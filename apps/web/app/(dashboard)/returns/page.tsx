@@ -22,11 +22,17 @@ import {
   type Return,
   type ReturnStatus,
   type ReturnReason,
-  type CreateReturnItemDto,
+  type CreateReturnLineItemDto,
 } from "@/lib/api/returns";
 import { useCustomers } from "@/lib/api/customers";
 import { useOrders, type Order } from "@/lib/api/orders";
-import { returnLineQtyText } from "@/lib/return-line-qty";
+import {
+  lineCountFields,
+  lineCountProblem,
+  returnLineQtyText,
+  type ReturnLineSnapshot,
+} from "@/lib/return-line-qty";
+import { ReturnLineCountCell } from "./_components/ReturnLineCountCell";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { FindSaleByNumber } from "./_components/FindSaleByNumber";
@@ -81,9 +87,13 @@ interface ReturnItemRow {
   lineId: string;
   productId: string;
   productName: string;
-  orderedQty: number;
+  /** The order line as it was sold (its own snapshot): what the count cell counts in. */
+  line: ReturnLineSnapshot;
   /** SA-1042 B9a: what the line counts, in pieces with its own unit beside it ("400 pcs (2 Cases)"). */
   lineText: string;
+  /** What the person typed, in the line's own unit: Cases/boxes and pcs, or one qty on a legacy line. */
+  boxes: string;
+  pieces: string;
   qty: string;
   notes: string;
 }
@@ -198,21 +208,24 @@ function CreateReturnModal({
           lineId: item.id,
           productId: item.productId,
           productName: item.product?.name ?? item.name ?? item.productId,
-          orderedQty: Number(item.qty),
+          line: item,
           lineText: returnLineQtyText(item),
+          boxes: "",
+          pieces: "",
           qty: "",
           notes: "",
         })),
     );
   }, [orderId]);
 
-  function updateReturnItem(i: number, field: "qty" | "notes", value: string) {
+  function updateReturnItem(i: number, field: "qty" | "boxes" | "pieces" | "notes", value: string) {
     setReturnItems((prev) =>
       prev.map((row, idx) => (idx === i ? { ...row, [field]: value } : row)),
     );
   }
 
-  const selectedReturnItems = returnItems.filter((r) => r.qty && parseFloat(r.qty) > 0);
+  // A row is returned when it has a count in its line's own unit (Cases/boxes and pcs, or qty on a legacy line).
+  const selectedReturnItems = returnItems.filter((r) => lineCountFields(r.line, r) !== null);
 
   function validate() {
     const errs: Record<string, string> = {};
@@ -220,12 +233,11 @@ function CreateReturnModal({
     if (!orderId) errs.orderId = "Select an order.";
     if (!reason) errs.reason = "Select a return reason.";
     if (selectedReturnItems.length === 0) errs.items = "Enter a quantity for at least one item.";
-    selectedReturnItems.forEach((row) => {
-      const qty = parseFloat(row.qty);
-      if (isNaN(qty) || qty <= 0) errs[`qty_${row.lineId}`] = "Qty must be > 0.";
-      if (qty > row.orderedQty)
-        errs[`qty_${row.lineId}`] = `Cannot exceed ordered qty (${row.orderedQty} pcs).`;
-    });
+    // The message only saves a trip: the server caps each line (and nets earlier returns) and prices it.
+    for (const row of returnItems) {
+      const problem = lineCountProblem(row.line, row);
+      if (problem) errs[`qty_${row.lineId}`] = problem;
+    }
     return errs;
   }
 
@@ -238,11 +250,16 @@ function CreateReturnModal({
     }
     setErrors({});
 
-    const items: CreateReturnItemDto[] = selectedReturnItems.map((row) => ({
-      productId: row.productId,
-      qty: parseFloat(row.qty),
-      notes: row.notes.trim() || undefined,
-    }));
+    // SA-1042 B9c: line items only: the line and the count in its own unit. No figure is read back; the server re-prices.
+    const items = selectedReturnItems.map(
+      (row) =>
+        ({
+          productId: row.productId,
+          orderItemId: row.lineId,
+          ...lineCountFields(row.line, row), // non-null: the row was selected because it has a count
+          notes: row.notes.trim() || undefined,
+        }) as CreateReturnLineItemDto,
+    );
 
     createReturn.mutate(
       {
@@ -388,7 +405,7 @@ function CreateReturnModal({
                       Ordered
                     </th>
                     <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/70">
-                      Return qty (pcs)
+                      Return
                     </th>
                     <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
                       Notes
@@ -401,18 +418,12 @@ function CreateReturnModal({
                       <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
                       <td className="px-3 py-2 text-center text-navy/70">{row.lineText}</td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          placeholder="0"
-                          min="0"
-                          max={row.orderedQty}
-                          step="1"
-                          value={row.qty}
-                          onChange={(e) => updateReturnItem(i, "qty", e.target.value)}
-                          className={cn(
-                            "h-8 w-20 rounded border bg-white px-2 text-sm text-center text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                            errors[`qty_${row.lineId}`] ? "border-danger" : "border-surface-border",
-                          )}
+                        <ReturnLineCountCell
+                          line={row.line}
+                          productName={row.productName}
+                          value={row}
+                          invalid={!!errors[`qty_${row.lineId}`]}
+                          onChange={(field, next) => updateReturnItem(i, field, next)}
                         />
                         {errors[`qty_${row.lineId}`] && (
                           <p className="mt-1 text-xs text-danger">{errors[`qty_${row.lineId}`]}</p>
