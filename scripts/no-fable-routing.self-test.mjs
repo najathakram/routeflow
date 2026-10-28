@@ -57,6 +57,56 @@ check(
   lines(".claude/skills/a/SKILL.md", "Never Fable for any step."),
   [],
 );
+// A marker excuses only its own clause (Opus review of R7-a): each of these routes a real step to Fable.
+const SKILL = ".claude/skills/a/SKILL.md";
+for (const [name, text] of [
+  ["F5 a marker inside a parenthesis", "S3: Fable @ high rules (the retired Opus 4 tier is gone)."],
+  ["F5b a marker after a semicolon", "S3: Fable rules; Haiku no longer runs gates here."],
+  ["F5c 'not used' about another model", "Use Fable for S3; Haiku is not used."],
+  ["F5d 'never spawn' about another model", "Never spawn Sonnet for S3 — use Fable."],
+  ["F5e a ruling date alone is no marker", "Per ruling 2026-10-15 the planner stays on Fable."],
+])
+  check(name, lines(SKILL, text), [1]);
+check(
+  "F5f a plain '> HISTORICAL note.' covers only its own line",
+  lines(SKILL, "> HISTORICAL note.\n> S3: spawn a Fable agent at high."),
+  [2],
+);
+check(
+  "F6 a formatted banner covers its blockquote paragraph, until a bare '>' line",
+  lines(
+    SKILL,
+    "> **HISTORICAL (superseded 2026-10-15):** the old rules.\n> Fable authors S3.\n>\n> Fable rules S4.",
+  ),
+  [4],
+);
+check(
+  "F6b a HISTORICAL heading covers its section, until a heading of that level",
+  lines(
+    SKILL,
+    "## Old routing — HISTORICAL\n\nFable rules S3.\n\n### detail\nFable rules S4.\n\n## Now\nFable rules S5.",
+  ),
+  [9],
+);
+check("F6c 'Fable 5.1 (retired)' is one clause", lines(SKILL, "| Fable 5.1 (retired) | $10 |"), []);
+check(
+  "F6d an Opus mapping is the ruling, not a routing",
+  lines(SKILL, "Every role Fable had is held by Opus."),
+  [],
+);
+check(
+  "F6e the FABLE-PROMPTING file name is not the model",
+  lines(SKILL, "Snippets: [FABLE-PROMPTING](references/FABLE-PROMPTING.md)."),
+  [],
+);
+check(
+  "F7 references are scanned, append-only logs are not",
+  [
+    instructionFiles(ROOT).includes(".claude/skills/model-routing/references/MODEL-CARDS.md"),
+    instructionFiles(ROOT).some((f) => f.endsWith("/RUN-LOG.md")),
+  ],
+  [true, false],
+);
 check(
   "F4 engine code is not scanned",
   instructionFiles(ROOT).filter((f) => !f.endsWith(".md")),

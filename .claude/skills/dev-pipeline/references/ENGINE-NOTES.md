@@ -1,5 +1,7 @@
 # Engine notes — the history and the long-form cautions behind dev-pipeline
 
+> **Owner ruling 2026-10-15: the Fable model is not used.** Every "Fable" below is history; the live role holder is Opus (alias `opus`).
+
 > Moved out of SKILL.md on 2026-09-02 so the skill body carries rules, not archaeology. Nothing here was
 > deleted; each section is quoted verbatim from the SKILL.md that shipped through 2026-09-02. SKILL.md keeps
 > one-line pointers. Read a section when the pointer is not enough.

@@ -40,10 +40,10 @@ itself.** When you catch one, write the guard, not the apology.
   2026-09-22).
 - **Times from `date -u` only.** Arm background `until date` checkpoint timers; never estimate
   when a window opens or closes (a window stalled 22 minutes on an estimate, 2026-09-22).
-- **The lead never implements** (ruling formerly "Fable never implements"; Fable retired 2026-10-15, Opus holds it). If you catch yourself editing source, stop and assign it (owner
+- **The lead (Opus) never implements.** If you catch yourself editing source, stop and assign it (owner
   ruling 2026-09-13).
 - **Owner questions go through the question box** (AskUserQuestion) with options and a
-  recommendation first. "Opus first": recommend before asking; ask only when the answer is not
+  recommendation first. "Recommend first": recommend before asking; ask only when the answer is not
   obvious. A question buried in prose is never read (owner rebukes 2026-09-17 and 2026-09-18).
 - **Lead output to the owner is one or two lines** unless asked. Refer to sessions by their
   window title, never by agent id (owner rebuke 2026-09-17).
@@ -140,6 +140,7 @@ frontmatter blocked every push fleet-wide).
   predicate in one file (SA-070); the live product pack never reinterprets a stored line (R-029).
 - A builder that stops rather than guesses (DTO correlation, ledger blocker, fixture wall) is
   doing it right. Answer the question; do not reward the guess.
+- Packs quote `graph@<sha>` (printed by orient); an unlabeled symbol line is not evidence.
 - A fresh session has none of the night's context; its brief must carry the rulings verbatim,
   or it rediscovers at 03:00 what was settled at 17:00.
 - No fleet session can open another session; the owner opens builder sessions, with exact
@@ -160,6 +161,7 @@ frontmatter blocked every push fleet-wide).
 - Never `git worktree remove --force` on the PC (junctions); never `git stash` on a shared
   stack; janitor in report-only first — its top proposal once targeted the worktree a live dev
   server ran from.
+- **Graph (per machine, one shared graph in a locked graph host; never build one in a worktree):** G0 on each machine before any brief mentions MCP there (server answers; `claude mcp list` shows graphify connected, re-check after every account switch; a fresh session resolves `getTierPrice`). Cadence: Mac mini refreshes every 2 h, MacBook every 4 h, PC pulls hourly or builds in its heavy slot every 6 h. The lead owns G0, the cadence and the canary (`cross-package: blind` in `BUILT_AT` keeps the `@routeflow/*` grep rule). Design: `rf-specs-handoff/specs/graphify/DESIGN.md`.
 - Railway from the PC: `--service postgres` exposes the TCP proxy variables, not `DATABASE_URL`;
   build the URL with `apps/api/scripts/lib/railway-db-url.mjs`'s `resolveDatabaseUrl`.
 
@@ -203,6 +205,8 @@ The skill improves only through its log. `scripts/lead-closeout.mjs` beside this
   made, with their number, so the skill is never behind the register.
 
 ## 12. Templates
+
+**GRAPH FIRST bullet (builder and reviewer templates; same text as `briefs/_common.md`):** GRAPH FIRST (graph@<sha>, printed by orient; one shared graph per machine, never build one). Point lookups by identifier with MCP `mcp__graphify__get_node` / `get_neighbors` / `shortest_path` (ToolSearch `select:` if deferred). Before editing an exported symbol run `node <host>/scripts/graph.mjs radius <Sym...>` and read its grep-only files first. Then one code-map INDEX row for invariants, then Read with offset/limit. An empty graph answer is UNKNOWN: grep env vars, constants, Prisma, regex sweeps, generic names and post-sha symbols, and write `graph miss: <why>`.
 
 **Decision relay:** "Owner, question box HH:MMZ: '<verbatim>'. Supersedes <earlier>. Build list:
 (1)… (2)…; NOT tonight: …; reviewers: …; declaration after …"
