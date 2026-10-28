@@ -510,6 +510,16 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // I-101 item 6: the 10 / 200 / 4800 ladder on two variants of one family, order -> invoice at Case and Pallet.
+    // Builds its own family through the API (leaves one family, two variants, and an order + invoice per level on
+    // e2e-routeflow; same no-cleanup tolerance as 53/54). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "units-ladder-three-level",
+      testMatch: /55-units-ladder-three-level.spec.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
     // Same posture as order-edit-pricing above — a client-side requirement
     // with no web unit runner behind it, so this runs only against a live app
