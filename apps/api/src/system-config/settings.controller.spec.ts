@@ -7,6 +7,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { plainToInstance } from "class-transformer";
+import { validateSync } from "class-validator";
+import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
 // apps/api/src/common/tax-rate.ts. A direct PATCH call can otherwise store an
@@ -219,18 +222,30 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
     expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "30");
   });
 
-  it('PATCH {depositDefaultPercent:null} stores the empty-string sentinel (not the string "null"), and GET then returns null', async () => {
-    await controller.updateInvoiceSettings({
-      depositDefaultPercent: null,
-    } as unknown as { depositDefaultPercent?: number });
-    expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "");
-    expect(svc.set).not.toHaveBeenCalledWith("invoice.depositDefaultPercent", "null");
+  it('PATCH {depositDefaultPercent:0} stores "0" (the clear; Row 652), and GET then returns 0', async () => {
+    await controller.updateInvoiceSettings({ depositDefaultPercent: 0 });
+    expect(svc.set).toHaveBeenCalledWith("invoice.depositDefaultPercent", "0");
 
+    svc.get.mockImplementation((key: string) =>
+      key === "invoice.depositDefaultPercent" ? Promise.resolve("0") : Promise.resolve(null),
+    );
+    expect((await controller.getInvoiceSettings()).depositDefaultPercent).toBe(0);
+  });
+
+  it("a row cleared before Row 652 (stored empty string) still reads as null", async () => {
     svc.get.mockImplementation((key: string) =>
       key === "invoice.depositDefaultPercent" ? Promise.resolve("") : Promise.resolve(null),
     );
-    const result = await controller.getInvoiceSettings();
-    expect(result.depositDefaultPercent).toBeNull();
+    expect((await controller.getInvoiceSettings()).depositDefaultPercent).toBeNull();
+  });
+
+  it("Row 652: the DTO refuses depositDefaultPercent: null (omit or send 0) and still takes 0 and 30", () => {
+    const bad = (plain: object) =>
+      validateSync(plainToInstance(UpdateInvoiceSettingsDto, plain)).map((e) => e.property);
+    expect(bad({ depositDefaultPercent: null })).toEqual(["depositDefaultPercent"]);
+    expect(bad({ depositDefaultPercent: 0 })).toEqual([]);
+    expect(bad({ depositDefaultPercent: 30 })).toEqual([]);
+    expect(bad({})).toEqual([]);
   });
 
   it('PATCH {depositCollectAtOrder:true} calls svc.set(invoice.depositCollectAtOrder, "true")', async () => {
@@ -318,5 +333,53 @@ describe("SettingsController — PATCH /settings refuses invoicePrefix / payment
   it("still accepts invoiceNotes / invoiceTerms (control)", async () => {
     await controller.updateSettings({ invoiceNotes: "n", invoiceTerms: "t" });
     expect(prisma.tenantConfig.upsert).toHaveBeenCalled();
+  });
+});
+
+// B1231: the Business Profile form used to PATCH businessName / email here, where neither is stored —
+// "Profile saved" with nothing changed. They now 400 with a pointer to the real store
+// (PUT /tenants/me/config/branding for the name) and NOTHING in the same body is written.
+describe("SettingsController — PATCH /settings refuses businessName / email (B1231)", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.tenantConfig.upsert = jest.fn().mockResolvedValue({});
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: prisma },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it.each([
+    ["businessName", "Acme Wholesale", /branding/i],
+    ["email", "ops@acme.test", /account email|not editable|sign-in/i],
+  ])("400s %s with a message naming where it lives", async (key, value, message) => {
+    await expect(controller.updateSettings({ [key]: value })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(controller.updateSettings({ [key]: value })).rejects.toThrow(message);
+  });
+
+  it("writes nothing from the same body when a refused key is present", async () => {
+    await expect(
+      controller.updateSettings({ taxRate: 8, invoiceNotes: "hi", businessName: "Acme Wholesale" }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(svc.set).not.toHaveBeenCalled();
+    expect(prisma.tenantConfig.upsert).not.toHaveBeenCalled();
   });
 });

@@ -15,10 +15,17 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
+// B1231: only a tenant admin edits the business name (saved through branding, not PATCH /settings).
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { id: "u1", username: "someone", role: "TENANT_ADMIN" } }),
+}));
+
 jest.mock("@/lib/api-client", () => ({
   apiClient: {
     get: jest.fn().mockResolvedValue({ data: {} }),
     post: jest.fn(),
+    put: jest.fn().mockResolvedValue({ data: {} }),
     patch: jest.fn().mockResolvedValue({ data: {} }),
     delete: jest.fn(),
   },
@@ -46,7 +53,6 @@ describe("SettingsPage — Business Profile tab", () => {
     renderWithProviders(<SettingsPage />);
 
     await user.type(await screen.findByLabelText("Business name"), "Acme Foods");
-    await user.type(screen.getByLabelText("Account email"), "ops@acme.test");
     await user.type(screen.getByLabelText("Owner / manager name"), "Jane Doe");
     await user.type(screen.getByLabelText("Phone"), "5125550100");
     await user.type(screen.getByLabelText("Street"), "123 Main St");
@@ -56,11 +62,12 @@ describe("SettingsPage — Business Profile tab", () => {
     await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
+      expect(apiClientMock.put).toHaveBeenCalledWith("/tenants/me/config/branding", {
+        businessName: "Acme Foods",
+      });
       expect(apiClientMock.patch).toHaveBeenCalledWith(
         "/settings",
         expect.objectContaining({
-          businessName: "Acme Foods",
-          email: "ops@acme.test",
           ownerName: "Jane Doe",
           street: "123 Main St",
           city: "Austin",

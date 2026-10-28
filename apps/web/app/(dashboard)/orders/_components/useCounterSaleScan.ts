@@ -5,6 +5,7 @@ import type { SellLevel } from "@routeflow/pricing";
 import {
   archivedMessage,
   resolveProductByCode,
+  SCAN_LOOKUP_TIMEOUT_MS,
   type BarcodeResolveResult,
 } from "@/lib/barcode-resolve";
 import { fetchCategoryPage, findCategoryProducts } from "@/lib/counter-category-search";
@@ -102,7 +103,8 @@ export function useCounterSaleScan(deps: Deps) {
         let lookupFailed = false;
         if (!depsRef.current.locked) {
           try {
-            result = await resolveProductByCode(item.code);
+            // Row 541: a lookup that never answers ends at the deadline as a failure (the retry cue), never a stuck till.
+            result = await resolveProductByCode(item.code, { timeoutMs: SCAN_LOOKUP_TIMEOUT_MS });
           } catch {
             lookupFailed = true;
           }

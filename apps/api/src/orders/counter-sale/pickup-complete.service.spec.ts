@@ -210,6 +210,9 @@ describe("PickupCompleteService.complete", () => {
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             changeStatus,
             decrementStockForSale,
             updateFulfillPath,
@@ -994,13 +997,12 @@ describe("PickupCompleteService.complete", () => {
         nothingWritten();
       },
     );
-    it("open credit with the sweep on is 409 WALK_IN_OPEN_CREDIT before any write", async () => {
+    it("W-913: a legacy open credit on the walk-in account with the sweep on no longer blocks the hand-over, and is never consulted", async () => {
       mockSweepOn.on = true;
       prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
-      const e = await errorOf(run());
-      expect(e.getStatus()).toBe(409);
-      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
-      nothingWritten();
+      const res = await run(cash(37.25));
+      expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true });
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     });
     it("a full CASH tender still completes", async () => {
       const res = await run(cash(37.25));

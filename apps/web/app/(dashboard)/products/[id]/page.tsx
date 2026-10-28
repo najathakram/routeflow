@@ -808,9 +808,11 @@ export default function ProductDetailPage() {
     setVariantModalOpen(true);
   };
 
+  // Row 535: the variant being edited is NOT cleared here. The dialog fades out after `open` goes false, and
+  // clearing it at once flipped its title and primary button to "Add variant" / "Create Variant" for those frames.
+  // Every open (openVariantModal) sets it afresh, so a stale value never reaches a new dialog.
   const closeVariantModal = () => {
     setVariantModalOpen(false);
-    setEditingVariant(null);
   };
 
   const handleVariantSubmit = () => {

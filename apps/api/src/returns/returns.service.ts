@@ -32,6 +32,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import {
   addCredits,
   piecesPerQtyOf,
@@ -47,6 +48,10 @@ import {
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isLockUnavailableError } from "../common/db-locks";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import {
+  INLINE_REFUND_AUDIT_ACTION,
+  INLINE_STORE_CREDIT_AUDIT_ACTION,
+} from "./inline-return-refund";
 import {
   EXTERNAL_REFUND_METHOD,
   isRefundPending,
@@ -180,6 +185,14 @@ export interface FindAllReturnsOptions {
   pendingRefund?: boolean;
   page?: number;
   limit?: number;
+}
+
+/** The two reads `refundActorName` makes, typed by what it uses. */
+interface RefundActorDb {
+  auditLog: { findFirst(args: unknown): Promise<{ userId: string | null } | null> };
+  user: {
+    findFirst(args: unknown): Promise<{ username: string | null; deletedAt: Date | null } | null>;
+  };
 }
 
 @Injectable()
@@ -1244,6 +1257,9 @@ export class ReturnsService {
     if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
+    // W-913: store credit on the walk-in account is refused before the claim (the credit note writer refuses it too)
+    if (method !== EXTERNAL_REFUND_METHOD)
+      await assertCreditCustomerNotWalkIn(this.prisma.forTenant(), ret.customerId);
 
     // F08 B53: refund value is priced from what was actually BILLED (the order's
     // creditable invoices), not re-derived from the order line — see billedBasisFor.
@@ -1656,7 +1672,8 @@ export class ReturnsService {
 
   /** RF-081: Fetches a return by ID with ownership enforcement for CUSTOMER role. */
   async findOneForUser(id: string, user: JwtPayload) {
-    const ret = await this.findOne(id);
+    // A buyer's read never carries the refunding staff member (and asks nothing to resolve them).
+    const ret = await this.findOne(id, user);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
@@ -1668,7 +1685,44 @@ export class ReturnsService {
     return ret;
   }
 
-  async findOne(id: string) {
+  /**
+   * Row 257: who made the refund, by name, read from the STORED refund actor: the user on the awaited audit row every refund
+   * path writes in the refund's own transaction. Null while the return is not refunded, and for a refund with no such row, a
+   * system actor, or a user who has since been removed (the client prints nothing rather than a guess).
+   */
+  private async refundActorName(
+    db: RefundActorDb,
+    ret: { id: string; status?: string | null; refundedAt?: Date | null },
+    tenantId: string | null | undefined,
+  ): Promise<string | null> {
+    if (ret.status !== "REFUNDED" && !ret.refundedAt) return null;
+    // Both reads name the tenant themselves (an audit row or a user of another tenant never names the refunder).
+    if (!tenantId) return null;
+    const audit = await db.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: "Return",
+        entityId: ret.id,
+        action: {
+          in: [
+            INLINE_REFUND_AUDIT_ACTION,
+            INLINE_STORE_CREDIT_AUDIT_ACTION,
+            AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+          ],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { userId: true },
+    });
+    if (!audit?.userId) return null;
+    const user = await db.user.findFirst({
+      where: { id: audit.userId, tenantId },
+      select: { username: true, deletedAt: true },
+    });
+    return user && !user.deletedAt ? (user.username ?? null) : null;
+  }
+
+  async findOne(id: string, viewer?: { role?: string | null }) {
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: {
@@ -1710,7 +1764,8 @@ export class ReturnsService {
             },
           },
         },
-        customer: { select: { id: true, businessName: true } },
+        // isWalkIn: the Resolve dialog offers a walk-in return a refund only (W-913)
+        customer: { select: { id: true, businessName: true, isWalkIn: true } },
         items: { include: { product: { select: { id: true, name: true, unit: true } } } },
       },
     });
@@ -1777,6 +1832,15 @@ export class ReturnsService {
       creditNote,
       refundEstimate,
       refundEstimateReason: refusal ?? null,
+      ...(viewer?.role === "CUSTOMER"
+        ? {}
+        : {
+            refundedBy: await this.refundActorName(
+              this.prisma.forTenant(),
+              ret,
+              ret.tenantId ?? this.prisma.getTenantId(),
+            ),
+          }),
     };
   }
 }
