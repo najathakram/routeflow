@@ -6,13 +6,14 @@ import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import {
   buildUnitOptions,
   defaultUnitValue,
+  heldSnapshotUnitOption,
   withLayerPrices,
   type OwnPackBasis,
   type UnitOption,
 } from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
 import { ladderProductOf, unitPickerValueOf, type PackBase } from "@/lib/order-line-unit";
-import type { CustomerLayerUnit, DerivedBaseMarker } from "@routeflow/pricing";
+import { withHeldOption, type CustomerLayerUnit, type DerivedBaseMarker } from "@routeflow/pricing";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
 export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
@@ -104,20 +105,40 @@ function OrderLineUnitPickerInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [line.ownPack?.unitPrice, line.ownPack?.unitsPerBox],
   );
+  // SA-1044 rule 4: a held level the ladder no longer offers at its sold size keeps its "(as ordered)" snapshot option.
+  const heldOption = React.useMemo(
+    () =>
+      enabled && units.data && units.data.length > 0
+        ? heldSnapshotUnitOption(line, product, units.data)
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      enabled,
+      units.data,
+      product,
+      line.unitLabel,
+      line.unitsPerBox,
+      line.unitPrice,
+      line.listPrice,
+    ],
+  );
   const options = React.useMemo<UnitOption[]>(() => {
     if (!enabled || !units.data || units.data.length === 0) return [];
     try {
-      return withLayerPrices(
-        buildUnitOptions(product, units.data, tier, packPrice),
-        product,
-        tier,
-        layer,
-        ownPack,
+      return withHeldOption(
+        withLayerPrices(
+          buildUnitOptions(product, units.data, tier, packPrice),
+          product,
+          tier,
+          layer,
+          ownPack,
+        ),
+        heldOption, // after the layer prices: the snapshot is the line's own, never re-priced
       );
     } catch {
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
-  }, [enabled, units.data, product, tier, packPrice, layer, ownPack]);
+  }, [enabled, units.data, product, tier, packPrice, layer, ownPack, heldOption]);
 
   const startedRef = React.useRef(false);
   React.useEffect(() => {
@@ -163,6 +184,7 @@ function OrderLineUnitPickerInner({
   const lastLadderPrice = React.useRef<number | undefined>(undefined);
   React.useEffect(() => {
     if (disabled || !line.unitLabel || !held) return; // W-745: not recorded, so the first confirmed ladder is a first sight
+    if (heldOption) return; // SA-1044: a gone/resized level bills at its snapshot; the ladder never re-prices it
     const firstSight = lastLadderPrice.current === undefined;
     const ladderMoved = lastLadderPrice.current !== held.price;
     lastLadderPrice.current = held.price;
@@ -181,6 +203,7 @@ function OrderLineUnitPickerInner({
     line.unitPrice,
     line.priceEdited,
     held,
+    heldOption,
     onChange,
     disabled,
   ]);
@@ -193,6 +216,7 @@ function OrderLineUnitPickerInner({
       packPrice={packPrice}
       layer={layer}
       ownPack={ownPack}
+      heldOption={heldOption}
       ariaLabel={`Sell ${line.productName} by`}
       value={unitPickerValueOf(line)}
       disabled={disabled}

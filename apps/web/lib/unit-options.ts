@@ -5,6 +5,8 @@ import {
   type CustomerLinePrice,
   defaultLadderOptionValue,
   derivedPiece,
+  heldLevelState,
+  heldSnapshotOption,
   ladderOptionLineTotal,
   ladderOptionText,
   type LadderOption,
@@ -131,6 +133,42 @@ export function defaultUnitValue(
 ): string {
   // #2784: the ONE resolver (@routeflow/pricing) — the server's buyer-qty default reads the same function.
   return defaultLadderOptionValue(product, units.map(toLadderUnit), tier);
+}
+
+/**
+ * SA-1044 rule 4: an EXISTING line whose held level the ladder no longer offers at the size it was sold at (the level was
+ * deleted or renamed, or the Case went 100 -> 200) keeps its own "(as ordered)" option at its snapshot size and price, in
+ * place of any same-label option. The server bills such a line at that snapshot too. Live / unknown / a fresh line = null.
+ */
+export function heldSnapshotUnitOption(
+  line: {
+    unitLabel?: string | null;
+    unitsPerBox?: number | null;
+    unitPrice: number;
+    listPrice?: number | null;
+  },
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+): UnitOption | null {
+  if (!line.unitLabel) return null; // the pack: nothing held
+  const held = {
+    unitLabel: line.unitLabel,
+    unitsPerBox: line.unitsPerBox,
+    unitPrice: line.unitPrice,
+  };
+  let state: ReturnType<typeof heldLevelState>;
+  try {
+    state = heldLevelState(held, product, units.map(toLadderUnit));
+  } catch {
+    return null; // display-only: a malformed ladder never unmounts the order form
+  }
+  if (state !== "gone" && state !== "resized") return null;
+  return heldSnapshotOption({
+    unitLabel: line.unitLabel,
+    unitsPerBox: line.unitsPerBox as number, // a positive integer: heldLevelState said so
+    unitPrice: line.unitPrice,
+    listPrice: line.listPrice,
+  });
 }
 
 /** The dropdown text: "Case · 288 pcs · $480.00"; a derived Piece reads "Piece · ≈$3.33 (1/3 of $10.00)" when not exact. The text lives in @routeflow/pricing (row 513), shared with mobile. */

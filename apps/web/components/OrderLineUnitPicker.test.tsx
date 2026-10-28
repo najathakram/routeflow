@@ -316,6 +316,59 @@ describe("OrderLineUnitPicker: a NEW line starts on the default selling unit (#2
 });
 
 /**
+ * SA-1044 (B11a) rule 4: an existing line whose held level is gone or resized keeps its own snapshot as the
+ * "(as ordered)" option. The #2305 price-follow and the pack reset never fire on it; live lines are unchanged.
+ */
+describe("OrderLineUnitPicker held snapshot (SA-1044)", () => {
+  it("F-4 resized: the Case went 100 -> 200; the line keeps its Case of 100 at its own price", () => {
+    mockUnits = [{ ...CASE, factorToBase: 200, price: "90.00" }];
+    const onChange = jest.fn();
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unitsPerBox: 100, unitPrice: 45 }}
+        tier={1}
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: /Case of 100 \(as ordered\)/ })).toBeInTheDocument();
+    const select = screen.getByLabelText("Sell Widget by");
+    expect(select).toHaveValue("Case");
+    fireEvent.change(select, { target: { value: "Case" } });
+    for (const [opt] of onChange.mock.calls) {
+      expect(opt).toMatchObject({ value: "Case", factorToBase: 100, price: 45 });
+    }
+  });
+
+  it("W-2 gone: the ladder no longer names Case; the line shows its snapshot, no reset to the pack", () => {
+    mockUnits = [{ ...CASE, id: "u2", label: "Pallet" }];
+    const onChange = jest.fn();
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unitsPerBox: 12, unitPrice: 45 }}
+        tier={1}
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: /Case of 12 \(as ordered\)/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Sell Widget by")).toHaveValue("Case");
+  });
+
+  it("live: same label, same factor — the snapshot option is not added", () => {
+    mockUnits = [CASE];
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unitsPerBox: 288 }}
+        tier={1}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(screen.queryByRole("option", { name: /as ordered/ })).toBeNull();
+  });
+});
+
+/**
  * #3670 review MUST-2 (W-745): after a failed customer read the order editor's picker re-priced an existing line from the tier-1
  * ladder (LIST). `disabled` (the editor passes !pricingReady) closes the control and fires no change at all.
  */
