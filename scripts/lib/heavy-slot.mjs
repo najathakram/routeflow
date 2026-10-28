@@ -364,6 +364,32 @@ export function isNpmInstall(cmd, args = []) {
   return at >= 0 && NPM_INSTALL_VERBS.has(list[at].toLowerCase());
 }
 
+/** The `--prefix`/`-C` value of the LAST npm install call in `cmd args` (raw, unresolved), or null. */
+export function npmInstallPrefix(cmd, args = []) {
+  const c = String(cmd ?? "").trim();
+  if (/\s/.test(c)) {
+    const words = c.split(/\s+/);
+    return npmInstallPrefix(words[0], [...words.slice(1), ...args]);
+  }
+  const base = path
+    .basename(c)
+    .replace(/\.(cmd|exe|bat|ps1)$/i, "")
+    .toLowerCase();
+  const lists = SHELLS.has(base) ? [...npmCallsInShell(args)] : base === "npm" ? [args] : [];
+  let found = null;
+  for (const list of lists.map((l) => l.map(String))) {
+    if (!isNpmInstall("npm", list)) continue;
+    found = null;
+    for (let i = 0; i < list.length; i++) {
+      const m = /^--prefix=(.*)$/.exec(list[i]);
+      if (m) found = m[1];
+      else if ((list[i] === "--prefix" || list[i] === "-C") && i + 1 < list.length)
+        found = list[++i];
+    }
+  }
+  return found || null;
+}
+
 /**
  * Why `cmd args` must not run under the slot, or null. A bare `npm ci` / `npm install` (or any alias
  * of them, after npm's own global options) runs the lifecycle scripts (husky `prepare`), which

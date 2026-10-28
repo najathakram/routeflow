@@ -11,6 +11,7 @@ import {
   HeavySlotTimeout,
   bareNpmReason,
   isNpmInstall,
+  npmInstallPrefix,
   TIMEOUT_EXIT_CODE,
   formatStatus,
   resolveDir,
@@ -49,7 +50,7 @@ export function parseCli(argv) {
 
 /**
  * After a SUCCESSFUL npm install (the `--ignore-scripts` form this CLI insists on), the tree has no `.husky/_`:
- * copy the main checkout's hooks in (no husky, no git config write). Never changes the job's exit code.
+ * copy the main checkout's hooks into the install's own tree (`--prefix`/`-C`, else cwd; no husky, no git config write). Never changes the job's exit code.
  */
 export function afterRun(
   cmd,
@@ -59,7 +60,8 @@ export function afterRun(
 ) {
   if (status !== 0 || !isNpmInstall(cmd, args)) return;
   try {
-    const r = ensure({ cwd });
+    const prefix = npmInstallPrefix(cmd, args);
+    const r = ensure({ cwd: prefix ? path.resolve(cwd, prefix) : cwd });
     (r.ok ? log : warn)(`heavy-slot: ${r.message}`);
   } catch (e) {
     warn(`heavy-slot: could not ensure git hooks: ${e instanceof Error ? e.message : e}`);
