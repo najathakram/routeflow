@@ -68,6 +68,7 @@
     "bugs": "node scripts/campaign/bugs.mjs",
     "bugs:self-test": "node scripts/campaign/bugs.mjs self-test",
     "registry:clone": "node scripts/registry-clone.mjs",
+    "registry:land": "node scripts/registry-land.mjs",
     "bugs:plane": "node scripts/campaign/plane-sync.mjs",
     "plane:sync": "node scripts/campaign/plane-sync.mjs",
     "plane:check": "node scripts/campaign/plane-sync.mjs --check",
