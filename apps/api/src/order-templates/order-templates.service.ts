@@ -53,9 +53,11 @@ import {
 } from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
 import * as tGate from "./template-restriction-gate";
-import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
+import { authorMarkerOf, orderSourceForChannel, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
+import { startOfCalendarDay } from "../common/calendar-date";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { retryStockTx } from "../common/tx-retry";
 import { STOCK_TX_OPTIONS } from "../common/product-locks";
 import {
@@ -568,8 +570,14 @@ export class OrderTemplatesService {
       ban: null,
       ...(outcome ? { restricted: [] } : {}),
     };
+    // B326 (SA-964 §1): a manual run is dated the tenant's own calendar day (zone resolved once, SA-488).
+    const targetDay = startOfCalendarDay(
+      new Date(),
+      await tenantTimeZone(this.prisma, { tenantId: this.prisma.getTenantId() }),
+    );
     const order = await this.createOrderFromTemplate(
       template,
+      targetDay,
       isStaffRole,
       false,
       runCtx,
@@ -687,6 +695,7 @@ export class OrderTemplatesService {
         // manual path, and a twin that committed meanwhile is answered instead of doubled.
         const order = await this.createOrderFromTemplate(
           template,
+          startOfUtcDay(today), // B326: the run's target day, the one whose weekday picked this template
           true,
           true,
           ctx,
@@ -812,6 +821,8 @@ export class OrderTemplatesService {
         suspendedAt?: Date | null;
       }>;
     },
+    /** B326: the calendar day the order is for, a UTC-midnight stamp; required, so every caller names its day. */
+    targetDay: Date,
     isStaffRole: boolean,
     unattended = false,
     /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
@@ -1160,6 +1171,7 @@ export class OrderTemplatesService {
     } = orderTotalsOf(lineItemsData, {
       taxRate,
       isTaxExempt,
+      discount: 0, // W-762: a standing order carries no order-level discount
     });
 
     // #1208 review LOW: guard the generated total the same way create() does
@@ -1171,7 +1183,6 @@ export class OrderTemplatesService {
     });
 
     const orderNumber = `ORD-${Date.now()}`;
-    const today = new Date();
     const skipNote =
       (skippedCount > 0
         ? ` (${skippedCount} regulated line(s) skipped — license not verified)`
@@ -1225,15 +1236,15 @@ export class OrderTemplatesService {
             templateId: template.id,
             fulfillPath,
             orderNumber,
-            // Unattended run: no principal creates it, and the template's author is judged per line
-            // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
-            source: "APP",
+            // Row 478: the source follows the run's judged channel (the same one the lines' author marker takes), so
+            // a staff-authored template records PHONE and a buyer-authored (or unknown-author) one records APP.
+            source: orderSourceForChannel(channel),
             sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
             subtotal,
             tax,
             total,
             notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
-            requestedDeliveryDate: today,
+            requestedDeliveryDate: targetDay,
             // Denormalized flag — true when any (allowed) line is regulated.
             hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
             // SA ruling (#3418): each line's explicit author marker: the channel this run is judged on (the least

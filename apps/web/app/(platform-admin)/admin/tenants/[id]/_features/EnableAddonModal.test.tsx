@@ -171,12 +171,12 @@ describe("EnableAddonModal — Stripe NOT configured", () => {
 describe("EnableAddonModal — free grant points at a complimentary override (back-office P2)", () => {
   const LINE = /To give it free for a set time, add a complimentary override instead\./;
 
-  it("Stripe not configured: the line and an Add Override button; clicking closes the modal and calls onCustomise(key)", async () => {
+  it("Stripe not configured: the line and an Add override button; clicking closes the modal and calls onCustomise(key)", async () => {
     mockFetchBilling.mockResolvedValue({ stripeConfigured: false });
     const onCustomise = jest.fn();
     const { onClose } = renderModal({ onCustomise });
     expect(await screen.findByText(LINE)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add Override" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add override" }));
     expect(onCustomise).toHaveBeenCalledTimes(1);
     expect(onCustomise).toHaveBeenCalledWith("ocr");
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -193,7 +193,7 @@ describe("EnableAddonModal — free grant points at a complimentary override (ba
     expect(screen.queryByText(LINE)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Grant without billing" }));
     expect(screen.getByText(LINE)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add Override" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add override" })).toBeInTheDocument();
   });
 
   it("no onCustomise given: no line and no button (nothing to link to)", async () => {
@@ -201,7 +201,7 @@ describe("EnableAddonModal — free grant points at a complimentary override (ba
     renderModal();
     await screen.findByText(/this will be a free grant, not billed/);
     expect(screen.queryByText(LINE)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add Override" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add override" })).not.toBeInTheDocument();
   });
 });
 

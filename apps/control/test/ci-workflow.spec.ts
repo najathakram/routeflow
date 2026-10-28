@@ -161,6 +161,7 @@ function repoReadsOf(text: string): string[] {
  */
 const SRC_RUNTIME_READS: Array<{ path: string; evidence: RegExp }> = [
   { path: "scripts/campaign/plane-denylist.json", evidence: /plane-denylist\.json/ },
+  { path: "scripts/lib/registry-source.json", evidence: /registry-source\.json/ },
   { path: "apps/api/railway.toml", evidence: /apps",\s*svc,\s*"railway\.toml"/ },
   { path: "apps/web/railway.toml", evidence: /apps",\s*svc,\s*"railway\.toml"/ },
 ];

@@ -53,6 +53,11 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
   let capability: any;
   const calls: string[] = [];
   const orders = {
+    // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+    get prisma() {
+      return prisma;
+    },
+    staffSellable: jest.fn(async () => undefined),
     assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge
     changeStatus: jest.fn(),
     updateFulfillPath: jest.fn(),
@@ -219,6 +224,26 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
     expect(inv.sendCompletionEmail).toHaveBeenCalledTimes(1);
     expect(inv.recordPayment).toHaveBeenCalledTimes(1);
     expect(res.alreadyPickedUp).toBe(true);
+  });
+
+  // W-774 (#3707 P2, mutant M4): a REPLAY of a finished hand-over never re-judges the restriction, so a restriction added
+  // after the hand-over cannot turn the stored outcome into a second 409 (the dialog would answer it AND the global toast).
+  it("R5b a replay of a DELIVERED order skips the restriction pre-judge: the stored outcome, no SELLING_RESTRICTED", async () => {
+    order = orderRow("DELIVERED", { fulfillPath: "ROUTE" });
+    (prisma.orderItem.findMany as jest.Mock).mockResolvedValue([{ id: "l-1", productId: "p-1" }]);
+    orders.staffSellable.mockRejectedValue(
+      Object.assign(new Error("restricted"), {
+        getStatus: () => 409,
+        getResponse: () => ({ code: "SELLING_RESTRICTED" }),
+      }),
+    );
+    try {
+      const res: any = await run();
+      expect(orders.staffSellable).not.toHaveBeenCalled();
+      expect(res.alreadyPickedUp).toBe(true);
+    } finally {
+      orders.staffSellable.mockReset().mockResolvedValue(undefined);
+    }
   });
 
   it("R6 a tender lock not taken (paymentRecorded false): no email; the retry records the payment and emails once", async () => {

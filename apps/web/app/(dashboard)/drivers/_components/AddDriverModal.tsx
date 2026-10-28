@@ -96,7 +96,7 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
     <Modal
       open={isOpen}
       onClose={handleClose}
-      title={tempPassword ? "Driver Created" : "Add Driver"}
+      title={tempPassword ? "Driver created" : "Add driver"}
       description={
         tempPassword
           ? "Share the temporary password with the driver. They will be prompted to change it on first login."
@@ -111,7 +111,7 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
               Cancel
             </Button>
             <Button type="submit" form="driver-form" loading={isSubmitting}>
-              Create Driver
+              Create driver
             </Button>
           </>
         )
@@ -148,7 +148,7 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
             </div>
           )}
           <Input
-            label="Full Name"
+            label="Full name"
             placeholder="Jane Smith"
             register={register("contactName")}
             error={errors.contactName?.message}
@@ -174,25 +174,25 @@ export function AddDriverModal({ isOpen, onClose, onCreateDriver }: AddDriverMod
             error={errors.username?.message}
           />
           <Input
-            label="Vehicle Make"
+            label="Vehicle make"
             placeholder="Ford"
             register={register("vehicleMake")}
             error={errors.vehicleMake?.message}
           />
           <Input
-            label="Vehicle Model"
+            label="Vehicle model"
             placeholder="Transit"
             register={register("vehicleModel")}
             error={errors.vehicleModel?.message}
           />
           <Input
-            label="Vehicle Colour"
+            label="Vehicle color"
             placeholder="White"
             register={register("vehicleColour")}
             error={errors.vehicleColour?.message}
           />
           <Input
-            label="Vehicle Plate"
+            label="Vehicle plate"
             placeholder="TX PLT-XXXX"
             register={register("vehiclePlate")}
             error={errors.vehiclePlate?.message}

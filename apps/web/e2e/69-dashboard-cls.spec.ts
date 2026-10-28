@@ -8,8 +8,8 @@
  * Two legs (all read-only, approved test tenants, local stack):
  *  - e2e-routeflow       — routes add-on ON, pre-authenticated operator (the project storageState)
  *  - qa-lite             — NO routes add-on: the Routes/Drivers cards must be absent and nothing shifts
- * The routes legs also assert the Scheduled Routes / Active Drivers stat cards and the Route Runs /
- * Driver Status panels render (a reserved slot must resolve to the real card, never vanish).
+ * The routes legs also assert the Scheduled routes / Active drivers stat cards and the Route Runs /
+ * Driver status panels render (a reserved slot must resolve to the real card, never vanish).
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie, fillWorkspaceIfShown } from "./helpers/auth";
@@ -21,7 +21,7 @@ const DELAYED =
   /\/api\/v1\/(orders|invoices|bookkeeping\/finance-dashboard|route-runs|drivers|products|tenants\/me\/(addons|features)|onboarding|settings)/;
 const EMPTY_COPY =
   /No overdue invoices|No runs scheduled|No drivers found|All stock levels healthy/;
-const ALWAYS = ["Today's Revenue", "Overdue Invoices", "Active Orders", "Low Stock Items"];
+const ALWAYS = ["Today's revenue", "Overdue invoices", "Active orders", "Low stock items"];
 
 async function installObserver(page: Page) {
   await page.addInitScript(() => {
@@ -127,11 +127,11 @@ for (const leg of LEGS) {
           expect(apiCalls).toBeLessThanOrEqual(leg.maxApiCalls);
           const stats = page.getByTestId("dashboard-stats");
           for (const label of ALWAYS) await expect(stats.getByText(label)).toBeVisible();
-          for (const label of ["Scheduled Routes", "Active Drivers"]) {
+          for (const label of ["Scheduled routes", "Active drivers"]) {
             if (leg.routes) await expect(stats.getByText(label)).toBeVisible();
             else await expect(stats.getByText(label)).toHaveCount(0);
           }
-          for (const panel of ["Scheduled Route Runs", "Driver Status"]) {
+          for (const panel of ["Scheduled route runs", "Driver status"]) {
             if (leg.routes) await expect(page.getByText(panel).first()).toBeVisible();
             else await expect(page.getByText(panel)).toHaveCount(0);
           }

@@ -19,7 +19,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
-import { customerIsTaxExempt, orderTotalsOf } from "./order-totals";
+import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -69,6 +69,7 @@ import {
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import {
@@ -79,7 +80,7 @@ import {
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
 import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
-import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
+import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
   lockAndRecheckMergeInputs,
@@ -131,16 +132,16 @@ import {
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
-import {
-  assertQuantitiesKnown,
-  cancelBlockedMessage,
-  cancelImpact,
-  deliveredUnitsBlockedMessage,
-} from "./order-cancel-impact";
+import { fulfillPathLocked } from "./fulfil-path-lock";
+import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
-import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
+import {
+  assertBuyerDiffShape,
+  classifyEditPayload,
+  takesBuyerDriverReplace,
+} from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -168,7 +169,7 @@ import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { openTenantGroups } from "./sweep-tenant-gate";
+import { sweepAllPendingOrdersImpl } from "./order-sweep";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { orderFor } from "../common/staff-only-fields";
 import { currentTaxRate } from "../common/tax-rate";
@@ -246,7 +247,7 @@ import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
-import type { OrderCancelBlockedField } from "@routeflow/types";
+import type { OrderCancelBlockedField, OrderFulfillPathLockField } from "@routeflow/types";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
@@ -271,15 +272,18 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import { clearLoserDraftForDelete } from "./merge-loser-draft";
+import { deleteOrderInvoice } from "./order-invoice-delete";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
-  private readonly logger = new Logger(OrdersService.name);
+  readonly logger = new Logger(OrdersService.name); // not `private`: order-sweep.ts reads it off `self`
   /** Row 531 F2 (WARN only, behaviour unchanged): log a line whose qty and box split disagree. */
-  private warnSplit(path: string, l: QtySplitLine, upb?: number | null) {
+  private warnSplit(path: string, l: QtySplitLine, upb?: number | null, fallbackQty?: number) {
     warnQtySplit(this.logger, this.prisma?.getTenantId?.(), path, l, upb);
+    warnOrderLine(path, l, upb, this.prisma, fallbackQty); // SA-982 PR-2b: the buildLine census, same path ids
   }
 
   constructor(
@@ -312,7 +316,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // tobacco-report, order-templates, authorization-expiry, commission-reconciliation
     // and regulated-filing-cron) so every forTenant() call inside the merge resolves
     // that tenant's own config/data, never another tenant's.
-    private readonly tenantCtx: TenantContextService,
+    readonly tenantCtx: TenantContextService, // not `private`: order-sweep.ts reads it off `self`
     // WS9: the backorder policy reader behind resolveOversellAllowed (resolved once per request,
     // before the transaction). Required (never @Optional): a missing provider is a DI error.
     private readonly oversellReader: PolicyOversellReader,
@@ -504,7 +508,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
-    } satisfies OrderCancelBlockedField);
+      fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
+    } satisfies OrderCancelBlockedField & OrderFulfillPathLockField);
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
@@ -744,8 +749,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   name: data.name,
                   qty: data.qty,
                   unitPrice: data.unitPrice,
-                  // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
-                  subtotal: roundMoney(data.qty * data.unitPrice),
+                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
                   status: ItemStatus.PENDING,
                   priceType: data.priceType,
                   originalPrice: data.originalPrice,
@@ -809,6 +813,7 @@ export class OrdersService implements OnApplicationBootstrap {
               taxRate,
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
+              discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
             });
             await tx.order.update({
               where: { id: winner.id },
@@ -1002,8 +1007,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   name: data.name,
                   qty: data.qty,
                   unitPrice: data.unitPrice,
-                  // scan-ok: money-rederive — custom line (productId: null), never boxed, so there's no unitsPerBox proration to lose; per-piece price x qty (Decimal(10,3) — the order-edit path allows fractional qty), rounded on write.
-                  subtotal: roundMoney(data.qty * data.unitPrice),
+                  subtotal: computeLineSubtotal({ unitPrice: data.unitPrice, qty: data.qty }),
                   status: ItemStatus.PENDING,
                   priceType: data.priceType,
                   originalPrice: data.originalPrice,
@@ -1023,7 +1027,7 @@ export class OrdersService implements OnApplicationBootstrap {
               if (loserDraft) {
                 await clearLoserDraftForDelete(tx, this.ledger, loserDraft);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
-                await tx.invoice.delete({ where: { id: loserDraft.id } });
+                await deleteOrderInvoice(tx, loserDraft.id, this.prisma.getTenantId());
               }
               // B215: a loser's merge keys follow its cart onto the winner. The FK cascade would
               // otherwise delete them with the loser, and a retry of that merge would fold the
@@ -1049,6 +1053,7 @@ export class OrdersService implements OnApplicationBootstrap {
               taxRate,
               isTaxExempt,
               shipping: Number(winner.shippingFee ?? 0),
+              discount: 0, // SA-918: no participant carries one (readMergeGroup refuses or skips)
             });
             const routeUpdate = routeAssignment
               ? {
@@ -1102,110 +1107,8 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
-  async sweepAllPendingOrders(): Promise<{
-    customers: number;
-    merged: number;
-    skipped: number;
-    /** B776: customers whose merge folded 2+ disagreeing packs for a product this sweep run. */
-    packMismatches: number;
-    /** SA-124: customers whose merge resolved a box-unaware, no-snapshot contribution via the
-     * live product pack this sweep run (SA-101(a) branch 4) — independent of packMismatches. */
-    livePackFallbacks: number;
-  }> {
-    // B323: no HTTP request context runs this (cron tick / boot), so ALS is empty and
-    // forTenant() used to fall through to the UNSCOPED client — every forTenant() call
-    // deeper in mergeAllPendingForCustomer (SystemConfigService.get for the tax rate,
-    // product lookups, ...) then resolved against whichever tenant's row a bare
-    // findFirst/findMany happened to return first, not the customer's own tenant.
-    // Group by tenantId alongside customerId so each group carries the tenant to
-    // re-enter below.
-    const pendingMergeCandidateWhere = {
-      status: OrderStatus.PENDING,
-      routeRunId: null,
-      routeRunStopId: null,
-      transaction: { is: null },
-      invoices: { none: {} },
-      returns: { none: {} },
-      skipAutoMerge: false,
-    };
-
-    const groups = await this.prisma.forTenant().order.groupBy({
-      by: ["customerId", "tenantId"],
-      where: pendingMergeCandidateWhere,
-      _count: { _all: true },
-      having: { customerId: { _count: { gt: 1 } } },
-    });
-
-    // F1 (B323 review): a customer with, say, one pending order under a real tenant AND
-    // one legacy null-tenant order lands in two SEPARATE one-row (customerId, tenantId)
-    // groups above — neither clears `having customerId._count > 1`, so the pair was
-    // silently invisible to both the merge loop AND the warn below it. Run one extra
-    // query on the same (unscoped, deliberate) client, over the identical filter but
-    // restricted to tenantId: null, so every customer with a null-tenant pending order
-    // is found and counted whether or not their real-tenant group individually cleared
-    // the >1 threshold.
-    const nullTenantRows = await this.prisma.forTenant().order.groupBy({
-      by: ["customerId"],
-      where: { ...pendingMergeCandidateWhere, tenantId: null },
-      _count: { _all: true },
-    });
-    for (const r of nullTenantRows) {
-      this.logger.warn(
-        `sweepAllPendingOrders: customer ${r.customerId} has ${r._count._all} pending order(s) without tenantId — not merged (B323)`,
-      );
-    }
-    const skipped = nullTenantRows.length;
-
-    // Null-tenant groups are counted + warned above (never double-logged); SA-776: a tenant that is not
-    // TRIAL / ACTIVE gets no automated merge (sweep-tenant-gate.ts), so `customers` counts only eligible groups.
-    const mergeCandidateGroups = await openTenantGroups(this.prisma, groups);
-
-    let merged = 0;
-    let packMismatches = 0;
-    let livePackFallbacks = 0;
-    for (const g of mergeCandidateGroups) {
-      try {
-        // RF-008: re-enter this group's OWN tenant's ALS scope before calling into
-        // anything that relies on ambient forTenant() scoping (same pattern as
-        // recurring-invoices.generateDueRecurringInvoices / tobacco-report /
-        // order-templates / authorization-expiry / commission-reconciliation /
-        // regulated-filing-cron).
-        const winner = await this.tenantCtx.run(g.tenantId as string, () =>
-          this.mergeAllPendingForCustomer(
-            g.customerId,
-            {},
-            {
-              onPackMismatch: () => packMismatches++,
-              onLivePackFallback: () => livePackFallbacks++,
-            },
-          ),
-        );
-        if (winner) merged++;
-      } catch (e) {
-        // Skip by CAUSE, not by exception type: only the two coded lock-contention errors mean
-        // "someone else holds this customer's lock, try again next hour". A 409/503 raised for
-        // any OTHER reason inside the merge (a credit-limit conflict, a genuinely dead
-        // dependency) is a real fault and must still stop the sweep — swallowing it by type
-        // would hide a broken merge behind an hourly "skipped" line forever.
-        if (isMergeContention(e)) {
-          this.logger.warn(
-            `sweepAllPendingOrders: skipped customer ${g.customerId} — ${(e as Error)?.message ?? e}`,
-          );
-          continue;
-        }
-        throw e;
-      }
-    }
-    this.logger.log(
-      `sweepAllPendingOrders: swept ${mergeCandidateGroups.length} customer(s), merged into ${merged} winner(s), skipped ${skipped} without tenantId, ${packMismatches} pack mismatch(es), ${livePackFallbacks} live-pack fallback(s) (B776)`,
-    );
-    return {
-      customers: mergeCandidateGroups.length,
-      merged,
-      skipped,
-      packMismatches,
-      livePackFallbacks,
-    };
+  async sweepAllPendingOrders(): ReturnType<typeof sweepAllPendingOrdersImpl> {
+    return sweepAllPendingOrdersImpl(this);
   }
 
   onApplicationBootstrap() {
@@ -1460,7 +1363,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // An auto-merge folds these items into an EXISTING order whose own business
     // date stays authoritative, so a supplied orderDate would be silently dropped.
     // Refuse instead — the operator can re-submit as a separate order.
-    if (orderDate && !options.skipAutoMerge) {
+    if (orderDate && !options.skipAutoMerge && !options.separateOnce) {
       await assertNoBackdatedMerge(this, customerId, {
         explicit: dto.fulfillPath,
         ...fulfilCaller(user),
@@ -1672,8 +1575,7 @@ export class OrdersService implements OnApplicationBootstrap {
         return unitLine;
       }
 
-      // Recompute qty from boxes/pieces when provided (backend is authoritative).
-      // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
+      // Recompute qty from boxes/pieces (backend is authoritative): integers, rolled up at a full box.
       const source = sourceLineFor(item.productId, options.sourceLines, items);
       const upb = source?.unitsPerBox ?? Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
@@ -1687,8 +1589,8 @@ export class OrdersService implements OnApplicationBootstrap {
       // 0/1 — the web still sends boxes:1 for unitsPerBox:1) keeps the operator's
       // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
       // qty at all, which derives 0 and trips the invariant below.
+      this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
       if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
-        this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
           pieces: item.pieces,
@@ -2589,15 +2491,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * money, since that's the more urgent problem for an operator to act on.
    */
   private async assertCancellableOrThrow(id: string) {
-    const impact = await this.cancelImpact(id);
-    if (impact.canCancel) return;
-    if (impact.blockingPayments.length > 0)
-      throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
-    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
-    // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
-    // order out from under them — that would erase the revenue for goods the
-    // customer already has. Record a return, or edit the order down instead.
-    throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
+    assertCancelImpactAllows(await this.cancelImpact(id)); // see that judgment in order-cancel-impact.ts
   }
 
   async reopenOrder(id: string, user?: JwtPayload, ack?: rGate.Ack) {
@@ -2726,6 +2620,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
     // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any, {
+      tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string, // B297 PR5 (D4a): see that guard
+      role: user?.role,
+    });
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -2983,10 +2881,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
         // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
-        if (
-          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
-          !isDiffPayload
-        ) {
+        if (takesBuyerDriverReplace(user?.role, isDiffPayload) && user) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
             // removed customer's still-valid session could mutate an order through.
@@ -3307,6 +3202,7 @@ export class OrdersService implements OnApplicationBootstrap {
             );
 
             const itemCtx: ReplaceAllLineBuildCtx = {
+              warnLine: (i, upb) => warnOrderLine("orders.replace-all", i, upb, this.prisma), // PR-2b
               bogoCounterparts,
               bogoPromos,
               existingLineByProduct,
@@ -3372,7 +3268,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 await unitEdit.createUnitLine(uctx, orderId, product, unitRow, item, pos++, true);
                 continue;
               }
-
               const built = buildReplaceAllLineData(itemCtx, item, product);
               if (!built) continue;
               const made = await tx.orderItem.create({
@@ -3604,10 +3499,18 @@ export class OrdersService implements OnApplicationBootstrap {
                 // downstream references it — a billed or delivered line is struck
                 // off instead so invoice/delivery history stays intact.
                 const li = heldById.get(item.id);
-                const hasDeliveries = await tx.deliveryMutation.count({
+                const mutationCount = await tx.deliveryMutation.count({
                   where: { orderItemId: item.id },
                 });
-                const keep = (li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0;
+                // Row 307 (SA-961 R10): delivered goods are gone, so a delivered line is struck off, never
+                // deleted. Judge it on the line's OWN deliveredQty (the floor order-stock books at), not on
+                // DeliveryMutation rows alone: a manual DELIVERED / counter sale / pickup stamps deliveredQty
+                // with no mutation row. A struck-off line stays booked at what left (no restock, no refusal);
+                // goods that come back are a return, never an edit.
+                const keep =
+                  Number(li?.invoicedQty ?? 0) > 0 ||
+                  Number(li?.deliveredQty ?? 0) > 0 ||
+                  mutationCount > 0;
                 // #2563: scoped to THIS order ({ id, orderId }); a foreign line id is a 404.
                 await writeLineRemoval(tx, orderId, item.id, keep ? "strike-off" : "delete");
               } else if (item.action === "CANCEL") {
@@ -3635,7 +3538,12 @@ export class OrdersService implements OnApplicationBootstrap {
                 // qty there, and normalize otherwise so a split sized to a different
                 // case can't persist with pieces >= the substitute's unitsPerBox.
                 const upb = Number(product.unitsPerBox ?? 0);
-                this.warnSplit("orders.update.substitute", { ...item, productId: product.id }, upb);
+                this.warnSplit(
+                  "orders.update.substitute",
+                  { ...item, productId: product.id },
+                  upb,
+                  Number(existingQty),
+                );
                 const split =
                   (item.boxes != null || item.pieces != null) && upb > 1
                     ? normalizeBoxesPieces({
@@ -4019,19 +3927,13 @@ export class OrdersService implements OnApplicationBootstrap {
         const shippingFee = isStaffFeeEdit
           ? roundMoney(Math.max(0, dto.shippingFee!))
           : roundMoney(Number((order as any).shippingFee ?? 0));
-        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
-        const { regularTax: tax, categoryTax, total } = totals;
-
-        // B451 gap 4: defense-in-depth — UpdateOrderItemsDto carries no
-        // discountAmount today (only create() does), so this path has no
-        // live negative-total vector yet, but the shared guard keeps it
-        // covered against a future field addition without a second review.
-        assertMoneyInvariantsOrThrow({
-          subtotal,
-          tax: tax + categoryTax,
+        const totals = editedOrderTotals(activeItems, order, {
+          taxRate,
+          isTaxExempt,
           shipping: shippingFee,
-          total,
+          subtotal,
         });
+        const { regularTax: tax, categoryTax, total } = totals;
 
         // Returns Inside Order Creation PR-1c (design.md §4/§6.4, M7): a DRIVER edit that
         // drops this order's gross below the credit already issued/held against its own
@@ -4082,8 +3984,7 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId,
               // The exact total the order.update below writes — Σ of stored
               // computeLineSubtotal results + regular tax + category tax, cents-
-              // rounded. Note: mirrors the existing edit recompute, which
-              // (pre-existing) does not subtract Order.discountAmount.
+              // rounded, less the order's discount (W-762).
               total,
               creditCheckEnabled,
               // B577: do the issued invoices survive this edit? Only a delivered, partially invoiced
@@ -4630,6 +4531,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // Money input to the total below — read here, under the Order FOR UPDATE lock, so a
             // shipping-fee edit that landed after the pre-tx snapshot is not billed away.
             shippingFee: true,
+            discountAmount: true, // W-762: the edit re-total carries it
             routeRun: { select: { status: true } },
             routeRunStop: { select: { status: true } },
           },
@@ -5036,7 +4938,12 @@ export class OrdersService implements OnApplicationBootstrap {
         const isTaxExempt = await customerIsTaxExempt(tx, order.customerId);
         await this.recomputeLineCategoryTaxes(tx, activeItems, isTaxExempt);
         const shippingFee = Number((live as any).shippingFee ?? 0);
-        const totals = orderTotalsOf(activeItems, { taxRate, isTaxExempt, shipping: shippingFee });
+        const totals = editedOrderTotals(activeItems, live, {
+          taxRate,
+          isTaxExempt,
+          shipping: shippingFee,
+          subtotal,
+        });
         const { regularTax: tax, categoryTax, total } = totals;
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
@@ -5118,6 +5025,10 @@ export class OrdersService implements OnApplicationBootstrap {
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
     return updateShipmentImpl(this, orderId, dto, _user);
+  }
+
+  async staffSellable(p: rGate.Args) {
+    return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
@@ -5258,7 +5169,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // order-cascade delete would strand or silently destroy accruals.
         // Throws when claimedAmount > 0 (same guard deleteInvoice enforces).
         await this.commissionEngine.removeInvoiceCommission(inv.id, tx);
-        await tx.invoice.delete({ where: { id: inv.id } });
+        await deleteOrderInvoice(tx, inv.id, this.prisma.getTenantId());
       }
       if (order.transaction) {
         await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction.id } });

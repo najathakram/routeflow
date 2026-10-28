@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -86,8 +86,11 @@ import {
   POS_COPY,
   POS_READY_FAILED,
   pickupCompleteErrorCopy,
+  pickupRunConfirm,
   decidePickupResponse,
   withPickupRecordAnyway,
+  completeAtCounterShown,
+  completeAtCounterSheetCopy,
   posHandOverBalance,
   posLiveInvoices,
   posMoveConfirm,
@@ -111,7 +114,8 @@ import {
   useMoveOrderOffPickup,
 } from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
-import { useStaffFulfilment } from "../../../../lib/tenant-features";
+import { useStaffFulfilment, useTenantFeatures } from "../../../../lib/tenant-features";
+import { COUNTER_COPY } from "@routeflow/types/counter-copy";
 import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -164,13 +168,17 @@ export default function OrderDetailScreen() {
   const shipmentMut = useUpdateOrderShipment();
   const createInvoiceMut = useCreateInvoiceFromOrder();
   const pickupMut = usePickupComplete(id ?? "");
+  // I-120: the sheet was opened from "Complete at counter" (any open order), not the POS hand-over.
+  const [completeMode, setCompleteMode] = useState(false);
   // GET /orders/:id does not carry customer.isWalkIn: read it from the customer record (same as web).
   const { data: walkInCustomer } = useCustomer(
-    isPosOrder(order) ? (order?.customer?.id ?? order?.customerId ?? "") : "",
+    isPosOrder(order) || completeMode ? (order?.customer?.id ?? order?.customerId ?? "") : "",
   );
   const moveOffPickupMut = useMoveOrderOffPickup();
   // Row 505: which "move off pickup" buttons the account offers (same capability answer as web).
   const staffFulfilment = useStaffFulfilment();
+  // I-120: the capability answer "Complete at counter" reads (the same one web reads).
+  const { data: tenantFeatures } = useTenantFeatures();
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
@@ -216,7 +224,7 @@ export default function OrderDetailScreen() {
   // The order payload's invoices carry no balance: read each live invoice for its server balanceDue.
   const balances = usePickupInvoiceBalances(
     posLiveInvoices(order).map((i) => i.id),
-    handOverOpen && isPosOrder(order),
+    handOverOpen && (isPosOrder(order) || completeMode),
   );
 
   if (isLoading) {
@@ -1098,8 +1106,8 @@ export default function OrderDetailScreen() {
                   })}
                 </View>
               ) : null}
-              {posSwitchToDeliveryHint(order.status) ? (
-                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order.status)}</Text>
+              {posSwitchToDeliveryHint(order) ? (
+                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order)}</Text>
               ) : null}
               {posCutNote(order, order.status) ? (
                 <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>
@@ -1112,44 +1120,66 @@ export default function OrderDetailScreen() {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Status</Text>
               <View style={styles.actionsCol}>
-                {actions.map((action) => (
-                  <Pressable
-                    key={action.toStatus}
-                    style={[
-                      styles.actionBtn,
-                      action.style === "primary" && styles.primaryAction,
-                      action.style === "secondary" && styles.secondaryAction,
-                      action.style === "warning" && styles.warningAction,
-                      action.style === "danger" && styles.dangerAction,
-                      (changeMut.isPending || reopenMut.isPending) && styles.actionDisabled,
-                    ]}
-                    onPress={() => handleStatusChange(action)}
-                    disabled={changeMut.isPending || reopenMut.isPending}
-                  >
-                    <Ionicons
-                      name={action.icon as "checkmark-circle-outline"}
-                      size={18}
-                      color={
-                        action.style === "primary"
-                          ? "#fff"
-                          : action.style === "danger"
-                            ? ios.system.red
-                            : action.style === "warning"
-                              ? ios.system.orange
-                              : ios.brand
-                      }
-                    />
-                    <Text
+                {actions.map((action, index) => (
+                  <Fragment key={action.toStatus}>
+                    <Pressable
                       style={[
-                        styles.actionBtnText,
-                        action.style === "primary" && { color: "#fff" },
-                        action.style === "danger" && { color: ios.system.red },
-                        action.style === "warning" && { color: ios.system.orange },
+                        styles.actionBtn,
+                        action.style === "primary" && styles.primaryAction,
+                        action.style === "secondary" && styles.secondaryAction,
+                        action.style === "warning" && styles.warningAction,
+                        action.style === "danger" && styles.dangerAction,
+                        (changeMut.isPending || reopenMut.isPending) && styles.actionDisabled,
                       ]}
+                      onPress={() => handleStatusChange(action)}
+                      disabled={changeMut.isPending || reopenMut.isPending}
                     >
-                      {action.label}
-                    </Text>
-                  </Pressable>
+                      <Ionicons
+                        name={action.icon as "checkmark-circle-outline"}
+                        size={18}
+                        color={
+                          action.style === "primary"
+                            ? "#fff"
+                            : action.style === "danger"
+                              ? ios.system.red
+                              : action.style === "warning"
+                                ? ios.system.orange
+                                : ios.brand
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.actionBtnText,
+                          action.style === "primary" && { color: "#fff" },
+                          action.style === "danger" && { color: ios.system.red },
+                          action.style === "warning" && { color: ios.system.orange },
+                        ]}
+                      >
+                        {action.label}
+                      </Text>
+                    </Pressable>
+                    {/* I-120: secondary, right after the primary status action; never beside the hand-over */}
+                    {index === 0 && completeAtCounterShown(order, staffRole, tenantFeatures) ? (
+                      <Pressable
+                        style={[
+                          styles.actionBtn,
+                          styles.secondaryAction,
+                          pickupMut.isPending && styles.actionDisabled,
+                        ]}
+                        onPress={() => {
+                          setCompleteMode(true);
+                          setHandOverError(null);
+                          setHandOverOwed(null);
+                          setHandOverOpen(true);
+                        }}
+                        disabled={pickupMut.isPending}
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="storefront-outline" size={18} color={ios.brand} />
+                        <Text style={styles.actionBtnText}>{COUNTER_COPY.completeAtCounter}</Text>
+                      </Pressable>
+                    ) : null}
+                  </Fragment>
                 ))}
               </View>
               {order.fulfillPath === "SHIP" &&
@@ -1285,6 +1315,7 @@ export default function OrderDetailScreen() {
 
       <PosHandOverSheet
         visible={handOverOpen}
+        copy={completeAtCounterSheetCopy(completeMode)}
         isWalkIn={walkInCustomer?.isWalkIn}
         balance={posHandOverBalance({
           orderTotal: Number(order.total),
@@ -1297,11 +1328,19 @@ export default function OrderDetailScreen() {
         onRetry={() => void balances.refetch()}
         submitting={pickupMut.isPending}
         error={handOverError}
-        onCancel={() => setHandOverOpen(false)}
+        onCancel={() => {
+          setHandOverOpen(false);
+          setCompleteMode(false);
+        }}
         onSubmit={function submitHandOver(body: PickupCompleteRequest) {
           pickupMut.mutate(body, {
             onSuccess: (res) => {
-              const d = decidePickupResponse(res, staffRole, order.customer?.businessName);
+              const d = decidePickupResponse(
+                res,
+                staffRole,
+                order.customer?.businessName,
+                completeMode,
+              );
               if (d.kind === "retry-tender") {
                 // Committed but unpaid: back to the tender step, same Idempotency-Key.
                 setHandOverOwed(d.owed);
@@ -1332,10 +1371,23 @@ export default function OrderDetailScreen() {
               releasePickupKey(order.id);
               setHandOverOwed(null);
               setHandOverOpen(false);
+              setCompleteMode(false);
               showToast(d.message);
               refetch();
             },
-            onError: (e) => setHandOverError(pickupCompleteErrorCopy(e)),
+            onError: (e) => {
+              // SA-913 R8: on a driver's run: confirm, then the same request (same key) with takeOffRun
+              const runConfirm = pickupRunConfirm(e);
+              if (runConfirm)
+                return chooseAction(runConfirm.title, runConfirm.message, [
+                  { label: "Cancel", style: "cancel" },
+                  {
+                    label: runConfirm.action,
+                    onPress: () => submitHandOver({ ...body, takeOffRun: true }),
+                  },
+                ]);
+              setHandOverError(pickupCompleteErrorCopy(e, completeMode));
+            },
           });
         }}
       />

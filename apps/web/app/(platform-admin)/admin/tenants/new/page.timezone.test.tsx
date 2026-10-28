@@ -67,7 +67,7 @@ describe("create tenant: time zone", () => {
     fireEvent.change(screen.getByLabelText("Time zone"), { target: { value: "America/Chicago" } });
     fireEvent.click(createButton());
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(post.mock.calls[0]![0]).toBe("/platform-admin/tenants");
     expect(post.mock.calls[0]![1]).toMatchObject({ timezone: "America/Chicago" });
@@ -85,7 +85,7 @@ describe("create tenant: time zone", () => {
     fireEvent.change(screen.getByLabelText("Time zone"), { target: { value: "america/chicago" } });
     fireEvent.click(createButton());
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
     await waitFor(() => expect(post).toHaveBeenCalled());
     expect(post.mock.calls[0]![1]).toMatchObject({ timezone: "America/Chicago" });
   });
@@ -99,7 +99,7 @@ describe("create tenant: time zone", () => {
     fireEvent.change(screen.getByLabelText("Time zone"), { target: { value: "America/Chicago" } });
     fireEvent.click(createButton());
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create Tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create tenant" }));
     expect(await screen.findByText("Choose a time zone.")).toBeInTheDocument();
     expect(screen.queryByText(/RAW SERVER TEXT/)).toBeNull();
     expect(screen.queryByText("Failed to create tenant")).toBeNull();

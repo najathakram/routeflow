@@ -136,7 +136,7 @@ const PARENT = {
 async function openDialog() {
   const user = userEvent.setup();
   renderWithProviders(<EstimatesPage />);
-  await user.click(screen.getByRole("button", { name: "New Estimate" }));
+  await user.click(screen.getAllByRole("button", { name: "New estimate" })[0]);
   const dialog = await screen.findByRole("dialog");
   await user.type(within(dialog).getByPlaceholderText(/search customers/i), "Acme");
   await user.click(await within(dialog).findByText("Acme Foods"));

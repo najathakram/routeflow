@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
-import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
@@ -50,11 +50,6 @@ import {
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
-import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -131,9 +126,6 @@ export class CounterSaleService {
     let customerId: string;
     if (walkIn) {
       customerId = await this.walkIns.getOrCreateWalkIn();
-      // send() auto-applies the customer's oldest open credits: a walk-in has no business holding
-      // any, and the tender below would then be judged against a balance the clerk never saw.
-      await this.assertNoOpenCredit(customerId);
     } else {
       const customer = await this.prisma.forTenant().customer.findFirst({
         where: { id: dto.customerId, deletedAt: null },
@@ -146,7 +138,6 @@ export class CounterSaleService {
       if (customer.isWalkIn === true) {
         walkIn = true;
         assertPaymentShape(dto.payment, true);
-        await this.assertNoOpenCredit(customerId); // the same guard as dto.walkIn: send() would auto-apply it
       }
     }
 
@@ -439,7 +430,7 @@ export class CounterSaleService {
     // "recorded": a first call that paid sibling 1 and failed on sibling 2 is resumed, never repeated.
     const balances = invoices.map((i) => ({
       id: i.id,
-      balance: remainingCapacity(
+      balance: confirmedRemaining(
         Number(i.total),
         (i.payments ?? []).filter((p) => !isTender(p)),
       ),
@@ -463,7 +454,7 @@ export class CounterSaleService {
               .reduce((sum, p) => sum + Number(p.amount), 0),
           );
           const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            Math.min(part.amount - stored, confirmedRemaining(Number(row.total), row.payments)),
           );
           return { invoiceId: part.invoiceId, due };
         })
@@ -615,23 +606,6 @@ export class CounterSaleService {
     // The pack factor of a plain, label-less counter line, read the ONE sanctioned way (resolveLineUnits,
     // units_v1), never off the product.
     return new Map(found.map((row) => [row.id, resolveLineUnits(row, [], null).unitsPerBox]));
-  }
-
-  private async assertNoOpenCredit(customerId: string): Promise<void> {
-    // When the tenant's send-time sweep is OFF (the default) send() applies nothing, so nothing can leak.
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    // The SAME selection markSent's auto-apply uses (credit-notes/auto-apply-candidates), not just ISSUED.
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
-    });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
   }
 
   private async readInvoices(orderId: string): Promise<InvoiceRow[]> {

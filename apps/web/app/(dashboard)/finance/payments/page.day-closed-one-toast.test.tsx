@@ -108,14 +108,14 @@ const CLOSED_DAY = [
 ] as const;
 
 const openRecordModal = () => {
-  fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: "cust-1" } });
+  fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), { target: { value: "cust-1" } });
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 };
 const openVoidConfirm = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Void" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Void Payment" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Void payment" }));
 };
 
 describe("finance/payments: a closed-day refusal raises exactly one toast (row 348)", () => {

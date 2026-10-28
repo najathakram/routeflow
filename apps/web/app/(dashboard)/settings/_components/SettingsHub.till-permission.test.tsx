@@ -67,13 +67,13 @@ describe("Settings finder and the operator's till permission", () => {
     expect(screen.getByText("No settings match “quick keys”.")).toBeInTheDocument();
   });
 
-  it("an operator with ORDERS: the Counter quick keys row is found", async () => {
+  it("an operator with ORDERS: the Quick keys row is found", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsHub isAdmin={false} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
     await user.type(screen.getByLabelText("Search settings"), "quick keys");
-    expect(await screen.findByText("How you sell › Counter quick keys")).toBeInTheDocument();
+    expect(await screen.findByText("Counter › Quick keys")).toBeInTheDocument();
   });
 
   it("a tenant admin never asks for permissions", async () => {

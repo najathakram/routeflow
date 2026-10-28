@@ -21,16 +21,16 @@ test("SA-2 create ux-audit-pos tenant with the POS profile, review sheet, then O
   await expect(page.getByText("Counter in the menu")).toBeVisible();
 
   // Create opens the review; nothing is created yet
-  await page.getByRole("button", { name: "Create Tenant", exact: true }).click();
+  await page.getByRole("button", { name: "Create tenant", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Create UX Audit POS?" });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByText("Counter sales on")).toBeVisible();
-  await sheet.getByRole("button", { name: "Create Tenant" }).click();
+  await sheet.getByRole("button", { name: "Create tenant" }).click();
 
   // The result banner takes focus, then the tenant opens on Overview
   const banner = page.getByTestId("create-banner");
   await expect(banner).toBeFocused();
-  await expect(banner).toContainText("Tenant created successfully!");
+  await expect(banner).toContainText("Tenant created");
   await banner.getByRole("link", { name: "Open UX Audit POS" }).click();
   await expect(page).toHaveURL(/\/admin\/tenants\/[^/]+\?tab=overview/);
 });

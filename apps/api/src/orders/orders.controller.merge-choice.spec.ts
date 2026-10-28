@@ -260,4 +260,74 @@ describe("OrdersController — merge choice vs orderDate", () => {
       mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR" },
     });
   });
+
+  // W-762 / SA-918 §2: create()'s merge is an AUTOMATIC merge, so an order discount on either side SKIPS it (reason
+  // DISCOUNTED): no merge prompt, no fold, the order is created on its own and kept out of later auto-merges.
+  describe("W-762: a discount on either side keeps the new order separate", () => {
+    it("an incoming order with a discount: no MERGE_CHOICE_REQUIRED, no fold, created separately", async () => {
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          discountAmount: 5,
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ discountAmount: 5 }),
+        operatorPayload,
+        { skipAutoMerge: false, separateOnce: true }, // SA-923: apart this once, never opted out of future merges
+      );
+    });
+
+    it("an open order that carries a discount: even mergeChoice 'merge' creates separately", async () => {
+      ordersService.findActiveOrder.mockResolvedValue({ ...activeOrder, discountAmount: 3 });
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+      expect(ordersService.create).toHaveBeenCalledWith(expect.anything(), operatorPayload, {
+        skipAutoMerge: false,
+        separateOnce: true,
+      });
+    });
+
+    it("the open order took a discount while the request queued (the in-lock re-read): created separately", async () => {
+      ordersService.findActiveOrder
+        .mockResolvedValueOnce(activeOrder) // the pre-lock read: no discount yet
+        .mockResolvedValueOnce({ ...activeOrder, discountAmount: 3 }); // the in-lock re-read
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+      expect(ordersService.create).toHaveBeenCalledWith(expect.anything(), operatorPayload, {
+        skipAutoMerge: false,
+        separateOnce: true,
+      });
+    });
+
+    it("no discount anywhere: the merge still runs (unchanged)", async () => {
+      await controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+        } as any,
+        operatorPayload,
+      );
+      expect(ordersService.updateOrderItems).toHaveBeenCalled();
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -75,6 +75,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/check-customer-tenants.js": "read-only",
   "apps/api/scripts/check-discrepancies.js": "read-only",
   "apps/api/scripts/check-tenant-logo.js": "read-only",
+  "apps/api/scripts/census-base-label-row621.mjs": "read-only",
   "apps/api/scripts/data-questions-report.mjs": "read-only",
   "apps/api/scripts/demo-bookings.mjs": "global-catalog",
   "apps/api/scripts/demo-seed.js": "test-slug-only",
@@ -106,12 +107,14 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-billing-pause-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-operator-account-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-b1043-stale-tax-state.mjs": "read-only",
+  "apps/api/scripts/report-b297-netting-census.mjs": "read-only",
   "apps/api/scripts/report-b297-trio-sizing.mjs": "read-only",
   "apps/api/scripts/report-b2187-subscription-period-census.mjs": "read-only",
   "apps/api/scripts/report-b2188-duplicate-addon-rows.mjs": "read-only",
   "apps/api/scripts/report-b2197-issuedate-time-component.mjs": "read-only",
   "apps/api/scripts/report-b2230-unit-lines-without-boxes.mjs": "read-only",
   "apps/api/scripts/report-b2436-stripe-missing-sub.mjs": "read-only",
+  "apps/api/scripts/report-cross-tenant-refs.mjs": "read-only", // 681: SELECT COUNT(*) only, default_transaction_read_only = on
   "apps/api/scripts/report-b673-next-delivery-overcharge.mjs": "read-only",
   "apps/api/scripts/report-b861-numbering-config.mjs": "read-only",
   "apps/api/scripts/report-b894-prorate-counts.mjs": "read-only",
@@ -145,6 +148,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-sa740-walkin-return-source.mjs": "read-only",
   "apps/api/scripts/report-sitting4-sizing.mjs": "read-only", // SA-772 §4 step 5 + SA-814 §3 C1-C4
   "apps/api/scripts/report-640-restored-grants.mjs": "read-only", // row 640 census: read-only counts, no writes
+  "apps/api/scripts/report-order-taxrate-census.mjs": "read-only", // T15 / SA-761 Order.taxRate census: counts only
   "apps/api/scripts/t6-backfill-census.mjs": "read-only",
   "apps/api/scripts/t6-drop-guards.mjs": "schema-only",
   "apps/api/scripts/t6-null-census.mjs": "read-only",
@@ -153,12 +157,16 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/ux-audit-seed.js": "test-slug-only",
   "scripts/data-integrity-report.mjs": "read-only",
   "scripts/f07-conservation-report.mjs": "read-only",
+  // Computed import() loads only the risk-path classifier; its one write is a markdown report file.
+  "scripts/factory-scoreboard.mjs": "not-a-db-client",
   // The DB-spec lane runner: creates and drops only its own rf_dbspec_* databases on the local compose
   // Postgres (SPEC_DB_PATTERN enforced), never a tenant table.
   "scripts/local-db-specs.mjs": "local-only",
   "scripts/local-super-admin.mjs": "local-only",
   "scripts/repair-integrity.mjs": "retired-stub",
   "scripts/report-f25-licence-dates.mjs": "read-only",
+  // Computed import() loads only the base ref's risk-path rules from a tmpdir copy; it reads git, nothing else.
+  "scripts/risk-class.mjs": "not-a-db-client",
   "scripts/rls-preflight.mjs": "read-only",
 };
 

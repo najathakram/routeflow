@@ -65,6 +65,10 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
 
 /** Writer files that do NOT call the guard, each with the reason it cannot carry a FAMILY line. `sites` is pinned. */
 const ALLOWED: Record<string, { sites: number; why: string }> = {
+  "inventory/b562-repair/d2-repair.ts": {
+    sites: 1,
+    why: "the B562 D2 repair input (row 635): a quantity-0 COST_BASIS row, only on a product that already carries its own D1 anchor and stock ledger (a FAMILY is never stocked, so it never has one)",
+  },
   "bookkeeping/bookkeeping.service.ts": {
     sites: 1,
     why: "the nested itemised ExpenseLineItem rows of an expense (account / notes / amount): an accounting line that has no product column",

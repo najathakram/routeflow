@@ -33,9 +33,9 @@ const SKIP_REASON = "PLAYWRIGHT_LITE_TENANT_SLUG not set — needs a dedicated L
  *  excluded too: catalog v13 gave LITE flag.returns, so a LITE tenant keeps it. */
 const GATED_LABELS = [
   "Estimates",
-  "Credit Notes",
+  "Credit notes",
   "Suppliers",
-  "Supplier Bills",
+  "Supplier bills",
   "Reports",
   "Analytics",
 ];
@@ -47,7 +47,7 @@ const UNGATED_LABELS = [
   "Returns",
   "Customers",
   "Inventory",
-  "Purchase Orders",
+  "Purchase orders",
   "Products",
 ];
 
@@ -167,7 +167,7 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
         "Warehouse",
         "Finance",
         "Analytics",
-        "Regulated Items",
+        "Regulated items",
         "Settings",
       ]);
   });
@@ -187,7 +187,7 @@ test.describe("Lite-plan nav/route gating (lite-L2)", () => {
     // 18-sales-agents-gate.spec.ts uses for a live addon flag: green either way.
     const completePayment = page.getByRole("button", { name: "Complete payment" });
     const isActive = await page
-      .getByText("ACTIVE", { exact: true })
+      .getByText("Active", { exact: true })
       .isVisible()
       .catch(() => false);
     if (isActive) {

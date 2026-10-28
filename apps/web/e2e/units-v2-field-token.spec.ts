@@ -77,7 +77,7 @@ for (const vp of SIZES) {
       }) => {
         await page.goto("/customers");
         await page.waitForLoadState("networkidle");
-        await page.getByRole("button", { name: "New Customer" }).click();
+        await page.getByRole("button", { name: "New customer" }).click();
         const dialog = page.getByRole("dialog");
         const field = await tokenColor(page, "border-field");
         const danger = await tokenColor(page, "border-danger");

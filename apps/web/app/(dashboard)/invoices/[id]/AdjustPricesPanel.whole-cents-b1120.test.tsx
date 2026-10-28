@@ -1,5 +1,5 @@
 /**
- * B1120: the Adjust Prices panel took whatever number was typed (`parseFloat`) and sent it, so 8.355 reached
+ * B1120: the Adjust prices panel took whatever number was typed (`parseFloat`) and sent it, so 8.355 reached
  * the API, was stored as 8.36, and the line total was computed from the raw 8.355 (6 x $8.36 = $50.13).
  * The API now refuses a 3rd decimal (400); the panel stops it first, in the field, instead of at a toast:
  * a sub-cent price marks THAT line invalid (inline, with the nearest whole-cent price), Apply is disabled
@@ -43,7 +43,7 @@ function setup() {
 const inputs = () => screen.getAllByRole("spinbutton") as HTMLInputElement[];
 const type = (index: number, value: string) =>
   fireEvent.change(inputs()[index], { target: { value } });
-const apply = () => screen.getByRole("button", { name: /Apply Price Changes/ });
+const apply = () => screen.getByRole("button", { name: /Apply price changes/ });
 
 beforeEach(() => {
   jest.clearAllMocks();

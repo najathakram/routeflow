@@ -5,6 +5,7 @@ import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
+import { tenantDisplayName } from "@/lib/tenant-display-name";
 import {
   DeleteTenantDialog,
   TENANT_ACTION_COPY,
@@ -278,7 +279,7 @@ export default function AdminTenantsPage() {
           href="/admin/tenants/new"
           className="admin-tap rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
         >
-          + Create New Tenant
+          + Create tenant
         </Link>
       </div>
 
@@ -287,7 +288,7 @@ export default function AdminTenantsPage() {
         <input
           aria-label="Search tenants"
           type="text"
-          placeholder="Search by slug or name..."
+          placeholder="Search by slug or name…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-64 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
@@ -298,11 +299,11 @@ export default function AdminTenantsPage() {
           onChange={(e) => setStatusFilter(e.target.value)}
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
         >
-          <option value="">All Statuses</option>
-          <option value="ACTIVE">ACTIVE</option>
-          <option value="TRIAL">TRIAL</option>
-          <option value="SUSPENDED">SUSPENDED</option>
-          <option value="CANCELLED">CANCELLED</option>
+          <option value="">All statuses</option>
+          <option value="ACTIVE">Active</option>
+          <option value="TRIAL">Trial</option>
+          <option value="SUSPENDED">Suspended</option>
+          <option value="CANCELLED">Cancelled</option>
         </select>
         <select
           aria-label="Filter by plan"
@@ -310,7 +311,7 @@ export default function AdminTenantsPage() {
           onChange={(e) => setPlanFilter(e.target.value)}
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
         >
-          <option value="">All Plans</option>
+          <option value="">All plans</option>
           {/* SA-1: the same plan list every other plan control offers (usePlanOptions); the server
               filters on the real billing plan (subscription.planKey). */}
           {withCurrentPlan(planOptions.planKeys, planFilter).map((p) => (
@@ -367,7 +368,7 @@ export default function AdminTenantsPage() {
             onClick={() => setBulkAction("change-plan")}
             className="rounded px-3 py-1 text-xs font-medium text-blue-400 hover:bg-blue-900/30"
           >
-            Change Plan
+            Change plan
           </button>
           <button
             onClick={() => setSelected(new Set())}
@@ -384,10 +385,10 @@ export default function AdminTenantsPage() {
         onClose={() => setBulkAction(null)}
         title={
           bulkAction === "suspend"
-            ? `Suspend ${selected.size} tenant(s)?`
+            ? `Suspend ${selected.size} ${selected.size === 1 ? "tenant" : "tenants"}?`
             : bulkAction === "activate"
-              ? `Activate ${selected.size} tenant(s)?`
-              : `Change plan for ${selected.size} tenant(s)`
+              ? `Activate ${selected.size} ${selected.size === 1 ? "tenant" : "tenants"}?`
+              : `Change plan for ${selected.size} ${selected.size === 1 ? "tenant" : "tenants"}`
         }
         footer={
           <>
@@ -402,7 +403,7 @@ export default function AdminTenantsPage() {
               onClick={executeBulk}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              {actionLoading === "bulk" ? "Processing..." : "Confirm"}
+              {actionLoading === "bulk" ? "Processing…" : "Confirm"}
             </button>
           </>
         }
@@ -440,7 +441,8 @@ export default function AdminTenantsPage() {
           </div>
         )}
         <p className="text-sm text-slate-300">
-          This action will be applied to {selected.size} selected tenant(s).
+          This action will be applied to {selected.size} selected{" "}
+          {selected.size === 1 ? "tenant" : "tenants"}.
         </p>
         {bulkAction === "suspend" && (
           <p className="mt-2 text-sm text-slate-400">{TENANT_ACTION_COPY.suspendAutoReinstate}</p>
@@ -457,7 +459,7 @@ export default function AdminTenantsPage() {
         onConfirm={deleteTenant}
       />
 
-      {loading && <div className="text-center text-slate-400 py-12">Loading tenants...</div>}
+      {loading && <div className="text-center text-slate-400 py-12">Loading tenants…</div>}
       {error && (
         <div
           role="alert"
@@ -539,7 +541,7 @@ export default function AdminTenantsPage() {
                         />
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-300">{t.slug}</td>
-                      <td className="px-4 py-3 text-white">{t.businessName ?? t.name}</td>
+                      <td className="px-4 py-3 text-white">{tenantDisplayName(t)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
                           <AdminBadge>{t.status}</AdminBadge>

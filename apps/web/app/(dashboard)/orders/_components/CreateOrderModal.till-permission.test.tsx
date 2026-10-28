@@ -116,7 +116,7 @@ describe("CreateOrderModal: POS mode switch and the operator's till permission",
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
     await waitFor(() =>
-      expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument(),
     );
     expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^create order$/i })).toBeInTheDocument();
@@ -132,7 +132,7 @@ describe("CreateOrderModal: POS mode switch and the operator's till permission",
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
-    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
   });
 
@@ -146,19 +146,19 @@ describe("CreateOrderModal: POS mode switch and the operator's till permission",
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await waitFor(() => expect(get).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
-    expect(screen.queryByRole("switch", { name: /pos mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /store pickup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm and invoice" })).not.toBeInTheDocument();
   });
 
   it("an operator with ORDERS: the switch is offered", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(await screen.findByRole("switch", { name: /pos mode/i })).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: /store pickup/i })).toBeInTheDocument();
   });
 
   it("a tenant admin: the switch is offered and permissions are never asked for", async () => {
     mockRole = "TENANT_ADMIN";
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    expect(await screen.findByRole("switch", { name: /pos mode/i })).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: /store pickup/i })).toBeInTheDocument();
     expect(get).not.toHaveBeenCalledWith("/users/me/permissions");
   });
 });
