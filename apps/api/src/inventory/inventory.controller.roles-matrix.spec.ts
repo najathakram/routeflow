@@ -35,6 +35,7 @@ const EXPECTED: Record<string, UserRole[]> = {
   startStockCountSession: OP,
   listStockCountSessions: OP,
   getStockCountSession: OP,
+  getStockCountProgress: OP,
   upsertStockCountLine: OP,
   removeStockCountLine: OP,
   commitStockCountSession: OP,

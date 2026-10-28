@@ -443,7 +443,12 @@ export class CounterSaleService {
     });
     if (plan.kind === "refuse") {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
-      if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
+      if (!invoices.some((i) => (i.payments ?? []).some(isTender))) {
+        // Row 638: a refused retry must not leave a crashed cash attempt's figure standing as "cash handed over".
+        planError = (await this.clearStaleCashTendered(orderId))
+          ? plan.code
+          : API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
     } else if (plan.kind === "pay") {
       // The allocation is pure, so it is made first: the closed-day check below must run before ANY write.
       const writes = allocateOldestFirst(balances, plan.amount)
@@ -486,6 +491,13 @@ export class CounterSaleService {
           planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         }
       }
+      // Row 638: a card / check tender states no cash figure, so one left by a crashed cash attempt (written before
+      // any row, see above) is cleared BEFORE any money moves, unless a tender row already stands (then it is
+      // frozen, as for cash). A clear that fails takes no money, like a cash figure that could not be stored.
+      if (method !== "CASH" && !invoices.some((i) => (i.payments ?? []).some(isTender))) {
+        if (!(await this.clearStaleCashTendered(orderId)))
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
       // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
       if (!planError) {
         try {
@@ -524,6 +536,26 @@ export class CounterSaleService {
       invoices = await this.readInvoices(orderId);
     }
     return { invoices, planError, duplicate };
+  }
+
+  /**
+   * Row 638: NULL the sale's stored cash tendered. Only called while no tender row is stored and the request states no
+   * cash figure, so whatever is there came from a cash attempt that wrote it and crashed before its row. Filtered on a
+   * set figure, so the usual sale (nothing stored) matches nothing. Returns false (logged) when the write fails.
+   */
+  private async clearStaleCashTendered(orderId: string): Promise<boolean> {
+    try {
+      await this.prisma.forTenant().order.updateMany({
+        where: { id: orderId, counterCashTendered: { not: null } },
+        data: { counterCashTendered: null },
+      });
+      return true;
+    } catch (e) {
+      this.logger.warn(
+        `counter sale ${orderId}: stale cash tendered not cleared (${(e as Error)?.message ?? e})`,
+      );
+      return false;
+    }
   }
 
   /**

@@ -46,6 +46,7 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked, waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -172,22 +173,6 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
       } as any),
     );
     return { family, variants, recipeProduct, draft };
-  }
-
-  /** Polls until some backend is blocked by `blockerPid`; false if `done()` or the deadline comes first. */
-  async function waitUntilBlockedBy(blockerPid: number, done: () => boolean): Promise<boolean> {
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline && !done()) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-        [blockerPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    return false;
   }
 
   async function activeRecipeHasNonFamilyComponent(tenantId: string): Promise<boolean> {
@@ -350,7 +335,11 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
         .finally(() => {
           settled = true;
         });
-      blocked = await waitUntilBlockedBy(pid, () => settled);
+      blocked = await waitUntilBlockedBy(pool, pid, {
+        timeoutMs: 10_000,
+        intervalMs: 20,
+        until: () => settled,
+      });
       await writer.query("COMMIT");
       await running;
     } finally {
@@ -513,17 +502,7 @@ describeDb("#2717 M2 fold: recipe invariants are kept — real Postgres", () => 
    * writer, so counting only the writer's direct victims never reaches 2.
    */
   async function waitUntilNBlocked(n: number): Promise<boolean> {
-    const deadline = Date.now() + 4_000;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND cardinality(pg_blocking_pids(pid)) > 0",
-      );
-      if (rows[0].n >= n) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    return false;
+    return (await waitUntilBlocked(pool, { atLeast: n, intervalMs: 20 })).length >= n;
   }
 
   it("SA-587a RACE (4 rounds): bulk assign vs activate is always a 409 and writes NOTHING (clear + isTobacco unchanged)", async () => {
