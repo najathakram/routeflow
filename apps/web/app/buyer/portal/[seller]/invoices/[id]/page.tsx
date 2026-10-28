@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
 import {
+  basePriceText,
   invoiceDisplayCategoryTax,
   formatPerBaseUnitPrice,
   invoiceDisplayLines,
@@ -36,7 +37,6 @@ import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import {
   InvoiceDisplayRows,
   displayQtyText,
-  formatUnitPrice4,
 } from "@/components/InvoiceDisplayRows";
 
 function fmt(n: number) {
@@ -436,7 +436,7 @@ export default function BuyerInvoiceDetailPage() {
                   >
                     <span className="whitespace-nowrap text-right tabular-nums">
                       {display.layout === "pieces"
-                        ? formatUnitPrice4(display.unitPrice)
+                        ? basePriceText(display.unitPrice)
                         : fmt(Number(item.unitPrice))}
                       {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps

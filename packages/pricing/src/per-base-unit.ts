@@ -30,7 +30,12 @@ export function perBaseUnitPrice(
   return { price: round4(unitPrice / pack), unit: label || "pc" };
 }
 
+/** A per-piece price: min 2, max 4 decimals, trailing zeros trimmed ("$2.00", "$2.0005"). The ONE price text on the invoice surfaces. */
+export function basePriceText(n: number): string {
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
 /** Min 2, max 4 decimals: "$2.00/pc", "$0.125/pc". */
 export function formatPerBaseUnitPrice(p: PerBaseUnitPrice): string {
-  return `$${p.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}/${p.unit}`;
+  return `${basePriceText(p.price)}/${p.unit}`;
 }

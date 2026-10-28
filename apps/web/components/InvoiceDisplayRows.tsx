@@ -1,5 +1,5 @@
 import * as React from "react";
-import { plural, type InvoiceDisplayLines } from "@routeflow/pricing";
+import { basePriceText, plural, type InvoiceDisplayLines } from "@routeflow/pricing";
 
 /** SA-827: the component rows (and category-tax row) of a composed box line. Every figure comes from
  * invoiceDisplayLines (packages/pricing); this only formats and lays them out. The box line's OWN
@@ -18,15 +18,6 @@ interface Props {
   variant: "staff" | "buyer";
   /** SA-1029: the invoice shows a Per piece column; component rows leave their cell empty so columns align. */
   perPieceCol?: boolean;
-}
-
-export function formatUnitPrice4(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  }).format(n);
 }
 
 /** "30 Pieces" / "1 Piece" via the repo's unit-word plural helper. */
@@ -78,7 +69,7 @@ export function InvoiceDisplayRows({ lines, itemId, fmt, variant, perPieceCol, c
             {displayQtyText(r.qty, r.unitLabel)}
           </td>
           <td className={c.price} data-label={lab("price")}>
-            {formatUnitPrice4(r.unitPrice)}
+            {basePriceText(r.unitPrice)}
           </td>
           {perPieceCol && (
             <td className={variant === "buyer" ? "hidden sm:table-cell" : "px-4 py-3"} />

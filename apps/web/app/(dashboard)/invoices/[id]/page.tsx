@@ -76,6 +76,7 @@ import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  basePriceText,
   editPaymentCap,
   formatPerBaseUnitPrice,
   invoiceDisplayLines,
@@ -90,7 +91,6 @@ import { ComponentSubLines } from "@/components/ComponentSubLines";
 import {
   InvoiceDisplayRows,
   displayQtyText,
-  formatUnitPrice4,
 } from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
@@ -2693,7 +2693,7 @@ export default function InvoiceDetailPage() {
                             <InvoiceLinePrice
                               item={item}
                               hideOriginal={hideOriginal}
-                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              chargedText={basePriceText(display.unitPrice)}
                               noStrike
                             />
                           ) : (
