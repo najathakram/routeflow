@@ -8,13 +8,16 @@ export const CARD_FIRST_FLAG_KEY = "billing.cardFirstPlanPick";
  * plan pick through Stripe Checkout. It ships OFF and is flipped by the owner (no per-tenant flag: owner
  * ruling 2026-10-25). Same store, shape and fail-closed rules as `ConfigSnapshotFlagService` (a
  * `PlatformConfig` row read with raw SQL, a standalone service so `BillingModule` has no cycle): only the
- * literal "on" (trimmed, any case) turns it on; a missing row, any other value and any read error mean OFF.
+ * literal "on" (trimmed, any case) turns it on; a missing row and any other value mean OFF. A read error keeps the LAST
+ * value read (SA-774r7 b: a database blip must not flip a live switch); it means OFF only when nothing was ever read.
  * Reads are cached ~5 s per replica; a read failure is not cached.
  */
 @Injectable()
 export class CardFirstFlagService {
   private readonly logger = new Logger(CardFirstFlagService.name);
   private cached: { value: boolean; expiresAt: number } | null = null;
+  /** The last value a read (or setEnabled) produced; survives the cache expiring. */
+  private lastKnown: boolean | null = null;
   private static readonly CACHE_TTL_MS = 5_000;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -38,10 +41,15 @@ export class CardFirstFlagService {
         }
       }
     } catch (err) {
-      this.logger.error(`Failed to read ${CARD_FIRST_FLAG_KEY} - treating as OFF`, err as Error);
-      return false;
+      const kept = this.lastKnown ?? false;
+      this.logger.error(
+        `Failed to read ${CARD_FIRST_FLAG_KEY} - keeping ${this.lastKnown === null ? "OFF (never read)" : `the last value (${kept ? "on" : "off"})`}`,
+        err as Error,
+      );
+      return kept;
     }
     this.cached = { value, expiresAt: now + CardFirstFlagService.CACHE_TTL_MS };
+    this.lastKnown = value;
     return value;
   }
 
@@ -54,6 +62,7 @@ export class CardFirstFlagService {
         DO UPDATE SET "value" = EXCLUDED.value, "updatedAt" = now()
     `;
     this.cached = { value: enabled, expiresAt: Date.now() + CardFirstFlagService.CACHE_TTL_MS };
+    this.lastKnown = enabled;
   }
 
   invalidate(): void {

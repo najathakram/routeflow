@@ -24,6 +24,7 @@ import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { CardFirstFlagService } from "./card-first-flag.service";
 
 /**
  * Nit (Opus review): BillingService, SubscriptionMutationService and others take collaborators as `@Optional()`
@@ -69,6 +70,10 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       const mutations = moduleRef.get(SubscriptionMutationService, { strict: false }) as any;
       expect(mutations.scheduledPrice).toBeInstanceOf(ScheduledPriceChangeService);
       expect(mutations.dunning).toBeInstanceOf(DunningService);
+      // SA-774r7 (c): the card-first release switch is @Optional on BillingService, so a module that forgot the
+      // provider would silently read OFF in production.
+      expect(billing.cardFirst).toBeInstanceOf(CardFirstFlagService);
+      expect(moduleRef.get(CardFirstFlagService, { strict: false })).toBe(billing.cardFirst);
       // SA-775: every AUTOMATIC lock writer holds the REAL rollout switch - an @Optional that came back
       // undefined would silently leave that writer ungated in production.
       const sw = moduleRef.get(AutoLockSwitchService, { strict: false });
