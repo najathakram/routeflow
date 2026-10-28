@@ -8,6 +8,7 @@ import {
   defaultUnitValue,
   heldSnapshotUnitOption,
   withLayerPrices,
+  type HeldSnapshot,
   type OwnPackBasis,
   type UnitOption,
 } from "@/lib/unit-options";
@@ -59,6 +60,7 @@ function OrderLineUnitPickerInner({
   line,
   tier,
   layer,
+  held,
   onChange,
   startOnDefaultUnit = false,
   disabled = false,
@@ -88,6 +90,12 @@ function OrderLineUnitPickerInner({
    * option with a row is offered at the layer price and `onChange` carries it (`option.layerLine`); omitted = master's ladder.
    */
   layer?: readonly CustomerLayerUnit[] | null;
+  /**
+   * SA-1044 A-2: an EXISTING line's stored snapshot. Label, price and list come from the item's `original*` fields; the
+   * factor from the stored line's raw `unitsPerBox` (null = unknown), never `line.unitsPerBox` (the pack size). Omitted = a
+   * fresh line: nothing is held.
+   */
+  held?: HeldSnapshot | null;
   onChange: (option: UnitOption, refresh: boolean) => void;
 }) {
   const enabled = useUnitsEnabled();
@@ -108,8 +116,8 @@ function OrderLineUnitPickerInner({
   // SA-1044 rule 4: a held level the ladder no longer offers at its sold size keeps its "(as ordered)" snapshot option.
   const heldOption = React.useMemo(
     () =>
-      enabled && units.data && units.data.length > 0
-        ? heldSnapshotUnitOption(line, product, units.data)
+      enabled && units.data
+        ? heldSnapshotUnitOption(held, line.unitLabel, product, units.data)
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -117,13 +125,15 @@ function OrderLineUnitPickerInner({
       units.data,
       product,
       line.unitLabel,
-      line.unitsPerBox,
-      line.unitPrice,
-      line.listPrice,
+      held?.unitLabel,
+      held?.unitsPerBox,
+      held?.unitPrice,
+      held?.listPrice,
     ],
   );
   const options = React.useMemo<UnitOption[]>(() => {
-    if (!enabled || !units.data || units.data.length === 0) return [];
+    // SA-1044 A-3: an empty ladder still offers a held snapshot (a gone level), so the line is never reset to the pack.
+    if (!enabled || !units.data || (units.data.length === 0 && !heldOption)) return [];
     try {
       return withHeldOption(
         withLayerPrices(

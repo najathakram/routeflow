@@ -65,7 +65,8 @@ export function UnitPicker({
 }: UnitPickerProps) {
   const { options, ok } = React.useMemo<{ options: UnitOption[]; ok: boolean }>(() => {
     if (!units) return { options: [], ok: false }; // still loading: nothing is known yet
-    if (units.length === 0) return { options: [], ok: true };
+    // SA-1044 A-3: an empty ladder with a held snapshot is a gone level: offer it, never reset the line.
+    if (units.length === 0 && !heldOption) return { options: [], ok: true };
     try {
       return {
         options: withHeldOption(

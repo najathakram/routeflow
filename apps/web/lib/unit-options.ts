@@ -13,6 +13,7 @@ import {
   type LadderProduct,
   type LadderUnit,
   roundMoney,
+  unitNameKey,
 } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -136,38 +137,43 @@ export function defaultUnitValue(
 }
 
 /**
+ * SA-1044 A-2: an existing unit line's STORED snapshot: label, price and list from the item's `original*` fields, the factor
+ * from the stored line's raw `unitsPerBox` (null = unknown). Never the order line's `unitsPerBox`, which is the PACK size.
+ */
+export type HeldSnapshot = {
+  unitLabel: string;
+  unitsPerBox: number | null;
+  unitPrice: number;
+  listPrice: number;
+};
+
+/**
  * SA-1044 rule 4: an EXISTING line whose held level the ladder no longer offers at the size it was sold at (the level was
  * deleted or renamed, or the Case went 100 -> 200) keeps its own "(as ordered)" option at its snapshot size and price, in
- * place of any same-label option. The server bills such a line at that snapshot too. Live / unknown / a fresh line = null.
+ * place of any same-label option. The server bills such a line at that snapshot too. A-2: the snapshot applies only while the
+ * line still sells that same level (never on a pack line). A-3: an empty ladder is a gone level, never a reset.
+ * Live / unknown / a fresh line = null.
  */
 export function heldSnapshotUnitOption(
-  line: {
-    unitLabel?: string | null;
-    unitsPerBox?: number | null;
-    unitPrice: number;
-    listPrice?: number | null;
-  },
+  snapshot: HeldSnapshot | null | undefined,
+  lineUnitLabel: string | null | undefined,
   product: LadderProduct,
   units: readonly ProductUnitLevel[],
 ): UnitOption | null {
-  if (!line.unitLabel) return null; // the pack: nothing held
-  const held = {
-    unitLabel: line.unitLabel,
-    unitsPerBox: line.unitsPerBox,
-    unitPrice: line.unitPrice,
-  };
+  if (!snapshot || !lineUnitLabel?.trim()) return null; // a fresh line, or the pack: nothing held
+  if (unitNameKey(lineUnitLabel) !== unitNameKey(snapshot.unitLabel)) return null; // re-picked: not the held level
   let state: ReturnType<typeof heldLevelState>;
   try {
-    state = heldLevelState(held, product, units.map(toLadderUnit));
+    state = heldLevelState(snapshot, product, units.map(toLadderUnit));
   } catch {
     return null; // display-only: a malformed ladder never unmounts the order form
   }
   if (state !== "gone" && state !== "resized") return null;
   return heldSnapshotOption({
-    unitLabel: line.unitLabel,
-    unitsPerBox: line.unitsPerBox as number, // a positive integer: heldLevelState said so
-    unitPrice: line.unitPrice,
-    listPrice: line.listPrice,
+    unitLabel: snapshot.unitLabel,
+    unitsPerBox: snapshot.unitsPerBox as number, // a positive integer: heldLevelState said so
+    unitPrice: snapshot.unitPrice,
+    listPrice: snapshot.listPrice,
   });
 }
 
