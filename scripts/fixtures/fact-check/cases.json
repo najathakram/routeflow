@@ -270,6 +270,69 @@
       "now": "2026-10-28T05:05:00Z",
       "message": "Re-pin #3838 at `0a1b2c3d4`.",
       "hits": [["sha", "0a1b2c3d4"]]
+    },
+    {
+      "id": "T27",
+      "log": "code review M2: bare directories are not branches",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "See docs/runbooks and test/fixtures/ for the shape.",
+      "hits": []
+    },
+    {
+      "id": "T28",
+      "log": "code review M3: deadlines in short lines, bullets and ISO dates are not now-claims",
+      "now": "2026-10-28T05:00:00Z",
+      "message": "ETA 06:00Z\nnext 06:00Z\nResume 06:00Z (reset)\n- by 06:00Z, then merge\nlanded 2026-10-27T10:00Z",
+      "hits": []
+    },
+    {
+      "id": "T29",
+      "log": "code review M4: a range end is not a now-claim",
+      "now": "2026-10-28T05:00:00Z",
+      "message": "train 04:50-05:20Z, window 04:50–05:20Z",
+      "hits": []
+    },
+    {
+      "id": "T30",
+      "log": "a bulleted speaker header stamp is still checked (LEAD-LOG 1983 shape)",
+      "now": "2026-10-28T05:00:00Z",
+      "message": "- Lead 05:20Z: review-a, hold.\nCoordinator: 05:12Z queue posted.",
+      "hits": [
+        ["stamp", "05:20Z"],
+        ["stamp", "05:12Z"]
+      ]
+    },
+    {
+      "id": "T31",
+      "log": "PR#3893 is the same claim as #3893; '.#' splits; a parenthesised sha binds",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "PR#3893 gate-complete.#3838 waits (378e97a73)",
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T32",
+      "log": "an unrelated 'not' does not silence a claim; a stale parenthesised head is caught",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 gate-complete (not blocked). #3840 (631d718de) next.",
+      "hits": [
+        ["sha", "631d718de"],
+        ["ready", "#3893"]
+      ]
+    },
+    {
+      "id": "T33",
+      "log": "scientific notation is not a sha",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "1e10000 and 1234e56 rows.",
+      "hits": []
+    },
+    {
+      "id": "T34",
+      "log": "a merged branch is deleted on origin: unverified, not a mismatch",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "fix/w785-followups landed.",
+      "hits": [],
+      "unverified": [["branch", "fix/w785-followups"]]
     }
   ]
 }

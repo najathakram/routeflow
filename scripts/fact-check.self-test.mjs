@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkFacts, fixtureSources } from "./fact-check.mjs";
+import { checkFacts, fixtureSources, prsFromGraphql } from "./fact-check.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "fact-check.mjs");
@@ -49,6 +49,39 @@ for (const c of DATA.cases) {
     "T1 truth names the head and the pending checks",
     /4ab859771/.test(hit?.truth) && /Verify/.test(hit?.truth),
     true,
+  );
+}
+
+// gh exits 1 when one number does not exist but still returns the others: that answer is used (code review M1).
+{
+  const partial = JSON.stringify({
+    data: {
+      repository: {
+        p3740: {
+          __typename: "PullRequest",
+          state: "MERGED",
+          headRefOid: "a1b2c3d",
+          mergeCommit: { oid: "2cc4f3e15" },
+          commits: { nodes: [] },
+        },
+        p99999: null,
+      },
+    },
+    errors: [{ type: "NOT_FOUND", path: ["repository", "p99999"] }],
+  });
+  const prs = prsFromGraphql(partial, ["3740", "99999"]);
+  check("partial NOT_FOUND keeps the found PR", prs?.["3740"]?.mergeCommit, "2cc4f3e15");
+  check("partial NOT_FOUND marks the missing number absent", prs && !("99999" in prs), true);
+  const live = { ...fixtureSources(DATA, { now: "2026-10-28T05:05:00Z" }), prs };
+  check(
+    "so a missing number is a mismatch",
+    checkFacts("#3740 and #99999 landed", live).hits.map((h) => h.token),
+    ["#99999"],
+  );
+  check(
+    "any other gh error is unavailable",
+    prsFromGraphql(JSON.stringify({ errors: [{ type: "RATE_LIMITED" }] }), ["1"]),
+    null,
   );
 }
 

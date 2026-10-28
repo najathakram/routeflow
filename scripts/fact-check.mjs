@@ -34,32 +34,41 @@ const DAY_MS = 86_400_000;
 const PR_RE = /(?<![\w#&/])#(\d{3,5})\b/g;
 const SHA_RE = /(?<![0-9A-Za-z_/-])[0-9a-f]{7,40}(?![0-9A-Za-z_-])/g;
 const BRANCH_RE =
-  /(?<![\w/.-])(?:feat|fix|chore|docs|test|ci|refactor|perf|train|bug|swarm)\/[\w.\-/]*[A-Za-z0-9]/g;
+  /(?<![\w/.-])(?:feat|fix|chore|docs|test|ci|refactor|perf|train|bug|swarm)\/[\w.\-/]*[A-Za-z0-9](?![\w/])/g;
 const STAMP_RE = /(?<![\d:])(\d{2}):(\d{2})(?::(\d{2}))?Z\b/g;
 const READY_RE =
   /gate[- ]complete|\bCI green\b|\bgreen CI\b|\bready to (?:land|merge)\b|\bready for (?:W\d+|merge|landing|the window|a window|the train)\b|#\d{3,5}\s+(?:is\s+)?ready\b(?!\?)/i;
-const NEGATION_RE = /\bnot\b|\bnever\b|n't\b|\?/i;
-const PAIR_RE = /(?:@|\bhead\b|\bat\b|\bas\b|\bpinned\b|\bre-?pin\b|\bsha\b)/i;
+const NEGATION_RE = /\bnot\s+(?:yet\s+)?(?:ready|green|gate)|\bnever\b|n't\b|\?|^\s*is\b/i;
+const PAIR_RE = /(?:@|\(|\bhead\b|\bat\b|\bas\b|\bpinned\b|\bre-?pin\b|\bsha\b)/i;
 const UNPAIR_RE = /\b(?:master|base|onto|origin|main)\b/i;
 const DEADLINE_RE =
   /\b(?:by|until|before|after|reset|deadline|eta|target|due|window|closes|opens|at|next|resume|re-?check|from|expires?)\b|→|~/i;
 const FILE_EXT_RE = /\.[A-Za-z]{1,5}$/;
+// A branch name carries a digit or a dash after its prefix; a bare directory (docs/runbooks, test/fixtures) does not.
+const BRANCH_SHAPE_RE = /^[^/]+\/.*[\d-]/;
+// Optional bullet and speaker ("- Lead ", "Coordinator: ") before a line's own stamp.
+const HEADER_LEAD_RE = /^\s*(?:[-*•]\s+)?(?:(?:Lead|Coordinator|SA|Lane)\b:?\s+|[\w-]+:\s+)?$/;
+const DATED_RE = /(?:\d{2}-\d{2}\s*|T)$/;
+const RANGE_END_RE = /\d{2}:\d{2}Z?\s*[-–]\s*$/;
+const LANDED_RE = /\b(?:merged|landed|deleted|squashed)\b/i;
 
-const isSha = (t) => /\d/.test(t) && /[a-f]/.test(t);
+const isSha = (t) => /\d/.test(t) && /[a-f]/.test(t) && !/^\d+e\d+$/.test(t);
 const short = (sha) => (sha ? sha.slice(0, 9) : "none");
 
 /** Clauses with their line text; fenced blocks removed (line count kept so header detection still works). */
 function clausesOf(text) {
   let fenced = false;
   const out = [];
-  for (const raw of String(text ?? "").split(/\r?\n/)) {
+  // "PR#3893" / "PR #3893" -> same-length "  #3893" so offsets stay true.
+  const plain = String(text ?? "").replace(/\bPR(\s?)#/g, (m) => " ".repeat(m.length - 1) + "#");
+  for (const raw of plain.split(/\r?\n/)) {
     if (/^\s*```/.test(raw)) {
       fenced = !fenced;
       continue;
     }
     if (fenced) continue;
     let offset = 0;
-    for (const clause of raw.split(/(?<=[;,|·—])|(?<=\.)\s+/)) {
+    for (const clause of raw.split(/(?<=[;,|·—])|(?<=\.)\s+|(?<=\.)(?=#)/)) {
       out.push({ text: clause, line: raw, lineOffset: offset });
       offset += clause.length;
     }
@@ -93,14 +102,16 @@ export function extractTokens(text) {
       }
       shas.push({ token: m[0], pr, ambiguous: ambiguous && !poss });
     }
-    for (const m of matchesOf(BRANCH_RE, c.text)) if (!FILE_EXT_RE.test(m[0])) branches.push(m[0]);
+    for (const m of matchesOf(BRANCH_RE, c.text))
+      if (!FILE_EXT_RE.test(m[0]) && BRANCH_SHAPE_RE.test(m[0]))
+        branches.push({ token: m[0], landed: LANDED_RE.test(c.text) });
     for (const m of matchesOf(STAMP_RE, c.text)) {
-      const inLine = c.lineOffset + m.index;
-      const header = c.line.slice(0, inLine).trim().split(/\s+/).filter(Boolean).length < 3;
-      const before = c.line.slice(0, inLine);
-      const dated = /\d{2}-\d{2}\s*$|T$/.test(before);
+      const before = c.line.slice(0, c.lineOffset + m.index);
+      // Dates and range ends are never "now" claims; a line's own header stamp always is; elsewhere deadlines skip.
+      if (DATED_RE.test(before) || RANGE_END_RE.test(before)) continue;
+      const header = HEADER_LEAD_RE.test(before);
       const lastWords = before.trim().split(/\s+/).slice(-3).join(" ");
-      if (!header && (dated || DEADLINE_RE.test(lastWords))) continue;
+      if (!header && DEADLINE_RE.test(lastWords)) continue;
       stamps.push({ token: m[0], h: +m[1], m: +m[2], s: +(m[3] ?? 0) });
     }
     if (READY_RE.test(c.text) && !NEGATION_RE.test(c.text)) for (const m of prMs) ready.push(m[1]);
@@ -108,7 +119,7 @@ export function extractTokens(text) {
   return {
     prs: [...new Set(prs)],
     shas,
-    branches: [...new Set(branches)],
+    branches: [...new Map(branches.map((b) => [b.token, b])).values()],
     stamps,
     ready: [...new Set(ready)],
   };
@@ -174,9 +185,11 @@ export function checkFacts(text, sources) {
         unv("sha", s.token, found === false ? "local clone older than 30 min" : "git unavailable");
     }
   }
-  for (const b of t.branches) {
+  for (const { token: b, landed } of t.branches) {
     if (!sources.branches) unv("branch", b, "git ls-remote unavailable");
-    else if (!sources.branches.has(b)) hit("branch", b, `${b} exists`, "no such branch on origin");
+    else if (sources.branches.has(b)) continue;
+    else if (landed) unv("branch", b, "absent on origin; merged branches are deleted");
+    else hit("branch", b, `${b} exists`, "no such branch on origin");
   }
   for (const s of t.stamps) {
     const now = new Date(sources.nowMs);
@@ -240,6 +253,7 @@ export function mainCheckoutRoot(cwd = process.cwd()) {
   }
 }
 
+// 100 contexts covers every RouteFlow workflow today (4 checks); a longer list would be truncated silently.
 const CHECKS =
   "contexts(first:100){nodes{__typename ...on CheckRun{name status conclusion} ...on StatusContext{context state}}}";
 const PR_FIELDS = `__typename ...on PullRequest{state headRefOid headRefName mergeCommit{oid} commits(last:1){nodes{commit{statusCheckRollup{${CHECKS}}}}}}`;
@@ -257,34 +271,49 @@ function normalizeRollup(node) {
   );
 }
 
+/**
+ * Pure: the PR map from a `gh api graphql` stdout, or null when it cannot be trusted. A number that does not exist comes
+ * back as a null node plus a NOT_FOUND error and gh exits 1, so that partial answer is still used; any other error,
+ * or no data, means gh is unavailable.
+ */
+export function prsFromGraphql(stdout, numbers) {
+  let doc;
+  try {
+    doc = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const repo = doc?.data?.repository;
+  if (!repo || (doc.errors ?? []).some((e) => e.type !== "NOT_FOUND")) return null;
+  const prs = {};
+  for (const n of numbers) {
+    const node = repo[`p${n}`];
+    if (!node) continue;
+    prs[n] =
+      node.__typename === "PullRequest"
+        ? {
+            state: node.state,
+            headRefOid: node.headRefOid,
+            mergeCommit: node.mergeCommit?.oid ?? null,
+            rollup: normalizeRollup(node),
+          }
+        : { issue: true };
+  }
+  return prs;
+}
+
 /** Live sources; only the lookups the text needs (no PR or branch tokens -> no network). */
 export function liveSources(text, cwd = process.cwd()) {
   const t = extractTokens(text);
   const root = mainCheckoutRoot(cwd);
   let prs = {};
   if (t.prs.length) {
+    const body = t.prs.map((n) => `p${n}:issueOrPullRequest(number:${n}){${PR_FIELDS}}`).join(" ");
+    const q = `query{repository(owner:"${REPO.owner}",name:"${REPO.name}"){${body}}}`;
     try {
-      const body = t.prs
-        .map((n) => `p${n}:issueOrPullRequest(number:${n}){${PR_FIELDS}}`)
-        .join(" ");
-      const q = `query{repository(owner:"${REPO.owner}",name:"${REPO.name}"){${body}}}`;
-      const repo = JSON.parse(run("gh", ["api", "graphql", "-f", `query=${q}`], root)).data
-        .repository;
-      for (const n of t.prs) {
-        const node = repo[`p${n}`];
-        if (!node) continue;
-        prs[n] =
-          node.__typename === "PullRequest"
-            ? {
-                state: node.state,
-                headRefOid: node.headRefOid,
-                mergeCommit: node.mergeCommit?.oid ?? null,
-                rollup: normalizeRollup(node),
-              }
-            : { issue: true };
-      }
-    } catch {
-      prs = null;
+      prs = prsFromGraphql(run("gh", ["api", "graphql", "-f", `query=${q}`], root), t.prs);
+    } catch (e) {
+      prs = prsFromGraphql(String(e.stdout ?? ""), t.prs); // exit 1 with a partial NOT_FOUND answer
     }
   }
   let branches = new Set();
@@ -292,7 +321,7 @@ export function liveSources(text, cwd = process.cwd()) {
     try {
       const out = run(
         "git",
-        ["ls-remote", "--heads", "origin", ...t.branches.map((b) => `refs/heads/${b}`)],
+        ["ls-remote", "--heads", "origin", ...t.branches.map((b) => `refs/heads/${b.token}`)],
         root,
       );
       branches = new Set(
