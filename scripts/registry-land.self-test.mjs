@@ -59,11 +59,13 @@ async function main() {
     const seenEnv = join(tmp, "seen-env.json");
     writeFileSync(
       probe,
-      `import { spawnSync } from "node:child_process";
+      `import { spawnSync as sh } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const { GIT_TERMINAL_PROMPT: p, GCM_INTERACTIVE: g } = process.env;
 writeFileSync(${JSON.stringify(seenEnv)}, JSON.stringify([p, g]));
-process.exit(spawnSync("git", ["upload-pack", ...process.argv.slice(2)], { stdio: "inherit" }).status ?? 1);
+// the shim is generated source the fixture scanner cannot read, so it scrubs GIT_* itself
+const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+process.exit(sh("git", ["upload-pack", ...process.argv.slice(2)], { stdio: "inherit", env }).status ?? 1);
 `,
     );
     const sync = (extra, cwd) => {
