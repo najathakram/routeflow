@@ -193,8 +193,8 @@ describe("G1: the invoice unit never reaches a money writer", () => {
  * SA-1029 (G-6): the per-piece price is read from ONE place. On the four invoice surfaces (PDF, email, staff invoice page,
  * buyer portal invoice page) the "per piece" cell comes from `perBaseUnit` (frozen word + `perBaseUnitPrice`), never from a
  * second division or a hard-coded "pc" suffix. Count-pinned: a new occurrence is a new place that prices a piece, so it must
- * be added here on purpose. The pre-existing display helpers (`formatUnitPrice4`, `pieceUnitPriceText`, the MSRP "/pc" suffix)
- * are pinned at their current counts, not zero.
+ * be added here on purpose. The retired price helpers (`formatUnitPrice4`, `pieceUnitPriceText`) and the hard-coded MSRP
+ * "/pc" suffix are pinned at zero: the one price text is `basePriceText`, the one word is `baseUnitSuffix`.
  */
 const SURFACES = [
   "apps/api/src/invoices/invoice-pdf-item.ts",
@@ -203,6 +203,7 @@ const SURFACES = [
   "apps/api/src/email/email.service.ts",
   "apps/web/app/(dashboard)/invoices/[id]/page.tsx",
   "apps/web/app/buyer/portal/[seller]/invoices/[id]/page.tsx",
+  "apps/web/components/InvoiceDisplayRows.tsx",
 ];
 const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length;
 
@@ -222,14 +223,16 @@ describe("G-6: one source for the per-piece price on the invoice surfaces", () =
     expect(total(/unitPrice[^;\n]*\/[^;\n]*unitsPerBox/g)).toBe(0);
   });
 
-  it("the pre-existing price helpers keep their pinned counts (no new caller)", () => {
+  it("the retired price helpers and the hard-coded /pc suffix are gone from every surface", () => {
     expect(total(/\bformatUnitPrice4\(/g)).toBe(0);
     expect(total(/\bpieceUnitPriceText\(/g)).toBe(0);
-    expect(total(/\/pc\b/g)).toBe(4);
+    expect(total(/\/pc\b/g)).toBe(0);
   });
 
   it("the new per-piece column is fed by perBaseUnit on every surface", () => {
-    for (const f of SURFACES.filter((x) => !x.endsWith("invoice-pdf-item.ts")))
+    for (const f of SURFACES.filter(
+      (x) => !/invoice-pdf-item\.ts$|InvoiceDisplayRows\.tsx$/.test(x),
+    ))
       expect(src(f)).toMatch(/perBaseUnit/);
   });
 });
