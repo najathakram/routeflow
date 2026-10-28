@@ -384,9 +384,18 @@ export const API_ERROR_CODES = {
   // SA-767 L-2.2: a durable stock count is being committed (batch by batch); a second commit, a line edit or a
   // discard is refused until the last batch lands. 409, nothing was changed, retry is safe.
   STOCK_COUNT_COMMITTING: "STOCK_COUNT_COMMITTING",
+  // SA-999 (row 562 S1): a stock count whose batched seed has not stamped its completion (still running, or the
+  // process died mid-seed) cannot be committed. 409, nothing was written; retry is safe once the seed finishes.
+  STOCK_COUNT_SEEDING: "STOCK_COUNT_SEEDING",
   // SA-767 r-note 5 SA-3: one OPEN count per product. Adding a product to a count (or committing one) is refused
   // while another OPEN / REVIEW count already has a line for it. 409, nothing was changed.
   PRODUCT_IN_OPEN_COUNT: "PRODUCT_IN_OPEN_COUNT",
+  // B640 (row 562): a free-text stock reference may not start with a head the stock-count commits key their
+  // idempotency on (STOCK_COUNT-). 400, nothing was written.
+  STOCK_REFERENCE_RESERVED: "STOCK_REFERENCE_RESERVED",
+  // SA-990 (row 562): the legacy one-shot count was sent a sessionId that already names a saved stock count.
+  // 409, nothing was written.
+  STOCK_COUNT_ID_TAKEN: "STOCK_COUNT_ID_TAKEN",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
@@ -776,6 +785,8 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
+  /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
+  COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.

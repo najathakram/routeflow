@@ -688,6 +688,13 @@ describe("pickupCompleteErrorCopy", () => {
       }),
     ).toBe(true);
   });
+  it("COUNTER_COMPLETE_DAY_CLOSED (the pre-check) is answered by the dialog too: no duplicate global toast", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 409, data: { code: "COUNTER_COMPLETE_DAY_CLOSED" } },
+      }),
+    ).toBe(true);
+  });
   it("anything else is the generic retry copy, never the server message", () => {
     expect(
       pickupCompleteErrorCopy({ response: { status: 500, data: { message: "boom internals" } } }),

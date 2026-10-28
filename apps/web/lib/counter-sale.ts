@@ -693,6 +693,7 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.PICKUP_NOT_READY,
   API_ERROR_CODES.PICKUP_ONLY,
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
 ]);
 /** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
