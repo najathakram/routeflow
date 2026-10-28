@@ -547,8 +547,10 @@ export function buildUnitLine(input: {
               overriddenBy: input.overriddenBy,
             }
           : null;
-  // SA-1034: a new override stamp (a typed price, not a held one kept) checks the price-edit capability first
-  if (stamp && decision != null && !echoesHeld) assertPriceEditAllowed(input.priceEditAllowed);
+  // SA-1034: a new override (a typed price that changed the line, not a held one kept) checks the price-edit capability
+  // first. Keyed on `overridden`, not on the stamp: a stamp exists only when `overriddenBy` was passed, and a check keyed
+  // on an optional field fails open. A typed price equal to the tier is not `overridden`, so it stays free.
+  if (overridden && decision != null && !echoesHeld) assertPriceEditAllowed(input.priceEditAllowed);
 
   // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
   // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
