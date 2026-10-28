@@ -13,6 +13,8 @@
  * {ts, sessionId, tool, to, ms, tokens, hits, unverified, mode, decision}: the flip review reads hit rates, false
  * positives and latency (p95) from it.
  *
+ * FACT_CHECK_LOG_DIR overrides the log directory (the spec points it at a temp dir).
+ *
  * Fail-open: empty message, no tokens, any exception -> exit 0, print nothing.
  */
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
@@ -22,14 +24,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CORE = pathToFileURL(path.join(HERE, "..", "..", "scripts", "fact-check.mjs")).href;
 
-/** Pure apart from deps: { core, sources(text) -> sources, append(row), now() -> ms }. Returns hook stdout or "". */
+/**
+ * Pure apart from deps: { core, sources(text) -> sources, append(row), now() -> ms, startedAt? }. Returns hook stdout
+ * or "". `ms` runs from startedAt (the process start in main) so the log shows what the sender waited.
+ */
 export function runHook(payload, deps) {
   const message = payload?.tool_input?.message;
   if (typeof message !== "string" || !message.trim()) return "";
   const t = deps.core.extractTokens(message);
   const count = t.prs.length + t.shas.length + t.branches.length + t.stamps.length + t.ready.length;
   if (!count) return "";
-  const started = deps.now();
+  const started = deps.startedAt ?? deps.now();
   const result = deps.core.checkFacts(message, deps.sources(message));
   const mode = deps.core.FACT_CHECK_MODE;
   deps.append({
@@ -54,18 +59,17 @@ export function runHook(payload, deps) {
 }
 
 async function main() {
+  const startedAt = Date.now();
   try {
     const payload = JSON.parse(readFileSync(0, "utf8") || "{}");
     const core = await import(CORE);
-    const logDir = path.join(
-      core.mainCheckoutRoot(payload.cwd || process.cwd()),
-      "local-assets",
-      "fact-check",
-    );
+    const root = core.mainCheckoutRoot(payload.cwd || process.cwd());
+    const logDir = process.env.FACT_CHECK_LOG_DIR || path.join(root, "local-assets", "fact-check");
     const out = runHook(payload, {
       core,
-      sources: (text) => core.liveSources(text, payload.cwd || process.cwd()),
+      sources: (text) => core.liveSources(text, root),
       now: () => Date.now(),
+      startedAt,
       append: (row) => {
         mkdirSync(logDir, { recursive: true });
         appendFileSync(path.join(logDir, "log.jsonl"), JSON.stringify(row) + "\n");
@@ -75,7 +79,7 @@ async function main() {
   } catch {
     /* fail open: a checker fault must never stop a send */
   }
-  process.exit(0);
+  process.exitCode = 0; // not process.exit: let stdout drain
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
