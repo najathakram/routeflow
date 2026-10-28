@@ -77,6 +77,8 @@ const REASON_OPTIONS = [
 // ─── Create Return Modal ──────────────────────────────────────────────────────
 
 interface ReturnItemRow {
+  /** The order line: the row key (two lines of one product are two rows), and what B9c names on the wire. */
+  lineId: string;
   productId: string;
   productName: string;
   orderedQty: number;
@@ -193,6 +195,7 @@ function CreateReturnModal({
         // Unlisted (ad-hoc) lines have no productId and can't be returned.
         .filter((item): item is typeof item & { productId: string } => !!item.productId)
         .map((item) => ({
+          lineId: item.id,
           productId: item.productId,
           productName: item.product?.name ?? item.name ?? item.productId,
           orderedQty: Number(item.qty),
@@ -217,11 +220,11 @@ function CreateReturnModal({
     if (!orderId) errs.orderId = "Select an order.";
     if (!reason) errs.reason = "Select a return reason.";
     if (selectedReturnItems.length === 0) errs.items = "Enter a quantity for at least one item.";
-    selectedReturnItems.forEach((row, i) => {
+    selectedReturnItems.forEach((row) => {
       const qty = parseFloat(row.qty);
-      if (isNaN(qty) || qty <= 0) errs[`qty_${i}`] = "Qty must be > 0.";
+      if (isNaN(qty) || qty <= 0) errs[`qty_${row.lineId}`] = "Qty must be > 0.";
       if (qty > row.orderedQty)
-        errs[`qty_${i}`] = `Cannot exceed ordered qty (${row.orderedQty} pcs).`;
+        errs[`qty_${row.lineId}`] = `Cannot exceed ordered qty (${row.orderedQty} pcs).`;
     });
     return errs;
   }
@@ -394,7 +397,7 @@ function CreateReturnModal({
                 </thead>
                 <tbody className="divide-y divide-surface-border">
                   {returnItems.map((row, i) => (
-                    <tr key={row.productId}>
+                    <tr key={row.lineId}>
                       <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
                       <td className="px-3 py-2 text-center text-navy/70">{row.lineText}</td>
                       <td className="px-3 py-2">
@@ -408,9 +411,12 @@ function CreateReturnModal({
                           onChange={(e) => updateReturnItem(i, "qty", e.target.value)}
                           className={cn(
                             "h-8 w-20 rounded border bg-white px-2 text-sm text-center text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                            errors[`qty_${i}`] ? "border-danger" : "border-surface-border",
+                            errors[`qty_${row.lineId}`] ? "border-danger" : "border-surface-border",
                           )}
                         />
+                        {errors[`qty_${row.lineId}`] && (
+                          <p className="mt-1 text-xs text-danger">{errors[`qty_${row.lineId}`]}</p>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <input

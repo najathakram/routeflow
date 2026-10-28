@@ -85,8 +85,40 @@ describe("New Return form: what a line counts (SA-1042 B9a)", () => {
     expect(text("Chips")).toContain("12 pcs");
   });
 
-  it("the Return qty header names the unit it counts in", async () => {
+  it("the Return qty header and the over-cap message name pcs", async () => {
     await openOrder();
     expect(await screen.findByText("Return qty (pcs)")).toBeInTheDocument();
+    fireEvent.change(screen.getAllByPlaceholderText("0")[0], { target: { value: "401" } });
+    const reasonSel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((x) =>
+      x.textContent?.includes("Select reason"),
+    )!;
+    fireEvent.change(reasonSel, { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Return" }));
+    expect(await screen.findByText("Cannot exceed ordered qty (400 pcs).")).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("an over-cap count on the second line lands on that line's row, not the first", async () => {
+    await openOrder();
+    await screen.findAllByRole("row");
+    fireEvent.change(screen.getAllByPlaceholderText("0")[1], { target: { value: "101" } });
+    const reasonSel = (screen.getAllByRole("combobox") as HTMLSelectElement[]).find((x) =>
+      x.textContent?.includes("Select reason"),
+    )!;
+    fireEvent.change(reasonSel, { target: { value: "DAMAGED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Return" }));
+    const msg = await screen.findByText("Cannot exceed ordered qty (100 pcs).");
+    const rows = screen.getAllByRole("row").filter((r) => r.textContent?.startsWith("Cola"));
+    expect(rows[1]).toContainElement(msg);
+    expect(rows[0].textContent).not.toContain("Cannot exceed");
+  });
+
+  it("R-w2: two lines of one product raise no duplicate-key warning", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    await openOrder();
+    await screen.findAllByRole("row");
+    const dup = spy.mock.calls.filter((c) => String(c[0]).includes("same key"));
+    spy.mockRestore();
+    expect(dup).toHaveLength(0);
   });
 });
