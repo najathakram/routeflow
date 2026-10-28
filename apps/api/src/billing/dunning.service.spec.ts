@@ -2498,6 +2498,38 @@ describe("DunningService", () => {
       expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
     });
 
+    it("G-s: a tenant paused at +170 h (under the 7-day clock) stays paused after the constant moves: no resume, no unpause, no mail", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [
+          row({
+            pastDueSince: hrsAgo(200),
+            pausedAt: hrsAgo(30),
+            tenant: {
+              status: "READ_ONLY",
+              readOnlyReason: "payment_overdue",
+              deletedAt: null,
+              class: "PRODUCTION",
+            },
+          }),
+        ],
+        logged: logged(
+          200,
+          ["DUNNING_D0", 200],
+          ["DUNNING_D3", 128],
+          ["DUNNING_D6", 60],
+          ["DUNNING_FINAL", 60],
+          ["DUNNING_PAUSED", 30],
+        ),
+        localPausedAt: hrsAgo(30),
+      });
+      const out = await d.svc.sweep(NOW);
+      expect(out.paused).toBe(0);
+      expect(d.transition).not.toHaveBeenCalled();
+      expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
     it("the last-day notice is due at +312 h (the pause minus the 24 h lead), and carries the read-only date", async () => {
       mode("enforced");
       const d = make({
