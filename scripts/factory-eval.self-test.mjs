@@ -651,7 +651,7 @@ try {
   const plan = { t1: [2, 0], t2: [2, 1], t3: [0, 2], t4: [2, 2] }; // passes of 2 runs: [cand, base]
   const lines = (i, cost) =>
     Object.entries(plan).flatMap(([t, p]) =>
-      [0, 1].map((r) => rec(t, r, r < p[i], cost, 10 * (r + 1))),
+      [0, 1].map((r) => rec(t, r + 1, r < p[i], cost, 10 * (r + 1))),
     );
   const save = (name, rows) => {
     const f = path.join(rtmp, name);
@@ -763,7 +763,7 @@ try {
     const text = FE.formatReport(f, rs.malformed);
     return [rs.length, rs.malformed, /NaN/.test(text), f.runs[0].meanCost, /skipped 7 /.test(text)];
   });
-  const t0 = rec("t", 0, true, 1, 1);
+  const t0 = rec("t", 1, true, 1, 1);
   const one = save("x/run1/results.jsonl", [t0]);
   const two = save("y/run1/results.jsonl", [{ ...t0, result: "fail" }]);
   const mix = save("mix.jsonl", [t0, { ...t0, arm: "b" }]);
@@ -791,10 +791,44 @@ try {
     const rs = kread("k1e6.jsonl", [{ k: 3 }, { k: 1e6 }]);
     return [rs.length, rs.malformed];
   });
-  await check("a run that is not an integer 0..1000 is malformed; absent is fine", [2, 5], () => {
-    const rs = kread("runs.jsonl", [{}, { run: 0 }, { run: -1 }, { run: 1001 }, { run: 1.5 }]);
-    const bad = kread("runs2.jsonl", [{ run: "x" }, { run: null }]);
+  await check("a run that is not an integer 1..1000 (or absent) is malformed", [2, 7], () => {
+    const rs = kread("runs.jsonl", [{ run: 1 }, { run: 1000 }, {}, { run: 0 }, { run: -1 }]);
+    const bad = kread("runs2.jsonl", [{ run: 1001 }, { run: 1.5 }, { run: "x" }, { run: null }]);
     return [rs.length, rs.malformed + bad.malformed];
+  });
+  await check("a run above the record's own k is malformed", [1, 1], () => {
+    const rs = kread("runk.jsonl", [
+      { k: 2, run: 2 },
+      { k: 2, run: 3 },
+    ]);
+    return [rs.length, rs.malformed];
+  });
+  await check("run 0 plus run 1 at k 2 is not complete and not pass^k", [1, false, false], () => {
+    const rs = kread("run0.jsonl", [
+      { k: 2, run: 0 },
+      { k: 2, run: 1 },
+    ]);
+    const row = FE.report(rs).rows[0];
+    return [rs.malformed, row.complete, row.passK];
+  });
+  await check("a record with no run beside run 1 at k 2 is not pass^k", [1, false, false], () => {
+    const rs = kread("norun.jsonl", [{ k: 2 }, { k: 2, run: 1 }]);
+    const row = FE.report(rs).rows[0];
+    return [rs.malformed, row.complete, row.passK];
+  });
+  await check(
+    "runs 1, 1, 2 are two runs; a failed duplicate fails the run",
+    [2, 1, 0.5, false],
+    () => {
+      const mk = (run, result) => ({ taskId: "t", result, run, k: 2, runId: "A" });
+      const row = FE.report([mk(1, "pass"), mk(1, "fail"), mk(2, "pass")]).rows[0];
+      return [row.runs, row.passes, row.passAt1, row.passK];
+    },
+  );
+  await check("a duplicate of a passing run counts once", [2, 2, true], () => {
+    const mk = (run) => ({ taskId: "t", result: "pass", run, k: 2, runId: "A" });
+    const row = FE.report([mk(1), mk(1), mk(2)]).rows[0];
+    return [row.runs, row.passes, row.passK];
   });
   const sameDir = (order) => {
     const abs = path.join(rtmp, "cd", "run1");
