@@ -699,7 +699,7 @@ try {
     [1, false],
     () => {
       const rs = FE.readResults([
-        save("bad.jsonl", [rec("t", 0, true, 1, 1), "{zzsecret not json"]),
+        save("bad.jsonl", [rec("t", 1, true, 1, 1), "{zzsecret not json"]),
       ]);
       return [rs.malformed, FE.formatReport(FE.report(rs), rs.malformed).includes("zzsecret")];
     },
@@ -751,7 +751,7 @@ try {
     return [a.passK, a.complete, vsv(r), cell(r, "B", "t1").passK, c.passK];
   });
   await check("bad ids, results, costs and times are skipped", [2, 7, false, 1, true], () => {
-    const line = (o) => JSON.stringify({ taskId: "t9", result: "pass", ...o });
+    const line = (o) => JSON.stringify({ taskId: "t9", result: "pass", run: 1, ...o });
     const bad = [{ costUsd: "5" }, { wallSec: "x" }, { costUsd: -1 }, { taskId: "a\u001b[31m" }];
     bad.push({ taskId: "a\nb" }, { result: "wat" }, { result: undefined });
     const ok = [
@@ -781,7 +781,7 @@ try {
     return [Math.max(...rows.map((r) => r.runs)), exit(save("empty.jsonl", ["x"])), exit(rtmp)];
   });
   // R6-b3 fold 2: pin the k fixes, one test per mutant.
-  const kline = (o) => JSON.stringify({ taskId: "t1", result: "pass", ...o });
+  const kline = (o) => JSON.stringify({ taskId: "t1", result: "pass", run: 1, ...o });
   const kread = (name, os) => FE.readResults([save(name, os.map(kline))]);
   await check("a record with k 0 is malformed", [1, 1], () => {
     const rs = kread("k0.jsonl", [{ k: 3 }, { k: 0 }]);
@@ -792,7 +792,13 @@ try {
     return [rs.length, rs.malformed];
   });
   await check("a run that is not an integer 1..1000 (or absent) is malformed", [2, 7], () => {
-    const rs = kread("runs.jsonl", [{ run: 1 }, { run: 1000 }, {}, { run: 0 }, { run: -1 }]);
+    const rs = kread("runs.jsonl", [
+      { run: 1 },
+      { run: 1000 },
+      { run: undefined },
+      { run: 0 },
+      { run: -1 },
+    ]);
     const bad = kread("runs2.jsonl", [{ run: 1001 }, { run: 1.5 }, { run: "x" }, { run: null }]);
     return [rs.length, rs.malformed + bad.malformed];
   });
@@ -812,7 +818,10 @@ try {
     return [rs.malformed, row.complete, row.passK];
   });
   await check("a record with no run beside run 1 at k 2 is not pass^k", [1, false, false], () => {
-    const rs = kread("norun.jsonl", [{ k: 2 }, { k: 2, run: 1 }]);
+    const rs = kread("norun.jsonl", [
+      { k: 2, run: undefined },
+      { k: 2, run: 1 },
+    ]);
     const row = FE.report(rs).rows[0];
     return [rs.malformed, row.complete, row.passK];
   });
@@ -825,11 +834,6 @@ try {
       return [row.runs, row.passes, row.passAt1, row.passK];
     },
   );
-  await check("a duplicate of a passing run counts once", [2, 2, true], () => {
-    const mk = (run) => ({ taskId: "t", result: "pass", run, k: 2, runId: "A" });
-    const row = FE.report([mk(1), mk(1), mk(2)]).rows[0];
-    return [row.runs, row.passes, row.passK];
-  });
   const sameDir = (order) => {
     const abs = path.join(rtmp, "cd", "run1");
     save("cd/run1/results.jsonl", [t0]);

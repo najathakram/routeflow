@@ -538,7 +538,10 @@ const goodRecord = (r) =>
   ["pass", "fail", "broken"].includes(r.result) &&
   [r.costUsd, r.wallSec].every(okNum) &&
   (r.k === undefined || (Number.isInteger(r.k) && r.k >= 1 && r.k <= 1000)) &&
-  (r.run === undefined || (Number.isInteger(r.run) && r.run >= 0 && r.run <= 1000));
+  // the writer numbers runs 1..k, so a missing run, run 0 or a run past the record's own k is malformed
+  Number.isInteger(r.run) &&
+  r.run >= 1 &&
+  r.run <= (r.k ?? 1000);
 
 /** Records of every run dir or results file, tagged with their run label; bad lines are counted, not kept. */
 export function readResults(paths) {
@@ -592,13 +595,22 @@ export function report(records, { vs, includeExample = false } = {}) {
     if (!groups.has(key)) groups.set(key, { run: label(r), taskId: r.taskId, recs: [] });
     groups.get(key).recs.push(r);
   }
-  const rows = [...groups.values()].map(({ run, taskId, recs }) => {
+  // One record per run number: when duplicates disagree the worst wins (broken, then fail, then pass), so a
+  // repeated run can never inflate pass^k. A record without a run number (readResults rejects those) stands alone.
+  const rank = { pass: 0, fail: 1, broken: 2 };
+  const byRun = (all) => {
+    const worst = new Map();
+    for (const r of all) {
+      const key = r.run ?? Symbol("no run");
+      if (!worst.has(key) || rank[r.result] > rank[worst.get(key).result]) worst.set(key, r);
+    }
+    return [...worst.values()];
+  };
+  const rows = [...groups.values()].map(({ run, taskId, recs: all }) => {
+    const recs = byRun(all);
     const kept = recs.filter((r) => r.result !== "broken");
     const passes = kept.filter((r) => r.result === "pass").length;
-    // distinct run numbers; a record without `run` counts once itself
-    const have =
-      new Set(recs.filter((r) => r.run != null).map((r) => r.run)).size +
-      recs.filter((r) => r.run == null).length;
+    const have = recs.length; // distinct run numbers
     return {
       run,
       taskId,
