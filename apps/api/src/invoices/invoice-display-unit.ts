@@ -10,7 +10,7 @@ import {
   INVOICE_UNIT_SETTING_KEY,
   type LadderViewUnit,
 } from "@routeflow/pricing";
-import type { InvoiceDisplayUnitView } from "@routeflow/types";
+import type { InvoiceDisplayUnitView, InvoiceUnitDefault } from "@routeflow/types";
 import { txConflictState } from "../common/tx-retry";
 import { isTxClient } from "../prisma/prisma.service";
 import { asLadderProduct } from "../products/line-units";
@@ -67,7 +67,7 @@ export interface DisplayUnitCatalog {
   unitsBy: Map<string, LadderViewUnit[]>;
   businessUnit: string | null;
   /** Customer.invoiceUnitDefault (LEGACY | PIECES | PACK), the highest-precedence preference. */
-  customerDefault?: "LEGACY" | "PIECES" | "PACK" | null;
+  customerDefault?: InvoiceUnitDefault | null;
   /** The ladder flag was off: only a customer-wide PIECES applies, with no view. */
   ladderOff?: boolean;
 }
