@@ -185,18 +185,24 @@ describe("ticksToProfileDef", () => {
 
   it("an omitted doorPayments takes the CURRENT value the caller read; an explicit value beats it", () => {
     expect(
-      ticksToProfileDef({ delivery: true }, { doorPayments: false }).normalised.doorPayments,
+      ticksToProfileDef({ delivery: true }, { doorPayments: false, configured: true }).normalised
+        .doorPayments,
     ).toBe(false);
     expect(
-      ticksToProfileDef({ delivery: true }, { doorPayments: true }).normalised.doorPayments,
-    ).toBe(true);
-    expect(
-      ticksToProfileDef({ delivery: true, doorPayments: true }, { doorPayments: false }).normalised
+      ticksToProfileDef({ delivery: true }, { doorPayments: true, configured: true }).normalised
         .doorPayments,
     ).toBe(true);
     expect(
-      ticksToProfileDef({ delivery: true, doorPayments: false }, { doorPayments: true }).normalised
-        .doorPayments,
+      ticksToProfileDef(
+        { delivery: true, doorPayments: true },
+        { doorPayments: false, configured: true },
+      ).normalised.doorPayments,
+    ).toBe(true);
+    expect(
+      ticksToProfileDef(
+        { delivery: true, doorPayments: false },
+        { doorPayments: true, configured: true },
+      ).normalised.doorPayments,
     ).toBe(false);
   });
 

@@ -1,6 +1,8 @@
 import * as React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
+// The server's real answer for an unset tenant: one file, pinned equal to `capabilitiesFromInputs` by the API spec.
+import REAL_UNSET from "../../../../../../../../packages/types/fixtures/business-capabilities.unset.json";
 import type { BusinessCapabilitiesPreviewResponse } from "@/lib/platform-admin/capabilities-contract";
 import { CapabilitiesCard } from "./CapabilitiesCard";
 import { INCLUDED_FREE_COPY } from "./profile-plain-copy";
@@ -29,10 +31,6 @@ jest.mock("@/lib/platform-admin/capabilities-contract", () => ({
   applyBusinessCapabilities: (tenantId: string, body: unknown, fingerprint: string) =>
     mockApply(tenantId, body, fingerprint),
 }));
-
-// The server's real answer for an unset tenant: one file, pinned equal to `capabilitiesFromInputs` by the API spec.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const REAL_UNSET = require("../../../../../../../../packages/types/fixtures/business-capabilities.unset.json");
 
 const TENANT_ID = "tenant-1";
 const DELIVERY = "Delivers on own trucks";
