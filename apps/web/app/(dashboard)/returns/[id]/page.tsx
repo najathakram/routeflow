@@ -22,7 +22,7 @@ import { undoAmendedPeriodNote } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
 import { TENDER_OPTIONS } from "../_components/refund-copy";
 import { RefundSlipAction } from "../_components/RefundSlipAction";
-import { refundErrorMessage } from "@/lib/credit-note-error-copy";
+import { RETURN_MIXED_UNIT_PRODUCT_COPY, refundErrorMessage } from "@/lib/credit-note-error-copy";
 import {
   useReturn,
   useApproveReturn,
@@ -96,6 +96,8 @@ const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
   NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
   NOTHING_BILLED:
     "None of the returned items were billed on this order, so there is nothing to refund.",
+  // B976 (SA-1042): a product sold in different units has no single price; the same words the refund toast uses (one source).
+  UNIT_UNRESOLVED: RETURN_MIXED_UNIT_PRODUCT_COPY,
 };
 
 function refundEstimateReasonText(reason: string): string {
