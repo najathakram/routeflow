@@ -18,6 +18,7 @@ import {
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
@@ -406,7 +407,11 @@ export default function InvoicesPage() {
     dateTo: "",
     dueFrom: "",
     dueTo: "",
+    toCollect: "", // SA-1026: "true" = only invoices that read To collect (staff)
+    customerId: "", // the customer chip's link: one customer's list
   });
+  const toCollectOn = urlFilters.toCollect === "true";
+  const customerFilter = (urlFilters.customerId as string) ?? "";
   const statusFilter = (urlFilters.status as string) ?? "";
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
@@ -486,6 +491,8 @@ export default function InvoicesPage() {
     dateTo: dateTo || undefined,
     dueFrom: dueFrom || undefined,
     dueTo: dueTo || undefined,
+    toCollect: toCollectOn || undefined,
+    customerId: customerFilter || undefined,
     sortBy,
     sortOrder,
     page,
@@ -513,6 +520,8 @@ export default function InvoicesPage() {
           dateTo: dateTo || undefined,
           dueFrom: dueFrom || undefined,
           dueTo: dueTo || undefined,
+          toCollect: toCollectOn || undefined,
+          customerId: customerFilter || undefined,
           sortBy,
           sortOrder,
           page: 1,
@@ -643,6 +652,21 @@ export default function InvoicesPage() {
 
       {/* Due-soon chips */}
       <div className="flex flex-wrap items-center gap-2">
+        {!isCustomer && (
+          <button
+            type="button"
+            aria-pressed={toCollectOn}
+            onClick={() => setFilter("toCollect", toCollectOn ? "" : "true")}
+            className={cn(
+              "min-h-[44px] rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              toCollectOn
+                ? "border-brand-500 bg-brand-500 text-white"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            To collect
+          </button>
+        )}
         <span className="text-xs font-medium uppercase tracking-wider text-navy/70">Due:</span>
         {DUE_CHIPS.map((chip) => (
           <button
@@ -764,7 +788,14 @@ export default function InvoicesPage() {
               ) : invoices.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-0">
-                    {search || statusFilter || dateFrom || dateTo || dueFrom || dueTo ? (
+                    {search ||
+                    statusFilter ||
+                    dateFrom ||
+                    dateTo ||
+                    dueFrom ||
+                    dueTo ||
+                    toCollectOn ||
+                    customerFilter ? (
                       <EmptyState
                         variant="invoices"
                         title="No matching invoices"
@@ -781,6 +812,8 @@ export default function InvoicesPage() {
                                 dateTo: "",
                                 dueFrom: "",
                                 dueTo: "",
+                                toCollect: "",
+                                customerId: "",
                               });
                             }}
                           >
@@ -834,7 +867,12 @@ export default function InvoicesPage() {
                       <td className="px-4 py-3 font-medium text-navy">
                         {inv.customer?.businessName ?? "—"}
                       </td>
-                      <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-start gap-1">
+                          {renderStatus(inv.status, inv.dueDate)}
+                          {!isCustomer && <ToCollectChip state={inv.toCollect} />}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-sm text-navy">
                         {fmtCalendarDate(inv.dueDate)}
                       </td>

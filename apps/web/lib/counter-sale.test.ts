@@ -703,6 +703,13 @@ describe("pickupCompleteErrorCopy", () => {
       }),
     ).toBe(true);
   });
+  it("COUNTER_COMPLETE_DAY_CLOSED (the pre-check) is answered by the dialog too: no duplicate global toast", () => {
+    expect(
+      isPickupHandledError({
+        response: { status: 409, data: { code: "COUNTER_COMPLETE_DAY_CLOSED" } },
+      }),
+    ).toBe(true);
+  });
   it("anything else is the generic retry copy, never the server message", () => {
     expect(
       pickupCompleteErrorCopy({ response: { status: 500, data: { message: "boom internals" } } }),
@@ -940,5 +947,39 @@ describe("post-dated check (interim till guard)", () => {
     expect(isCounterSaleHandledError(refusal("SOMETHING_ELSE"))).toBe(false);
     expect(isCounterSaleHandledError({ response: { status: 500, data: {} } })).toBe(false);
     expect(isCounterSaleHandledError(new Error("Network Error"))).toBe(false);
+  });
+});
+
+describe("resolveTender: 'Check not received yet' is On account plus one typed intent (SA-1026 A)", () => {
+  const resolve = (
+    counterSaleModule as unknown as {
+      resolveTender?: (
+        m: string,
+        notReceived: boolean,
+      ) => { method: string; expectedMethod?: string };
+    }
+  ).resolveTender;
+
+  it("Check + not received sends ON_ACCOUNT with expectedMethod CHECK", () => {
+    expect(resolve?.("CHECK", true)).toEqual({ method: "ON_ACCOUNT", expectedMethod: "CHECK" });
+  });
+
+  it("every other tender is itself, with no expectedMethod", () => {
+    for (const m of ["CASH", "CARD", "CHECK", "ON_ACCOUNT"]) {
+      expect(resolve?.(m, false)).toEqual({ method: m });
+    }
+    // the flag belongs to Check only: a stale flag under another method never rides along
+    expect(resolve?.("CASH", true)).toEqual({ method: "CASH" });
+  });
+
+  it("a walk-in on that tender is refused by the same rule as On account", () => {
+    const t = resolve?.("CHECK", true);
+    expect(
+      counterSaleModule.validatePayment({
+        method: t?.method as never,
+        total: 10,
+        isWalkIn: true,
+      }),
+    ).toBe("WALK_IN_ON_ACCOUNT");
   });
 });

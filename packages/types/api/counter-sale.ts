@@ -3,6 +3,7 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { ToCollectMethod, ToCollectState } from "./enums";
 import type { DuplicatePaymentRefExisting } from "./payment-ref";
 import type { RestrictionAck } from "./restrictions";
 
@@ -41,6 +42,12 @@ export interface CounterSalePayment {
   recordAnyway?: boolean;
   /** CHECK only: the date written on the check, YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. Omitted = not checked. */
   checkDate?: string;
+  /**
+   * SA-1026: "the check is not in hand yet". Valid only with `method: "ON_ACCOUNT"` (a named customer): no payment row is
+   * written and the invoice is marked To collect until a payment clears it. Any other method with it is a 400
+   * COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT; a walk-in is refused by WALK_IN_NO_ACCOUNT as for any On account.
+   */
+  expectedMethod?: ToCollectMethod;
 }
 
 /**
@@ -97,6 +104,8 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** SA-1026: "To collect" read back from storage after the sale (staff only; omitted by an older server). */
+  toCollect?: ToCollectState;
   /**
    * Row 498 (SA-837b): WHY the payment was not recorded when the cause is a duplicate payment reference
    * (`DUPLICATE_PAYMENT_REF`), with the existing payment it repeats; the till shows the shared sentence and a
@@ -175,7 +184,8 @@ export interface CounterSaleVoidResponse {
 // after the order's `deliveredAt` (the moment this hand-over moved it to DELIVERED) are this request's tender:
 // a deposit or portal payment made before it is never counted as one.
 
-export interface PickupCompleteRequest {
+/** W-773: `RestrictionAck` is the #3455 resubmit after a RESTRICTION_WARNING (the switch judges at the store's state). */
+export interface PickupCompleteRequest extends RestrictionAck {
   /** omit to hand the order over unpaid (an open invoice on account); a walk-in must pay */
   payment?: CounterSalePayment;
   /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
@@ -198,6 +208,8 @@ export interface PickupCompleteResponse {
   /** false when the hand-over committed but recording the payment failed; `paymentErrorCode` names why. */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** SA-1026: "To collect" read back from storage after the hand-over (staff only; omitted by an older server). */
+  toCollect?: ToCollectState;
   /** Row 498 (SA-837b): as on the counter-sale response. */
   paymentCauseCode?: string;
   existingPayment?: DuplicatePaymentRefExisting;
@@ -302,6 +314,11 @@ export interface TodaysSaleRow {
    */
   returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
+  /**
+   * SA-1026: "To collect", derived by the server from the sale's live invoices (a check not received yet): the row's chip reads
+   * it. The payment state stays ON_ACCOUNT and no money counts as taken. Omitted by an older server.
+   */
+  toCollect?: ToCollectState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
   /**

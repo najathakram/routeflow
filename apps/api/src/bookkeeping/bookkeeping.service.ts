@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { toCollectByCustomer, toCollectState } from "../invoices/to-collect";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
@@ -1598,6 +1599,12 @@ export class BookkeepingService implements OnModuleInit {
     // #1529 / SA-517: the deposit's "today" is the tenant's day (the same zone the buckets age in).
     const todayIso = startOfCalendarDay(now, tz).toISOString().slice(0, 10);
     const depositOverdue = { count: 0, outstanding: 0 };
+    const entries: Array<{
+      customerId: string;
+      businessName: string;
+      balance: number;
+      toCollect: ReturnType<typeof toCollectState>;
+    }> = [];
 
     for (const inv of invoices) {
       const paid = sumConfirmed(inv.payments); // the deposit check's full confirmed total
@@ -1622,7 +1629,13 @@ export class BookkeepingService implements OnModuleInit {
         depositAmount: deposit.depositAmount,
         depositDueDate: inv.depositDueDate ?? null,
         depositOverdue: deposit.depositOverdue,
+        toCollect: toCollectState(inv), // SA-1026: staff only; derived by the one rule (invoices/to-collect.ts)
       };
+      entries.push({
+        ...entry,
+        customerId: inv.customerId,
+        businessName: inv.customer?.businessName ?? "",
+      });
       if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
         continue;
@@ -1647,7 +1660,14 @@ export class BookkeepingService implements OnModuleInit {
 
     // #1529: `depositOverdue` is its own top-level key, never a `totals` key (totals stay the AR
     // buckets, agreeing with the finance dashboard).
-    return { buckets, totals, intervalDays: interval, depositOverdue };
+    // SA-1026: the To collect column, per customer (staff only; the buckets and totals above are untouched).
+    return {
+      buckets,
+      totals,
+      intervalDays: interval,
+      depositOverdue,
+      toCollectByCustomer: toCollectByCustomer(entries),
+    };
   }
 
   async getSalesByCustomer(from?: string, to?: string) {
@@ -2255,6 +2275,7 @@ export class BookkeepingService implements OnModuleInit {
           ageDays,
           amount: Number(inv.total),
           balance,
+          toCollect: toCollectState(inv), // SA-1026: staff only
         };
       })
       .filter((row) => row.balance > 0);
