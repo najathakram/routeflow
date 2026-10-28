@@ -833,6 +833,15 @@ try {
       return [cell(r, "A", "t1").passK, cell(r, "A", "t2").passK, cell(r, "A", "t3").complete];
     },
   );
+  await check(
+    "two records of run 1 with k 2 are one run: incomplete, never pass^k",
+    [false, false],
+    () => {
+      const rs = [1, 1].map((run) => ({ ...rec("t", run, true, 1, 1), runId: "A", k: 2 }));
+      const row = FE.report(rs).rows[0];
+      return [row.complete, row.passK];
+    },
+  );
   await check("run numbers above a task's recorded k leave it incomplete", [false, false], () => {
     const rs = [1, 3].map((run) => ({ ...rec("t", run, true, 1, 1), runId: "A", k: 2 }));
     const row = FE.report(rs).rows[0];
