@@ -12,6 +12,7 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
+  readdirSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -317,6 +318,66 @@ async function main() {
     );
     fresh();
   });
+
+  await section("a redo: notes match trimmed, a prove already applied is skipped", async () => {
+    const noteOnly = writeJson("note.json", [
+      { id: "B1", action: "note", text: "ends with a mark -->" },
+    ]);
+    const proveOnly = writeJson("prove.json", [okClaims[0]]);
+    land(["--sha", tip, "--claims", noteOnly], regEnv(A, an("a")));
+    const redo = sumOf(land(["--sha", tip, "--claims", noteOnly], regEnv(A, an("a"))));
+    check(
+      "a note whose cleaned text ends in whitespace is held, not added twice",
+      [hist().split("ends with a mark").length - 1, redo?.claims, redo?.skipped],
+      [1, 0, 1],
+    );
+    fresh();
+    land(["--sha", tip, "--claims", proveOnly], regEnv(A, an("a")));
+    const before = origin();
+    const again = sumOf(land(["--sha", tip, "--claims", proveOnly], regEnv(A, an("a"))));
+    check(
+      "a prove already on origin is reported as skipped, nothing new is written",
+      [again?.claims, again?.skipped, origin() === before],
+      [0, 1, true],
+    );
+    fresh();
+  });
+
+  await section(
+    "a failed land removes its temp anchor; a missing anchor is a warning",
+    async () => {
+      const temps = () => readdirSync(tmp).filter((n) => n.startsWith("anchor-a.json.land-"));
+      writeJson("anchor-a.json", { lastSha: c0 }); // valid: the child sync works on a copy
+      const unknown = writeJson("unknown.json", [
+        { id: "B999", action: "note", text: "no such bug" },
+      ]);
+      const failed = land(["--sha", tip, "--claims", unknown], regEnv(A, an("a")));
+      check(
+        "a land that fails leaves no .land-<pid> file, the register and the anchor untouched",
+        [failed.status !== 0, temps(), origin() === sha0, anchorSha("a")],
+        [true, [], true, c0],
+      );
+      // the push window removes the anchor and its temp copy: nothing for the land to move into place
+      const hook = join(bare, "hooks", "pre-receive");
+      mkdirSync(dirname(hook), { recursive: true });
+      writeFileSync(hook, `#!/bin/sh\nrm -f "${fwd(an("a"))}" "${fwd(an("a"))}".land-*\n`);
+      chmodSync(hook, 0o755);
+      const before = count();
+      const r = land(["--sha", tip, "--claims", okFile], regEnv(A, an("a")));
+      rmSync(hook);
+      check(
+        "no anchor after a landed push: a clear warning, exit 0, no stack trace, the landing recorded",
+        [
+          r.status,
+          /anchor/i.test(r.stderr + r.stdout),
+          /\n\s+at /.test(r.stderr),
+          count() - before,
+        ],
+        [0, true, false, 1],
+      );
+      fresh();
+    },
+  );
 
   await section("sync on origin/master; tracked mode unchanged", async () => {
     const sy = join(tmp, "sy");
