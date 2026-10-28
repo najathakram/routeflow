@@ -348,9 +348,12 @@ describeDb("SA-1050 PR-1: the write-off writes its event (real Postgres)", () =>
 
     const september = {
       gte: new Date("2026-09-01T00:00:00Z"),
-      lt: new Date("2026-10-01T00:00:00Z"),
+      lte: new Date("2026-09-30T23:59:59.999Z"),
     };
-    const wide = { gte: new Date("2026-01-01T00:00:00Z"), lt: new Date("2100-01-01T00:00:00Z") };
+    const wide = {
+      gte: new Date("2026-01-01T00:00:00Z"),
+      lte: new Date("2099-12-31T23:59:59.999Z"),
+    };
     const sept = await tenantCtx.run(t.id, () =>
       fetchBadDebtExpense(prisma as any, t.id, september),
     );
