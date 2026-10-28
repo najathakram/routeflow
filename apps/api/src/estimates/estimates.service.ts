@@ -41,7 +41,7 @@ import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { customerPricing } from "../orders/units-prices-v2";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
-import { assertCustomPricesAllowed } from "../orders/staff-override";
+import { assertCustomPricesAllowed, assertPriceEditAllowed } from "../orders/staff-override";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
@@ -159,8 +159,8 @@ export class EstimatesService {
 
     const tenantId = this.prisma.getTenantId();
     const items: any[] = dto.items ?? [];
-    // SA-1034 rule 4 (AUTHORING): a custom estimate line carries a staff-typed price. The capability is read once here,
-    // before the write; no actor is no capability (the controller always passes the caller).
+    // SA-1034 rules 4-5: a custom estimate line, and a typed catalog price under list, are staff-typed prices. The
+    // capability is read once here, before the write, and only when a line types a price; no actor is no capability.
     const needsPriceRights = items.some((i) => !i.productId || i.unitPrice != null);
     const priceEditAllowed =
       !needsPriceRights ||
@@ -224,6 +224,7 @@ export class EstimatesService {
         const overridePrice = i.unitPrice != null ? roundMoney(Number(i.unitPrice)) : null;
 
         if (overridePrice != null && overridePrice < listPrice) {
+          assertPriceEditAllowed(priceEditAllowed); // SA-1034 rule 5: a typed price under list is a staff price override
           unitPrice = overridePrice;
           priceType = PriceType.DISCOUNTED;
           originalPrice = listPrice;

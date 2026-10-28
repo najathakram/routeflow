@@ -48,6 +48,7 @@ const ASSERT_COUNTS: Record<string, number> = {
   "orders/unit-line-build.ts": 1, // a unit line's new override (create + unit-line-edit)
   "orders/replace-all-line-build.ts": 1, // replace-all repriced line + the create auto-merge's new line
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit, pack and unit
+  "estimates/estimates.service.ts": 1, // estimate create: a typed catalog price under list (rule 5)
 };
 
 /**

@@ -777,6 +777,45 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect(await raw.recurringInvoice.count({ where: { tenantId } })).toBe(before);
     });
 
+    it("M-R1 live (rule 5): the denied operator's estimate with a catalog price typed under list is a 403; no estimate row", async () => {
+      live();
+      const before = await raw.estimate.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() =>
+          estimatesService.create(
+            { customerId, items: [{ productId, qty: 1, unitPrice: 6 }] } as any,
+            denied(),
+          ),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.estimate.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("M-G1 / Q1-G3 (rule 5): the denied operator's estimate at list price, or with no typed price, is written; shadow writes the discount", async () => {
+      live();
+      const plain: any = await inTenant(() =>
+        estimatesService.create({ customerId, items: [{ productId, qty: 1 }] } as any, denied()),
+      );
+      const atList: any = await inTenant(() =>
+        estimatesService.create(
+          { customerId, items: [{ productId, qty: 1, unitPrice: 10 }] } as any,
+          denied(),
+        ),
+      );
+      expect([plain.id, atList.id].every(Boolean)).toBe(true);
+      jest.restoreAllMocks(); // back to shadow: the capability is only reported
+      jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const shadow: any = await inTenant(() =>
+        estimatesService.create(
+          { customerId, items: [{ productId, qty: 1, unitPrice: 6 }] } as any,
+          denied(),
+        ),
+      );
+      const [row] = await raw.estimateItem.findMany({ where: { estimateId: shadow.id } });
+      expect(Number(row.unitPrice)).toBe(6);
+    });
+
     it("Q1-G2: a TENANT_ADMIN makes the same calls as on master (order, invoice, estimate, template)", async () => {
       live();
       const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, admin()));
