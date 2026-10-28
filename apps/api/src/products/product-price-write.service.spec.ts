@@ -158,7 +158,11 @@ function makeTx(w: World) {
   return tx;
 }
 
-function build(over: Partial<World> = {}, tenantId: string | null = TENANT) {
+function build(
+  over: Partial<World> = {},
+  tenantId: string | null = TENANT,
+  mode: "on" | "off" = "off",
+) {
   const world = makeWorld(over);
   const tx = makeTx(world);
   const prisma = {
@@ -166,8 +170,9 @@ function build(over: Partial<World> = {}, tenantId: string | null = TENANT) {
     forTenant: () => tx,
     tenantTransaction: jest.fn(async (fn: (t: any) => Promise<unknown>) => fn(tx)),
   };
-  const grid = new ProductPriceGridService(prisma as never);
-  const service = new ProductPriceWriteService(prisma as never, grid);
+  const featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(mode) } as never;
+  const grid = new ProductPriceGridService(prisma as never, featureConfig);
+  const service = new ProductPriceWriteService(prisma as never, grid, featureConfig);
   return { world, tx, prisma, grid, service };
 }
 
@@ -767,8 +772,8 @@ describe("ProductPriceWriteService.save", () => {
     });
   });
 
-  it("a variant is 409 FAMILY_PRICE_AUTHORITY and a family or recipe row is 400, nothing written", async () => {
-    const variant = build();
+  it("a variant base cell is 409 FAMILY_PRICE_AUTHORITY in mode on and a family row is 400, nothing written", async () => {
+    const variant = build({}, TENANT, "on");
     variant.world.product!.parentProductId = "fam-1";
     const g1 = await variant.grid.get(PRODUCT_ID);
     const e1 = await rejection(
@@ -777,7 +782,7 @@ describe("ProductPriceWriteService.save", () => {
         {
           expectedRevision: g1.revision,
           expectedPriceState: g1.priceState,
-          patches: [{ ref: "pack", tier: 3, to: 5 }],
+          patches: [{ ref: "base", tier: 2, to: 2.5 }],
         },
         null,
       ),
@@ -785,8 +790,8 @@ describe("ProductPriceWriteService.save", () => {
     expect(e1.getResponse().code).toBe(API_ERROR_CODES.FAMILY_PRICE_AUTHORITY);
     expect(variant.world.writes).toEqual([]);
 
-    for (const kind of ["FAMILY", "RECIPE"]) {
-      const other = build();
+    for (const kind of ["FAMILY"]) {
+      const other = build({}, TENANT, "on");
       other.world.product!.kind = kind;
       const g = await other.grid.get(PRODUCT_ID);
       const e = await rejection(

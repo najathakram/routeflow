@@ -117,7 +117,7 @@ describe("ProductUnitsService price guard (row 749)", () => {
 
   it("a recipe is refused only with a family link and no override in mode on", async () => {
     const recipe = { ...variantProduct, parentProductId: null, kind: "RECIPE" };
-    const one: Row = { id: "u-one", label: "Each", factorToBase: 1 };
+    const one: Row = { id: "u-one", label: "Piece", factorToBase: 1 };
     const linked = build({ product: recipe, rows: [one], mode: "on", recipeFamilyId: "f1" });
     await expect(linked.service.update("p1", "u-one", { price: 9 })).rejects.toThrow(
       ConflictException,
