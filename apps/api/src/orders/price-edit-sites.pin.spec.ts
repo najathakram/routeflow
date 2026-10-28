@@ -130,6 +130,23 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     );
   });
 
+  it('exactly one call site passes source: "template-run" (the recurring run), and loadOverride requires a source', () => {
+    const found: Record<string, number> = {};
+    for (const f of files) {
+      const n = [...code(read(f)).matchAll(/source: "template-run"/g)].length;
+      if (n > 0) found[f.split("\\").join("/")] = n;
+    }
+    expect(found).toEqual({ "recurring-invoices/recurring-invoices.service.ts": 1 });
+    const sig = code(read("invoices/invoice-line-override.ts")).match(
+      /export async function loadOverride\(([\s\S]*?)\): Promise/,
+    );
+    expect(sig?.[1]).toMatch(/source: InvoiceSource,/);
+    // InvoicesService names its source on both of its own calls: create's option (default request), the edit's literal
+    const svc = code(read("invoices/invoices.service.ts"));
+    expect(svc).toMatch(/opts\?\.source \?\? "request"/);
+    expect([...svc.matchAll(/"request",\s*this\.entitlements/g)]).toHaveLength(2); // create (default) + edit
+  });
+
   it("priceEditAllowedFor( is called at exactly the compute sites, once each per request path", () => {
     const found: Record<string, number> = {};
     for (const f of files) {

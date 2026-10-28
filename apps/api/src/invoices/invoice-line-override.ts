@@ -45,6 +45,13 @@ import type { ManualLineItem } from "./manual-invoice-lines";
 
 export type ManualInvoiceDto = Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] };
 
+/**
+ * SA-1034 rule 6: who is asking for the invoice. `request` is a staff member typing lines (POST /invoices, PATCH
+ * /invoices/:id): both price-edit checks apply. `template-run` is a recurring template re-sending the lines a person
+ * with price rights authored: no one typed a price, so neither check applies (the run is a COPY site).
+ */
+export type InvoiceSource = "request" | "template-run";
+
 export type LinePriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
 
 /** The four price columns a decided line writes (the stamp is null unless the price is a real override). */
@@ -130,6 +137,8 @@ export async function loadOverride(
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   ladders: ReadonlyMap<string, readonly LadderUnit[]>,
   actor: { sub?: string; role?: string | null; tenantId?: string | null } | undefined,
+  /** Required, never defaulted here: `create()` and the edit say which they are (SA-1034 rule 6). */
+  source: InvoiceSource,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
 ): Promise<LineOverrideCtx | undefined> {
   const actorId = actor?.sub;
@@ -152,11 +161,15 @@ export async function loadOverride(
   return {
     actorId,
     // SA-1034: the one price-edit capability, read once per request here (both callers sit before their transaction).
-    priceEditAllowed: await priceEditAllowedFor(
-      prisma,
-      { sub: actorId, tenantId: actor?.tenantId ?? null, role: actor?.role as UserRole },
-      "InvoicesService.loadOverride",
-    ),
+    // A template run re-sends an authored price: nobody typed one, so it carries the capability without a read.
+    priceEditAllowed:
+      source === "template-run"
+        ? true
+        : await priceEditAllowedFor(
+            prisma,
+            { sub: actorId, tenantId: actor?.tenantId ?? null, role: actor?.role as UserRole },
+            "InvoicesService.loadOverride",
+          ),
     ladders,
     tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
     layerOf: pc.layer,

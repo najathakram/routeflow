@@ -17,7 +17,10 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
     const dto = { customerId: "c1", items: [] } as never;
     await controller.create(dto, user);
     // SA-982 PR-2: POST /invoices alone names the invoices.manual census site (a recurring run passes none)
-    expect(service.create).toHaveBeenCalledWith(dto, user, { warnSite: "invoices.manual" });
+    expect(service.create).toHaveBeenCalledWith(dto, user, {
+      source: "request",
+      warnSite: "invoices.manual",
+    });
   });
 
   it("update passes the id, the body and the whole actor (row 510 override needs the role)", async () => {

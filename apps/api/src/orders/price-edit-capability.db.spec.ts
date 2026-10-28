@@ -816,6 +816,70 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect(Number(row.unitPrice)).toBe(6);
     });
 
+    it("C-G1 live (rule 6): the denied operator's Run now bills a template an admin authored below tier, with a custom line", async () => {
+      live();
+      const tpl: any = await inTenant(() =>
+        recurring.create(
+          {
+            ...weekly(),
+            items: [
+              { description: "Cola", productId, qty: 1, unitPrice: 6 },
+              { description: "Service fee", qty: 1, unitPrice: 20 },
+            ],
+          } as any,
+          admin(),
+        ),
+      );
+      const before = await raw.invoice.count({ where: { tenantId } });
+      const made: any = await inTenant(() => recurring.runNow(tpl.id, denied()));
+      expect(made?.id).toBeTruthy();
+      invoiceIds.push(made.id);
+      expect(await raw.invoice.count({ where: { tenantId } })).toBe(before + 1);
+      const rows = await raw.invoiceItem.findMany({ where: { invoiceId: made.id } });
+      expect(rows.map((r) => Number(r.unitPrice)).sort((a, b) => a - b)).toEqual([6, 20]);
+    });
+
+    it("C-G1 live (rule 6): the same operator typing that below-tier catalog price or a custom charge on a request is still refused", async () => {
+      live();
+      for (const line of [
+        { description: "Cola", productId, qty: 1, unitPrice: 6, overrideReason: "sa1034" },
+        { description: "Service fee", qty: 1, unitPrice: 20 },
+      ]) {
+        const err = await caught(
+          inTenant(() =>
+            invoicesService.create({ customerId, items: [line] } as any, denied(), {
+              source: "request",
+            }),
+          ),
+        );
+        expectPriceEditRefused(err);
+      }
+    });
+
+    it("C-G1 live (P15): the denied operator converts an accepted estimate that carries both; the invoice is created", async () => {
+      live();
+      const est: any = await inTenant(() =>
+        estimatesService.create(
+          {
+            customerId,
+            items: [
+              { productId, qty: 1, unitPrice: 6 },
+              { description: "Design fee", qty: 1, unitPrice: 50 },
+            ],
+          } as any,
+          admin(),
+        ),
+      );
+      await inTenant(() => estimatesService.send(est.id));
+      await inTenant(() => estimatesService.accept(est.id));
+      const made: any = await inTenant(() => estimatesService.convertToInvoice(est.id, denied()));
+      const invoiceId = made?.invoice?.id ?? made?.id;
+      expect(invoiceId).toBeTruthy();
+      invoiceIds.push(invoiceId);
+      const rows = await raw.invoiceItem.findMany({ where: { invoiceId } });
+      expect(rows.map((r) => Number(r.unitPrice)).sort((a, b) => a - b)).toEqual([6, 50]);
+    });
+
     it("Q1-G2: a TENANT_ADMIN makes the same calls as on master (order, invoice, estimate, template)", async () => {
       live();
       const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, admin()));

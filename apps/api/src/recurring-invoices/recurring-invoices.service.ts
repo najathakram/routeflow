@@ -515,6 +515,8 @@ export class RecurringInvoicesService {
           })),
         },
         run?.actor,
+        // SA-1034 rule 6: the template re-sends prices a person with price rights authored; nobody types one here.
+        { source: "template-run" },
       );
     } catch (err) {
       // REG-B106: record the failure AND give the cycle back. invoicesService.create
