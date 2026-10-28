@@ -39,7 +39,7 @@ const specNow = (): Date =>
  */
 function firstUnsnapped(from: Date, offsetDays: number[] = []): Date {
   const clear = (t: number) =>
-    offsetDays.every((d) => {
+    [0, ...offsetDays].every((d) => {
       const x = new Date(t + d * DAY);
       return snapToBoundary(x).getTime() === x.getTime();
     });
