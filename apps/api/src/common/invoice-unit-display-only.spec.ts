@@ -20,7 +20,7 @@ const FORBIDDEN =
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
 const CALLER =
-  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog|loadStopDisplayUnitCatalog|clearIssueDisplayUnits|displayUnit)\b/;
+  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|writeIssueBaseLabels|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog|loadStopDisplayUnitCatalog|clearIssueDisplayUnits|displayUnit)\b/;
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
   "apps/api/src/bookkeeping/bookkeeping.service.ts",
@@ -138,6 +138,7 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "withItemDisplayUnits",
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
+      "writeIssueBaseLabels",
       "freezeDraftIssueUnits",
       "freezeIssueUnitsFromCatalog",
       "loadStopDisplayUnitCatalog",
@@ -163,6 +164,7 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "itemsWithDisplayUnits",
       "resolveIssueDisplayUnits",
       "writeIssueDisplayUnits",
+      "writeIssueBaseLabels",
       "freezeDraftIssueUnits",
       "freezeIssueUnitsFromCatalog",
       "loadStopDisplayUnitCatalog",
