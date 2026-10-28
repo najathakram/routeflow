@@ -75,6 +75,8 @@ import { checkoutAnchorParams, planCheckoutAnchor } from "./checkout-anchor";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
+import { CardFirstFlagService } from "./card-first-flag.service";
+import { isLinkPending } from "./link-pending";
 import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
 import {
   PAYMENT_GRACE_DAYS,
@@ -102,6 +104,8 @@ import {
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
   STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
+  STRIPE_CHECKOUT_LINK_ENTITY,
+  STRIPE_CHECKOUT_LINKED_ACTION,
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
@@ -272,6 +276,8 @@ export class BillingService {
     @Optional() private readonly dunning?: DunningService,
     // SA-775: the rollout pause on AUTOMATIC locks (reconcileCanceledSubscriptions, the Stripe-cancel webhook).
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
+    // SA-774 (card first, then active): the dark platform flag. Absent or OFF, every path below is the legacy one.
+    @Optional() private readonly cardFirst?: CardFirstFlagService,
   ) {
     // MRR has ONE writer: dunning's pause and resume book their delta through this class's transitionAndEmit.
     this.dunning?.bindTransition((...args) => this.transitionAndEmit(...args));
@@ -1083,6 +1089,8 @@ export class BillingService {
 
       case "invoice.paid":
         await this.catchup?.onInvoicePaid(event.data.object);
+        // SA-774 chunk 2: a bank debit that cleared for a linked-but-unactivated checkout activates it (flag-gated).
+        await this.activateLinkedOnInvoicePaid(event.data.object);
         // SA-733r7 PR-B3: the ONLY resume (and the only +MRR booking) of a dunning pause; a throw is redelivered.
         await this.dunning?.onInvoicePaid(event.data.object);
         break;
@@ -2109,6 +2117,20 @@ export class BillingService {
     // did before the hook existed.
     // Every session, plan-naming or not: the tenant/customer/replay guards below protect the Stripe
     // ids + period write too, and a legacy session with no planKey used to skip all of them.
+    // SA-774 chunk 2 (dark): with the card-first flag ON a non-catch-up checkout only LINKS the Stripe subscription; the
+    // plan, the snapshot and ACTIVE are written when the payment is settled (this delivery, an async_payment_succeeded
+    // redelivery or the invoice.paid trigger). Flag OFF: unchanged.
+    const linkOnly = !isCatchupSession(session) && (await this.cardFirst?.isEnabled()) === true;
+    if (linkOnly && !settled) {
+      await this.linkCheckoutOnly(session, tenantId, subscriptionId, {
+        stripeSub,
+        period,
+        billingInterval,
+        resolvedPlanKey,
+        recheckUnderLock,
+      });
+      return;
+    }
     const snapshotOn = await this.planTransition.isEnabled();
     const tenantRow = snapshotOn
       ? await this.prisma.tenant.findUnique({
@@ -2132,7 +2154,7 @@ export class BillingService {
     // the plan and ran the plan-transition hook. Settling it must not re-judge the plan: the "newer downgrade" query
     // below would find that delivery's OWN snapshot (a false "plan not changed" email to the tenant admin), and a
     // re-write could reverse a change made while the debit was in flight. It only activates.
-    const alreadyLinked = existingOverride?.stripeSubId === subscriptionId;
+    const alreadyLinked = !linkOnly && existingOverride?.stripeSubId === subscriptionId;
     if (snapshotOn) {
       const storedCustomer = existingOverride?.stripeCustomerId;
       if (!tenantRow || (storedCustomer && storedCustomer !== session.customer)) {
@@ -2217,6 +2239,15 @@ export class BillingService {
         ? await this.mutations.inclusionCatalog?.(tenantId)
         : undefined;
 
+    // SA-774 r4: card-first ACTIVATION snapshots what Stripe bills (the base item's unit_amount), not the catalog figure.
+    const stripeBaseCents = linkOnly
+      ? this.stripeBaseUnitCents(
+          stripeSub,
+          checkoutAddonItems(stripeSub).map((i) => i.itemId),
+        )
+      : null;
+    const snapshotPrice = stripeBaseCents != null ? fromCents(stripeBaseCents) : resolvedBasePrice;
+
     const upsertArgs = {
       where: { tenantId },
       create: {
@@ -2230,7 +2261,7 @@ export class BillingService {
           ? planKeyToEnum(resolvedPlanKey)
           : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
         planKey: planKeyForCheckout,
-        basePriceSnapshot: resolvedBasePrice,
+        basePriceSnapshot: snapshotPrice,
         ...(period ?? {}),
         billingInterval,
       },
@@ -2244,8 +2275,8 @@ export class BillingService {
         // else on this base clears externalPayment on a card checkout.
         ...(isCatchupSession(session) ? { externalPayment: false } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
-        ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
-          ? { basePriceSnapshot: resolvedBasePrice }
+        ...(planKeyForCheckout && snapshotPrice != null && !hasNegotiatedOverride
+          ? { basePriceSnapshot: snapshotPrice }
           : {}),
       },
     };
@@ -2315,6 +2346,9 @@ export class BillingService {
                   existingOverride?.planKey,
                 );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
+                if (linkOnly && planKeyForCheckout) {
+                  await this.markTrialConvertedTx(tx, tenantId, planKeyForCheckout);
+                }
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
                 if (session.id && settled) {
@@ -2388,6 +2422,9 @@ export class BillingService {
               existingOverride?.planKey,
             );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
+            if (linkOnly && planKeyForCheckout) {
+              await this.markTrialConvertedTx(tx, tenantId, planKeyForCheckout);
+            }
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
@@ -2486,6 +2523,168 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /** The base plan item's unit price in cents on a retrieved subscription (add-on items excluded); null when unreadable. */
+  private stripeBaseUnitCents(stripeSub: any, addonItemIds: readonly string[]): number | null {
+    const item = stripeBaseItem(stripeSub, new Set(addonItemIds));
+    const cents = item?.price?.unit_amount;
+    return typeof cents === "number" && Number.isFinite(cents) ? cents : null;
+  }
+
+  /**
+   * SA-774 r4: a checkout that converts a trial (TRIAL, or READ_ONLY trial_*) stamps `trialConvertedAt` and emits
+   * TRIAL_CONVERTED once, in the activation transaction. A tenant that was not on a trial changes nothing.
+   */
+  private async markTrialConvertedTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    planKey: string,
+  ): Promise<void> {
+    const t = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { status: true, readOnlyReason: true },
+    });
+    const wasTrial =
+      t?.status === "TRIAL" ||
+      (t?.status === "READ_ONLY" && (t.readOnlyReason ?? "").startsWith("trial_"));
+    if (!wasTrial) return;
+    await tx.tenantSubscription.update({
+      where: { tenantId },
+      data: { trialConvertedAt: new Date() },
+    });
+    await this.events.emit(tenantId, BILLING_EVENTS.TRIAL_CONVERTED, { planKey }, { tx });
+  }
+
+  /**
+   * SA-774 chunk 2 (dark): the LINK half of a card-first checkout. Writes the Stripe ids, interval and period plus the
+   * LINKED marker in ONE transaction under the per-session lock, and NOTHING about the plan, the price snapshot or the
+   * tenant's status: the tenant stays exactly as it was until the payment settles (see onCheckoutCompleted).
+   */
+  private async linkCheckoutOnly(
+    session: any,
+    tenantId: string,
+    subscriptionId: string,
+    args: {
+      stripeSub: any;
+      period: Record<string, unknown> | null | undefined;
+      billingInterval: string | undefined;
+      resolvedPlanKey: string | null;
+      recheckUnderLock: (tx: Prisma.TransactionClient) => Promise<void>;
+    },
+  ): Promise<void> {
+    const { stripeSub, period, billingInterval, resolvedPlanKey, recheckUnderLock } = args;
+    const addonItemIds = checkoutAddonItems(stripeSub).map((i) => i.itemId);
+    try {
+      await retryOnTxConflict("billing.linkCheckout", () =>
+        this.prisma.$transaction(async (tx) => {
+          if (session.id) {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+            if (await this.hasAppliedMarker(tenantId, session.id, tx)) return;
+          }
+          await lockTenantForLedger(tx, tenantId);
+          await recheckUnderLock(tx);
+          const previousSubId = await this.storedStripeSubIdTx(tx, tenantId);
+          const tenant = await tx.tenant.findUnique({
+            where: { id: tenantId },
+            select: { plan: true },
+          });
+          await tx.tenantSubscription.upsert({
+            where: { tenantId },
+            create: {
+              tenantId,
+              stripeCustomerId: session.customer as string,
+              stripeSubId: subscriptionId,
+              currentPlan: tenant?.plan ?? "STARTER",
+              ...(period ?? {}),
+              billingInterval,
+            },
+            update: {
+              stripeSubId: subscriptionId,
+              stripeCustomerId: session.customer as string,
+              ...(period ?? {}),
+              ...(billingInterval ? { billingInterval } : {}),
+            },
+          });
+          await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
+          const already = await tx.auditLog.findFirst({
+            where: {
+              tenantId,
+              entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+              entityId: subscriptionId,
+              action: STRIPE_CHECKOUT_LINKED_ACTION,
+              meta: { path: ["sessionId"], equals: session.id ?? null },
+            },
+            select: { id: true },
+          });
+          if (already) return;
+          await tx.auditLog.create({
+            data: {
+              tenantId,
+              action: STRIPE_CHECKOUT_LINKED_ACTION,
+              entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+              entityId: subscriptionId,
+              meta: {
+                sessionId: session.id ?? null,
+                intent: session.metadata?.intent ?? null,
+                pickedPlanKey: resolvedPlanKey,
+                publishedVersionId: session.metadata?.publishedVersionId ?? null,
+                priceCents: this.stripeBaseUnitCents(stripeSub, addonItemIds),
+                addonSkus: listedCheckoutAddonSkus(session.metadata, stripeSub?.metadata),
+                pickedBy: session.metadata?.pickedBy ?? null,
+              },
+            },
+          });
+        }, CHECKOUT_TX_OPTIONS),
+      );
+    } catch (err) {
+      if (err instanceof DuplicateCheckoutSignal) {
+        await this.handleDuplicate(session, tenantId, stripeSub, err.verdict);
+        return;
+      }
+      throw err;
+    }
+    this.logger.log(
+      `checkout.awaiting_payment ${session.id ?? "?"}: tenant ${tenantId} linked to ${subscriptionId} ` +
+        `(payment_status=${session.payment_status ?? "unknown"}) - plan and status unchanged until the payment settles`,
+    );
+  }
+
+  /**
+   * SA-774 r3 rule 3 trigger (dark): `invoice.paid` for a subscription whose LINKED marker has no ACTIVATED marker
+   * activates it, by re-running the checkout's own handler on its (now paid) session. Matching is by subscription id
+   * AND customer; `onCheckoutCompleted` re-verifies the customer, the duplicate state and the lock itself.
+   */
+  private async activateLinkedOnInvoicePaid(invoice: any): Promise<void> {
+    if ((await this.cardFirst?.isEnabled()) !== true) return;
+    const subId = stripeInvoiceSubscriptionId(invoice);
+    if (!subId) return;
+    const linked = await this.prisma.auditLog.findFirst({
+      where: {
+        entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+        entityId: subId,
+        action: STRIPE_CHECKOUT_LINKED_ACTION,
+      },
+      orderBy: { createdAt: "desc" },
+      select: { tenantId: true, meta: true },
+    });
+    const tenantId = linked?.tenantId;
+    const sessionId = (linked?.meta as { sessionId?: unknown } | null)?.sessionId;
+    if (!tenantId || typeof sessionId !== "string") return;
+    if (!(await isLinkPending(this.prisma, tenantId, subId))) return;
+    const session = await this.stripe.getCheckoutSession(sessionId);
+    const invoiceCustomer =
+      typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
+    const sessionCustomer =
+      typeof session?.customer === "string" ? session.customer : session?.customer?.id;
+    if (!session || !invoiceCustomer || invoiceCustomer !== sessionCustomer) {
+      this.logger.warn(
+        `invoice.paid for ${subId}: customer does not match its checkout session ${sessionId} - not activated`,
+      );
+      return;
+    }
+    if (!SETTLED_CHECKOUT_PAYMENT_STATUSES.has(session.payment_status ?? "")) return;
+    await this.onCheckoutCompleted(session);
   }
 
   /**
@@ -2873,6 +3072,21 @@ export class BillingService {
         `payment_succeeded for tenant ${sub.tenantId}: invoice subscription ${invoiceSubId ?? "none"} is not the tenant's own - no reinstatement`,
       );
       return;
+    }
+
+    // SA-774 r3 rule 4 (dark): with card-first ON a payment never ACTIVATES a tenant that has not been activated: a
+    // link-pending one (its checkout activates it) and a trial (TRIAL, READ_ONLY trial_*) are skipped here.
+    if ((await this.cardFirst?.isEnabled()) === true) {
+      const neverActivated =
+        sub.tenant?.status === "TRIAL" ||
+        (sub.tenant?.status === "READ_ONLY" &&
+          (sub.tenant.readOnlyReason ?? "").startsWith("trial_"));
+      if (neverActivated || (await isLinkPending(this.prisma, sub.tenantId, sub.stripeSubId))) {
+        this.logger.log(
+          `payment_succeeded for tenant ${sub.tenantId}: not activated yet (trial or checkout link pending) - the checkout activates it, not this event`,
+        );
+        return;
+      }
     }
 
     // SA-733r M3 / r3 N1 (PR-B3): a dunning pause is resumed ONLY by invoice.paid (DunningService.onInvoicePaid,

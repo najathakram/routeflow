@@ -32,6 +32,7 @@ import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { BillingNotificationService } from "./billing-notification.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { CATCHUP_META } from "./catchup-claim";
 
 /** SA-736r: an upcoming-invoice preview that bills (one recurring subscription line, no discount). */
 const pricedPreview = () => ({
@@ -81,6 +82,8 @@ function make(
     casCount?: number;
     /** #2440: count of the plain SUSPENDED → CANCELLED compare-and-swap (no ledger delta). */
     plainCasCount?: number;
+    /** SA-774 chunk 2: the dark card-first flag (undefined = the service has no flag dependency at all). */
+    cardFirst?: boolean;
   } = {},
 ) {
   const sub = overrides.sub ?? {
@@ -100,6 +103,8 @@ function make(
       // isPayingRow gate — every existing test's tenant is PRODUCTION/non-deleted by default,
       // preserving current behavior exactly.
       findUniqueOrThrow: jest.fn().mockResolvedValue({ deletedAt: null, class: "PRODUCTION" }),
+      // SA-774 chunk 2: the activation tx reads the tenant (plan for a link-only create, status for the trial stamp).
+      findUnique: jest.fn((args: unknown) => prisma.tenant.findUnique(args)),
     },
     tenantAddon: {
       findMany: jest.fn().mockResolvedValue(overrides.addons ?? []),
@@ -223,6 +228,13 @@ function make(
     billingNotification,
     planTransition,
     mutations,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    overrides.cardFirst === undefined
+      ? undefined
+      : ({ isEnabled: jest.fn().mockResolvedValue(overrides.cardFirst) } as any),
   );
   return {
     svc,
@@ -3717,5 +3729,241 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(
       emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
     ).toHaveLength(1);
+  });
+});
+
+// SA-774 chunk 2 (dark, card first then active): with `billing.cardFirstPlanPick` ON a card-less checkout only LINKS;
+// the plan, the price snapshot and ACTIVE are written when the payment settles. OFF is the legacy path, untouched.
+describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gated)", () => {
+  const sessionOf = (payment_status: string, extra: Record<string, unknown> = {}) => ({
+    id: "cs_cf",
+    metadata: { tenantId: "t1", planKey: "BUSINESS", intent: "subscribe" },
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status,
+    ...extra,
+  });
+  const withBase = (stripe: any, unitAmount: number) =>
+    stripe.getSubscription.mockResolvedValue({
+      customer: "cus_1",
+      status: "active",
+      items: {
+        data: [
+          {
+            id: "si_base",
+            price: { unit_amount: unitAmount },
+            current_period_start: 1_700_000_000,
+            current_period_end: 1_702_000_000,
+          },
+        ],
+      },
+    });
+  const rowsOf = (tx: any) => tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data);
+
+  it.each(["unpaid", "weird"])(
+    "ON, payment_status %s: LINKED marker, Stripe ids only - no plan, no snapshot, no ACTIVE, no APPLIED marker",
+    async (status) => {
+      const { svc, tx, events } = make({ transitionCount: 1, cardFirst: true });
+      await (svc as any).onCheckoutCompleted(sessionOf(status));
+      const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+      expect(written.update).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: "cus_1" });
+      expect(written.update).not.toHaveProperty("planKey");
+      expect(written.update).not.toHaveProperty("basePriceSnapshot");
+      expect(written.create).not.toHaveProperty("planKey");
+      const rows = rowsOf(tx);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        tenantId: "t1",
+        action: "STRIPE_CHECKOUT_LINKED",
+        entityType: "STRIPE_CHECKOUT_LINK",
+        entityId: "sub_1",
+        meta: { sessionId: "cs_cf", pickedPlanKey: "BUSINESS", intent: "subscribe" },
+      });
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    },
+  );
+
+  it("ON, unpaid: the LINKED marker carries the Stripe base item's unit_amount as priceCents", async () => {
+    const { svc, tx, stripe } = make({ transitionCount: 1, cardFirst: true });
+    withBase(stripe, 34_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("unpaid"));
+    expect(rowsOf(tx)[0].meta.priceCents).toBe(34_900);
+  });
+
+  it("ON, unpaid, redelivered: the LINKED marker for the session is written once", async () => {
+    const { svc, tx } = make({ transitionCount: 1, cardFirst: true });
+    await (svc as any).onCheckoutCompleted(sessionOf("unpaid"));
+    tx.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+      where.action === "STRIPE_CHECKOUT_LINKED" ? { id: "l1" } : null,
+    );
+    await (svc as any).onCheckoutCompleted(sessionOf("unpaid"));
+    expect(rowsOf(tx).filter((r: any) => r.action === "STRIPE_CHECKOUT_LINKED")).toHaveLength(1);
+  });
+
+  it("ON, paid: the PICKED plan and Stripe's base unit_amount are written at activation, with the APPLIED marker", async () => {
+    const { svc, tx, stripe, events } = make({ transitionCount: 1, cardFirst: true });
+    withBase(stripe, 29_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+    expect(written.update).toMatchObject({
+      planKey: normalizePlanKey("BUSINESS"),
+      basePriceSnapshot: 299,
+    });
+    expect(rowsOf(tx).map((r: any) => r.action)).toContain("STRIPE_CHECKOUT_APPLIED");
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+  });
+
+  it("ON, async_payment_succeeded after an unpaid link: the plan is written then (the link did not write it)", async () => {
+    const { svc, tx } = make({
+      transitionCount: 1,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeSubId: "sub_1", // this session's own subscription, linked by the unpaid delivery
+        stripeCustomerId: "cus_1",
+      },
+    });
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(tx.tenantSubscription.upsert.mock.calls[0][0].update).toMatchObject({
+      planKey: normalizePlanKey("BUSINESS"),
+    });
+  });
+
+  it("OFF: an unpaid session links the plan exactly as before and writes no LINKED marker", async () => {
+    const { svc, tx } = make({ transitionCount: 1, cardFirst: false });
+    await (svc as any).onCheckoutCompleted(sessionOf("unpaid"));
+    expect(tx.tenantSubscription.upsert.mock.calls[0][0].update).toMatchObject({
+      planKey: normalizePlanKey("BUSINESS"),
+    });
+    expect(rowsOf(tx).map((r: any) => r.action)).not.toContain("STRIPE_CHECKOUT_LINKED");
+  });
+
+  it("ON, a catch-up session is not link-only (it keeps its own claim path)", async () => {
+    const { svc, tx } = make({ transitionCount: 1, cardFirst: true });
+    await (svc as any).onCheckoutCompleted(
+      sessionOf("unpaid", {
+        metadata: { tenantId: "t1", planKey: "BUSINESS", [CATCHUP_META.catchup]: "oct" },
+      }),
+    );
+    expect(rowsOf(tx).map((r: any) => r.action)).not.toContain("STRIPE_CHECKOUT_LINKED");
+  });
+
+  describe("onPaymentSucceeded narrowing (r3 rule 4)", () => {
+    const trialSub = {
+      tenantId: "t1",
+      planKey: "BUSINESS",
+      basePriceSnapshot: 349,
+      discount: 0,
+      stripeSubId: "sub_1",
+      tenant: { status: "TRIAL", readOnlyReason: null },
+    };
+    it("ON: a TRIAL tenant is not activated by the payment event", async () => {
+      const { svc, tx, events } = make({ transitionCount: 1, cardFirst: true, sub: trialSub });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
+      expect(tx.tenant.updateMany).not.toHaveBeenCalled();
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+    it("ON: READ_ONLY(trial_expired) is not activated by the payment event", async () => {
+      const { svc, events } = make({
+        transitionCount: 1,
+        cardFirst: true,
+        sub: { ...trialSub, tenant: { status: "READ_ONLY", readOnlyReason: "trial_expired" } },
+      });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+    it("ON: a link-pending SUSPENDED tenant is not reinstated by the payment event", async () => {
+      const { svc, prisma, events } = make({
+        transitionCount: 1,
+        cardFirst: true,
+        sub: { ...trialSub, tenant: { status: "SUSPENDED", readOnlyReason: null } },
+      });
+      prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+        where.action === "STRIPE_CHECKOUT_LINKED"
+          ? { meta: { sessionId: "cs_cf" }, createdAt: new Date() }
+          : null,
+      );
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    });
+    it("ON: a SUSPENDED card payer (no link pending) is still reinstated", async () => {
+      const { svc, events } = make({
+        transitionCount: 1,
+        cardFirst: true,
+        sub: { ...trialSub, tenant: { status: "SUSPENDED", readOnlyReason: null } },
+      });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    });
+    it("OFF: unchanged - the trial row is reinstated as before", async () => {
+      const { svc, events } = make({ transitionCount: 1, cardFirst: false, sub: trialSub });
+      await (svc as any).onPaymentSucceeded(OWN_INVOICE);
+      expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    });
+  });
+
+  describe("invoice.paid trigger", () => {
+    const linkedRow = { tenantId: "t1", meta: { sessionId: "cs_cf" }, createdAt: new Date() };
+    const pendingTrail = (prisma: any) =>
+      prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+        where.action === "STRIPE_CHECKOUT_LINKED" ? linkedRow : null,
+      );
+    const invoicePaid = (svc: any, customer = "cus_1") =>
+      svc.handleWebhookEvent({
+        id: "evt_ip",
+        type: "invoice.paid",
+        data: { object: { ...OWN_INVOICE, customer } },
+      });
+
+    it("ON: a linked, unactivated subscription is activated through the checkout handler", async () => {
+      const { svc, prisma, stripe } = make({ cardFirst: true });
+      pendingTrail(prisma);
+      stripe.getCheckoutSession = jest.fn().mockResolvedValue(sessionOf("paid"));
+      const spy = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+      await invoicePaid(svc);
+      expect(stripe.getCheckoutSession).toHaveBeenCalledWith("cs_cf");
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+    it("ON: a foreign customer activates nothing", async () => {
+      const { svc, prisma, stripe } = make({ cardFirst: true });
+      pendingTrail(prisma);
+      stripe.getCheckoutSession = jest.fn().mockResolvedValue(sessionOf("paid"));
+      const spy = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+      jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      await invoicePaid(svc, "cus_other");
+      expect(spy).not.toHaveBeenCalled();
+    });
+    it("ON: a session that is still unpaid activates nothing", async () => {
+      const { svc, prisma, stripe } = make({ cardFirst: true });
+      pendingTrail(prisma);
+      stripe.getCheckoutSession = jest.fn().mockResolvedValue(sessionOf("unpaid"));
+      const spy = jest.spyOn(svc as any, "onCheckoutCompleted").mockResolvedValue(undefined);
+      await invoicePaid(svc);
+      expect(spy).not.toHaveBeenCalled();
+    });
+    it("ON: an already activated link (APPLIED marker) is left alone", async () => {
+      const { svc, prisma, stripe } = make({ cardFirst: true });
+      prisma.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+        where.action === "STRIPE_CHECKOUT_LINKED"
+          ? linkedRow
+          : where.action === "STRIPE_CHECKOUT_APPLIED"
+            ? { id: "a1" }
+            : null,
+      );
+      stripe.getCheckoutSession = jest.fn();
+      await invoicePaid(svc);
+      expect(stripe.getCheckoutSession).not.toHaveBeenCalled();
+    });
+    it("OFF: the trigger reads nothing", async () => {
+      const { svc, prisma, stripe } = make({ cardFirst: false });
+      stripe.getCheckoutSession = jest.fn();
+      await invoicePaid(svc);
+      expect(stripe.getCheckoutSession).not.toHaveBeenCalled();
+      expect(prisma.auditLog.findFirst).not.toHaveBeenCalled();
+    });
   });
 });
