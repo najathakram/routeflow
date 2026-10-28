@@ -69,15 +69,11 @@ import {
   paymentMethodOptions,
   preselectFulfilment,
   quickTenderOptions,
-  AUTO_PRINT_CHOICES,
-  type AutoPrintChoice,
-  printsInvoice,
-  printsReceipt,
-  readAutoPrintChoice,
+  readAutoPrint,
   readHeldAttempt,
   resolveTender,
   validatePayment,
-  writeAutoPrintChoice,
+  writeAutoPrint,
   writeHeldAttempt,
   COUNTER_CHECK_POSTDATED_COPY,
   COUNTER_CHECK_ZONE_FAILED_COPY,
@@ -87,7 +83,6 @@ import {
 } from "@/lib/counter-sale";
 import { calendarDayInZone } from "@/lib/calendar-date";
 import { useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
-import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { keptSaleHref } from "@/lib/kept-draft-invoice";
 import { receiptCustomerName, type ReceiptBusinessProfile } from "@/lib/counter-receipt";
 import { isCounterSaleDayClosed } from "@/lib/day-closed-copy";
@@ -239,10 +234,9 @@ export function CounterSaleScreen() {
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
   // no cash tendered), so the receipt can show tendered and change, labelled "as entered".
   const [enteredTender, setEnteredTender] = React.useState<number | null>(null);
-  const [autoPrint, setAutoPrint] = React.useState<AutoPrintChoice>("off");
-  const printInvoice = usePrintInvoice();
+  const [autoPrint, setAutoPrint] = React.useState(false);
 
-  React.useEffect(() => setAutoPrint(readAutoPrintChoice()), []);
+  React.useEffect(() => setAutoPrint(readAutoPrint()), []);
   // A held UNKNOWN attempt survives leaving the screen: restore the locked sale with the SAME key and body.
   React.useEffect(() => {
     const held = readHeldAttempt(heldKey);
@@ -1032,23 +1026,14 @@ export function CounterSaleScreen() {
       roundMoney(res.total) !== roundMoney(shown.total) ||
       roundMoney(res.change ?? 0) !== roundMoney(shown.change);
     const startFresh = next && !unpaid && !figuresDiffer;
-    // SA-1026 B: the device's choice is nothing, receipt, invoice or both; the invoice PDF follows the receipt when both
-    const invoiceToPrint = printsInvoice(autoPrint) ? res.invoiceId : undefined;
-    if (printsReceipt(autoPrint)) {
+    if (autoPrint) {
       // D6: the RECEIPT is rendered first, then printed once (the effect below), and only then does "next" reset.
-      printAfterRenderRef.current = {
-        reset: startFresh,
-        note: lastSaleNoteFrom(res),
-        invoiceId: invoiceToPrint,
-      };
+      printAfterRenderRef.current = { reset: startFresh, note: lastSaleNoteFrom(res) };
       setReceipt(res);
-    } else {
-      if (invoiceToPrint) void printInvoice.print(invoiceToPrint);
-      if (startFresh) {
-        resetSale();
-        setLastSale(lastSaleNoteFrom(res)); // CQ-17: after the reset, so the fresh sale names the one just finished
-      } else setReceipt(res);
-    }
+    } else if (startFresh) {
+      resetSale();
+      setLastSale(lastSaleNoteFrom(res)); // CQ-17: after the reset, so the fresh sale names the one just finished
+    } else setReceipt(res);
   };
 
   // S5: why Complete is off (linked from both buttons), next to the read-only hint when that shows too
@@ -1145,17 +1130,12 @@ export function CounterSaleScreen() {
   };
 
   // Auto-print: runs after the receipt has committed to the DOM, so the page printed IS the receipt.
-  const printAfterRenderRef = React.useRef<{
-    reset: boolean;
-    note?: LastSaleNote;
-    invoiceId?: string;
-  } | null>(null);
+  const printAfterRenderRef = React.useRef<{ reset: boolean; note?: LastSaleNote } | null>(null);
   React.useEffect(() => {
     if (!receipt || !printAfterRenderRef.current) return;
-    const { reset, note, invoiceId } = printAfterRenderRef.current;
+    const { reset, note } = printAfterRenderRef.current;
     printAfterRenderRef.current = null;
     window.print(); // once per completed sale
-    if (invoiceId) void printInvoice.print(invoiceId); // both: the invoice PDF after the receipt
     if (reset) {
       resetSale();
       if (note) setLastSale(note);
@@ -1163,9 +1143,9 @@ export function CounterSaleScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt]);
 
-  const chooseAutoPrint = (choice: AutoPrintChoice) => {
-    setAutoPrint(choice);
-    writeAutoPrintChoice(choice);
+  const toggleAutoPrint = (on: boolean) => {
+    setAutoPrint(on);
+    writeAutoPrint(on);
   };
 
   // A failed check keeps its retry panel up through a retry (CQ-30, see `keepRetryPanel`).
@@ -1662,18 +1642,13 @@ export function CounterSaleScreen() {
           </section>
 
           <label className="flex min-h-[44px] items-center gap-2 text-sm">
-            Print automatically
-            <select
-              className="min-h-[44px] rounded border border-slate-300 bg-white px-2 text-sm"
-              value={autoPrint}
-              onChange={(e) => chooseAutoPrint(e.target.value as AutoPrintChoice)}
-            >
-              {AUTO_PRINT_CHOICES.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+            <input
+              type="checkbox"
+              className="h-5 w-5 max-lg:h-11 max-lg:w-11"
+              checked={autoPrint}
+              onChange={(e) => toggleAutoPrint(e.target.checked)}
+            />
+            Print receipt automatically
           </label>
 
           {outcomeUnknown ? (

@@ -1,4 +1,6 @@
 import * as React from "react";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { screen, waitFor, fireEvent } from "@/test-utils/render";
 import { renderTill } from "@/test-utils/render-till";
 import { apiClient } from "@/lib/api-client";
@@ -6,9 +8,9 @@ import { AUTO_PRINT_KEY } from "@/lib/counter-sale";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
- * SA-1026 B-R5: the till's "Print receipt automatically" becomes a choice of nothing, receipt, invoice or both. It stays a
- * per-device setting. Receipt prints the page (as before); invoice fetches and prints the sale's invoice PDF instead; both
- * does the receipt, then the invoice. The done screen's own Print invoice is the one-tap fallback.
+ * SA-1026 B (owner ruling): an invoice never prints by itself. The till keeps its one device-local "Print receipt
+ * automatically" checkbox (the receipt page, as before) and offers NO auto-print choice for the invoice; the invoice prints
+ * only when staff tap "Print invoice". A stored "invoice" or "both" from the retired choice reads as off.
  */
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -67,6 +69,7 @@ const SALE = {
 };
 const get = apiClient.get as unknown as jest.Mock;
 const print = jest.fn();
+const pdfCalls = () => get.mock.calls.map((c) => String(c[0])).filter((u) => u.endsWith("/pdf"));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -95,47 +98,31 @@ const named = () => {
 };
 const complete = () =>
   fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
-const choose = (value: string) =>
-  fireEvent.change(screen.getByLabelText("Print automatically"), { target: { value } });
 
-describe("CounterSaleScreen: auto-print choice (SA-1026 B-R5)", () => {
-  it("offers nothing, receipt, invoice and both, and remembers the pick on this device", () => {
+describe("CounterSaleScreen: the invoice never prints by itself (SA-1026 B-G2)", () => {
+  it("has the one receipt checkbox and no Print automatically choice", () => {
     renderTill(<CounterSaleScreen />);
-    const select = screen.getByLabelText("Print automatically") as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual([
-      "Nothing",
-      "Receipt",
-      "Invoice",
-      "Receipt and invoice",
-    ]);
-    choose("invoice");
-    expect(window.localStorage.getItem(AUTO_PRINT_KEY)).toBe("invoice");
+    expect(screen.getByRole("checkbox", { name: "Print receipt automatically" })).not.toBeChecked();
+    expect(screen.queryByLabelText("Print automatically")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /print/i })).toBeNull();
   });
 
-  it("invoice: the invoice PDF for the sale prints and the receipt page does not", async () => {
-    window.localStorage.setItem(AUTO_PRINT_KEY, "invoice");
-    renderTill(<CounterSaleScreen />);
-    await scan();
-    named();
-    complete();
-    await screen.findByTestId("counter-sale-receipt");
-    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
-    expect(get.mock.calls.map((c) => String(c[0]))).toContain("/invoices/i1/pdf");
-    expect(print).not.toHaveBeenCalled();
-  });
+  it.each(["invoice", "both"])(
+    "a stored %s prints nothing when a sale completes",
+    async (stored) => {
+      window.localStorage.setItem(AUTO_PRINT_KEY, stored);
+      renderTill(<CounterSaleScreen />);
+      await scan();
+      named();
+      complete();
+      await screen.findByTestId("counter-sale-receipt");
+      expect(printPdfBlob).not.toHaveBeenCalled();
+      expect(print).not.toHaveBeenCalled();
+      expect(pdfCalls()).toEqual([]);
+    },
+  );
 
-  it("both: the receipt prints, then the invoice", async () => {
-    window.localStorage.setItem(AUTO_PRINT_KEY, "both");
-    renderTill(<CounterSaleScreen />);
-    await scan();
-    named();
-    complete();
-    await screen.findByTestId("counter-sale-receipt");
-    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
-    expect(print).toHaveBeenCalledTimes(1);
-  });
-
-  it("receipt (a stored 1) prints the page only, exactly as before", async () => {
+  it("the receipt checkbox still prints the receipt page only, never the invoice PDF", async () => {
     window.localStorage.setItem(AUTO_PRINT_KEY, "1");
     renderTill(<CounterSaleScreen />);
     await scan();
@@ -144,5 +131,30 @@ describe("CounterSaleScreen: auto-print choice (SA-1026 B-R5)", () => {
     await screen.findByTestId("counter-sale-receipt");
     expect(print).toHaveBeenCalledTimes(1);
     expect(printPdfBlob).not.toHaveBeenCalled();
+  });
+
+  it("the done screen's Print invoice is the one-tap way, and it prints that sale's invoice", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan();
+    named();
+    complete();
+    await screen.findByTestId("counter-sale-receipt");
+    expect(printPdfBlob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
+  });
+
+  it("no source keeps an invoice auto-print choice", () => {
+    const till = readFileSync(join(__dirname, "CounterSaleScreen.tsx"), "utf8");
+    const lib = readFileSync(
+      join(__dirname, "..", "..", "..", "..", "lib", "counter-sale.ts"),
+      "utf8",
+    );
+    expect(till).not.toContain("usePrintInvoice");
+    for (const gone of ["printsInvoice", "AutoPrintChoice", "AUTO_PRINT_CHOICES"]) {
+      expect(lib).not.toContain(gone);
+      expect(till).not.toContain(gone);
+    }
   });
 });

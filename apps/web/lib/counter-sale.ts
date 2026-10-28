@@ -493,49 +493,21 @@ export function counterSaleErrorCopy(err: unknown, opts: { walkIn?: boolean } = 
 /** One key per SALE (sent as `Idempotency-Key`): kept until a DEFINITIVE answer, then a new sale gets a new one. */
 export const newIdempotencyKey = mintSaleKey;
 
-/**
- * Per-DEVICE preference ("Print automatically"): localStorage only, never tenant data, never throws. SA-1026 B: it is a choice
- * of nothing, receipt, invoice or both. Stored as before: "1" = receipt and "0" = off (so an older tab reads it the same),
- * "invoice" and "both" for the new picks. A stored "true" also reads as receipt; anything unknown reads as off, so no device
- * changes behaviour on deploy.
- */
+/** Per-DEVICE preference ("Print receipt automatically"): localStorage only, never tenant data, never throws. */
 export const AUTO_PRINT_KEY = "rf.counterSale.autoPrint";
-export type AutoPrintChoice = "off" | "receipt" | "invoice" | "both";
-export const AUTO_PRINT_CHOICES: readonly { value: AutoPrintChoice; label: string }[] = [
-  { value: "off", label: "Nothing" },
-  { value: "receipt", label: "Receipt" },
-  { value: "invoice", label: "Invoice" },
-  { value: "both", label: "Receipt and invoice" },
-];
-export function readAutoPrintChoice(): AutoPrintChoice {
-  try {
-    const stored = window.localStorage.getItem(AUTO_PRINT_KEY);
-    if (stored === "1" || stored === "true" || stored === "receipt") return "receipt";
-    if (stored === "invoice" || stored === "both") return stored;
-    return "off";
-  } catch {
-    return "off";
-  }
-}
-export function writeAutoPrintChoice(choice: AutoPrintChoice): void {
-  try {
-    window.localStorage.setItem(
-      AUTO_PRINT_KEY,
-      choice === "receipt" ? "1" : choice === "off" ? "0" : choice,
-    );
-  } catch {
-    /* storage unavailable: the choice simply does not persist */
-  }
-}
-/** Whether the receipt prints by itself (the refund slip follows the same switch). */
-export const printsReceipt = (c: AutoPrintChoice): boolean => c === "receipt" || c === "both";
-/** Whether the sale's invoice prints by itself. */
-export const printsInvoice = (c: AutoPrintChoice): boolean => c === "invoice" || c === "both";
 export function readAutoPrint(): boolean {
-  return printsReceipt(readAutoPrintChoice());
+  try {
+    return window.localStorage.getItem(AUTO_PRINT_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 export function writeAutoPrint(on: boolean): void {
-  writeAutoPrintChoice(on ? "receipt" : "off");
+  try {
+    window.localStorage.setItem(AUTO_PRINT_KEY, on ? "1" : "0");
+  } catch {
+    /* storage unavailable: the toggle simply does not persist */
+  }
 }
 
 // ─── Pickup complete (order ahead, "Picked up") ───────────────────────────────────────────────────────────

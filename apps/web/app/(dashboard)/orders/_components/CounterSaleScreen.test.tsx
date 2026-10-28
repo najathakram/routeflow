@@ -600,9 +600,7 @@ describe("CounterSaleScreen", () => {
     };
     it("on: window.print once after Complete & show receipt, and the toggle persists locally", async () => {
       renderTill(<CounterSaleScreen />);
-      fireEvent.change(screen.getByLabelText("Print automatically"), {
-        target: { value: "receipt" },
-      });
+      fireEvent.click(screen.getByLabelText("Print receipt automatically"));
       expect(window.localStorage.getItem("rf.counterSale.autoPrint")).toBe("1");
       await finishSale();
       await waitFor(() => expect(printSpy).toHaveBeenCalledTimes(1));
@@ -611,7 +609,7 @@ describe("CounterSaleScreen", () => {
       window.localStorage.setItem("rf.counterSale.autoPrint", "1");
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
       );
       await scan("012345678905");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
@@ -643,10 +641,8 @@ describe("CounterSaleScreen", () => {
       });
       try {
         renderTill(<CounterSaleScreen />);
-        expect(screen.getByLabelText("Print automatically")).toHaveValue("off");
-        fireEvent.change(screen.getByLabelText("Print automatically"), {
-          target: { value: "receipt" },
-        });
+        expect(screen.getByLabelText("Print receipt automatically")).not.toBeChecked();
+        fireEvent.click(screen.getByLabelText("Print receipt automatically"));
         await finishSale();
         // the toggle was flipped for this session even though it could not persist
       } finally {
@@ -1190,7 +1186,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
         mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
         renderTill(<CounterSaleScreen />);
         await waitFor(() =>
-          expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+          expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
         );
         await fillCola();
         fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
@@ -1523,7 +1519,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockResolvedValue(unpaid);
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
@@ -1664,7 +1660,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       });
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: /Complete & next sale/ }));
@@ -1993,7 +1989,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockRejectedValueOnce({ response: { status: 503 } });
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
       );
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
@@ -2007,7 +2003,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
     it("two Complete & next sale runs print twice in total", async () => {
       renderTill(<CounterSaleScreen />);
       await waitFor(() =>
-        expect(screen.getByLabelText("Print automatically")).toHaveValue("receipt"),
+        expect(screen.getByLabelText("Print receipt automatically")).toBeChecked(),
       );
       for (let i = 0; i < 2; i++) {
         if (i > 0) tapWalkIn(); // the next sale asks who is buying again

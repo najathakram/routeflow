@@ -131,7 +131,7 @@ describe("POS-3 control inventory (nothing removed or hidden)", () => {
     for (const label of ["Find a customer", "Scan or search items", "Amount tendered"]) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
-    expect(screen.getByLabelText("Print automatically")).toBeInTheDocument();
+    expect(screen.getByLabelText("Print receipt automatically")).toBeInTheDocument();
     expect(screen.getByTestId("running-total")).toBeInTheDocument();
     expect(screen.getByTestId("change-due")).toBeInTheDocument();
     click("Check");
@@ -371,7 +371,7 @@ describe("POS-3 layout and touch targets", () => {
         screen.getByRole(TENDERS.test(String(name)) ? "radio" : "button", { name }).className,
       ).toMatch(/min-w-\[44px\]/);
     }
-    const autoPrint = screen.getByLabelText("Print automatically").closest("label")!;
+    const autoPrint = screen.getByLabelText("Print receipt automatically").closest("label")!;
     expect(autoPrint.className).toMatch(/min-h-\[44px\]/);
   });
 });
