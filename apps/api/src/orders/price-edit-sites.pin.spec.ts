@@ -54,6 +54,7 @@ const ASSERT_COUNTS: Record<string, number> = {
 const COMPUTE_COUNTS: Record<string, number> = {
   "orders/orders.service.ts": 2, // create, updateOrderItems (each once, before its transaction)
   "invoices/invoice-line-override.ts": 1, // loadOverride: invoice create and edit
+  "returns/inline-returns-quote.service.ts": 1, // priceInlineReturn: the quote and the capture's credit price
 };
 
 describe("SA-1034: price-edit capability is checked at every override site", () => {
