@@ -160,3 +160,86 @@ export function assertLineCaps(
     used.set(r.orderItemId, (used.get(r.orderItemId) ?? 0) + r.pieces);
   }
 }
+
+// ── Rule 7: price per line ─────────────────────────────────────────────────────────────────────────────────────────────
+
+interface GroupableItem {
+  productId: string;
+  qty: unknown;
+  sourceOrderItemId?: string | null;
+}
+
+/** The group a returned item is priced and itemised under: its product, and its order line when it names one. */
+export const returnGroupKey = (item: {
+  productId: string;
+  sourceOrderItemId?: string | null;
+}): string =>
+  item.sourceOrderItemId ? `${item.productId}|${item.sourceOrderItemId}` : item.productId;
+
+export interface ReturnGroup {
+  key: string;
+  productId: string;
+  /** The order line of a line group; null for the pooled group of a product. */
+  orderItemId: string | null;
+  /** The group's returned qty, in the line's own unit. */
+  qty: number;
+}
+
+/** Returned items grouped by `returnGroupKey`, qty summed, in first-seen order. The ONE grouping the preview and the mint share. */
+export function groupReturnItems(items: GroupableItem[]): Map<string, ReturnGroup> {
+  const out = new Map<string, ReturnGroup>();
+  for (const it of items) {
+    const key = returnGroupKey(it);
+    const cur = out.get(key);
+    if (cur) cur.qty += Number(it.qty);
+    else
+      out.set(key, {
+        key,
+        productId: it.productId,
+        orderItemId: it.sourceOrderItemId || null,
+        qty: Number(it.qty),
+      });
+  }
+  return out;
+}
+
+/** The invoice items a group is credited against: a line group's are the items billed from that order line; a pooled group's, all of the product's. */
+export function groupInvoiceItems<T>(
+  group: Pick<ReturnGroup, "productId" | "orderItemId">,
+  invoiceItems: readonly T[],
+): T[] {
+  return invoiceItems.filter((it) => {
+    const row = it as { productId?: string | null; orderItemId?: string | null };
+    return (
+      row.productId === group.productId &&
+      (group.orderItemId == null || row.orderItemId === group.orderItemId)
+    );
+  });
+}
+
+/** The order line a standard item names, as the wire shows it (a snapshot of the line, never the live product), or null. */
+export function lineOfItem(
+  item: { sourceOrderItemId?: string | null },
+  order: OrderForPieces | null | undefined,
+): {
+  unitLabel: string | null;
+  unitsPerBox: number | null;
+  boxes: number | null;
+  qty: number;
+} | null {
+  if (!item.sourceOrderItemId) return null;
+  const line = (order?.lineItems ?? []).find((l) => l.id === item.sourceOrderItemId);
+  if (!line) return null;
+  return {
+    unitLabel: line.unitLabel ?? null,
+    unitsPerBox: line.unitsPerBox != null ? Number(line.unitsPerBox) : null,
+    boxes: line.boxes != null ? Number(line.boxes) : null,
+    qty: Number(line.qty),
+  };
+}
+
+/** Each item with its order line (`line`, rule 8), from the order the read already holds. */
+export const withLines = <T extends { sourceOrderItemId?: string | null }>(
+  items: T[] | null | undefined,
+  order: OrderForPieces | null | undefined,
+) => (items ?? []).map((it) => ({ ...it, line: lineOfItem(it, order) }));

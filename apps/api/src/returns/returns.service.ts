@@ -94,7 +94,14 @@ import {
   standardPackBasesForOrders,
   standardReturnPieces,
 } from "./returns-pieces.util";
-import { assertLineCaps, resolveLineItems } from "./return-line-items";
+import {
+  assertLineCaps,
+  groupInvoiceItems,
+  groupReturnItems,
+  lineOfItem,
+  resolveLineItems,
+  withLines,
+} from "./return-line-items";
 import { restockReturnItems } from "./returns-restock.util";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
@@ -133,6 +140,7 @@ const REFUND_RETURN_INCLUDE = {
           items: {
             select: {
               id: true,
+              orderItemId: true,
               productId: true,
               qty: true,
               subtotal: true,
@@ -599,6 +607,7 @@ export class ReturnsService {
                   items: {
                     select: {
                       id: true,
+                      orderItemId: true,
                       productId: true,
                       qty: true,
                       subtotal: true,
@@ -646,6 +655,7 @@ export class ReturnsService {
       if (ret.kind === "INLINE") {
         return {
           ...rest,
+          items: withLines(rest.items, order),
           order: strippedOrder,
           refundEstimate: null,
           refundEstimateReason: "INLINE",
@@ -663,6 +673,7 @@ export class ReturnsService {
       );
       return {
         ...rest,
+        items: withLines(rest.items, order),
         order: strippedOrder,
         refundEstimate: amount,
         refundEstimateReason: refusal ?? null,
@@ -825,16 +836,23 @@ export class ReturnsService {
     // Nothing billed at all => refuse (a $0 REFUNDED return with no credit note was a silent under-credit); a MIXED return refunds
     // the billed part and reports the rest as readable "not billed, no refund" lines.
     const billedProducts = new Set<string>();
+    const billedLines = new Set<string>(); // SA-1042: a line item is billed only if ITS line was
     for (const inv of creditable)
-      for (const it of inv.items ?? []) if (Number(it.qty) > 0) billedProducts.add(it.productId);
+      for (const it of inv.items ?? [])
+        if (Number(it.qty) > 0) {
+          billedProducts.add(it.productId);
+          if (it.orderItemId) billedLines.add(it.orderItemId);
+        }
+    const isBilled = (it: any) =>
+      it.sourceOrderItemId
+        ? billedLines.has(it.sourceOrderItemId)
+        : billedProducts.has(it.productId);
+    const returned = items.filter((it: any) => Number(it.qty) > 0);
     const unbilledQty = new Map<string, number>();
-    for (const it of items)
-      if (Number(it.qty) > 0 && !billedProducts.has(it.productId))
+    for (const it of returned)
+      if (!isBilled(it))
         unbilledQty.set(it.productId, (unbilledQty.get(it.productId) ?? 0) + Number(it.qty));
-    const returnedProducts = new Set(
-      items.filter((it: any) => Number(it.qty) > 0).map((it: any) => it.productId),
-    );
-    if (returnedProducts.size > 0 && unbilledQty.size === returnedProducts.size)
+    if (returned.length > 0 && returned.every((it: any) => !isBilled(it)))
       throw new BadRequestException({
         code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
         message:
@@ -1056,23 +1074,15 @@ export class ReturnsService {
   ): Promise<RefundItem[]> {
     const lines: HeadroomLine[] = (invoice?.items ?? []).map(toHeadroomLine);
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
-    const returnedByProduct = new Map<string, number>();
-    for (const it of returnItems) {
-      returnedByProduct.set(
-        it.productId,
-        (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
-      );
-    }
     let credited = await loadLineCredits(db, invoice.id, lines);
     const out: RefundItem[] = [];
-    for (const [productId, returnedQty] of returnedByProduct) {
-      const mine = lines.filter((l) => l.productId === productId);
-      const axis = returnPricingAxis(
-        packBases,
-        productId,
-        returnedQty,
-        (invoice.items ?? []).filter((it: any) => it.productId === productId),
-      );
+    // SA-1042 rule 7: a line group is credited against the invoice items billed from its line, a pooled group against the product's.
+    for (const group of groupReturnItems(returnItems).values()) {
+      const { productId, qty: returnedQty } = group;
+      const billed = groupInvoiceItems<any>(group, invoice.items ?? []);
+      const billedIds = new Set(billed.map((it: any) => it.id));
+      const mine = lines.filter((l) => billedIds.has(l.id));
+      const axis = returnPricingAxis(packBases, productId, returnedQty, billed);
       if ("unresolved" in axis) throw this.mixedUnitRefusal(productId);
       const factorOf = (l: HeadroomLine): number => (axis.pieces ? (l.piecesPerQty ?? 1) : 1);
       const inPieces = mine.map((l) => ({ ...l, qty: l.qty * factorOf(l), piecesPerQty: 1 }));
@@ -1165,7 +1175,15 @@ export class ReturnsService {
         );
       }
       let amount = 0;
-      for (const item of items) {
+      // SA-1042 rule 7: a line item is priced from its own order line's subtotal / qty, never from the pool.
+      for (const g of groupReturnItems(items.filter((i) => i.sourceOrderItemId)).values()) {
+        const line = (order?.lineItems ?? []).find(
+          (l: any) => l.id === g.orderItemId && l.status !== "CANCELLED",
+        );
+        if (!line || Number(line.qty) <= 0) continue;
+        amount += (Math.min(g.qty, Number(line.qty)) * Number(line.subtotal)) / Number(line.qty);
+      }
+      for (const item of items.filter((i) => !i.sourceOrderItemId)) {
         const soldQty = soldQtyByProduct.get(item.productId) ?? 0;
         if (soldQty <= 0) continue;
         const soldSubtotal = soldSubtotalByProduct.get(item.productId) ?? 0;
@@ -1185,39 +1203,25 @@ export class ReturnsService {
       return { amount: 0, invoiceId: undefined, creditable, refusal: "NOTHING_CREDITABLE" };
     }
 
-    const billedQtyByProduct = new Map<string, number>();
-    const billedItemsByProduct = new Map<string, any[]>();
-    for (const inv of creditable) {
-      for (const invItem of inv.items ?? []) {
-        billedQtyByProduct.set(
-          invItem.productId,
-          (billedQtyByProduct.get(invItem.productId) ?? 0) + Number(invItem.qty),
-        );
-        const list = billedItemsByProduct.get(invItem.productId);
-        if (list) list.push(invItem);
-        else billedItemsByProduct.set(invItem.productId, [invItem]);
-      }
-    }
-
-    // SA-628b: the pooled average per product (master's price), the same `planProductRefund` price the mint uses, rounded
-    // per product so the preview equals what the mint itemises (money-neutral vs master up to a cent across products).
+    // SA-1042 rule 7: price per GROUP (product + line when named): a line group's billed items are the creditable invoice items
+    // billed from that order line, a pooled group's are all of the product's (SA-628b, the pooled average, unchanged).
+    const billedAll: any[] = creditable.flatMap((inv: any) => inv.items ?? []);
+    const groups = groupReturnItems(items);
+    const billedQtyOf = (g: { productId: string; orderItemId: string | null }) =>
+      groupInvoiceItems<any>(g, billedAll).reduce((t: number, it: any) => t + Number(it.qty), 0);
     // B969 (SA-628p): the average runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
     // `standardReturnPieces`, each billed item through `piecesPerQtyOf`) so 1 box of a 2-box line billed as 24 pieces refunds
     // 12 x (120 / 24), not 1 x (120 / 24).
-    const returned = new Map<string, number>();
-    for (const item of items) {
-      returned.set(item.productId, (returned.get(item.productId) ?? 0) + Number(item.qty));
-    }
     let amount = 0;
     let unresolvedProductId: string | undefined;
-    for (const [productId, qty] of returned) {
-      const billedItems = billedItemsByProduct.get(productId) ?? [];
-      if ((billedQtyByProduct.get(productId) ?? 0) <= 0) continue;
-      const axis = returnPricingAxis(packBases, productId, qty, billedItems, {
+    for (const g of groups.values()) {
+      const billedItems = groupInvoiceItems<any>(g, billedAll);
+      if (billedQtyOf(g) <= 0) continue;
+      const axis = returnPricingAxis(packBases, g.productId, g.qty, billedItems, {
         pooled: creditable.length >= 2,
       });
       if ("unresolved" in axis) {
-        unresolvedProductId ??= productId;
+        unresolvedProductId ??= g.productId;
         continue;
       }
       const billed = billedItems.reduce(
@@ -1231,9 +1235,7 @@ export class ReturnsService {
 
     // B959: nothing the customer returned was billed on any creditable invoice (a billed $0 line is billed): the preview says
     // so (amount 0 WITH a reason) and billedBasisFor refuses it, instead of a plain $0.
-    const nothingBilled =
-      [...returned].length > 0 &&
-      [...returned.keys()].every((productId) => (billedQtyByProduct.get(productId) ?? 0) <= 0);
+    const nothingBilled = groups.size > 0 && [...groups.values()].every((g) => billedQtyOf(g) <= 0);
     // B969: if ANY returned product has no single pricing axis the WHOLE preview is $0 WITH a reason, because the mint refuses
     // the whole return (409). Never make this a partial sum of the products that did resolve.
     const why = unresolvedProductId
@@ -1765,6 +1767,7 @@ export class ReturnsService {
                 items: {
                   select: {
                     id: true,
+                    orderItemId: true,
                     productId: true,
                     qty: true,
                     subtotal: true,
@@ -1810,6 +1813,7 @@ export class ReturnsService {
         ...item,
         orderedQty: ret.order ? soldQtyForProduct(ret.order as any, item.productId) : null,
         unitPrice: orderLine ? Number(orderLine.unitPrice) : null,
+        line: lineOfItem(item, ret.order as any), // SA-1042 rule 8: the item's order line, a snapshot (null when pooled)
       };
     });
 
