@@ -377,8 +377,8 @@ try {
     },
   );
   await check(
-    "a real k=3 run with one broken repeat per task is incomplete, never pass^k",
-    [3, false, false],
+    "a real k=3 run with one broken repeat per task is complete but never pass^k",
+    [3, true, false],
     async () => {
       let n = 0;
       const gradeFn = () => ({ result: ++n % 3 === 0 ? "broken" : "pass" });
@@ -645,13 +645,26 @@ try {
   const P3 = ["pass", "pass", "pass"];
   const vsv = (r) => Object.values(r.vs.against[0]).slice(1); // won, lost, tied
   const cell = (r, run, t) => r.rows.find((x) => x.run === run && x.taskId === t);
-  // A broken repeat is out of pass@1 but still leaves the task short of k: incomplete, below complete.
-  await check("broken repeats are left out", [false, 1, [0, 1, 0], 1, true], () => {
-    const A = set("A", { t1: ["pass", "pass", "broken"], t2: Array(3).fill("broken") });
-    const r = FE.report([...A, ...set("B", { t1: P3, t2: P3 })], { vs: "B" });
-    const a = cell(r, "A", "t1");
-    return [a.passK, a.passAt1, vsv(r), r.runs[0].tasks, /n\/a/.test(FE.formatReport(r))];
-  });
+  // A broken repeat is out of pass@1 and blocks pass^k, but it is not a missing repeat: the task is complete.
+  await check(
+    "broken repeats are left out of pass@1, block pass^k, and do not make a task incomplete",
+    [false, true, 1, [0, 1, 0], 1, true],
+    () => {
+      const A = set("A", { t1: ["pass", "pass", "broken"], t2: Array(3).fill("broken") });
+      const r = FE.report([...A, ...set("B", { t1: P3, t2: P3 })], { vs: "B" });
+      const a = cell(r, "A", "t1");
+      const na = /n\/a/.test(FE.formatReport(r));
+      return [a.passK, a.complete, a.passAt1, vsv(r), r.runs[0].tasks, na];
+    },
+  );
+  await check(
+    "neither side pass^k, both complete: pass@1 decides (1.00 beats 0.33)",
+    [1, 0, 0],
+    () => {
+      const A = set("A", { t1: ["pass", "pass", "broken"] });
+      return vsv(FE.report([...A, ...set("B", { t1: ["pass", "fail", "fail"] })], { vs: "B" }));
+    },
+  );
   await check("an incomplete task is never pass^k", [false, false, [0, 1, 1], false, false], () => {
     const A = set("A", { t1: ["pass", "pass"], t2: P3, t9: P3 });
     const r = FE.report([...A, ...set("B", { t1: ["pass", "fail", "fail"], t2: P3 })], { vs: "B" });
@@ -689,6 +702,59 @@ try {
     const exit = (v) => cli("report", fa, "--vs", v).status;
     return [Math.max(...rows.map((r) => r.runs)), exit(save("empty.jsonl", ["x"])), exit(rtmp)];
   });
+  // R6-b3 fold 2: pin the k fixes, one test per mutant.
+  const kline = (o) => JSON.stringify({ taskId: "t1", result: "pass", ...o });
+  const kread = (name, os) => FE.readResults([save(name, os.map(kline))]);
+  await check("a record with k 0 is malformed", [1, 1], () => {
+    const rs = kread("k0.jsonl", [{ k: 3 }, { k: 0 }]);
+    return [rs.length, rs.malformed];
+  });
+  await check("a record with k 1e6 is malformed", [1, 1], () => {
+    const rs = kread("k1e6.jsonl", [{ k: 3 }, { k: 1e6 }]);
+    return [rs.length, rs.malformed];
+  });
+  await check("a run that is not an integer 0..1000 is malformed; absent is fine", [2, 5], () => {
+    const rs = kread("runs.jsonl", [{}, { run: 0 }, { run: -1 }, { run: 1001 }, { run: 1.5 }]);
+    const bad = kread("runs2.jsonl", [{ run: "x" }, { run: null }]);
+    return [rs.length, rs.malformed + bad.malformed];
+  });
+  const sameDir = (order) => {
+    const abs = path.join(rtmp, "cd", "run1");
+    save("cd/run1/results.jsonl", [t0]);
+    const cwd = process.cwd();
+    try {
+      process.chdir(path.join(rtmp, "cd"));
+      return FE.readResults(order === "abs-first" ? [abs, "run1"] : ["run1", abs]).length;
+    } finally {
+      process.chdir(cwd);
+    }
+  };
+  await check("an absolute and a relative path to one run dir read once (absolute first)", 1, () =>
+    sameDir("abs-first"),
+  );
+  await check("an absolute and a relative path to one run dir read once (relative first)", 1, () =>
+    sameDir("rel-first"),
+  );
+  await check(
+    "records with no k and runs 1 and 3 (run 2 missing) are incomplete",
+    [false, false],
+    () => {
+      const rs = [1, 3].map((run) => ({ ...rec("t", run, true, 1, 1), runId: "A" }));
+      const row = FE.report(rs).rows[0];
+      return [row.complete, row.passK];
+    },
+  );
+  await check(
+    "a task's own record k decides it, not the run-wide maximum",
+    [true, true, false],
+    () => {
+      const one = { ...rec("t1", 1, true, 1, 1), runId: "A", k: 1 };
+      const three = [1, 2, 3].map((run) => ({ ...rec("t2", run, true, 1, 1), runId: "A", k: 3 }));
+      const bare = [1, 2].map((run) => ({ ...rec("t3", run, true, 1, 1), runId: "A" }));
+      const r = FE.report([one, ...three, ...bare]);
+      return [cell(r, "A", "t1").passK, cell(r, "A", "t2").passK, cell(r, "A", "t3").complete];
+    },
+  );
 } finally {
   rmSync(rtmp, { recursive: true, force: true });
 }
