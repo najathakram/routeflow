@@ -68,6 +68,8 @@ itself.** When you catch one, write the guard, not the apology.
 | 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#3686; #2554 until 2026-10-23; #938 until 2026-09-27) at the exact merging sha** + real green CI |
 | 2    | UI, docs, tests, tooling                                   | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded)                         |
 
+- **DARK until the flip (R5):** also record `node scripts/review-tier.mjs` (computed tier) beside
+  the hand tier on the board head: `tier (computed): N`. The hand tier still decides.
 - The coordinator resolves every sha against origin before merging (`merge-base --is-ancestor`);
   tree-identity is the only exception, and only when tree hashes match.
 - **Before every merge: `gh pr view N --json baseRefName` must print `master`. After every
