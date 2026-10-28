@@ -164,11 +164,13 @@ try {
   write(D, "expect(2).toBe(2);\n");
   commit("init");
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "test-tamper-check.mjs");
+  // The CLI cases pin the local (plain) format, so CI's GITHUB_ACTIONS is cleared;
+  // the ::warning:: format has its own case below.
   const run = () =>
     spawnSync(process.execPath, [script, "--base", "master"], {
       cwd: dir,
       encoding: "utf8",
-      env: scrubbedGitEnv(),
+      env: { ...scrubbedGitEnv(), GITHUB_ACTIONS: "" },
     });
   sh(dir, "checkout", "-q", "-b", "fix/x");
   write(SPEC, "// nothing\n");
