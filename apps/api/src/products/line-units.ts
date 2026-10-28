@@ -1,9 +1,9 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   PIECE_LABEL,
-  baseLabelOf,
+  namesBase,
   describeBaseOption,
-  normalizeBoxesPieces,
+  packPiecesSplit,
   planBaseBilling,
   roundMoney,
   defaultSellingLabel,
@@ -173,7 +173,7 @@ export function asLadderProduct(p: Record<string, any>): LadderProduct {
 /**
  * An OLD client (or a stale picker) sends a derived Piece as `{ unitLabel: "Piece", qty: n }` and prices
  * it per piece — which, rounded to the cent, bills `n x $3.33` where the pack's proration says $6.67.
- * The server turns that line into the PACK line's pieces (boxes/pieces via normalizeBoxesPieces, no
+ * The server turns that line into the PACK line's pieces (boxes/pieces via packPiecesSplit, no
  * unitLabel stored) so `computeLineSubtotal` prorates it. Left untouched (returns the SAME object):
  * a base with its OWN price (the unit-line path), a non-base label, an explicit boxes/pieces split,
  * a line already held on the base, an unboxed product, a fractional/zero count, and a typed per-piece
@@ -204,8 +204,7 @@ export function normalizeDerivedBaseLine<
 ): T {
   const label = (item.unitLabel ?? "").trim();
   if (!label || !product) return item;
-  const isBase = (l: string) =>
-    norm(l) === norm(baseLabelOf(product)) || norm(l) === norm(PIECE_LABEL);
+  const isBase = (l: string) => namesBase(product, l);
   if (!isBase(label) || ((opts?.held ?? "").trim() !== "" && isBase(opts!.held!))) return item;
   if (Math.trunc(Number(product.unitsPerBox ?? 0)) <= 1) return item;
   if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) return item;
@@ -218,11 +217,7 @@ export function normalizeDerivedBaseLine<
       return item;
     }
   }
-  const split = normalizeBoxesPieces({
-    boxes: 0,
-    pieces: count,
-    unitsPerBox: Number(product.unitsPerBox),
-  });
+  const split = packPiecesSplit(Number(product.unitsPerBox), count);
   const out = {
     ...item,
     unitLabel: null,

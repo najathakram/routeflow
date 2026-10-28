@@ -1,6 +1,7 @@
 export * from "./pricing";
 export * from "./counter-day-close";
 export * from "./cents";
+export * from "./scale-frozen-split";
 export * from "./counter-register";
 export * from "./tier-pricing";
 export * from "./payment-confirmation";
@@ -30,6 +31,7 @@ export * from "./component-pieces";
 export * from "./pending-unit";
 export * from "./invoice-totals";
 export * from "./unit-chain";
+export * from "./unit-price-convert";
 export * from "./unit-options";
 export * from "./sale-totals";
 export * from "./charge-lines";

@@ -217,6 +217,18 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
+  FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
+  /** B297 PR5: the last-line ledger guard: a row would be booked into a LOCKED filing's period. */
+  LEDGER_PERIOD_LOCKED: "LEDGER_PERIOD_LOCKED",
+  /** B297 PR5: the lock endpoint's refusals. */
+  FILING_NOT_LOCKABLE: "FILING_NOT_LOCKABLE",
+  FILING_ALREADY_LOCKED: "FILING_ALREADY_LOCKED",
+  FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
+  /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
+  FILING_STALE: "FILING_STALE",
+  /** SA-997: locking a filing is switched off (FILING_LOCK_READY) until the sale-routing work lands. */
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
   FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
@@ -342,6 +354,7 @@ export const API_ERROR_CODES = {
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  WALK_IN_STORE_CREDIT_REFUSED: "WALK_IN_STORE_CREDIT_REFUSED",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
@@ -532,6 +545,12 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
+  /**
+   * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
+   * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
+   * hand-over stands" (raised after the claim).
+   */
+  COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: the hand-over committed, no payment
    * was sent, and the invoices final after DELIVERED (a remainder or rebuild) leave money owing. Retry with a payment.

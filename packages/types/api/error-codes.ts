@@ -444,6 +444,17 @@ export const API_ERROR_CODES = {
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
+  FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
+  /** B297 PR5: the last-line ledger guard: a row would be booked into a LOCKED filing's period. */
+  LEDGER_PERIOD_LOCKED: "LEDGER_PERIOD_LOCKED",
+  /** B297 PR5: the lock endpoint's refusals. */
+  FILING_NOT_LOCKABLE: "FILING_NOT_LOCKABLE",
+  FILING_ALREADY_LOCKED: "FILING_ALREADY_LOCKED",
+  FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
+  /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
+  FILING_STALE: "FILING_STALE",
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   // 409 body: productId, period (the filed period's label) and filedFor ("Tobacco" or the tracked category's name, W-755).
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
@@ -575,6 +586,8 @@ export const API_ERROR_CODES = {
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  /** 409 from a credit-note writer, the inline return capture and the return refund: a walk-in return is refunded at the till, never kept as store credit on the shared walk-in account (body carries `cause`: STORE_CREDIT, ROLE, NOT_PAID_IN_FULL, PAID_WITH_STORE_CREDIT or ZERO_TOTAL). Nothing is written. */
+  WALK_IN_STORE_CREDIT_REFUSED: "WALK_IN_STORE_CREDIT_REFUSED",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
@@ -763,6 +776,8 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
+  /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
+  COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
@@ -964,6 +979,14 @@ export const SHIPPED_ORDER_MESSAGE =
   "This order has already shipped. Contact the seller for changes.";
 
 /**
+ * SA-995: the 409 FILING_STALE sentence (a filing whose figures no longer match the ledger refuses to lock). Web and
+ * mobile show it by code; the API keeps a literal copy in regulated-filing.service.ts, pinned byte-equal by
+ * apps/api/src/regulated/filing-stale-message-parity.spec.ts.
+ */
+export const FILING_STALE_COPY =
+  "Sales were added to this period after the filing was generated. Regenerate the filing, check it, then lock it.";
+
+/**
  * SA-814g: the 409 INVOICE_TAX_STATE_STALE body carries `path`, the kind of invoice that refused: an
  * order-linked DRAFT, a manual DRAFT, or an ISSUED invoice (whichever recompute asked: lines save, discount /
  * shipping, price adjustment). Web and mobile pick their copy from it; the API keeps a literal copy
@@ -1006,3 +1029,13 @@ export const UNVOID_BILLING_COPY: Record<OrderBillingChangedReason, string> = {
   LINE_REDUCED:
     "The order line now holds less than this invoice bills. Raise the order line, or create a new invoice from the order.",
 };
+
+/**
+ * SA-997: locking a filing is OFF until a sale that books into a locked period is routed to the current one (W-965).
+ * The API refuses with 409 FILING_LOCK_NOT_READY before any read; web disables the control with this sentence. The API
+ * keeps a literal copy (apps/api/src/regulated/filing-lock-ready.ts), pinned byte-equal and false-equal by
+ * apps/api/src/regulated/filing-lock-ready.spec.ts.
+ */
+export const FILING_LOCK_READY = false;
+export const FILING_LOCK_NOT_READY_COPY =
+  "Locking a filing isn't available yet. You can still generate, check and download it.";

@@ -122,6 +122,9 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(1000) };
               return order;
@@ -190,7 +193,7 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
       () => undefined,
       (e) => e,
     );
-    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
     expect(order.status).toBe("CONFIRMED"); // no DELIVERED
     expect(mockAfterTender).not.toHaveBeenCalled();
   });
@@ -213,7 +216,10 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
   });
 
   it("a closed day's 409 survives a re-check that throws (its body unchanged)", async () => {
-    prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+    // the pre-claim check passes, so the day closes AFTER it: the in-lock tender's code, and the re-check really runs
+    prisma.counterDayClose.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: "close-1" });
     mockAfterTender.mockImplementation(() => {
       throw new Error("re-check blew up");
     });
@@ -222,6 +228,7 @@ describe("PickupCompleteService.complete: the credit re-check after a failed net
       (e) => e,
     );
     expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(mockAfterTender).toHaveBeenCalledTimes(1);
   });
 
   it("a re-check that throws never fails the finished hand-over", async () => {
