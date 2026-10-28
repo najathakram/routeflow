@@ -65,11 +65,14 @@ import {
   chooseRunMode,
   chooseVerifyDefaults,
   excludedLine,
+  executePlan,
+  finishRun,
   jestPassthrough,
   jestWorkerBudget,
   LOW_MEM_THRESHOLD_BYTES,
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
+  planPins,
   planTurboCalls,
 } from "./verify-turbo.mjs";
 
@@ -1785,6 +1788,121 @@ check(
       (env) => fastStampLine(isFastMode(env)),
     ),
     [null, null, null],
+  );
+}
+// FR: review fold of the R3-c change (lead ruling 2026-10-28).
+{
+  const STAMP =
+    "fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)";
+  const API = "@routeflow/api";
+  // MUST: apps/api/scripts is walked by specs whose jest rootDir (src) --changedSince never relates.
+  check(
+    "FR1 a change under apps/api/scripts (either slash) wants the pin run",
+    [
+      "apps/api/scripts/x.mjs",
+      "apps\\api\\scripts\\x.mjs",
+      "scripts\\x.mjs",
+      ".husky\\pre-push",
+    ].map((f) => repoPinsNeeded([f])),
+    [true, true, true, true],
+  );
+  check(
+    "FR1b other apps' scripts-free paths still do not",
+    [["apps/api/prisma/x.sql"], ["apps/web/app/page.tsx"], []].map((f) => repoPinsNeeded(f)),
+    [false, false, false],
+  );
+  const pinned = REPO_WIDE_PINS.map((p) => p.file.replace(/^apps\/api\/src\/common\//, ""));
+  check(
+    "FR2 the specs that walk apps/api/scripts are repo-wide pins",
+    [
+      "scripts-unscoped-delete.spec.ts",
+      "owner-report-db-url.spec.ts",
+      "no-ui-package-import.spec.ts",
+      "wipe-order-fk-pin.spec.ts",
+    ].map((f) => pinned.includes(f)),
+    [true, true, true, true],
+  );
+  // SHOULD 1: fail closed
+  check(
+    "FR3 an uncomputable diff (null) RUNS the pins and says why",
+    (({ pins, line }) => [pins, /cannot diff/.test(line ?? "")])(
+      planPins({ fast: true, files: null, excluded: [] }),
+    ),
+    [true, true],
+  );
+  check(
+    "FR3b a pin-worthy diff runs pins with the REPO PINS line; docs-only and non-fast do not",
+    [
+      planPins({ fast: true, files: ["scripts/a.mjs"], excluded: [] }).line?.startsWith(
+        "+ REPO PINS",
+      ),
+      planPins({ fast: true, files: ["docs/a.md"], excluded: [] }).pins,
+      planPins({ fast: false, files: ["scripts/a.mjs"], excluded: [] }).pins,
+      planPins({ fast: false, files: null, excluded: [] }).line,
+    ],
+    [true, null, null, null],
+  );
+  // SHOULD 2: serialized
+  const argv =
+    planTurboCalls({
+      scope: fvScope,
+      excluded: [],
+      splitJest: false,
+      fast: true,
+      pins: true,
+    }).calls.find((c) => c.pins)?.argv ?? [];
+  const dash = argv.indexOf("--");
+  check(
+    "FR4 the pin call is serialized (--runInBand) with every flag BEFORE the -- separator",
+    [
+      argv.includes("--runInBand"),
+      argv.indexOf("--runInBand") < dash,
+      dash > 0,
+      argv.slice(dash + 1).some((a) => a.startsWith("--")),
+    ],
+    [true, true, true, false],
+  );
+  // SHOULD 3: VERIFY_EXCLUDE dropping api
+  const noApi = planPins({ fast: true, files: ["scripts/a.mjs"], excluded: [API] });
+  check(
+    "FR5 api excluded: no pins, no REPO PINS line, no pin call even when forced",
+    [
+      noApi,
+      planPins({ fast: true, files: null, excluded: [API] }).line,
+      planTurboCalls({
+        scope: fvScope,
+        excluded: [API],
+        splitJest: false,
+        fast: true,
+        pins: true,
+      }).calls.some((c) => c.pins),
+    ],
+    [{ pins: null, line: null }, null, false],
+  );
+  // SHOULD 4: mutants
+  const logged = [];
+  const st = finishRun({ fast: true, status: 3, log: (l) => logged.push(l) });
+  const quiet = [];
+  const st2 = finishRun({ fast: false, status: 0, log: (l) => quiet.push(l) });
+  check(
+    "FR6 finishRun logs the exact stamp for a fast run, nothing otherwise, and returns the status",
+    [logged, st, quiet, st2],
+    [[STAMP], 3, [], 0],
+  );
+  const ran = [];
+  const calls = [{ id: "a" }, { id: "pin", pins: true }, { id: "c" }];
+  const run = async (c) => (ran.push(c.id), c.pins ? 1 : 0);
+  check(
+    "FR7 executePlan runs every call in order and a failing pin call fails the run",
+    [await executePlan(calls, run), ran, await executePlan([{ id: "z" }], async () => 0)],
+    [1, ["a", "pin", "c"], 0],
+  );
+  check(
+    "FR7b main() delegates the tail to executePlan and finishRun",
+    (({ vt }) => [/await executePlan\(/.test(vt), /finishRun\(\{/.test(vt)])({
+      vt: readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8"),
+    }),
+    [true, true],
   );
 }
 // (e) every listed pin exists, with a reason

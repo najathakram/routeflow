@@ -373,6 +373,21 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * spawn `npx turbo` and call `process.exit` inside the test process). Same pattern as
  * `scripts/janitor.mjs`.
  */
+/** STUB (red commit): decides whether the repo pins run and what to print. */
+export function planPins() {
+  return { pins: null, line: null };
+}
+
+/** STUB (red commit): runs every planned call, returns the first non-zero status. */
+export async function executePlan() {
+  return 0;
+}
+
+/** STUB (red commit): prints the closing stamp of a run and returns the status. */
+export function finishRun() {
+  return 0;
+}
+
 export async function main() {
   const defaults = chooseVerifyDefaults({
     totalMemBytes: totalmem(),
