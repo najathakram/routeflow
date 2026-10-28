@@ -223,6 +223,28 @@ async function main() {
     );
     git(A, "checkout", "--", PFX);
     rmSync(hand2, { force: true });
+    // fn throws while a hand edit lands mid-write: the clone is left as is, never reset or cleaned
+    try {
+      rw.withRegistryWrite(
+        (ctx) => {
+          appendFileSync(join(ctx.root, "rows.txt"), "half\n");
+          appendFileSync(hand, mark);
+          writeFileSync(hand2, "keep me\n");
+          throw new Error("fn broke");
+        },
+        { ...base },
+      );
+    } catch (e) {
+      err = e;
+    }
+    check(
+      "fn throws: exit 2, says the clone was left as is, both hand edits kept",
+      [err?.exitCode, /left as is/.test(err?.message), readFileSync(hand, "utf8").endsWith(mark)],
+      [2, true, true],
+    );
+    check("fn throws: the untracked hand file survives", existsSync(hand2), true);
+    git(A, "checkout", "--", PFX);
+    rmSync(hand2, { force: true });
   });
   await section("the lock is scripts/lib/mkdir-lock.mjs (MUST 3)", async () => {
     const lib = (n) => readFileSync(join(ROOT, "scripts", "lib", n), "utf8");
