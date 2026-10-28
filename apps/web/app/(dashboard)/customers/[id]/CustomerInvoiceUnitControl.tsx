@@ -4,6 +4,7 @@ import * as React from "react";
 import { useToast } from "@routeflow/ui/web";
 import type { InvoiceUnitDefault } from "@routeflow/types";
 import { useUpdateCustomer } from "@/lib/api/customers";
+import { customerFormErrorCopy } from "@/lib/customer-form-error-copy";
 
 /**
  * "Invoice in" choice for one customer (SA-827 G7): how this customer's invoices list
@@ -20,14 +21,6 @@ const OPTIONS: { value: InvoiceUnitDefault; label: string; hint: string }[] = [
   },
   { value: "PACK", label: "Packs", hint: "Always the unit sold." },
 ];
-
-function saveErrorMessage(err: unknown): string {
-  const message = (err as { response?: { data?: { message?: unknown } } } | null)?.response?.data
-    ?.message;
-  if (typeof message === "string") return message;
-  if (Array.isArray(message)) return message.join(", ");
-  return "";
-}
 
 export function CustomerInvoiceUnitControl({
   customerId,
@@ -69,7 +62,7 @@ export function CustomerInvoiceUnitControl({
                 onError: (err: unknown) => {
                   toast({
                     title: "Couldn't save invoice unit",
-                    description: saveErrorMessage(err),
+                    description: customerFormErrorCopy(err),
                     variant: "error",
                   });
                 },

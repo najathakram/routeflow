@@ -62,10 +62,10 @@ describe("CustomerInvoiceUnitControl", () => {
     renderWithProviders(<CustomerInvoiceUnitControl customerId="c1" value="LEGACY" />);
     fireEvent.change(select(), { target: { value: "PACK" } });
     const opts = mutate.mock.calls[0][1];
-    opts.onError({ response: { data: { message: "nope" } } });
+    opts.onError({ response: { status: 500, data: { message: "raw server text" } } });
     expect(toast).toHaveBeenCalledWith({
       title: "Couldn't save invoice unit",
-      description: "nope",
+      description: "Something went wrong on our side. Please try again.",
       variant: "error",
     });
   });
@@ -90,6 +90,6 @@ describe("CustomerInvoiceUnitControl", () => {
     renderWithProviders(<CustomerInvoiceUnitControl customerId="c1" value="LEGACY" />);
     fireEvent.change(select(), { target: { value: "PACK" } });
     mutate.mock.calls[0][1].onError(new Error("boom"));
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ description: "" }));
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringMatching(/\S/) }));
   });
 });
