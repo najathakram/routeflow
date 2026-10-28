@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { roundMoney } from "@routeflow/pricing";
 import type { AppLinks, AppLinksPatch } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -219,7 +220,7 @@ export class PlatformConfigService {
       insightRuns,
       tokensIn,
       tokensOut,
-      estSpendUsd: Math.round(estSpendUsd * 100) / 100,
+      estSpendUsd: roundMoney(estSpendUsd),
       errorRate: totalCalls > 0 ? Math.round((failures / totalCalls) * 1000) / 10 : 0,
       totalCalls,
     };
