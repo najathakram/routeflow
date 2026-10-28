@@ -9,6 +9,7 @@ import {
   ladderOptionText,
   packPiecesSplit,
   withHeldOption,
+  type LadderOption,
   type LadderProduct,
   type LadderUnit,
 } from "./index";
@@ -241,7 +242,7 @@ describe("heldSnapshotOption / withHeldOption (SA-1044 rule 4)", () => {
   });
 
   it("replaces the live option of the same label, or is added after the rest", () => {
-    const live = [
+    const live: LadderOption[] = [
       {
         value: "",
         label: "Box",
