@@ -43,10 +43,10 @@ writeFileSync(
       timestamp: "2026-10-28T05:00:00.000Z",
       message: { content: "go" },
     }),
-    line("m1", "claude-sonnet-5-5", "2026-10-28T05:00:00.000Z", usage(100, 1000)),
-    line("m1", "claude-sonnet-5-5", "2026-10-28T05:00:00.500Z", usage(100, 1000)), // same API call, streamed twice
+    line("m1", "claude-sonnet-5", "2026-10-28T05:00:00.000Z", usage(100, 1000)),
+    line("m1", "claude-sonnet-5", "2026-10-28T05:00:00.500Z", usage(100, 1000)), // same API call, streamed twice
     line("m2", "claude-haiku-4-5", "2026-10-28T05:02:00.000Z", usage(10, 50)),
-    line("m3", "claude-sonnet-5-5", "2026-10-28T05:04:00.000Z", usage(200, 2000)),
+    line("m3", "claude-sonnet-5", "2026-10-28T05:04:00.000Z", usage(200, 2000)),
   ].join("\n") + "\n",
 );
 writeFileSync(
@@ -60,7 +60,7 @@ const base = { session_id: "sess-1", transcript_path: transcript };
   check("A1 duration is the usage span", r.durationMs, 240_000);
   check("A1/A4 tokens are deduped by message id", r.tokens, 100 + 1000 + 10 + 50 + 200 + 2000);
   check("A1 cost is priced, not null", typeof r.costUsd === "number" && r.costUsd > 0, true);
-  check("A1 the main model is the one with most tokens", r.model, "claude-sonnet-5-5");
+  check("A1 the main model is the one with most tokens", r.model, "claude-sonnet-5");
   check(
     "A1 meta fills description and effort",
     [r.description, r.effort, r.agentType],
@@ -74,9 +74,9 @@ check(
   "payload",
 );
 check(
-  "A2b no agent_id: the newest transcript within 10 s",
+  "A2b no agent_id: the one transcript within 10 s",
   [buildRow(base).src, buildRow(base).agentId],
-  ["newest", "abc123"],
+  ["recent", "abc123"],
 );
 check(
   "A2c a stale transcript is not adopted",
@@ -139,6 +139,73 @@ check(
     "settings register the repo hook on SubagentStop",
     cmds.includes("node .claude/hooks/agent-log.mjs"),
     true,
+  );
+}
+
+{
+  // Review MUST 1: never borrow another agent's numbers.
+  check(
+    "A2d agent_id whose file is not written yet: null, never the recent neighbour",
+    [
+      buildRow({ ...base, agent_id: "notyet" }).tokens,
+      buildRow({ ...base, agent_id: "notyet" }).nullReason,
+    ],
+    [null, "no transcript"],
+  );
+  const twin = path.join(subDir, "agent-twin.jsonl");
+  writeFileSync(
+    twin,
+    line("t1", "claude-haiku-4-5", "2026-10-28T05:00:00.000Z", usage(1, 1)) + "\n",
+  );
+  check(
+    "A2e two recent transcripts and no agent_id: ambiguous, null",
+    [buildRow(base).tokens, buildRow(base).nullReason],
+    [null, "ambiguous transcript"],
+  );
+  check(
+    "A2e an agent_id still resolves its own file",
+    buildRow({ ...base, agent_id: "twin" }).src,
+    "derived",
+  );
+  rmSync(twin);
+}
+const soloDir = (name, lines) => {
+  const t = path.join(tmp, name + ".jsonl");
+  const d = path.join(tmp, name, "subagents");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(t, "");
+  writeFileSync(path.join(d, "agent-one.jsonl"), lines.join("\n") + "\n");
+  return buildRow({ session_id: name, transcript_path: t, agent_id: "one" });
+};
+{
+  // Review MUST 2: claude-sonnet-5 rates never price claude-sonnet-5-5.
+  const r = soloDir("unpriced", [
+    line("u1", "claude-sonnet-5-5", "2026-10-28T05:00:00.000Z", usage(100, 100)),
+    line("u2", "claude-haiku-4-5", "2026-10-28T05:01:00.000Z", usage(100, 100)),
+  ]);
+  check(
+    "A6 an unpriced model makes the whole cost null and names it",
+    [r.costUsd, r.nullReason, r.tokens],
+    [null, "unpriced model: claude-sonnet-5-5", 400],
+  );
+  const d = soloDir("dated", [
+    line("d1", "claude-haiku-4-5-20251001", "2026-10-28T05:00:00.000Z", usage(1000, 0)),
+  ]);
+  check(
+    "A6b a dated id still prices on its family row",
+    [typeof d.costUsd, d.nullReason],
+    ["number", null],
+  );
+  check("A7 one assistant message: duration null, not 0", d.durationMs, null);
+}
+{
+  const wt2 = path.join(tmp, "repo", "wt2");
+  mkdirSync(wt2, { recursive: true });
+  writeFileSync(path.join(wt2, ".git"), "gitdir: ..\\main\\.git\\worktrees\\wt2\r\n");
+  check(
+    "a relative, backslashed, CRLF gitdir resolves the main checkout",
+    mainRoot(wt2),
+    path.join(tmp, "repo", "main"),
   );
 }
 

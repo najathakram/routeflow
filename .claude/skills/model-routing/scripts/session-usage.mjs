@@ -332,7 +332,10 @@ function ratesForModel(modelId, priceTable) {
   // it today, but sort defensively in case new ids are added).
   const prefixes = Object.keys(priceTable).sort((a, b) => b.length - a.length);
   for (const prefix of prefixes) {
-    if (modelId.startsWith(prefix)) return priceTable[prefix];
+    // The prefix must end the id or be followed by a date, an @ pin or a [context] suffix: claude-sonnet-5 never
+    // prices claude-sonnet-5-5, a different model with its own row (or none, and then its cost is null).
+    if (modelId.startsWith(prefix) && /^(?:$|-\d{8}|@|\[)/.test(modelId.slice(prefix.length)))
+      return priceTable[prefix];
   }
   return null;
 }
@@ -1308,4 +1311,12 @@ function main() {
 }
 
 // Run only as a CLI: importing this module (the agent-log hook, R1) must run nothing.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+// realpath: run through a junction (~/.claude/skills is one), argv[1] is the link while import.meta.url is the target.
+const isCli = () => {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (process.argv[1] && isCli()) main();

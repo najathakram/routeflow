@@ -7,7 +7,8 @@
  * The numbers come from the subagent's own transcript, located in this order (the rule that fired is `src`):
  *   payload    payload.agent_transcript_path
  *   derived    <transcript_path without .jsonl>/subagents/agent-<payload.agent_id>.jsonl
- *   newest     the newest agent-*.jsonl in that directory modified in the last 10 s
+ *   recent     with no agent_id only: the one agent-*.jsonl in that directory modified in the last 10 s. Two or
+ *              more candidates give a null row ("ambiguous transcript"); a payload with an agent_id never falls back.
  * and are counted by session-usage.mjs's exported readUsageRecords/aggregate/loadPriceTable/agentDurationMs, the one
  * accounting (message.id dedupe, MODEL-CARDS prices). The sibling agent-<id>.meta.json gives agentType, description and
  * effort. A field that cannot be found stays null with `nullReason`; nothing is guessed.
@@ -23,6 +24,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import path from "node:path";
@@ -60,16 +62,17 @@ export function locateTranscript(p, nowMs = Date.now()) {
   if (typeof p.transcript_path !== "string") return { file: null, src: null };
   const dir = path.join(p.transcript_path.replace(/\.jsonl$/, ""), "subagents");
   if (typeof p.agent_id === "string") {
+    // An id names exactly one file. Another agent's transcript is never borrowed while this one is not yet written.
     const file = path.join(dir, `agent-${p.agent_id}.jsonl`);
-    if (existsSync(file)) return { file, src: "derived" };
+    return existsSync(file) ? { file, src: "derived" } : { file: null, src: null };
   }
   try {
-    const newest = readdirSync(dir)
+    const recent = readdirSync(dir)
       .filter((f) => /^agent-.*\.jsonl$/.test(f))
       .map((f) => ({ f: path.join(dir, f), t: statSync(path.join(dir, f)).mtimeMs }))
-      .filter((x) => nowMs - x.t <= NEWEST_WINDOW_MS)
-      .sort((a, b) => b.t - a.t)[0];
-    if (newest) return { file: newest.f, src: "newest" };
+      .filter((x) => nowMs - x.t <= NEWEST_WINDOW_MS);
+    if (recent.length === 1) return { file: recent[0].f, src: "recent" };
+    if (recent.length > 1) return { file: null, src: null, ambiguous: true };
   } catch {
     /* no subagents directory */
   }
@@ -101,13 +104,16 @@ export function buildRow(p, nowMs = Date.now()) {
     src: null,
     nullReason: null,
   };
-  const { file, src } = locateTranscript(p, nowMs);
-  if (!file) return { ...row, nullReason: "no transcript" };
+  const { file, src, ambiguous } = locateTranscript(p, nowMs);
+  if (!file) return { ...row, nullReason: ambiguous ? "ambiguous transcript" : "no transcript" };
   const meta = readJson(file.replace(/\.jsonl$/, ".meta.json"));
   const warnings = [];
   const { table, pricesAsOf } = loadPriceTable({});
   const agg = aggregate(readUsageRecords(file, warnings), table, IDLE_GAP_MS, warnings);
   const models = Object.entries(agg.byModel).sort((a, b) => b[1].tokens - a[1].tokens);
+  // A partial sum would read as the agent's whole cost, so one unpriced model makes the cost null.
+  const unpriced = models.filter(([, b]) => b.costUsd == null).map(([id]) => id);
+  const span = agg.messages ? agentDurationMs(agg) : 0;
   return {
     ...row,
     agentId: row.agentId ?? path.basename(file).replace(/^agent-|\.jsonl$/g, ""),
@@ -115,15 +121,15 @@ export function buildRow(p, nowMs = Date.now()) {
     description: meta.description ?? null,
     model: models[0]?.[0] ?? null,
     effort: meta.effort ?? null,
-    durationMs: agg.messages ? agentDurationMs(agg) : null,
+    durationMs: span > 0 ? span : null, // first to last assistant message; null under two timestamps
     tokens: agg.messages ? agg.total.tokens : null,
-    costUsd: agg.total.costUsd,
+    costUsd: unpriced.length ? null : agg.total.costUsd,
     pricesAsOf,
     src,
     nullReason: !agg.messages
       ? "no usage in transcript"
-      : agg.total.costUsd == null
-        ? "unpriced model"
+      : unpriced.length
+        ? `unpriced model: ${unpriced.join(", ")}`
         : null,
   };
 }
@@ -141,4 +147,12 @@ function main() {
   process.exit(0);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+// realpath: run through a junction or symlink, argv[1] is the link while import.meta.url is the target.
+const isCli = () => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (process.argv[1] && isCli()) main();
