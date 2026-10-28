@@ -103,9 +103,9 @@ export const dirtyPaths = (c) =>
     .map((l) => l.slice(3));
 
 // A reset never runs over a hand edit. `why` is set once a write was under way: it says that write
-// was not recorded and why.
+// was not recorded and why. `c.allowDirty` names the paths a hand-edit commit is about to capture.
 export function guardClean(c, why = "") {
-  const dirty = dirtyPaths(c);
+  const dirty = dirtyPaths(c).filter((p) => !c.allowDirty?.includes(p));
   if (dirty.length)
     throw refusal(
       `${DIRTY_MESSAGE}\n  dirty: ${dirty.join(", ")}` +

@@ -37,16 +37,27 @@ import {
 export { RegistryError };
 export const WRITE_DEFAULTS = CLONE_DEFAULTS;
 
-export function withRegistryWrite(fn, opts = {}) {
-  const c = settings(opts);
+export const needClone = (c) => {
   if (!existsSync(join(c.cloneDir, ".git")))
     throw new RegistryError(
       `register clone not found at ${c.cloneDir} — run \`${REGISTRY_FIX_COMMAND}\``,
       2,
     );
+};
+
+// opts.capture(c) runs under the lock right after the first dirty guard (commit-record saves its hand
+// edit there, so a refused clone leaves no capture). opts.allowDirty exempts those paths from that
+// FIRST guard only: after the capture the edit lives in the saved copy, so every later guard treats
+// the same path as someone else's edit. allowDirty without capture is refused.
+export function withRegistryWrite(fn, opts = {}) {
+  const { capture, allowDirty, ...rest } = opts;
+  const c = settings(rest);
+  needClone(c);
+  if (allowDirty && !capture) throw new Error("withRegistryWrite: allowDirty needs a capture");
   return locked(c, () => {
     checkOrigin(c);
-    guardClean(c);
+    guardClean({ ...c, allowDirty });
+    capture?.(c);
     let inFlight = false; // fn has run and its edits are not committed yet: the dirt is ours
     try {
       let last = "";

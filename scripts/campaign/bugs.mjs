@@ -106,11 +106,13 @@ import {
   withLock,
 } from "../lib/mkdir-lock.mjs";
 import {
+  REGISTRY_PREFIX,
   registryMissingMessage,
   registryMode,
   registryRoot,
   registrySource,
 } from "../lib/registry-root.mjs";
+import { commitRecord, discardRegistry } from "../lib/registry-records.mjs";
 import { RegistryError, withRegistryWrite } from "../lib/registry-write.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
@@ -620,6 +622,46 @@ cmds.file = (args) => {
         `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue and ledger restored to their pre-write state`,
       );
     }
+  });
+};
+
+const refuseTracked = (cmd) => {
+  console.error(`bugs: ${cmd}: the register is tracked in git here; commit with git`);
+  process.exit(2);
+};
+const registryCommand = (body) => {
+  try {
+    body();
+  } catch (e) {
+    if (!(e instanceof RegistryError)) throw e;
+    console.error(`bugs: ${e.message}`);
+    process.exit(e.exitCode);
+  }
+};
+
+// Clone mode: make hand edits to B###.md in the register clone durable (3-way merge onto origin).
+cmds["commit-record"] = (args) => {
+  if (registryMode() !== "clone") return refuseTracked("commit-record");
+  const ids = args.map((a) => (normId(a) ? resolveId(a) : null));
+  if (!ids.length || ids.includes(null)) fail("usage: commit-record B### [B###…]");
+  registryCommand(() => {
+    const r = commitRecord(ids.map((id) => `${REGISTRY_PREFIX}/bugs/${id}.md`));
+    console.log(`recorded ${ids.join(", ")}${r.pushed ? "" : " (already identical on origin)"}`);
+  });
+};
+
+// Clone mode: print, save, then clear a dirty clone's edits (nothing is pushed).
+cmds["registry-discard"] = () => {
+  if (registryMode() !== "clone") return refuseTracked("registry-discard");
+  registryCommand(() => {
+    const { dir, patch, loose } = discardRegistry();
+    if (!dir)
+      return console.log("registry-discard: the register clone is clean, nothing to discard");
+    if (patch) console.log(patch.trimEnd());
+    for (const p of loose) console.log(`untracked: ${p}`);
+    console.log(
+      `registry-discard: cleared ${loose.length} untracked file(s) and the diff above; saved in ${dir}`,
+    );
   });
 };
 
