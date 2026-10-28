@@ -4,17 +4,26 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
+import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkGitHooks, hooksDirFor, isCi, scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import {
+  checkGitHooks,
+  ensureGitHooks,
+  hooksDirFor,
+  isCi,
+  scrubbedGitEnv,
+} from "./lib/check-git-hooks.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let failed = 0;
@@ -57,7 +66,10 @@ try {
   let r = run(a);
   ok(
     "T1 hooksPath -> missing dir FAILS (1)",
-    r.status === 1 && /NOT INSTALLED/.test(r.message) && /npx husky/.test(r.message),
+    r.status === 1 &&
+      /NOT INSTALLED/.test(r.message) &&
+      /ensure-git-hooks.mjs/.test(r.message) &&
+      !/npx husky/.test(r.message),
     JSON.stringify(r),
   );
 
@@ -281,6 +293,145 @@ try {
     }
   }
 
+  // T14 — a new worktree of a repo whose main checkout has hooks: ensureGitHooks copies them in,
+  // never touches git config, leaves a tree that already has hooks alone, and fails when main has none.
+  const ENSURE_CLI = path.join(ROOT, "scripts", "ensure-git-hooks.mjs");
+  const cliEnv = { ...scrubbedGitEnv(), CI: "" };
+  const mainWithHook = repo("t13-main");
+  sh(mainWithHook, "config", "core.hooksPath", ".husky/_");
+  withHook(mainWithHook, ".husky/_");
+  writeFileSync(path.join(mainWithHook, ".husky/_/husky.sh"), "# helper\n");
+  writeFileSync(path.join(mainWithHook, ".husky/_/commit-msg"), "# main commit-msg\n");
+  const linked = path.join(tmp, "t13-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t13", linked);
+  ok("T14a the new tree has no hooks: checkGitHooks FAILS", check(linked).status === 1);
+  const before = sh(linked, "config", "core.hooksPath").trim();
+  let en = ensureGitHooks({ cwd: linked, env: {} });
+  ok(
+    "T14b ensureGitHooks copies and reports it",
+    en.ok === true && en.copied === true,
+    JSON.stringify(en),
+  );
+  ok("T14c checkGitHooks now PASSES in the new tree", check(linked).status === 0);
+  ok(
+    "T14d pre-push and helper files exist in the new tree",
+    existsSync(path.join(linked, ".husky/_/pre-push")) &&
+      existsSync(path.join(linked, ".husky/_/husky.sh")),
+  );
+  ok(
+    "T14e git config core.hooksPath is unchanged",
+    sh(linked, "config", "core.hooksPath").trim() === before &&
+      sh(mainWithHook, "config", "core.hooksPath").trim() === before,
+  );
+  ok(
+    "T14f the copied pre-push is executable (POSIX)",
+    process.platform === "win32" ||
+      (statSync(path.join(linked, ".husky/_/pre-push")).mode & 0o111) !== 0,
+  );
+  const prePush = path.join(linked, ".husky/_/pre-push");
+  mkdirSync(path.dirname(prePush), { recursive: true });
+  writeFileSync(prePush, "#!/bin/sh\n# local edit\nexit 0\n");
+  chmodSync(prePush, 0o755);
+  const stamp = statSync(prePush).mtimeMs;
+  en = ensureGitHooks({ cwd: linked, env: {} });
+  ok(
+    "T14g a tree that already has hooks: copied false, files untouched",
+    en.ok === true &&
+      en.copied === false &&
+      statSync(prePush).mtimeMs === stamp &&
+      /local edit/.test(readFileSync(prePush, "utf8")),
+    JSON.stringify(en),
+  );
+
+  const mainBare = repo("t13-main-nohook");
+  sh(mainBare, "config", "core.hooksPath", ".husky/_");
+  const linkedBare = path.join(tmp, "t13-linked-nohook");
+  sh(mainBare, "worktree", "add", "-q", "-b", "t13b", linkedBare);
+  en = ensureGitHooks({ cwd: linkedBare, env: {} });
+  ok(
+    "T14h main checkout without pre-push: ok false, nothing copied",
+    en.ok === false && en.copied === false && !existsSync(path.join(linkedBare, ".husky/_")),
+    JSON.stringify(en),
+  );
+  const ensureCli = (cwd) =>
+    spawnSync(process.execPath, [ENSURE_CLI], { cwd, env: cliEnv, encoding: "utf8" });
+  ok("T14i the CLI exits 1 when main has no pre-push", ensureCli(linkedBare).status === 1);
+  ok("T14j the CLI exits 0 on a tree that has hooks", ensureCli(linked).status === 0);
+  const linked2 = path.join(tmp, "t13-linked-2");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t13c", linked2);
+  ok(
+    "T14k the CLI copies the hooks into a hookless tree (exit 0)",
+    ensureCli(linked2).status === 0 && check(linked2).status === 0,
+  );
+  const linked3 = path.join(tmp, "t13-linked-3");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t13d", linked3);
+  en = ensureGitHooks({ cwd: linked3, env: { CI: "true" } });
+  ok(
+    "T14l CI on a HOOKLESS tree: ok with a note, nothing copied",
+    en.ok === true && en.copied === false && !existsSync(path.join(linked3, ".husky/_/pre-push")),
+    JSON.stringify(en),
+  );
+  en = ensureGitHooks({ cwd: tmp, env: {} });
+  ok(
+    "T14m a non-checkout: ok with a note",
+    en.ok === true && en.copied === false,
+    JSON.stringify(en),
+  );
+
+  // T14n-q — review folds: non-executable pre-push, custom hooks kept, the .git basename guard.
+  const nonExec = path.join(tmp, "t14n-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14n", nonExec);
+  withHook(nonExec, ".husky/_");
+  const pp = path.join(nonExec, ".husky/_/pre-push");
+  const chmods = [];
+  let mode = 0o644;
+  const fakeFs = {
+    ...nodeFs,
+    statSync: (p) => (p === pp ? { mode } : nodeFs.statSync(p)),
+    chmodSync: (p, m) => (chmods.push(p), (mode = m)),
+  };
+  en = ensureGitHooks({ cwd: nonExec, env: {}, fs: fakeFs, platform: "linux" });
+  ok(
+    "T14n a present but non-executable pre-push (POSIX) is chmod-ed, not reported as already fine",
+    en.ok === true && chmods.length === 1 && chmods[0] === pp && mode === 0o755,
+    JSON.stringify([en, chmods, mode]),
+  );
+  mode = 0o644;
+  chmods.length = 0;
+  en = ensureGitHooks({ cwd: nonExec, env: {}, fs: fakeFs, platform: "win32" });
+  ok("T14n2 on win32 there is no exec bit to fix", en.ok === true && chmods.length === 0);
+  const posixTree = path.join(tmp, "t14o-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14o", posixTree);
+  withHook(posixTree, ".husky/_");
+  if (process.platform !== "win32") chmodSync(path.join(posixTree, ".husky/_/pre-push"), 0o644);
+  ensureGitHooks({ cwd: posixTree, env: {} });
+  ok(
+    "T14o (POSIX only; passes trivially on win32) ensure leaves a runnable pre-push",
+    process.platform === "win32" || check(posixTree).status === 0,
+  );
+  const custom = path.join(tmp, "t14p-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14p", custom);
+  mkdirSync(path.join(custom, ".husky/_"), { recursive: true });
+  writeFileSync(path.join(custom, ".husky/_/commit-msg"), "# custom commit-msg\n");
+  en = ensureGitHooks({ cwd: custom, env: {} });
+  ok(
+    "T14p a custom commit-msg survives ensure; the missing pre-push is copied in",
+    en.ok === true &&
+      /custom commit-msg/.test(readFileSync(path.join(custom, ".husky/_/commit-msg"), "utf8")) &&
+      existsSync(path.join(custom, ".husky/_/pre-push")),
+    JSON.stringify(en),
+  );
+  const bare = path.join(tmp, "t14q-main.git");
+  sh(tmp, "clone", "-q", "--bare", mainWithHook, bare);
+  const bareLinked = path.join(tmp, "t14q-linked");
+  sh(bare, "worktree", "add", "-q", "-b", "t14q", bareLinked);
+  en = ensureGitHooks({ cwd: bareLinked, env: {} });
+  ok(
+    "T14q a common dir that is not named .git (a bare main): refused, nothing copied",
+    en.ok === false && en.copied === false && /cannot locate the main checkout/.test(en.message),
+    JSON.stringify(en),
+  );
+
   // T12 — structural: the guard is actually wired where it must be.
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
   const FRESHNESS = "node scripts/campaign-check.mjs --freshness-only && ";
@@ -300,8 +451,10 @@ try {
   );
   const dispatch = readFileSync(path.join(ROOT, ".claude/commands/dispatch.md"), "utf8");
   ok(
-    "T12d the worktree-setup instructions run the check",
-    /check-git-hooks\.mjs/.test(dispatch) && /ignore-scripts/.test(dispatch),
+    "T12d the worktree-setup instructions: npm ci --ignore-scripts, then ensure, then the check",
+    /npm ci --ignore-scripts[\s\S]*ensure-git-hooks\.mjs[\s\S]*check-git-hooks\.mjs/.test(
+      dispatch,
+    ) && !/never\s+`--ignore-scripts`/.test(dispatch),
   );
   const settings = JSON.parse(readFileSync(path.join(ROOT, ".claude/settings.json"), "utf8"));
   const sessionStart = JSON.stringify(settings.hooks.SessionStart);
