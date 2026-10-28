@@ -55,6 +55,7 @@ import {
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
+import { markOpenInvoicesToCollect } from "../../invoices/to-collect";
 import { WalkInCustomerService } from "./walk-in-customer";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
@@ -236,6 +237,13 @@ export class CounterSaleService {
     let duplicate: DuplicatePaymentRefExisting | undefined;
     if (method === "ON_ACCOUNT") {
       invoices = await this.readInvoices(orderId);
+      // SA-1026: "the check is not in hand yet": the invoice(s) of this sale are marked To collect right after the sale
+      // committed (createSale is several steps, so there is no one transaction to ride). Replay-safe: the first intent stays,
+      // and a retry of a half-finished first attempt completes the mark. The response reads the column back.
+      if (dto.payment.expectedMethod) {
+        await markOpenInvoicesToCollect(this.prisma, invoices as never, dto.payment.expectedMethod);
+        invoices = await this.readInvoices(orderId);
+      }
     } else {
       try {
         // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close

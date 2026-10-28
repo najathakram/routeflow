@@ -601,6 +601,7 @@ describe("CounterSaleService.ring", () => {
         paymentId: "pay-inv-1",
         method: "CASH",
         paymentRecorded: true,
+        toCollect: "NONE", // SA-1026: every sale reads its state back, NONE unless marked
       });
     });
 
@@ -1143,6 +1144,7 @@ describe("CounterSaleService.ring", () => {
         method: "CASH",
         paymentRecorded: true,
         replayed: true,
+        toCollect: "NONE", // SA-1026
       });
       expect(findReplayCandidateByKey).toHaveBeenCalledWith("k1", expect.any(String));
       expect(createSale).not.toHaveBeenCalled();

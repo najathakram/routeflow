@@ -12,6 +12,7 @@ from this owner's own runs.
 | Claude Opus 5     | `claude-opus-5`     | 1M / 128K         | 5 / 25              | ~10% of input |
 | Claude Opus 5.5   | `claude-opus-5-5`   | 1M / 128K         | 4 / 20              | 0.20          |
 | Claude Sonnet 5   | `claude-sonnet-5`   | 1M / 128K         | 2 / 10              | ~10% of input |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5` | 1M / 128K         | 2 / 10              | 0.20          |
 | Claude Sonnet 4.6 | `claude-sonnet-4-6` | 1M                | 3 / 15              | ~10% of input |
 | Claude Haiku 4.5  | `claude-haiku-4-5`  | 200K              | 1 / 5               | ~10% of input |
 
