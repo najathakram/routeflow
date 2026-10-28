@@ -1066,6 +1066,8 @@ export interface PriceAdjustmentDto {
 export interface InvoiceSettings {
   defaultTerms: string;
   hideOriginalPrice?: boolean;
+  /** SA-1031: true = the invoice PDF prints no product barcode (or the code under it). Absent/false = shown. */
+  hideBarcodes?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
   depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null

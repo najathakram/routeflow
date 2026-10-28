@@ -2667,6 +2667,27 @@ function InvoicingTab() {
     );
   };
 
+  const handleHideBarcodesChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { hideBarcodes: !checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Barcode display updated.",
+            variant: "success",
+          }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleHideOriginalPriceChange = (checked: boolean) => {
     updateSettings.mutate(
       { hideOriginalPrice: !checked },
@@ -2819,6 +2840,26 @@ function InvoicingTab() {
                 aria-label="Show original price on discounted lines"
                 checked={!invoiceSettings?.hideOriginalPrice}
                 onChange={(e) => handleHideOriginalPriceChange(e.target.checked)}
+                disabled={isLoading || updateSettings.isPending}
+                className="h-4 w-4 rounded border-surface-border"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">Show barcodes on invoices</p>
+              <p className="text-xs text-navy/70">
+                Prints each product&apos;s barcode and code on its line. Turn off to print invoices
+                without them.
+              </p>
+            </div>
+            <label className="inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                aria-label="Show barcodes on invoices"
+                checked={!invoiceSettings?.hideBarcodes}
+                onChange={(e) => handleHideBarcodesChange(e.target.checked)}
                 disabled={isLoading || updateSettings.isPending}
                 className="h-4 w-4 rounded border-surface-border"
               />
