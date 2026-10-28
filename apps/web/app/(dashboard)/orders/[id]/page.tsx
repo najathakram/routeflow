@@ -15,7 +15,7 @@ import {
   Trash2,
   Calendar,
 } from "lucide-react";
-import { Badge, Button, Card, useToast, type BadgeStatus } from "@routeflow/ui/web";
+import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {

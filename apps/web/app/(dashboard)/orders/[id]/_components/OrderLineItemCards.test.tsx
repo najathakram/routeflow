@@ -197,7 +197,7 @@ describe("OrderLineItemCards", () => {
   // r5 Q20: from lg the Summary card beside the lines carries the total, so this footer is for below lg only.
   it("the Order Total footer is hidden from lg (the Summary card carries it there)", () => {
     render(<OrderLineItemCards lineItems={[line()]} orderStatus="CONFIRMED" total={52} />);
-    expect(screen.getByText("Order Total").parentElement).toHaveClass("lg:hidden");
+    expect(screen.getByText("Order total").parentElement).toHaveClass("lg:hidden");
   });
 
   it("renders one card per line with name, sku, qty × price and stored total", () => {

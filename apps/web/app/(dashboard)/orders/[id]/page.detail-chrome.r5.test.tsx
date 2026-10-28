@@ -7,7 +7,7 @@ import OrderDetailPage from "./page";
 /**
  * apple-ux r5, Order detail chrome. jsdom has no layout, so these pin the class tokens the CSS keys off; the measured
  * result (one total, one back control, per width) is the host-run capture's job.
- *  - Q20: "Order Total" is said ONCE per width. Below lg the Summary card is stacked under the lines (and the customer
+ *  - Q20: "Order total" is said ONCE per width. Below lg the Summary card is stacked under the lines (and the customer
  *    card), so the line-items footer carries the total there; from lg the Summary sits beside the lines and carries it.
  *  - Q23: ONE back control. The dashboard top bar already shows a back arrow on every sub-page, so the page has no
  *    second "← Orders" link of its own.
@@ -85,13 +85,13 @@ const tokens = (el: Element | null) =>
 describe("Order detail says Order Total once per width (Q20)", () => {
   it("the line-items footer total is for below lg only", async () => {
     await openDetail();
-    const footer = screen.getByText("Order Total").closest("tr");
+    const footer = screen.getAllByText("Order total").map((e) => e.closest("tr")).find(Boolean);
     expect(tokens(footer)).toContain("lg:hidden");
   });
 
   it("the Summary card total is hidden below lg (so the pair is never both on screen)", async () => {
     await openDetail();
-    const row = screen.getByText("Order total").closest("div");
+    const row = screen.getAllByText("Order total").map((e) => e.closest("div")).find((d) => d?.tagName === "DIV" && tokens(d).includes("max-lg:hidden")) ?? null;
     expect(tokens(row)).toContain("max-lg:hidden");
   });
 
@@ -100,7 +100,7 @@ describe("Order detail says Order Total once per width (Q20)", () => {
     fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
     const row = (await screen.findByText("Saved total")).closest("div");
     expect(tokens(row)).not.toContain("max-lg:hidden");
-    expect(screen.queryByText("Order Total")).toBeNull();
+    expect(screen.queryByText("Order total")).toBeNull();
   });
 });
 

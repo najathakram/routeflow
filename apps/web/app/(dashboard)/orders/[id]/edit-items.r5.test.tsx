@@ -6,7 +6,7 @@
  */
 import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
-import { EditableLineItems, type EditItemState } from "./page";
+import { EditableLineItems, type EditItemState } from "./_components/order-line-edit";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,

@@ -29,27 +29,27 @@ type Row = [status: string, who: "staff" | "buyer", blocked: boolean, expected: 
 describe("phoneActionItems: status x role x cancel-blocked", () => {
   const rows: Row[] = [
     // staff, nothing blocked
-    ["DRAFT", "staff", false, ["Record return", "Delete Draft"]],
-    ["PENDING", "staff", false, ["Record return", "Cancel Order", "Delete order"]],
-    ["CONFIRMED", "staff", false, ["Record return", "Unconfirm", "Cancel Order", "Delete order"]],
+    ["DRAFT", "staff", false, ["Record return", "Delete draft"]],
+    ["PENDING", "staff", false, ["Record return", "Cancel order", "Delete order"]],
+    ["CONFIRMED", "staff", false, ["Record return", "Unconfirm", "Cancel order", "Delete order"]],
     [
       "OUT_FOR_DELIVERY",
       "staff",
       false,
-      ["Record return", "Return to Confirmed", "Cancel Order", "Delete order"],
+      ["Record return", "Return to Confirmed", "Cancel order", "Delete order"],
     ],
     ["DELIVERED", "staff", false, ["Record return"]],
     ["CANCELLED", "staff", false, ["Record return", "Delete order"]],
     // staff, the parcel is with the carrier (server verdict): no Cancel, and no Delete on an open order
-    ["DRAFT", "staff", true, ["Record return", "Delete Draft"]],
+    ["DRAFT", "staff", true, ["Record return", "Delete draft"]],
     ["PENDING", "staff", true, ["Record return"]],
     ["CONFIRMED", "staff", true, ["Record return", "Unconfirm"]],
     ["OUT_FOR_DELIVERY", "staff", true, ["Record return", "Return to Confirmed"]],
     ["DELIVERED", "staff", true, ["Record return"]],
     ["CANCELLED", "staff", true, ["Record return", "Delete order"]],
     // buyer: never Record return, Unconfirm, Return to Confirmed or Delete; Cancel only while the order is theirs to cancel
-    ["DRAFT", "buyer", false, ["Cancel Order"]],
-    ["PENDING", "buyer", false, ["Cancel Order"]],
+    ["DRAFT", "buyer", false, ["Cancel order"]],
+    ["PENDING", "buyer", false, ["Cancel order"]],
     ["CONFIRMED", "buyer", false, []],
     ["OUT_FOR_DELIVERY", "buyer", false, []],
     ["DELIVERED", "buyer", false, []],
@@ -73,7 +73,7 @@ describe("phoneActionItems: the other gates", () => {
     // a dispatched order is not edited from here: its menu is unchanged
     expect(labels({ status: "OUT_FOR_DELIVERY", isEditing: true })).toEqual([
       "Return to Confirmed",
-      "Cancel Order",
+      "Cancel order",
       "Delete order",
     ]);
     expect(labels({ status: "CANCELLED", isEditing: true })).toEqual(["Delete order"]);
@@ -82,7 +82,7 @@ describe("phoneActionItems: the other gates", () => {
   it("Record return needs the add-on, whatever the status", () => {
     expect(labels({ status: "DELIVERED", returnAvailable: false })).toEqual([]);
     expect(labels({ status: "PENDING", returnAvailable: false })).toEqual([
-      "Cancel Order",
+      "Cancel order",
       "Delete order",
     ]);
   });
@@ -93,10 +93,10 @@ describe("phoneActionItems: the other gates", () => {
   });
 
   it("staff keep Cancel on CONFIRMED and OUT_FOR_DELIVERY without the buyer cancel permission", () => {
-    expect(labels({ status: "CONFIRMED", canCancel: false })).toContain("Cancel Order");
-    expect(labels({ status: "OUT_FOR_DELIVERY", canCancel: false })).toContain("Cancel Order");
+    expect(labels({ status: "CONFIRMED", canCancel: false })).toContain("Cancel order");
+    expect(labels({ status: "OUT_FOR_DELIVERY", canCancel: false })).toContain("Cancel order");
     // but a PENDING order's Cancel is the permission's
-    expect(labels({ status: "PENDING", canCancel: false })).not.toContain("Cancel Order");
+    expect(labels({ status: "PENDING", canCancel: false })).not.toContain("Cancel order");
   });
 
   it("Delete on a confirmed or dispatched order needs the page's open-and-uninvoiced gate", () => {
@@ -106,7 +106,7 @@ describe("phoneActionItems: the other gates", () => {
     );
     // Delete of a draft, a pending or a cancelled order does not use that gate
     expect(labels({ status: "PENDING", canDeleteOpen: false })).toContain("Delete order");
-    expect(labels({ status: "DRAFT", canDeleteOpen: false })).toContain("Delete Draft");
+    expect(labels({ status: "DRAFT", canDeleteOpen: false })).toContain("Delete draft");
     expect(labels({ status: "CANCELLED", canDeleteOpen: false })).toContain("Delete order");
   });
 
@@ -121,15 +121,15 @@ describe("phoneActionItems: the other gates", () => {
   it("Cancel and Delete are the danger entries, nothing else is", () => {
     const items = phoneActionItems({ ...base, status: "CONFIRMED" });
     expect(items.filter((i) => i.danger).map((i) => i.label)).toEqual([
-      "Cancel Order",
+      "Cancel order",
       "Delete order",
     ]);
   });
 
   it("Delete reads Delete Draft only on a draft", () => {
-    expect(labels({ status: "DRAFT" })).toContain("Delete Draft");
+    expect(labels({ status: "DRAFT" })).toContain("Delete draft");
     for (const status of ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "CANCELLED"]) {
-      expect(labels({ status })).not.toContain("Delete Draft");
+      expect(labels({ status })).not.toContain("Delete draft");
     }
   });
 });
@@ -148,7 +148,7 @@ describe("phoneActionItems: every entry runs the SAME handler, a tick after the 
     const handlers: Record<string, jest.Mock> = {
       "Record return": base.onRecordReturn as jest.Mock,
       "Return to Confirmed": base.onReturnToConfirmed as jest.Mock,
-      "Cancel Order": base.onCancel as jest.Mock,
+      "Cancel order": base.onCancel as jest.Mock,
       "Delete order": base.onDelete as jest.Mock,
     };
     for (const [label, handler] of Object.entries(handlers)) {
