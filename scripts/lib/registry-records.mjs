@@ -36,6 +36,12 @@ export function commitRecord(paths, opts = {}) {
       const kept = join(capDir(p), "ours");
       const edited = dirty.includes(p) && existsSync(join(cc.cloneDir, p));
       if (existsSync(kept)) {
+        if (!existsSync(join(capDir(p), "base")))
+          throw new RegistryError(
+            `the kept capture ${capDir(p)} has your edit but no base (a write was cut off); ` +
+              `copy the edit out of "ours" if you want it, delete that folder, and re-edit`,
+            2,
+          );
         // resume the kept capture (and its base) when the file is clean or holds the same edit
         if (!edited || readFileSync(kept, "utf8") === readFileSync(join(cc.cloneDir, p), "utf8"))
           return false;
@@ -49,10 +55,20 @@ export function commitRecord(paths, opts = {}) {
       return true;
     });
     for (const p of fresh) {
-      mkdirSync(capDir(p), { recursive: true });
-      cpSync(join(cc.cloneDir, p), join(capDir(p), "ours"));
+      // base first: a kill between the two writes leaves a base alone (harmless), never an ours alone
       const base = registryGit(cc, ["show", `HEAD:${p}`], { ok: true, raw: true });
-      writeFileSync(join(capDir(p), "base"), base.status === 0 ? base.stdout : "");
+      let text = base.stdout;
+      if (base.status !== 0) {
+        // only a file HEAD really lacks (a new record) has an empty base; a failed or timed-out read
+        // must not become one
+        const t = registryGit(cc, ["ls-tree", "--name-only", "HEAD", "--", p], { ok: true });
+        if (t.status !== 0 || t.stdout !== "")
+          throw new RegistryError(`could not read ${p} at HEAD to capture its base; re-run`, 2);
+        text = "";
+      }
+      mkdirSync(capDir(p), { recursive: true });
+      writeFileSync(join(capDir(p), "base"), text);
+      cpSync(join(cc.cloneDir, p), join(capDir(p), "ours"));
     }
   };
   const merge = () => {
@@ -71,6 +87,14 @@ export function commitRecord(paths, opts = {}) {
       if (existsSync(at)) cpSync(at, theirs);
       else writeFileSync(theirs, "");
       const m = registryGit(c, ["merge-file", "-p", ours, base, theirs], { ok: true, raw: true });
+      // git merge-file exits with the number of conflicts (1-127); anything else is an error whose
+      // stdout is empty, and must never be written over "ours"
+      if (!Number.isInteger(m.status) || m.status < 0 || m.status > 127)
+        throw new RegistryError(
+          `git merge-file failed for ${p} (status ${m.status}); ${ours} and ${base} are untouched — ` +
+            `re-run, or delete ${dirname(ours)} to drop the edit`,
+          2,
+        );
       if (m.status !== 0) {
         writeFileSync(ours, m.stdout); // the conflict, marked
         cpSync(theirs, base); // origin's side is what the resolved ours is merged onto next time
