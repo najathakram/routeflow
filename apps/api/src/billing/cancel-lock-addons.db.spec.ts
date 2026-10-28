@@ -326,6 +326,33 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(await netMrr(t)).toBe(0);
   }, 60_000);
 
+  /**
+   * I-172 probe (no assertion yet): the fixture's snapshots equal their catalog prices, so M2 cannot tell whether the
+   * lock and the resume book a row at its stored snapshot or at the live catalog price. Here one FORECASTING row holds
+   * a snapshot 15 above the published price; the logged deltas show which value each crossing and net MRR book
+   * (snapshot: cancel -(249 + snapshot), resume +(249 + snapshot); catalog: the same with the catalog price).
+   */
+  it("I-172 probe: a FORECASTING snapshot that differs from its catalog price -> which value lock, resume and net MRR book", async () => {
+    const t = await newTenant("i172");
+    const snapshot = price.FORECASTING + 15;
+    await addRow(t, "FORECASTING", "FORECASTING", { priceSnapshot: snapshot });
+    await lock(t);
+    const canceled = await delta(t, BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+    await admin.updateStatus(t, { status: "ACTIVE" } as any, null);
+    const resumed = await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    // eslint-disable-next-line no-console
+    console.log(
+      `I-172 ${JSON.stringify({
+        base: 249,
+        snapshot,
+        catalog: price.FORECASTING,
+        canceled,
+        resumed,
+        netMrr: await netMrr(t),
+      })}`,
+    );
+  }, 60_000);
+
   it("M3: lock -> activateManualSubscription: a-d are on, (a) and (b) are booked once, (e) stays off", async () => {
     const t = await fixture("m3");
     await lock(t);
