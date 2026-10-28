@@ -17,6 +17,14 @@ const err = (status: number, data: Record<string, unknown> = {}) => ({
   response: { status, data: { message: RAW, ...data } },
 });
 
+describe("genericToastCopy: SA-1050 A-1 delete refusal", () => {
+  it("INVOICE_HAS_WRITE_OFF_HISTORY maps to the bad-debt-history sentence, not the neutral 409", () => {
+    expect(
+      genericToastCopy(err(409, { code: API_ERROR_CODES.INVOICE_HAS_WRITE_OFF_HISTORY })),
+    ).toBe("This invoice has a bad-debt history, so it can't be deleted.");
+  });
+});
+
 describe("genericToastCopy: status class", () => {
   it.each([
     [400, "Some details aren't valid. Check what you entered and try again."],

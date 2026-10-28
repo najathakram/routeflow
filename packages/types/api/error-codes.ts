@@ -399,6 +399,8 @@ export const API_ERROR_CODES = {
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  // SA-1050 A-1: an invoice with a bad-debt (write-off) history is never deleted — the events are a past period's ledger.
+  INVOICE_HAS_WRITE_OFF_HISTORY: "INVOICE_HAS_WRITE_OFF_HISTORY",
   INVOICE_HAS_CASH_REFUND: "INVOICE_HAS_CASH_REFUND",
   // Order cancel refused: part of the order was refunded in cash (the invoice void keeps INVOICE_HAS_CASH_REFUND).
   ORDER_HAS_CASH_REFUND: "ORDER_HAS_CASH_REFUND",

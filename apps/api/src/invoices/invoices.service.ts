@@ -268,6 +268,7 @@ import {
   externalPaidOn,
 } from "./invoice-send-guard";
 import { writeOffInvoice } from "./invoice-write-off";
+import { assertNoWriteOffHistory } from "./invoice-write-off-history";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
@@ -5000,6 +5001,8 @@ export class InvoicesService {
       // B214 (REG-B214): refuse while a credit note this invoice sourced still has spendable balance
       // (deleting would orphan it as provenance-less wallet money). Before any write, via this tx (L-081).
       await assertNoUnspentSourcedCredits(tx, [id]);
+      // SA-1050 A-1 (REFUSE): a bad-debt history is a past period's ledger and its FK is RESTRICT — 409, before any write.
+      await assertNoWriteOffHistory(tx, [id]);
 
       // Free up invoicedQty on the source order BEFORE deleting the invoice
       // items (we read them inside the helper). Otherwise a delete leaves the

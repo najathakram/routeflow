@@ -2,9 +2,12 @@ import {
   assertNoUnspentSourcedCredits,
   unlinkSourcedCredits,
 } from "../credit-notes/sourced-credit-guard";
+import { assertNoWriteOffHistory } from "../invoices/invoice-write-off-history";
 
 /** The slice of the transaction client this helper reads and writes (the rest rides through to unlinkSourcedCredits). */
 export interface InvoiceDeleteTx {
+  /** Read by `assertNoWriteOffHistory`. */
+  invoiceWriteOffEvent?: unknown;
   invoice: {
     findUnique(args: {
       where: { id: string };
@@ -29,6 +32,8 @@ export async function deleteOrderInvoice(
   tenantId: string | null,
 ): Promise<void> {
   await assertNoUnspentSourcedCredits(tx, [invoiceId]);
+  // SA-1050 A-1 (REFUSE): the same refusal for every order-side door, before any write (RESTRICT FK, bad-debt ledger).
+  await assertNoWriteOffHistory(tx, [invoiceId]);
   const row = await tx.invoice.findUnique({
     where: { id: invoiceId },
     select: { invoiceNumber: true },
