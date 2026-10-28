@@ -62,6 +62,8 @@ import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
+import { RecurringInvoicesService } from "../recurring-invoices/recurring-invoices.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { NumberingService } from "../import/numbering.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
@@ -82,6 +84,8 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
   let tenantCtx: TenantContextService;
   let orders: any;
   let invoicesService: InvoicesService;
+  let estimatesService: EstimatesService;
+  let recurring: RecurringInvoicesService;
   const run = randomUUID().slice(0, 8);
   const slug = assertTestTenant(`qa-sa1034-${run}`, "price-edit-capability.db.spec.ts");
   let tenantId = "";
@@ -213,8 +217,11 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
         SellingRestrictionsService,
         ProductLabelsService,
         EstimatesService,
+        RecurringInvoicesService,
         NumberingService,
         { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: tenantCtx },
+        { provide: NotificationsService, useValue: {} },
         {
           provide: RouteFlowGateway,
           useValue: {
@@ -295,6 +302,8 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       ],
     }).compile();
     invoicesService = module.get(InvoicesService);
+    estimatesService = module.get(EstimatesService);
+    recurring = module.get(RecurringInvoicesService);
 
     tenantId = (await raw.tenant.create({ data: { slug, name: `sa1034 ${slug}` } })).id;
     adminUserId = (
@@ -353,6 +362,10 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
     await raw.orderItem.deleteMany({ where: { tenantId } });
     await raw.order.deleteMany({ where: { tenantId } });
     await raw.auditLog.deleteMany({ where: { tenantId } });
+    await raw.recurringInvoiceItem.deleteMany({ where: { tenantId } });
+    await raw.recurringInvoice.deleteMany({ where: { tenantId } });
+    await raw.estimateItem.deleteMany({ where: { tenantId } });
+    await raw.estimate.deleteMany({ where: { tenantId } });
     await raw.invoiceItem.deleteMany({ where: { tenantId } });
     await raw.invoice.deleteMany({ where: { tenantId } });
     await raw.numberingSequence.deleteMany({ where: { tenantId } });
@@ -583,6 +596,219 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expectPriceEditRefused(err); // observed: 403 PRICE_EDIT_NOT_PERMITTED
       expect(Number((await lineOf(o.lineItems[0].id)).unitPrice)).toBe(10);
       expect(await counts()).toEqual(before);
+    });
+  });
+
+  describe("PR7b — custom (unlisted) priced lines need price rights (rule 4)", () => {
+    const denied = () => principal("OPERATOR", deniedOperatorId);
+    const admin = () => principal("TENANT_ADMIN", adminUserId);
+    const live = () =>
+      jest.spyOn(OperatorPermissionsService.prototype, "mode").mockReturnValue("live");
+    const custom = { name: "Pallet fee", qty: 1, unitPrice: 5 };
+    const weekly = () => ({
+      customerId,
+      frequency: "WEEKLY",
+      dayOfWeek: 1,
+      nextRunAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    /** A PENDING order holding one custom line (2 x $5) as an admin authored it. */
+    async function orderWithCustomLine() {
+      const o = await raw.order.create({
+        data: {
+          customerId,
+          tenantId,
+          status: "PENDING",
+          subtotal: "10.00",
+          total: "10.00",
+          lineItems: {
+            create: [
+              {
+                tenantId,
+                productId: null,
+                name: "Pallet fee",
+                qty: 2,
+                unitPrice: "5.00",
+                subtotal: "10.00",
+                priceType: "MANUAL",
+              },
+            ],
+          },
+        },
+        include: { lineItems: true },
+      });
+      orderIds.push(o.id);
+      return o;
+    }
+    const lineCount = (orderId: string) => raw.orderItem.count({ where: { orderId } });
+
+    it("Q1-R1 live: the denied operator's order create with a custom item is a 403; no order row", async () => {
+      live();
+      const before = await raw.order.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() => orders.create({ customerId, items: [custom] }, denied())),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.order.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("Q1-R3 live: the denied operator's diff that adds a new custom item is a 403; the lines are unchanged", async () => {
+      live();
+      const o = await order();
+      const before = await lineCount(o.id);
+      const err = await caught(editOrder(o.id, { replaceAll: false, items: [custom] }, denied()));
+      expectPriceEditRefused(err);
+      expect(await lineCount(o.id)).toBe(before);
+    });
+
+    it("Q1-R3b live: the denied operator's full replace that adds a new custom item is a 403; nothing is deleted", async () => {
+      live();
+      const o = await order();
+      const err = await caught(
+        editOrder(
+          o.id,
+          { replaceAll: true, items: [{ id: o.lineItems[0].id, productId, qty: 2 }, custom] },
+          denied(),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(Number((await lineOf(o.lineItems[0].id)).qty)).toBe(2);
+    });
+
+    it("Q1-G1 live: the denied operator saves an order that already holds the custom item, unchanged (full replace)", async () => {
+      live();
+      const o = await orderWithCustomLine();
+      const held = o.lineItems[0];
+      await editOrder(
+        o.id,
+        { replaceAll: true, items: [{ id: held.id, name: "Pallet fee", qty: 2, unitPrice: 5 }] },
+        denied(),
+      );
+      const rows = await raw.orderItem.findMany({ where: { orderId: o.id } });
+      expect(rows).toHaveLength(1);
+      expect(Number(rows[0].unitPrice)).toBe(5);
+    });
+
+    it("Q1-R3c live: re-sending the held custom item at another price is a 403 (delete and re-add is closed)", async () => {
+      live();
+      const o = await orderWithCustomLine();
+      const err = await caught(
+        editOrder(
+          o.id,
+          {
+            replaceAll: true,
+            items: [{ id: o.lineItems[0].id, name: "Pallet fee", qty: 2, unitPrice: 1 }],
+          },
+          denied(),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(Number((await lineOf(o.lineItems[0].id)).unitPrice)).toBe(5);
+    });
+
+    it("Q1-R4 live: the denied operator's direct invoice with a custom charge is a 403; no invoice row", async () => {
+      live();
+      const before = await raw.invoice.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() =>
+          invoicesService.create(
+            { customerId, items: [{ description: "Fuel surcharge", qty: 1, unitPrice: 7 }] } as any,
+            denied(),
+          ),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.invoice.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("Q1-R4b live: the denied operator's invoice edit that adds a custom charge is a 403; the lines are unchanged", async () => {
+      live();
+      const inv = await draftInvoice();
+      const err = await caught(
+        editInvoice(
+          inv.id,
+          {
+            items: [
+              { id: inv.held.id, description: "line", productId, qty: 2, unitPrice: 10 },
+              { description: "Fuel surcharge", qty: 1, unitPrice: 7 },
+            ],
+          },
+          denied(),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.invoiceItem.count({ where: { invoiceId: inv.id } })).toBe(1);
+    });
+
+    it("Q1-R5 live: the denied operator's estimate with a custom line is a 403; no estimate row", async () => {
+      live();
+      const before = await raw.estimate.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() =>
+          estimatesService.create(
+            { customerId, items: [{ description: "Design fee", qty: 1, unitPrice: 50 }] } as any,
+            denied(),
+          ),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.estimate.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("Q1-R5b live: the denied operator's recurring template with a custom line is a 403; no template row", async () => {
+      live();
+      const before = await raw.recurringInvoice.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() =>
+          recurring.create(
+            {
+              ...weekly(),
+              items: [{ description: "Service fee", qty: 1, unitPrice: 20 }],
+            } as any,
+            denied(),
+          ),
+        ),
+      );
+      expectPriceEditRefused(err);
+      expect(await raw.recurringInvoice.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("Q1-G2: a TENANT_ADMIN makes the same calls as on master (order, invoice, estimate, template)", async () => {
+      live();
+      const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, admin()));
+      orderIds.push(o.id);
+      expect(await lineCount(o.id)).toBe(1);
+      const inv: any = await inTenant(() =>
+        invoicesService.create(
+          { customerId, items: [{ description: "Fuel surcharge", qty: 1, unitPrice: 7 }] } as any,
+          admin(),
+        ),
+      );
+      invoiceIds.push(inv.id);
+      const est: any = await inTenant(() =>
+        estimatesService.create(
+          { customerId, items: [{ description: "Design fee", qty: 1, unitPrice: 50 }] } as any,
+          admin(),
+        ),
+      );
+      expect(est.id).toBeTruthy();
+      const tpl: any = await inTenant(() =>
+        recurring.create(
+          { ...weekly(), items: [{ description: "Service fee", qty: 1, unitPrice: 20 }] } as any,
+          admin(),
+        ),
+      );
+      expect(tpl.id).toBeTruthy();
+    });
+
+    it("M-G1 shadow: the denied operator's custom item is written as on master", async () => {
+      const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, denied()));
+      orderIds.push(o.id);
+      expect(await lineCount(o.id)).toBe(1);
     });
   });
 });

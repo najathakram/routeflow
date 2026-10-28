@@ -9,6 +9,11 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
+
 /** What a tenant-scoped read does: only this tenant's own rows come back for an id list. */
 const ownRows = (owned: string[]) => async (args: { where: { id: { in: string[] } } }) =>
   args.where.id.in.filter((id) => owned.includes(id)).map((id) => ({ id }));

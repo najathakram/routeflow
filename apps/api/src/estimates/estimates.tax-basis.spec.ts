@@ -9,6 +9,11 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
 
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
+
 /**
  * H5 (owner ruling 2026-10-13, SA): an estimate carries tax the way an invoice does - the tenant rate
  * (`settings.taxRate`, a percent) and the customer's exempt flag - instead of always being untaxed; converting it

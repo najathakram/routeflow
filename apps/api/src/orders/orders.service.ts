@@ -79,7 +79,12 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
-import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
+import {
+  assertCustomPricesAllowed,
+  assertPriceEditAllowed,
+  decideTierOverride,
+} from "./staff-override";
+import { authoredCustomEntries } from "./custom-line-authoring";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
@@ -1476,6 +1481,9 @@ export class OrdersService implements OnApplicationBootstrap {
     if (user.role === UserRole.CUSTOMER && items.some((i) => !i.productId)) {
       throw new BadRequestException("Custom (unlisted) items can only be added by staff");
     }
+    // SA-1034 rule 4 (AUTHORING, covers the counter): a staff-typed custom line needs price rights, judged before any
+    // lock or write. A driver's unlisted line keeps today's behaviour.
+    if (isStaffRole) assertCustomPricesAllowed(items, priceEditAllowed);
 
     // Load any per-product tier overrides for this customer
     const customerPrices =
@@ -3230,6 +3238,21 @@ export class OrdersService implements OnApplicationBootstrap {
               operatorReplaceCategoryMap,
             };
 
+            // SA-1034 rule 4: the custom lines this payload AUTHORES (new, or re-sent at another price) need price
+            // rights; the create auto-merge re-homes lines that were authored earlier (COPY), so it is not judged here.
+            if (isStaffEdit && !opts?.isCreateMerge) {
+              assertCustomPricesAllowed(
+                authoredCustomEntries(
+                  dto.items,
+                  heldItems.map((h) => ({
+                    ...h,
+                    name: (order.lineItems ?? []).find((l) => l.id === h.id)?.name,
+                  })),
+                ),
+                uctx.priceEditAllowed,
+              );
+            }
+
             // SA-124i (non-blocking): validate every item's own pack against the live product
             // for ALL items BEFORE deleteMany runs, rather than interleaved with it per-item —
             // a mid-loop refusal was already rolled back by the surrounding transaction either
@@ -3354,6 +3377,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const name = (item.name as string).trim();
                 const qty = item.qty as number;
                 const unitPrice = Number(item.unitPrice);
+                if (isStaffEdit) assertCustomPricesAllowed([item], uctx.priceEditAllowed); // SA-1034 rule 4
                 await tx.orderItem.create({
                   data: {
                     orderId,

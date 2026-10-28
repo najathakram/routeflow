@@ -53,6 +53,12 @@ export function decideTierOverride(
   };
 }
 
+const priceEditRefusal = () =>
+  new ForbiddenException({
+    code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
+    message: "You can't change prices. Ask your account admin.",
+  });
+
 /**
  * POS-5 / SA-1034: the price-edit capability is checked at every override site through this one helper. Each caller
  * computes `priceEditAllowed` as `staffMay(role, "EDIT_LINE_PRICE", deniedGroups)` (create() also takes the counter
@@ -60,12 +66,28 @@ export function decideTierOverride(
  * the SERVER price, before the line is written. Sites: price-edit-sites.pin.spec.ts.
  */
 export function assertPriceEditAllowed(priceEditAllowed: boolean): void {
-  if (!priceEditAllowed) {
-    throw new ForbiddenException({
-      code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
-      message: "You can't change prices. Ask your account admin.",
-    });
-  }
+  if (!priceEditAllowed) throw priceEditRefusal();
+}
+
+/**
+ * SA-1034 rule 4: a custom (unlisted) line has no product and no system kind, and its price is whatever the staff
+ * member typed. NSF and any other server-priced line carries a `systemKind` and is not this class.
+ */
+export const isCustomPricedLine = (line: {
+  productId?: string | null;
+  systemKind?: string | null;
+}) => !line.productId && !line.systemKind;
+
+/**
+ * SA-1034 rule 4: the custom-line twin of `assertPriceEditAllowed`, with the same 403. Call it at every AUTHORING site
+ * with the lines the request writes as new (a resubmitted, unchanged line is no authoring); it refuses before
+ * anything is written. Copy sites (merge, template run, convert) never call it. Sites: price-edit-sites.pin.spec.ts.
+ */
+export function assertCustomPricesAllowed(
+  lines: ReadonlyArray<{ productId?: string | null; systemKind?: string | null }>,
+  priceEditAllowed: boolean,
+): void {
+  if (!priceEditAllowed && lines.some(isCustomPricedLine)) throw priceEditRefusal();
 }
 
 /** SA-1034: re-exported so an override site computes its capability next to the one helper that checks it. */

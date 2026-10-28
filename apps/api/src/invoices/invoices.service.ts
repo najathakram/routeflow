@@ -70,7 +70,9 @@ import {
   inheritHeldUnit,
   inPlacePatch,
   matchEditLines,
+  authoredCustomEditLines,
 } from "./invoice-edit-plan";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
@@ -470,13 +472,17 @@ export class InvoicesService {
     );
 
     // Manual-invoice line builder: see manual-invoice-lines.ts (verbatim move; units_v1 4c-1 prefactor).
+    const override = await loadOverride(this.prisma, dto, unitsByProduct, actor, this.entitlements);
+    // SA-1034 rule 4 (AUTHORING): a typed custom charge needs price rights. Here, beside loadOverride, and never inside
+    // buildManualInvoiceLines, which the estimate convert shares (that copies an authored price). No actor = internal.
+    if (override) assertCustomPricesAllowed(dto.items, override.priceEditAllowed);
     const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
       ...lineGuardCtx(this.prisma, actor, opts?.warnSite), // tenant, role, and POST /invoices' census site (SA-982 PR-2)
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
-      override: await loadOverride(this.prisma, dto, unitsByProduct, actor, this.entitlements),
+      override,
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -3189,6 +3195,13 @@ export class InvoicesService {
         const { storedRows, isTaxExempt, invoice: cur } = locked;
         const matches = matchEditLines(items, storedRows);
         if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
+        // SA-1034 rule 4: a custom line this edit authors (new, or re-priced) needs price rights; before any write.
+        if (override) {
+          assertCustomPricesAllowed(
+            authoredCustomEditLines(items, matches),
+            override.priceEditAllowed,
+          );
+        }
         assertNsfLinesUntaxed(
           items,
           matches.map((m) => m.row),

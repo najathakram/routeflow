@@ -1,3 +1,7 @@
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
 /**
  * H5 parity pin (SA must 3): an estimate and an invoice built from the SAME lines at the SAME tenant rate and exempt
  * flag carry the same subtotal, tax and total - so a quote converted at an unchanged rate can never move. Own file

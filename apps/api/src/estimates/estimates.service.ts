@@ -40,6 +40,8 @@ import {
 import { assertNoUnitAwareLines } from "../orders/unit-aware-guard";
 import { customerPricing } from "../orders/units-prices-v2";
 import { CreateEstimateDto } from "./dto/create-estimate.dto";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
 
 // B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
@@ -123,7 +125,7 @@ export class EstimatesService {
     });
   }
 
-  async create(dto: CreateEstimateDto) {
+  async create(dto: CreateEstimateDto, actor?: JwtPayload) {
     // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
     // behavior to preserve — validate the shape before touching the DB so a
     // malformed value 400s instead of writing Invalid Date or a misparsed date.
@@ -157,6 +159,13 @@ export class EstimatesService {
 
     const tenantId = this.prisma.getTenantId();
     const items: any[] = dto.items ?? [];
+    // SA-1034 rule 4 (AUTHORING): a custom estimate line carries a staff-typed price. The capability is read once here,
+    // before the write; no actor is no capability (the controller always passes the caller).
+    const needsPriceRights = items.some((i) => !i.productId || i.unitPrice != null);
+    const priceEditAllowed =
+      !needsPriceRights ||
+      (await priceEditAllowedFor(this.prisma, actor, "EstimatesService.create"));
+    assertCustomPricesAllowed(items, priceEditAllowed);
     // H5: a quote is taxed the way an invoice is - the tenant rate and the customer's exempt flag, today.
     const taxRate = await configuredTaxRateFraction(this.prisma);
     const isTaxExempt = !!customer.isTaxExempt;

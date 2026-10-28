@@ -1,3 +1,7 @@
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
 // `@LeaderCron` wraps every cron tick in a Postgres advisory lock (common/cron-lock.ts).
 // These specs invoke the tick directly and have no database, so the lock is a PASS-THROUGH here:
 // it must still call the body — a mock that skipped it would make every assertion below measure

@@ -50,11 +50,26 @@ const ASSERT_COUNTS: Record<string, number> = {
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit, pack and unit
 };
 
+/**
+ * Exact: the `assertCustomPricesAllowed(` calls, one per AUTHORING site of a custom (no product) priced line (rule 4).
+ * COPY sites never call it: the create auto-merge and the buyer/driver replace (orders.service), the estimate convert
+ * (it copies through buildManualInvoiceLines, which must stay free of it), the recurring run (source "template-run"),
+ * and order -> invoice generation.
+ */
+const CUSTOM_ASSERT_COUNTS: Record<string, number> = {
+  "orders/orders.service.ts": 3, // create (covers the counter), staff full replace (new lines), diff-add
+  "invoices/invoices.service.ts": 2, // direct invoice create, invoice edit (new / re-priced custom lines)
+  "estimates/estimates.service.ts": 1, // estimate create
+  "recurring-invoices/recurring-invoices.service.ts": 1, // template create + update, through one private method
+};
+
 /** Exact: the `priceEditAllowedFor(` compute sites (the helper's own definition is not a call). */
 const COMPUTE_COUNTS: Record<string, number> = {
   "orders/orders.service.ts": 2, // create, updateOrderItems (each once, before its transaction)
   "invoices/invoice-line-override.ts": 1, // loadOverride: invoice create and edit
   "returns/inline-returns-quote.service.ts": 1, // priceInlineReturn: the quote and the capture's credit price
+  "estimates/estimates.service.ts": 1, // create
+  "recurring-invoices/recurring-invoices.service.ts": 1, // assertCustomLinesAllowed (template create + update)
 };
 
 describe("SA-1034: price-edit capability is checked at every override site", () => {
@@ -86,6 +101,32 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
       if (n > 0) found[f.split("\\").join("/")] = n;
     }
     expect(found).toEqual(ASSERT_COUNTS);
+  });
+
+  it.each(Object.entries(CUSTOM_ASSERT_COUNTS))(
+    "%s has exactly %i assertCustomPricesAllowed( calls",
+    (file, n) => {
+      expect(callCount(read(file), "assertCustomPricesAllowed")).toBe(n);
+    },
+  );
+
+  it("assertCustomPricesAllowed( is called nowhere else outside staff-override.ts (never in the shared copy builders)", () => {
+    const found: Record<string, number> = {};
+    for (const f of files) {
+      if (f === join("orders", "staff-override.ts")) continue;
+      const n = callCount(read(f), "assertCustomPricesAllowed");
+      if (n > 0) found[f.split("\\").join("/")] = n;
+    }
+    expect(found).toEqual(CUSTOM_ASSERT_COUNTS);
+  });
+
+  it("orders.service.ts holds exactly 7 `productId: null` sites, each classified in the SA-1034 PR body", () => {
+    // AUTHORING (assertCustomPricesAllowed): create, staff full replace, diff-add. COPY: the two auto-merge re-homes and
+    // the buyer/driver replace (a buyer's entry is ignored, B51; a driver keeps today's behaviour). The seventh is the
+    // `where: { productId: null }` filter. A new site must be classed AUTHORING or COPY in its own diff.
+    expect([...code(read("orders/orders.service.ts")).matchAll(/productId: null/g)]).toHaveLength(
+      7,
+    );
   });
 
   it("priceEditAllowedFor( is called at exactly the compute sites, once each per request path", () => {

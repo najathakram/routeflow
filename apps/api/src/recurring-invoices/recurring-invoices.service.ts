@@ -19,6 +19,9 @@ import { RecurringFrequency } from "@prisma/client";
 import { recurringLineSplit } from "./recurring-line-split";
 import { assertNsfLinesUntaxed, nsfSafeTaxRate } from "../invoices/nsf-line-tax-guard";
 import { assertSellableLines } from "../products/sellable-lines";
+import { roundMoney } from "@routeflow/pricing";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -60,7 +63,7 @@ export class RecurringInvoicesService {
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateRecurringInvoiceDto) {
+  async create(dto: CreateRecurringInvoiceDto, actor?: JwtPayload) {
     assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
     // 681 (R5-5): the template stores its customer and each item's productId; prove both in this tenant first.
     await assertRefsInTenant(this.prisma, {
@@ -75,6 +78,12 @@ export class RecurringInvoicesService {
       .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
     await this.assertNoFamilyLines(dto.items ?? []);
+    await this.assertCustomLinesAllowed(
+      dto.items ?? [],
+      [],
+      actor,
+      "RecurringInvoicesService.create",
+    );
 
     return this.prisma.forTenant().recurringInvoice.create({
       data: {
@@ -102,6 +111,32 @@ export class RecurringInvoicesService {
       },
       include: { customer: { select: { id: true, businessName: true } }, items: true },
     });
+  }
+
+  /**
+   * SA-1034 rule 4 (AUTHORING): a template line with no product carries a staff-typed price. One that the template
+   * already holds (same text, same cent price) is only re-sent by an edit and is not authoring. The run itself COPIES
+   * the authored price (InvoicesService.create source "template-run") and never reaches this check.
+   */
+  private async assertCustomLinesAllowed(
+    items: ReadonlyArray<{ description: string; productId?: string | null; unitPrice: number }>,
+    held: ReadonlyArray<{ description: string; productId?: string | null; unitPrice: unknown }>,
+    actor: JwtPayload | undefined,
+    site: string,
+  ) {
+    const text = (d: string) => (d ?? "").trim();
+    const authored = items.filter(
+      (i) =>
+        !i.productId &&
+        !held.some(
+          (h) =>
+            !h.productId &&
+            text(h.description) === text(i.description) &&
+            roundMoney(Number(h.unitPrice)) === roundMoney(Number(i.unitPrice)),
+        ),
+    );
+    if (authored.length === 0) return;
+    assertCustomPricesAllowed(authored, await priceEditAllowedFor(this.prisma, actor, site));
   }
 
   /** WS8: a template line never names a FAMILY (the generated invoice line would). */
@@ -132,9 +167,9 @@ export class RecurringInvoicesService {
     return ri;
   }
 
-  async update(id: string, dto: UpdateRecurringInvoiceDto) {
+  async update(id: string, dto: UpdateRecurringInvoiceDto, actor?: JwtPayload) {
     assertNsfLinesUntaxed(dto.items ?? []); // #2656: 400 before any read or write
-    await this.findOne(id);
+    const held = await this.findOne(id);
     const include = { customer: { select: { id: true, businessName: true } }, items: true };
     const data = {
       ...(dto.frequency && { frequency: dto.frequency }),
@@ -157,6 +192,12 @@ export class RecurringInvoicesService {
     // 681 (R5-5): update never writes customerId; the replacement items' productIds are proven before the tx.
     await assertRefsInTenant(this.prisma, { productIds: items.map((i) => i.productId) });
     await this.assertNoFamilyLines(items);
+    await this.assertCustomLinesAllowed(
+      items,
+      held.items,
+      actor,
+      "RecurringInvoicesService.update",
+    );
     return this.prisma.tenantTransaction(async (tx) => {
       await tx.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
       return tx.recurringInvoice.update({

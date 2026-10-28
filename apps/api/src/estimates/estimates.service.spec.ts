@@ -11,6 +11,11 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
+
 // B8: accept() had no status guard and convertToInvoice() was a read-then-write
 // with no transaction, so a double-click (re-accept a CONVERTED estimate, or two
 // concurrent converts) could mint a second invoice for the same estimate. Both

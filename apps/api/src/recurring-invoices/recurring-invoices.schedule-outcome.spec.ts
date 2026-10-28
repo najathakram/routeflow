@@ -9,6 +9,11 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
+
 /**
  * F13 red set — B46 (MONTHLY schedule), B106 (failure/success outcome recording),
  * B92 (recurring template item replace). Every proof title below carries its
@@ -300,7 +305,11 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
 
   describe("recurring template item replace (R25, B92)", () => {
     it("REG-B92 T31 — item replacement runs inside one tenantTransaction with tenantId stamped on nested creates", async () => {
-      prisma.recurringInvoice.findUnique.mockResolvedValue({ id: "ri-1", customerId: "c1" });
+      prisma.recurringInvoice.findUnique.mockResolvedValue({
+        id: "ri-1",
+        customerId: "c1",
+        items: [],
+      });
       const calls: string[] = [];
       prisma.recurringInvoiceItem.deleteMany.mockImplementation(() => {
         calls.push("delete");

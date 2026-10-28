@@ -150,6 +150,23 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
   return out;
 }
 
+/**
+ * SA-1034 rule 4: the payload lines that AUTHOR a custom (no product) price on an edit: a line with no stored row, or a
+ * stored custom line re-sent at another price. A server-priced row (`systemKind`, e.g. NSF) and a custom line whose
+ * price is only echoed back (a qty or note change) are not authoring. Feed it to `assertCustomPricesAllowed`.
+ */
+export function authoredCustomEditLines(
+  items: EditPayloadLine[],
+  matches: LineMatch[],
+): EditPayloadLine[] {
+  return items.filter((item, i) => {
+    if (item.productId) return false;
+    const row = matches[i].row;
+    if (row?.systemKind) return false;
+    return !row || !same(item.unitPrice, row.unitPrice);
+  });
+}
+
 /** The payload with an absent `unitLabel` filled from the matched row's unit (SA-070: absent = unchanged). */
 export function inheritHeldUnit(items: EditPayloadLine[], matches: LineMatch[]): EditPayloadLine[] {
   return items.map((it, i) => {
