@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Logger } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import {
   decideStaffOverride,
@@ -12,12 +12,14 @@ import {
   computeLineSubtotalStrict,
   isSpecialPrice,
   normalizeBoxesPieces,
-  resolveLadderLevel,
+  heldLevelState,
+  heldSnapshotPrices,
   resolveUnitPrice,
   unitNameKey,
   type CategoryTaxSnapshot,
   type CategoryTaxType,
   type CustomerLayerPrice,
+  type HeldLevel,
   type LadderProduct,
   type LadderUnit,
   type TrackedCategoryRow,
@@ -101,6 +103,8 @@ export const STORED_UNIT_LINE_SELECT = {
  * never throws `UnknownUnitError`. A NEW line has none, and still gets the 400.
  */
 export interface UnitSnapshotLine {
+  /** The stored line's id — named in the SA-1044 "unknown held level" warning only. */
+  id?: string | null;
   unitLabel?: string | null;
   unitsPerBox?: number | null;
   unitPrice?: unknown;
@@ -324,16 +328,7 @@ export interface UnitLineData {
   tenantId: string | null | undefined;
 }
 
-/** Does the live ladder still name `label`? (the pack, the base, or a level row) */
-function ladderNames(product: LadderProduct, units: readonly LadderUnit[], label: string): boolean {
-  try {
-    resolveLadderLevel(product, units, label);
-    return true;
-  } catch (e) {
-    if (e instanceof UnknownUnitError) return false;
-    throw e;
-  }
-}
+const log = new Logger("unit-line-build");
 
 export function buildUnitLine(input: {
   product: UnitLineProduct;
@@ -416,20 +411,25 @@ export function buildUnitLine(input: {
     );
   }
 
-  // Units P0b: a rewrite of a line HELD on a unit the ladder no longer names keeps its own snapshot.
+  // Units P0b + SA-1044 (B11a): a rewrite of a line HELD on a level the ladder no longer names (gone) or names at
+  // another size (resized) keeps its own snapshot price — never the live level's price at the held factor.
   const snap = input.existing;
-  const gone =
-    snap != null &&
-    unitNameKey(snap.unitLabel ?? "") === unitNameKey(label) &&
-    Number(snap.unitPrice) >= 0 &&
-    !ladderNames(ladderProduct, units, label);
+  const state =
+    snap != null && unitNameKey(snap.unitLabel ?? "") === unitNameKey(label)
+      ? heldLevelState(snap as HeldLevel, ladderProduct, units)
+      : null;
+  if (state === "unknown") {
+    log.warn(
+      `SA-1044: held line ${snap?.id ?? "(no id)"} has an unusable unit snapshot; re-priced from the ladder`,
+    );
+  }
+  const gone = snap != null && (state === "gone" || state === "resized");
   let listPrice: number;
   let tierPrice: number;
   const layer = input.customerLayer ?? null;
   try {
     if (gone) {
-      tierPrice = roundMoney(Number(snap.unitPrice));
-      listPrice = roundMoney(Number(snap.originalPrice ?? snap.unitPrice));
+      ({ tierPrice, listPrice } = heldSnapshotPrices(snap as HeldLevel));
     } else {
       // the layer row's own list when there is one, so the original and the SPECIAL/MANUAL type agree with the price
       // (the ladder is still resolved: an unknown unit or an invalid tier is refused exactly as master does)
