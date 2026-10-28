@@ -160,6 +160,17 @@ export function isFastMode(env = process.env) {
   return env.RF_VERIFY_MODE === "fast" && !env.CI && env.FULL_VERIFY !== "1";
 }
 
+// STUB (red commit): real values land in the next commit.
+export const FAST_NOT_PROOF_LINE = "";
+export const REPO_WIDE_PINS = [];
+export const SCRIPT_SPEC_PATTERN = "";
+export function repoPinsNeeded() {
+  return false;
+}
+export function fastStampLine() {
+  return null;
+}
+
 /** The checked-out branch name ("HEAD" when detached), or null when git cannot say. */
 export function currentBranch(root) {
   const out = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
