@@ -447,4 +447,31 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     expect(f.returns).toHaveLength(0);
     addonOn = true;
   }, 60_000);
+
+  it("(WI-G1, SA-1036) a walk-in sale with an inlineReturn is refused 409 WALK_IN_STORE_CREDIT_REFUSED before any write", async () => {
+    addonOn = true;
+    const key = randomUUID();
+    const before = await raw.creditNote.count({ where: { tenantId } });
+    let refused: { status?: number; response?: { code?: string } } | undefined;
+    await tenantCtx
+      .run(tenantId, () =>
+        service.ring(
+          {
+            walkIn: true,
+            items: [{ productId: big, qty: 1 }],
+            payment: { method: "CASH", amount: 10 },
+            inlineReturn: returnOf(snack, `rk-${key}`),
+          } as CounterSaleDto,
+          staff(),
+          key,
+        ),
+      )
+      .catch((e) => (refused = e));
+    expect(refused?.status).toBe(409);
+    expect(refused?.response?.code).toBe("WALK_IN_STORE_CREDIT_REFUSED");
+    const f = await footprint(key);
+    expect(f.orders).toHaveLength(0);
+    expect(f.returns).toHaveLength(0);
+    expect(await raw.creditNote.count({ where: { tenantId } })).toBe(before);
+  }, 60_000);
 });
