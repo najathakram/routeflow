@@ -36,6 +36,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -56,6 +57,9 @@ export const DEFAULT_BUDGET_USD = 40;
 const GH_LIMIT = 200;
 const BIG = 64 * 1024 * 1024;
 const EVAL_LOCK = "rf-eval"; // prepare's own lock reason: cleanup touches no other tree (not R4's rf-probe)
+const OWNER_FILE = "rf-eval-owner"; // second ownership factor, in the tree's own per-worktree gitdir
+export const RUN_ID = `${randomUUID()}-${process.pid}-${Date.now()}`;
+const TOKEN = /^rf-eval-owner v1 run=(\S+) pid=\d+ at=\S+\s*$/;
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 const cents = (n) => Math.round(Number(n) * 100); // money compares in cents: 3 x $0.10 is $0.30
 const toplevel = (dir) =>
@@ -175,7 +179,7 @@ export async function prepare(task, { repo, dir } = {}) {
   let added = false;
   let held = false;
   const cleanup = () => {
-    if (held && !cleanupTree(tree, { repo: root }))
+    if (held && !cleanupTree(tree, { repo: root, runId: RUN_ID }))
       throw new Error(`could not remove the eval tree ${tree}; see the message above`);
     if (added && !held) gitIn(root, ["worktree", "remove", "--force", tree]); // unlocked: no links yet
     gitIn(root, ["worktree", "prune"]);
@@ -185,6 +189,12 @@ export async function prepare(task, { repo, dir } = {}) {
     const add = gitIn(root, ["worktree", "add", "--detach", tree, task.baseSha]);
     if (add.status !== 0) throw new Error(`git worktree add failed: ${add.stderr}`);
     added = true;
+    const gitDir = gitIn(tree, ["rev-parse", "--path-format=absolute", "--git-dir"]).stdout.trim();
+    writeFileSync(
+      path.join(gitDir, OWNER_FILE),
+      `rf-eval-owner v1 run=${RUN_ID} pid=${process.pid} at=${new Date().toISOString()}
+`,
+    );
     const locked = gitIn(root, ["worktree", "lock", "--reason", EVAL_LOCK, tree]);
     if (locked.status !== 0) throw new Error(`git worktree lock failed: ${locked.stderr}`);
     held = true;
@@ -211,9 +221,11 @@ export const cleanupCommand = (tree) => `node scripts/factory-eval.mjs cleanup "
  * Removes a tree prepare() made: unlinks its node_modules links first and proves them gone (a recursive remove
  * must never walk through a junction into the caller's node_modules), then unlocks and removes the worktree.
  * Returns false, leaving the tree, when a link would not go. Throws, touching nothing, for a directory that is no
- * linked worktree or whose worktree does not carry prepare's "rf-probe" lock (a lane's tree, locked or not).
+ * linked worktree, whose worktree does not carry prepare's "rf-eval" lock, or whose own gitdir lacks prepare's
+ * owner token (a lane's tree, even one locked "rf-eval"). With `runId` the token must name that run; without it
+ * (a later sweep) the token must still parse as an rf-eval token.
  */
-export function cleanupTree(tree, { repo } = {}) {
+export function cleanupTree(tree, { repo, runId } = {}) {
   const dir = path.resolve(tree);
   const rev = (...a) =>
     (gitIn(dir, ["rev-parse", "--path-format=absolute", ...a]).stdout ?? "").trim();
@@ -229,6 +241,12 @@ export function cleanupTree(tree, { repo } = {}) {
     });
   if (!ours)
     throw new Error(`${dir} is not a tree prepare made (no "${EVAL_LOCK}" lock); left in place`);
+  const tokenFile = path.join(rev("--git-dir"), OWNER_FILE);
+  const tokenRun = existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").match(TOKEN)?.[1] : null;
+  if (!tokenRun || (runId && tokenRun !== runId))
+    throw new Error(
+      `${dir} carries the "${EVAL_LOCK}" lock but no matching owner token (${OWNER_FILE}); left in place`,
+    );
   const isLink = (l) => {
     try {
       return lstatSync(l).isSymbolicLink();
@@ -740,7 +758,13 @@ function select(o, root) {
 
 /** The stub arm: copies EVAL_STUB_PATHS from EVAL_STUB_SHA into the tree and reports a fake cost. */
 function stubArm() {
-  for (const p of (process.env.EVAL_STUB_PATHS ?? "").split(",").filter(Boolean)) {
+  const paths = (process.env.EVAL_STUB_PATHS ?? "").split(",").filter(Boolean);
+  for (const p of paths) {
+    const rel = path.relative(process.cwd(), path.resolve(process.cwd(), p));
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel))
+      throw new Error(`stub arm: ${p} is outside the eval tree`);
+  }
+  for (const p of paths) {
     const r = gitIn(process.cwd(), ["show", `${process.env.EVAL_STUB_SHA}:${p}`]);
     if (r.status !== 0) throw new Error(`stub arm: cannot read ${p}`);
     writeFileSync(p, r.stdout);
