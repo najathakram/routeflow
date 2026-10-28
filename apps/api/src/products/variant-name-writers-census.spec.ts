@@ -56,12 +56,16 @@ const GUARDED: Record<string, { calls: number; why: string }> = {
 
 /** Files that write ONLY through ProductsService.create / update (which are GUARDED above). */
 const ROUTED: Record<string, string> = {
+  "catalog-copy/catalog-copy.service.ts":
+    "SA-1027: copyFamily / createProduct hand each variant to ProductsService.create (reparentVia import, the bare label as name and variantName); it writes no Product row of its own",
   "import/variant-resolution.service.ts":
     "createVariant hands the variant to ProductsService.create (the import and scan 'new variant' choice); it writes no variant label of its own",
 };
 
 /** Files that match the scan but never write a variant label, each with the reason. */
 const ALLOWED: Record<string, string> = {
+  "catalog-copy/catalog-copy.plan.ts":
+    "SA-1027: the pure plan reads the source rows and carries each variant's bare label to the service; it writes nothing",
   "import/import.service.ts":
     "SA-823 PR-2: a Family row's new variant is built as a create() dto (name = variantName = the bare label from the planner) and handed to ProductsService.create; it writes no Product row itself",
   "buyer/buyer-catalog-where.ts": "a search filter on variantName (read)",
