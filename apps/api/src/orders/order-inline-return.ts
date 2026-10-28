@@ -1,4 +1,6 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { roundMoney } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertReplayItems,
   type InlineReturnReplayLines,
@@ -65,6 +67,30 @@ export async function previewInlineReturnCredit(
   } catch {
     return 0;
   }
+}
+
+/**
+ * W-863 (SA-945 MUST 6, G5): the credit gate netted a PRE-transaction preview. Inside the transaction, after the capture,
+ * the credit actually issued must still cover it (both capped at the sale total, ½¢ tolerance): a concurrent return of
+ * the same sold line between the preview and the capture would otherwise loosen the limit. 409 and the transaction rolls
+ * back: no order, no Return, no credit note. No preview (0) = nothing was netted = nothing to hold it to.
+ */
+export function assertIssuedCreditCoversPreview(
+  minted: { amount?: unknown } | null,
+  previewed: number,
+  saleTotal: number,
+): void {
+  if (!(previewed > 0)) return;
+  const want = roundMoney(Math.min(previewed, saleTotal));
+  const got = roundMoney(Math.min(Number(minted?.amount ?? 0), saleTotal));
+  if (got >= want - 0.005) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.RETURN_CREDIT_CHANGED,
+    message:
+      "The return's credit changed while the sale was being rung. Nothing was saved: check the return and try again.",
+    previewed: want,
+    issued: got,
+  });
 }
 
 /**

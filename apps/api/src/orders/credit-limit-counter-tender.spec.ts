@@ -200,7 +200,7 @@ describe("S1 wiring pins", () => {
   });
   it("only the COUNTER sale nets a return credit at the gate (Create Order keeps SA-194)", () => {
     expect(src("orders.service.ts")).toMatch(
-      /const returnCredit = options\.counterSale\s*\?\s*await inlineReturn\.previewInlineReturnCredit\([^)]*\)\s*:\s*0;/,
+      /returnCredit = options\.counterSale\s*\?\s*await inlineReturn\.previewInlineReturnCredit\([^)]*\)\s*:\s*0;/,
     );
   });
   it("only the counter sale sets creditPaidNow (repo-wide scan of apps/api/src, specs excluded)", () => {

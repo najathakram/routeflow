@@ -82,6 +82,7 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let service: CounterSaleService;
+  let inlineSvcRef: InlineReturnsService; // case (g) stubs its dry-run pricing
   let addonOn = true;
   let tenantId = "";
   let operatorId = "";
@@ -137,6 +138,7 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
       quoteService: new InlineReturnsQuoteService(prisma, systemConfig),
       idempotency: new IdempotencyService(),
     });
+    inlineSvcRef = inlineSvc;
     const mod = await Test.createTestingModule({
       providers: [
         InvoicesService,
@@ -458,6 +460,28 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
       ),
     );
     expect(over).toBeNull();
+  }, 60_000);
+
+  it("(g) SA-945 G5: when the credit really issued is below what the gate netted, the sale is refused 409 RETURN_CREDIT_CHANGED and nothing is written", async () => {
+    addonOn = true;
+    // the preview (dry-run) says $9.00; the in-transaction capture prices the real $4.00: a concurrent return landed between
+    const spy = jest.spyOn(inlineSvcRef, "preflightNewOrderReturn").mockResolvedValue(9);
+    const key = randomUUID();
+    const before = await raw.creditNote.count({ where: { tenantId } });
+    let refused: { status?: number; response?: { code?: string } } | undefined;
+    try {
+      await ring(key, returnOf(snack, `rk-${key}`), { method: "ON_ACCOUNT" }).catch(
+        (e) => (refused = e),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(refused?.status).toBe(409);
+    expect(refused?.response?.code).toBe("RETURN_CREDIT_CHANGED");
+    const f = await footprint(key);
+    expect(f.orders).toHaveLength(0);
+    expect(f.returns).toHaveLength(0);
+    expect(await raw.creditNote.count({ where: { tenantId } })).toBe(before);
   }, 60_000);
 
   it("(d) with the add-on off the field is refused 403 and nothing is written", async () => {
