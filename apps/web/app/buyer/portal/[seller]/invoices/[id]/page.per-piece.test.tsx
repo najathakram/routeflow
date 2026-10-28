@@ -112,3 +112,37 @@ describe("SA-1029 buyer portal invoice: per-piece price", () => {
     expect(screen.queryByText("$2.00/pc")).toBeNull();
   });
 });
+
+describe("SA-1029 G-6: one price text, one word (portal)", () => {
+  it("W-P1: the pieces layout prints the charged price trimmed", () => {
+    show(
+      invoiceItem({
+        ...packLine,
+        displayUnit: { kind: "pieces", label: "Piece" },
+        perBaseUnit: { price: 2, unit: "pc" },
+      } as never),
+    );
+    expect(screen.getAllByText("$2.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText("$2.0000")).toBeNull();
+  });
+
+  it("MSRP-R1: a pack line of a Bag product prints MSRP per bag", () => {
+    show(invoiceItem({ ...packLine, msrp: 3.49, perBaseUnit: { price: 2, unit: "bag" } } as never));
+    expect(screen.getAllByText(/MSRP \$3\.49\/bag/).length).toBeGreaterThan(0);
+  });
+
+  it("MSRP-G1: a loose line with an MSRP still prints /pc", () => {
+    show(
+      invoiceItem({
+        ...packLine,
+        boxes: 0,
+        pieces: 3,
+        qty: 3,
+        unitsPerBox: 1,
+        msrp: 3.49,
+        perBaseUnit: null,
+      } as never),
+    );
+    expect(screen.getAllByText(/MSRP \$3\.49\/pc/).length).toBeGreaterThan(0);
+  });
+});

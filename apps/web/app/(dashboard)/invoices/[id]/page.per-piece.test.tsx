@@ -157,3 +157,32 @@ describe("SA-1029 staff invoice: per-piece price column", () => {
     }
   });
 });
+
+describe("SA-1029 G-6: one price text, one word (staff)", () => {
+  it("W-P1: the pieces layout prints the charged price trimmed, $2.00 not $2.0000", () => {
+    mockInvoice = invoiceWith({
+      ...packLine,
+      displayUnit: { kind: "pieces", label: "Piece" },
+      perBaseUnit: { price: 2, unit: "pc" },
+    });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getAllByText("$2.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText("$2.0000")).toBeNull();
+  });
+
+  it("MSRP-R1: a pack line of a Bag product prints MSRP per bag", () => {
+    mockInvoice = invoiceWith({
+      ...packLine,
+      msrp: 3.49,
+      perBaseUnit: { price: 2, unit: "bag" },
+    });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getAllByText(/MSRP \$3\.49\/bag/).length).toBeGreaterThan(0);
+  });
+
+  it("MSRP-G1: a loose line with an MSRP still prints /pc", () => {
+    mockInvoice = invoiceWith({ ...looseLine, msrp: 3.49, perBaseUnit: null });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getAllByText(/MSRP \$3\.49\/pc/).length).toBeGreaterThan(0);
+  });
+});

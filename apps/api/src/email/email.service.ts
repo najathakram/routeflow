@@ -21,7 +21,7 @@ import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // shared with the email too — one formatter, never a second copy of the same
 // boxes/pieces/unitLabel display logic.
 import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
-import { formatPerBaseUnitPrice, type PerBaseUnitPrice } from "@routeflow/pricing";
+import { baseUnitSuffix, formatPerBaseUnitPrice, type PerBaseUnitPrice } from "@routeflow/pricing";
 import { sellerDisplayName } from "../common/seller-display-name";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
@@ -1699,7 +1699,7 @@ export class EmailService {
               : ""
           }${fmt(it.unitPrice)}${
             it.msrp != null
-              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/pc</div>`
+              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/${baseUnitSuffix(it.perBaseUnit)}</div>`
               : ""
           }</td>${
             showPerPiece

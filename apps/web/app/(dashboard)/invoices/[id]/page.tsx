@@ -77,6 +77,7 @@ import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   basePriceText,
   editPaymentCap,
+  baseUnitSuffix,
   formatPerBaseUnitPrice,
   invoiceDisplayLines,
   invoiceDisplayCategoryTax,
@@ -87,10 +88,7 @@ import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import {
-  InvoiceDisplayRows,
-  displayQtyText,
-} from "@/components/InvoiceDisplayRows";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
@@ -2662,7 +2660,7 @@ export default function InvoiceDetailPage() {
                               loses the MSRP addon. */}
                           {item.msrp != null && (
                             <p className="mt-0.5 text-[10px] text-navy/50">
-                              MSRP {fmt(Number(item.msrp))}/pc
+                              MSRP {fmt(Number(item.msrp))}/{baseUnitSuffix(item.perBaseUnit)}
                             </p>
                           )}
                         </td>

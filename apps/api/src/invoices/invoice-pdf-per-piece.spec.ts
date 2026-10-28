@@ -29,3 +29,10 @@ describe("invoice-pdf-template — per-piece column (SA-1029 PDF-R1)", () => {
     expect(src).toMatch(/colPerUnit:\s*\{/);
   });
 });
+
+describe("invoice-pdf-template — MSRP note unit word (SA-1029 G-6)", () => {
+  it("MSRP-R1: the note prints the line's base unit word, not a literal /pc", () => {
+    expect(src).toMatch(/MSRP \{fmt\(item\.msrp\)\}\/\{baseUnitSuffix\(item\.perBaseUnit\)\}/);
+    expect(src).not.toMatch(/\}\/pc\b/);
+  });
+});
