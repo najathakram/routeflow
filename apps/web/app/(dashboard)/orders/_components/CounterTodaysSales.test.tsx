@@ -1024,3 +1024,20 @@ describe("Last 7 days (Train 4 b)", () => {
     expect(await screen.findByTestId("week-total")).toBeInTheDocument();
   });
 });
+
+describe("CounterTodaysSales: a sale left To collect (SA-1026 A-G8)", () => {
+  it("the row keeps its On account state and adds the To collect chip", async () => {
+    serve({ 1: page1([row({ paymentState: "ON_ACCOUNT", toCollect: "TO_COLLECT" })]) });
+    await open();
+    await screen.findByTestId("to-collect-chip");
+    expect(screen.getAllByText("On account").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("to-collect-chip")).toHaveTextContent("To collect");
+  });
+
+  it("an unmarked On account row has no chip", async () => {
+    serve({ 1: page1([row({ paymentState: "ON_ACCOUNT", toCollect: "NONE" })]) });
+    await open();
+    await screen.findByTestId("today-summary");
+    expect(screen.queryByTestId("to-collect-chip")).toBeNull();
+  });
+});

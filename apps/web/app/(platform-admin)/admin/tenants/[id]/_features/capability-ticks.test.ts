@@ -29,10 +29,24 @@ function caps(over: Partial<BusinessCapabilities> = {}): BusinessCapabilities {
 }
 
 describe("ticksFromCapabilities", () => {
-  it("a tenant that is not set up shows nothing ticked, whatever else the read says (D1)", () => {
+  // SA-1028 K-R3: supersedes D1 ("not set up shows nothing ticked"). The server now reads what an unset tenant does
+  // today; the card copies it, so a tenant nobody set up is not shown as a business that does nothing.
+  it("a tenant that is not set up shows the server's ticks of what it does today", () => {
     const ticks = ticksFromCapabilities(
-      caps({ configured: false, delivery: true, counter: true, doorPayments: true }),
+      caps({ configured: false, delivery: true, shipping: true, doorPayments: true }),
     );
+    expect(ticks).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: false,
+      opensAs: "order",
+    });
+    expect(nothingTicked(ticks)).toBe(false);
+  });
+
+  it("an unset tenant whose read carries no ticks still shows nothing ticked", () => {
+    const ticks = ticksFromCapabilities(caps({ configured: false }));
     expect(ticks).toEqual(NO_TICKS);
     expect(nothingTicked(ticks)).toBe(true);
   });
@@ -65,6 +79,17 @@ describe("toggleCapability", () => {
     const ship = toggleCapability(NO_TICKS, "shipping", true);
     const both = toggleCapability(ship, "counter", true);
     expect(both.opensAs).toBe("counter");
+  });
+
+  // SA-1028 K-R3 (unit): an unset tenant keeps the opens-as the card showed (`keepOpensAs`); the default only fills a blank.
+  it("K-R3: with keepOpensAs 'order' (an unset tenant), ticking Counter on Shipping keeps order", () => {
+    const ship = toggleCapability(NO_TICKS, "shipping", true);
+    expect(toggleCapability(ship, "counter", true, "order").opensAs).toBe("order");
+  });
+
+  it("K-G7: with no keepOpensAs (the create form, a configured tenant) D6 still defaults to counter", () => {
+    const ship = toggleCapability(NO_TICKS, "shipping", true);
+    expect(toggleCapability(ship, "counter", true, undefined).opensAs).toBe("counter");
   });
 
   it("leaving that combination resets opens-as to order", () => {

@@ -7,7 +7,7 @@
  *      `tenantTransaction`), so it still owns the Product row lock;
  *   2. writer B is started; its pre-tx validation read sees A's UNCOMMITTED-away state (the stale
  *      read the old code computed from);
- *   3. the spec polls `pg_blocking_pids` until B is genuinely WAITING on a lock (the B916 rule: the
+ *   3. the spec polls the blocked-wait helper until B is genuinely WAITING on a lock (the B916 rule: the
  *      lock wait must be observed, not assumed), then releases A.
  * On the old code B is blocked at its first Product write; on the new code at the lock statement.
  * Either way the contention is real and the final state tells the two apart.
@@ -49,6 +49,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -241,20 +242,7 @@ describeDb("SA-767 L-2 - stock writers lock, re-read in-tx, write relatively", (
    * own locks in the same database can never produce a false true.
    */
   async function sawLockWait(holderPid: number, withinMs = 5_000): Promise<boolean> {
-    const deadline = Date.now() + withinMs;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND pid <> pg_backend_pid()
-            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
-        [holderPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(25);
-    }
-    return false;
+    return waitUntilBlockedBy(pool, holderPid, { timeoutMs: withinMs });
   }
 
   it("(a) two concurrent purchases blend in the serialized order: 10 @ 2.00 +10 @ 4 +20 @ 6 = 40 @ 4.50", async () => {
