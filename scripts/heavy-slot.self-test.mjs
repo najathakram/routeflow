@@ -1693,6 +1693,20 @@ check(
       [0, []],
     ],
   );
+  // E10 — the tree to ensure is the install's own (--prefix / -C), resolved against cwd, not cwd itself.
+  const target = (cmd, args) => (run(cmd, args, 0), calls[0]);
+  const R = (p) => path.resolve("/w", p);
+  check(
+    "E10 npm ci --prefix <other> ensures that tree; -C and --prefix= too; none means cwd",
+    [
+      target("npm", ["ci", "--ignore-scripts", "--prefix", "/other"]),
+      target("npm", ["--prefix=sub", "ci", "--ignore-scripts"]),
+      target("npm", ["ci", "--ignore-scripts", "-C", "up"]),
+      target("sh", ["-c", "npm ci --ignore-scripts --prefix /shell"]),
+      target("npm", ["ci", "--ignore-scripts"]),
+    ],
+    [R("/other"), R("sub"), R("up"), R("/shell"), "/w"],
+  );
 }
 
 {
