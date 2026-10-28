@@ -18,6 +18,7 @@ import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
+import { walkInStoreCreditRefusal } from "../../credit-notes/walk-in-credit-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -117,6 +118,8 @@ export class CounterSaleService {
       throw new BadRequestException("Choose a customer or mark the sale as a walk-in");
     }
     let walkIn = !!dto.walkIn;
+    // W-863 (SA-932): a walk-in return is refunded at the till, never credited to the shared walk-in account.
+    if (walkIn && dto.inlineReturn) throw walkInStoreCreditRefusal();
     assertPaymentShape(dto.payment, walkIn);
     // Interim till guard: judged on the TENANT's day, before any write.
     await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
@@ -136,6 +139,7 @@ export class CounterSaleService {
       // The kept walk-in RECORD (park/resume) is a walk-in however the request names it: same refusals,
       // same tender rule, before any write.
       if (customer.isWalkIn === true) {
+        if (dto.inlineReturn) throw walkInStoreCreditRefusal();
         walkIn = true;
         assertPaymentShape(dto.payment, true);
       }
@@ -162,6 +166,8 @@ export class CounterSaleService {
         // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
         restrictionOverrides: dto.restrictionOverrides,
         warningHash: dto.warningHash,
+        // W-863: create() captures the return and issues its credit in the sale's own transaction (the one return writer).
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       } as never,
       user,
       {

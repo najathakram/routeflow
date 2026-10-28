@@ -3,6 +3,7 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { InlineReturnLinesRequest } from "./inline-returns";
 import type { DuplicatePaymentRefExisting } from "./payment-ref";
 import type { RestrictionAck } from "./restrictions";
 
@@ -54,6 +55,8 @@ export interface CounterSaleRequest extends RestrictionAck {
   items: CounterSaleItem[];
   payment: CounterSalePayment;
   notes?: string;
+  /** W-863 (SA-945): Create Order's own inline return, riding the sale. Named customers only: a walk-in's is refused 409. */
+  inlineReturn?: InlineReturnLinesRequest;
 }
 
 /**

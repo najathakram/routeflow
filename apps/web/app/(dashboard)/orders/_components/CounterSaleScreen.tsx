@@ -99,6 +99,7 @@ import {
   type LastSaleNote,
 } from "./CounterLastSale";
 import { useCounterLineUndo } from "./useCounterLineUndo";
+import { CounterReturnsMount, useCounterInlineReturn } from "./useCounterInlineReturn";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -481,6 +482,10 @@ export function CounterSaleScreen() {
   const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
+  // W-863: a named customer's inline return nets against the sale; `payTotal` is what the till asks for.
+  const namedCustomer = customer !== null && !customer.isWalkIn;
+  const ret = useCounterInlineReturn(totals.total, namedCustomer, setError);
+  const payTotal = ret.payTotal;
 
   const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: customerSearch.trim() || undefined,
@@ -790,6 +795,7 @@ export function CounterSaleScreen() {
 
   function resetSale() {
     dropUndo();
+    ret.discard();
     setLastSale(null);
     setCustomer(null);
     buyerChoice.reset();
@@ -853,6 +859,7 @@ export function CounterSaleScreen() {
       offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
       setOutcomeUnknown(false);
+      if (attempt.dto.inlineReturn) ret.settled();
       return res;
     } catch (err) {
       const finalCopy = finalCounterSaleCopy(err);
@@ -865,6 +872,7 @@ export function CounterSaleScreen() {
         liveCart.endSend();
       } else if (finalCopy) {
         // FINAL (even for an unknown attempt): voided or changed after it was rung. Drop the key, unlock, never retry.
+        if (attempt.dto.inlineReturn) ret.refused(err);
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
@@ -879,6 +887,7 @@ export function CounterSaleScreen() {
         setError(COUNTER_OFFLINE_COPY);
         liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
+        if (attempt.dto.inlineReturn) ret.refused(err);
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
@@ -936,9 +945,12 @@ export function CounterSaleScreen() {
       );
       return null;
     }
+    // W-863: the return is quoted BEFORE Complete (a blocked one says why); the key pair is minted here, once per attempt.
+    const inlineReturn = customer ? ret.prepare(customer.id) : undefined;
+    if (inlineReturn === null) return null;
     const problem = validatePayment({
       method,
-      total: totals.total,
+      total: payTotal,
       tendered: tenderedNum,
       reference,
       isWalkIn,
@@ -952,7 +964,7 @@ export function CounterSaleScreen() {
         setReference("");
         setCheckDate("");
       }
-      setError(paymentProblemCopy(problem, totals.total));
+      setError(paymentProblemCopy(problem, payTotal));
       if (problem === "TENDER_SHORT") setTenderFix((n) => n + 1);
       return null;
     }
@@ -984,6 +996,7 @@ export function CounterSaleScreen() {
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
+      ...(inlineReturn ? { inlineReturn } : {}),
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
@@ -994,7 +1007,7 @@ export function CounterSaleScreen() {
     };
     estimateRef.current = {
       total: totals.total,
-      change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
+      change: method === "CASH" ? changeDue(payTotal, tenderAmount) : 0,
     };
     return send(attemptRef.current);
   };
@@ -1513,6 +1526,12 @@ export function CounterSaleScreen() {
               </>
             ) : null}
           </div>
+
+          <CounterReturnsMount
+            customerId={namedCustomer ? customer.id : null}
+            walkIn={buyerChoice.kind === "walk-in"}
+            ret={ret}
+          />
         </div>
 
         <div
@@ -1560,7 +1579,7 @@ export function CounterSaleScreen() {
             {method === "CASH" ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
-                  {quickTenderOptions(totals.total).map((q) => (
+                  {quickTenderOptions(payTotal).map((q) => (
                     <button
                       key={q.label}
                       type="button"
@@ -1792,7 +1811,7 @@ export function CounterSaleScreen() {
                 the cent (a tender in progress, a card sale or a differing figure shows it as before). The figure stays in
                 the DOM, visually hidden, for assistive tech and for the tests that read it. */}
             {method === "CASH" &&
-            roundMoney(totals.total) === roundMoney(amountDue(totals.total, tenderedNum)) ? (
+            roundMoney(totals.total) === roundMoney(amountDue(payTotal, tenderedNum)) ? (
               <span className="sr-only" data-testid="running-total">
                 Total {money(totals.total)}
               </span>
@@ -1810,9 +1829,14 @@ export function CounterSaleScreen() {
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
-                {changeDue(totals.total, tenderedNum) > 0
-                  ? `Change ${money(changeDue(totals.total, tenderedNum))}`
-                  : `Amount due ${money(amountDue(totals.total, tenderedNum))}`}
+                {changeDue(payTotal, tenderedNum) > 0
+                  ? `Change ${money(changeDue(payTotal, tenderedNum))}`
+                  : `Amount due ${money(amountDue(payTotal, tenderedNum))}`}
+              </p>
+            ) : null}
+            {ret.storeCredit > 0 ? (
+              <p className="text-sm font-semibold text-navy" data-testid="return-store-credit">
+                Store credit {money(ret.storeCredit)}
               </p>
             ) : null}
 

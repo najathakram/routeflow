@@ -2093,6 +2093,8 @@ export class OrdersService implements OnApplicationBootstrap {
         ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
         restrictionOverrides: dto.restrictionOverrides, // row 510: the staff's acknowledgement rides the sale
         warningHash: dto.warningHash,
+        // W-863: the counter's return, captured and credited inside create()'s own transaction (one return writer)
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       },
       user,
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
