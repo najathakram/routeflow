@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -536,6 +537,48 @@ try {
   ok(
     "T14v a tree that already has pre-push still gets its stale helper refreshed",
     en.ok === true && readFileSync(path.join(fresh, ".husky/_/h"), "utf8") === "# fresh h\n",
+    JSON.stringify(en),
+  );
+
+  // T14w — a per-worktree hooksPath at a SHARED dir that has pre-push and a stale helper: the refresh
+  // guard (`owns &&`) must leave it byte-identical. Mutant `!owner.fail &&` overwrote it with main's.
+  const guardMain = repo("t14w-main");
+  sh(guardMain, "config", "core.hooksPath", ".husky/_");
+  sh(guardMain, "config", "extensions.worktreeConfig", "true");
+  withHook(guardMain, ".husky/_");
+  writeFileSync(path.join(guardMain, ".husky/_/h"), "# main fresh h\n");
+  const guardShared = path.join(tmp, "t14w-shared");
+  withHook(tmp, "t14w-shared");
+  writeFileSync(path.join(guardShared, "h"), "# shared stale h\n");
+  const guardTree = path.join(tmp, "t14w-linked");
+  sh(guardMain, "worktree", "add", "-q", "-b", "t14w", guardTree);
+  sh(guardTree, "config", "--worktree", "core.hooksPath", guardShared.replaceAll("\\", "/"));
+  const guardList = () => readdirSync(guardShared).sort().join(",");
+  const guardBefore = guardList();
+  en = ensureGitHooks({ cwd: guardTree, env: {} });
+  ok(
+    "T14w a shared hooks dir with pre-push keeps its own helper byte-identical; nothing written",
+    readFileSync(path.join(guardShared, "h"), "utf8") === "# shared stale h\n" &&
+      guardList() === guardBefore &&
+      !existsSync(path.join(guardShared, "husky.sh")),
+    JSON.stringify(en),
+  );
+
+  // T14x — a dangling link at the hooks dir (target removed): refused with a message, never copied into.
+  const dangMain = repo("t14x-main");
+  sh(dangMain, "config", "core.hooksPath", ".husky/_");
+  withHook(dangMain, ".husky/_");
+  const dangTree = path.join(tmp, "t14x-linked");
+  sh(dangMain, "worktree", "add", "-q", "-b", "t14x", dangTree);
+  const dangTarget = path.join(tmp, "t14x-gone");
+  mkdirSync(dangTarget, { recursive: true });
+  mkdirSync(path.join(dangTree, ".husky"), { recursive: true });
+  symlinkSync(dangTarget, path.join(dangTree, ".husky/_"), "junction");
+  rmSync(dangTarget, { recursive: true, force: true });
+  en = ensureGitHooks({ cwd: dangTree, env: {} });
+  ok(
+    "T14x a dangling link at the hooks dir is refused with a clear message",
+    en.ok === false && en.copied === false && /dangling/.test(en.message),
     JSON.stringify(en),
   );
 
