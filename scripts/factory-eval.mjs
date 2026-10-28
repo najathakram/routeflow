@@ -595,9 +595,10 @@ export function report(records, { vs, includeExample = false } = {}) {
     if (!groups.has(key)) groups.set(key, { run: label(r), taskId: r.taskId, recs: [] });
     groups.get(key).recs.push(r);
   }
-  // One record per run number: when duplicates disagree the worst wins (broken, then fail, then pass), so a
-  // repeated run can never inflate pass^k. A record without a run number (readResults rejects those) stands alone.
-  const rank = { pass: 0, fail: 1, broken: 2 };
+  // One record per run number: when duplicates disagree the worst wins (fail, then broken, then pass), so a
+  // repeated run never inflates pass^k or pass@1 (a broken copy never hides a fail). A record without a run
+  // number (readResults rejects those) stands alone.
+  const rank = { pass: 0, broken: 1, fail: 2 };
   const byRun = (all) => {
     const worst = new Map();
     for (const r of all) {
