@@ -242,3 +242,51 @@ describe("CounterSaleScreen: Check not received yet (SA-1026 A-R1)", () => {
     expect((screen.getByLabelText(CHOICE) as HTMLInputElement).checked).toBe(false);
   });
 });
+
+/**
+ * SA-1026 A-R2: ticking "Check not received yet" clears the check number typed before it, so no snapshot (park, refresh)
+ * can resume the sale as a Check with a number and no tick, which would send a CHECK payment for a check nobody has.
+ */
+describe("CounterSaleScreen: the tick clears a typed check number (SA-1026 A-R2)", () => {
+  const typedThenTicked = async () => {
+    await scan("COLA");
+    await named();
+    fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+    await waitFor(() => expect(screen.getByLabelText("Check date")).toHaveValue(dayPlus(0)));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.click(screen.getByLabelText(CHOICE));
+  };
+  const refusedWithNumberCopy = async () => {
+    complete();
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").some((a) => a.textContent === "Enter the check number."),
+      ).toBe(true),
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  };
+
+  it("a parked then resumed sale has an empty number field and Complete is refused", async () => {
+    renderTill(<CounterSaleScreen />);
+    await typedThenTicked();
+    fireEvent.click(screen.getByRole("button", { name: "Park" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Park" })).toBeDisabled());
+    fireEvent.click(await screen.findByRole("button", { name: /^Parked/ }));
+    await screen.findByRole("dialog", { name: "Parked sales" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Resume / }));
+    await screen.findByRole("button", { name: "Remove Cola" });
+    expect(screen.getByLabelText("Check number")).toHaveValue("");
+    await refusedWithNumberCopy();
+  });
+
+  it("a refreshed sale (the stored live cart) comes back with an empty number field and Complete is refused", async () => {
+    const first = renderTill(<CounterSaleScreen />);
+    await typedThenTicked();
+    window.dispatchEvent(new Event("pagehide")); // the refresh: the stored cart is flushed
+    first.unmount();
+    renderTill(<CounterSaleScreen />);
+    await screen.findByRole("button", { name: "Remove Cola" });
+    expect(screen.getByLabelText("Check number")).toHaveValue("");
+    await refusedWithNumberCopy();
+  });
+});

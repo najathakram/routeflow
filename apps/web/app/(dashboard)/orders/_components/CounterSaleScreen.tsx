@@ -453,6 +453,11 @@ export function CounterSaleScreen() {
   React.useEffect(() => {
     if (method !== "CHECK" || noAccount) setCheckNotReceived(false);
   }, [method, noAccount]);
+  // SA-1026 A-R2: ticking drops a number typed before it, so no park, held or refresh snapshot resumes as a Check in hand
+  const onNotReceivedChange = (on: boolean) => {
+    setCheckNotReceived(on);
+    if (on) setReference("");
+  };
   const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
@@ -1623,7 +1628,7 @@ export function CounterSaleScreen() {
                 walkIn={noAccount}
                 disabled={locked}
                 notReceived={checkNotReceived}
-                onNotReceivedChange={setCheckNotReceived}
+                onNotReceivedChange={onNotReceivedChange}
                 onPutOnAccount={() => {
                   setMethod("ON_ACCOUNT");
                   setError("");
