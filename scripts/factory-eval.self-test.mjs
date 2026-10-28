@@ -98,6 +98,11 @@ await check(
     ];
   },
 );
+await check("E1 a trailing .., node_modules or a drive prefix is rejected", [1, 1, 1], () =>
+  ["a/..", "node_modules/x.mjs", "C:x.mjs"].map(
+    (p) => FE.validateTask({ ...full, hiddenTests: [{ path: p, fromSha: "bbbbbbb" }] }).length,
+  ),
+);
 
 const repo = plant({ "x.mjs": mod(1) });
 try {
@@ -109,6 +114,9 @@ try {
   repo.write("y.self-test.mjs", "const = ;\n");
   repo.commit("test: y has a syntax error");
   const bad = repo.git("rev-parse", "HEAD");
+  repo.write("z.self-test.mjs", 'console.log("z.self-test.mjs:1");\nconsole.log("SyntaxError");\n');
+  repo.commit("test: z passes but prints the word");
+  const zSha = repo.git("rev-parse", "HEAD");
   const task = { ...base, baseSha, hiddenTests: [{ path: "x.self-test.mjs", fromSha: fix }] };
   const trees = () => repo.git("worktree", "list").split("\n").length;
   const onTree = async (t, edit) => {
@@ -165,6 +173,25 @@ try {
       const lost = { ...task, baseSha: "f".repeat(40) };
       const msg = await FE.prepare(lost, { repo: repo.dir }).catch((e) => e.message);
       return [trees() - before, /not reachable/.test(msg)];
+    },
+  );
+  await check("a passing test that prints SyntaxError is a pass", "pass", async () => {
+    return (await onTree({ ...task, hiddenTests: [{ path: "z.self-test.mjs", fromSha: zSha }] }))
+      .result;
+  });
+  await check(
+    "grade refuses a tree prepare did not make, leaving it untouched",
+    [true, "keep\n"],
+    async () => {
+      repo.write("x.self-test.mjs", "keep\n");
+      const msg = await FE.grade(task, repo.dir).then(
+        () => "graded",
+        (e) => e.message,
+      );
+      return [
+        /not a prepared eval tree/.test(msg),
+        readFileSync(path.join(repo.dir, "x.self-test.mjs"), "utf8"),
+      ];
     },
   );
 } finally {
