@@ -299,5 +299,74 @@ if (process.platform === "win32") {
   );
 }
 
+// 11. Gate 4's git calls carry a scrubbed env: a GIT_DIR inherited from an outer git process (a
+// hook, a worktree script) would re-point the clone's rev-list at the checkout and hide the lag.
+{
+  const m = makeMain();
+  const c = makeClone({ behind: 1 });
+  const r = runHook(m.dir, cloneEnv(c.dir, anchorFile(m.tip), { GIT_DIR: join(m.dir, ".git") }));
+  check(
+    "inherited GIT_DIR: the clone lag is still reported",
+    r.status === 0 && /clone is 1 commit\(s\) behind origin\/main/.test(r.stderr),
+    r,
+  );
+}
+
+// 12. An anchor sha the repo does not know is reported, not silent (a rev-list failure is not 0).
+{
+  const m = makeMain();
+  const c = makeClone();
+  const r = runHook(m.dir, cloneEnv(c.dir, anchorFile("0123456789abcdef0123456789abcdef01234567")));
+  check(
+    "unknown anchor sha: names --rescan",
+    r.status === 0 &&
+      /anchor is missing or unknown/.test(r.stderr) &&
+      r.stderr.includes("--rescan"),
+    r,
+  );
+}
+
+// 13. Gate 4 reports only from the main checkout on master: a topic branch and a linked worktree
+// stay silent even when the clone is behind.
+{
+  const m = makeMain();
+  const c = makeClone({ behind: 1 });
+  git(m.dir, ["checkout", "-q", "-b", "topic"]);
+  const onTopic = runHook(m.dir, cloneEnv(c.dir, anchorFile(m.first)));
+  git(m.dir, ["checkout", "-q", "master"]);
+  const lane = fresh("lane");
+  git(m.dir, ["worktree", "add", "-q", "-b", "lane", lane]);
+  const inLane = runHook(lane, cloneEnv(c.dir, anchorFile(m.first)));
+  check(
+    "not main-on-master: topic branch and linked worktree print no Bug registry line",
+    onTopic.status === 0 &&
+      inLane.status === 0 &&
+      bugLines(onTopic).length === 0 &&
+      bugLines(inLane).length === 0,
+    onTopic.stderr ? onTopic : inLane,
+  );
+}
+
+// 14. Gate 5's usage guard names the landing on origin/main, not on the clone's checked-out HEAD:
+// with the clone behind, the status commit exists only on the ref.
+{
+  const m = makeMain();
+  const c = makeClone({ behind: 1 });
+  const sha = git(c.dir, [
+    "log",
+    "-1",
+    "--format=%H",
+    "origin/main",
+    "--",
+    "registry/campaign/status",
+  ]);
+  const r = runHook(m.dir, cloneEnv(c.dir, anchorFile(m.tip)));
+  check(
+    "gate 5 usage guard, clone behind: landing sha comes from the ref",
+    r.status === 0 && r.stderr.includes(`Plane: WARN landing without sync (${sha})`),
+    r,
+  );
+}
+
 console.log(failed ? `\nstop.gate4.spec FAILED — ${failed} case(s).` : "\nstop.gate4.spec PASS");
 process.exit(failed ? 1 : 0);
