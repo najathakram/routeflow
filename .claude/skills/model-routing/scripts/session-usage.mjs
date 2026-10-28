@@ -954,7 +954,9 @@ function writeJsonl(filePath, records) {
 }
 
 function runSelftest() {
-  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "session-usage-selftest-"));
+  // Real path: git reports resolved paths, so a symlinked tmpdir (macOS /var -> /private/var,
+  // a Windows junction) would otherwise fail every git-resolution comparison below.
+  const tmpBase = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "session-usage-selftest-")));
   let ok = true;
   try {
     const claudeHome = path.join(tmpBase, "fakehome", ".claude");
