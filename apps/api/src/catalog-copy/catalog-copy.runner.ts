@@ -87,7 +87,9 @@ export async function runCatalogCopy(
     const service = app.get(CatalogCopyService);
     if (args.resume) {
       const manifest = JSON.parse(readFileSync(resolve(args.resume), "utf8")) as Manifest;
-      const done = await service.resumePhotos(manifest, args);
+      const done = await service.resumePhotos(manifest, args, {
+        beforeWrite: hooks.beforeWrite,
+      });
       writeManifest(args.resume, manifest);
       log(`catalog-copy resume: photos copied ${done.photosCopied}`);
       return done;

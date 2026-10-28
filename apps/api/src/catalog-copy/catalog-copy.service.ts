@@ -257,13 +257,22 @@ export class CatalogCopyService {
   }
 
   /** `--resume`: finish the photos of the products THIS manifest says a run created; nothing else is touched. */
-  async resumePhotos(manifest: Manifest, args: CopyArgs): Promise<{ photosCopied: number }> {
+  async resumePhotos(
+    manifest: Manifest,
+    args: CopyArgs,
+    options: RunOptions = {},
+  ): Promise<{ photosCopied: number }> {
+    // A resume uploads into the target, so it is an apply: the same gate, then the same beforeWrite hook as run().
+    if (!args.apply)
+      throw new CopyRefusal("refused: --resume needs --apply (it uploads photos to the target)");
     assertApplyAllowed(args);
     const source = await this.tenantBySlug(args.source);
     const target = await this.tenantBySlug(args.target);
     if (manifest.source !== source.id || manifest.target !== target.id) {
       throw new CopyRefusal("refused: the manifest belongs to a different source/target pair");
     }
+    if (options.beforeWrite)
+      await options.beforeWrite({ targetTenantId: target.id, createCount: 0 });
     let photosCopied = 0;
     for (const entry of manifest.entries) {
       const pending = entry.photos.filter((p) => p.status !== "copied");

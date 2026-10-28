@@ -344,6 +344,71 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
     });
   });
 
+  describe("C-G19: --resume goes through the same guards as an apply", () => {
+    const manifestFor = (targetId: string, targetProductId: string) => ({
+      version: 1 as const,
+      createdAt: new Date().toISOString(),
+      source: ids.src,
+      target: targetId,
+      entries: [
+        {
+          sourceId: "x",
+          targetId: targetProductId,
+          sku: "S-1",
+          photos: [{ sourceKey: "products/x/pending.png", status: "failed" as const }],
+        },
+      ],
+    });
+
+    it("a resume without --apply is refused by the service itself and copies nothing", async () => {
+      const t = await tenant("rs0");
+      const copy = jest.spyOn(service as never, "copyPhotos" as never);
+      try {
+        await expect(
+          service.resumePhotos(manifestFor(t.id, "p"), args(t.slug) as never),
+        ).rejects.toBeInstanceOf(CopyRefusal);
+        expect(copy).not.toHaveBeenCalled();
+      } finally {
+        copy.mockRestore();
+      }
+    });
+
+    it("beforeWrite runs once, with the target, BEFORE any photo is copied; a refusal there copies nothing", async () => {
+      const t = await tenant("rs1");
+      const copy = jest
+        .spyOn(service as never, "copyPhotos" as never)
+        .mockResolvedValue([] as never);
+      try {
+        const order: string[] = [];
+        copy.mockImplementation((async () => {
+          order.push("copy");
+          return [];
+        }) as never);
+        const beforeWrite = jest.fn(async () => {
+          order.push("hook");
+        });
+        await service.resumePhotos(manifestFor(t.id, "p"), args(t.slug, { apply: true }), {
+          beforeWrite,
+        });
+        expect(beforeWrite).toHaveBeenCalledTimes(1);
+        expect(beforeWrite.mock.calls[0]![0]).toMatchObject({ targetTenantId: t.id });
+        expect(order).toEqual(["hook", "copy"]);
+
+        copy.mockClear();
+        await expect(
+          service.resumePhotos(manifestFor(t.id, "p"), args(t.slug, { apply: true }), {
+            beforeWrite: async () => {
+              throw new CopyRefusal("refused: the protected-tenant line was not typed");
+            },
+          }),
+        ).rejects.toBeInstanceOf(CopyRefusal);
+        expect(copy).not.toHaveBeenCalled();
+      } finally {
+        copy.mockRestore();
+      }
+    });
+  });
+
   it("C-G3 (other side): a target that holds units_v1 gets the ladder, parents first, through the units service", async () => {
     const t = await tenant("t2");
     await grant(t.id, "GRANT");

@@ -49,6 +49,12 @@ export function parseCopyArgs(argv: readonly string[]): CopyArgs {
   if (!out.source) throw new CopyRefusal("--source <slug> is required (there is no default)");
   if (!out.target) throw new CopyRefusal("--target <slug> is required (there is no default)");
   if (out.source === out.target) throw new CopyRefusal("source and target must differ");
+  // A resume uploads photos into the target: it is an apply, so it passes every apply guard (review-a, #3892).
+  if (out.resume && !out.apply) {
+    throw new CopyRefusal(
+      "--resume needs --apply (it uploads photos to the target); nothing was written",
+    );
+  }
   return out as CopyArgs;
 }
 

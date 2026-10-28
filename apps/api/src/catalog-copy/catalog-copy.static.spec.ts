@@ -89,3 +89,79 @@ describe("SA-1027 structural pins", () => {
     for (const column of NOT_CARRIED) expect(body).not.toMatch(new RegExp(`\\b${column}\\b`));
   });
 });
+
+/**
+ * C-G19, the sweep (review-a BLOCK on #3892): every path that can write goes through the SAME guards. The writes are the
+ * calls into the app's own writers; they may sit only in PRIVATE methods; the only public async methods of the service
+ * are the two entry points below; and each of them calls assertApplyAllowed and the beforeWrite hook. A new flag or
+ * method that writes without passing the hook fails here (add it to ENTRY_POINTS only with the hook in its body).
+ */
+describe("C-G19: every write path runs the apply guards and beforeWrite", () => {
+  const code = (x: string): string =>
+    x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  const ENTRY_POINTS = ["run", "resumePhotos"];
+  const WRITER_CALLS = [
+    "this.products.create(",
+    "this.products.bulkDelete(",
+    "this.products.uploadImage(",
+    "this.units.create(",
+    "this.families.createFamilyContainer(",
+    "this.families.reserveFamilyName(",
+  ];
+  const service = () => code(fs.readFileSync(path.join(DIR, "catalog-copy.service.ts"), "utf8"));
+  const METHOD = /^ {2}(private |public |protected )?(async )?(get )?([A-Za-z_]+)\(/;
+  const methods = (text: string) => {
+    const lines = text.split("\n");
+    const found: Array<{ name: string; priv: boolean; async: boolean; start: number }> = [];
+    lines.forEach((l, i) => {
+      const m = METHOD.exec(l);
+      if (m && !["constructor", "if", "for", "while", "switch", "catch"].includes(m[4]))
+        found.push({
+          name: m[4],
+          priv: m[1]?.trim() === "private",
+          async: !!m[2],
+          start: i,
+        });
+    });
+    return { lines, found };
+  };
+  const bodyOf = (name: string) => {
+    const { lines, found } = methods(service());
+    const at = found.findIndex((f) => f.name === name);
+    const end = at + 1 < found.length ? found[at + 1].start : lines.length;
+    return lines.slice(found[at].start, end).join("\n");
+  };
+
+  it("the service's public async methods are exactly the guarded entry points", () => {
+    const pub = methods(service())
+      .found.filter((f) => !f.priv && f.async)
+      .map((f) => f.name)
+      .sort();
+    expect(pub).toEqual([...ENTRY_POINTS].sort());
+  });
+
+  it("every call into a writer sits inside a private method", () => {
+    const { lines, found } = methods(service());
+    const offenders: string[] = [];
+    lines.forEach((l, i) => {
+      if (!WRITER_CALLS.some((w) => l.includes(w))) return;
+      const owner = [...found].reverse().find((f) => f.start <= i);
+      if (!owner || !owner.priv) offenders.push(`${owner?.name ?? "?"}:${i + 1}`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it.each(ENTRY_POINTS)("%s asserts the apply gate and runs the beforeWrite hook", (name) => {
+    const body = bodyOf(name);
+    expect(body).toContain("assertApplyAllowed(");
+    expect(body).toMatch(/options\.beforeWrite|beforeWrite\?\.\(/);
+    expect(body).toContain("beforeWrite(");
+  });
+
+  it("the runner hands the hook to BOTH entry points, and the CLI passes one", () => {
+    const runner = code(fs.readFileSync(path.join(DIR, "catalog-copy.runner.ts"), "utf8"));
+    expect(runner).toMatch(/service\.run\([^)]*beforeWrite: hooks\.beforeWrite/s);
+    expect(runner).toMatch(/service\.resumePhotos\([^)]*beforeWrite: hooks\.beforeWrite/s);
+    expect(code(fs.readFileSync(CLI, "utf8"))).toMatch(/runCatalogCopy\([^)]*\{ beforeWrite \}/s);
+  });
+});

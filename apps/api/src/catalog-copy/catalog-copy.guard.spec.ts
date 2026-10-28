@@ -54,6 +54,35 @@ describe("catalog copy args (SA-1027 rule 5)", () => {
   });
 });
 
+// Review-a BLOCK on #3892: `--resume <manifest>` without --apply was accepted, and it uploads photos to the target,
+// so it skipped the override, --backup-taken, the R2 guard and the protected-tenant line. It is an apply-only flag.
+describe("C-G19: --resume is an apply, so it needs --apply", () => {
+  it("is refused without --apply, at parse time (exit 1, before the database is opened)", () => {
+    expect(() => parseCopyArgs([...base, "--resume", "m.json"])).toThrow(CopyRefusal);
+    expect(() => parseCopyArgs([...base, "--resume", "m.json"])).toThrow(/--resume needs --apply/);
+  });
+
+  it("parses with --apply", () => {
+    expect(parseCopyArgs([...base, "--apply", "--resume", "m.json"])).toMatchObject({
+      apply: true,
+      resume: "m.json",
+    });
+  });
+
+  it("on a non-test target a resume needs the same override as any apply", () => {
+    const args = parseCopyArgs([
+      "--source",
+      "qa-a",
+      "--target",
+      "acme-live-1",
+      "--apply",
+      "--resume",
+      "m.json",
+    ]);
+    expect(() => assertApplyAllowed(args)).toThrow(/live-tenant-override/);
+  });
+});
+
 describe("C-R1: --apply on a non-test target needs the override, before any read", () => {
   it("is refused with no override (0 reads, 0 writes)", () => {
     const args = parseCopyArgs(["--source", "qa-a", "--target", "acme-live-1", "--apply"]);
