@@ -378,6 +378,26 @@ describe("ticksToProfileDef keep rule (SA-1028)", () => {
     expect(changed.def.modes).toEqual({ fulfilment_model: "pickup_ship", counter_sales: "on" });
   });
 
+  it("K-R4: the unset no-fleet tenant's real answer + Counter with the card's 'order' writes counter_sales only (no pickup_ship)", () => {
+    const real = capabilitiesFromInputs(inputs("unset", "unset", false), []);
+    const { def } = ticksToProfileDef(
+      { shipping: true, counter: true, opensAs: "order" },
+      {
+        configured: real.configured,
+        doorPayments: real.doorPayments,
+        ticks: {
+          delivery: real.delivery,
+          doorPayments: real.doorPayments,
+          shipping: real.shipping,
+          counter: real.counter,
+          opensAs: real.opensAs,
+        },
+      },
+    );
+    expect(real.opensAs).toBe("order");
+    expect(def.modes).toEqual({ counter_sales: "on" });
+  });
+
   it("K-G3: a configured ship tenant adding only Counter keeps its mode; the def reads Shipping", () => {
     const { def, normalised } = ticksToProfileDef(
       { shipping: true, counter: true, opensAs: "order" },

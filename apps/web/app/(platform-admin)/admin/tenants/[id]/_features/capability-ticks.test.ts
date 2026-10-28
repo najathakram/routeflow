@@ -81,6 +81,17 @@ describe("toggleCapability", () => {
     expect(both.opensAs).toBe("counter");
   });
 
+  // SA-1028 K-R3 (unit): an unset tenant keeps the opens-as the card showed (`keepOpensAs`); the default only fills a blank.
+  it("K-R3: with keepOpensAs 'order' (an unset tenant), ticking Counter on Shipping keeps order", () => {
+    const ship = toggleCapability(NO_TICKS, "shipping", true);
+    expect(toggleCapability(ship, "counter", true, "order").opensAs).toBe("order");
+  });
+
+  it("K-G7: with no keepOpensAs (the create form, a configured tenant) D6 still defaults to counter", () => {
+    const ship = toggleCapability(NO_TICKS, "shipping", true);
+    expect(toggleCapability(ship, "counter", true, undefined).opensAs).toBe("counter");
+  });
+
   it("leaving that combination resets opens-as to order", () => {
     const both = toggleCapability(toggleCapability(NO_TICKS, "shipping", true), "counter", true);
     expect(toggleCapability(both, "delivery", true).opensAs).toBe("order");

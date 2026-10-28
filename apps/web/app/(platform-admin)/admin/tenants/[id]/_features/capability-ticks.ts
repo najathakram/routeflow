@@ -71,15 +71,22 @@ export function ticksKey(t: CapabilityTicks): string {
   return JSON.stringify([n.delivery, n.doorPayments, n.shipping, n.counter, n.opensAs]);
 }
 
+/**
+ * `keepOpensAs`: the opens-as an UNSET tenant already works with (SA-1028). Its card passes the value it showed, so ticking
+ * Counter next to Shipping does not turn "opens as an order" into "opens as a counter sale", which would write
+ * pickup_ship (invoicing moves to shipment) on a tenant whose model was never set. The create form and a configured
+ * tenant pass nothing, and D6 applies.
+ */
 export function toggleCapability(
   t: CapabilityTicks,
   box: CapabilityBox,
   on: boolean,
+  keepOpensAs?: OpensAs,
 ): CapabilityTicks {
   const next: CapabilityTicks = { ...t, [box]: on };
   if (box === "delivery") next.doorPayments = on;
   if (!opensAsChoosableFor(next)) next.opensAs = "order";
-  else if (!opensAsChoosableFor(t)) next.opensAs = "counter"; // D6: Shipping + Counter opens as a counter sale
+  else if (!opensAsChoosableFor(t)) next.opensAs = keepOpensAs ?? "counter"; // D6: Shipping + Counter opens as a counter sale
   return next;
 }
 

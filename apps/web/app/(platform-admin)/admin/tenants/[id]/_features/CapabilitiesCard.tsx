@@ -340,6 +340,7 @@ export function CapabilitiesCard({
               matchedPreset={caps.matchedPreset}
               unavailable={caps.unavailable}
               disabled={applying}
+              keepOpensAs={caps.configured ? undefined : ticksFromCapabilities(caps).opensAs}
             />
           </div>
 

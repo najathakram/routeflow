@@ -136,6 +136,36 @@ describe("CapabilitiesCard: what is saved", () => {
     expect(box(COUNTER)).not.toBeChecked();
   });
 
+  // The D6 BLOCK on #3893: an unset Shipping-only tenant ticking Counter sent opensAs "counter", so the server wrote
+  // pickup_ship (invoicing moves to shipment, or 409 with orders in transit). The card keeps the opens-as it showed.
+  it("K-R3 (web): an unset Shipping-only tenant ticking Counter previews opensAs 'order', never 'counter'", async () => {
+    mockFetchCapabilities.mockResolvedValue(REAL_UNSET.shipping);
+    await renderCard();
+    fireEvent.click(box(COUNTER));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: false,
+      shipping: true,
+      counter: true,
+      opensAs: "order",
+    });
+  });
+
+  it("K-G8: a CONFIGURED Shipping-only tenant ticking Counter still defaults to opening as a counter sale (D6 kept)", async () => {
+    mockFetchCapabilities.mockResolvedValue(
+      capabilitiesFixture({ shipping: true, opensAs: "order", matchedPreset: null }),
+    );
+    await renderCard();
+    fireEvent.click(box(COUNTER));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: false,
+      shipping: true,
+      counter: true,
+      opensAs: "counter",
+    });
+  });
+
   it("K-R3: adding Counter on that tenant previews Delivery + Shipping kept and Counter added, never a smaller request", async () => {
     mockFetchCapabilities.mockResolvedValue(UNSET_TODAY_FIXTURE);
     await renderCard();
