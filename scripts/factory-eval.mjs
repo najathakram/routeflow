@@ -444,6 +444,7 @@ export async function runEval({
         taskId: task.id,
         arm: armName,
         run,
+        k,
         kind: task.kind,
         risk: task.risk,
         example: task.example === true,
@@ -517,7 +518,8 @@ const goodRecord = (r) =>
   typeof r?.taskId === "string" &&
   /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(r.taskId) &&
   ["pass", "fail", "broken"].includes(r.result) &&
-  [r.costUsd, r.wallSec].every(okNum);
+  [r.costUsd, r.wallSec].every(okNum) &&
+  (r.k === undefined || (Number.isInteger(r.k) && r.k >= 1 && r.k <= 1000));
 
 /** Records of every run dir or results file, tagged with their run label; bad lines are counted, not kept. */
 export function readResults(paths) {
@@ -527,10 +529,10 @@ export function readResults(paths) {
   for (const p of paths) {
     const file = existsSync(p) && statSync(p).isDirectory() ? path.join(p, "results.jsonl") : p;
     const label = resultLabel(p);
-    if (seen.get(label) === file) continue; // the same path twice is read once
+    if (seen.get(label) === path.resolve(file)) continue; // the same path twice is read once
     if (seen.has(label))
       throw new Error(`run label "${label}" is used by both ${seen.get(label)} and ${file}`);
-    seen.set(label, file);
+    seen.set(label, path.resolve(file));
     const arms = new Set();
     for (const line of readFileSync(file, "utf8").split("\n")) {
       if (!line.trim()) continue;
@@ -579,7 +581,8 @@ export function report(records, { vs, includeExample = false } = {}) {
       taskId,
       runs: kept.length,
       passes,
-      k: Number.isInteger(recs[0].k) ? recs[0].k : 0,
+      // k as run, else the most repeats seen (broken ones included): a short task is never complete
+      k: Math.max(0, recs.length, ...recs.map((r) => r.k ?? 0), ...recs.map((r) => r.run ?? 0)),
       passAt1: kept.length ? passes / kept.length : null,
       broken: recs.length - kept.length,
     };

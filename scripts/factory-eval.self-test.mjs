@@ -645,7 +645,8 @@ try {
   const P3 = ["pass", "pass", "pass"];
   const vsv = (r) => Object.values(r.vs.against[0]).slice(1); // won, lost, tied
   const cell = (r, run, t) => r.rows.find((x) => x.run === run && x.taskId === t);
-  await check("broken repeats are left out", [true, 1, [0, 0, 1], 1, true], () => {
+  // A broken repeat is out of pass@1 but still leaves the task short of k: incomplete, below complete.
+  await check("broken repeats are left out", [false, 1, [0, 1, 0], 1, true], () => {
     const A = set("A", { t1: ["pass", "pass", "broken"], t2: Array(3).fill("broken") });
     const r = FE.report([...A, ...set("B", { t1: P3, t2: P3 })], { vs: "B" });
     const a = cell(r, "A", "t1");
