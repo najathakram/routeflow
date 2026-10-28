@@ -9,7 +9,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import type { InvoicePdfVariant } from "./invoice-pdf-variant";
 import { resolveInvoiceVariant } from "./invoice-stage";
-import { invoiceItemCode } from "./invoice-item-code";
+import { invoiceBarcodeSource, invoiceItemCode } from "./invoice-item-code";
 import { roundMoney } from "@routeflow/pricing";
 import { splitConfirmed } from "./payment-predicates";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -151,7 +151,13 @@ export class InvoicePdfService {
     const itemsWithBarcodes = await Promise.all(
       inv.items.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);
-        if (showBarcodes && barcodeText) {
+        // SA-1031 r2: a mixed pack prints the box (this line) OR its pieces, never both.
+        const source = invoiceBarcodeSource(
+          (item as any).product,
+          (item as { components?: { unitBarcode?: string | null }[] }).components,
+          showBarcodes,
+        );
+        if (source === "line" && barcodeText) {
           try {
             const buf = await bwipjs.toBuffer({
               bcid: "code128",
@@ -179,9 +185,15 @@ export class InvoicePdfService {
         const components = (item as { components?: unknown[] }).components;
         if (!components || components.length === 0) return item;
         const views = toLineComponentViews(components as never);
+        const piecesPrint =
+          invoiceBarcodeSource(
+            (item as any).product,
+            components as { unitBarcode?: string | null }[],
+            showBarcodes,
+          ) === "pieces";
         const subLines = await Promise.all(
           views.map(async (v) =>
-            pdfSubLine(v, showBarcodes ? await this.subLineBarcode(v) : null, showBarcodes),
+            pdfSubLine(v, piecesPrint ? await this.subLineBarcode(v) : null, piecesPrint),
           ),
         );
         return { ...item, subLines };

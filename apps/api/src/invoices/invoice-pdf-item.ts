@@ -107,7 +107,7 @@ export interface PdfSubLine {
  * #2717 M3 (SA-579 case 21): the sub-line of one frozen component, from its client view. The text
  * parts come from `@routeflow/pricing` (`componentPriceText`, the same helper `componentSubLineText`
  * uses), so the PDF, web and mobile read identically. `barcodeDataUri` is rendered by the caller
- * (bwip-js) because it is I/O, and `showBarcode` is the tenant's choice (required: the compiler finds every caller).
+ * (bwip-js) because it is I/O, and `showBarcode` is whether the pieces are this line's barcode source (`invoiceBarcodeSource`: the tenant's choice, and the box or the pieces, never both). It is required: the compiler finds every caller.
  */
 export function pdfSubLine(
   view: LineComponentView,
@@ -117,7 +117,7 @@ export function pdfSubLine(
   return {
     name: view.name,
     unitSku: view.unitSku,
-    // SA-1031: the tenant's `invoice.hideBarcodes` choice. Off prints neither the bars nor the digits; the SKU text stays.
+    // SA-1031: off (the tenant's `invoice.hideBarcodes`, or the box is this line's source, r2) prints neither the bars nor the digits; the SKU text stays.
     barcodeText: showBarcode ? view.unitBarcode : null,
     barcodeDataUri: showBarcode ? barcodeDataUri : null,
     qtyText: `x ${view.qty}`,
