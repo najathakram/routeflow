@@ -13,7 +13,7 @@
  * Each rep is one deterministic interleaving on two connections:
  *   1. the WRITER (raw `pg`) takes the Order, then the Invoice FOR UPDATE (the Order -> Invoice prefix);
  *   2. the SERVICE starts; a barrier waits until Postgres reports it BLOCKED by the writer
- *      (`pg_blocking_pids`), so the interleaving is real, never a timing guess;
+ *      (the blocked-wait helper), so the interleaving is real, never a timing guess;
  *   3. only then does the writer take the CreditNote FOR NO KEY UPDATE and commit.
  * Master: the service already holds the CreditNote when it blocks on the Invoice, so step 3 closes a
  * cycle and Postgres aborts one side with 40P01 (P1 may retry internally; the server counter is the
@@ -39,6 +39,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { CreditNotesService } from "./credit-notes.service";
@@ -162,20 +163,6 @@ describeDb(
       return Number(rows[0].n);
     }
 
-    /** Polls until some backend is blocked by `blockerPid`; false if `done()` or the deadline comes first. */
-    async function waitUntilBlockedBy(blockerPid: number, done: () => boolean): Promise<boolean> {
-      const deadline = Date.now() + 10_000;
-      while (Date.now() < deadline && !done()) {
-        const { rows } = await pool.query(
-          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-          [blockerPid],
-        );
-        if (rows[0].n > 0) return true;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      return false;
-    }
-
     interface Rep {
       blocked: boolean;
       writer: unknown;
@@ -209,7 +196,11 @@ describeDb(
           .finally(() => {
             settled = true;
           });
-        blocked = await waitUntilBlockedBy(pid, () => settled);
+        blocked = await waitUntilBlockedBy(pool, pid, {
+          timeoutMs: 10_000,
+          intervalMs: 20,
+          until: () => settled,
+        });
 
         try {
           await writer.query('SELECT id FROM "CreditNote" WHERE id = $1 FOR NO KEY UPDATE', [
@@ -531,7 +522,11 @@ describeDb(
 
           // 5. release the cancel; wait until the writer blocks it (or it settles)
           release();
-          blocked = await waitUntilBlockedBy(pid, () => settled);
+          blocked = await waitUntilBlockedBy(pool, pid, {
+            timeoutMs: 10_000,
+            intervalMs: 20,
+            until: () => settled,
+          });
 
           // 6. WRITER: the CreditNote
           try {

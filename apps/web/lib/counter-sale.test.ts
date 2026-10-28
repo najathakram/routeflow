@@ -918,3 +918,37 @@ describe("post-dated check (interim till guard)", () => {
     expect(isCounterSaleHandledError(new Error("Network Error"))).toBe(false);
   });
 });
+
+describe("resolveTender: 'Check not received yet' is On account plus one typed intent (SA-1026 A)", () => {
+  const resolve = (
+    counterSaleModule as unknown as {
+      resolveTender?: (
+        m: string,
+        notReceived: boolean,
+      ) => { method: string; expectedMethod?: string };
+    }
+  ).resolveTender;
+
+  it("Check + not received sends ON_ACCOUNT with expectedMethod CHECK", () => {
+    expect(resolve?.("CHECK", true)).toEqual({ method: "ON_ACCOUNT", expectedMethod: "CHECK" });
+  });
+
+  it("every other tender is itself, with no expectedMethod", () => {
+    for (const m of ["CASH", "CARD", "CHECK", "ON_ACCOUNT"]) {
+      expect(resolve?.(m, false)).toEqual({ method: m });
+    }
+    // the flag belongs to Check only: a stale flag under another method never rides along
+    expect(resolve?.("CASH", true)).toEqual({ method: "CASH" });
+  });
+
+  it("a walk-in on that tender is refused by the same rule as On account", () => {
+    const t = resolve?.("CHECK", true);
+    expect(
+      counterSaleModule.validatePayment({
+        method: t?.method as never,
+        total: 10,
+        isWalkIn: true,
+      }),
+    ).toBe("WALK_IN_ON_ACCOUNT");
+  });
+});

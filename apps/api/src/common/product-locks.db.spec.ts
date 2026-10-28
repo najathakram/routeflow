@@ -34,6 +34,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { decrementStockForSale } from "../orders/order-stock";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { waitUntilBlockedBy } from "./testing/blocked-wait";
 import { lockProductsForStock, PRODUCT_LOCK_RANK_SQL } from "./product-locks";
 import { lockProductsForDelete } from "../products/product-delete-classify";
 import { stockTxRetryState } from "./tx-retry";
@@ -164,22 +165,6 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
     return { tenantId, f: ids.fam, c: ids.rec, r: ids.comp };
   }
 
-  /** Polls until some backend is blocked by `blockerPid`. */
-  async function waitUntilBlockedBy(blockerPid: number, timeoutMs = 4_000): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-        [blockerPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(25);
-    }
-    return false;
-  }
-
   /** True iff a NOWAIT lock on `id` succeeds on a fresh connection (i.e. nobody holds it). */
   async function isFree(id: string): Promise<boolean> {
     const c = await pool.connect();
@@ -223,7 +208,7 @@ describeDb("SA-767 L-1 — lockProductsForStock (real Postgres)", () => {
         .catch((e) => {
           stockError = e;
         });
-      blocked = await waitUntilBlockedBy(pid);
+      blocked = await waitUntilBlockedBy(pool, pid);
       stockHoldsC = !(await isFree(w.c));
       stockHoldsR = !(await isFree(w.r));
       try {
