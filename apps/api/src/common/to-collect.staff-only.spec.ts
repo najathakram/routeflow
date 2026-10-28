@@ -29,7 +29,8 @@ const rel = (p: string) => relative(SRC, p).split(sep).join("/");
 
 describe("the buyer allowlists never name the new fields", () => {
   it("CUSTOMER_INVOICE_FIELDS and CUSTOMER_ORDER_FIELDS omit toCollect and expectedPaymentMethod", () => {
-    for (const list of [CUSTOMER_INVOICE_FIELDS, CUSTOMER_ORDER_FIELDS] as readonly string[][]) {
+    const lists: (readonly string[])[] = [CUSTOMER_INVOICE_FIELDS, CUSTOMER_ORDER_FIELDS];
+    for (const list of lists) {
       expect(list).not.toContain("toCollect");
       expect(list).not.toContain("expectedPaymentMethod");
     }
