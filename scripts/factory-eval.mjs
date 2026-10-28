@@ -56,7 +56,10 @@ export function validateTask(t) {
   if (typeof t.brief !== "string" || !t.brief.trim()) bad("brief", "required text");
   const ht = t.hiddenTests;
   const relative = (p) =>
-    typeof p === "string" && p && !path.isAbsolute(p) && !/(^|[\\/])\.\.[\\/]/.test(p);
+    typeof p === "string" &&
+    !path.isAbsolute(p) &&
+    !/^[a-z]:/i.test(p) &&
+    p.split(/[\\/]/).every((s) => s && s !== ".." && s !== "node_modules");
   if (!Array.isArray(ht) || !ht.length) bad("hiddenTests", "required; a list of { path, fromSha }");
   else if (!ht.every((h) => relative(h?.path) && HEX.test(h.fromSha ?? "")))
     bad("hiddenTests", "each entry needs a relative path and a fromSha");
@@ -170,6 +173,14 @@ export async function prepare(task, { repo, dir } = {}) {
 
 /** Copies the hidden tests into `tree`, runs them (R4's runner), then the extra command: { result, reason }. */
 export async function grade(task, tree, { run = defaultRun } = {}) {
+  // Only a tree prepare() made: a linked worktree's own toplevel, holding BRIEF.md, at or after baseSha.
+  const rev = (...a) => gitIn(tree, ["rev-parse", "--path-format=absolute", ...a]).stdout.trim();
+  const ok =
+    rev("--git-dir") !== rev("--git-common-dir") &&
+    toplevel(tree) === realpathSync.native(tree) &&
+    existsSync(path.join(tree, "BRIEF.md")) &&
+    gitIn(tree, ["merge-base", "--is-ancestor", task.baseSha, "HEAD"]).status === 0;
+  if (!ok) throw new Error(`${tree} is not a prepared eval tree (run prepare first)`);
   for (const h of task.hiddenTests) {
     const r = gitIn(tree, ["show", `${h.fromSha}:${h.path}`]);
     if (r.status !== 0)
@@ -182,12 +193,13 @@ export async function grade(task, tree, { run = defaultRun } = {}) {
     const o = run(h.path, tree);
     if (o.skip) return { result: "broken", reason: `${h.path}: ${o.skip}` };
     if (o.status === null) return { result: "broken", reason: `${h.path}: timed out` };
+    if (o.status === 0) continue;
     // A syntax error located in the hidden test itself means it cannot run; one in the agent's code is a fail.
     const [before, after] = (o.output ?? "").split(/SyntaxError/);
     const at = before.split("\n").findLast((l) => /:\d+\s*$/.test(l)) ?? "";
     if (after !== undefined && at.includes(path.basename(h.path)))
       return { result: "broken", reason: `${h.path}: SyntaxError${after.split("\n")[0]}` };
-    if (o.status !== 0) fails.push(`${h.path}: exit ${o.status}`);
+    fails.push(`${h.path}: exit ${o.status}`);
   }
   if (fails.length) return { result: "fail", reason: fails.join("; ") };
   if (task.grade) {
@@ -228,7 +240,7 @@ function select(o, root) {
     const v = keepCandidate({ ...pr, reworkOf: rows.get(number)?.reworkOf }, extra);
     const sha = pr.mergeCommit?.oid;
     const base = sha ? gitIn(root, ["rev-parse", `${sha}^`]) : { status: 1 };
-    const tests = pr.files.map((f) => f.path).filter(isTestFile);
+    const tests = pr.files.filter((f) => f.additions > 0 && isTestFile(f.path)).map((f) => f.path);
     let why = v.keep ? null : v.reason;
     if (!why && base.status !== 0) why = "merge commit not in this clone";
     if (

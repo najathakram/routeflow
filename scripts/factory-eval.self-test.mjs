@@ -179,19 +179,14 @@ try {
     return (await onTree({ ...task, hiddenTests: [{ path: "z.self-test.mjs", fromSha: zSha }] }))
       .result;
   });
+  const edited = () => readFileSync(path.join(repo.dir, "x.self-test.mjs"), "utf8");
   await check(
-    "grade refuses a tree prepare did not make, leaving it untouched",
+    "grade refuses a tree prepare did not make, untouched",
     [true, "keep\n"],
     async () => {
       repo.write("x.self-test.mjs", "keep\n");
-      const msg = await FE.grade(task, repo.dir).then(
-        () => "graded",
-        (e) => e.message,
-      );
-      return [
-        /not a prepared eval tree/.test(msg),
-        readFileSync(path.join(repo.dir, "x.self-test.mjs"), "utf8"),
-      ];
+      const msg = await FE.grade(task, repo.dir).catch((e) => e.message);
+      return [/not a prepared eval tree/.test(msg), edited()];
     },
   );
 } finally {
