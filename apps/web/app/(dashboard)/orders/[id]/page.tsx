@@ -769,11 +769,10 @@ export default function OrderDetailPage() {
         onSuccess: (done: unknown) => {
           setLocalStatus("DELIVERED");
           routeHeldNotice(done, order.lineItems, toast); // row 590: lines the driver's figure holds
-          // #2089 (owner ruling): "automatically open the invoice, then ask if you
-          // want to send it" — offline is checked FIRST and unconditionally
-          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
-          // network call below, since a dropped connection right after delivery
-          // must read as "try again once synced," never as "no invoice."
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you want to
+          // send it" — offline is checked FIRST and unconditionally (postDeliveryInvoicePrompt's
+          // own contract), before ever attempting the network call below, since a dropped
+          // connection right after delivery must read as "try again once synced," not "no invoice."
           if (
             postDeliveryInvoicePrompt({
               invoice: undefined,
