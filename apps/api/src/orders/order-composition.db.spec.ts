@@ -37,6 +37,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { Logger } from "@nestjs/common";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -276,19 +277,7 @@ describeDb("#2717 M3 order composition writes — real Postgres", () => {
    * timeout). Returns the last count seen, so a timeout reports how many actually blocked.
    */
   async function waitUntilNBlocked(n: number): Promise<number> {
-    const deadline = Date.now() + 4_000;
-    let seen = 0;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND cardinality(pg_blocking_pids(pid)) > 0",
-      );
-      seen = rows[0].n;
-      if (seen >= n) return seen;
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    return seen;
+    return (await waitUntilBlocked(pool, { atLeast: n, intervalMs: 20 })).length;
   }
 
   beforeAll(async () => {

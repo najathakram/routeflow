@@ -18,6 +18,7 @@ import {
 import { lastDays, sumWeek, weekCsv } from "@/lib/counter-week";
 import { itemNamesLine } from "@/lib/counter-item-names";
 import { useTenant } from "@/components/tenant-provider";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
 import {
@@ -483,6 +484,7 @@ function SaleRow({
         ) : (
           <span className={BADGE}>{PAYMENT_LABEL[row.paymentState]}</span>
         )}
+        {row.voided ? null : <ToCollectChip state={row.toCollect} />}
         {returnLabel ? <span className={BADGE}>{returnLabel}</span> : null}
       </div>
       <div className="flex flex-wrap gap-2">

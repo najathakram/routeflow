@@ -5,6 +5,7 @@ import type {
   CommitStockCountResponse,
   CommitStockCountSessionResponse,
   StockCountCommitProgress,
+  StockCountProgressResponse,
 } from "@routeflow/types";
 export type {
   CommitStockCountPayload,
@@ -96,6 +97,10 @@ export interface StockCountSessionSummary {
   notes?: string | null;
   movementReference?: string | null;
   amendsSessionId?: string | null;
+  /** SA-999: the lines the batched seed will write; null/absent = a legacy count. See `stockCountSeedState`. */
+  seedPlannedLines?: number | null;
+  /** SA-999: set when the seed finished; null beside `seedPlannedLines` = still being prepared. */
+  seedCompletedAt?: string | null;
   startedBy?: StockCountUserRef | null;
   committedBy?: StockCountUserRef | null;
   _count?: { lines: number };
@@ -170,6 +175,25 @@ export function useStockCountSession(
     queryFn: () =>
       apiClient.get<StockCountSessionDetail>(`/inventory/stock-counts/${id}`).then((r) => r.data),
     enabled: !!id,
+    refetchInterval: opts?.pollMs || false,
+  });
+}
+
+/**
+ * SA-999: the pure-read poll behind "Preparing count… N of M" (`GET stock-counts/:id/progress`, a few hundred
+ * bytes; the session detail is about 1 MB at 3.4k lines). Reads only while `pollMs` is set.
+ */
+export function useStockCountProgress(
+  id: string | null | undefined,
+  opts?: { pollMs?: number | false },
+) {
+  return useQuery({
+    queryKey: ["inventory", "stockCountProgress", id],
+    queryFn: () =>
+      apiClient
+        .get<StockCountProgressResponse>(`/inventory/stock-counts/${id}/progress`)
+        .then((r) => r.data),
+    enabled: !!id && !!opts?.pollMs,
     refetchInterval: opts?.pollMs || false,
   });
 }

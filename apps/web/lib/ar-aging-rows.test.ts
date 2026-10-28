@@ -4,6 +4,7 @@
  * PR-A #2603), and one summary line reports the API's top-level `depositOverdue {count,
  * outstanding}`. Buckets and totals are untouched — the marker never moves an amount.
  */
+import * as agingRows from "./ar-aging-rows";
 import { depositOverdueLine, groupArAgingByCustomer } from "./ar-aging-rows";
 
 const row = (id: string, customerId: string, balance: number, depositOverdue?: boolean) => ({
@@ -57,5 +58,28 @@ describe("depositOverdueLine (#1529)", () => {
   it("no overdue deposit (or an older response without the field) ⇒ no line", () => {
     expect(depositOverdueLine({ count: 0, outstanding: 0 }, fmt)).toBeNull();
     expect(depositOverdueLine(undefined, fmt)).toBeNull();
+  });
+});
+
+describe("toCollectLookup: the aging report's To collect column (SA-1026 A-G11)", () => {
+  const lookup = (
+    agingRows as unknown as {
+      toCollectLookup?: (
+        l?: { customerId: string; businessName: string; count: number; balance: number }[],
+      ) => Record<string, { count: number; balance: number }>;
+    }
+  ).toCollectLookup;
+
+  it("keys the server's per-customer rows by customer id", () => {
+    expect(
+      lookup?.([
+        { customerId: "c1", businessName: "Acme Co", count: 2, balance: 260.3 },
+        { customerId: "c2", businessName: "Beta Co", count: 1, balance: 40 },
+      ]),
+    ).toEqual({ c1: { count: 2, balance: 260.3 }, c2: { count: 1, balance: 40 } });
+  });
+
+  it("an older server (no list) marks nobody", () => {
+    expect(lookup?.(undefined)).toEqual({});
   });
 });

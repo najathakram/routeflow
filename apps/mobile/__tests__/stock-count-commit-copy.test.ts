@@ -78,6 +78,13 @@ describe("stock-count commit copy (mobile)", () => {
       expect(stockCountProductInOpenCount(err(409, { code: "STOCK_COUNT_COMMITTING" }))).toBeNull();
     });
 
+    it("409 STOCK_COUNT_SEEDING shares the web sentence (SA-999: mobile mirrors web through the code)", () => {
+      expect(stockCountCommitFailure(err(409, { code: "STOCK_COUNT_SEEDING" }))).toEqual({
+        copy: "This count is still being prepared. Try again in a moment.",
+        permanent: false,
+      });
+    });
+
     it("the commit overlap sentence and the help line", () => {
       expect(
         stockCountCommitFailure(err(409, { code: "PRODUCT_IN_OPEN_COUNT", conflicts: [] }))?.copy,

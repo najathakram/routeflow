@@ -56,6 +56,7 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { AuditService } from "../audit/audit.service";
 import { periodBucketOf } from "../regulated/period";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { blockedPids, prismaQueryable } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -306,7 +307,7 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
    * Makes a SAME-key race deterministic. The first transaction to reach `idempotency.save` (the
    * winner: it holds the key's advisory lock and has done every write) is parked there until
    * Postgres itself reports a peer backend blocked behind it on `pg_advisory_xact_lock`
-   * (`pg_blocking_pids`), and only then is it allowed to save and commit. So the peer's
+   * (blocked-wait helper), and only then is it allowed to save and commit. So the peer's
    * Serializable snapshot is provably taken BEFORE the winner commits: its `check` sees no row,
    * it enters the void, loses on the write conflict and replays on the retry. Without the park the
    * peer may start its transaction after the winner has already committed, take the early
@@ -322,12 +323,15 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
         const [{ pid }] = await tx.$queryRaw`SELECT pg_backend_pid()::int AS pid`;
         const deadline = Date.now() + 20_000;
         while (!state.peerObserved) {
-          const rows = await prisma.$queryRaw<Array<{ n: number }>>`
-            SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE ${pid}::int = ANY(pg_blocking_pids(pid))
-              AND wait_event_type = 'Lock' AND wait_event = 'advisory'
-              AND query ILIKE '%pg_advisory_xact_lock%'`;
-          state.peerObserved = rows[0].n > 0;
+          const pids = await blockedPids(prismaQueryable(prisma), { holderPid: pid });
+          if (pids.length > 0) {
+            const rows = await prisma.$queryRaw<Array<{ n: number }>>`
+              SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE pid = ANY(${pids}::int[])
+                AND wait_event_type = 'Lock' AND wait_event = 'advisory'
+                AND query ILIKE '%pg_advisory_xact_lock%'`;
+            state.peerObserved = rows[0].n > 0;
+          }
           if (state.peerObserved) break;
           if (Date.now() > deadline)
             throw new Error("park: no peer was ever blocked on the idempotency lock");

@@ -114,18 +114,30 @@ export class StockAlertService {
       return ids === null || ids.has(productId);
     };
 
+    // Row 562 S1 (T15): ONE read of every product's PENDING alerts, then ONE read of just the products that have
+    // any (it was two queries per product: a count that restocks 50 products made 100).
+    const allPending = await this.prisma.forTenant().stockAlert.findMany({
+      where: { productId: { in: unique }, status: StockAlertStatus.PENDING },
+    });
+    if (allPending.length === 0) return { notified: 0 };
+    const pendingBy = new Map<string, typeof allPending>();
+    for (const a of allPending) {
+      const list = pendingBy.get(a.productId);
+      if (list) list.push(a);
+      else pendingBy.set(a.productId, [a]);
+    }
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: [...pendingBy.keys()] } },
+      select: { id: true, name: true, currentStock: true },
+    });
+    const productById = new Map(products.map((p) => [p.id, p]));
+
     let notified = 0;
     for (const productId of unique) {
-      const product = await this.prisma.forTenant().product.findFirst({
-        where: { id: productId },
-        select: { id: true, name: true, currentStock: true },
-      });
-      // In-stock guard: never fire while on-hand is still 0 or negative.
+      const product = productById.get(productId);
+      // In-stock guard: never fire while on-hand is still 0 or negative (its alerts stay PENDING).
       if (!product || Number(product.currentStock) <= 0) continue;
-
-      const pending = await this.prisma.forTenant().stockAlert.findMany({
-        where: { productId, status: StockAlertStatus.PENDING },
-      });
+      const pending = pendingBy.get(productId) ?? [];
 
       for (const alert of pending) {
         // A buyer this product is hidden from (a selling restriction) is never told it is back: their alert is left

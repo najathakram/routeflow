@@ -275,7 +275,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     const src = stripComments(
       fs.readFileSync(path.join(SRC_ROOT, "invoices/invoices.service.ts"), "utf8"),
     );
-    const status = src.indexOf("applyInvoiceStatusFilters(where, query, tz)");
+    const status = src.indexOf("applyInvoiceStatusFilters(where, query, tz, user?.role)");
     const balance = src.indexOf("applyOverdueBalanceFilter(where, query");
     expect(status).toBeGreaterThan(-1);
     expect(balance).toBeGreaterThan(status);

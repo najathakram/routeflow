@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from "@nestjs/common";
 import { ImportEntityType, MigrationSource, Prisma, StagingRecordStatus } from "@prisma/client";
@@ -11,6 +13,7 @@ import { productCategoryViolation, productNameViolation } from "../common/text-c
 import { ExternalRefService } from "./external-ref.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
 import { StagedRow } from "./connectors/source-connectors";
+import { parseImportMoney } from "./parse-import-number";
 
 const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -19,11 +22,44 @@ const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
 const UNSAFE_NAME_FLAG = "unsafe-name";
 /** The staging flag on a record whose free-text product category starts with a spreadsheet formula character (B990). */
 const UNSAFE_CATEGORY_FLAG = "unsafe-category";
+/** The staging flag on a PRODUCT whose price is present but not a non-negative number (B205): skipped, never priced 0. */
+const BAD_PRICE_FLAG = "bad-price";
+/** The staging flag on a PRODUCT whose units per box is present but not a whole number of 1 or more: skipped. */
+const BAD_UNITS_FLAG = "bad-units-per-box";
+/** The staging flag on a record whose commit threw at confirm (B334): skipped on its own, the job still confirms. */
+const COMMIT_FAILED_FLAG = "commit-failed";
+/** Prisma codes that mean one row's own value or key was refused (too long, out of range, too big, duplicate, missing parent). */
+const ROW_LEVEL_PRISMA_CODES = ["P2000", "P2002", "P2003", "P2020", "P2033"];
+
+/**
+ * An optional "$", then plain digits or comma-grouped thousands (groups of three), then an optional ".d" or ".dd"
+ * tail. More decimals is not a price: "1.234" (a European thousands dot) must not round to 1.23.
+ */
+const PRICE_SHAPE = /^\$?\s*(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/;
+/** Largest value a Decimal(10,2) price column holds. */
+const MAX_PRICE = 99_999_999.99;
+
+/**
+ * A staged product's price as the canonical money string ("1,234.56" -> "1234.56"), "" when absent, or null when
+ * present but not a non-negative number (B205). The Migration Hub's CSV path hands the cell text through verbatim.
+ */
+function normalizedPrice(payload: Record<string, unknown>): string | null {
+  const raw = payload.pricePerUnit ?? payload.price;
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) return "";
+  // Strict shape: "12,50" (decimal comma), "12abc" and "1e3" must not parse to a different price.
+  if (typeof raw === "string" && !PRICE_SHAPE.test(raw.trim())) return null;
+  // A numeric cell is held to the same two-decimal rule (1.234 would round to 1.23).
+  if (typeof raw === "number" && Math.round(raw * 100) / 100 !== raw) return null;
+  const n = parseImportMoney(raw);
+  return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? n.toFixed(2) : null;
+}
 
 /** The flag a staged PRODUCT payload earns (name first, then category), or null when it is safe to commit. */
 function unsafeProductFlag(payload: Record<string, unknown>): string | null {
   if (productNameViolation({ name: str(payload.name) })) return UNSAFE_NAME_FLAG;
   if (productCategoryViolation(optStr(payload.category))) return UNSAFE_CATEGORY_FLAG;
+  if (normalizedPrice(payload) === null) return BAD_PRICE_FLAG;
+  if (unitsPerBoxOf(payload) === null) return BAD_UNITS_FLAG;
   return null;
 }
 
@@ -37,11 +73,24 @@ function optStr(v: unknown): string | undefined {
   const s = str(v);
   return s.length > 0 ? s : undefined;
 }
-/** Coerce to a finite number, or undefined. */
-function optNum(v: unknown): number | undefined {
-  if (v == null) return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+/** Plain digits, or comma-grouped thousands (groups of three): "1,000" is a box count, "1,5" and "12,50" are not. */
+const UNITS_PER_BOX_SHAPE = /^(\d{1,3}(,\d{3})+|\d+)$/;
+/** Largest value of the Int column. */
+const MAX_INT = 2_147_483_647;
+
+/**
+ * A staged product's units per box: undefined when absent, null when present but not a whole number of 1 or more
+ * (the comma is never guessed at: "1,5" must not become 15). The Int column and the product DTO both want >= 1.
+ */
+function unitsPerBoxOf(payload: Record<string, unknown>): number | undefined | null {
+  const raw = payload.unitsPerBox;
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) return undefined;
+  let n: number;
+  if (typeof raw === "number") n = raw;
+  else if (typeof raw === "string" && UNITS_PER_BOX_SHAPE.test(raw.trim()))
+    n = Number(raw.trim().replace(/,/g, ""));
+  else return null;
+  return Number.isInteger(n) && n >= 1 && n <= MAX_INT ? n : null;
 }
 
 /**
@@ -125,13 +174,20 @@ export class MigrationService {
         flags.push(unsafe);
       }
 
+      // B205: a thousands-comma price is stored canonical ("1,234.56" -> "1234.56"), so preview and commit agree.
+      let payload = row.payload as Record<string, unknown>;
+      if (entityType === "PRODUCT" && status === "PENDING") {
+        const price = normalizedPrice(payload);
+        if (price) payload = { ...payload, pricePerUnit: price };
+      }
+
       await this.prisma.forTenant().migrationStagingRecord.create({
         data: {
           tenantId,
           jobId,
           entityType,
           externalId: row.externalId ?? null,
-          rawPayload: row.payload as object,
+          rawPayload: payload as object,
           status,
           flags,
           matchedEntityId,
@@ -182,10 +238,11 @@ export class MigrationService {
 
     let committed = 0;
     let skipped = 0;
+    let attempted = 0;
+    const prismaSkips: { rec: (typeof pending)[number]; code: string }[] = [];
     for (const rec of pending) {
-      // B964-2: a record staged before the stage-time check (or edited since) must not reach products.create, which has
-      // no per-record catch here: one formula-led name would throw midway and leave the job STAGED forever (undo needs
-      // CONFIRMED). It is skipped like any other uncommittable record.
+      // B964-2: a record staged before the stage-time check (or edited since) is skipped here without calling
+      // products.create (it would refuse a formula-led name or a bad price), like any other uncommittable record.
       const unsafe =
         rec.entityType === "PRODUCT"
           ? unsafeProductFlag(rec.rawPayload as Record<string, unknown>)
@@ -199,18 +256,55 @@ export class MigrationService {
         skipped++;
         continue;
       }
-      const createdId = await this.commit(
-        rec.entityType,
-        rec.rawPayload as Record<string, unknown>,
-      );
-      if (createdId) {
-        if (rec.externalId) {
-          await this.externalRefs.record(rec.entityType, createdId, sourceKey, rec.externalId);
+      // B334: one row that cannot be created (a duplicate name, a vanished category) is skipped on its own, with a
+      // code and never the server's text. Earlier rows stay live, the job still reaches CONFIRMED, and the undo
+      // window covers them; a throw here used to leave the job STAGED for good (undo needs CONFIRMED).
+      attempted++;
+      let createdId: string | null;
+      try {
+        createdId = await this.commit(rec.entityType, rec.rawPayload as Record<string, unknown>);
+      } catch (e) {
+        // Only a row-level refusal (an HTTP 4xx from the service, a Prisma constraint error) skips the row; an outage
+        // or timeout (a 5xx included) must surface, or every remaining row would be SKIPPED and the job could never
+        // be retried.
+        // A value the column cannot hold (P2000 too long, P2020 out of range, P2033 too big) or a constraint refusal is
+        // the row's own fault, not an outage. A PrismaClientValidationError is a code/schema mismatch that would hit
+        // every row, so it is never row-level: it rethrows and the job stays retryable.
+        const prismaCode =
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          ROW_LEVEL_PRISMA_CODES.includes(e.code)
+            ? e.code
+            : null;
+        const rowLevel = (e instanceof HttpException && e.getStatus() < 500) || prismaCode !== null;
+        if (!rowLevel) throw e;
+        // A database-code skip is held back until the loop ends: if every row fails that way nothing is written, so
+        // the job stays PENDING and retryable instead of CONFIRMED with nothing live.
+        if (prismaCode) {
+          prismaSkips.push({ rec, code: prismaCode });
+          continue;
         }
+        const prior = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
+        await this.prisma.forTenant().migrationStagingRecord.update({
+          where: { id: rec.id },
+          data: { status: "SKIPPED", flags: [...prior, COMMIT_FAILED_FLAG] },
+        });
+        skipped++;
+        continue;
+      }
+      if (createdId) {
+        // The entity is live: COMMITTED + createdEntityId must land even if the external-ref write fails, so undo can
+        // remove it and a second confirm cannot create it again.
         await this.prisma.forTenant().migrationStagingRecord.update({
           where: { id: rec.id },
           data: { status: "COMMITTED", createdEntityId: createdId },
         });
+        if (rec.externalId) {
+          try {
+            await this.externalRefs.record(rec.entityType, createdId, sourceKey, rec.externalId);
+          } catch {
+            // best effort: the ref only helps later re-imports match this row
+          }
+        }
         committed++;
       } else {
         const flags = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
@@ -220,6 +314,27 @@ export class MigrationService {
         });
         skipped++;
       }
+    }
+
+    // Duplicates (P2002) are left out of the count: re-running a file already imported is a legitimate idempotent case
+    // that confirms with 0 committed and the duplicates skipped. If at least one other row reached the database, every
+    // one of those failed with a database code, and none committed, that is systemic (a column or constraint every row
+    // trips), not a bad row: throw, and the held-back skips were never written.
+    const systemic = prismaSkips.filter((p) => p.code !== "P2002");
+    const duplicates = prismaSkips.length - systemic.length;
+    if (committed === 0 && systemic.length > 0 && systemic.length === attempted - duplicates) {
+      const codes = [...new Set(systemic.map((p) => p.code))].join(", ");
+      throw new InternalServerErrorException(
+        `Every row failed with a database error (${codes}); the migration was not confirmed and can be retried.`,
+      );
+    }
+    for (const { rec } of prismaSkips) {
+      const prior = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
+      await this.prisma.forTenant().migrationStagingRecord.update({
+        where: { id: rec.id },
+        data: { status: "SKIPPED", flags: [...prior, COMMIT_FAILED_FLAG] },
+      });
+      skipped++;
     }
 
     const confirmedAt = new Date();
@@ -294,10 +409,10 @@ export class MigrationService {
           name: str(payload.name),
           sku: optStr(payload.sku),
           unit: str(payload.unit) || "each",
-          pricePerUnit: str(payload.pricePerUnit ?? payload.price) || "0",
+          pricePerUnit: normalizedPrice(payload) || "0",
           barcode: optStr(payload.barcode),
           category: optStr(payload.category),
-          unitsPerBox: optNum(payload.unitsPerBox),
+          unitsPerBox: unitsPerBoxOf(payload) ?? undefined,
         });
         return created.id;
       }
