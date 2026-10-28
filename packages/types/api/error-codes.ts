@@ -776,6 +776,8 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
+  /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
+  COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
