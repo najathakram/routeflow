@@ -1342,7 +1342,6 @@ export function CounterSaleScreen() {
             className="sticky top-0 z-20 flex items-center gap-2 bg-white py-2"
             data-testid="counter-scan-bar"
           >
-            <CounterLiveMatches live={live} onPick={pickLive} />
             <input
               ref={scanRef}
               aria-label="Scan or search items"
@@ -1391,6 +1390,8 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
+          <CounterLiveMatches live={live} onPick={pickLive} />
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.

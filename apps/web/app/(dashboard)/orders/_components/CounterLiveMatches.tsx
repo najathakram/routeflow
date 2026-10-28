@@ -79,11 +79,16 @@ export function CounterLiveMatches({
   onPick: (product: any) => void;
 }) {
   const { rows, open, empty, nav } = live;
+  const listRef = React.useRef<HTMLUListElement>(null);
+  // On a phone the fixed payment bar covers the lower third: bring the list to the middle of the visible page.
+  React.useEffect(() => {
+    if (open && window.innerWidth < 768) listRef.current?.scrollIntoView?.({ block: "center" });
+  }, [open]);
   if (empty) {
     return (
       <p
         role="status"
-        className="absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy/70 shadow-dropdown"
+        className="rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy/70 shadow-dropdown"
       >
         No items match.
       </p>
@@ -92,10 +97,11 @@ export function CounterLiveMatches({
   if (!open) return null;
   return (
     <ul
+      ref={listRef}
       id={nav.listId}
       role="listbox"
       aria-label="Matching items"
-      className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-auto rounded-lg border border-surface-border bg-white shadow-dropdown"
+      className="max-h-72 overflow-auto rounded-lg border border-surface-border bg-white shadow-dropdown"
       data-testid="counter-live-matches"
     >
       {rows.map((p, i) => (
