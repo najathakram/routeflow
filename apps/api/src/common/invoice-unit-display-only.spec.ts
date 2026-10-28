@@ -223,8 +223,8 @@ describe("G-6: one source for the per-piece price on the invoice surfaces", () =
   });
 
   it("the pre-existing price helpers keep their pinned counts (no new caller)", () => {
-    expect(total(/\bformatUnitPrice4\(/g)).toBe(2);
-    expect(total(/\bpieceUnitPriceText\(/g)).toBe(3);
+    expect(total(/\bformatUnitPrice4\(/g)).toBe(0);
+    expect(total(/\bpieceUnitPriceText\(/g)).toBe(0);
     expect(total(/\/pc\b/g)).toBe(4);
   });
 

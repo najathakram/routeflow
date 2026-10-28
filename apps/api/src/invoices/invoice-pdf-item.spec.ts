@@ -1,5 +1,5 @@
-import { invoiceDisplayLines } from "@routeflow/pricing";
-import { pdfItemDisplay, pieceUnitPriceText } from "./invoice-pdf-item";
+import { basePriceText, invoiceDisplayLines } from "@routeflow/pricing";
+import { pdfItemDisplay } from "./invoice-pdf-item";
 
 // SA-827 (T3): the PDF row mapper. The template is jest-mocked, so the row shape is proved here.
 const PIECES = { kind: "pieces", label: "Piece" } as const;
@@ -33,10 +33,10 @@ const comps = [
   },
 ];
 
-describe("pieceUnitPriceText", () => {
+describe("basePriceText", () => {
   it("prints cents, up to 4 dp when needed", () => {
-    expect(pieceUnitPriceText(2.0005)).toBe("$2.0005");
-    expect(pieceUnitPriceText(2)).toBe("$2.00");
+    expect(basePriceText(2.0005)).toBe("$2.0005");
+    expect(basePriceText(2)).toBe("$2.00");
   });
 });
 
@@ -97,14 +97,13 @@ describe("pdfItemDisplay", () => {
 });
 
 // SA-1029 (RED first): the pieces view prints on the shared min-2 / max-4 decimal formatter.
-describe("SA-1029 pieceUnitPriceText on the shared formatter", () => {
+describe("SA-1029 basePriceText on the shared formatter", () => {
   it.each([
     [2, "$2.00"],
     [0.7875, "$0.7875"],
     [0.125, "$0.125"],
     [1.2504, "$1.2504"],
   ])("%s -> %s", (n, text) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    expect(require("./invoice-pdf-item").pieceUnitPriceText(n)).toBe(text);
+    expect(basePriceText(n)).toBe(text);
   });
 });
