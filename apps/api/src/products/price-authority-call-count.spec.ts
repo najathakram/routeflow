@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "fs";
-import { join, relative } from "path";
+import { join, relative, sep } from "path";
 
 /**
  * SA-1041 structural pin: `familyPriceAuthorityError(` is how a writer refuses a price the family owns.
@@ -26,7 +26,7 @@ describe("familyPriceAuthorityError call sites", () => {
   const found: Record<string, number> = {};
   for (const file of sources(SRC)) {
     const n = readFileSync(file, "utf8").split("familyPriceAuthorityError(").length - 1;
-    if (n > 0) found[relative(SRC, file)] = n;
+    if (n > 0) found[relative(SRC, file).split(sep).join("/")] = n;
   }
 
   it("matches the pinned count per file (exact, shrink-only)", () => {

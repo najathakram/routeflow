@@ -772,6 +772,32 @@ describe("ProductPriceWriteService.save", () => {
     });
   });
 
+  it("the pack row (the five columns) is base: a variant and a family-linked recipe are refused in mode on, nothing written (SA-1041)", async () => {
+    for (const shape of ["variant", "recipe"] as const) {
+      const ctx = build({}, TENANT, "on");
+      if (shape === "variant") ctx.world.product!.parentProductId = "fam-1";
+      else {
+        ctx.world.product!.kind = "RECIPE";
+        ctx.tx.recipe = { findFirst: jest.fn(async () => ({ familyProductId: "fam-1" })) };
+      }
+      const g = await ctx.grid.get(PRODUCT_ID);
+      const err = await rejection(
+        ctx.service.save(
+          PRODUCT_ID,
+          {
+            expectedRevision: g.revision,
+            expectedPriceState: g.priceState,
+            patches: [{ ref: "pack", tier: 1, to: 20 }],
+          },
+          null,
+        ),
+      );
+      expect(err.getResponse().code).toBe(API_ERROR_CODES.FAMILY_PRICE_AUTHORITY);
+      expect(ctx.world.writes).toEqual([]);
+      expect(ctx.world.product!.pricePerUnit).toBe("12.00");
+    }
+  });
+
   it("a variant base cell is 409 FAMILY_PRICE_AUTHORITY in mode on and a family row is 400, nothing written", async () => {
     const variant = build({}, TENANT, "on");
     variant.world.product!.parentProductId = "fam-1";

@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Optional } from "@n
 import {
   PricingRulesNotReadyError,
   applyCellPatches,
+  authorityLevelOfRef,
   canonicalUnitRef,
   ladderPrice,
   materializePack,
@@ -556,12 +557,10 @@ export class ProductPriceWriteService {
         : null;
     const subject = { ...p, recipeFamilyId };
     const levels = new Set(
-      (refs.length > 0 ? refs : ["·none"]).map((ref) =>
-        canonicalUnitRef(m.units, ref) === "base" ? "base" : "other",
-      ),
+      (refs.length > 0 ? refs : ["·none"]).map((ref) => authorityLevelOfRef(m.units, ref)),
     );
     for (const level of levels) {
-      const authority = priceAuthority(subject, mode, level as "base" | "other");
+      const authority = priceAuthority(subject, mode, level);
       if (authority === "family") {
         throw familyPriceAuthorityError(p.parentProductId ?? recipeFamilyId ?? p.id);
       }

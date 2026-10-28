@@ -267,6 +267,11 @@ describe("ProductPriceGridService (units v2)", () => {
       notEditableReason: "Priced by the family.",
     });
     expect(byLabel.Case.editable).toBe(true);
+    // the product's own five-column row is the base level too
+    expect(byLabel.Box).toMatchObject({
+      editable: false,
+      notEditableReason: "Priced by the family.",
+    });
     // a FAMILY is never editable here, in either mode
     for (const mode of ["on", "off"] as const) {
       expect((await reasons({ kind: "FAMILY" }, mode))[0]).toEqual(["Box", false, FAMILY_REASON]);

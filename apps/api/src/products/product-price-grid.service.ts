@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, Optional } from "@nestjs/common";
 import {
   DEFAULT_TIER_RULES,
   buildLadderView,
+  authorityLevelOfRef,
   canonicalUnitRef,
   priceAuthority,
   priceGrid,
@@ -200,7 +201,7 @@ export class ProductPriceGridService {
       rows: priceGrid(view, rules).map((row) => {
         // A piece level no ProductUnit backs (the implicit row) cannot be priced: the write never mints a unit.
         const reason =
-          governedReason(authorityOf, mode, row.ref === "base" ? "base" : "other") ??
+          governedReason(authorityOf, mode, authorityLevelOfRef(units, row.ref)) ??
           (row.ref === "base" && !baseUnit ? addUnitFirst(row.label) : null);
         return {
           ...row,

@@ -29,12 +29,36 @@ export function priceAuthority(
   mode: PriceAuthorityMode,
   level: PriceAuthorityLevel,
 ): PriceAuthority {
-  if (product.kind === "FAMILY") return "family-page";
-  if (mode === "off") return "own";
-  if (level === "other") return "own";
-  if (product.parentProductId) return "family";
-  if (product.kind === "RECIPE" && !product.familyPriceOverride && product.recipeFamilyId) {
-    return "family";
+  const kind: PriceAuthorityKind | string | null | undefined = product.kind;
+  switch (kind) {
+    case "FAMILY":
+      return "family-page";
+    case "STANDARD":
+    case "VARIANT":
+    case "RECIPE":
+      return ownedBelowFamily(product, kind, mode, level);
+    default:
+      return ownedBelowFamily(product, "STANDARD", mode, level);
   }
-  return "own";
+}
+
+function ownedBelowFamily(
+  product: PriceAuthorityProduct,
+  kind: Exclude<PriceAuthorityKind, "FAMILY">,
+  mode: PriceAuthorityMode,
+  level: PriceAuthorityLevel,
+): PriceAuthority {
+  if (mode === "off" || level === "other") return "own";
+  switch (kind) {
+    case "STANDARD":
+    case "VARIANT":
+      return product.parentProductId ? "family" : "own";
+    case "RECIPE":
+      if (product.parentProductId) return "family";
+      return !product.familyPriceOverride && product.recipeFamilyId ? "family" : "own";
+    default: {
+      const unreachable: never = kind;
+      return unreachable;
+    }
+  }
 }
