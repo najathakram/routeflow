@@ -16,6 +16,8 @@ interface Props {
   /** The page's own money formatter (amounts). */
   fmt: (n: number) => string;
   variant: "staff" | "buyer";
+  /** SA-1029: the invoice shows a Per piece column; component rows leave their cell empty so columns align. */
+  perPieceCol?: boolean;
 }
 
 export function formatUnitPrice4(n: number): string {
@@ -53,7 +55,7 @@ const CELL = {
 
 const LABELS = { qty: "Qty", price: "Unit Price", amount: "Subtotal" } as const;
 
-export function InvoiceDisplayRows({ lines, itemId, fmt, variant, children }: Props) {
+export function InvoiceDisplayRows({ lines, itemId, fmt, variant, perPieceCol, children }: Props) {
   const c = CELL[variant];
   const lab = (k: keyof typeof LABELS) => (variant === "buyer" ? LABELS[k] : undefined);
   return (
@@ -78,6 +80,9 @@ export function InvoiceDisplayRows({ lines, itemId, fmt, variant, children }: Pr
           <td className={c.price} data-label={lab("price")}>
             {formatUnitPrice4(r.unitPrice)}
           </td>
+          {perPieceCol && (
+            <td className={variant === "buyer" ? "hidden sm:table-cell" : "px-4 py-3"} />
+          )}
           <td className={c.amount} data-label={lab("amount")}>
             {fmt(r.amount)}
           </td>
@@ -89,6 +94,9 @@ export function InvoiceDisplayRows({ lines, itemId, fmt, variant, children }: Pr
           <td className={c.first}>{lines.categoryTax.label}</td>
           <td className={c.qty} />
           <td className={c.price} />
+          {perPieceCol && (
+            <td className={variant === "buyer" ? "hidden sm:table-cell" : "px-4 py-3"} />
+          )}
           <td className={c.amount} data-label={lab("amount")}>
             {fmt(lines.categoryTax.amount)}
           </td>

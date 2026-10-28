@@ -16,7 +16,9 @@ import {
 import { Badge, useToast } from "@routeflow/ui/web";
 import {
   invoiceDisplayCategoryTax,
+  formatPerBaseUnitPrice,
   invoiceDisplayLines,
+  invoiceLineQtyText,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -215,6 +217,10 @@ export default function BuyerInvoiceDetailPage() {
       : null;
   const deposit = invoiceDepositFields(invoice);
 
+  const showPerPiece = (invoice.items ?? []).some(
+    (it) => !!it.perBaseUnit && it.displayUnit?.kind !== "pieces",
+  );
+
   return (
     <div className="p-6 max-w-4xl">
       <button
@@ -351,6 +357,7 @@ export default function BuyerInvoiceDetailPage() {
               <th className="px-4 py-2.5 text-left">Description</th>
               <th className="px-4 py-2.5 text-right w-20">Qty</th>
               <th className="px-4 py-2.5 text-right w-28">Unit price</th>
+              {showPerPiece && <th className="px-4 py-2.5 text-right w-28">Per piece</th>}
               <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
             </tr>
           </thead>
@@ -412,7 +419,7 @@ export default function BuyerInvoiceDetailPage() {
                     <span className="text-right">
                       {display.layout === "pieces"
                         ? displayQtyText(display.qty, display.unitLabel)
-                        : Number(item.qty)}
+                        : invoiceLineQtyText(item)}
                       {/* BUY_N_GET_M: name the free units, or the reduced subtotal
                         reads as a pricing error. */}
                       {Number(item.promoFreeUnits ?? 0) > 0 && (
@@ -439,6 +446,20 @@ export default function BuyerInvoiceDetailPage() {
                       )}
                     </span>
                   </td>
+                  {showPerPiece &&
+                    (item.perBaseUnit && display.layout === "today" ? (
+                      <td
+                        data-testid={`invoice-line-per-piece-${item.id}`}
+                        data-label="Per piece"
+                        className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
+                      >
+                        <span className="whitespace-nowrap text-right tabular-nums">
+                          {formatPerBaseUnitPrice(item.perBaseUnit)}
+                        </span>
+                      </td>
+                    ) : (
+                      <td className="hidden sm:table-cell" />
+                    ))}
                   <td
                     data-testid={`invoice-line-subtotal-${item.id}`}
                     data-label="Subtotal"
@@ -458,6 +479,7 @@ export default function BuyerInvoiceDetailPage() {
                     itemId={item.id}
                     fmt={fmt}
                     variant="buyer"
+                    perPieceCol={showPerPiece}
                   >
                     {groupRow}
                   </InvoiceDisplayRows>

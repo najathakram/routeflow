@@ -121,9 +121,9 @@ export function pdfSubLine(view: LineComponentView, barcodeDataUri: string | nul
   };
 }
 
-/** SA-827: a piece price at 4 dp ("$2.0005"). The ONE formatter for the PDF's display units; money is never computed here. */
+/** SA-827 / SA-1029: a piece price, cents with up to 2 more decimals only when needed ("$2.00", "$2.0005"). The ONE formatter for the PDF's display units; money is never computed here. */
 export function pieceUnitPriceText(n: number): string {
-  return `$${n.toFixed(4)}`;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
 }
 
 const amountText = (n: number): string => `$${n.toFixed(2)}`;
