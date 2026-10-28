@@ -184,7 +184,8 @@ export interface CounterSaleVoidResponse {
 // after the order's `deliveredAt` (the moment this hand-over moved it to DELIVERED) are this request's tender:
 // a deposit or portal payment made before it is never counted as one.
 
-export interface PickupCompleteRequest {
+/** W-773: `RestrictionAck` is the #3455 resubmit after a RESTRICTION_WARNING (the switch judges at the store's state). */
+export interface PickupCompleteRequest extends RestrictionAck {
   /** omit to hand the order over unpaid (an open invoice on account); a walk-in must pay */
   payment?: CounterSalePayment;
   /** SA-750r3: the till register this hand-over's cash counts on when the order has none stamped yet; default 'main' */
