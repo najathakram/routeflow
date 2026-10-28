@@ -270,6 +270,66 @@ try {
   git("config", "diff.k.textconv", "sh -c 'sed s/EVIL/y/ \"$1\"' --");
   const n2 = delta(n2v, git("rev-parse", "HEAD"), "n2base");
   check("N2 textconv cannot hide a real change", [n2.code, /carries/.test(n2.out)], [1, false]);
+  rmSync(path.join(dir, ".git", "info", "attributes"));
+
+  // N3: submodule.<name>.ignore=all (in .gitmodules) must not hide a gitlink move
+  const link = (n) => git("update-index", "--add", "--cacheinfo", `160000,${n.repeat(40)},s`);
+  git("checkout", "-q", "-B", "n3base", "master");
+  put(".gitmodules", '[submodule "s"]\n\tpath = s\n\turl = ./s\n\tignore = all\n');
+  link("1");
+  commit("chore: submodule s");
+  const pin = (name, n) => {
+    git("checkout", "-q", "-B", name, "n3base");
+    put("t3.txt", "y\n");
+    link(n);
+    commit(`feat: s to ${n}`);
+    return git("rev-parse", "HEAD");
+  };
+  const n3v = pin("n3v", "2");
+  const n3h = pin("n3h", "3");
+  git("checkout", "-q", "n3base");
+  const n3 = delta(n3v, n3h, "n3base");
+  check(
+    "N3 submodule ignore=all cannot hide a gitlink move",
+    [n3.code, n3.out],
+    [1, "review-delta: changed; re-read 1 file(s): s"],
+  );
+
+  // N4: a replace ref must not stand in for the head commit
+  git("checkout", "-q", "-B", "n4base", "master");
+  put("r.txt", "x\n");
+  commit("chore: r");
+  const edit = (name, text) => {
+    git("checkout", "-q", "-B", name, "n4base");
+    put("r.txt", text);
+    commit(`feat: r ${text.trim()}`);
+    return git("rev-parse", "HEAD");
+  };
+  const n4v = edit("n4v", "y\n");
+  const n4h = edit("n4h", "z\n");
+  git("replace", "-f", n4h, n4v);
+  const n4 = delta(n4v, n4h, "n4base");
+  git("replace", "-d", n4h);
+  check(
+    "N4 a replace ref cannot hide a real change",
+    [n4.code, /carries/.test(n4.out)],
+    [1, false],
+  );
+
+  // the re-read list names PR files only, not the base files an update-branch pulled in
+  git("checkout", "-q", "n4base");
+  put("u.txt", "u\n");
+  commit("chore: base moves elsewhere");
+  git("checkout", "-q", "-B", "n5", n4v);
+  git("merge", "-q", "--no-edit", "n4base");
+  put("r.txt", "w\n");
+  commit("fix: r again");
+  const n5 = delta(n4v, git("rev-parse", "HEAD"), "n4base");
+  check(
+    "re-read list is limited to PR files",
+    n5.out,
+    "review-delta: changed; re-read 1 file(s): r.txt",
+  );
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
