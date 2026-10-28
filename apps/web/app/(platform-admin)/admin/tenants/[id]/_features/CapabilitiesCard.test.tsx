@@ -1,6 +1,8 @@
 import * as React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
+// The server's real answer for an unset tenant: one file, pinned equal to `capabilitiesFromInputs` by the API spec.
+import REAL_UNSET from "../../../../../../../../packages/types/fixtures/business-capabilities.unset.json";
 import type { BusinessCapabilitiesPreviewResponse } from "@/lib/platform-admin/capabilities-contract";
 import { CapabilitiesCard } from "./CapabilitiesCard";
 import { INCLUDED_FREE_COPY } from "./profile-plain-copy";
@@ -8,6 +10,7 @@ import {
   CAPABILITY_PRESETS_FIXTURE,
   DELIVERY_COUNTER_FIXTURE,
   NOT_CONFIGURED_FIXTURE,
+  UNSET_TODAY_FIXTURE,
   capabilitiesFixture,
   capabilitiesPreview,
   capabilitiesPreviewWithBilling,
@@ -34,6 +37,8 @@ const DELIVERY = "Delivers on own trucks";
 const DOOR = "Collect payment at the door";
 const SHIPPING = "Ships by carrier";
 const COUNTER = "Sells at the counter";
+const NOT_SET_UP_COPY =
+  "Not set up yet. The boxes show how this business works today. Change them, or start from a preset.";
 
 function apiError(status: number, data: Record<string, unknown>) {
   return Object.assign(new Error("Request failed"), { response: { status, data } });
@@ -78,11 +83,7 @@ describe("CapabilitiesCard: what is saved", () => {
   it("a tenant nobody set up shows the empty state, nothing ticked, Apply off with its reason (R11)", async () => {
     mockFetchCapabilities.mockResolvedValue(NOT_CONFIGURED_FIXTURE);
     await renderCard();
-    expect(
-      screen.getByText(
-        "Not set up yet. The business works as before. Tick what it does, or start from a preset.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(NOT_SET_UP_COPY)).toBeVisible();
     for (const n of [DELIVERY, SHIPPING, COUNTER]) expect(box(n)).not.toBeChecked();
     expect(applyButton()).toBeDisabled();
     expect(screen.getByText("Tick at least one.")).toBeVisible();
@@ -91,6 +92,89 @@ describe("CapabilitiesCard: what is saved", () => {
       await sleep(400);
     });
     expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  // SA-1028 K-R3 (supersedes the "nothing ticked" read for a tenant nobody set up): the boxes show what the business
+  // does today, so adding Counter cannot silently untick Delivery and Shipping.
+  it("K-R3: a tenant nobody set up shows today's ticks, keeps the 'not set up' line, and Apply is off until something changes", async () => {
+    mockFetchCapabilities.mockResolvedValue(UNSET_TODAY_FIXTURE);
+    await renderCard();
+    expect(screen.getByText(NOT_SET_UP_COPY)).toBeVisible();
+    expect(screen.queryByText(/^Saved setup:/)).toBeNull();
+    expect(box(DELIVERY)).toBeChecked();
+    expect(box(DOOR)).toBeChecked();
+    expect(box(SHIPPING)).toBeChecked();
+    expect(box(COUNTER)).not.toBeChecked();
+    expect(applyButton()).toBeDisabled();
+    expect(screen.getByText("Already set up this way.")).toBeVisible();
+    await act(async () => {
+      await sleep(400);
+    });
+    expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  // SA-1028 H-R1 (headline): the card is rendered from the SERVER's real answer for an unset shipping tenant (the file the
+  // API spec pins against capabilitiesFromInputs), never a hand-built fixture. Reverting the server read or the web
+  // mapping alone turns one of the two specs red.
+  it("H-R1: an unset shipping tenant's real server answer shows Shipping ticked, saved, with the 'not set up' line", async () => {
+    mockFetchCapabilities.mockResolvedValue(REAL_UNSET.shipping);
+    await renderCard();
+    expect(box(SHIPPING)).toBeChecked();
+    expect(box(DELIVERY)).not.toBeChecked();
+    expect(box(COUNTER)).not.toBeChecked();
+    expect(screen.getByText(NOT_SET_UP_COPY)).toBeVisible();
+    expect(applyButton()).toBeDisabled();
+    expect(screen.getByText("Already set up this way.")).toBeVisible();
+  });
+
+  it("H-R1: with a fleet held the real answer shows Delivery, door payments and Shipping ticked", async () => {
+    mockFetchCapabilities.mockResolvedValue(REAL_UNSET.shippingWithFleet);
+    await renderCard();
+    for (const n of [DELIVERY, DOOR, SHIPPING]) expect(box(n)).toBeChecked();
+    expect(box(COUNTER)).not.toBeChecked();
+  });
+
+  // The D6 BLOCK on #3893: an unset Shipping-only tenant ticking Counter sent opensAs "counter", so the server wrote
+  // pickup_ship (invoicing moves to shipment, or 409 with orders in transit). The card keeps the opens-as it showed.
+  it("K-R3 (web): an unset Shipping-only tenant ticking Counter previews opensAs 'order', never 'counter'", async () => {
+    mockFetchCapabilities.mockResolvedValue(REAL_UNSET.shipping);
+    await renderCard();
+    fireEvent.click(box(COUNTER));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: false,
+      shipping: true,
+      counter: true,
+      opensAs: "order",
+    });
+  });
+
+  it("K-G8: a CONFIGURED Shipping-only tenant ticking Counter still defaults to opening as a counter sale (D6 kept)", async () => {
+    mockFetchCapabilities.mockResolvedValue(
+      capabilitiesFixture({ shipping: true, opensAs: "order", matchedPreset: null }),
+    );
+    await renderCard();
+    fireEvent.click(box(COUNTER));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: false,
+      shipping: true,
+      counter: true,
+      opensAs: "counter",
+    });
+  });
+
+  it("K-R3: adding Counter on that tenant previews Delivery + Shipping kept and Counter added, never a smaller request", async () => {
+    mockFetchCapabilities.mockResolvedValue(UNSET_TODAY_FIXTURE);
+    await renderCard();
+    fireEvent.click(box(COUNTER));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledTimes(1));
+    expect(mockPreview.mock.calls[0]![1]).toEqual({
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: true,
+    });
   });
 
   it("shows the saved ticks, sends no request while they are unchanged, and says why Apply is off", async () => {

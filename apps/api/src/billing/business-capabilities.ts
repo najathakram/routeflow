@@ -26,14 +26,12 @@ export const isOpensAsChoosable = (
   t: Pick<BusinessCapabilityTicks, "delivery" | "shipping" | "counter">,
 ): boolean => t.shipping && t.counter && !t.delivery;
 
-const NO_TICKS: BusinessCapabilityTicks = {
-  delivery: false,
-  doorPayments: false,
-  shipping: false,
-  counter: false,
-  opensAs: "order",
-};
-
+/**
+ * `configured` is only "has the admin set `fulfilment_model`". The ticks are ALWAYS what the business does today
+ * (SA-1028): an unset tenant works as ROUTE + SHIP, so it reads Shipping, and Delivery when the fleet is held (an unset
+ * tenant with no fleet cannot deliver on trucks), and Counter when `counter_sales` is on. Reading it as "nothing ticked"
+ * made the card send a request that turned Delivery and Shipping off, which wrote `fulfilment_model` under a carrier order.
+ */
 export function capabilitiesFromInputs(
   inputs: FulfilmentInputs,
   heldModules: Iterable<string>,
@@ -41,15 +39,13 @@ export function capabilitiesFromInputs(
   const cap = capabilityFromInputs(inputs);
   const held = new Set(heldModules);
   const configured = inputs.fulfilmentMode !== "unset";
-  const ticks: BusinessCapabilityTicks = configured
-    ? {
-        delivery: cap.methods.includes("ROUTE"),
-        doorPayments: held.has("driver_payments"),
-        shipping: cap.methods.includes("SHIP"),
-        counter: cap.counter !== "off",
-        opensAs: cap.staffOpensAs,
-      }
-    : NO_TICKS;
+  const ticks: BusinessCapabilityTicks = {
+    delivery: cap.methods.includes("ROUTE") && (configured || cap.fleet),
+    doorPayments: held.has("driver_payments"),
+    shipping: cap.methods.includes("SHIP"),
+    counter: cap.counter !== "off",
+    opensAs: cap.staffOpensAs,
+  };
   return {
     configured,
     ...ticks,
@@ -99,22 +95,16 @@ export function presetTicks(def: BusinessProfileDef): BusinessCapabilityTicks {
  */
 export function ticksToProfileDef(
   input: BusinessCapabilitiesRequest,
-  current?: { doorPayments: boolean },
+  current?: CurrentCapabilities,
 ): {
   def: BusinessProfileDef;
   normalised: BusinessCapabilityTicks;
   preset: BusinessProfileKey | null;
 } {
+  assertCapabilitiesRequested(input);
   const delivery = input.delivery === true;
   const shipping = input.shipping === true;
   const counter = input.counter === true;
-  if (!delivery && !shipping && !counter) {
-    throw new BadRequestException({
-      statusCode: 400,
-      code: API_ERROR_CODES.BUSINESS_CAPABILITIES_EMPTY,
-      message: "Choose at least one of Delivery, Shipping or Counter.",
-    });
-  }
   const doorPayments = delivery && (input.doorPayments ?? current?.doorPayments ?? true);
   const opensAsCounter = input.opensAs !== "order"; // D6 default: Shipping + Counter opens as a Counter sale
   const mode = delivery
@@ -126,6 +116,30 @@ export function ticksToProfileDef(
         ? "pickup_ship"
         : "ship"
       : "pickup";
+  // SA-1028 keep rule: a tenant nobody set up (fulfilment_model unset) whose Delivery, Shipping and Opens-as stay as the
+  // card read them keeps its model unset. Only the other boxes (Counter, door payments) are written, so no mode moves
+  // and the carrier-in-transit rule has nothing to refuse. A real change to D/S/Opens-as still writes the model.
+  if (current && !current.configured && current.ticks && keepsModel(input, current.ticks, mode)) {
+    const kept: BusinessProfileDef = {
+      key: "custom",
+      label: "Custom capabilities",
+      description:
+        "A combination of delivery, shipping and counter sales chosen for this business.",
+      fleet: delivery,
+      ...(delivery && !doorPayments
+        ? { modules: { recurring_routes: true, order_delivery: true, driver_payments: false } }
+        : {}),
+      modes: { counter_sales: counter ? "on" : "unset" },
+    };
+    const normalised: BusinessCapabilityTicks = {
+      delivery,
+      doorPayments,
+      shipping,
+      counter,
+      opensAs: current.ticks.opensAs,
+    };
+    return { def: kept, normalised, preset: null };
+  }
   const custom: BusinessProfileDef = {
     key: "custom",
     label: "Custom capabilities",
@@ -140,6 +154,44 @@ export function ticksToProfileDef(
   const preset = matchPreset(normalised);
   const def = preset ? (BUSINESS_PROFILES.find((p) => p.key === preset) ?? custom) : custom;
   return { def, normalised, preset };
+}
+
+/** What the planner needs to know about the tenant the ticks are for (read once, with the GET that shows the card). */
+export interface CurrentCapabilities {
+  /** The held `driver_payments` module: what an omitted `doorPayments` keeps. */
+  doorPayments: boolean;
+  /** `fulfilment_model` is set. Only an unset tenant can keep its model (see the keep rule). */
+  configured: boolean;
+  /** The ticks the card showed for this tenant. */
+  ticks?: BusinessCapabilityTicks;
+}
+
+/** 400 BUSINESS_CAPABILITIES_EMPTY when no capability is ticked. Called before any read, so an empty request never touches the DB. */
+export function assertCapabilitiesRequested(input: BusinessCapabilitiesRequest): void {
+  if (input.delivery !== true && input.shipping !== true && input.counter !== true) {
+    throw new BadRequestException({
+      statusCode: 400,
+      code: API_ERROR_CODES.BUSINESS_CAPABILITIES_EMPTY,
+      message: "Choose at least one of Delivery, Shipping or Counter.",
+    });
+  }
+}
+
+/**
+ * The keep rule's test: Delivery and Shipping equal the current ticks, and so does Opens-as wherever the request can
+ * choose it (an omitted choice is the D6 default "counter", so it is a change from the card's "order").
+ */
+function keepsModel(
+  input: BusinessCapabilitiesRequest,
+  now: BusinessCapabilityTicks,
+  mode: string,
+): boolean {
+  const delivery = input.delivery === true;
+  const shipping = input.shipping === true;
+  if (delivery !== now.delivery || shipping !== now.shipping) return false;
+  if (!isOpensAsChoosable({ delivery, shipping, counter: input.counter === true })) return true;
+  const requested = mode === "pickup_ship" ? "counter" : "order"; // the opens-as the written mode would derive
+  return requested === now.opensAs;
 }
 
 /**

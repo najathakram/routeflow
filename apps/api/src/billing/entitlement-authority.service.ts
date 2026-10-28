@@ -15,7 +15,7 @@ import {
 } from "./feature-registry";
 import { addonGateState } from "./addon-gate-registry";
 import { isDarkFlag, allowsFlag, computeServedFlags } from "./plan-flag-policy";
-import type { FeatureModeState, FeatureSource } from "@routeflow/types";
+import type { FeatureSource } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Fire-and-forget diff writes (item 3): suppress a re-write of the SAME disagreement from
@@ -192,25 +192,6 @@ export class EntitlementAuthority {
       result.set(feature.key, ent ? allowsFlag(ent, feature.key) : isDarkFlag(feature.key));
     }
     return result;
-  }
-
-  /**
-   * Brief A ships only the REGISTRY_DEFAULT provider (a config-bearing key's `fallbackMode`,
-   * unconditionally) — a tenant-level override provider (`FEATURE_MODE_PROVIDER`) is brief C's
-   * `TenantFeatureConfig` work. Never turns a key on/off; a key with no `config` block on its
-   * registry row returns a state with an empty `value`/`effective`.
-   */
-  async config(_tenantId: string, key: string): Promise<FeatureModeState> {
-    const feature = FEATURE_BY_KEY.get(key);
-    const fallback = feature?.config?.fallbackMode ?? "";
-    const modeKeys = feature?.config ? Object.keys(feature.config.modes) : [];
-    return {
-      value: fallback,
-      effective: fallback,
-      source: "REGISTRY_DEFAULT",
-      allowed: modeKeys,
-      blocked: [],
-    };
   }
 
   /** For the explain trace / preview — every key's full resolved detail in one resolver call. */
