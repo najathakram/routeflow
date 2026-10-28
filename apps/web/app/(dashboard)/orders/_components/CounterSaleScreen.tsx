@@ -31,6 +31,7 @@ import { useCustomers } from "@/lib/api/customers";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
+import { CounterLiveMatches, useCounterLiveMatches } from "./CounterLiveMatches";
 import {
   COUNTER_SHIP_FAILED_COPY,
   COUNTER_SHIP_WALK_IN_CAPTION,
@@ -724,6 +725,15 @@ export function CounterSaleScreen() {
 
   // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
   const lastScanActivityRef = React.useRef(Number.NEGATIVE_INFINITY);
+  // W-852: the live match list under the scan field; a row (click, or Enter on the highlighted one) lands through scan.pick.
+  const pickLive = (product: any) => {
+    lastScanActivityRef.current = performance.now();
+    if (lineLocked || saleInFlight()) return;
+    setScanText("");
+    scan.pick(product);
+    refocus();
+  };
+  const live = useCounterLiveMatches({ text: scanText, enabled: !lineLocked, onPick: pickLive });
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     lastScanActivityRef.current = performance.now();
@@ -1332,12 +1342,14 @@ export function CounterSaleScreen() {
             className="sticky top-0 z-20 flex items-center gap-2 bg-white py-2"
             data-testid="counter-scan-bar"
           >
+            <CounterLiveMatches live={live} onPick={pickLive} />
             <input
               ref={scanRef}
               aria-label="Scan or search items"
               className="min-h-[44px] w-full text-ellipsis rounded border px-3 py-2 text-base"
               placeholder="Scan or type an item"
               aria-describedby="counter-scan-hint"
+              {...live.nav.inputProps}
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1352,6 +1364,7 @@ export function CounterSaleScreen() {
                   e.preventDefault();
                   undoRemove();
                 }
+                if (live.nav.onKeyDown(e)) return; // W-852: Arrow keys move the highlight; Enter adds the highlighted row
                 if (e.key === "Enter" && !scanText.trim()) {
                   e.preventDefault(); // an empty Enter is never a scan
                   if (
