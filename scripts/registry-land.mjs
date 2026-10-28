@@ -10,14 +10,18 @@
 //   2. inside ONE register write transaction: sync, then prove/note for each claim, by running the
 //      real bugs.mjs against the clone (BUGS_ROOT). The real anchor never moves until the push has
 //      landed: the child sync runs on a temp copy that replaces it afterwards, so a rejected push, a
-//      crash or a kill leaves the events to be re-scanned (a redo starts from a fresh copy).
+//      crash or a kill leaves the events to be re-scanned (a redo starts from a fresh copy);
+//   3. still inside it, after the claims and BEFORE the push: `campaign-check.mjs --landing` against
+//      the clone's ledger (CAMPAIGN_CHECK_STATUS_DIR) and this checkout's code (CAMPAIGN_CHECK_CODE_ROOT).
+//      A failing check resets the clone and pushes nothing: exit 1.
 //
 // FILE is JSON: [{ "id": "B12", "action": "prove", "pr": 3901, "proof": "REG-B12 ..." },
 //                { "id": "B12", "action": "note", "text": "..." }]; checked whole before the lock.
 // Prints one summary line after the push landed (claims = applied now, skipped = already recorded).
 // Exit 0 landed (or nothing to add), 1 not recorded, 2 fix it yourself (bad claims, dirty/HEAD != M,
 // M not merged, anchor gap, dirty clone, tracked mode).
-// campaign-check in landing mode is B1-b2b.
+// REGISTRY_LAND_CHECK_CMD (a script path, run instead of campaign-check.mjs) is a test seam, honoured
+// only under BUGS_SELF_TEST=1, like BUGS_SYNC_REPO.
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -29,12 +33,15 @@ import {
   FIRST_RUN_WINDOW,
   REPO_ROOT,
   registryMode,
+  landCheckOverride,
   syncRepoOverride,
   syncStatePath,
 } from "./lib/registry-root.mjs";
 import { withRegistryWrite } from "./lib/registry-write.mjs";
 
-const BUGS = join(dirname(fileURLToPath(import.meta.url)), "campaign", "bugs.mjs");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BUGS = join(HERE, "campaign", "bugs.mjs");
+const CHECK = landCheckOverride() || join(HERE, "campaign-check.mjs");
 const ORIGIN = "refs/remotes/origin/master";
 const bad = (m) => {
   throw new RegistryError(m, 2);
@@ -129,17 +136,37 @@ function land(sha, claims) {
     bad("anchor gap: run `bugs.mjs sync --rescan` with a wider window");
 
   const work = `${anchorPath}.land-${process.pid}`;
+  // RF_VERIFY_MODE=fast is a pre-push switch; it must never reach a child of a landing
+  const childEnv = () => {
+    const e = scrubbedGitEnv();
+    delete e.RF_VERIFY_MODE;
+    return e;
+  };
   const bugs = (root, args) => {
     const r = spawnSync(process.execPath, [BUGS, ...args], {
       cwd: repoDir,
       encoding: "utf8",
-      env: { ...scrubbedGitEnv(), BUGS_ROOT: root, BUGS_SYNC_STATE: work },
+      env: { ...childEnv(), BUGS_ROOT: root, BUGS_SYNC_STATE: work },
     });
     if (r.status !== 0)
       throw new RegistryError(
         `bugs.mjs ${args[0]} failed: ${(r.stderr || r.stdout).trim().split("\n")[0]}`,
       );
     return r.stdout;
+  };
+  const campaignCheck = (root) => {
+    const r = spawnSync(process.execPath, [CHECK, "--landing"], {
+      cwd: repoDir,
+      encoding: "utf8",
+      env: {
+        ...childEnv(),
+        CAMPAIGN_CHECK_STATUS_DIR: join(root, "status"),
+        CAMPAIGN_CHECK_CODE_ROOT: repoDir,
+      },
+    });
+    if (r.status === 0) return;
+    const tail = `${r.stdout}${r.stderr}`.trim().split("\n").slice(-20).join("\n");
+    throw new RegistryError(`${tail}\nregistry:land: campaign-check failed; nothing pushed`);
   };
   let out;
   try {
@@ -159,6 +186,7 @@ function land(sha, claims) {
             bugs(root, k.args);
             applied++;
           }
+          campaignCheck(root);
           const events = /recorded (\d+) new event/.exec(synced)?.[1] ?? 0;
           return {
             paths: dirty(),

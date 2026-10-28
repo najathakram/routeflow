@@ -46,6 +46,10 @@ export const syncStatePath = () =>
   process.env.BUGS_SYNC_STATE || join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
 export const syncRepoOverride = () =>
   (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_SYNC_REPO) || null;
+// REGISTRY_LAND_CHECK_CMD (a script run instead of campaign-check.mjs by registry:land) is a test seam
+// with the same gate as BUGS_SYNC_REPO: honoured only under BUGS_SELF_TEST=1.
+export const landCheckOverride = (env = process.env) =>
+  (env.BUGS_SELF_TEST === "1" && env.REGISTRY_LAND_CHECK_CMD) || null;
 export const REGISTRY_FIX_COMMAND = "npm run registry:clone";
 
 // Where the register sits inside the repo while the mode is "tracked".

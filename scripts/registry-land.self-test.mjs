@@ -22,6 +22,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { fixture, git } from "./lib/registry-fixture.mjs";
+import * as rr from "./lib/registry-root.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUGS = join(ROOT, "scripts", "campaign", "bugs.mjs");
@@ -58,6 +59,32 @@ git(rf, "reset", "--hard", "origin/master");
 git(rf, "update-ref", "refs/remotes/origin/master", c4); // origin/master is stale: the fetch must fix it
 
 const an = (n) => join(tmp, `anchor-${n}.json`);
+// Stands in for `campaign-check.mjs --landing` (REGISTRY_LAND_CHECK_CMD, honoured only under
+// BUGS_SELF_TEST=1). It logs what it saw to STUB_LOG and fails on STUB_FAIL=1.
+const stub = join(tmp, "check-stub.mjs");
+writeFileSync(
+  stub,
+  `import { appendFileSync, existsSync, readFileSync } from "node:fs";
+const e = process.env;
+const led = (e.CAMPAIGN_CHECK_STATUS_DIR ?? "") + "/F01.jsonl";
+if (e.STUB_LOG)
+  appendFileSync(
+    e.STUB_LOG,
+    JSON.stringify({
+      args: process.argv.slice(2),
+      status: e.CAMPAIGN_CHECK_STATUS_DIR,
+      code: e.CAMPAIGN_CHECK_CODE_ROOT,
+      leak: e.GIT_AUTHOR_NAME ?? null,
+      mode: e.RF_VERIFY_MODE ?? null,
+      proven: existsSync(led) && readFileSync(led, "utf8").includes('"state":"proven"'),
+    }) + "\\n",
+  );
+if (e.STUB_FAIL === "1") {
+  console.error("stub: F01 B1 refused, no proof in the reports");
+  process.exit(1);
+}
+`,
+);
 const regEnv = (dir, anchor, extra = {}) =>
   env({
     RF_REGISTRY_DIR: dir,
@@ -65,6 +92,7 @@ const regEnv = (dir, anchor, extra = {}) =>
     BUGS_SELF_TEST: "1",
     BUGS_SYNC_REPO: rf,
     BUGS_SYNC_STATE: anchor,
+    REGISTRY_LAND_CHECK_CMD: stub,
     ...extra,
   });
 const run = (script, args, e, cwd = tmp) =>
@@ -324,6 +352,178 @@ async function main() {
     );
     fresh();
   });
+
+  await section(
+    "round 3: notes, the anchor across an aborted push, tracked mode, a failed claim",
+    async () => {
+      // MUST 1: a note is skipped only when a History note line holds that exact text.
+      fresh();
+      writeJson("anchor-a.json", { lastSha: c0 });
+      const titleNote = writeJson("title-note.json", [
+        { id: "B1", action: "note", text: "Bug one" },
+      ]);
+      const noteLine = (t) =>
+        hist()
+          .split("\n")
+          .filter((l) => l.includes(`**note** · ${t} <!--`));
+      const n1 = sumOf(land(["--sha", tip, "--claims", titleNote], regEnv(A, an("a"))));
+      check(
+        "a note whose text is the bug's title is recorded, and counted as applied",
+        [noteLine("Bug one").length, n1?.claims, n1?.skipped],
+        [1, 1, 0],
+      );
+      const n2 = sumOf(land(["--sha", tip, "--claims", titleNote], regEnv(B, an("b"))));
+      check(
+        "the same note again is skipped, once only, and counted as skipped",
+        [noteLine("Bug one").length, n2?.claims, n2?.skipped],
+        [1, 0, 1],
+      );
+      fresh();
+
+      // MUST 2: the child sync works on a temp copy; the real anchor moves only after the push landed.
+      writeJson("anchor-a.json", { lastSha: c0 });
+      const seenAtPush = join(tmp, "anchor-at-push.json");
+      const reject = join(bare, "hooks", "pre-receive");
+      mkdirSync(dirname(reject), { recursive: true });
+      writeFileSync(
+        reject,
+        `#!/bin/sh\ncp "${fwd(an("a"))}" "${fwd(seenAtPush)}" 2>/dev/null\necho no >&2\nexit 1\n`,
+      );
+      chmodSync(reject, 0o755);
+      const aborted = land(["--sha", tip, "--claims", okFile], regEnv(A, an("a")));
+      rmSync(reject);
+      check(
+        "every push rejected: exit 1, the real anchor never moved (not even during the push)",
+        [
+          aborted.status,
+          origin() === sha0,
+          anchorSha("a") === c0,
+          existsSync(seenAtPush) && JSON.parse(readFileSync(seenAtPush, "utf8")).lastSha === c0,
+        ],
+        [1, true, true, true],
+      );
+      const redo = land(["--sha", tip, "--claims", okFile], regEnv(A, an("a")));
+      check(
+        "the next run re-scans the same events and lands them",
+        [redo.status, shaLines().length, anchorSha("a")],
+        [0, 3, tip],
+      );
+      fresh();
+
+      // MUST 3: registry:land is clone-mode only.
+      const trackedEnv = regEnv(A, an("a"));
+      delete trackedEnv.RF_REGISTRY_MODE_TEST;
+      const tracked = land(["--sha", tip, "--claims", okFile], trackedEnv);
+      check(
+        "tracked mode: exit 2 naming it, no commit, the anchor unwritten",
+        [tracked.status, /tracked/.test(tracked.stderr), origin() === sha0, existsSync(an("a"))],
+        [2, true, true, false],
+      );
+
+      fresh(); // the unfixed tracked run landed a commit; every check below starts from sha0
+      // MUST 4: a claim that fails leaves the clone clean and origin unchanged.
+      writeJson("anchor-a.json", { lastSha: c0 }); // a valid anchor, so the sync before the claim writes
+      const failing = writeJson("fail.json", [
+        { id: "B999", action: "prove", pr: 1, proof: "REG-B999 x" },
+      ]);
+      const failed = land(["--sha", tip, "--claims", failing], regEnv(A, an("a")));
+      check(
+        "a failed claim: non-zero, the clone clean, origin and the anchor unchanged",
+        [failed.status !== 0, fx.clean(A), origin() === sha0, anchorSha("a") === c0],
+        [true, true, true, true],
+      );
+      fresh();
+    },
+  );
+
+  await section(
+    "steps 2-3: campaign-check runs before the push; a failure pushes nothing",
+    async () => {
+      const log = join(tmp, "stub.log");
+      const seenBy = () =>
+        existsSync(log)
+          ? readFileSync(log, "utf8")
+              .split("\n")
+              .filter(Boolean)
+              .map((l) => JSON.parse(l))
+          : [];
+      const e = (extra) =>
+        regEnv(A, an("a"), {
+          STUB_LOG: log,
+          GIT_AUTHOR_NAME: "leak",
+          RF_VERIFY_MODE: "fast",
+          ...extra,
+        });
+      const before = count();
+      const ok = land(["--sha", tip, "--claims", okFile], e({}));
+      const [saw] = seenBy();
+      check(
+        "a passing check lets the push land (one commit), run once with --landing",
+        [ok.status, count() - before, seenBy().length, saw?.args],
+        [0, 1, 1, ["--landing"]],
+      );
+      check(
+        "it sees STATUS_DIR = the clone's status, CODE_ROOT = the main checkout, a scrubbed git env, no RF_VERIFY_MODE",
+        [resolve(saw?.status ?? "x"), resolve(saw?.code ?? "x"), saw?.leak, saw?.mode],
+        [resolve(join(A, rr.REGISTRY_PREFIX, "status")), resolve(rf), null, null],
+      );
+      check("it runs after the claims are written, before the push", saw?.proven, true);
+      fresh();
+      rmSync(log, { force: true });
+
+      const was = origin();
+      const bad = land(["--sha", tip, "--claims", okFile], e({ STUB_FAIL: "1" }));
+      check(
+        "a failing check: exit 1 (not 2), the check's tail and the notice, nothing pushed, no anchor",
+        [
+          bad.status,
+          bad.stderr.includes("stub: F01 B1 refused"),
+          bad.stderr.includes("registry:land: campaign-check failed; nothing pushed"),
+          origin() === was,
+          existsSync(an("a")),
+        ],
+        [1, true, true, true, false],
+      );
+      check(
+        "the clone is left clean and at origin",
+        [git(A, "status", "--porcelain"), git(A, "rev-parse", "HEAD") === was],
+        ["", true],
+      );
+      const again = land(["--sha", tip, "--claims", okFile], e({}));
+      check("the next landing from that clone works", [again.status, origin() !== was], [0, true]);
+      fresh();
+      rmSync(log, { force: true });
+
+      const flag = fwd(join(tmp, "rejected-check-once"));
+      const hook = join(bare, "hooks", "pre-receive");
+      mkdirSync(dirname(hook), { recursive: true });
+      writeFileSync(
+        hook,
+        `#!/bin/sh\nif [ ! -e "${flag}" ]; then : > "${flag}"; echo no >&2; exit 1; fi\n`,
+      );
+      chmodSync(hook, 0o755);
+      const redo = land(["--sha", tip, "--claims", okFile], e({}));
+      rmSync(hook);
+      check(
+        "a rejected push redoes the landing, and the check runs again before the second push",
+        [redo.status, existsSync(flag), seenBy().length, seenBy().every((s) => s.proven)],
+        [0, true, 2, true],
+      );
+      fresh();
+      const pick = (env) =>
+        typeof rr.landCheckOverride === "function" ? rr.landCheckOverride(env) : "unavailable";
+      check(
+        "REGISTRY_LAND_CHECK_CMD is honoured only under BUGS_SELF_TEST=1",
+        [
+          pick({ REGISTRY_LAND_CHECK_CMD: "stub.mjs" }),
+          pick({ REGISTRY_LAND_CHECK_CMD: "stub.mjs", BUGS_SELF_TEST: "0" }),
+          pick({ BUGS_SELF_TEST: "1" }),
+          pick({ REGISTRY_LAND_CHECK_CMD: "stub.mjs", BUGS_SELF_TEST: "1" }),
+        ],
+        [null, null, null, "stub.mjs"],
+      );
+    },
+  );
 
   await section("a redo: notes match trimmed, a prove already applied is skipped", async () => {
     const noteOnly = writeJson("note.json", [
