@@ -198,6 +198,27 @@ for (const [branch, subject, want] of [
   }
 }
 
+// A failed lock stops the probe before any junction exists: an unlocked worktree with live links is
+// the one state a later `git worktree remove` could delete through.
+{
+  const repo = plantFix("fix/x", { [T]: test("f() === 2") });
+  try {
+    let ran = false;
+    const lock = () => ({ status: 128, stderr: "lock boom" });
+    const err = await probe(repo, { lock, run: () => ((ran = true), { status: 0 }) }).then(
+      () => "",
+      (e) => e.message,
+    );
+    check(
+      "failed lock throws before links or runs; worktree gone",
+      [/lock boom/.test(err), ran, worktrees(repo)],
+      [true, false, 1],
+    );
+  } finally {
+    repo.cleanup();
+  }
+}
+
 // A failed restore is skipped with git's stderr, never graded against HEAD; a HEAD timeout is skipped.
 {
   const repo = plantFix("fix/x", { [T]: test("f() === 2") });

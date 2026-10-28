@@ -137,7 +137,16 @@ function unlink(link) {
 }
 
 /** Probes every test file of the branch; returns { branch, base, notFix?, results: [{ file, verdict, reason }] }. */
-export async function runProbe({ cwd, base, tests, run = defaultRun, restore = restoreFix }) {
+const lockWorktree = (root, wt) => gitIn(root, ["worktree", "lock", "--reason", "rf-probe", wt]);
+
+export async function runProbe({
+  cwd,
+  base,
+  tests,
+  run = defaultRun,
+  restore = restoreFix,
+  lock = lockWorktree,
+}) {
   const root = realpathSync.native(gitIn(cwd, ["rev-parse", "--show-toplevel"]).stdout.trim());
   const branch = gitIn(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
   const mb = gitIn(root, ["merge-base", base, "HEAD"]).stdout.trim() || base;
@@ -168,7 +177,9 @@ export async function runProbe({ cwd, base, tests, run = defaultRun, restore = r
     const add = gitIn(root, ["worktree", "add", "--detach", wt, "HEAD"]);
     if (add.status !== 0) throw new Error(`git worktree add failed: ${add.stderr}`);
     added = true;
-    gitIn(root, ["worktree", "lock", "--reason", "rf-probe", wt]);
+    // No junction on an unlocked worktree: a crash would leave live links a later remove deletes through.
+    const locked = lock(root, wt);
+    if (locked.status !== 0) throw new Error(`git worktree lock failed: ${locked.stderr}`);
     for (const d of nodeModulesDirs(root)) {
       const link = path.join(wt, d, "node_modules");
       mkdirSync(path.dirname(link), { recursive: true });
