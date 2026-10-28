@@ -5,13 +5,20 @@
     "headRefName": "swarm/run-7",
     "createdAt": "2026-10-20T00:00:00Z",
     "mergedAt": "2026-10-27T10:00:00Z",
-    "mergeCommit": { "oid": "aaaa111aaaa111aaaa111aaaa111aaaa111aaaa1" },
+    "mergeCommit": {
+      "oid": "aaaa111aaaa111aaaa111aaaa111aaaa111aaaa1"
+    },
     "additions": 300,
     "deletions": 20,
     "changedFiles": 6,
     "body": "Batch.",
     "commits": [
-      { "messageHeadline": "fix: a", "messageBody": "" },
+      {
+        "messageHeadline": "fix: a",
+        "messageBody": "",
+        "authoredDate": "2026-10-19T20:00:00Z",
+        "committedDate": "2026-10-19T20:05:00Z"
+      },
       {
         "messageHeadline": "fix: b",
         "messageBody": "Factory-Route: bug-swarm\nRework-Of: #3740\nBookkeeping-Follow-Up: pending"
@@ -24,12 +31,19 @@
     "headRefName": "fix/w785-followups",
     "createdAt": "2026-10-20T00:00:00Z",
     "mergedAt": "2026-10-27T11:00:00Z",
-    "mergeCommit": { "oid": "bbbb222bbbb222bbbb222bbbb222bbbb222bbbb2" },
+    "mergeCommit": {
+      "oid": "bbbb222bbbb222bbbb222bbbb222bbbb222bbbb2"
+    },
     "additions": 500,
     "deletions": 150,
     "changedFiles": 9,
     "body": "",
-    "commits": [{ "messageHeadline": "fix(web): text", "messageBody": "" }]
+    "commits": [
+      {
+        "messageHeadline": "fix(web): text",
+        "messageBody": ""
+      }
+    ]
   },
   {
     "number": 103,
@@ -37,7 +51,9 @@
     "headRefName": "docs/runbook-update",
     "createdAt": "2026-10-20T00:00:00Z",
     "mergedAt": "2026-10-27T12:00:00Z",
-    "mergeCommit": { "oid": "cccc333cccc333cccc333cccc333cccc333cccc3" },
+    "mergeCommit": {
+      "oid": "cccc333cccc333cccc333cccc333cccc333cccc3"
+    },
     "additions": 40,
     "deletions": 2,
     "changedFiles": 1,
