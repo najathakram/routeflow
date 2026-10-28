@@ -201,7 +201,9 @@ export function buildCounterSaleResponse(input: {
     ...(method ? { method } : {}),
     paymentRecorded: settled,
     // SA-1026: read back from the stored rows (never echoed from the request), staff only
-    toCollect: rollupToCollect(invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" }))),
+    toCollect: rollupToCollect(
+      invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
+    ),
     ...(!settled
       ? {
           paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,

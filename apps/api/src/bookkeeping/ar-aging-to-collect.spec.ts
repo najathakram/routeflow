@@ -71,7 +71,6 @@ const MOCK_INVOICE = {
   payments: [],
 };
 
-
 describe("BookkeepingService AR aging: To collect (SA-1026 A-G11)", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -129,7 +128,6 @@ describe("BookkeepingService AR aging: To collect (SA-1026 A-G11)", () => {
 
     service = module.get<BookkeepingService>(BookkeepingService);
   });
-
 
   const inv = (id: string, extra: Record<string, unknown>) => ({
     id,

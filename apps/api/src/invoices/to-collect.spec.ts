@@ -43,9 +43,12 @@ describe("toCollectState (A-G5 truth table)", () => {
     }
   });
 
-  it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE"])("intent + open status %s is TO_COLLECT", (status) => {
-    expect(toCollectState({ expectedPaymentMethod: "CHECK", status })).toBe("TO_COLLECT");
-  });
+  it.each(["SENT", "VIEWED", "PARTIAL", "OVERDUE"])(
+    "intent + open status %s is TO_COLLECT",
+    (status) => {
+      expect(toCollectState({ expectedPaymentMethod: "CHECK", status })).toBe("TO_COLLECT");
+    },
+  );
 
   it.each(["PAID", "VOID", "WRITTEN_OFF"])("intent + %s is NONE (cleared)", (status) => {
     expect(toCollectState({ expectedPaymentMethod: "CHECK", status })).toBe("NONE");
@@ -62,7 +65,11 @@ describe("toCollectState (A-G5 truth table)", () => {
 describe("A-G6 class pin: the predicate and the list filter agree for every InvoiceStatus", () => {
   it("the OPEN and CLEARED sets plus DRAFT cover every InvoiceStatus (a new status forces a decision here)", () => {
     const all = Object.values(InvoiceStatus).sort();
-    const covered = [...OPEN_INVOICE_STATUSES, ...CLEARED_INVOICE_STATUSES, InvoiceStatus.DRAFT].sort();
+    const covered = [
+      ...OPEN_INVOICE_STATUSES,
+      ...CLEARED_INVOICE_STATUSES,
+      InvoiceStatus.DRAFT,
+    ].sort();
     expect(covered).toEqual(all);
   });
 
@@ -78,7 +85,10 @@ describe("A-G6 class pin: the predicate and the list filter agree for every Invo
   it("a row with no intent is never listed, at any status", () => {
     for (const status of Object.values(InvoiceStatus)) {
       expect(
-        matches(TO_COLLECT_WHERE as Record<string, unknown>, { expectedPaymentMethod: null, status }),
+        matches(TO_COLLECT_WHERE as Record<string, unknown>, {
+          expectedPaymentMethod: null,
+          status,
+        }),
       ).toBe(false);
     }
   });
@@ -145,7 +155,8 @@ const rel = (p: string) => relative(SRC, p).split(sep).join("/");
 describe("A-G7: expectedPaymentMethod is written only in to-collect.ts (OP-7)", () => {
   // A WRITE is the field set to a value: `expectedPaymentMethod: <identifier or literal>` or a shorthand property. A read
   // (`select: { expectedPaymentMethod: true }`, `{ not: null }`, the CAS `: null`) and a `?:` type member are not.
-  const WRITE = /expectedPaymentMethod\s*:\s*(?!true\b|false\b|null\b|\{)\S|[{,]\s*expectedPaymentMethod\s*[,}]/g;
+  const WRITE =
+    /expectedPaymentMethod\s*:\s*(?!true\b|false\b|null\b|\{)\S|[{,]\s*expectedPaymentMethod\s*[,}]/g;
 
   it("no other non-spec file assigns it", () => {
     const writers = sourceFiles(SRC)

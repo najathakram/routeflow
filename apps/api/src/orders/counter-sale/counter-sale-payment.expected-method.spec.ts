@@ -89,7 +89,9 @@ describe("DTO edge: expectedMethod", () => {
   });
 
   it("the hand-over's payment accepts it too", async () => {
-    const dto = plainToInstance(PickupCompleteDto, { payment: payment({ expectedMethod: "CHECK" }) });
+    const dto = plainToInstance(PickupCompleteDto, {
+      payment: payment({ expectedMethod: "CHECK" }),
+    });
     expect(await validate(dto, { whitelist: true })).toEqual([]);
     expect((dto.payment as unknown as { expectedMethod?: string }).expectedMethod).toBe("CHECK");
   });

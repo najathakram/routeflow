@@ -960,7 +960,10 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const k1 = key();
       const k2 = key();
       await ring(A, k1, { items: [{ productId: A.cola, qty: 1 }], payment: expectCheck });
-      await ring(A, k2, { items: [{ productId: A.cola, qty: 1 }], payment: { method: "ON_ACCOUNT" } as Pay });
+      await ring(A, k2, {
+        items: [{ productId: A.cola, qty: 1 }],
+        payment: { method: "ON_ACCOUNT" } as Pay,
+      });
       const marked = await invoiceOf(A, k1);
       const plain = await invoiceOf(A, k2);
       const list: any = await tenantCtx.run(A.tenantId, () =>
@@ -976,7 +979,9 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const byId = Object.fromEntries(all.data.map((r: any) => [r.id, r.toCollect]));
       expect(byId[marked.id]).toBe("TO_COLLECT");
       expect(byId[plain.id]).toBe("NONE");
-      const detail: any = await tenantCtx.run(A.tenantId, () => invoices.findOne(marked.id, staff(A)));
+      const detail: any = await tenantCtx.run(A.tenantId, () =>
+        invoices.findOne(marked.id, staff(A)),
+      );
       expect(detail.toCollect).toBe("TO_COLLECT");
     });
 
@@ -984,7 +989,9 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const k = key();
       await ring(A, k, { items: [{ productId: A.cola, qty: 1 }] });
       const inv = await invoiceOf(A, k);
-      expect(await markToCollect(raw, { tenantId: B.tenantId, invoiceIds: [inv.id], method: "CHECK" })).toBe(0);
+      expect(
+        await markToCollect(raw, { tenantId: B.tenantId, invoiceIds: [inv.id], method: "CHECK" }),
+      ).toBe(0);
       expect((await invoiceOf(A, k)).expectedPaymentMethod).toBeNull();
     });
   });
