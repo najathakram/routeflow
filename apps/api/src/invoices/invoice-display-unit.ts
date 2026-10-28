@@ -70,7 +70,8 @@ export interface DisplayUnitCatalog {
   ladderOff?: boolean;
 }
 
-const emptyCatalog = (): DisplayUnitCatalog => ({
+const emptyCatalog = (customerId: string): DisplayUnitCatalog => ({
+  customerId,
   customerTier: null,
   cpBy: new Map(),
   productBy: new Map(),
@@ -107,7 +108,7 @@ export async function loadDisplayUnitCatalog(
         select: { invoiceUnitDefault: true },
       });
       if (c?.invoiceUnitDefault !== "PIECES") return null;
-      return { ...emptyCatalog(), customerDefault: "PIECES", ladderOff: true };
+      return { ...emptyCatalog(customerId), customerDefault: "PIECES", ladderOff: true };
     }
 
     const [customer, cpRows, tierRows, products, unitRows, business] = await Promise.all([
@@ -226,9 +227,8 @@ export function resolveFromCatalog(
   if (catalog.ladderOff) {
     const pieces = invoiceDisplayUnitFor({ customerDefault: "PIECES", scopes: {}, view: null });
     for (const pid of productIds) byProduct.set(pid, { ...pieces });
-    return byProduct;
   }
-  for (const pid of productIds) {
+  for (const pid of catalog.ladderOff ? [] : productIds) {
     try {
       const p = productBy.get(pid);
       if (!p) {
