@@ -44,6 +44,7 @@ import { PromotionsService } from "../promotions/promotions.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -212,20 +213,7 @@ describeDb("SA-767 r-note 3 (b) - a sale behind a held product lock (real Postgr
 
   /** True once a backend is genuinely WAITING on a lock held by `holderPid`. */
   async function sawLockWait(holderPid: number, withinMs = 10_000): Promise<boolean> {
-    const deadline = Date.now() + withinMs;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND pid <> pg_backend_pid()
-            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
-        [holderPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(25);
-    }
-    return false;
+    return waitUntilBlockedBy(pool, holderPid, { timeoutMs: withinMs });
   }
 
   const sale = (w: World) =>

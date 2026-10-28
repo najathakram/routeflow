@@ -8,6 +8,7 @@ import {
   IsDateString,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { IsNotReservedStockReference } from "../reserved-reference";
 
 export class RecordPurchaseDto {
   @IsString()
@@ -46,6 +47,7 @@ export class RecordPurchaseDto {
 
   @IsOptional()
   @IsString()
+  @IsNotReservedStockReference()
   reference?: string;
 
   @IsOptional()

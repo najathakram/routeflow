@@ -23,6 +23,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 import { IdempotencyService } from "../common/idempotency.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -284,7 +285,7 @@ describeDb("SA-740 walk-in source sale + capture locks, real Postgres", () => {
   }, 60_000);
 
   // NOTE on proof strength: test 8 is the REAL red pin (it holds B's row lock on a raw session, shows the capture queued behind
-  // it through pg_blocking_pids, and fails on the old carrying-only lock). Test 8b is only a SMOKE race (two calls crossing the
+  // it through Postgres, and fails on the old carrying-only lock). Test 8b is only a SMOKE race (two calls crossing the
   // same two orders, asserting no deadlock text): it can pass by timing luck, so do NOT count it as proof of the lock order.
   it("8. a capture sourced on B (carried on A) WAITS for another transaction holding B's row lock: it takes the source order lock too", async () => {
     const s = await seed("source-lock");
@@ -302,15 +303,9 @@ describeDb("SA-740 walk-in source sale + capture locks, real Postgres", () => {
         (v) => ({ ok: v }),
         (e) => ({ err: e }),
       );
-      let blocked = 0;
-      for (let i = 0; i < 100 && blocked === 0; i++) {
-        const r = await poller.query(
-          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-          [holderPid],
-        );
-        blocked = Number(r.rows[0].n);
-        if (blocked === 0) await new Promise((res) => setTimeout(res, 50));
-      }
+      const blocked = (
+        await waitUntilBlocked(poller, { holderPid, timeoutMs: 5_000, intervalMs: 50 })
+      ).length;
       expect(blocked).toBeGreaterThan(0); // the capture is queued behind the SOURCE order's lock
       await holder.query("ROLLBACK");
       const outcome = await settled;
