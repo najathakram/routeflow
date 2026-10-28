@@ -83,6 +83,7 @@ if (e.STUB_FAIL === "1") {
   console.error("stub: F01 B1 refused, no proof in the reports");
   process.exit(1);
 }
+if (e.STUB_HANG === "1") await new Promise((r) => setTimeout(r, 8000)); // outlives the timeout
 `,
 );
 const regEnv = (dir, anchor, extra = {}) =>
@@ -522,6 +523,50 @@ async function main() {
         ],
         [null, null, null, "stub.mjs"],
       );
+    },
+  );
+
+  await section(
+    "the land-check hook warns, is read through landCheckOverride, is bounded",
+    async () => {
+      const warned = land(["--sha", tip, "--claims", okFile], regEnv(A, an("a")));
+      check(
+        "a honoured REGISTRY_LAND_CHECK_CMD prints a WARNING",
+        [warned.status, /WARNING: REGISTRY_LAND_CHECK_CMD/.test(warned.stderr)],
+        [0, true],
+      );
+      fresh();
+      const src = readFileSync(LAND, "utf8");
+      check(
+        "registry-land.mjs never reads REGISTRY_LAND_CHECK_CMD itself: only through landCheckOverride",
+        [
+          /env(\.|\[["'])REGISTRY_LAND_CHECK_CMD/.test(src.replace(/^\/\/.*$/gm, "")),
+          src.includes("landCheckOverride()"),
+        ],
+        [false, true],
+      );
+      const was = origin();
+      const t0 = Date.now();
+      const slow = land(
+        ["--sha", tip, "--claims", okFile],
+        regEnv(A, an("a"), { STUB_HANG: "1", REGISTRY_LAND_CHECK_TIMEOUT_MS: "1500" }),
+      );
+      check(
+        "a check that outlives its timeout: exit 2 saying so, nothing pushed, the clone clean",
+        [
+          slow.status,
+          /timed out/.test(slow.stderr),
+          origin() === was,
+          git(A, "status", "--porcelain"),
+        ],
+        [2, true, true, ""],
+      );
+      check(
+        "the timeout fired well before the check would have ended",
+        Date.now() - t0 < 7000,
+        true,
+      );
+      fresh();
     },
   );
 
