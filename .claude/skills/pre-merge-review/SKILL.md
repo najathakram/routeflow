@@ -126,6 +126,9 @@ hygiene the owner lane clears before the window; otherwise it is a BLOCK.
 
 - No PR enters block A without a recorded verdict of CLEAN or cleared MERGE-WITH-NOTES.
 - A verdict is per-HEAD. New commits after the verdict → re-review the delta.
+  **DARK until the flip (R5):** run `node scripts/review-delta.mjs <verdict-sha> <head-sha>`; record
+  the `review-delta` line beside the verdict; still dispatch the delta re-read; the flip compares
+  the two. A carry still needs green CI at the new head.
 - The independent pass **replaces** in-lane rounds 2 and 3, it does not add to them: the
   house standard is one in-lane refute + one independent verdict. Four Opus passes where two do
   better is the cost the owner cut on 2026-09-13.
