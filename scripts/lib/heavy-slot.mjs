@@ -302,6 +302,24 @@ const NPM_VALUE_OPTS = new Set([
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "cmd", "powershell", "pwsh"]);
 
+/** The words after each `npm` inside a shell command string among `args` (`sh -c 'a && npm ci'`). */
+function* npmCallsInShell(args) {
+  for (const a of args.map(String)) {
+    if (!/\s/.test(a)) continue;
+    for (const seg of a.split(/&&|\|\||[;|\n]/)) {
+      const w = seg
+        .replace(/['"`()]/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      for (let i = 0; i < w.length; i++) {
+        const name = path.basename(w[i]).replace(/\.(cmd|exe)$/i, "");
+        if (name.toLowerCase() === "npm") yield w.slice(i + 1);
+      }
+    }
+  }
+}
+
 function npmVerbIndex(args) {
   for (let i = 0; i < args.length; i++) {
     const a = String(args[i]);
@@ -328,6 +346,24 @@ function envIgnoreScripts(env) {
   return false;
 }
 
+/** True when `cmd args` is an npm install-family verb (`ci`, `install`, aliases; shell-string form too). */
+export function isNpmInstall(cmd, args = []) {
+  const c = String(cmd ?? "").trim();
+  if (/\s/.test(c)) {
+    const words = c.split(/\s+/);
+    return isNpmInstall(words[0], [...words.slice(1), ...args]);
+  }
+  const base = path
+    .basename(c)
+    .replace(/\.(cmd|exe|bat|ps1)$/i, "")
+    .toLowerCase();
+  if (SHELLS.has(base)) return [...npmCallsInShell(args)].some((w) => isNpmInstall("npm", w));
+  if (base !== "npm") return false;
+  const list = args.map(String);
+  const at = npmVerbIndex(list);
+  return at >= 0 && NPM_INSTALL_VERBS.has(list[at].toLowerCase());
+}
+
 /**
  * Why `cmd args` must not run under the slot, or null. A bare `npm ci` / `npm install` (or any alias
  * of them, after npm's own global options) runs the lifecycle scripts (husky `prepare`), which
@@ -347,26 +383,9 @@ export function bareNpmReason(cmd, args = [], env = process.env) {
     .replace(/\.(cmd|exe|bat|ps1)$/i, "")
     .toLowerCase();
   if (SHELLS.has(base)) {
-    for (const a of args.map(String)) {
-      if (!/\s/.test(a)) continue;
-      for (const seg of a.split(/&&|\|\||[;|\n]/)) {
-        const w = seg
-          .replace(/['"`()]/g, " ")
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean);
-        for (let i = 0; i < w.length; i++) {
-          if (
-            path
-              .basename(w[i])
-              .replace(/\.(cmd|exe)$/i, "")
-              .toLowerCase() === "npm"
-          ) {
-            const r = bareNpmReason("npm", w.slice(i + 1), env);
-            if (r) return r;
-          }
-        }
-      }
+    for (const w of npmCallsInShell(args)) {
+      const r = bareNpmReason("npm", w, env);
+      if (r) return r;
     }
     return null;
   }

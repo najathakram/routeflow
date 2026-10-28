@@ -6,9 +6,11 @@
 //   node scripts/heavy-slot.mjs status                                        holder, queue, last runs
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { ensureGitHooks } from "./lib/check-git-hooks.mjs";
 import {
   HeavySlotTimeout,
   bareNpmReason,
+  isNpmInstall,
   TIMEOUT_EXIT_CODE,
   formatStatus,
   resolveDir,
@@ -45,7 +47,26 @@ export function parseCli(argv) {
   return { ...opts, cmd, args };
 }
 
-export async function main(argv = process.argv.slice(2)) {
+/**
+ * After a SUCCESSFUL npm install (the `--ignore-scripts` form this CLI insists on), the tree has no `.husky/_`:
+ * copy the main checkout's hooks in (no husky, no git config write). Never changes the job's exit code.
+ */
+export function afterRun(
+  cmd,
+  args,
+  status,
+  { ensure = ensureGitHooks, cwd = process.cwd(), log = console.log, warn = console.warn } = {},
+) {
+  if (status !== 0 || !isNpmInstall(cmd, args)) return;
+  try {
+    const r = ensure({ cwd });
+    (r.ok ? log : warn)(`heavy-slot: ${r.message}`);
+  } catch (e) {
+    warn(`heavy-slot: could not ensure git hooks: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+export async function main(argv = process.argv.slice(2), { after = afterRun } = {}) {
   let cli;
   try {
     cli = parseCli(argv);
@@ -74,6 +95,7 @@ export async function main(argv = process.argv.slice(2)) {
         r = await spawnAsync(cli.cmd, cli.args, { shell: true });
       }
       if (r.error) console.error(`heavy-slot: ${r.error.message}`);
+      after(cli.cmd, cli.args, r.status);
       return r.status ?? 1;
     });
   } catch (e) {
