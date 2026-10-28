@@ -4,6 +4,8 @@
 // apps/mobile/lib/api/orders.ts, per the DTO-duplication sweep. Near-identical
 // resolution: field order/comments only — comment kept from the richer side.
 
+import type { ToCollectState } from "./enums";
+
 export interface ActiveOrderSummary {
   id: string;
   orderNumber: string | null;
@@ -43,6 +45,12 @@ export interface OrderInvoicesNeedReview {
   /** Who flagged it at a stop, and when (ISO), from the latest ORDER_INVOICES_NEED_REVIEW audit row. */
   flaggedAtStop?: { by: string; at: string };
 }
+
+/**
+ * SA-1026: STAFF-ONLY `toCollect` on the order detail read (`GET /orders/:id`): "a check not received yet", rolled up by
+ * the server from the order's invoices. Never present on a buyer, customer or driver read. Clients never compute it.
+ */
+export type OrderToCollectField = { toCollect?: ToCollectState };
 
 export interface CustomerPriceHistory {
   [productId: string]: {
