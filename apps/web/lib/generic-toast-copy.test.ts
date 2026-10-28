@@ -173,6 +173,19 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).toBe("Nothing is due right now.");
   });
 
+  it("UNCONFIRMED_PAYMENT_SUPERSEDED (W-706: a card payment filled the invoice first) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, {
+        code: API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED,
+        message: "raw server text",
+      }),
+    );
+    expect(copy).toBe(
+      "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
+    );
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
     const copy = genericToastCopy(
       err(409, { code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED, message: "raw server text" }),

@@ -254,6 +254,9 @@ const CODE_COPY: Record<string, string> = {
   // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
   [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
     "The amount changed. We've refreshed it, please check and try again.",
+  // SA-862 (W-706): confirming an unconfirmed payment on an invoice a card payment already filled.
+  [API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED]:
+    "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
   // SA-832 / 453: a subscribe / checkout on a workspace a payment may not reinstate. Fixed sentence, no cause named.
   [API_ERROR_CODES.TENANT_ADMIN_LOCKED]:
     "This workspace is locked and can't take a payment right now. Please contact support.",
