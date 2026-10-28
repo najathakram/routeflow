@@ -14,7 +14,7 @@
 // Needs `npm run build -w apps/api` first (the module runs from `dist`) and DATABASE_URL (+ the storage env of the API
 // service for photos). A PROTECTED target (paying, Stripe-linked, env-listed; lib/live-target-guard.cjs) also needs
 // `--allow-protected <tenantId>` and the typed "ALLOW PROTECTED <tenantId>" at a real terminal.
-// Exit: 0 ok · 1 refused (nothing written) · 2 environment error.
+// Exit: 0 ok · 1 refused (nothing written) · 2 environment error · 3 finished with error rows (see the report and manifest).
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -52,7 +52,7 @@ async function main() {
   const { parseCopyArgs, assertApplyAllowed, CopyRefusal } = await import(
     pathToFileURL(resolve(DIST, "catalog-copy.guard.js")).href
   );
-  const { runCatalogCopy } = await import(
+  const { runCatalogCopy, exitCodeFor } = await import(
     pathToFileURL(resolve(DIST, "catalog-copy.runner.js")).href
   );
 
@@ -99,8 +99,8 @@ async function main() {
   };
 
   try {
-    await runCatalogCopy(args, manifestPath, { beforeWrite });
-    return 0;
+    const result = await runCatalogCopy(args, manifestPath, { beforeWrite });
+    return exitCodeFor(result);
   } catch (e) {
     console.error(`${TAG}: ${e.message}`);
     return e?.name === "CopyRefusal" || e?.name === "ProtectedTenantError" ? 1 : 2;

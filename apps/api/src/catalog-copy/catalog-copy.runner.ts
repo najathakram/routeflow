@@ -35,9 +35,14 @@ export function formatReport(r: CopyReport): string[] {
     lines.push(
       `  created: ${r.created}   photos copied: ${r.photosCopied}   errors: ${r.errors?.length ?? 0}`,
     );
-    for (const e of r.errors ?? []) lines.push(`    error ${e.rootId}: ${e.message}`);
+    for (const e of r.errors ?? []) lines.push(`    ${e.kind} error ${e.rootId}: ${e.message}`);
   }
   return lines;
+}
+
+/** 0 ok; 3 the run finished but left error rows (a family not copied, or an undo that could not remove its rows). */
+export function exitCodeFor(result: CopyReport | { photosCopied: number }): number {
+  return "errors" in result && (result.errors?.length ?? 0) > 0 ? 3 : 0;
 }
 
 export function writeManifest(path: string, manifest: Manifest, extra?: Partial<CopyReport>): void {

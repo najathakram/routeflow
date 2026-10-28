@@ -78,12 +78,32 @@ export interface ManifestEntry {
   photos: PhotoRecord[];
 }
 
+/** One thing the run could not do: a family that was not copied ("copy"), or a product its undo could not remove ("undo"). */
+export interface CopyError {
+  rootId: string;
+  kind: "copy" | "undo";
+  message: string;
+}
+
 export interface Manifest {
   version: 1;
   createdAt: string;
   source: string;
   target: string;
   entries: ManifestEntry[];
+  /** The same rows as the report's `errors`, so a manifest alone says what is left at the target. */
+  errors?: CopyError[];
+}
+
+/** A family that failed, with the rows its undo left (an id `bulkDelete` skipped or archived, or an undo that threw). */
+class FamilyFailure extends Error {
+  constructor(
+    cause: Error,
+    readonly undo: CopyError[],
+  ) {
+    super(cause.message);
+    this.name = "FamilyFailure";
+  }
 }
 
 export interface CopyReport {
@@ -109,7 +129,7 @@ export interface CopyReport {
   /** Set on `--apply`. */
   created?: number;
   photosCopied?: number;
-  errors?: Array<{ rootId: string; message: string }>;
+  errors?: CopyError[];
   manifest?: Manifest;
 }
 
@@ -191,6 +211,7 @@ export class CatalogCopyService {
     report.created = 0;
     report.photosCopied = 0;
     report.errors = [];
+    manifest.errors = report.errors;
     if ((await this.targetCount(target.id)) !== before) {
       throw new CopyRefusal(
         "refused: the target's product count moved since the plan; run the dry run again",
@@ -206,7 +227,10 @@ export class CatalogCopyService {
           report.photosCopied += e.photos.filter((p) => p.status === "copied").length;
         }
       } catch (e) {
-        report.errors.push({ rootId: family.rootId, message: (e as Error).message });
+        report.errors.push(
+          { rootId: family.rootId, kind: "copy", message: (e as Error).message },
+          ...(e instanceof FamilyFailure ? e.undo : []),
+        );
         this.logger.warn(`family ${family.rootId} not copied: ${(e as Error).message}`);
       }
       options.onManifest?.(manifest);
@@ -436,15 +460,15 @@ export class CatalogCopyService {
         }
       });
     } catch (e) {
-      // No partial family: undo what this family created, newest first, through the app's own remove.
-      await this.tenantCtx.run(targetTenantId, async () => {
-        for (const c of [...created].reverse()) {
-          await this.products.remove(c.targetId, { confirmCascade: true }).catch((err: Error) => {
-            this.logger.warn(`could not undo ${c.targetId}: ${err.message}`);
-          });
-        }
-      });
-      throw e;
+      // No partial family: undo what this family created in ONE call to the app's own bulk delete.
+      throw new FamilyFailure(
+        e as Error,
+        await this.undoFamily(
+          family.rootId,
+          created.map((c) => c.targetId).reverse(),
+          targetTenantId,
+        ),
+      );
     }
     // Photos after the family's create has committed.
     for (const c of created) {
@@ -455,6 +479,50 @@ export class CatalogCopyService {
       entries.push({ sourceId: c.sourceId, targetId: c.targetId, sku: src.sku, photos });
     }
     return { entries };
+  }
+
+  /**
+   * One `ProductsService.bulkDelete(ids)`: it hard-deletes what nothing references and archives what something does.
+   * Whatever it skips or archives, and an undo that throws, comes back as an error row: a half-removed family is
+   * never silent, and the run exits non-zero for it.
+   */
+  private async undoFamily(
+    rootId: string,
+    targetIds: string[],
+    targetTenantId: string,
+  ): Promise<CopyError[]> {
+    if (targetIds.length === 0) return [];
+    const row = (message: string): CopyError => ({ rootId, kind: "undo", message });
+    try {
+      const out = await this.tenantCtx.run(targetTenantId, () =>
+        this.products.bulkDelete(targetIds),
+      );
+      const rows = out.skipped.map((s) =>
+        row(`undo skipped ${s.id} (${s.code}): ${s.reason}; it is still at the target`),
+      );
+      if (out.softDeleted > 0) {
+        rows.push(
+          row(
+            `undo archived ${out.softDeleted} of ${targetIds.length} product(s) instead of deleting them ` +
+              `(inactive at the target): ${targetIds.join(", ")}`,
+          ),
+        );
+      }
+      const accounted = out.deleted + out.softDeleted + out.skipped.length;
+      if (accounted !== targetIds.length) {
+        rows.push(
+          row(
+            `undo accounted for ${accounted} of ${targetIds.length} product(s): ${targetIds.join(", ")}`,
+          ),
+        );
+      }
+      for (const r of rows) this.logger.warn(r.message);
+      return rows;
+    } catch (err) {
+      const message = `undo failed for ${targetIds.join(", ")}: ${(err as Error).message}`;
+      this.logger.warn(message);
+      return [row(message)];
+    }
   }
 
   private async createFamilyContainer(root: SourceRow, targetTenantId: string): Promise<string> {

@@ -18,6 +18,7 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { ProductsService } from "../products/products.service";
 import { CatalogCopyModule } from "./catalog-copy.module";
 import { CatalogCopyService } from "./catalog-copy.service";
+import { exitCodeFor } from "./catalog-copy.runner";
 import { CopyRefusal } from "./catalog-copy.guard";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -380,6 +381,107 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
     expect(names).not.toContain("A2");
     expect(names).toContain("Alpha"); // the other groups still copied
   }, 60000);
+
+  describe("C-G17: a failed family is undone by ONE bulkDelete; whatever it cannot undo is an error row", () => {
+    const failA2 = () => {
+      const products = moduleRef.get(ProductsService);
+      const real = products.create.bind(products);
+      return jest.spyOn(products, "create").mockImplementation(((dto: never, opts: never) => {
+        if ((dto as { name: string }).name === "A2") throw new Error("refused by the service");
+        return real(dto, opts);
+      }) as never);
+    };
+
+    it("one bulkDelete call over the family's created ids, no remove(), the rows are gone (not archived)", async () => {
+      const t = await tenant("g17a");
+      await grant(t.id, "DENY");
+      const products = moduleRef.get(ProductsService);
+      const create = failA2();
+      const bulk = jest.spyOn(products, "bulkDelete");
+      const remove = jest.spyOn(products, "remove");
+      try {
+        const r = await service.run(args(t.slug, { apply: true }));
+        expect(bulk).toHaveBeenCalledTimes(1);
+        expect(bulk.mock.calls[0][0].length).toBeGreaterThanOrEqual(1); // what this family had created when A2 failed
+        expect(remove).not.toHaveBeenCalled();
+        expect(r.errors).toEqual([
+          expect.objectContaining({ kind: "copy", message: "refused by the service" }),
+        ]);
+        expect(r.manifest!.errors).toEqual(r.errors);
+      } finally {
+        create.mockRestore();
+        bulk.mockRestore();
+        remove.mockRestore();
+      }
+      const left = await prisma.product.findMany({
+        where: { tenantId: t.id, name: { in: ["Fam A", "A1", "A2"] } },
+      });
+      expect(left).toEqual([]); // hard-deleted: nothing archived, nothing left behind
+    }, 60000);
+
+    it.each([
+      [
+        "an id it skips",
+        (n: number) => ({
+          deleted: n - 1,
+          softDeleted: 0,
+          skipped: [{ id: "skipped-id", code: "OPEN", reason: "open" }],
+        }),
+        /undo skipped skipped-id [(]OPEN[)]/,
+      ],
+      [
+        "an id it archives",
+        (n: number) => ({ deleted: 0, softDeleted: n, skipped: [] }),
+        /undo archived [0-9]+ of [0-9]+ product[(]s[)]/,
+      ],
+      [
+        "a count it cannot account for",
+        (n: number) => ({ deleted: n - 1, softDeleted: 0, skipped: [] }),
+        /accounted for [0-9]+ of [0-9]+/,
+      ],
+    ])(
+      "%s is an error row in the report and the manifest",
+      async (_name, outcome, message) => {
+        const t = await tenant(`g17-${_name.replace(/\W+/g, "")}`);
+        await grant(t.id, "DENY");
+        const products = moduleRef.get(ProductsService);
+        const create = failA2();
+        const bulk = jest
+          .spyOn(products, "bulkDelete")
+          .mockImplementation((async (ids: string[]) => outcome(ids.length)) as never);
+        try {
+          const r = await service.run(args(t.slug, { apply: true }));
+          const undo = r.errors!.filter((e) => e.kind === "undo");
+          expect(undo).toHaveLength(1);
+          expect(undo[0].message).toMatch(message);
+          expect(r.manifest!.errors).toEqual(r.errors);
+        } finally {
+          create.mockRestore();
+          bulk.mockRestore();
+        }
+      },
+      60000,
+    );
+
+    it("an undo that throws is an error row, and the run still finishes the other groups", async () => {
+      const t = await tenant("g17throw");
+      await grant(t.id, "DENY");
+      const products = moduleRef.get(ProductsService);
+      const create = failA2();
+      const bulk = jest.spyOn(products, "bulkDelete").mockRejectedValue(new Error("boom"));
+      try {
+        const r = await service.run(args(t.slug, { apply: true }));
+        const undo = r.errors!.filter((e) => e.kind === "undo");
+        expect(undo).toHaveLength(1);
+        expect(undo[0].message).toMatch(/undo failed for .*: boom/);
+        expect(exitCodeFor(r)).toBe(3);
+        expect((await activeOf(t.id)).map((p) => p.name)).toContain("Alpha");
+      } finally {
+        create.mockRestore();
+        bulk.mockRestore();
+      }
+    }, 60000);
+  });
 
   it("scale: a 2,500-product source across families is read WHOLE - the dry-run and created counts equal the seeded count", async () => {
     const big = await tenant("big");
