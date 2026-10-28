@@ -132,10 +132,17 @@ describe("GET tenants/:id/business-capabilities", () => {
     expect(res.matchedPreset).toBeNull();
   });
 
-  it("an unset tenant that holds the fleet reads as not configured, nothing ticked", async () => {
+  // SA-1028 K-R1: "not configured" no longer means nothing ticked; the ticks are what the business does today.
+  it("an unset tenant that holds the fleet reads as not configured, with today's ticks (Delivery + Shipping)", async () => {
     const c = build({ addons: ["recurring_routes"] });
     const res = await c.getBusinessCapabilities(T);
-    expect(res).toMatchObject({ configured: false, delivery: false, counter: false });
+    expect(res).toMatchObject({
+      configured: false,
+      delivery: true,
+      shipping: true,
+      counter: false,
+      fleetHeld: true,
+    });
     expect(res.matchedPreset).toBeNull();
   });
 
