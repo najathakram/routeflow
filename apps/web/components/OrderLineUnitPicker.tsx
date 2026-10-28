@@ -190,14 +190,14 @@ function OrderLineUnitPickerInner({
   // change), never because `line.unitPrice` moved. The order-edit price row sets only `unitPrice`
   // (priceType stays STANDARD), so re-checking on every price change snapped a typed price straight
   // back to the ladder's and Save then sent nothing.
-  const held = options.find((o) => o.value === (line.unitLabel ?? ""));
+  const heldUnit = options.find((o) => o.value === (line.unitLabel ?? ""));
   const lastLadderPrice = React.useRef<number | undefined>(undefined);
   React.useEffect(() => {
-    if (disabled || !line.unitLabel || !held) return; // W-745: not recorded, so the first confirmed ladder is a first sight
+    if (disabled || !line.unitLabel || !heldUnit) return; // W-745: not recorded, so the first confirmed ladder is a first sight
     if (heldOption) return; // SA-1044: a gone/resized level bills at its snapshot; the ladder never re-prices it
     const firstSight = lastLadderPrice.current === undefined;
-    const ladderMoved = lastLadderPrice.current !== held.price;
-    lastLadderPrice.current = held.price;
+    const ladderMoved = lastLadderPrice.current !== heldUnit.price;
+    lastLadderPrice.current = heldUnit.price;
     if (!ladderMoved) return;
     // #2381: a remount (or a ladder arriving late) is a first sight, not a ladder move; a price
     // the operator typed stands. A real move afterwards (the tier changed) still re-prices.
@@ -205,14 +205,14 @@ function OrderLineUnitPickerInner({
     if (line.priceType === "DISCOUNTED") return;
     // master: MANUAL is the operator's and stands; only the layer's own above-list price (marked by the surface) follows
     if (line.priceType === "MANUAL" && !line.layerManual) return;
-    if (held.price !== line.unitPrice) onChange(held, true);
+    if (heldUnit.price !== line.unitPrice) onChange(heldUnit, true);
   }, [
     line.unitLabel,
     line.priceType,
     line.layerManual,
     line.unitPrice,
     line.priceEdited,
-    held,
+    heldUnit,
     heldOption,
     onChange,
     disabled,
