@@ -44,8 +44,11 @@ delete process.env.DATABASE_URL;
 
 const sh = (dir, ...a) => {
   const id = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"];
-  const opts = { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() };
-  const r = spawnSync("git", [...id, "-c", "core.hooksPath=", ...a], opts);
+  const r = spawnSync("git", [...id, "-c", "core.hooksPath=", ...a], {
+    cwd: dir,
+    encoding: "utf8",
+    env: scrubbedGitEnv(),
+  });
   if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
 };
