@@ -29,7 +29,7 @@ import { profileBullets } from "./profile-plain-copy";
 import { profileErrorCopy, profilePartlyApplied, profilePlanChanged } from "./profile-errors";
 
 const NOT_SET_UP =
-  "Not set up yet. The business works as before. Tick what it does, or start from a preset.";
+  "Not set up yet. The boxes show how this business works today. Change them, or start from a preset.";
 const PLAN_CHANGED_NOTICE = "This business changed. Check the preview again.";
 const CARRIER_COPY = "Orders are with the carrier right now. Change this once they are delivered.";
 
@@ -340,6 +340,7 @@ export function CapabilitiesCard({
               matchedPreset={caps.matchedPreset}
               unavailable={caps.unavailable}
               disabled={applying}
+              keepOpensAs={caps.configured ? undefined : ticksFromCapabilities(caps).opensAs}
             />
           </div>
 
