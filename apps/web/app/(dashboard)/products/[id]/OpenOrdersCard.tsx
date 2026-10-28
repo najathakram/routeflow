@@ -56,7 +56,14 @@ export function OpenOrdersCard({
   });
 
   const empty = !!data && data.lines.length === 0;
-  const total = data ? normalizeBoxesPieces({ qty: data.summary.totalQty, unitsPerBox }) : null;
+  // The total is split by the packs the lines were taken on. Lines on different packs (the pack was
+  // edited between orders) have no single box size, so the total stays in plain pieces.
+  const linePacks = new Set(lines.map((l) => l.unitsPerBox ?? null));
+  const totalPack =
+    linePacks.size === 1 ? [...linePacks][0] : linePacks.size === 0 ? unitsPerBox : 1;
+  const total = data
+    ? normalizeBoxesPieces({ qty: data.summary.totalQty, unitsPerBox: totalPack })
+    : null;
 
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">

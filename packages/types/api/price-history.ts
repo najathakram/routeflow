@@ -20,6 +20,12 @@ export interface PriceHistoryRow {
   unitLabel: string;
   /** Pieces per unit when the unit is a pack (> 1), else null. */
   unitsPerBox: number | null;
+  /**
+   * `salePackOf`'s answer for this line, sent verbatim: 1 = by the piece, > 1 = pieces per pack, null = cannot be
+   * known (a pre-snapshot line). `unitsPerBox` is its > 1 projection and is null for BOTH 1 and unknown, so a reader
+   * that must tell them apart reads this (SA-1004).
+   */
+  salePack: number | null;
   /** Quantity in `unitLabel` units (e.g. 5 cases), not raw pieces. */
   qty: number;
   boxes: number | null;
@@ -57,6 +63,26 @@ export interface PriceHistoryReferences {
   changeSinceLast: number | null;
 }
 
+/** One month of a reference line: `month` is "YYYY-MM" (UTC), `average` is the monthly mean in the line's unit. */
+export interface PriceHistoryAveragePoint {
+  month: string;
+  average: number;
+}
+
+/**
+ * One plot unit's two reference lines (SA-954 D4), next to this customer's own line. `unitsPerBox` follows
+ * `PriceHistoryRow`'s rule: pieces per unit, null = by the piece. A month backed by fewer than 3 distinct OTHER buyers
+ * is left out of both lines (never bridged), and a line whose pack cannot be read is left out of `converted`.
+ */
+export interface PriceHistoryComparisonLine {
+  unitLabel: string;
+  unitsPerBox: number | null;
+  /** Line 2: OTHER customers' lines in this unit name and pack, the monthly mean of the line price. Oldest first. */
+  likeForLike: PriceHistoryAveragePoint[];
+  /** Line 3: ALL customers' known-pack lines in any unit, converted to this unit (one rounding). Oldest first. */
+  converted: PriceHistoryAveragePoint[];
+}
+
 /**
  * v1.1 `?compare=all`: anonymous aggregate of OTHER customers' invoiced sales of the product in the
  * last 180 days, in the most common unit. Never carries a customer name or id; null (on the
@@ -79,8 +105,15 @@ export interface PriceSummaryEntry {
   /**
    * The newest sales, each in ITS OWN unit AND pack size (`unitsPerBox`, null = unknown / sold by the
    * piece). A chip may only be offered for a line whose pack matches the row's own, never the entry's.
+   * `salePack` as on `PriceHistoryRow` (1 piece, > 1 pack, null unknown); absent from an older server.
    */
-  last3: { date: string; unitPrice: number; unitLabel: string; unitsPerBox: number | null }[];
+  last3: {
+    date: string;
+    unitPrice: number;
+    unitLabel: string;
+    unitsPerBox: number | null;
+    salePack?: number | null;
+  }[];
   /** Low / high of the NEWEST sale's unit group only (never units mixed); null with no sales. */
   low: number | null;
   high: number | null;
@@ -104,4 +137,9 @@ export interface PriceHistoryResponse {
   references: PriceHistoryReferences;
   /** v1.1: present only with `?compare=all` (null = too few other customers). */
   aggregate?: PriceHistoryAggregate | null;
+  /**
+   * SA-954: present only with `?compare=all`, one entry per plot unit (this customer's units; with no history, the
+   * summary's unit). Absent from an older server, which the web reads as empty.
+   */
+  comparison?: PriceHistoryComparisonLine[];
 }

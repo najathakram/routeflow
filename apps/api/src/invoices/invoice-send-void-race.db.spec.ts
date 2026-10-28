@@ -66,6 +66,11 @@ import { AfterCommit } from "../common/after-commit";
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
+// One shared wait for "T1 is blocked on T2's lock": 1600 x 25 ms = 40 s, and the loop exits the moment T1 blocks, so it costs
+// nothing when healthy. The lane's 30 s testTimeout is below it, so every test in this file gets an explicit limit above the
+// wait plus the cleanup after it, and a stuck run fails as "not blocked", not as a Jest timeout.
+const BLOCKED_WAIT_ITERS = 1600;
+jest.setTimeout(120_000);
 let tenantSeq = 0;
 /** A fresh, policy-approved throwaway tenant slug — never reused across tests in this file. */
 function freshTenantSlug(label: string): string {
@@ -256,7 +261,8 @@ describeDb(
           (e) => ({ ok: false as const, e }),
         );
         let blocked = false;
-        for (let i = 0; i < 800 && !blocked; i++) {
+        for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+          await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
           const r = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
@@ -338,9 +344,7 @@ describeDb(
         status: "VOID",
         emailsSent: 0,
       });
-      // 60 s, not the lane's 30 s default: the first sendEmail of a run pays a cold warm-up
-      // (F2 measured 22–25 s once), and a timeout there is a false red, not a race result.
-    }, 60_000);
+    });
 
     // SA-404b documented residual, red BY DESIGN: a bare payment INSERT that never touches the
     // Invoice row is invisible to void's Serializable snapshot. No production writer does that —
@@ -598,7 +602,8 @@ describeDb(
               (v: any) => ({ ok: true, v }),
               (e: any) => ({ ok: false, e }),
             );
-          for (let i = 0; i < 800 && !blocked; i++) {
+          for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+            await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
             const q = await t2.query(
               `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
               [pid],
@@ -703,7 +708,8 @@ describeDb(
           (e) => ({ ok: false as const, e }),
         );
         let blocked = false;
-        for (let i = 0; i < 800 && !blocked; i++) {
+        for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+          await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
           const q = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
@@ -1222,7 +1228,8 @@ describeDb(
               (v: unknown) => ({ ok: true as const, v }),
               (e: any) => ({ ok: false as const, e }),
             );
-          for (let i = 0; i < 800 && !blocked; i++) {
+          for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+            await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
             const q = await t2.query(
               `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
               [pid],
