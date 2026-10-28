@@ -259,21 +259,31 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Cheap prefilter: parse a file only if its quoted strings name >= 3 values of some enum. */
+/**
+ * Cheap prefilter: parse a file only if its WORDS (an identifier-shaped run, quoted or not) name >= 3 values of some
+ * enum. Words, not quoted strings: an object's keys may be bare (`{ DRAFT: "Draft" }`), and a file whose only mention
+ * of the values is a bare-key object has no quoted value at all. A quoted `"DRAFT"` is a word too, so this is a
+ * superset of the quoted-only filter it replaces. The G-1 test below feeds its fixtures through it (`scanText`).
+ */
 const valueIndex = new Map<string, string[]>();
 for (const [name, values] of ENUMS) {
   for (const v of values) valueIndex.set(v, [...(valueIndex.get(v) ?? []), name]);
 }
 function mayMirror(text: string): boolean {
   const hits = new Map<string, Set<string>>();
-  for (const m of text.matchAll(/["'`]([^"'`\n]{1,64})["'`]/g)) {
-    for (const name of valueIndex.get(m[1]) ?? []) {
+  for (const m of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+    for (const name of valueIndex.get(m[0]) ?? []) {
       const s = hits.get(name) ?? hits.set(name, new Set()).get(name)!;
-      s.add(m[1]);
+      s.add(m[0]);
       if (s.size >= MIN_MEMBERS) return true;
     }
   }
   return false;
+}
+
+/** What the scan does to one file: the prefilter, then the mirrors. Both G-1 and G-2 go through here. */
+export function scanText(fileName: string, text: string, enums = ENUMS): Mirror[] {
+  return mayMirror(text) ? findMirrors(fileName, text, enums) : [];
 }
 
 describe("SA-1049 PR-2 — the detector (G-1, in-memory fixtures)", () => {
@@ -298,6 +308,29 @@ describe("SA-1049 PR-2 — the detector (G-1, in-memory fixtures)", () => {
     );
     expect(new Set(hits.map((h) => h.enumName)).size).toBe(1);
     expect(hits[0].enumName).toBe(attribute(v));
+  });
+
+  it("G-1 keys: an object's keys written bare, double-quoted, single-quoted and mixed are each flagged once, through the prefilter", () => {
+    const keys = (fmt: (x: string, i: number) => string) =>
+      `export const L = { ${v.map((x, i) => `${fmt(x, i)}: "Label ${i}"`).join(", ")} };`;
+    const forms: Record<string, string> = {
+      bare: keys((x) => x),
+      doubleQuoted: keys((x) => `"${x}"`),
+      singleQuoted: keys((x) => `'${x}'`),
+      mixed: keys((x, i) => (i % 3 === 0 ? x : i % 3 === 1 ? `"${x}"` : `'${x}'`)),
+    };
+    for (const [form, src] of Object.entries(forms)) {
+      const hits = scanText("fixture.ts", src);
+      expect([form, hits.map((h) => h.kind)]).toEqual([form, ["object"]]);
+      expect(hits[0].enumName).toBe(attribute(v));
+    }
+    // a bare-key object in a file with NO quoted value of any enum: the quoted-only filter never opened it
+    expect(forms.bare).not.toMatch(new RegExp(`["'\`](${v.join("|")})["'\`]`));
+  });
+
+  it("G-1 keys: computed [Enum.X] keys are outside the pin", () => {
+    const src = `import { E } from "./e";\nexport const L = { ${v.map((x) => `[E.${x}]: 1`).join(", ")} };`;
+    expect(scanText("fixture.ts", src)).toEqual([]);
   });
 
   it("does not flag a Record keyed by a shared type, but does flag one keyed by literals", () => {
@@ -346,9 +379,7 @@ describe("SA-1049 PR-2 — no source file hand-types a Prisma enum (G-2)", () =>
   let total = 0;
   const started = Date.now();
   for (const f of files) {
-    const text = readFileSync(f, "utf8");
-    if (!mayMirror(text)) continue;
-    for (const m of findMirrors(f, text)) {
+    for (const m of scanText(f, readFileSync(f, "utf8"))) {
       const key = `${rel(f)}\t${m.enumName}`;
       found.set(key, (found.get(key) ?? 0) + 1);
       total++;
