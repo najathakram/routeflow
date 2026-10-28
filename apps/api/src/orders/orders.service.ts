@@ -1830,7 +1830,13 @@ export class OrdersService implements OnApplicationBootstrap {
         ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
-      const projectedTotal = creditProjectedTotal(total, options); // S1: net of the till tender
+      // S1: net of the till tender. W-863 (SA-945 MUST 6): the COUNTER sale also nets its SERVER-priced return credit
+      // (never a client figure); Create Order keeps SA-194 (an unapplied credit never loosens the gate), pinned in
+      // orders-inline-return-create.db.spec.ts.
+      const returnCredit = options.counterSale
+        ? await inlineReturn.previewInlineReturnCredit(inlineRet, customerId, user)
+        : 0;
+      const projectedTotal = creditProjectedTotal(total, options, returnCredit);
       await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
     }
 

@@ -48,6 +48,26 @@ export async function prepareInlineReturn(
 }
 
 /**
+ * W-863 (SA-945 MUST 6): the SERVER-priced credit this create's return will give, for the B585 credit gate to net (the
+ * credit pays the order down before the tender, so it is not "on account"). A dry-run read only: it writes and reserves
+ * nothing. 0 when there is no return, for a DRIVER (an over-cap return is HELD and issues no credit), and on ANY refusal:
+ * the same preflight runs again in `reserveInlineReturnNumber` and throws there, so the gate never loosens on a guess.
+ */
+export async function previewInlineReturnCredit(
+  p: PreparedInlineReturn | null,
+  customerId: string,
+  user: JwtPayload | undefined,
+): Promise<number> {
+  if (!p || p.role === "DRIVER") return 0;
+  try {
+    const total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
+    return Number.isFinite(total) && total > 0 ? total : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Create only: validate the return, then reserve the credit-note number once, before the retry loop
  * (SA-221 change 1). The dry-run (pricing + the returnKey check, `preflightNewOrderReturn`) runs FIRST,
  * so a refused request burns no number (Opus N1), and a return that prices to $0 mints no credit note

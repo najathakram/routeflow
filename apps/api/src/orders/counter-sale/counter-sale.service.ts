@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
 import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
+import { sumInlineReturnCredit } from "../../returns/inline-return-credit.util";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
@@ -328,8 +329,15 @@ export class CounterSaleService {
     planError: string,
     user: JwtPayload | "read-only",
   ) {
-    const sum = Number(total ?? 0);
-    const netted = counterCreditPaidNow(tender, sum, checkToday);
+    const gross = Number(total ?? 0);
+    // W-863 (SA-945 MUST 6): the return credit stored on this sale (the SERVER's figure, read back, never the request's)
+    // pays the order down before the tender, so it is netted, not on account: judge what is left after it.
+    const credit = Math.min(
+      gross,
+      await sumInlineReturnCredit(this.prisma.forTenant(), orderId).catch(() => 0),
+    );
+    const sum = roundMoney(gross - credit);
+    const netted = roundMoney(counterCreditPaidNow(tender, sum, checkToday) + credit);
     const deps = {
       prisma: this.prisma,
       entitlements: this.orders.entitlements,

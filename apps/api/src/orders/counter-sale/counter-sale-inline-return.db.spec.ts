@@ -89,6 +89,8 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
   let big: string; // $10.00: the item sold
   let snack: string; // $4.00: the item returned (priced from the catalogue: not sold on a source order)
   let large: string; // $12.00: the item returned in case (b)
+  let bulk: string; // $92.00: a customer's existing balance (case e)
+  let limitedId = ""; // a $100.00 credit limit (case e)
   const tenantIds: string[] = [];
   const userIds: string[] = [];
   const slug = assertTestTenant(`qa-cs-inlret-${RUN}`, "counter-sale-inline-return.db.spec.ts");
@@ -262,6 +264,22 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     big = await product("big", "10.00");
     snack = await product("snack", "4.00");
     large = await product("large", "12.00");
+    bulk = await product("bulk", "92.00");
+    // SA-945 MUST 6: a customer with a $100.00 limit, and the credit gate ENFORCED for new orders
+    limitedId = (
+      await raw.customer.create({
+        data: {
+          userId: await mkUser("CUSTOMER", "c2"),
+          businessName: "Acme Limited",
+          contactName: "T",
+          tenantId,
+          creditLimit: "100.00",
+        },
+      })
+    ).id;
+    await raw.systemConfig.create({
+      data: { tenantId, key: "credit_limit.enforce_new_orders", value: "true" },
+    });
   }, 180_000);
 
   afterAll(async () => {
@@ -307,12 +325,13 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     key: string,
     inlineReturn: ReturnType<typeof returnOf> | undefined,
     payment: CounterSaleDto["payment"],
+    who = { customerId, productId: big },
   ) =>
     tenantCtx.run(tenantId, () =>
       service.ring(
         {
-          customerId,
-          items: [{ productId: big, qty: 1 }],
+          customerId: who.customerId,
+          items: [{ productId: who.productId, qty: 1 }],
           payment,
           ...(inlineReturn ? { inlineReturn } : {}),
         } as CounterSaleDto,
@@ -388,6 +407,33 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     expect(
       await raw.creditNote.count({ where: { tenantId, id: f.returns[0].creditNoteId as string } }),
     ).toBe(1);
+  }, 60_000);
+
+  it("(e) the credit gate nets the SERVER-priced return: limit 100, balance 92, $10.00 on account with a $4.00 return is exposure 98, allowed", async () => {
+    addonOn = true;
+    const who = { customerId: limitedId, productId: big };
+    await ring(
+      randomUUID(),
+      undefined,
+      { method: "ON_ACCOUNT" },
+      {
+        customerId: limitedId,
+        productId: bulk,
+      },
+    ); // the balance: 92.00
+    // control (the gate is live): the same $10.00 with no return would take exposure to 102
+    await expect(
+      ring(randomUUID(), undefined, { method: "ON_ACCOUNT" }, who),
+    ).rejects.toMatchObject({
+      status: 409,
+    });
+    const key = randomUUID();
+    const res = await ring(key, returnOf(snack, `rk-${key}`), { method: "ON_ACCOUNT" }, who);
+    expect(res.paymentRecorded).toBe(true);
+    const f = await footprint(key);
+    expect(f.returns).toHaveLength(1);
+    // the $4.00 credit paid this sale down: $6.00 is left on the sale, so exposure is 98.00
+    expect(res.balanceDue).toBeCloseTo(6, 2);
   }, 60_000);
 
   it("(d) with the add-on off the field is refused 403 and nothing is written", async () => {
