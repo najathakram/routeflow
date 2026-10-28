@@ -178,15 +178,15 @@ const soloDir = (name, lines) => {
   return buildRow({ session_id: name, transcript_path: t, agent_id: "one" });
 };
 {
-  // Review MUST 2: claude-sonnet-5 rates never price claude-sonnet-5-5.
+  // Review MUST 2: an unlisted version (claude-sonnet-5-9) is never priced on the claude-sonnet-5 row.
   const r = soloDir("unpriced", [
-    line("u1", "claude-sonnet-5-5", "2026-10-28T05:00:00.000Z", usage(100, 100)),
+    line("u1", "claude-sonnet-5-9", "2026-10-28T05:00:00.000Z", usage(100, 100)),
     line("u2", "claude-haiku-4-5", "2026-10-28T05:01:00.000Z", usage(100, 100)),
   ]);
   check(
     "A6 an unpriced model makes the whole cost null and names it",
     [r.costUsd, r.nullReason, r.tokens],
-    [null, "unpriced model: claude-sonnet-5-5", 400],
+    [null, "unpriced model: claude-sonnet-5-9", 400],
   );
   const d = soloDir("dated", [
     line("d1", "claude-haiku-4-5-20251001", "2026-10-28T05:00:00.000Z", usage(1000, 0)),

@@ -246,6 +246,7 @@ const NAME_TO_PREFIX = [
   { test: (name) => name === "Claude Opus 5", prefix: "claude-opus-5" },
   { test: (name) => name === "Claude Opus 5.5", prefix: "claude-opus-5-5" },
   { test: (name) => name === "Claude Sonnet 5", prefix: "claude-sonnet-5" },
+  { test: (name) => name === "Claude Sonnet 5.5", prefix: "claude-sonnet-5-5" },
   { test: (name) => name === "Claude Sonnet 4.6", prefix: "claude-sonnet-4-6" },
   { test: (name) => name === "Claude Haiku 4.5", prefix: "claude-haiku-4-5" },
 ];
@@ -960,6 +961,17 @@ function runSelftest() {
   const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "session-usage-selftest-"));
   let ok = true;
   try {
+    // Sonnet 5.5 is the house builder: its own row prices it, and the strict prefix match keeps the Sonnet 5 row
+    // from pricing it (and an unlisted version, such as claude-sonnet-5-9, from pricing at all).
+    {
+      const parsed = parseModelCards(fs.readFileSync(MODEL_CARDS_PATH, "utf8"));
+      const r55 = ratesForModel("claude-sonnet-5-5", parsed.table);
+      assert(r55 && r55 === parsed.table["claude-sonnet-5-5"], "claude-sonnet-5-5 did not resolve to its own row");
+      assert(r55.in === 2 && r55.out === 10 && r55.cacheRead === 0.2, `Sonnet 5.5 rates wrong: ${JSON.stringify(r55)}`);
+      assert(ratesForModel("claude-sonnet-5", parsed.table) === parsed.table["claude-sonnet-5"], "claude-sonnet-5 lost its row");
+      assert(ratesForModel("claude-sonnet-5-9", parsed.table) === null, "an unlisted version was priced on a family row");
+      assert(ratesForModel("claude-haiku-4-5-20251001", parsed.table) === parsed.table["claude-haiku-4-5"], "a dated id lost its row");
+    }
     const claudeHome = path.join(tmpBase, "fakehome", ".claude");
     const fakeRepo = path.join(tmpBase, "fakerepo"); // never touched on disk; only its string is encoded
     const enc = encodeProjectDir(path.resolve(fakeRepo));
