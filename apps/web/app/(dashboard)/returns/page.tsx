@@ -394,7 +394,10 @@ function CreateReturnModal({
           <div>
             <label className="mb-2 block text-sm font-medium text-navy">Items to Return</label>
             {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
-            <div className="overflow-hidden rounded-lg border border-surface-border">
+            <div
+              className="overflow-x-auto rounded-lg border border-surface-border"
+              data-testid="return-lines-table"
+            >
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
@@ -416,7 +419,9 @@ function CreateReturnModal({
                   {returnItems.map((row, i) => (
                     <tr key={row.lineId}>
                       <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
-                      <td className="px-3 py-2 text-center text-navy/70">{row.lineText}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-center text-navy/70">
+                        {row.lineText}
+                      </td>
                       <td className="px-3 py-2">
                         <ReturnLineCountCell
                           line={row.line}
@@ -435,7 +440,7 @@ function CreateReturnModal({
                           placeholder="Condition / notes…"
                           value={row.notes}
                           onChange={(e) => updateReturnItem(i, "notes", e.target.value)}
-                          className="h-8 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          className="h-8 w-full min-w-[9rem] rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       </td>
                     </tr>

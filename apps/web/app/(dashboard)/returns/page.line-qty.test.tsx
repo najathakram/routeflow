@@ -161,6 +161,20 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it("I-167: at phone width the table scrolls instead of clipping Notes, and the Ordered text does not wrap", async () => {
+    await openOrder();
+    await screen.findAllByRole("row");
+    const wrap = screen.getByTestId("return-lines-table");
+    expect(wrap.className).toContain("overflow-x-auto");
+    expect(wrap.className).not.toContain("overflow-hidden");
+    expect(within(colaRow(0)).getByText("400 pcs (2 Cases)").className).toContain(
+      "whitespace-nowrap",
+    );
+    expect(within(colaRow(0)).getByPlaceholderText("Condition / notes…").className).toContain(
+      "min-w-",
+    );
+  });
+
   it("R-w2: two lines of one product raise no duplicate-key warning", async () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => {});
     await openOrder();
