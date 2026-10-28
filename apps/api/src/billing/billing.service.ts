@@ -3427,7 +3427,7 @@ ${updateLine}
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId!);
         // SA r-note 5 A2: ONLY `canceled` (a subscription the tenant ended). past_due / unpaid are payment-overdue
-        // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 7-day grace, then
+        // states and never suspend, in any BILLING_PAUSE_MODE: dunning owns non-payment (the 14-day grace, then
         // READ_ONLY + pay).
         if (stripeSub.status === "canceled") {
           // SA-934 §3: a missed customer.subscription.deleted webhook ends the same way a delivered one does - through

@@ -50,7 +50,7 @@ const owing = (over: Partial<SubscriptionView> = {}) =>
     pastDueInvoiceId: "in_1",
     openInvoiceAmount: 149,
     pastDueMonthLabel: "November",
-    graceEndsLabel: "Nov 8",
+    graceEndsLabel: "Nov 15",
     pauseEnforced: true,
     ...over,
   });
@@ -170,13 +170,13 @@ describe("subscriptionBannerState - card expiring", () => {
   });
 });
 
-describe("subscriptionBannerState - payment failed, days 0-5 (neutral, dismissible for the day)", () => {
+describe("subscriptionBannerState - payment failed, days 0-12 (neutral, dismissible for the day)", () => {
   it.each([0, 1, 3, 5])("admin day %i: exact copy, Update payment, never red", (day) => {
     const s = subscriptionBannerState(owing(), "admin", at(day, 3));
     expect(s.kind).toBe("grace");
     expect(s.tone).toBe("neutral");
     expect(s.copy).toBe(
-      "We couldn't charge your card for November. Update it by Nov 8 and nothing changes.",
+      "We couldn't charge your card for November. Update it by Nov 15 and nothing changes.",
     );
     expect(s.action).toEqual({ label: "Update payment", intent: "update-payment" });
     expect(s.dismiss).toEqual({ scope: "day", key: expect.any(String) });
@@ -211,14 +211,14 @@ describe("subscriptionBannerState - payment failed, days 0-5 (neutral, dismissib
     expect(s.copy).toBe(
       "There's a billing issue. Everything still works. Your admin can sort it out in Billing.",
     );
-    const d6 = subscriptionBannerState(owing(), "staff", at(6, 2));
+    const d6 = subscriptionBannerState(owing(), "staff", at(13, 2));
     expect(d6.copy).toBe("Your workspace becomes read-only tomorrow. Let your admin know.");
   });
 });
 
-describe("subscriptionBannerState - day 6 (amber, not dismissible, announced once)", () => {
+describe("subscriptionBannerState - day 13 (amber, not dismissible, announced once)", () => {
   it("admin", () => {
-    const s = subscriptionBannerState(owing(), "admin", at(6, 2));
+    const s = subscriptionBannerState(owing(), "admin", at(13, 2));
     expect(s.kind).toBe("final-day");
     expect(s.tone).toBe("amber");
     expect(s.copy).toBe(
@@ -230,7 +230,7 @@ describe("subscriptionBannerState - day 6 (amber, not dismissible, announced onc
   });
 
   it("operator", () => {
-    const s = subscriptionBannerState(owing(), "staff", at(6, 2));
+    const s = subscriptionBannerState(owing(), "staff", at(13, 2));
     expect(s.copy).toBe("Your workspace becomes read-only tomorrow. Let your admin know.");
     expect(s.action).toBeNull();
     expect(s.dismiss).toBeNull();
@@ -238,9 +238,9 @@ describe("subscriptionBannerState - day 6 (amber, not dismissible, announced onc
     expect(s.live).toBe("alert");
   });
 
-  it("day 5 is still neutral and day 6 starts at +144 h", () => {
-    expect(subscriptionBannerState(owing(), "admin", at(5, 23)).kind).toBe("grace");
-    expect(subscriptionBannerState(owing(), "admin", at(6, 0)).kind).toBe("final-day");
+  it("day 12 is still neutral and day 13 starts at +312 h", () => {
+    expect(subscriptionBannerState(owing(), "admin", at(12, 23)).kind).toBe("grace");
+    expect(subscriptionBannerState(owing(), "admin", at(13, 0)).kind).toBe("final-day");
   });
 });
 
@@ -297,7 +297,7 @@ describe("subscriptionBannerState - read-only (paused): amber, not dismissible, 
 describe("subscriptionBannerState - Don't list (binding)", () => {
   const all = (role: "admin" | "staff") => [
     subscriptionBannerState(owing(), role, at(1)),
-    subscriptionBannerState(owing(), role, at(6, 2)),
+    subscriptionBannerState(owing(), role, at(13, 2)),
     subscriptionBannerState(paused(), role, at(8)),
   ];
 
@@ -374,7 +374,7 @@ describe("subscriptionBannerState - labels come from the server (S4)", () => {
   it("without labels it falls back to UTC from pastDueSince, never the browser zone", () => {
     const v = owing({ pastDueMonthLabel: null, graceEndsLabel: null });
     expect(subscriptionBannerState(v, "admin", at(1)).copy).toBe(
-      "We couldn't charge your card for November. Update it by Nov 8 and nothing changes.",
+      "We couldn't charge your card for November. Update it by Nov 15 and nothing changes.",
     );
   });
 });
@@ -393,7 +393,7 @@ describe("subscriptionBannerState - pause NOT enforced (dark / off): the owner's
       expect(s.kind).toBe("overdue");
       expect(s.tone).toBe("amber");
       expect(s.copy).toBe(OVERDUE);
-      expect(s.copy).not.toMatch(/read-only|lock|suspend|tomorrow|\bby\b|Nov 8|days?\b/i);
+      expect(s.copy).not.toMatch(/read-only|lock|suspend|tomorrow|\bby\b|Nov 15|days?\b/i);
       expect(s.action).toEqual({ label: "Pay now", intent: "pay" });
       expect(s.dismiss).toEqual({ scope: "day", key: expect.stringMatching(/^grace:in_1:/) });
       expect(s.live).toBe("status");
@@ -451,7 +451,7 @@ describe("subscriptionBannerState - pause NOT enforced (dark / off): the owner's
   it("an older server that sends no flag is treated as not enforced", () => {
     const v = owing();
     delete (v as any).pauseEnforced;
-    const s = subscriptionBannerState(v, "admin", at(6, 3));
+    const s = subscriptionBannerState(v, "admin", at(13, 3));
     expect(s.kind).toBe("overdue");
     expect(s.copy).not.toMatch(/read-only|tomorrow/i);
   });
@@ -580,7 +580,7 @@ describe("subscriptionBannerState - the server's facts gate the strip (SA-777 re
     const s = subscriptionBannerState(
       owing({ pauseEnforced: true, billingState: "due" }),
       "admin",
-      at(6, 2),
+      at(13, 2),
     );
     expect(s.kind).toBe("final-day");
   });
@@ -596,11 +596,11 @@ describe("subscriptionBannerState - the server's facts gate the strip (SA-777 re
 });
 
 describe("subscriptionBannerState - pause enforced keeps the escalation", () => {
-  it("day 6 is amber / alert / not dismissible only when the server enforces the pause", () => {
-    expect(subscriptionBannerState(owing({ pauseEnforced: true }), "admin", at(6, 2)).kind).toBe(
+  it("day 13 is amber / alert / not dismissible only when the server enforces the pause", () => {
+    expect(subscriptionBannerState(owing({ pauseEnforced: true }), "admin", at(13, 2)).kind).toBe(
       "final-day",
     );
-    expect(subscriptionBannerState(owing({ pauseEnforced: false }), "admin", at(6, 2)).kind).toBe(
+    expect(subscriptionBannerState(owing({ pauseEnforced: false }), "admin", at(13, 2)).kind).toBe(
       "overdue",
     );
   });
@@ -649,16 +649,16 @@ describe("subscriptionBannerState - an owed marker with no pastDueSince (S-nit)"
 // SA-775 rollout: the server says (autoLockHeld) that the pause holds every lock a banner would threaten, so nothing
 // here may promise a read-only date or a deadline; the rest of the banner (the overdue sentence, Pay now) stays.
 describe("subscriptionBannerState - autoLockHeld drops the lock threat", () => {
-  const LOCK_WORDS = /read-only|tomorrow|nothing changes|Nov 8|suspend/i;
+  const LOCK_WORDS = /read-only|tomorrow|nothing changes|Nov 15|suspend/i;
 
-  it("day 6 with the pause enforced: the overdue strip, not the final-day 'read-only tomorrow'", () => {
+  it("day 13 with the pause enforced: the overdue strip, not the final-day 'read-only tomorrow'", () => {
     for (const role of ["admin", "staff"] as const) {
-      const s = subscriptionBannerState(owing({ autoLockHeld: true }), role, at(6, 2));
+      const s = subscriptionBannerState(owing({ autoLockHeld: true }), role, at(13, 2));
       expect(s.kind).toBe("overdue");
       expect(s.copy).not.toMatch(LOCK_WORDS);
       expect(s.dismiss).not.toBeNull();
     }
-    const admin = subscriptionBannerState(owing({ autoLockHeld: true }), "admin", at(6, 2));
+    const admin = subscriptionBannerState(owing({ autoLockHeld: true }), "admin", at(13, 2));
     expect(admin.copy).toMatch(/overdue/i);
     expect(admin.action).toEqual({ label: "Pay now", intent: "pay" });
     expect(admin.cardPay).toEqual({ label: "Pay $149.00", intent: "pay" });
@@ -673,14 +673,14 @@ describe("subscriptionBannerState - autoLockHeld drops the lock threat", () => {
 
   it("false or absent: today's copy, unchanged", () => {
     for (const over of [{ autoLockHeld: false }, {}]) {
-      const s = subscriptionBannerState(owing(over), "admin", at(6, 2));
+      const s = subscriptionBannerState(owing(over), "admin", at(13, 2));
       expect(s.kind).toBe("final-day");
       expect(s.copy).toBe(
         "Your workspace becomes read-only tomorrow. Update your payment to keep everything running.",
       );
       const g = subscriptionBannerState(owing(over), "admin", at(2));
       expect(g.copy).toBe(
-        "We couldn't charge your card for November. Update it by Nov 8 and nothing changes.",
+        "We couldn't charge your card for November. Update it by Nov 15 and nothing changes.",
       );
     }
   });
@@ -689,5 +689,34 @@ describe("subscriptionBannerState - autoLockHeld drops the lock threat", () => {
     const a = subscriptionBannerState(paused({ autoLockHeld: true }), "admin", at(9));
     const b = subscriptionBannerState(paused(), "admin", at(9));
     expect(a).toEqual(b);
+  });
+});
+
+// SA-1037 r2 PR-6: the owner chose "pause at 14 days" (05:21Z). The banner reads the shared DUNNING_CLOCK, so its
+// "read-only tomorrow" strip is on day 13 (+312 h), not day 6, and the copy's date is the pause date (+14 days).
+describe("subscriptionBannerState - the 14-day clock (SA-1037 PR-6)", () => {
+  const hoursAfter = (h: number) => new Date(T0.getTime() + h * 3_600_000);
+
+  it("R6: enforced at +150 h: NOT the final-day strip (the pause is on day 14)", () => {
+    expect(subscriptionBannerState(owing(), "admin", hoursAfter(150)).kind).not.toBe("final-day");
+    expect(subscriptionBannerState(owing(), "staff", hoursAfter(150)).kind).not.toBe("final-day");
+  });
+
+  it("R6: enforced at +315 h: the final-day strip", () => {
+    expect(subscriptionBannerState(owing(), "admin", hoursAfter(315)).kind).toBe("final-day");
+  });
+
+  it("the final-day strip starts at +312 h and not before", () => {
+    expect(subscriptionBannerState(owing(), "admin", hoursAfter(311)).kind).not.toBe("final-day");
+    expect(subscriptionBannerState(owing(), "admin", hoursAfter(312)).kind).toBe("final-day");
+  });
+
+  it("with no server label, the deadline date is the pause date: 14 days after the first failure", () => {
+    const s = subscriptionBannerState(
+      owing({ graceEndsLabel: undefined }),
+      "admin",
+      hoursAfter(2 * 24),
+    );
+    expect(s.copy).toContain("Update it by Nov 15");
   });
 });

@@ -4,14 +4,23 @@
  */
 import type { Prisma } from "@prisma/client";
 
-/** Hours from the first failure (`pastDueSince`) until the tenant may be paused: day 7. */
-export const DUNNING_PAUSE_HOURS = 168;
+/**
+ * Hours from the first failure (`pastDueSince`) until the tenant may be paused: day 14 (SA-1037 r2, the owner's "pause at
+ * 14 days"; it superseded the day-7 pause of D-2026-10-08). The web reads the same clock from `DUNNING_CLOCK`
+ * (@routeflow/types); `dunning-clock-parity.spec.ts` pins the two equal.
+ */
+export const DUNNING_PAUSE_HOURS = 336;
 /** The d3 reminder is due at +72 h. */
 export const DUNNING_D3_HOURS = 72;
-/** The d6 reminder ("read-only tomorrow" in `enforced`) is due at +144 h. */
-export const DUNNING_D6_HOURS = 144;
+/** The d7 reminder (the d3 copy) is due at +168 h, so there is no ten-day silence before the last day. */
+export const DUNNING_D7_HOURS = 168;
 /** `dunning_final` must have been sent at least this many hours before a pause (SA-733r M4). */
 export const DUNNING_FINAL_LEAD_HOURS = 24;
+/**
+ * The last-day notice ("read-only tomorrow" in `enforced`) is due the final-notice lead before the pause: +312 h. Its
+ * stored milestone key stays `DUNNING_D6` (see {@link DUNNING_MILESTONES}) so a claim made before the clock moved still counts.
+ */
+export const DUNNING_LAST_DAY_HOURS = DUNNING_PAUSE_HOURS - DUNNING_FINAL_LEAD_HOURS;
 /** The pause lands on the first sweep at or after this tenant-local hour (SA-733r6). */
 export const PAUSE_LOCAL_HOUR = 3;
 /** The zone used when a tenant has none configured (the money-date contract of calendar-date.ts). */
@@ -23,6 +32,9 @@ export const HOUR_MS = 60 * 60 * 1000;
 export const DUNNING_MILESTONES = {
   D0: "DUNNING_D0",
   D3: "DUNNING_D3",
+  /** SA-1037 r2: a second reminder at +168 h (the d3 copy). The milestone is a String column: no migration. */
+  D7: "DUNNING_D7",
+  /** The LAST-DAY notice. The key keeps its old name for claim continuity; it is now due at +312 h, not +144 h. */
   D6: "DUNNING_D6",
   FINAL: "DUNNING_FINAL",
   PAUSED: "DUNNING_PAUSED",
