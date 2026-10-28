@@ -79,19 +79,26 @@ beforeEach(() => {
   seedSession("OPERATOR");
 });
 
-const tokens = (el: Element | null) =>
+const tokens = (el: Element | null | undefined) =>
   (el?.getAttribute("class") ?? "").split(/\s+/).filter(Boolean);
 
 describe("Order detail says Order Total once per width (Q20)", () => {
   it("the line-items footer total is for below lg only", async () => {
     await openDetail();
-    const footer = screen.getAllByText("Order total").map((e) => e.closest("tr")).find(Boolean);
+    const footer = screen
+      .getAllByText("Order total")
+      .map((e) => e.closest("tr"))
+      .find(Boolean);
     expect(tokens(footer)).toContain("lg:hidden");
   });
 
   it("the Summary card total is hidden below lg (so the pair is never both on screen)", async () => {
     await openDetail();
-    const row = screen.getAllByText("Order total").map((e) => e.closest("div")).find((d) => d?.tagName === "DIV" && tokens(d).includes("max-lg:hidden")) ?? null;
+    const row =
+      screen
+        .getAllByText("Order total")
+        .map((e) => e.closest("div"))
+        .find((d) => d?.tagName === "DIV" && tokens(d).includes("max-lg:hidden")) ?? null;
     expect(tokens(row)).toContain("max-lg:hidden");
   });
 
