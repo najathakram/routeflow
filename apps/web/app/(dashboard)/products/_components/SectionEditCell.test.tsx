@@ -22,8 +22,8 @@ const mount = (productName?: string) =>
 
 describe("SectionEditCell accessible name (W-926)", () => {
   it("is 'Regulated type for <product name>' and carries no id", () => {
-    mount("Corona Box");
-    const select = screen.getByRole("combobox", { name: "Regulated type for Corona Box" });
+    mount("Acme Cigar Box");
+    const select = screen.getByRole("combobox", { name: "Regulated type for Acme Cigar Box" });
     expect(select.getAttribute("aria-label")).not.toContain(PRODUCT_ID);
   });
 
