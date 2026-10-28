@@ -95,8 +95,8 @@ test.describe("I-101: a Pallet of the 10/200/4800 ladder, sold in the UI", () =>
     await page.getByText(CUSTOMER_NAME, { exact: true }).first().click();
     await page.getByPlaceholder(/scan barcode, or type product name/i).fill(PRODUCT_NAME);
     await page
-      .getByRole("listbox")
-      .getByRole("button", { name: new RegExp(PRODUCT_NAME) })
+      .getByRole("listbox", { name: "Product suggestions" })
+      .getByRole("option", { name: new RegExp(PRODUCT_NAME) })
       .click();
     await expect(page.locator(`input[value="${PRODUCT_NAME}"]`)).toBeVisible();
     const picker = page.getByRole("combobox", { name: `Sell ${PRODUCT_NAME} by` });
