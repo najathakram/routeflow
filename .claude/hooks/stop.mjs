@@ -46,11 +46,19 @@ import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { registrySource } from "../../scripts/lib/registry-root.mjs";
+import {
+  registryMissingMessage,
+  registryMode,
+  registryRoot,
+  registrySource,
+  syncStatePath,
+} from "../../scripts/lib/registry-root.mjs";
 
-// The register location comes from the one contract module (path reads only; the Gate 4/5
-// rework that follows the register out of the tree is a separate change).
+// The register location comes from the one contract module. In clone mode the register is a
+// separate git repo: Gate 4 only reports its lag and Gate 5 reads it through CLONE_DIR.
+const CLONE_MODE = registryMode() === "clone";
 const REGISTER = registrySource().prefix;
+const CLONE_DIR = registrySource().repoDir;
 
 // Invoke prettier directly via node — this repo's root has no node_modules/.bin
 // shim, so `npx prettier` fails on Windows. Fall back to npx where the shim exists.
@@ -259,7 +267,64 @@ if (hasLessons && !changed.some(isLesson) && !bookkeepingDeferred) {
 // registry is meant to reconcile against, and syncing there is exactly how
 // a record's body got wiped; the main checkout on master is always the
 // tree every other session's commits are already visible in.
-if (
+//
+// Clone mode (B1-b3): Gate 4 is a read-only report, never a writer. Missing clone: name the fix.
+// Otherwise print only a lag (clone behind origin/main, anchor behind routeflow origin/master) or a
+// missing/unknown anchor. Local refs only (no fetch); every git call shares one 5 s deadline.
+if (CLONE_MODE && isMainCheckoutOnMaster()) {
+  try {
+    const root = registryRoot({ allowMissing: true });
+    if (!existsSync(join(root, "bugs.jsonl"))) {
+      process.stderr.write(`Bug registry: ${registryMissingMessage(root)}\n`);
+    } else {
+      const deadline = Date.now() + 5000;
+      let timedOut = false;
+      const count = (cwd, range) => {
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          timedOut = true;
+          return null;
+        }
+        const r = spawnSync("git", ["-C", cwd, "rev-list", "--count", range], {
+          encoding: "utf8",
+          timeout: left,
+        });
+        if (r.error || r.signal) timedOut = true;
+        return r.status === 0 ? Number((r.stdout || "").trim()) : null;
+      };
+      const notes = [];
+      const behind = count(CLONE_DIR, "HEAD..origin/main");
+      if (behind > 0) {
+        notes.push(
+          `clone is ${behind} commit(s) behind origin/main — run \`npm run registry:land\``,
+        );
+      }
+      let anchor = null;
+      try {
+        anchor = JSON.parse(readFileSync(syncStatePath(), "utf8")).lastSha || null;
+      } catch {
+        // a missing or unreadable anchor is reported below
+      }
+      const lag = anchor ? count(".", `${anchor}..origin/master`) : null;
+      if (!timedOut) {
+        if (lag === null) {
+          notes.push(
+            "sync anchor is missing or unknown — run `node scripts/campaign/bugs.mjs sync --rescan`",
+          );
+        } else if (lag > 0) {
+          notes.push(
+            `sync anchor is ${lag} commit(s) behind origin/master — run \`npm run registry:land\` or \`node scripts/campaign/bugs.mjs sync --rescan\``,
+          );
+        }
+      }
+      for (const note of notes) process.stderr.write(`Bug registry: ${note}\n`);
+      if (timedOut) process.stderr.write("Bug registry: lag check skipped (timeout)\n");
+    }
+  } catch {
+    // a bookkeeping report must never fail a turn
+  }
+} else if (
+  !CLONE_MODE &&
   isMainCheckoutOnMaster() &&
   existsSync(`${REGISTER}/bugs`) &&
   existsSync("scripts/campaign/bugs.mjs")
@@ -301,16 +366,34 @@ if (
 // Never gates the turn: any outcome (skip / success / failure / crash) below
 // still falls through to the unconditional `process.exit(0)` at the end of
 // this file.
-if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(`${REGISTER}/bugs.jsonl`)) {
+// Clone mode: the register comes from the resolver, and a missing clone says so (no silent skip).
+const GATE5_REGISTER_FILE = CLONE_MODE
+  ? join(registryRoot({ allowMissing: true }), "bugs.jsonl")
+  : `${REGISTER}/bugs.jsonl`;
+if (
+  CLONE_MODE &&
+  existsSync("scripts/campaign/plane-sync.mjs") &&
+  !existsSync(GATE5_REGISTER_FILE)
+) {
+  process.stderr.write(
+    `Plane mirror: skipped — ${registryMissingMessage(registryRoot({ allowMissing: true }))}
+`,
+  );
+}
+if (existsSync("scripts/campaign/plane-sync.mjs") && existsSync(GATE5_REGISTER_FILE)) {
   // `|| ""` (Gate 4's precedent, :212): spawnSync returns stdout === null when
   // the child never starts (git missing from PATH, EACCES, EINVAL), and
   // `null.trim()` would throw a raw stack out of a gate whose whole contract is
   // that it never fails a turn.
   const dirty =
     (
-      spawnSync("git", ["status", "--porcelain", "--", REGISTER], {
-        encoding: "utf8",
-      }).stdout || ""
+      spawnSync(
+        "git",
+        [...(CLONE_MODE ? ["-C", CLONE_DIR] : []), "status", "--porcelain", "--", REGISTER],
+        {
+          encoding: "utf8",
+        },
+      ).stdout || ""
     ).trim() !== "";
   // Env-overridable so the spec can shrink it (a case proving the silent-timeout
   // path must not wait 25 s); the default is the budget the gate ships with.
@@ -390,7 +473,15 @@ try {
       }
       const statusLog = spawnSync(
         "git",
-        ["log", "-1", "--format=%H %cI", "--", `${REGISTER}/status`],
+        [
+          ...(CLONE_MODE ? ["-C", CLONE_DIR] : []),
+          "log",
+          "-1",
+          "--format=%H %cI",
+          ...(CLONE_MODE ? ["origin/main"] : []),
+          "--",
+          `${REGISTER}/status`,
+        ],
         { encoding: "utf8", env: gitEnv() },
       );
       const statusLine = (statusLog.stdout || "").trim();
