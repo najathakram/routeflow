@@ -7,6 +7,9 @@
  *   R-r2  110 pieces on the 100-piece line B: a 400 naming "100 pcs (10 boxes)"; nothing written.
  *   N-r4  one Case on A: ReturnItem.qty 200 with sourceOrderItemId A.
  *   G-r10 a line return of 1 Case, then 2 Cases on A: a 400 (1 Case left).
+ *   R-r18 two invoices, 35.00 left on line A (60.00 on P): 1 Case off A is a 409 naming A and 35.00, nothing minted (A-2 F1).
+ *   G-r19 two invoices: all of B refunded, then all of A, is accepted (the replay is group-shaped).
+ *   G-r20 create() with a line-group pooledRefund over A's room is refused, nothing written.
  *
  * Every tenant is a throwaway `qa-b9b-<run>-<n>` slug approved by `assertTestTenant`, deleted in FK order in afterAll.
  */
@@ -97,8 +100,12 @@ describeDb(
       await prisma?.$disconnect();
     });
 
-    /** O with lines A and B of one product, ONE SENT invoice with items iA and iB. */
-    async function seed(label: string) {
+    /**
+     * O with lines A and B of one product, ONE SENT invoice with items iA and iB. `twoInvoices`: iA moves to the LATER invoice
+     * (190.00 total, so the lump refund has room), iB to an earlier one (25.00); the later invoice's id sorts first, so the order
+     * pool lists A's invoice item first, which is where a product-shaped replay of an earlier return lands.
+     */
+    async function seed(label: string, opts: { twoInvoices?: boolean } = {}) {
       seq += 1;
       const slug = assertTestTenant(`qa-b9b-${RUN}-${seq}-${label}`, "returns-by-line.db.spec.ts");
       const tenant = await prisma.tenant.create({ data: { slug, name: `b9b ${slug}` } });
@@ -158,23 +165,41 @@ describeDb(
         pieces: 0,
         unitsPerBox: 10,
       });
+      const [idLater, idEarlier] = [randomUUID(), randomUUID()].sort();
       const invoice = await prisma.invoice.create({
         data: {
+          ...(opts.twoInvoices ? { id: idLater } : {}),
           tenantId,
           customerId: customer.id,
           orderId: order.id,
           invoiceNumber: `INV-B9B-${RUN}-${seq}`,
           status: "SENT",
-          subtotal: 115,
+          subtotal: opts.twoInvoices ? 90 : 115,
           taxAmount: 0,
-          total: 115,
+          total: opts.twoInvoices ? 190 : 115,
         },
       });
-      const mkItem = (orderItemId: string, over: Record<string, unknown>) =>
+      const invoiceB = opts.twoInvoices
+        ? await prisma.invoice.create({
+            data: {
+              id: idEarlier,
+              tenantId,
+              customerId: customer.id,
+              orderId: order.id,
+              invoiceNumber: `INV-B9B-${RUN}-${seq}-B`,
+              status: "SENT",
+              subtotal: 25,
+              taxAmount: 0,
+              total: 25,
+              createdAt: new Date(Date.now() - 3_600_000),
+            },
+          })
+        : invoice;
+      const mkItem = (orderItemId: string, over: Record<string, unknown>, invoiceId = invoice.id) =>
         prisma.invoiceItem.create({
           data: {
             tenantId,
-            invoiceId: invoice.id,
+            invoiceId,
             orderItemId,
             productId: product.id,
             description: "P",
@@ -189,16 +214,15 @@ describeDb(
         pieces: 0,
         unitsPerBox: 200,
       });
-      const iB = await mkItem(lineB.id, {
-        qty: 100,
-        unitPrice: 2.5,
-        subtotal: 25,
-        boxes: 10,
-        pieces: 0,
-        unitsPerBox: 10,
-      });
+      const iB = await mkItem(
+        lineB.id,
+        { qty: 100, unitPrice: 2.5, subtotal: 25, boxes: 10, pieces: 0, unitsPerBox: 10 },
+        invoiceB.id,
+      );
       return {
         tenantId,
+        customerId: customer.id,
+        invoiceA: invoice,
         userId: user.id,
         orderId: order.id,
         productId: product.id,
@@ -268,6 +292,97 @@ describeDb(
       await expect(
         create(s, [{ productId: s.productId, orderItemId: s.lineA.id, boxes: 1 }]),
       ).resolves.toBeDefined();
+    });
+
+    /** The credit note an operator issued earlier against A's invoice item: `amount` net on iA, `qty` pieces. */
+    const seedItemCredit = (s: Seed, amount: number, qty: number) =>
+      prisma.creditNote.create({
+        data: {
+          tenantId: s.tenantId,
+          creditNoteNumber: `CN-SEED-${RUN}-${++cnSeq}`,
+          customerId: s.customerId,
+          invoiceId: s.invoiceA.id,
+          amount,
+          status: "ISSUED",
+          items: { create: [{ tenantId: s.tenantId, invoiceItemId: s.iA.id, amount, qty }] },
+        } as any,
+      });
+
+    /** The notes minted AFTER the seeded ones, oldest first. */
+    const mintedAmounts = async (s: { tenantId: string }, seededIds: string[]) =>
+      (
+        await prisma.creditNote.findMany({
+          where: { tenantId: s.tenantId, status: { not: "VOID" }, id: { notIn: seededIds } },
+          orderBy: { createdAt: "asc" },
+        })
+      ).map((n) => Number(n.amount));
+
+    /** RECEIVED, then the refund door; the error (or null) it answered. */
+    async function refundOutcome(s: { tenantId: string }, returnId: string): Promise<any> {
+      await prisma.return.update({ where: { id: returnId }, data: { status: "RECEIVED" } });
+      return tenantCtx
+        .run(s.tenantId, () => returns.processRefund(returnId))
+        .then(() => null)
+        .catch((e: any) => e);
+    }
+    const refusalOf = (e: any) => ({
+      status: e?.getStatus?.(),
+      code: e?.getResponse?.()?.code,
+      orderItemId: e?.getResponse?.()?.orderItemId ?? null,
+      remaining: e?.getResponse?.()?.remaining,
+    });
+
+    // Product P on TWO invoices: A (90.00) on the later one, B (25.00) on an earlier one. An operator credited 55.00 of A's
+    // line earlier (200 pcs), so line A has 35.00 and 200 pcs left, while P as a whole has 60.00 and 300 pcs.
+    it("R-r18: 1 Case off line A with 35.00 left on it is a 409 naming A and 35.00, never 45.00 minted past the line", async () => {
+      const s = await seed("rr18", { twoInvoices: true });
+      const seeded = await seedItemCredit(s, 55, 200);
+      const ret: any = await create(s, [
+        { productId: s.productId, orderItemId: s.lineA.id, boxes: 1, pieces: 0 },
+      ]);
+      const err = await refundOutcome(s, ret.id);
+      expect({ ...refusalOf(err), minted: await mintedAmounts(s, [seeded.id]) }).toEqual({
+        status: 409,
+        code: "RETURN_REFUND_OVER_LINE_HEADROOM",
+        orderItemId: s.lineA.id,
+        remaining: 35,
+        minted: [],
+      });
+    });
+
+    it("G-r19: all of B refunded on the 2+-invoice path, then all of A, is accepted at A's full 90.00", async () => {
+      const s = await seed("gr19", { twoInvoices: true });
+      const retB: any = await create(s, [
+        { productId: s.productId, orderItemId: s.lineB.id, qty: 100 },
+      ]);
+      expect(await refundOutcome(s, retB.id)).toBeNull();
+      const retA: any = await create(s, [
+        { productId: s.productId, orderItemId: s.lineA.id, boxes: 2, pieces: 0 },
+      ]);
+      expect(await refundOutcome(s, retA.id)).toBeNull();
+      expect(await mintedAmounts(s, [])).toEqual([25, 90]);
+    });
+
+    it("G-r20: create() called directly with a line-group pooledRefund over A's room (35.00) but under P's (60.00) is refused, nothing written", async () => {
+      const s = await seed("gr20", { twoInvoices: true });
+      const seeded = await seedItemCredit(s, 55, 200);
+      const err: any = await tenantCtx
+        .run(s.tenantId, () =>
+          creditNotes.create(
+            { customerId: s.customerId, invoiceId: s.invoiceA.id, amount: 45, reason: "g-r20" },
+            {
+              ledgerReversedByReturn: true,
+              pooledRefund: [{ productId: s.productId, orderItemId: s.lineA.id, qty: 200 }],
+            } as any,
+          ),
+        )
+        .then(() => null)
+        .catch((e: any) => e);
+      expect({
+        code: err?.getResponse?.()?.code,
+        pooled: err?.getResponse?.()?.pooled,
+        minted: await mintedAmounts(s, [seeded.id]),
+      }).toEqual({ code: "CREDIT_NOTE_OVER_HEADROOM", pooled: true, minted: [] });
     });
   },
 );

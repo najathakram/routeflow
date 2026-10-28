@@ -172,7 +172,7 @@ type RefundBasis = {
   amount: number;
   invoiceId?: string;
   items?: RefundItem[];
-  pooledRefund?: Array<{ productId: string; qty: number }>;
+  pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
   unbilledItems?: UnbilledReturnItem[];
   refusal?: string;
 };
@@ -794,7 +794,7 @@ export class ReturnsService {
     amount: number;
     invoiceId?: string;
     items?: RefundItem[];
-    pooledRefund?: Array<{ productId: string; qty: number }>;
+    pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
     unbilledItems?: UnbilledReturnItem[];
   }> {
     // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
@@ -938,32 +938,37 @@ export class ReturnsService {
     }
 
     // B947: 2+ creditable invoices keep the lump sum minted on the latest invoice, but the refund is checked against the SAME
-    // per-line headroom, POOLED per product across ALL the creditable invoices (a line on an older invoice was invisible to
-    // it). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
-    let pooledRefund: Array<{ productId: string; qty: number }> | undefined;
+    // per-line headroom across ALL the creditable invoices (a line on an older invoice was invisible to it). SA-1042 A-2: per
+    // GROUP, on the lines the group was priced on (a line group on its own line's invoice items, a pooled group on the
+    // product's). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
+    let pooledRefund:
+      Array<{ productId: string; orderItemId: string | null; qty: number }> | undefined;
     if (creditable.length >= 2 && order?.id) {
       const pool = await loadOrderPool(db, order.id);
-      // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
-      const returnedPieces = new Map<string, number>();
-      for (const [productId, qty] of returnedByProduct)
-        returnedPieces.set(productId, this.poolPieces(packBases, pool, productId, qty));
-      for (const [productId, qty] of returnedPieces) {
-        const refused = pooledRefundRefusal(pool, productId, qty);
+      pooledRefund = [];
+      for (const group of groupReturnItems(items).values()) {
+        // priced only when billed (qty > 0) on the group's own lines: an unbilled line group was priced 0 (B959), nothing to check
+        if (!groupInvoiceItems<HeadroomLine>(group, pool.lines).some((l) => Number(l.qty) > 0))
+          continue;
+        // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
+        const qty = this.poolPieces(packBases, pool, group.productId, group.qty);
+        const refused = pooledRefundRefusal(pool, group, qty);
         if (refused)
           throw new ConflictException({
             code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
             message:
               "This refund would credit more than the order's invoice lines are worth: part of it was already credited " +
               "(by a credit note or an earlier refund). Give store credit for what is still billable, or cancel the return.",
-            productId,
+            productId: group.productId,
+            orderItemId: group.orderItemId,
             requested: refused.requestedAmount,
             remaining: refused.remainingAmount,
             requestedQty: refused.requestedQty,
             remainingQty: refused.remainingQty,
             qtyUnit: refused.qtyUnit,
           });
+        pooledRefund.push({ productId: group.productId, orderItemId: group.orderItemId, qty });
       }
-      pooledRefund = [...returnedPieces].map(([productId, qty]) => ({ productId, qty }));
     }
 
     const latestAgg = await db.creditNote.aggregate({

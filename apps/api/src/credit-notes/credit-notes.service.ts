@@ -104,7 +104,9 @@ export class CreditNotesService {
       ledgerReversedByReturn?: boolean;
       // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
       // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
-      pooledRefund?: Array<{ productId: string; qty: number }>;
+      // SA-1042 A-2: one entry per return GROUP (a product, and its order line when the item names one), re-checked on the
+      // same lines the group was priced on.
+      pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
     } = {},
   ): Promise<
     Array<{
@@ -129,6 +131,7 @@ export class CreditNotesService {
         items: {
           select: {
             id: true,
+            orderItemId: true,
             productId: true,
             subtotal: true,
             qty: true,
@@ -186,7 +189,8 @@ export class CreditNotesService {
     }
     if (pool)
       for (const r of opts.pooledRefund ?? []) {
-        const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
+        const group = { productId: r.productId, orderItemId: r.orderItemId };
+        const refusal = pooledRefundRefusal(pool, group, r.qty);
         if (refusal)
           // `pooled`: the refund path maps ONLY this refusal (not the invoice-total cap) to its own 409 wording
           throw new BadRequestException({
@@ -536,7 +540,7 @@ export class CreditNotesService {
     },
     internal: {
       ledgerReversedByReturn?: boolean;
-      pooledRefund?: Array<{ productId: string; qty: number }>;
+      pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
       /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
       returnId?: string;
     } = {},
