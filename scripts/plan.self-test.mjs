@@ -117,6 +117,13 @@ try {
 
   // sharing a file is fine when a dependsOn chain orders the two slices
   check("shared file with a chain: ok", await codeOf(set(good(), "slices.1.files", [S1TS])), 0);
+  const chained = set(set(good(), "slices.2.dependsOn", ["S2"]), "slices.2.files", [S1TS]);
+  check("shared file through a transitive chain: ok", await codeOf(chained), 0);
+  check(
+    "a slice listing its own file twice: ok",
+    await codeOf(set(good(), "slices.0.files", [S1TS, S1TS])),
+    0,
+  );
 
   // P8: the five EARS patterns and a bare capitalised name
   const ears = [
@@ -175,7 +182,7 @@ try {
     [r.code, r.out.includes(path.basename(r.file))],
     [1, true],
   );
-  check("BOM stripped", (await runRaw(`﻿${JSON.stringify(good())}`)).code, 0);
+  check("BOM stripped", (await runRaw(`\uFEFF${JSON.stringify(good())}`)).code, 0);
 
   // --check-all: a missing folder is ok; each problem is prefixed with its file name once
   check(

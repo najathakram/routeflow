@@ -153,7 +153,7 @@ function fileClashes(slices) {
     deps.get(from).some((d) => d === to || (!seen.has(d) && seen.add(d) && reaches(d, to, seen)));
   const owners = new Map();
   for (const s of [...slices].sort(byId))
-    for (const f of arr(s.files)) owners.set(f, [...(owners.get(f) ?? []), s.id]);
+    for (const f of new Set(arr(s.files))) owners.set(f, [...(owners.get(f) ?? []), s.id]);
   const out = [];
   for (const [f, who] of owners)
     for (let i = 0; i < who.length; i++)
@@ -189,7 +189,7 @@ function sliceStatus(s, gh) {
 function loadChecked(file) {
   let plan;
   try {
-    plan = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, ""));
+    plan = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
   } catch (e) {
     return { problems: [e.message], warnings: [] };
   }
