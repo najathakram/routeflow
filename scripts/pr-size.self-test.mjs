@@ -214,27 +214,65 @@ check(
   2,
 );
 check("--since must be a date", parseArgs(["--since", "soon"]).error !== undefined, true);
+const boom = () => {
+  throw new Error("boom");
+};
+const darkFail = await run([], { git: boom });
 check(
-  "git failure exits 2",
-  (
-    await run([], {
-      git: () => {
-        throw new Error("boom");
-      },
-    })
-  ).code,
-  2,
+  "dark: a git failure is reported and never fails the push",
+  [darkFail.code, /cannot measure: boom/.test(darkFail.err)],
+  [0, true],
 );
+check("enforced: a git failure exits 2", (await run([], { git: boom, mode: "enforced" })).code, 2);
+
+// CI: a pull_request checkout's HEAD is GitHub's merge commit, so the trailer is read from --message-ref.
+{
+  const logArgs = [];
+  const base = fakeGit([src(700)], "feat: vendor\n\nPR-Size-Override: vendored engine\n");
+  const git = (args) => {
+    if (args[0] === "log") logArgs.push(args.at(-1));
+    return base(args);
+  };
+  const r = await run(["--message-ref", "abc123"], { git });
+  check(
+    "--message-ref reads the trailer from that commit",
+    [logArgs, /warn-override/.test(r.out)],
+    [["abc123"], true],
+  );
+  check(
+    "--message-ref without the git mode is a usage error",
+    parseArgs(["--pr", "1", "--message-ref", "x"]).error !== undefined,
+    true,
+  );
+}
+
+// gh lists at most 100 files per PR: a PR at that cap is a floor, not a count.
+{
+  const files = Array.from({ length: 100 }, (_, i) => ({
+    path: `apps/api/src/f${i}.ts`,
+    additions: 10,
+    deletions: 0,
+  }));
+  const r = await run(["--pr", "9", "--json"], {
+    gh: () => JSON.stringify({ files, headRefOid: "a", commits: [] }),
+  });
+  check("a PR at gh's file cap is flagged truncated", J(r.out).truncated, true);
+}
 
 // S9: a planted repo, branch two commits past base
 {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "pr-size-")));
   try {
     const git = (...a) => {
-      const r = spawnSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], {
-        encoding: "utf8",
-        env: scrubbedGitEnv(),
-      });
+      const r = spawnSync(
+        "git",
+        [
+          ...["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"],
+          ...["-c", "commit.gpgsign=false", "-c", "core.hooksPath="],
+          ...a,
+        ],
+        { encoding: "utf8", env: scrubbedGitEnv() },
+      );
       if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
       return r.stdout;
     };
@@ -244,6 +282,10 @@ check(
       git("add", f);
     };
     git("init", "-q", "-b", "master");
+    // A leaked GIT_DIR would resolve to the outer repo: stop before any write touches it.
+    const top = git("rev-parse", "--show-toplevel").trim();
+    const norm = (p) => p.split(path.sep).join("/").replace(/\/+$/, "").toLowerCase();
+    if (norm(top) !== norm(dir)) throw new Error(`S9 repo resolved to ${top}, not ${dir}`);
     put("README.md", 1);
     git("commit", "-q", "-m", "chore: base");
     git("checkout", "-q", "-b", "feat/x");
@@ -311,7 +353,9 @@ check(
   check(
     "S11 ci.yml runs pr-size dark on pull_request",
     [
-      /node scripts\/pr-size\.mjs --base "origin\/\$\{BASE_REF\}" --github/.test(ci),
+      /node scripts\/pr-size\.mjs --base "origin\/\$\{BASE_REF\}" --message-ref "\$\{HEAD_SHA\}" --github/.test(
+        ci,
+      ),
       /name: PR size \(dark\)\s+if: github\.event_name == 'pull_request'\s+continue-on-error: true/.test(
         ci,
       ),
