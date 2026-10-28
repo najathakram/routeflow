@@ -1,29 +1,13 @@
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
-import type { OperatorPermissionGroup } from "@prisma/client";
+import { operatorDeniedGroups } from "../../auth/permissions/operator-denied-groups";
 import {
-  ALL_PERMISSION_GROUPS,
   OperatorPermissionsService,
   type PermissionPrincipal,
 } from "../../auth/permissions/operator-permissions.service";
 import { permissionDeniedException } from "../../auth/permissions/permission-errors";
 import { STAFF_CAPABILITY_RULES, staffMay } from "../../auth/permissions/staff-capabilities";
 import { PrismaService } from "../../prisma/prisma.service";
-
-/**
- * The groups an OPERATOR is denied, read live from the user row (never a JWT claim, never cached). Everyone
- * else is `[]`: TENANT_ADMIN and SUPER_ADMIN (impersonation tokens carry TENANT_ADMIN) always pass, and no
- * permissions read is made for them. `effective()` reports groups HELD, so denied = all groups minus held;
- * an OPERATOR with no row holds nothing, so every group is denied (fail closed).
- */
-export async function operatorDeniedGroups(
-  prisma: PrismaService,
-  user: PermissionPrincipal,
-): Promise<OperatorPermissionGroup[]> {
-  if (user.role !== UserRole.OPERATOR) return [];
-  const held = new Set((await new OperatorPermissionsService(prisma).effective(user)).groups);
-  return ALL_PERMISSION_GROUPS.filter((group) => !held.has(group));
-}
 
 /**
  * The ONE till predicate (BO-07): may this principal use POS mode? `staffMay` over the groups an OPERATOR is
