@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 // `@LeaderCron` wraps every cron tick in a Postgres advisory lock (common/cron-lock.ts).
 // These specs invoke the tick directly and have no database, so the lock is a PASS-THROUGH here:
 // it must still call the body — a mock that skipped it would make every assertion below measure
@@ -114,6 +116,7 @@ function make(
     tenantSubscription: {
       upsert: jest.fn((args: unknown) => prisma.tenantSubscription.upsert(args)),
       updateMany: jest.fn().mockResolvedValue({ count: overrides.casCount ?? 1 }),
+      update: jest.fn().mockResolvedValue({}),
       // X1: the under-the-lock re-check re-reads the stored row — the same mock as the pre-tx read.
       findUnique: jest.fn((args: unknown) => prisma.tenantSubscription.findUnique(args)),
     },
@@ -160,7 +163,10 @@ function make(
       // false, preserving current behavior exactly.
       findUnique: jest.fn().mockResolvedValue(sub),
       update: jest.fn().mockResolvedValue({}),
-      upsert: jest.fn().mockResolvedValue(sub),
+      // a real upsert returns the row it wrote: the card-first activation reads the new snapshot from it
+      upsert: jest.fn(async (args: any) =>
+        overrides.cardFirst ? { ...sub, ...(args?.update ?? {}) } : sub,
+      ),
     },
     auditLog: {
       findFirst: jest.fn().mockResolvedValue(null), // no processed session by default
@@ -3801,19 +3807,174 @@ describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gat
     expect(rowsOf(tx).filter((r: any) => r.action === "STRIPE_CHECKOUT_LINKED")).toHaveLength(1);
   });
 
-  it("ON, paid: the PICKED plan and Stripe's base unit_amount are written at activation, with the APPLIED marker", async () => {
-    const { svc, tx, stripe, events } = make({ transitionCount: 1, cardFirst: true });
+  const tenantRow = (status: string, readOnlyReason: string | null = null) => ({
+    id: "t1",
+    class: "PRODUCTION",
+    deletedAt: null,
+    status,
+    readOnlyReason,
+    plan: "STARTER",
+    planVersionId: "v1",
+  });
+  const sumDeltas = (events: any) =>
+    events.emit.mock.calls.reduce((s: number, c: any[]) => s + (c[3]?.amountDelta ?? 0), 0);
+
+  it("ON, paid, a TRIAL tenant: the PICKED plan and Stripe's base unit_amount are written, booked ONCE through PLAN_CHANGED (R7-1 trial)", async () => {
+    const { svc, tx, prisma, stripe, events } = make({
+      transitionCount: 1,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeSubId: null,
+        stripeCustomerId: "cus_1",
+      },
+    });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL"));
     withBase(stripe, 29_900);
     await (svc as any).onCheckoutCompleted(sessionOf("paid"));
     const written = tx.tenantSubscription.upsert.mock.calls[0][0];
-    expect(written.update).toMatchObject({
-      planKey: normalizePlanKey("BUSINESS"),
-      basePriceSnapshot: 299,
-    });
+    expect(written.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 299 });
     expect(rowsOf(tx).map((r: any) => r.action)).toContain("STRIPE_CHECKOUT_APPLIED");
-    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    expect(emitted(events)).toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(299);
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(sumDeltas(events)).toBe(299); // never +598
   });
 
+  it("R7-1: an ACTIVE tenant with no card (admin Reactivate) books new - old, no RESUMED, no paid-while-locked notice", async () => {
+    const { svc, prisma, stripe, events } = make({
+      transitionCount: 1,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: "STARTER",
+        basePriceSnapshot: 79,
+        discount: 0,
+        stripeSubId: null,
+        stripeCustomerId: "cus_1",
+        externalPayment: false,
+      },
+    });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("ACTIVE"));
+    withBase(stripe, 9_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(20);
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+    expect(sumDeltas(events)).toBe(20);
+    expect(prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data.action)).not.toContain(
+      "PAID_WHILE_ADMIN_LOCKED",
+    ); // no paid-while-locked notice
+  });
+
+  it("ON, paid, a SUSPENDED card-less tenant: +new once (r5 exactly-one)", async () => {
+    const { svc, prisma, stripe, events } = make({
+      transitionCount: 1,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: "STARTER",
+        basePriceSnapshot: 79,
+        discount: 0,
+        stripeSubId: null,
+        stripeCustomerId: "cus_1",
+      },
+    });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("SUSPENDED"));
+    withBase(stripe, 9_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(99);
+    expect(sumDeltas(events)).toBe(99);
+  });
+
+  it("ON, paid, READ_ONLY(trial_expired): a trial conversion, booked once", async () => {
+    const { svc, prisma, stripe, events } = make({
+      transitionCount: 1,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeSubId: null,
+        stripeCustomerId: "cus_1",
+      },
+    });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
+    withBase(stripe, 9_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(
+      emitted(events).filter((e: string) => e === BILLING_EVENTS.TRIAL_CONVERTED),
+    ).toHaveLength(1);
+    expect(sumDeltas(events)).toBe(99);
+  });
+
+  it("ON, paid, SUSPENDED(admin_set): the admin lock stands - nothing is booked and the paid-while-locked notice is raised", async () => {
+    const { svc, prisma, stripe, events } = make({
+      transitionCount: 0,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: "STARTER",
+        basePriceSnapshot: 79,
+        discount: 0,
+        stripeSubId: null,
+        stripeCustomerId: "cus_1",
+      },
+    });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("SUSPENDED", "admin_set"));
+    withBase(stripe, 9_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+    expect(sumDeltas(events)).toBe(0);
+    expect(prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data.action)).toContain(
+      "PAID_WHILE_ADMIN_LOCKED",
+    );
+  });
+
+  it("R7-2: completed (paid), async_payment_succeeded, invoice.paid redeliveries: the contribution is booked once", async () => {
+    const { svc, tx, prisma, stripe, events } = make({
+      transitionCount: 1,
+      cardFirst: true,
+      sub: {
+        tenantId: "t1",
+        planKey: null,
+        basePriceSnapshot: null,
+        discount: 0,
+        stripeSubId: null,
+        stripeCustomerId: "cus_1",
+      },
+    });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL"));
+    withBase(stripe, 9_900);
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    // the later deliveries find the session's APPLIED marker under the lock
+    tx.auditLog.findFirst.mockImplementation(async ({ where }: any) =>
+      where.action === "STRIPE_CHECKOUT_APPLIED" ? { id: "a1" } : null,
+    );
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(sumDeltas(events)).toBe(99);
+  });
+
+  it("R7-4: flag OFF - the legacy checkout still books through the resume CAS (SUBSCRIPTION_RESUMED)", async () => {
+    const { svc, events } = make({ transitionCount: 1, cardFirst: false });
+    await (svc as any).onCheckoutCompleted(sessionOf("paid"));
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toBe(349);
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+  });
+
+  it("R7-5: one conversion writer - markTrialConvertedTx is gone and the activation uses the never-activated helper", () => {
+    const src = fs.readFileSync(path.join(__dirname, "billing.service.ts"), "utf8");
+    expect(src).not.toContain("markTrialConvertedTx");
+    expect(fs.readFileSync(path.join(__dirname, "card-first-activation.ts"), "utf8")).toContain(
+      "isNeverActivated(",
+    );
+  });
   it("ON, async_payment_succeeded after an unpaid link: the plan is written then (the link did not write it)", async () => {
     const { svc, tx } = make({
       transitionCount: 1,

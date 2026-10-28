@@ -77,6 +77,11 @@ import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { CardFirstFlagService } from "./card-first-flag.service";
 import { isLinkPending } from "./link-pending";
+import {
+  bookCardFirstActivationTx,
+  readActivationBaseTx,
+  type CardFirstActivation,
+} from "./card-first-activation";
 import { autoLockAllowed, recordAutoLockSkip } from "./auto-lock-gate";
 import {
   PAYMENT_GRACE_DAYS,
@@ -2284,6 +2289,9 @@ export class BillingService {
     // Flag OFF (or a checkout that names no plan): EXACTLY the plain upsert this handler always
     // did — no transaction, no hook. Only an active hook wraps it, so it commits with the snapshot.
     let upserted: any;
+    // SA-774r7 (1): a card-first activation books inside the apply transaction, by subscribe()'s rule (see below).
+    const cardFirstActivate = linkOnly && !!planKeyForCheckout;
+    let activation: CardFirstActivation | null = null;
     try {
       if (transition && preparedTransition?.enabled) {
         try {
@@ -2345,9 +2353,17 @@ export class BillingService {
                   planKeyForCheckout,
                   existingOverride?.planKey,
                 );
+                const before = cardFirstActivate ? await readActivationBaseTx(tx, tenantId) : null;
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
-                if (linkOnly && planKeyForCheckout) {
-                  await this.markTrialConvertedTx(tx, tenantId, planKeyForCheckout);
+                if (before) {
+                  activation = await bookCardFirstActivationTx(
+                    tx,
+                    this.events,
+                    tenantId,
+                    before,
+                    planKeyForCheckout!,
+                    row,
+                  );
                 }
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
@@ -2421,9 +2437,17 @@ export class BillingService {
               planKeyForCheckout,
               existingOverride?.planKey,
             );
+            const before = cardFirstActivate ? await readActivationBaseTx(tx, tenantId) : null;
             const row = await tx.tenantSubscription.upsert(upsertArgs);
-            if (linkOnly && planKeyForCheckout) {
-              await this.markTrialConvertedTx(tx, tenantId, planKeyForCheckout);
+            if (before) {
+              activation = await bookCardFirstActivationTx(
+                tx,
+                this.events,
+                tenantId,
+                before,
+                planKeyForCheckout!,
+                row,
+              );
             }
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
@@ -2485,14 +2509,20 @@ export class BillingService {
     // SA-832 row 453: ONLY a billing-caused lock lifts (paymentReinstatableWhere is the CAS form of the one predicate), so
     // a session an admin's lock outlived (opened before an admin cancel / read-only / suspend) can never reinstate the
     // tenant: the CAS misses and the payment is alerted below instead.
-    const reinstated = await this.transitionAndEmit(
-      tenantId,
-      { status: { not: "ACTIVE" }, ...paymentReinstatableWhere() },
-      "ACTIVE",
-      1,
-      BILLING_EVENTS.SUBSCRIPTION_RESUMED,
-      { source: "stripe", reason: "checkout_completed", ...scheduleLeftArmed(upserted) },
-    );
+    // SA-774r7 (1): the card-first path already activated and booked inside the apply transaction (PLAN_CHANGED, plus
+    // TRIAL_CONVERTED for a trial): it never takes this resume CAS, which would book the same contribution again.
+    const cardFirstDone = activation as CardFirstActivation | null;
+    if (cardFirstDone) await this.dunning?.clearPauseAfterCommit(cardFirstDone.exit);
+    const reinstated = cardFirstDone
+      ? !cardFirstDone.locked
+      : await this.transitionAndEmit(
+          tenantId,
+          { status: { not: "ACTIVE" }, ...paymentReinstatableWhere() },
+          "ACTIVE",
+          1,
+          BILLING_EVENTS.SUBSCRIPTION_RESUMED,
+          { source: "stripe", reason: "checkout_completed", ...scheduleLeftArmed(upserted) },
+        );
     this.tenantStatusGuard.invalidate(tenantId);
     if (!reinstated) await this.alertCheckoutPaidOnLockedTenant(tenantId, session, subscriptionId);
 
@@ -2530,30 +2560,6 @@ export class BillingService {
     const item = stripeBaseItem(stripeSub, new Set(addonItemIds));
     const cents = item?.price?.unit_amount;
     return typeof cents === "number" && Number.isFinite(cents) ? cents : null;
-  }
-
-  /**
-   * SA-774 r4: a checkout that converts a trial (TRIAL, or READ_ONLY trial_*) stamps `trialConvertedAt` and emits
-   * TRIAL_CONVERTED once, in the activation transaction. A tenant that was not on a trial changes nothing.
-   */
-  private async markTrialConvertedTx(
-    tx: Prisma.TransactionClient,
-    tenantId: string,
-    planKey: string,
-  ): Promise<void> {
-    const t = await tx.tenant.findUnique({
-      where: { id: tenantId },
-      select: { status: true, readOnlyReason: true },
-    });
-    const wasTrial =
-      t?.status === "TRIAL" ||
-      (t?.status === "READ_ONLY" && (t.readOnlyReason ?? "").startsWith("trial_"));
-    if (!wasTrial) return;
-    await tx.tenantSubscription.update({
-      where: { tenantId },
-      data: { trialConvertedAt: new Date() },
-    });
-    await this.events.emit(tenantId, BILLING_EVENTS.TRIAL_CONVERTED, { planKey }, { tx });
   }
 
   /**
