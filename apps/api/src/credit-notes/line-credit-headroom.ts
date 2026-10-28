@@ -286,6 +286,8 @@ export function replayReturnedQty(
 async function externalRefundReturned(
   db: any,
   where: Record<string, unknown>,
+  // SA-840 A-2: a priced Return leaves its OWN recorded refund out (the detail estimate of an already-resolved return)
+  opts: { excludeReturnId?: string } = {},
 ): Promise<ReturnedQty[]> {
   const rows: Array<{
     orderId?: string | null;
@@ -298,6 +300,7 @@ async function externalRefundReturned(
         refundMethod: "EXTERNAL_REFUND",
         creditNoteId: null,
         status: "REFUNDED",
+        ...(opts.excludeReturnId ? { id: { not: opts.excludeReturnId } } : {}),
         ...where,
       },
       select: {
@@ -343,7 +346,7 @@ export async function loadLineCredits(
   invoiceId: string,
   lines: readonly HeadroomLine[],
   // `skipLegacy`: the ORDER POOL (below) counts the itemless refund notes of every creditable invoice once, itself.
-  opts: { excludeCreditNoteId?: string; skipLegacy?: boolean } = {},
+  opts: { excludeCreditNoteId?: string; excludeReturnId?: string; skipLegacy?: boolean } = {},
 ): Promise<Map<string, LineCredit>> {
   const notThis = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
   let credited = new Map<string, LineCredit>();
@@ -412,9 +415,11 @@ export async function loadLineCredits(
 
   // SA-727 (M4): external refunds of STANDARD returns, attributed to this invoice only when it is its order's SOLE
   // creditable invoice (with 2+ the order pool carries them: a return is not tied to one of several invoices).
-  const external = await externalRefundReturned(db, {
-    order: { invoices: { some: { id: invoiceId } } },
-  });
+  const external = await externalRefundReturned(
+    db,
+    { order: { invoices: { some: { id: invoiceId } } } },
+    { excludeReturnId: opts.excludeReturnId },
+  );
   if (external.length > 0) {
     const inv: { orderId: string | null } | null =
       (await db.invoice?.findFirst?.({ where: { id: invoiceId }, select: { orderId: true } })) ??
@@ -469,7 +474,7 @@ export const compareInvoiceFillOrder = (
 export async function loadOrderPool(
   db: any,
   orderId: string,
-  opts: { excludeCreditNoteId?: string } = {},
+  opts: { excludeCreditNoteId?: string; excludeReturnId?: string } = {},
 ): Promise<OrderPool> {
   const invoices: Array<{ id: string; createdAt: Date; items: any[] }> = await db.invoice.findMany({
     where: { orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
@@ -504,6 +509,7 @@ export async function loadOrderPool(
     lines.push(...invLines);
     const part = await loadLineCredits(db, inv.id, invLines, {
       excludeCreditNoteId: opts.excludeCreditNoteId,
+      excludeReturnId: opts.excludeReturnId,
       skipLegacy: true,
     });
     for (const [k, v] of part) credited.set(k, v);
@@ -540,7 +546,11 @@ export async function loadOrderPool(
     credited = replayReturnedQty(lines, credited, returnedOf(returns));
   }
   // SA-727 (M4): the order's EXTERNAL_REFUND STANDARD returns (no credit note), replayed like the legacy term above.
-  const external = await externalRefundReturned(db, { orderId });
+  const external = await externalRefundReturned(
+    db,
+    { orderId },
+    { excludeReturnId: opts.excludeReturnId },
+  );
   pinnedReturned.push(...external.filter((r) => r.orderItemId));
   if (external.length > 0) credited = replayReturnedQty(lines, credited, external);
   // SA-1042 A-3: line groups are replayed FIRST and fill only their own line, so replaying just them on the item-credited base

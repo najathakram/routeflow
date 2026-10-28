@@ -40,6 +40,7 @@ import {
   loadOrderPool,
   pooledRefundRefusal,
   type HeadroomLine,
+  type LineCredit,
   type OrderPool,
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
@@ -118,6 +119,13 @@ import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledg
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
 const INLINE_RETURN_USE_INLINE_ENDPOINTS = API_ERROR_CODES.INLINE_RETURN_USE_INLINE_ENDPOINTS;
+
+/**
+ * SA-840 A-2: the ONE pricing that reads no credits. `findAll` prices a whole list page and must never issue a per-row query
+ * (G6), so its estimate is priced as if every line were uncredited: exact for a line with no prior credit, an upper bound
+ * otherwise. Every other `priceReturn` caller passes what `creditsForPricing` read.
+ */
+const NO_CREDITS: ReadonlyMap<string, LineCredit> = new Map();
 
 /**
  * SA-840: the invoice columns `refundableLineShare` prices from, spread into ALL THREE reads that feed the pricer
@@ -701,6 +709,7 @@ export class ReturnsService {
         ret.items ?? [],
         ret.order ?? undefined,
         packBasesByOrder.get(ret.order?.id) ?? new Map(),
+        NO_CREDITS,
       );
       return {
         ...rest,
@@ -833,10 +842,14 @@ export class ReturnsService {
     // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
     // preview (`findOne`/`findAll`) uses, so preview == mint.
     const packBases = await this.packBasesOf(order, db);
+    // SA-840 A-2: what the lines already carry is read FIRST (under the claim's locks when SA-737 recomputes), so the price, the
+    // itemiser and the pooled refusal below all read the same credits.
+    const { credited, pool } = await this.creditsForPricing(order, db);
     const { amount, invoiceId, creditable, refusal, unresolvedProductId, split } = this.priceReturn(
       items,
       order,
       packBases,
+      credited,
     );
     if (refusal === "NOTHING_CREDITABLE") {
       throw new BadRequestException(NOTHING_CREDITABLE_MESSAGE);
@@ -965,7 +978,7 @@ export class ReturnsService {
     let effectiveAmount = amount;
     let effectiveSplit = split;
     if (creditable.length === 1 && latest) {
-      const itemised = await this.itemiseRefund(items, latest, packBases, db);
+      const itemised = await this.itemiseRefund(items, latest, packBases, credited);
       if (itemised.length > 0) {
         refundItems = itemised;
         effectiveSplit = splitOfItems(itemised);
@@ -979,8 +992,7 @@ export class ReturnsService {
     // product's). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
     let pooledRefund:
       Array<{ productId: string; orderItemId: string | null; qty: number }> | undefined;
-    if (creditable.length >= 2 && order?.id) {
-      const pool = await loadOrderPool(db, order.id);
+    if (creditable.length >= 2 && pool) {
       pooledRefund = [];
       for (const group of groupReturnItems(items).values()) {
         // priced only when billed (qty > 0) on the group's own lines: an unbilled line group was priced 0 (B959), nothing to check
@@ -1077,12 +1089,44 @@ export class ReturnsService {
   }
 
   /**
+   * SA-840 A-2 (F1): what the creditable invoices' lines already carry, read ONE way for the mint, the recorded refund and the
+   * detail estimate. 2+ creditable invoices: the order pool (every earlier refund lump replayed over the lines in fill order,
+   * with the pool itself returned for the pooled refusal); one invoice: that invoice's line credits; none: nothing to read.
+   * `own` leaves a return's own refund out (its detail estimate after it was resolved).
+   */
+  private async creditsForPricing(
+    order: any,
+    db: any,
+    own?: { returnId: string; creditNoteId?: string | null },
+  ): Promise<{ credited: Map<string, LineCredit>; pool?: OrderPool }> {
+    const creditable: any[] = (order?.invoices ?? []).filter(
+      (inv: any) => !CREDIT_SOURCE_EXCLUDED.includes(inv.status as any),
+    );
+    const exclude = {
+      excludeReturnId: own?.returnId,
+      ...(own?.creditNoteId ? { excludeCreditNoteId: own.creditNoteId } : {}),
+    };
+    if (creditable.length >= 2 && order?.id) {
+      const pool = await loadOrderPool(db, order.id, exclude);
+      return { credited: pool.credited, pool };
+    }
+    if (creditable.length === 1) {
+      const lines: HeadroomLine[] = (creditable[0].items ?? []).map(toHeadroomLine);
+      // an item with no id (never the real query) cannot carry a credit: it prices as a lump, uncredited
+      if (lines.length === 0 || lines.some((l) => !l.id)) return { credited: new Map() };
+      return { credited: await loadLineCredits(db, creditable[0].id, lines, exclude) };
+    }
+    return { credited: new Map() }; // nothing creditable: priceReturn reads no credits
+  }
+
+  /**
    * EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the mint-time gates, EXCEPT a return with no
    * single pricing axis (B969): that has no refund amount to record, and a recorded $0 would feed net sales silently. Refused
    * 409 RETURN_MIXED_UNIT_PRODUCT, like the mint.
    */
   private async externalRefundBasis(items: any[], order?: any, db: any = this.prisma.forTenant()) {
-    const priced = this.priceReturn(items, order, await this.packBasesOf(order, db));
+    const { credited } = await this.creditsForPricing(order, db);
+    const priced = this.priceReturn(items, order, await this.packBasesOf(order, db), credited);
     if (priced.refusal === "UNIT_UNRESOLVED" && priced.unresolvedProductId)
       throw this.mixedUnitRefusal(priced.unresolvedProductId);
     return priced;
@@ -1112,11 +1156,12 @@ export class ReturnsService {
     returnItems: any[],
     invoice: any,
     packBases: Map<string, ProductPackBasis>,
-    db: any = this.prisma.forTenant(),
+    // what the invoice's lines already carry (`creditsForPricing`: the same read the price used)
+    creditedBefore: ReadonlyMap<string, LineCredit>,
   ): Promise<RefundItem[]> {
     const lines: HeadroomLine[] = (invoice?.items ?? []).map(toHeadroomLine);
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
-    let credited = await loadLineCredits(db, invoice.id, lines);
+    let credited: ReadonlyMap<string, LineCredit> = creditedBefore;
     const out: RefundItem[] = [];
     const refundable = toRefundableInvoice(invoice);
     // SA-1042 rule 7: a line group is credited against the invoice items billed from its line, a pooled group against the product's.
@@ -1167,6 +1212,8 @@ export class ReturnsService {
     items: any[],
     order: any,
     packBases: Map<string, ProductPackBasis>,
+    // SA-840 A-2: REQUIRED, so the compiler finds every caller: what the lines already carry (`creditsForPricing`), or NO_CREDITS
+    credited: ReadonlyMap<string, LineCredit>,
   ): {
     amount: number;
     invoiceId?: string;
@@ -1250,8 +1297,8 @@ export class ReturnsService {
       groupInvoiceItems<any>(g, billedAll).reduce((t: number, it: any) => t + Number(it.qty), 0);
     // SA-840: each returned group is FILLED over its billed lines by `planProductRefund` (the same fill the mint uses) and every
     // filled line is priced by `refundableLineShare` on its own invoice: net after its discount share, plus the tax the invoice
-    // charged on it. The old pooled average ignored all of that (B704). The preview has no credits to read (pure, DB-free), so it
-    // prices from an uncredited line; the mint prices against what the lines already carry.
+    // charged on it. The old pooled average ignored all of that (B704). The function stays pure and DB-free: its callers read the
+    // credits (`creditsForPricing`) and pass them in, so the preview, the mint and the recorded refund price against the same ones.
     // B969 (SA-628p): the fill runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
     // `standardReturnPieces`, each billed item through `piecesPerQtyOf`) so 1 box of a 2-box line billed as 24 pieces refunds
     // 12 x (120 / 24), not 1 x (120 / 24).
@@ -1273,7 +1320,7 @@ export class ReturnsService {
       const { items: priced } = priceProductSlice({
         lines: groupInvoiceItems<HeadroomLine>(g, billed.lines),
         invoiceOf: billed.invoiceOf,
-        credited: new Map(),
+        credited,
         productId: g.productId,
         axis,
         mode: "count",
@@ -1913,10 +1960,16 @@ export class ReturnsService {
       refundEstimate = null;
       refusal = "INLINE";
     } else {
+      // SA-840 A-2: detail = mint = recorded refund: it reads the credits the same way, leaving this return's own refund out
+      const { credited } = await this.creditsForPricing(ret.order, this.prisma.forTenant(), {
+        returnId: ret.id,
+        creditNoteId: ret.creditNoteId,
+      });
       ({ amount: refundEstimate, refusal } = this.priceReturn(
         ret.items,
         ret.order ?? undefined,
         await this.packBasesOf(ret.order),
+        credited,
       ));
     }
 
