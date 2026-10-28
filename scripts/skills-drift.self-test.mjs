@@ -176,6 +176,41 @@ const run = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "u
     true,
   );
   check("after sync: no drift", driftReport(repo, glob).drift, []);
+
+  // D6: an uncommitted global edit is the only copy of that text, so sync refuses to overwrite it.
+  put(path.join(ck, "a", "SKILL.md"), "# a, edited by hand and not committed\n");
+  put(path.join(repo, "a", "references", "two.md"), "two\n");
+  const d6 = syncSkills(repo, glob);
+  check(
+    "D6 an uncommitted global edit is refused and kept; a new file is still written",
+    [
+      d6.refused.map((r) => [r.file, /uncommitted/.test(r.why)]),
+      readFileSync(path.join(ck, "a", "SKILL.md"), "utf8"),
+      d6.copied,
+    ],
+    [[["a/SKILL.md", true]], "# a, edited by hand and not committed\n", ["a/references/two.md"]],
+  );
+}
+{
+  // D5: a plain global dir (no git) has no history, so an overwrite is refused unless --force; the CLI exits 1.
+  const { repo, glob } = fresh("d5");
+  put(path.join(glob, "a", "SKILL.md"), "# a, only copy\n");
+  const r = run(["--sync", "--repo", repo, "--global", glob]);
+  check(
+    "D5 outside git: refused, exit 1, the global text survives",
+    [
+      r.status,
+      /refused a\/SKILL\.md: not in a git checkout/.test(r.stdout),
+      readFileSync(path.join(glob, "a", "SKILL.md"), "utf8"),
+    ],
+    [1, true, "# a, only copy\n"],
+  );
+  const f = run(["--sync", "--force", "--repo", repo, "--global", glob]);
+  check(
+    "D5 --force overwrites",
+    [f.status, readFileSync(path.join(glob, "a", "SKILL.md"), "utf8")],
+    [0, "# a\n"],
+  );
 }
 {
   const r = run([

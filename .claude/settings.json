@@ -29,7 +29,12 @@
       {
         "hooks": [
           { "type": "command", "command": "node scripts/campaign/plane-triage.mjs --brief" },
-          { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" }
+          { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" },
+          {
+            "type": "command",
+            "command": "node scripts/skills-drift.mjs --check --warn",
+            "timeout": 10
+          }
         ]
       },
       {
