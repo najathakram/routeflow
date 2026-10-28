@@ -161,6 +161,7 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
+import { CustomerToCollectChip } from "./_components/CustomerToCollectChip";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
 import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-order-action";
@@ -2328,6 +2329,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 variant="neutral"
                 label={customer.customerType === "individual" ? "Individual" : "Business"}
               />
+              <CustomerToCollectChip customerId={id} summary={statement?.toCollect} />
             </div>
             <p className="mt-1 text-sm text-navy/70">
               {[

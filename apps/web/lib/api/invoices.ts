@@ -3,6 +3,7 @@ import type {
   InvoiceStatus,
   OverrideStampView,
   RestrictionAck,
+  ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -156,6 +157,8 @@ export interface InvoicePayment {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** SA-1026: STAFF reads only: "To collect" (a check not received yet), derived by the server. Never computed here. */
+  toCollect?: ToCollectState;
   /** P-4: derived by the API; absent = never revised (no badge). */
   revisedAt?: string | null;
   /** P-4: > 0 only when overpaid; absent = nothing shown. */
@@ -297,6 +300,8 @@ export function useInvoices(
      * `ListInvoicesDto.isOverdue`).
      */
     isOverdue?: boolean;
+    /** SA-1026: only invoices that read To collect (a check not received yet); staff only, honoured by the server. */
+    toCollect?: boolean;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
