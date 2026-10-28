@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -215,12 +216,13 @@ try {
     () => FE.cleanupTree(repo.dir, { repo: repo.dir }),
   );
   await check(
-    "cleanup refuses a lane's worktree (locked by someone else, or unlocked); work and lock survive",
-    [true, true, true, true],
+    "cleanup refuses a lane's or a probe's worktree (locked otherwise, or unlocked), even beside an eval tree",
+    [true, true, true, true, true],
     async () => {
       const lane = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evl-")));
       const wt = path.join(lane, "wt");
       repo.git("worktree", "add", "--detach", wt, "HEAD");
+      const evalTree = await FE.prepare(task, { repo: repo.dir }); // an rf-eval lock exists elsewhere
       try {
         writeFileSync(path.join(wt, "BRIEF.md"), "lane\n");
         writeFileSync(path.join(wt, "wip.txt"), "keep\n");
@@ -235,14 +237,44 @@ try {
         repo.git("worktree", "lock", "--reason", "lane in use", wt);
         const locked = refused(() => FE.cleanupTree(wt, { repo: repo.dir }));
         const still = repo.git("worktree", "list", "--porcelain").includes("locked lane in use");
-        return [open, locked, existsSync(path.join(wt, "wip.txt")), still];
+        repo.git("worktree", "unlock", wt);
+        repo.git("worktree", "lock", "--reason", "rf-probe", wt);
+        const probe = refused(() => FE.cleanupTree(wt, { repo: repo.dir }));
+        return [open, locked, existsSync(path.join(wt, "wip.txt")), still, probe];
       } finally {
+        evalTree.cleanup();
         spawnSync("git", ["worktree", "unlock", wt], { cwd: repo.dir });
         repo.git("worktree", "remove", "--force", wt);
         rmSync(lane, { recursive: true, force: true });
       }
     },
   );
+  await check(
+    "cleanup unlinks a link the agent planted (its target survives) and the tree is really gone",
+    [true, false, true],
+    async () => {
+      const outside = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evo-")));
+      writeFileSync(path.join(outside, "keep.txt"), "keep\n");
+      try {
+        const p = await FE.prepare(task, { repo: repo.dir });
+        symlinkSync(outside, path.join(p.tree, "planted"), "junction");
+        const ok = FE.cleanupTree(p.tree, { repo: repo.dir });
+        return [ok, existsSync(p.tree), existsSync(path.join(outside, "keep.txt"))];
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
+  await check("cleanup keeps the parent of a --dir tree", [true, false], async () => {
+    const parent = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evp-")));
+    try {
+      const p = await FE.prepare(task, { repo: repo.dir, dir: path.join(parent, "wt") });
+      p.cleanup();
+      return [existsSync(parent), existsSync(p.tree)];
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
   const ts = "w.spec.ts:3:5 - error TS2322: Type 'string' is not assignable to type 'number'.\n";
   const gradeWith = async (output, status = 1) => {
     const t = { ...task, hiddenTests: [{ path: "w.spec.ts", fromSha: wSha }] };
@@ -276,6 +308,18 @@ try {
       return [
         (await gradeWith(tsc("w.spec.ts", "TS2322") + none)).result,
         (await gradeWith(tsc("src/foo.ts", "TS1005") + none)).result,
+      ];
+    },
+  );
+  await check(
+    "same file name elsewhere is not the hidden test: TS and SyntaxError both grade fail; mixed errors fail",
+    ["fail", "fail", "fail"],
+    async () => {
+      const none = "Tests:       0 total\n";
+      return [
+        (await gradeWith(tsc("src/legacy/w.spec.ts", "TS1005") + none)).result,
+        (await gradeWith("neww.spec.ts:3\nSyntaxError: Unexpected token\n")).result,
+        (await gradeWith(tsc("w.spec.ts", "TS2322") + tsc("src/foo.ts", "TS1005") + none)).result,
       ];
     },
   );
