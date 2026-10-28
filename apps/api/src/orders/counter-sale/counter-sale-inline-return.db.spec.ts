@@ -91,6 +91,7 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
   let large: string; // $12.00: the item returned in case (b)
   let bulk: string; // $92.00: a customer's existing balance (case e)
   let limitedId = ""; // a $100.00 credit limit (case e)
+  let limitedSale: { orderId: string; total: number } | undefined; // the sale case (e) rang, re-checked by case (f)
   const tenantIds: string[] = [];
   const userIds: string[] = [];
   const slug = assertTestTenant(`qa-cs-inlret-${RUN}`, "counter-sale-inline-return.db.spec.ts");
@@ -434,6 +435,29 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
     expect(f.returns).toHaveLength(1);
     // the $4.00 credit paid this sale down: $6.00 is left on the sale, so exposure is 98.00
     expect(res.balanceDue).toBeCloseTo(6, 2);
+    limitedSale = { orderId: f.orders[0].id, total: Number(f.orders[0].total) };
+  }, 60_000);
+
+  it("(f) creditRecheck nets the STORED return credit when it judges what is left: the case (e) sale re-checked with a $6.00 cash tender that did not record is not over the limit", async () => {
+    expect(limitedSale).toBeDefined();
+    // balance 92 (the other sale), this sale $10.00 with a $4.00 stored return credit, a $6.00 cash tender not recorded:
+    // gross it judges 102 (over 100, the figures come back); net of the credit it judges 98 (nothing to report).
+    const over = await tenantCtx.run(tenantId, () =>
+      (
+        service as unknown as {
+          creditRecheck: (...a: unknown[]) => Promise<{ limit: number; exposure: number } | null>;
+        }
+      ).creditRecheck(
+        limitedSale!.orderId,
+        limitedId,
+        limitedSale!.total,
+        { method: "CASH", amount: 6 },
+        undefined,
+        "COUNTER_PAYMENT_NOT_RECORDED",
+        staff(),
+      ),
+    );
+    expect(over).toBeNull();
   }, 60_000);
 
   it("(d) with the add-on off the field is refused 403 and nothing is written", async () => {
