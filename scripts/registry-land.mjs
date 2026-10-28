@@ -34,6 +34,7 @@ import {
   REPO_ROOT,
   registryMode,
   landCheckOverride,
+  landCheckTimeoutMs,
   syncRepoOverride,
   syncStatePath,
 } from "./lib/registry-root.mjs";
@@ -158,6 +159,7 @@ function land(sha, claims) {
     const r = spawnSync(process.execPath, [CHECK, "--landing"], {
       cwd: repoDir,
       encoding: "utf8",
+      timeout: landCheckTimeoutMs(),
       env: {
         ...childEnv(),
         CAMPAIGN_CHECK_STATUS_DIR: join(root, "status"),
@@ -165,6 +167,10 @@ function land(sha, claims) {
       },
     });
     if (r.status === 0) return;
+    if (r.error?.code === "ETIMEDOUT")
+      bad(
+        `campaign-check timed out after ${landCheckTimeoutMs() / 1000}s; nothing pushed — re-run`,
+      );
     const tail = `${r.stdout}${r.stderr}`.trim().split("\n").slice(-20).join("\n");
     throw new RegistryError(`${tail}\nregistry:land: campaign-check failed; nothing pushed`);
   };

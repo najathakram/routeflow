@@ -47,9 +47,25 @@ export const syncStatePath = () =>
 export const syncRepoOverride = () =>
   (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_SYNC_REPO) || null;
 // REGISTRY_LAND_CHECK_CMD (a script run instead of campaign-check.mjs by registry:land) is a test seam
-// with the same gate as BUGS_SYNC_REPO: honoured only under BUGS_SELF_TEST=1.
-export const landCheckOverride = (env = process.env) =>
-  (env.BUGS_SELF_TEST === "1" && env.REGISTRY_LAND_CHECK_CMD) || null;
+// with the same gate as BUGS_SYNC_REPO: honoured only under BUGS_SELF_TEST=1, and it says so (once
+// per process) when it is, like the other test hooks.
+let landCheckWarned = false;
+export const landCheckOverride = (env = process.env) => {
+  const cmd = (env.BUGS_SELF_TEST === "1" && env.REGISTRY_LAND_CHECK_CMD) || null;
+  if (cmd && !landCheckWarned) {
+    landCheckWarned = true;
+    console.error(
+      `WARNING: REGISTRY_LAND_CHECK_CMD is set — a test-only hook: running ${cmd} instead of campaign-check.mjs`,
+    );
+  }
+  return cmd;
+};
+// The campaign-check child of registry:land runs under the clone lock, so it is capped (10 min).
+// REGISTRY_LAND_CHECK_TIMEOUT_MS shortens it, under BUGS_SELF_TEST=1 only.
+export const LAND_CHECK_TIMEOUT_MS = 10 * 60 * 1000;
+export const landCheckTimeoutMs = (env = process.env) =>
+  (env.BUGS_SELF_TEST === "1" && Number(env.REGISTRY_LAND_CHECK_TIMEOUT_MS)) ||
+  LAND_CHECK_TIMEOUT_MS;
 export const REGISTRY_FIX_COMMAND = "npm run registry:clone";
 
 // Where the register sits inside the repo while the mode is "tracked".
