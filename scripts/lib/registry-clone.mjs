@@ -58,16 +58,19 @@ export const firstLine = (s) => s.trim().split("\n")[0];
 // compared and merged byte-for-byte. stdout is trimmed unless `raw` (file content).
 export function registryGit(c, args, { timeoutMs = c.timeoutMs, ok = false, raw = false } = {}) {
   c.hooks?.onGit?.(args); // test seam: counts the capped calls the lock-wait budget has to cover
-  const r = spawnSync(
-    "git",
-    ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "core.autocrlf=false", ...args],
-    {
-      cwd: c.cloneDir,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      env: { ...scrubbedGitEnv(), GIT_TERMINAL_PROMPT: "0" },
-    },
-  );
+  const forced = c.hooks?.gitResult?.(args); // test seam: a spawn result to use instead of git's
+  const r =
+    forced ??
+    spawnSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "core.autocrlf=false", ...args],
+      {
+        cwd: c.cloneDir,
+        encoding: "utf8",
+        timeout: timeoutMs,
+        env: { ...scrubbedGitEnv(), GIT_TERMINAL_PROMPT: "0" },
+      },
+    );
   const stdout = r.stdout ?? "";
   const out = {
     status: r.error ? -1 : r.status,

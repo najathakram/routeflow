@@ -48,7 +48,11 @@ if (process.argv[2] === "--worker") {
             JSON.stringify({ pid: process.pid, token: "usurper", at: Date.now() }),
           );
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
-        appendFileSync(join(root, "rows.txt"), `${line}\n`);
+        // idempotent, like a real writer (idemKey / dedupe): a retry after a push that landed but
+        // was reported failed must not add the row twice
+        const rows = join(root, "rows.txt");
+        if (!readFileSync(rows, "utf8").split("\n").includes(line))
+          appendFileSync(rows, `${line}\n`);
         return { paths: [`${PFX}/rows.txt`], result: line };
       },
       { cloneDir, lockWaitMs: 60000 },
@@ -662,6 +666,80 @@ async function main() {
       bare = err.message;
     }
     check("allowDirty without a capture is refused", /needs a capture/.test(bare ?? ""), true);
+    // Fold 4 MUST: only merge-file statuses 1-127 are conflicts; 255, null (timeout) and -1 are errors
+    // that leave `ours` and `base` untouched. Capture writes base before ours.
+    const oursF = join(capDir, "ours");
+    const baseF = join(capDir, "base");
+    const mergeAs = (status) => ({
+      gitResult: (a) => (a[0] === "merge-file" ? { status, stdout: "", stderr: "" } : undefined),
+    });
+    git(A, "fetch", "origin", "main");
+    git(A, "reset", "--hard", "origin/main");
+    rmSync(capDir, { recursive: true, force: true });
+    const head = git(A, "show", `HEAD:${recPath}`);
+    let edited;
+    for (const [name, status] of [
+      ["255", 255],
+      ["null (timeout kill)", null],
+      ["-1 (spawn error)", -1],
+    ]) {
+      rmSync(capDir, { recursive: true, force: true });
+      git(A, "checkout", "--", PFX);
+      edit("MERGE-ERR");
+      edited = readFileSync(rec, "utf8");
+      const e = record(mergeAs(status));
+      check(
+        `merge-file status ${name}: exit 2, ours and base byte-identical, nothing pushed`,
+        [
+          e?.exitCode,
+          existsSync(oursF) && readFileSync(oursF, "utf8") === edited,
+          existsSync(baseF) && readFileSync(baseF, "utf8").trim() === head.trim(),
+          /MERGE-ERR/.test(showOrigin("bugs/B12.md")),
+        ],
+        [2, true, true, false],
+      );
+    }
+    // a capture folder with ours but no base (a kill between the two writes) is refused on resume
+    const keptOurs = readFileSync(oursF, "utf8");
+    rmSync(baseF);
+    git(A, "checkout", "--", PFX);
+    const noBase = record();
+    check(
+      "a kept capture with ours but no base: refused with exit 2, ours intact, origin unchanged",
+      [
+        noBase?.exitCode,
+        readFileSync(oursF, "utf8") === keptOurs,
+        existsSync(baseF),
+        /MERGE-ERR/.test(showOrigin("bugs/B12.md")),
+      ],
+      [2, true, false, false],
+    );
+    rmSync(capDir, { recursive: true, force: true });
+    // capture order: if the base cannot be read, ours must not be left behind without it
+    edit("ORDER");
+    const showDies = {
+      onGit: (a) => {
+        if (a[0] === "show") throw new Error("killed at show");
+      },
+    };
+    record(showDies);
+    check(
+      "capture order: ours never exists without base",
+      !existsSync(oursF) || existsSync(baseF),
+      true,
+    );
+    rmSync(capDir, { recursive: true, force: true });
+    // SHOULD: a failed or timed-out `git show HEAD:path` at capture refuses, never writes base as ""
+    const noShow = record({
+      gitResult: (a) => (a[0] === "show" ? { status: null, stdout: "", stderr: "" } : undefined),
+    });
+    check(
+      "a failed git show at capture: exit 2, no capture written",
+      [noShow?.exitCode, existsSync(oursF), existsSync(baseF)],
+      [2, false, false],
+    );
+    git(A, "checkout", "--", PFX);
+    rmSync(capDir, { recursive: true, force: true });
   });
   await section("tracked mode unchanged", async () => {
     const reg = join(tmp, "fixture-reg");
