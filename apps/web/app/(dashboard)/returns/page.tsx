@@ -26,6 +26,7 @@ import {
 } from "@/lib/api/returns";
 import { useCustomers } from "@/lib/api/customers";
 import { useOrders, type Order } from "@/lib/api/orders";
+import { returnLineQtyText } from "@/lib/return-line-qty";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { FindSaleByNumber } from "./_components/FindSaleByNumber";
@@ -79,6 +80,8 @@ interface ReturnItemRow {
   productId: string;
   productName: string;
   orderedQty: number;
+  /** SA-1042 B9a: what the line counts, in pieces with its own unit beside it ("400 pcs (2 Cases)"). */
+  lineText: string;
   qty: string;
   notes: string;
 }
@@ -193,6 +196,7 @@ function CreateReturnModal({
           productId: item.productId,
           productName: item.product?.name ?? item.name ?? item.productId,
           orderedQty: Number(item.qty),
+          lineText: returnLineQtyText(item),
           qty: "",
           notes: "",
         })),
@@ -216,7 +220,8 @@ function CreateReturnModal({
     selectedReturnItems.forEach((row, i) => {
       const qty = parseFloat(row.qty);
       if (isNaN(qty) || qty <= 0) errs[`qty_${i}`] = "Qty must be > 0.";
-      if (qty > row.orderedQty) errs[`qty_${i}`] = `Cannot exceed ordered qty (${row.orderedQty}).`;
+      if (qty > row.orderedQty)
+        errs[`qty_${i}`] = `Cannot exceed ordered qty (${row.orderedQty} pcs).`;
     });
     return errs;
   }
@@ -380,7 +385,7 @@ function CreateReturnModal({
                       Ordered
                     </th>
                     <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/70">
-                      Return Qty
+                      Return qty (pcs)
                     </th>
                     <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
                       Notes
@@ -391,7 +396,7 @@ function CreateReturnModal({
                   {returnItems.map((row, i) => (
                     <tr key={row.productId}>
                       <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
-                      <td className="px-3 py-2 text-center text-navy/70">{row.orderedQty}</td>
+                      <td className="px-3 py-2 text-center text-navy/70">{row.lineText}</td>
                       <td className="px-3 py-2">
                         <input
                           type="number"
