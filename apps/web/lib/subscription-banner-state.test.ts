@@ -698,8 +698,8 @@ describe("subscriptionBannerState - the 14-day clock (SA-1037 PR-6)", () => {
   const hoursAfter = (h: number) => new Date(T0.getTime() + h * 3_600_000);
 
   it("R6: enforced at +150 h: NOT the final-day strip (the pause is on day 14)", () => {
-    expect(subscriptionBannerState(owing(), "admin", hoursAfter(150)).kind).not.toBe("final-day");
-    expect(subscriptionBannerState(owing(), "staff", hoursAfter(150)).kind).not.toBe("final-day");
+    expect(subscriptionBannerState(owing(), "admin", hoursAfter(150)).kind).toBe("grace");
+    expect(subscriptionBannerState(owing(), "staff", hoursAfter(150)).kind).toBe("grace");
   });
 
   it("R6: enforced at +315 h: the final-day strip", () => {
@@ -707,7 +707,7 @@ describe("subscriptionBannerState - the 14-day clock (SA-1037 PR-6)", () => {
   });
 
   it("the final-day strip starts at +312 h and not before", () => {
-    expect(subscriptionBannerState(owing(), "admin", hoursAfter(311)).kind).not.toBe("final-day");
+    expect(subscriptionBannerState(owing(), "admin", hoursAfter(311)).kind).toBe("grace");
     expect(subscriptionBannerState(owing(), "admin", hoursAfter(312)).kind).toBe("final-day");
   });
 
