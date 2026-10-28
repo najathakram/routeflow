@@ -48,7 +48,6 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   OVERPAID_EPSILON,
-  isPaidAtSale,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
@@ -140,6 +139,7 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { listRowFlags } from "./invoice-row-flags";
 import {
   applyInvoiceSearchAndDateFilters,
   applyInvoiceStatusFilters,
@@ -2902,7 +2902,7 @@ export class InvoicesService {
     // SA-488 / row 308: the tenant's zone, read ONCE per request: the isOverdue filter and every row's
     // isOverdue flag end the due day in it (one cutoff, so the list and its filter always agree).
     const tz = (await this.resolveTenantInvoiceDefaults()).timezone;
-    applyInvoiceStatusFilters(where, query, tz);
+    applyInvoiceStatusFilters(where, query, tz, user?.role);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -2990,7 +2990,7 @@ export class InvoicesService {
         isOverdue,
         depositAmount,
         depositOverdue,
-        paidAtSale: isPaidAtSale(inv),
+        ...listRowFlags(inv),
       };
     });
 
@@ -3095,7 +3095,7 @@ export class InvoicesService {
       items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
-      paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
+      ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),

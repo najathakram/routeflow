@@ -263,6 +263,9 @@ export interface CustomerStatement {
    *  delivered order behind them (standalone, cancelled/draft order, quote) —
    *  shown beside, never inside, `creditExposure`. */
   pendingExposure?: number;
+  /** SA-1026, operator statement only (absent on the buyer portal): how many of the customer's invoices read To collect and
+   *  their summed balance due. The server derives both; never computed here. */
+  toCollect?: { count: number; balance: number };
   /** Lifetime billed total, summed by the DATABASE over the whole history —
    *  never a reduce over the capped `transactions` ledger below. */
   lifetimeInvoiced: number;
