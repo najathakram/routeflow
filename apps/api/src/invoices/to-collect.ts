@@ -106,7 +106,9 @@ export async function markToCollect(
 export async function markOpenInvoicesToCollect(
   prisma: {
     getTenantId(): string | null | undefined;
-    tenantTransaction<T>(fn: (tx: Pick<Prisma.TransactionClient, "invoice">) => Promise<T>): Promise<T>;
+    tenantTransaction<T>(
+      fn: (tx: Pick<Prisma.TransactionClient, "invoice">) => Promise<T>,
+    ): Promise<T>;
   },
   invoices: readonly { id: string; status: string }[],
   method: ToCollectMethod,
@@ -115,9 +117,42 @@ export async function markOpenInvoicesToCollect(
   if (!tenantId) throw new Error("markOpenInvoicesToCollect: no tenant in context");
   const open = invoices.filter((i) => OPEN.includes(i.status));
   const drafts = invoices.filter((i) => i.status === InvoiceStatus.DRAFT).length;
-  if (drafts > 0) logger.warn(`to-collect: ${drafts} DRAFT invoice(s) left unmarked (not issued yet)`);
+  if (drafts > 0)
+    logger.warn(`to-collect: ${drafts} DRAFT invoice(s) left unmarked (not issued yet)`);
   if (open.length === 0) return 0;
   return prisma.tenantTransaction((tx) =>
     markToCollect(tx, { tenantId, invoiceIds: open.map((i) => i.id), method }),
   );
+}
+
+/**
+ * AR aging's "To collect" column (staff only): per customer, how many open invoices read To collect (TO_COLLECT or UNKNOWN,
+ * shown never hidden) and the sum of their balances, cents-exact. The rows carry the state `toCollectState` already gave
+ * them; this only groups. A customer with none is absent. Ordered by customer id for a stable response.
+ */
+export function toCollectByCustomer(
+  rows: readonly {
+    customerId: string;
+    businessName: string;
+    balance: number;
+    toCollect: ToCollectState;
+  }[],
+): { customerId: string; businessName: string; count: number; balance: number }[] {
+  const by = new Map<
+    string,
+    { customerId: string; businessName: string; count: number; balance: number }
+  >();
+  for (const r of rows) {
+    if (r.toCollect === "NONE" || r.balance <= 0) continue;
+    const cur = by.get(r.customerId) ?? {
+      customerId: r.customerId,
+      businessName: r.businessName,
+      count: 0,
+      balance: 0,
+    };
+    cur.count += 1;
+    cur.balance = Math.round((cur.balance + r.balance) * 100) / 100;
+    by.set(r.customerId, cur);
+  }
+  return [...by.values()].sort((a, b) => (a.customerId < b.customerId ? -1 : 1));
 }
