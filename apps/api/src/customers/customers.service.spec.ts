@@ -1758,6 +1758,27 @@ describe("CustomersService", () => {
       expect(settledBucket?.income).toBe(150);
       expect(paidBucket?.income).toBe(0);
     });
+
+    it("SA-1048 A1/A2: the monthly income and expense totals round by roundMoney (2.135 -> 2.14)", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      const now = new Date();
+      const day = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 1, paidAt: day, settledAt: day },
+        { amount: 1.135, paidAt: day, settledAt: day },
+      ]);
+      prisma.expense.findMany.mockResolvedValue([
+        { amount: 1, date: day },
+        { amount: 1.135, date: day },
+      ]);
+
+      const chart = await service.getIncomeChart("cust-1");
+
+      const label = day.toLocaleString("en-US", { month: "short", year: "numeric" });
+      const bucket = chart.find((m) => m.month === label);
+      expect(bucket?.income).toBe(2.14);
+      expect(bucket?.expenses).toBe(2.14);
+    });
   });
 
   // ─── T2 (REG-B169) — orderBy carries an id tiebreaker (createdAt ties are

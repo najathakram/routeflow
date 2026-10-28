@@ -1511,8 +1511,8 @@ export class CustomersService {
 
       return {
         month,
-        income: Math.round(income * 100) / 100,
-        expenses: Math.round(expense * 100) / 100,
+        income: roundMoney(income),
+        expenses: roundMoney(expense),
       };
     });
   }
