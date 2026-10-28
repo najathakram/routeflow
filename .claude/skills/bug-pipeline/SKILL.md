@@ -1,6 +1,6 @@
 ---
 name: bug-pipeline
-description: The house pipeline for BUG FIXES — a known defect with an observable wrong behavior (a bug-registry id, a regression, a repro, "X is broken") goes through evidence gathering, adversarial root-cause refutation, one Fable fix ruling, repro-first tests that must fail on the bug's own wrong value, then the shared dev-pipeline engine in bugfix mode (radius-scoped review on Opus for HIGH-risk, sibling sweep, fix-revert probes, harness-integrity check). Use whenever the user asks to fix a bug, defect, regression, or broken/incorrect behavior with a known symptom, cites a bug id, pastes an error or repro, or says "bug pipeline" or "/bug-pipeline". For NEW features, capabilities, refactors, or hardening with no single defect, use dev-pipeline instead. Skip only for trivial typo-class escapes.
+description: The house pipeline for BUG FIXES — a known defect with an observable wrong behavior (a bug-registry id, a regression, a repro, "X is broken") goes through evidence gathering, adversarial root-cause refutation, one Opus fix ruling, repro-first tests that must fail on the bug's own wrong value, then the shared dev-pipeline engine in bugfix mode (radius-scoped review on Opus for HIGH-risk, sibling sweep, fix-revert probes, harness-integrity check). Use whenever the user asks to fix a bug, defect, regression, or broken/incorrect behavior with a known symptom, cites a bug id, pastes an error or repro, or says "bug pipeline" or "/bug-pipeline". For NEW features, capabilities, refactors, or hardening with no single defect, use dev-pipeline instead. Skip only for trivial typo-class escapes.
 ---
 
 # Bug pipeline
@@ -110,11 +110,11 @@ diverges from intent, or the reason the suspicion cannot be the cause." It must 
 `undetermined` (with the missing evidence). This stage exists because suggested fixes are wrong often enough to
 have burned whole batches; a fix built on an unverified cause is the most expensive kind of green.
 
-### S3 — Fix ruling (Fable @ high — a decision over the brief + refutation, no repo access)
+### S3 — Fix ruling (Opus @ high — a decision over the brief + refutation, no repo access)
 
 > **Design Gate (owner R19, mandatory):** before this ruling is approved, apply the `future-proof` skill's "Fixing: the area, not the symptom" section (big-picture fix, area sweep and chunked fixes, owner questions batched now) and put its Lite gate in `cause-ruling.md`; a P0 hotfix carries the Hotfix gate and files its area sweep as the follow-up. No build without it (`.claude/skills/future-proof/SKILL.md`).
 
-Fable receives S1 + S2 verbatim and rules once, into `cause-ruling.md` (template):
+Opus receives S1 + S2 verbatim and rules once, into `cause-ruling.md` (template):
 
 1. **Cause verdict** — accept, or send S2 back with the specific question (one round; still undetermined →
    surface to the owner, do not build).
@@ -135,20 +135,20 @@ Fable receives S1 + S2 verbatim and rules once, into `cause-ruling.md` (template
    named REG test must go red for each; the engine runs these strictly sequentially after the wave loop and
    verifies every restore with one shared `checksum:after` agent (see S6).
 
-### S4 — Test plan (Fable @ high rules; Sonnet @ medium transcribes)
+### S4 — Test plan (Opus @ high rules; Sonnet @ medium transcribes)
 
-Fable rules the decisions — REG token per bug id, the exact expected value TODAY (the wrong one) and AFTER the
+Opus rules the decisions — REG token per bug id, the exact expected value TODAY (the wrong one) and AFTER the
 fix, the harness note — as a compact ruling. A Sonnet `medium` agent expands that ruling into the full
 `bug-test-plan.md` template (per test: id T#, REG token, setup, Given/When/Then, the harness note the engine's
 harness-integrity check will verify) and returns a **≤ 1.5K diff brief**: what it filled, what it could not
-decide (raised to Fable, never guessed). Fable rules on the brief; it does not re-read the expanded file. Pins
+decide (raised to Opus, never guessed). Opus rules on the brief; it does not re-read the expanded file. Pins
 carry no REG token and stay outside the red gate. **The red bar is behavioral**: each REG test must fail on its
 own wrong value, not merely fail — reproduction is the point, and the engine enforces it in bugfix mode (a red
 set that stays non-behavioral after remediation is a major blocker, not a note).
 
-### S5 — Build plan + args (Fable @ high rules; Sonnet @ medium transcribes; the args block is mandatory)
+### S5 — Build plan + args (Opus @ high rules; Sonnet @ medium transcribes; the args block is mandatory)
 
-Same split as S4: Fable's ruling covers the package boundaries, file ownership, the hard lines and the tiered
+Same split as S4: Opus's ruling covers the package boundaries, file ownership, the hard lines and the tiered
 commands; a Sonnet `medium` agent transcribes `build-plan.md` with the standard package structure (see
 dev-pipeline's template) plus the **"## Pipeline args"** block containing, beyond the standard fields:
 `mode: 'bugfix'`, an `args.tasks[]` array typed `'root-cause' | 'repro-test' | 'fix' | 'revert-probe'` (plus

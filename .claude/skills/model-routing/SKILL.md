@@ -1,25 +1,25 @@
 ---
 name: model-routing
 description: >-
-  How to get the best coding work out of Claude Fable 5.1 while spending the fewest tokens and the least
-  wall-clock: which model (Fable 5.1 / Opus 5.5 / Sonnet 5 / Haiku 4.5) and which effort level to give every
-  task and subagent, what Fable should write itself versus delegate, how to prompt Fable 5.1, how to keep
+  How to get the best coding work out of Claude (Opus) while spending the fewest tokens and the least
+  wall-clock: which model (Opus 5.5 / Sonnet 5 / Haiku 4.5) and which effort level to give every
+  task and subagent, what Opus should write itself versus delegate, how to prompt Opus, how to keep
   fan-outs cache-friendly and fast, and how to measure a run so trades are made on numbers. Use whenever
-  the user asks which model or effort to use, mentions Fable, Opus, Sonnet, Haiku, cost, tokens, budget,
+  the user asks which model or effort to use, mentions Opus, Sonnet, Haiku, cost, tokens, budget,
   "too expensive", "too slow", speed, delegation, subagents, "optimize tokens", "model routing", or
   "/model-routing" — and read it before starting any multi-agent, Workflow, or dev-pipeline work.
 ---
 
-# Model routing — decisions on Fable, volume on Sonnet, verdicts on Opus, mechanics on Haiku
+# Model routing — decisions and verdicts on Opus, volume on Sonnet, mechanics on Haiku (Fable retired 2026-10-15)
 
-The interactive session is Fable 5.1, the most capable and most expensive tier ($10 in / $50 out per
-MTok). Its output tokens are where the money goes, and effort is where the time goes. Everything below
-follows from three facts: **decision density decides the model, difficulty decides the effort, and no
-subagent ever inherits the session's effort** (they do by default, so a Fable session at `xhigh` silently
+The interactive session is Opus (alias `opus`, today Opus 5.5 at $4 in / $20 out per MTok;
+the Fable 5.1 tier it replaced, retired 2026-10-15, cost $10 / $50). Its output tokens are where the money goes, and effort is where the time goes.
+Everything below follows from three facts: **decision density decides the model, difficulty decides the effort, and no
+subagent ever inherits the session's effort** (they do by default, so an Opus session at `xhigh` silently
 runs every Opus reviewer and Sonnet implementer at `xhigh` too).
 
 Prices, capabilities and traps per model: [MODEL-CARDS](references/MODEL-CARDS.md). Prompt snippets and
-the subagent prompt template: [FABLE-PROMPTING](references/FABLE-PROMPTING.md). Lever order, measured
+the subagent prompt template (file name kept for history): [FABLE-PROMPTING](references/FABLE-PROMPTING.md). Lever order, measured
 expectations, the ledger and the ten-run rules: [COST-AND-TIME-LEVERS](references/COST-AND-TIME-LEVERS.md).
 
 ## 0. Token-class routing (owner ruling 2026-09-10 — read this before the table)
@@ -30,23 +30,23 @@ section is its summary.
 
 Price per MTok, the four classes that matter:
 
-| Model     | Fresh input | Cache write (5m / 1h) | **Cache read** | **Output** |
-| --------- | ----------- | --------------------- | -------------- | ---------- |
-| Fable 5.1 | $10         | $12.50 / $20          | **$0.25**      | **$50**    |
-| Opus 5    | $5          | $6.25 / $10           | **$0.50**      | $25        |
-| Sonnet 5  | $2          | $2.50 / $4            | $0.20          | $10        |
-| Haiku 4.5 | $1          | $1.25 / $2            | $0.10          | $5         |
+| Model                          | Fresh input | Cache write (5m / 1h) | **Cache read** | **Output** |
+| ------------------------------ | ----------- | --------------------- | -------------- | ---------- |
+| Fable 5.1 (retired 2026-10-15) | $10         | $12.50 / $20          | **$0.25**      | **$50**    |
+| Opus 5                         | $5          | $6.25 / $10           | **$0.50**      | $25        |
+| Sonnet 5                       | $2          | $2.50 / $4            | $0.20          | $10        |
+| Haiku 4.5                      | $1          | $1.25 / $2            | $0.10          | $5         |
 
 Measured on one 113-agent engine run ($205 true): Opus $180, of which **$109 was cache reads and $67
-cache writes — $2.70 was verdict output**; Fable $11 was cache writes for a 20-token reply; Sonnet did all
-the volume for $11.50. The waste is not "Opus is expensive": it is Opus (and Fable) doing **in/out and
+cache writes — $2.70 was verdict output**; Fable (retired 2026-10-15) $11 was cache writes for a 20-token reply; Sonnet did all
+the volume for $11.50. The waste is not "Opus is expensive": it is Opus (and the retired Fable) doing **in/out and
 cache work** — reading repos, re-reading a growing context on every tool call — that Sonnet does for a
 fifth of the price at the same quality on saturated coding. Hence the classes:
 
-- **Fable = cache work only.** The long-lived orchestrator over a stable, cached prefix (its cache read is
+- **Orchestrator/ruling class = cache work only** (formerly Fable, retired 2026-10-15; now Opus). The long-lived orchestrator over a stable, cached prefix (its cache read is
   the cheapest of the three judgment models) plus short rulings. Almost never fresh in/out: it reads no
   file, receives ≤ 300-token agent summaries (agents write artifacts to disk), and rules in ≤ 2 KB. Inside
-  the engine a Fable call gets a ≤ 8 KB brief and answers in one turn.
+  the engine an Opus ruling call gets a ≤ 8 KB brief and answers in one turn.
 - **Sonnet = all in/out.** Reading, exploring, gathering, packing, transcribing, implementing, testing,
   packaging, driving the browser, mechanical and designed fixes — and the **verdict on routine work**
   (non-HIGH-risk files) at `high`. Difficulty sets its effort: `low` mechanics, `medium` transcription,
@@ -59,7 +59,7 @@ fifth of the price at the same quality on saturated coding. Hence the classes:
 - **Haiku = mechanics** with a checkable output.
 - **Difficulty decides, not habit:** trivial/mechanical → Haiku; routine read/write/transcribe → Sonnet
   `medium`; judgment on routine files → Sonnet `high`; judgment on HIGH-risk files or a split vote → Opus
-  `high`; framing, architecture, tie-breaks, fix design → Fable over its cache. A demotion that drops a
+  `high`; framing, architecture, tie-breaks, fix design → Opus over its cache. A demotion that drops a
   phase's confirmed findings across ten true-telemetry runs is reverted (learning clause, quality floor).
 - **Three axes, one scorecard.** Every routing choice is judged on cost **and** quality **and** time, per
   task level, from the ledger — never on price alone. `session-usage.mjs` records each agent's true cost
@@ -69,7 +69,7 @@ fifth of the price at the same quality on saturated coding. Hence the classes:
   (reviewers: confirmed findings per agent and the refutation-overturn rate; test authors: behavioral-red
   rate; implementers: fix rounds their packages caused; refuters: dropped-finding rate; probes: caught rate).
   The cheapest model that holds the level's quality signal within the last ten runs, at the shortest
-  time, wins the row. Speed facts to weigh: Sonnet emits fastest, Opus next, Fable slowest per token; one
+  time, wins the row. Speed facts to weigh: Sonnet emits fastest, Opus next, then slower; one
   effort step down is ≈ 40% faster; a fan-out of small-input agents beats one long-context agent on
   wall-clock because each tool call re-reads its whole context.
 
@@ -95,9 +95,9 @@ one file), novelty (no lesson or fix-card covers it), verifiability (tests exist
 (light loop / full pipeline / workflow), **ultracode ON or OFF with the reason**, and per-role model +
 effort from the scorecard. It runs three times: as a `UserPromptSubmit` hook on every new request
 (prints the recommendation into context), at S0 triage (on the real task shape), and at close-out ("next
-task: OFF unless …"). One Fable session is the lead; workers are Sonnet/Opus/Haiku subagents at explicit
-efforts — never additional Fable sessions as an effort ladder (each one re-pays its cached prefix and its
-$10/$50 in/out); parallel sessions only for independent workstreams.
+task: OFF unless …"). One Opus session is the lead; workers are Sonnet/Opus/Haiku subagents at explicit
+efforts — never additional Opus sessions as an effort ladder (each one re-pays its cached prefix and its
+$4/$20 in/out); parallel sessions only for independent workstreams.
 
 ### `route-task.mjs` contract
 
@@ -113,41 +113,41 @@ level's routing comes from the scorecard's own cost×quality×minutes row instea
 below — the script reads `summary` first and falls back to §1/ROUTING-PLAN only when a level has no
 scorecard history yet. Runs three times per task (unchanged): `UserPromptSubmit` (advisory only), S0
 triage (on the real task shape), close-out (the next-task recommendation) — never a fourth session, never
-a peer to the lead Fable session.
+a peer to the lead Opus session.
 
 ## 1. Routing table
 
-| Work                                                                                                                                                                                                                                                                                                                                                                                                                                                | Model                                                                    | Effort                                                                                                                | Why                                                                                                                                                                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Planning, specs, architecture, decisions under ambiguity, cross-file invariants, the final-pass DECISION over candidates an Opus reader produced from a Sonnet-built digest, tie-break judgments from cited evidence, the design of every fix over a Sonnet-built brief, the bug-pipeline fix ruling over an evidence brief and an Opus cause refutation                                                                                            | **Fable 5.1** (`claude-fable-5-1`) — the session itself when it is Fable | `high`; `ultrathink` (one turn) or `xhigh` only for framing money / auth / tenancy / schema work                      | Best on above-frontier work; a wrong plan poisons every cheaper stage after it. Hand it the gathered facts and let it judge: at higher effort it over-gathers context on its own                                                                                                                                                                       |
-| The correctness lens on EVERY file (ruling A4: ~64% of self-generated errors survive same-family self-checking, so Sonnet code needs an Opus correctness read), deep lenses (spec-compliance, edge-cases-and-security, operability) on HIGH-risk files, refutation of blocker/major findings there, red-gate audit, final-pass read, HIGH-risk judgment fixes, UI verdicts on HIGH-risk surfaces — always over a Sonnet-built pack, ≤ 12 tool calls | **Opus 5.5** (`claude-opus-5-5`)                                         | `high`; `xhigh` for deep lenses only when the diff has HIGH-risk files                                                | Fable-class verdicts at half the price — but its cache read ($0.50) is the dearest of all, so it judges a compact pack and never explores (token-class ruling, §0). Inside dev-pipeline's task-loop engine (2026-09-12 rebuild) this role is Fable 5.1; Opus is kept only as `CFG.fallbackModel` for a Fable refusal (task loop: Fable, Opus fallback) |
-| Pattern review lenses (style, consistency, test-quality, design-system), refutation of findings on routine files, mutation probes, UI verdicts on routine surfaces, build repair on routine files                                                                                                                                                                                                                                                   | **Sonnet 5** (`claude-sonnet-5`)                                         | `high` (`medium` for the mutation probe)                                                                              | Same quality on saturated coding at a fifth of Opus's in/out price; the scorecard reverts any row where its confirmed-finding rate drops                                                                                                                                                                                                               |
-| Tests and implementation transcribed from a Fable plan, mechanical fixes, migrations, sweeps, reading / exploration fan-outs, context packs, mechanical checks (does a cited location exist)                                                                                                                                                                                                                                                        | **Sonnet 5** (`claude-sonnet-5`)                                         | `medium` for transcription (`high` for the one money/tenancy package); `low` for mechanical edits, readers and checks | Executes a decided spec well; never plans — a gap in the plan is a finding, not a guess                                                                                                                                                                                                                                                                |
-| Running commands, checksums, manifests, anything with a checkable output                                                                                                                                                                                                                                                                                                                                                                            | **Haiku 4.5** (`claude-haiku-4-5`)                                       | `low`                                                                                                                 | Cheapest and fastest; wrong on judgment                                                                                                                                                                                                                                                                                                                |
-| Context pack / repo facts gathering (read-only)                                                                                                                                                                                                                                                                                                                                                                                                     | **Sonnet 5** (`claude-sonnet-5`)                                         | `medium` (read-only)                                                                                                  | Gathers paths and facts for a planner to decide from; never rules on what it finds                                                                                                                                                                                                                                                                     |
-| Plan transcription (test/build plan from Fable's ruling)                                                                                                                                                                                                                                                                                                                                                                                            | **Sonnet 5** (`claude-sonnet-5`)                                         | `medium`                                                                                                              | Expands a decided ruling into the full template; a gap it finds is raised, never guessed                                                                                                                                                                                                                                                               |
-| Grounding / tree-fact checks / per-phase checkpoints / close-out                                                                                                                                                                                                                                                                                                                                                                                    | **Haiku 4.5** (`claude-haiku-4-5`)                                       | `low`                                                                                                                 | Mechanical verification and verbatim summarization only; wrong on judgment                                                                                                                                                                                                                                                                             |
+| Work                                                                                                                                                                                                                                                                                                                                                                                                                                                | Model                                                        | Effort                                                                                                                | Why                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Planning, specs, architecture, decisions under ambiguity, cross-file invariants, the final-pass DECISION over candidates an Opus reader produced from a Sonnet-built digest, tie-break judgments from cited evidence, the design of every fix over a Sonnet-built brief, the bug-pipeline fix ruling over an evidence brief and an Opus cause refutation                                                                                            | **Opus** (alias `opus`) — the session itself when it is Opus | `high`; `ultrathink` (one turn) or `xhigh` only for framing money / auth / tenancy / schema work                      | Best on above-frontier work; a wrong plan poisons every cheaper stage after it. Hand it the gathered facts and let it judge: at higher effort it over-gathers context on its own                                                                                                                                                                                                     |
+| The correctness lens on EVERY file (ruling A4: ~64% of self-generated errors survive same-family self-checking, so Sonnet code needs an Opus correctness read), deep lenses (spec-compliance, edge-cases-and-security, operability) on HIGH-risk files, refutation of blocker/major findings there, red-gate audit, final-pass read, HIGH-risk judgment fixes, UI verdicts on HIGH-risk surfaces — always over a Sonnet-built pack, ≤ 12 tool calls | **Opus 5.5** (`claude-opus-5-5`)                             | `high`; `xhigh` for deep lenses only when the diff has HIGH-risk files                                                | Verdicts at half the retired Fable tier's price (retired 2026-10-15) — but its cache read ($0.50) is the dearest of all, so it judges a compact pack and never explores (token-class ruling, §0). Inside dev-pipeline's task-loop engine (2026-09-12 rebuild) this role is Fable 5.1; Opus is kept only as `CFG.fallbackModel` for a Fable refusal (task loop: Fable, Opus fallback) |
+| Pattern review lenses (style, consistency, test-quality, design-system), refutation of findings on routine files, mutation probes, UI verdicts on routine surfaces, build repair on routine files                                                                                                                                                                                                                                                   | **Sonnet 5** (`claude-sonnet-5`)                             | `high` (`medium` for the mutation probe)                                                                              | Same quality on saturated coding at a fifth of Opus's in/out price; the scorecard reverts any row where its confirmed-finding rate drops                                                                                                                                                                                                                                             |
+| Tests and implementation transcribed from an Opus plan, mechanical fixes, migrations, sweeps, reading / exploration fan-outs, context packs, mechanical checks (does a cited location exist)                                                                                                                                                                                                                                                        | **Sonnet 5** (`claude-sonnet-5`)                             | `medium` for transcription (`high` for the one money/tenancy package); `low` for mechanical edits, readers and checks | Executes a decided spec well; never plans — a gap in the plan is a finding, not a guess                                                                                                                                                                                                                                                                                              |
+| Running commands, checksums, manifests, anything with a checkable output                                                                                                                                                                                                                                                                                                                                                                            | **Haiku 4.5** (`claude-haiku-4-5`)                           | `low`                                                                                                                 | Cheapest and fastest; wrong on judgment                                                                                                                                                                                                                                                                                                                                              |
+| Context pack / repo facts gathering (read-only)                                                                                                                                                                                                                                                                                                                                                                                                     | **Sonnet 5** (`claude-sonnet-5`)                             | `medium` (read-only)                                                                                                  | Gathers paths and facts for a planner to decide from; never rules on what it finds                                                                                                                                                                                                                                                                                                   |
+| Plan transcription (test/build plan from Opus's ruling)                                                                                                                                                                                                                                                                                                                                                                                             | **Sonnet 5** (`claude-sonnet-5`)                             | `medium`                                                                                                              | Expands a decided ruling into the full template; a gap it finds is raised, never guessed                                                                                                                                                                                                                                                                                             |
+| Grounding / tree-fact checks / per-phase checkpoints / close-out                                                                                                                                                                                                                                                                                                                                                                                    | **Haiku 4.5** (`claude-haiku-4-5`)                           | `low`                                                                                                                 | Mechanical verification and verbatim summarization only; wrong on judgment                                                                                                                                                                                                                                                                                                           |
 
 Pin full model ids in scripts and agent definitions: a bare alias resolves to whatever the harness maps it
 to today (a bare `sonnet` can land on Sonnet 4.6 at $3/$15). Effort names do not mean the same depth
 across models — re-sweep after any migration.
 
-**Owner trial, not enabled (2026-09-10):** vendor-published SWE-bench Pro figures have Fable 5.1 at `low`
-beating Sonnet 5 default (88.6% vs 77.4%) at 35% less cost per solved task, and Opus 5 `low` +
-rerun-failures beating all-default at half cost — both in tension with §0's cache-work-only framing for
-Fable. Proposal on the table, not adopted: a 10-run trial of Fable @ `low` as the implementer for the one
-HIGH-risk package per run, scored on fix rounds and confirmed findings against the Sonnet baseline.
-Requires the owner's explicit yes before any run uses it; nothing in this file enables it today.
+> **HISTORICAL (Fable retired 2026-10-15) - owner trial, never enabled (2026-09-10):** vendor-published SWE-bench Pro figures have Fable 5.1 at `low`
+> beating Sonnet 5 default (88.6% vs 77.4%) at 35% less cost per solved task, and Opus 5 `low` +
+> rerun-failures beating all-default at half cost — both in tension with §0's cache-work-only framing for
+> Fable. Proposal on the table, not adopted: a 10-run trial of Fable @ `low` as the implementer for the one
+> HIGH-risk package per run, scored on fix rounds and confirmed findings against the Sonnet baseline.
+> Requires the owner's explicit yes before any run uses it; nothing in this file enables it today.
 
 ## 2. Effort ladder
 
 - `high` is the default everywhere (the API default and Claude Code's default). Set it explicitly anyway.
 - `xhigh`: HIGH-risk depth (money, pricing, tax, auth, tenancy, schema, PII, payments) and nothing else.
-- `medium`: Sonnet transcription, refuters on LOW-risk findings, the mutation probe; Fable at `medium` is
-  roughly Fable 5 at `high` when a routine Fable turn is dragging.
-- `low`: Haiku-class mechanics and Sonnet mechanical fixes. Fable at `low` beats prior models' `xhigh` on
-  much routine work — measure it before reaching for a cheaper model on judgment-shaped reads.
-- `max`: never by default. At `xhigh`/`max` Fable drafts long deliverables twice (once in thinking, once
+- `medium`: Sonnet transcription, refuters on LOW-risk findings, the mutation probe; (HISTORICAL: Fable at `medium` is
+  roughly Fable 5 at `high` when a routine Fable turn is dragging, retired 2026-10-15.)
+- `low`: Haiku-class mechanics and Sonnet mechanical fixes. (HISTORICAL: Fable at `low` beat prior models' `xhigh` on
+  much routine work — measure it before reaching for a cheaper model on judgment-shaped reads.)
+- `max`: never by default. At `xhigh`/`max` the model drafts long deliverables twice (observed on Fable, retired 2026-10-15) (once in thinking, once
   as the reply). Write specs, test plans and documents at `high`.
 - Do not change the session's effort mid-task: an `effort` change invalidates the messages cache. Raise
   one turn with `ultrathink`; set the session default with `/effort <level>` or
@@ -157,9 +157,9 @@ Requires the owner's explicit yes before any run uses it; nothing in this file e
   score-vs-spend at each step; escalate the model only when the effort sweep does not close the quality
   gap.
 
-## 3. Fable-session rules (what Fable writes, what it hands off)
+## 3. Opus-session rules (what Opus writes, what it hands off)
 
-1. **Fable writes decisions, not volume.** The 20 hard lines, the R#/T# matrix, the verdict, the spec.
+1. **Opus writes decisions, not volume.** The 20 hard lines, the R#/T# matrix, the verdict, the spec.
    Sonnet types tests, boilerplate, mechanical edits and long documents from an exact brief. In the pipeline that is
    literal: the plan, the fix designs, the final verdicts — never the reading, the driving, the packaging or the
    execution.
@@ -172,16 +172,16 @@ Requires the owner's explicit yes before any run uses it; nothing in this file e
    seconds share the prompt-prefix cache; serializing them to "save tokens" loses both cache and time.
 5. **Shared prefix first.** Subagent prompts open with the block every agent in the run shares (repo
    note, artifact paths, manifest, lessons register), then the role line, then the task specifics.
-6. **Targeted edits, never whole-file rewrites** (a Fable 5.1 tendency worth naming in every editing
+6. **Targeted edits, never whole-file rewrites** (a tendency of the retired Fable 5.1, worth naming in every editing
    prompt). **Ground every claim in a tool result** before reporting it.
 7. **Reuse before re-deriving.** Code map → lessons register → prior run artifacts (`.claude/pipeline/`,
    `fix-cards/`, `design-system.md`) → then read source. Planning turns should not rediscover what the
    last batch recorded.
-8. **Security-flavoured asks may refuse on Fable.** Route security review to Opus; treat a dead Fable
-   agent as "declined", retry once on Opus, and never report an unverified read as clean.
-9. **Fable is the brain, never the hands.** Fable reads no file and runs no command when a Sonnet or Opus
-   agent can bring it the facts; it decides from briefs. In a Fable session that means delegating reads,
-   forensics, mechanical edits and long writing, and keeping Fable's own turns to rulings.
+8. **Security-flavoured asks may be declined.** Route security review to Opus; treat a dead
+   agent as "declined", retry once, and never report an unverified read as clean.
+9. **Opus is the brain, never the hands** (ruling formerly "Fable is the brain"; Fable retired 2026-10-15). Opus reads no file and runs no command when a Sonnet or Opus
+   agent can bring it the facts; it decides from briefs. In an Opus session that means delegating reads,
+   forensics, mechanical edits and long writing, and keeping Opus's own turns to rulings.
 10. **Executors never delete, move, stash or checkout.** Ownership is stated per brief (which files this
     agent may touch); scratch goes to the session scratchpad, never a repo path; agents editing one repo
     concurrently get `isolation: "worktree"` or disjoint files — never a shared checkout with overlapping writes.
@@ -206,7 +206,7 @@ Requires the owner's explicit yes before any run uses it; nothing in this file e
   findings), one Opus refuter per file; let the fixer refute first elsewhere and send only disputes to the slate.
   Measured: 30 first votes overturned 2 findings on F13; the slate's value is in the disputed tail, not the bulk.
 - Delegate asynchronously and keep working; write the RESUME card when a long run _starts_, not after a
-  kill. Opus **fast mode** (2.5× tokens/s, priced like Fable, main loop only) is the right choice for an
+  kill. Opus **fast mode** (2.5× tokens/s, priced like the retired Fable (2026-10-15), main loop only) is the right choice for an
   interactive mechanical loop where latency matters more than reasoning.
 - Drop phases the ledger says never convert (see §6); never drop coverage.
 - **Run cheap, rerun failures at default** (owner ruling 2026-09-10): checkable phases — test authoring,
@@ -216,14 +216,14 @@ Requires the owner's explicit yes before any run uses it; nothing in this file e
   and the stakes match the ~15× token multiplier of running several agents where one would do; the
   ultracode advisor applies this same gate before turning breadth on.
 
-## 5. Prompting Fable 5.1 (and Opus 5.5) agents
+## 5. Prompting Opus agents
 
 State the goal, the constraints and the acceptance check; keep numbered choreography only for fragile,
 single-safe-sequence steps (destructive commands, restore-by-copy) and for Sonnet transcription. Prompts
-written for older models are usually too prescriptive for Fable 5.1 and lower its output quality. Add the
+written for older models are usually too prescriptive for Opus and lower its output quality. Add the
 autonomy and scope blocks for unattended runs, the grounded-claims line to every reporter, the
 targeted-edit line to every editor, and the long-deliverable note only when a request must run at
-`xhigh`/`max`. Snippets, verbatim, in [FABLE-PROMPTING](references/FABLE-PROMPTING.md).
+`xhigh`/`max`. Snippets, verbatim, in [FABLE-PROMPTING] (file name kept for history)(references/FABLE-PROMPTING.md).
 
 ## 6. Measure, then tune
 
@@ -265,12 +265,11 @@ contamination rules, minimum n = 10 before `compare` ranks an arm, and how to re
 
 ## 7. How the house taxonomies map onto this ladder
 
-`dev-pipeline` routes by **stage** (Fable plans and reviews/implements HIGH-risk tasks, Sonnet
-transcribes and reviews routine tasks, Haiku gates — Opus kept only as `CFG.fallbackModel` for a Fable
-refusal since the 2026-09-12 task-loop rebuild; task loop: Fable, Opus fallback); the RouteFlow `team`
-agents route by **role** (tech-lead Fable/high,
+`dev-pipeline` routes by **stage** (Opus plans and reviews every task, Sonnet
+transcribes and implements, Haiku gates; Fable retired 2026-10-15); the RouteFlow `team`
+agents route by **role** (tech-lead Opus/high,
 builder Sonnet/medium, qa-engineer Sonnet/high, feature-reviewer Opus/high); `bug-hunt` routes by
-**defect class** (conservation invariants and forensics on Fable, concurrency and security on Opus,
+**defect class** (conservation invariants and forensics, concurrency and security on Opus,
 mechanical sweeps on Sonnet behind a strong verifier). All three are the same ladder. The one open
-disagreement — money judgment defaults to Sonnet-at-high in `qa-engineer` but to Fable/Opus in the global
+disagreement — money judgment defaults to Sonnet-at-high in `qa-engineer` but to Opus in the global
 rule — is the owner's call; until ruled, escalate money/tenancy verification to Opus per invocation.

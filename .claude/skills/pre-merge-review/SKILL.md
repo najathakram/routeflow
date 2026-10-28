@@ -12,7 +12,7 @@ differently-filtered line sets — drivers over-collecting cash). PR #711 read R
 1,012 lines of engine scratch at the repo root and 19 commits authored by a test identity, about
 to land on a public master. Neither lane could see its own blind spot. This gate exists for that.
 
-## Model routing (owner ruling 2026-09-13 — Fable never implements)
+## Model routing (owner ruling 2026-09-13 — formerly "Fable never implements", Fable retired 2026-10-15, now Opus)
 
 | Step                        | Model · effort      | Why                                                                   |
 | --------------------------- | ------------------- | --------------------------------------------------------------------- |

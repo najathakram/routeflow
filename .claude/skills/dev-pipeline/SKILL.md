@@ -72,26 +72,27 @@ high` effort), the test author, (the routine reviewer — now Opus, see above), 
 > fix-designer/executor, or sibling-judge role, or says Opus is fallback-only, it is **historical,
 > superseded 2026-09-13/2026-09-14**; trust this callout and `pipeline.js` over it.
 
-**[Historical — since 2026-09-29 read "Fable 5.1" in this paragraph and the planning bullets below as "Opus 5.5 @ high".] Planning decisions (S1–S5) run ONLY on Fable 5.1. Never Sonnet. Never Haiku. Opus 5.5 is the fallback solely when
-Fable is genuinely unavailable — never a peer choice** (owner policy 2026-08-31, effort and drop rules amended
-2026-09-02, gather/transcribe exemption 2026-09-10). Three agents sit inside the planning band without deciding
-anything: the S0.5 context pack (Sonnet, read-only), the S5 transcription expansion (Sonnet, from Fable's ruling)
-and the S5.5 grounding pass (now folded into the engine's own Baseline phase, Haiku, fact checks). They gather and
-transcribe; a decision they cannot find is raised
-to Fable, never made.
+> **[HISTORICAL — since 2026-09-29 read "Fable 5.1" in this paragraph and the planning bullets below as "Opus 5.5 @ high".] Planning decisions (S1–S5) run ONLY on Fable 5.1. Never Sonnet. Never Haiku. Opus 5.5 is the fallback solely when
+> Fable is genuinely unavailable — never a peer choice** (owner policy 2026-08-31, effort and drop rules amended
+> 2026-09-02, gather/transcribe exemption 2026-09-10). Three agents sit inside the planning band without deciding
+> anything: the S0.5 context pack (Sonnet, read-only), the S5 transcription expansion (Sonnet, from Fable's ruling)
+> and the S5.5 grounding pass (now folded into the engine's own Baseline phase, Haiku, fact checks). They gather and
+> transcribe; a decision they cannot find is raised
+> to Fable, never made.
+
 The plan is the _sole_ context every downstream agent gets; a weak planner poisons every later stage, and review
 cannot recover a spec that framed the wrong problem.
 
-- Session already **Fable 5.1** ⇒ write S1–S5 **inline** at `high` effort (long artifacts drafted at `xhigh`/`max`
+- Session already **Opus** ⇒ write S1–S5 **inline** at `high` effort (long artifacts drafted at `xhigh`/`max`
   are written twice — once in thinking, once as the reply). Use `ultrathink` for the one framing decision of
   money/auth/tenancy/schema work, not for the whole session. Otherwise ⇒ one planning subagent per stage with
-  `model: 'claude-fable-5-1'`, `effort: 'high'`.
+  `model: 'opus'`, `effort: 'high'`.
 - **Sonnet does not plan. Ever.** What Sonnet receives in S7 — the `tasks[]` graph, each task's brief, files and
-  tests — is a _transcription_ of Fable's artifacts; a Sonnet agent that finds the plan ambiguous RAISES that as a
+  tests — is a _transcription_ of Opus's artifacts; a Sonnet agent that finds the plan ambiguous RAISES that as a
   finding and stops at the gap. Never route planning to a cheap model because tokens are tight: cut scope or phases
   instead.
 - **Downstream, the engine sets model AND effort per role; nothing inherits the interactive session's effort**
-  (12 of 25 agent calls did until 2026-09-02 — a Fable session at `xhigh` ran every lens at `xhigh`). The task-loop
+  (12 of 25 agent calls did until 2026-09-02 — a Fable session (retired 2026-10-15) at `xhigh` ran every lens at `xhigh`). The task-loop
   engine (rebuilt 2026-09-12, `docs/superpowers/plans/2026-09-12-task-loop-rebuild.md`) routes per TASK, not per
   fan-out lens. **Per the 2026-09-13/2026-09-14 owner rulings, Fable 5.1 is not called anywhere inside the
   engine** — see the MODEL POLICY callout above for the live table. In short: **Opus 5.5** (`claude-opus-5-5`) is the
@@ -105,7 +106,7 @@ cannot recover a spec that framed the wrong problem.
   `revert-probe` checksum agents and every checkpoint — all at `low`. Full ids, never aliases; the per-role table
   is `CFG.models`/`CFG.effort` atop [pipeline.js](pipeline.js), the caps `CFG.caps` (token-class ruling 2026-09-10).
 - **Opus 5.5 (`claude-opus-5-5`) is the judgment-and-design tier for HIGH-risk work (owner rulings 2026-09-13,
-  2026-09-14 — supersedes the 2026-09-03 "Fable is the brain, never the hands" framing this bullet used to carry).**
+  2026-09-14 — supersedes the 2026-09-03 "Fable is the brain, never the hands" framing (Fable retired 2026-10-15) this bullet used to carry).**
   In the task-loop engine it decides at exactly the HIGH-risk points: the HIGH-risk task's reviewer and UI judge;
   the **fix DESIGNER** from round 3 onward — at round 3+ ONE Opus call designs (over a Haiku-built `fix-brief.mjs`
   brief, ≤ 8 KB, deciding fix / dispute / defer, the design, the invariant and the test per finding) and a
@@ -116,14 +117,14 @@ cannot recover a spec that framed the wrong problem.
   a **peer tier chosen directly** for these roles, not a fallback: `CFG.models.fallbackModel` (also
   `claude-opus-5-5`) is a leftover refusal-fallback constant that only backs the now-dead `executorIsDesigner` path.
   History: [ENGINE-NOTES](references/ENGINE-NOTES.md).
-- **Light loop** (owner ruling 2026-09-03 for bounded work and for finishing runs that lost agents): see [LIGHT-LOOP](references/LIGHT-LOOP.md) — Fable plans and rules, Opus executes HIGH-risk and reviews, Sonnet writes.
-- **Fable decides, Sonnet gathers and transcribes — in planning too (owner ruling 2026-09-10).** Measured: the
-  orchestrating Fable session held 58–193 KB of planning artifacts plus every source read for 6–14 h, and one such
-  session cost $103 in cache reads that no ledger saw. So S1–S5 keep Fable as the only author of _decisions_ (the
+- **Light loop** (owner ruling 2026-09-03 for bounded work and for finishing runs that lost agents): see [LIGHT-LOOP](references/LIGHT-LOOP.md) — Opus plans, rules and reviews, Sonnet writes.
+- **Opus decides, Sonnet gathers and transcribes — in planning too (owner ruling 2026-09-10).** Measured on Fable (retired 2026-10-15): the
+  orchestrating Fable session (retired) held 58–193 KB of planning artifacts plus every source read for 6–14 h, and one such
+  session cost $103 in cache reads that no ledger saw. So S1–S5 keep Opus as the only author of _decisions_ (the
   problem framing, every `R#`, every `T#` oracle, the hard lines, package boundaries, verification commands), but
-  Fable reads a Sonnet-built **context pack** (S0.5) instead of the code map, lessons, fix-cards and sources, and
-  a Sonnet `medium` agent **transcribes** Fable's decided `test-plan.md`/`build-plan.md` into the full templates and
-  returns a ≤ 1.5K diff brief for Fable to rule on. That is transcription, not planning — "Sonnet does not plan"
+  Opus reads a Sonnet-built **context pack** (S0.5) instead of the code map, lessons, fix-cards and sources, and
+  a Sonnet `medium` agent **transcribes** Opus's decided `test-plan.md`/`build-plan.md` into the full templates and
+  returns a ≤ 1.5K diff brief for Opus to rule on. That is transcription, not planning — "Sonnet does not plan"
   stands; a Sonnet transcriber that finds a decision missing raises it and stops.
 
 ## LEARNING CLAUSE — mandatory (owner ruling 2026-09-10)
@@ -158,7 +159,7 @@ route and ultracode call are the triage default — override only with a stated 
 
 **Lane (SS1, 2026-09-16).** The router now also returns a `lane` — `surgical` | `standard` | `high-risk` —
 alongside `route`/`reason`, and the advise line prints it as `Route: light-loop (standard)`. Write it into
-**`args.lane`** next to the existing `args.scale`/`args.profile`; Fable overrides it only with a stated reason.
+**`args.lane`** next to the existing `args.scale`/`args.profile`; Opus overrides it only with a stated reason.
 The lane says how much machinery the work earns, and **this engine is no longer the default**:
 
 | Lane        | Router condition                                                                             | Runs on                         | Fix rounds           |
@@ -208,7 +209,7 @@ lesson ids from `LESSONS-DIGEST.md` that apply, each with its one-line Lesson; e
 run artifacts for the area (paths + the decisive lines); the repo facts a build plan needs (package-manifest scripts,
 test runner and config, workspaces, the base sha of the integration branch); the project's `CONTEXT.md` terms it will
 use; and an "unknowns" list of what it could not establish. Paths everywhere, content only where a decision hinges on
-it. Fable reads the pack — not the sources. Skip the pack only for `small` work whose files the ask already names.
+it. Opus reads the pack — not the sources. Skip the pack only for `small` work whose files the ask already names.
 
 ## S1 — Discovery: why (→ `discovery.md`)
 
@@ -266,12 +267,12 @@ for the right reason. Method, anti-vacuity rules and Playwright house rules: [TE
    red gate's whole job is that every test in scope fails.
 6. Pass `lessonsPath` (the project's `.claude/lessons/LESSONS.md`), `startedAt` (an ISO timestamp taken at launch)
    and `runDir` (the run's absolute artifact directory — enables per-phase checkpoints and the `result.json` summary).
-7. **Transcription split (2026-09-10):** Fable writes the decisions of S4 and S5 — the `R#`→`T#` matrix with each
+7. **Transcription split (2026-09-10):** Opus writes the decisions of S4 and S5 — the `R#`→`T#` matrix with each
    oracle's concrete value, the package boundaries with file ownership, the hard lines, the tiered commands — as a
    compact ruling (≤ 12 KB across both). A Sonnet `medium` agent expands that ruling into the full
    [TEST-PLAN](templates/TEST-PLAN.md) / [BUILD-PLAN](templates/BUILD-PLAN.md) templates (Given/When/Then wording,
    package boilerplate, the `## Pipeline args` block) and returns a ≤ 1.5K brief: what it filled, what it could not
-   decide (raised, never guessed). Fable rules on the brief; it does not re-read the expanded files.
+   decide (raised, never guessed). Opus rules on the brief; it does not re-read the expanded files.
 
 ## S5.5 — Grounding pass
 
@@ -432,7 +433,7 @@ revert-probe outcome, not a five-agent slate.
   agent, all three Node scripts (`task-brief.mjs`, `review-pack.mjs`, `fix-brief.mjs`), the structural/behavioral
   RED check, the `revert-probe` checksum agent, and every checkpoint — all `low`. **Fable 5.1 is not called inside
   the engine at all** (owner rulings 2026-09-13, 2026-09-14, 2026-09-29) — planning and the final-pass read are Opus
-  5.5 @ high now; `CFG.models.fable` stays defined only for owner-requested use. `CFG.models`/`CFG.effort` hold
+  5.5 @ high now; `CFG.models.fable` (retired 2026-10-15) stays defined only for owner-requested use. `CFG.models`/`CFG.effort` hold
   the table; `CFG.caps.toolCalls` (12) caps every Opus call via `withToolCap()`.
 - **`lean` vs `standard` profile** (`CFG.profiles`, S6, `args.profile` override): `lean` = superpowers parity — no
   separate test author (the implementer pastes its own RED then GREEN in `report.md`), Baseline skips the `final`
@@ -455,7 +456,7 @@ revert-probe outcome, not a five-agent slate.
   ENGINE steps, not extra task types — they run once per plan, not once per task, and never block (`harnessCheck`
   and `sibling-sweep` hits both surface as findings/owner-questions, never a red run).
 - **The holistic read fires INSIDE the fix loop, not after it (SS5, 2026-09-16).** For every HIGH-risk task that
-  enters a fix round, one Opus 5.5 whole-change read (Fable before 2026-09-29) runs immediately after round 1's re-review and **before round 2
+  enters a fix round, one Opus 5.5 whole-change read (Fable, retired 2026-10-15, before 2026-09-29) runs immediately after round 1's re-review and **before round 2
   begins**, and its findings join that round's open findings through the same merge `discoveredFindings` uses — so
   what it catches still has fix rounds to be spent on it. Previously this read ran once, globally, after every
   task's budget was already exhausted, which is why the RUN-LOG raised "run the final review before the last fix
@@ -584,7 +585,7 @@ Caps, each one read by the code (checked against `CFG` 2026-09-16 — this line 
 | ----------------------- | --------------------------------------------------------------------------------------- | ------------------- |
 | `CFG.maxFixRounds`      | **4** (round 3+ gets the Opus fix designer — see "Opus designs, Sonnet executes" above) | fix loop            |
 | `CFG.waveBatchSize`     | **4** concurrent task chains per wave; a wider wave is sliced and each slice awaited    | wave loop           |
-| `CFG.caps.toolCalls`    | **12** per Opus agent call (Fable, if the owner ever asks for it) (`withToolCap()`)     | every judgment call |
+| `CFG.caps.toolCalls`    | **12** per Opus agent call (`withToolCap()`)                                            | every judgment call |
 | test-author remediation | **1** attempt, then a hard blocker                                                      | `redCheckStage`     |
 
 The house cap of **four background agents** binds the orchestrating session on top of all of these.
@@ -595,7 +596,7 @@ The house cap of **four background agents** binds the orchestrating session on t
 | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Models, every effort ceiling, lazy voting, the red-gate bar, final-pass skip, prices, refute gate, fix rounds, the measured-trade flags | `CFG` atop [pipeline.js](pipeline.js)                                  |
 | Triage thresholds, small-scale policy, approval, stage order, close-out                                                                 | this file                                                              |
-| The routing ladder itself, Fable prompting, the ledger and the ten-run rules                                                            | the `model-routing` skill                                              |
+| The routing ladder itself, Opus prompting, the ledger and the ten-run rules                                                             | the `model-routing` skill                                              |
 | The architect question set and its stop conditions                                                                                      | [references/ARCHITECT-QUESTIONS.md](references/ARCHITECT-QUESTIONS.md) |
 | Test method, anti-vacuity rules, Playwright rules, mutation probe                                                                       | [references/TESTING-PLAYBOOK.md](references/TESTING-PLAYBOOK.md)       |
 | Which design skill handles which need                                                                                                   | [references/DESIGN-ROUTING.md](references/DESIGN-ROUTING.md)           |
@@ -621,8 +622,8 @@ pipeline.js` reports `Illegal return statement` — expected, not a defect. Repr
 Syntax proves nothing about the branches. `scripts/dry-run.mjs` executes the whole engine with stubbed Workflow
 globals and canned agent answers — zero API calls — and asserts the promises above: an explicit full model id and
 effort on every call, `xhigh` lenses only with HIGH-risk files, the structural red bar (and the behavioral bar on
-small), the lazy slate and the Fable tie-break, Verify beside UI verify, the final pass skipped on a no-HIGH diff and
-falling back to Opus when Fable declines, the hollow-gate rule, and the pricing fields. Run it after **every** edit:
+small), the lazy slate and the Fable tie-break (retired), Verify beside UI verify, the final pass skipped on a no-HIGH diff and
+falling back to Opus when Fable (retired) declines, the hollow-gate rule, and the pricing fields. Run it after **every** edit:
 
 ```bash
 node scripts/dry-run.mjs          # add --calls to print every agent call with its model and effort
