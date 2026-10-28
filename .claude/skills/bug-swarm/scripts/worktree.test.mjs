@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 import {
   planWorktree,
   parseArgs,
@@ -126,7 +127,7 @@ const noCi = () => {
 
 function tmpTree({ hooks }) {
   const dir = mkdtempSync(path.join(tmpdir(), "wt-hooks-"));
-  const g = (...a) => execFileSync("git", a, { cwd: dir, stdio: "pipe" });
+  const g = (...a) => execFileSync("git", a, { cwd: dir, stdio: "pipe", env: scrubbedGitEnv() });
   g("init", "-q");
   g("config", "core.hooksPath", ".husky/_");
   mkdirSync(path.join(dir, "scripts"), { recursive: true });
@@ -173,6 +174,7 @@ const gitIn = (cwd, ...a) =>
     cwd,
     encoding: "utf8",
     stdio: "pipe",
+    env: scrubbedGitEnv(),
   }).trim();
 
 function mainAndLinked({ worktreeConfig, shared }) {
