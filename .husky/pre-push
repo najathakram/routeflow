@@ -77,7 +77,7 @@ node scripts/size-ratchet-gate.mjs || exit 1
 node scripts/risk-class.mjs 2>/dev/null || true
 
 # DARK (R4): report-only test-tamper scan of this branch (scripts/test-tamper-check.mjs). Never blocks.
-node scripts/test-tamper-check.mjs 2>/dev/null || true
+node scripts/test-tamper-check.mjs || true
 
 if [ "$SKIP_VERIFY" = "1" ]; then
   upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/master)"

@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
-import { TAMPER_MODE, isTestFile, parseTrailers, scanDiff } from "./test-tamper-check.mjs";
+import * as tamper from "./test-tamper-check.mjs";
+const { TAMPER_MODE, isTestFile, parseTrailers, scanDiff } = tamper;
 
 let passed = 0;
 let failed = 0;
@@ -193,6 +194,23 @@ try {
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
+
+// CI shows a dark hit as a ::warning:: annotation (spec §3), plain text elsewhere.
+const hit = {
+  kind: "loosened",
+  file: "a.spec.ts",
+  line: 3,
+  before: "toBe(1)",
+  after: "toBeDefined()",
+};
+check(
+  "CI hit is a ::warning:: annotation; local hit is plain",
+  [tamper.formatHit?.(hit, true), tamper.formatHit?.(hit, false)],
+  [
+    "::warning file=a.spec.ts,line=3::test-tamper loosened: toBe(1) => toBeDefined()",
+    "TAMPER  loosened  a.spec.ts:3  toBe(1) => toBeDefined()",
+  ],
+);
 
 console.log(`test-tamper-check self-test: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

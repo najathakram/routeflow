@@ -177,11 +177,19 @@ export function scanDiff(diff, { trailers = [] } = {}) {
   return { hits, allowed };
 }
 
+// quotePath off: a non-ASCII test path stays unquoted, so the `diff --git` header still parses.
 const git = (args) =>
-  spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", ...args], {
-    encoding: "utf8",
-    env: scrubbedGitEnv(),
-  });
+  spawnSync(
+    "git",
+    ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", "-c", "core.quotePath=false", ...args],
+    { encoding: "utf8", env: scrubbedGitEnv() },
+  );
+
+/** One hit as a line: a ::warning:: annotation in GitHub Actions (spec §3), plain text elsewhere. */
+export const formatHit = (h, gha) =>
+  gha
+    ? `::warning file=${h.file},line=${h.line}::test-tamper ${h.kind}: ${h.before} => ${h.after}`
+    : `TAMPER  ${h.kind}  ${h.file}:${h.line}  ${h.before} => ${h.after}`;
 
 export function main(argv) {
   const bi = argv.indexOf("--base");
@@ -196,8 +204,7 @@ export function main(argv) {
   const d = git(["diff", "-U0", "-M", "--no-color", "--no-ext-diff", mb, "HEAD"]);
   const trailers = parseTrailers(git(["log", "--format=%B", `${mb}..HEAD`]).stdout);
   const { hits, allowed } = scanDiff(d.stdout, { trailers });
-  for (const h of hits)
-    console.log(`TAMPER  ${h.kind}  ${h.file}:${h.line}  ${h.before} => ${h.after}`);
+  for (const h of hits) console.log(formatHit(h, process.env.GITHUB_ACTIONS === "true"));
   for (const a of allowed) console.log(`allowed ${a.kind}  ${a.file}:${a.line}  ${a.reason}`);
   console.log(
     `test-tamper-check (${TAMPER_MODE}): ${hits.length} hit(s), ${allowed.length} allowed.`,
