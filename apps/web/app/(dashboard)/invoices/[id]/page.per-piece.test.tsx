@@ -135,4 +135,25 @@ describe("SA-1029 staff invoice: per-piece price column", () => {
     renderWithProviders(<InvoiceDetailPage />);
     expect(screen.getAllByText("$1.6667/pc").length).toBeGreaterThan(0);
   });
+  it("B641: an explicit unitLabel null line has an empty per-piece cell while a pack line still prints", () => {
+    mockInvoice = {
+      ...invoiceWith(packLine),
+      items: [
+        { ...packLine, perBaseUnit: { price: 2, unit: "pc" } },
+        {
+          ...packLine,
+          id: "item-3",
+          description: "Acme Relabelled",
+          unitLabel: null,
+          perBaseUnit: null,
+        },
+      ],
+    };
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getAllByText("$2.00/pc").length).toBeGreaterThan(0);
+    for (const el of screen.getAllByText("Acme Relabelled")) {
+      const row = el.closest("tr");
+      if (row) expect(row.textContent).not.toContain("/pc");
+    }
+  });
 });
