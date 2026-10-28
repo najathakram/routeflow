@@ -20,6 +20,7 @@ import {
   buildFamilyContainerInput,
   buildLadderLevelInput,
   buildProductCreateInput,
+  listNewUnitNames,
   planCatalogCopy,
   readPrices,
   toMoney,
@@ -45,7 +46,10 @@ interface SourceRow extends CopySource {
   invoiceUnitRef: string | null;
   invoiceLineCode: string | null;
   familyPriceOverride: boolean;
-  hasTierUnits: boolean;
+  /** Rows of the product's ProductTierUnit: listed by the dry run, never copied. */
+  tierUnitRows: number;
+  /** The product's ladder labels, smallest first (what the ladder writer would link to the tenant's unit list). */
+  ladderLabels: string[];
 }
 
 // The familyPriceOverride-writer tripwire (SA-584 C1) flags the quoted column identifier in any non-spec source and its
@@ -68,6 +72,8 @@ export type DiffersColumn = (typeof DIFFERS_COLUMNS)[number];
 /** What the target holds that decides a write: the ladder writer's flag and the MSRP gate. */
 interface TargetState extends TargetCatalog {
   msrp: boolean;
+  /** `nameKey` of every TenantUnit the target holds (archived included: the writer finds those too). */
+  unitKeys: Set<string>;
 }
 
 export interface PhotoRecord {
@@ -130,6 +136,10 @@ export interface CopyReport {
   codesDropped: Array<{ sku: string | null; kind: string; code: string }>;
   packOnly: string[];
   photos: number;
+  /** Source ProductTierUnit rows on the products to copy: listed, not copied (a non-zero live count goes to the owner). */
+  tierUnitRows: number;
+  /** TenantUnit names the ladder writer would create on the target (empty when it writes no ladder). */
+  newUnits: string[];
   /** Per column: every source product (by SKU, else id) whose value differs from what the target will hold. */
   differs: Record<DiffersColumn, string[]>;
   unitsV1: boolean;
@@ -279,19 +289,21 @@ export class CatalogCopyService {
     const rows: SourceRow[] = [];
     const inactive: string[] = [];
     const recipes: string[] = [];
-    const ladderIds = new Set(
-      (
-        await this.prisma.productUnit.findMany({ where: { tenantId }, select: { productId: true } })
-      ).map((u) => u.productId),
-    );
-    const tierIds = new Set(
-      (
-        await this.prisma.productTierUnit.findMany({
-          where: { tenantId },
-          select: { productId: true },
-        })
-      ).map((u) => u.productId),
-    );
+    const ladders = new Map<string, string[]>();
+    for (const u of await this.prisma.productUnit.findMany({
+      where: { tenantId },
+      select: { productId: true, label: true },
+      orderBy: [{ factorToBase: "asc" }],
+    })) {
+      ladders.set(u.productId, [...(ladders.get(u.productId) ?? []), u.label]);
+    }
+    const tierRows = new Map<string, number>();
+    for (const u of await this.prisma.productTierUnit.findMany({
+      where: { tenantId },
+      select: { productId: true },
+    })) {
+      tierRows.set(u.productId, (tierRows.get(u.productId) ?? 0) + 1);
+    }
     const levels = new Map<string, Array<{ code: string; level: string }>>();
     for (const b of await this.prisma.productBarcode.findMany({
       where: { tenantId, code: { not: null } },
@@ -337,7 +349,7 @@ export class CatalogCopyService {
           regUomUnit: p.regUomUnit,
           imageKeys: p.imageKeys ?? [],
           levelBarcodes: levels.get(p.id) ?? [],
-          hasLadder: ladderIds.has(p.id),
+          hasLadder: ladders.has(p.id),
           kind: p.kind,
           description: p.description,
           unit: p.unit,
@@ -351,7 +363,8 @@ export class CatalogCopyService {
           invoiceUnitRef: p.invoiceUnitRef,
           invoiceLineCode: p.invoiceLineCode,
           familyPriceOverride: p.familyPriceOverride,
-          hasTierUnits: tierIds.has(p.id),
+          tierUnitRows: tierRows.get(p.id) ?? 0,
+          ladderLabels: ladders.get(p.id) ?? [],
         });
       }
     }
@@ -372,7 +385,12 @@ export class CatalogCopyService {
     const unitsV1 = await this.entitlements.hasFlag(tenantId, UNITS_FLAG);
     // the same evaluation point `ProductsService` uses for the MSRP gate (overrides + live-mode resolver)
     const msrp = await this.authority.can(tenantId, "flag.msrp");
-    return { products, levelBarcodes, unitsV1, msrp };
+    const unitKeys = new Set(
+      (
+        await this.prisma.tenantUnit.findMany({ where: { tenantId }, select: { nameKey: true } })
+      ).map((u) => u.nameKey),
+    );
+    return { products, levelBarcodes, unitsV1, msrp, unitKeys };
   }
 
   private targetCount(tenantId: string): Promise<number> {
@@ -396,6 +414,14 @@ export class CatalogCopyService {
       string[]
     >;
     const copied = new Set(plan.create.flatMap((f) => f.members.map((m) => m.sourceId)));
+    let tierUnitRows = 0;
+    const ladders: string[][] = [];
+    for (const f of plan.create) {
+      for (const m of f.members) {
+        const r = byId.get(m.sourceId)!;
+        if (target.unitsV1 && !m.packOnly && r.hasLadder) ladders.push(r.ladderLabels);
+      }
+    }
     for (const r of rows) {
       if (!copied.has(r.id)) continue; // only products the target will receive
       if (r.packLabel !== null) differs.packLabel.push(label(r.id));
@@ -404,7 +430,8 @@ export class CatalogCopyService {
       if (r.invoiceUnitRef !== null) differs.invoiceUnitRef.push(label(r.id));
       if (r.invoiceLineCode !== null) differs.invoiceLineCode.push(label(r.id));
       if (r.familyPriceOverride) differs.familyPriceOverride.push(label(r.id));
-      if (r.hasTierUnits) differs.tierUnits.push(label(r.id));
+      if (r.tierUnitRows > 0) differs.tierUnits.push(label(r.id));
+      tierUnitRows += r.tierUnitRows;
       if (r.msrp !== null && !target.msrp) differs.msrp.push(label(r.id));
     }
     return {
@@ -427,6 +454,8 @@ export class CatalogCopyService {
       })),
       packOnly: plan.packOnly.map(label),
       photos: plan.photos,
+      tierUnitRows,
+      newUnits: listNewUnitNames(ladders, target.unitKeys),
       differs,
       unitsV1: target.unitsV1,
     };

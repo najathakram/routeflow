@@ -26,6 +26,8 @@ export function formatReport(r: CopyReport): string[] {
     `  pack-only (target has no ${r.unitsV1 ? "ladder writer" : "units_v1"}): ${r.packOnly.length}`,
     `  recipes left out: ${r.recipesLeftOut.length}${r.recipesLeftOut.length ? ` (${head(r.recipesLeftOut)})` : ""}`,
     `  photos to copy: ${r.photos}`,
+    `  tier units (listed, not copied): ${r.tierUnitRows}`,
+    `  tenant units the ladder writer would create: ${r.newUnits.length}${r.newUnits.length ? ` (${head(r.newUnits)})` : ""}`,
     "  columns that will differ (the target keeps its default):",
     ...Object.entries(r.differs).map(
       ([col, list]) => `    ${col}: ${list.length}${list.length ? ` (${head(list)})` : ""}`,

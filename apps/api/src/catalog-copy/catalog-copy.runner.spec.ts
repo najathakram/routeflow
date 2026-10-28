@@ -28,6 +28,8 @@ describe("catalog-copy report: the inactive products it leaves out", () => {
       regulated: 0,
       codesDropped: [],
       packOnly: [],
+      tierUnitRows: 0,
+      newUnits: [],
       differs: {},
     }) as never;
 
@@ -41,5 +43,38 @@ describe("catalog-copy report: the inactive products it leaves out", () => {
     expect(formatReport(report(many)).join(" | ")).toMatch(
       /inactive left out: 25 .*X-19.*[+]5 more/,
     );
+  });
+});
+
+describe("catalog-copy report: tier units and the tenant units the ladder writer would create", () => {
+  const report = (extra: Record<string, unknown>) =>
+    ({
+      mode: "dry-run",
+      sourceProducts: 1,
+      inactiveLeftOut: 0,
+      inactiveLeft: [],
+      recipesLeftOut: [],
+      skippedBySku: [],
+      variantsSkipped: [],
+      regulatedIds: [],
+      regulated: 0,
+      codesDropped: [],
+      packOnly: [],
+      differs: {},
+      tierUnitRows: 0,
+      newUnits: [],
+      ...extra,
+    }) as never;
+
+  it("prints the tier-unit count and each new unit name", () => {
+    const text = formatReport(report({ tierUnitRows: 3, newUnits: ["Half case", "Pallet"] })).join(
+      " | ",
+    );
+    expect(text).toMatch(/tier units [(]listed, not copied[)]: 3/);
+    expect(text).toMatch(/ladder writer would create: 2 [(]Half case, Pallet[)]/);
+  });
+
+  it("prints a zero count with no list", () => {
+    expect(formatReport(report({})).join(" | ")).toMatch(/ladder writer would create: 0 |/);
   });
 });

@@ -113,6 +113,10 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
     const pair = await prisma.productUnit.create({
       data: { tenantId: s.id, productId: alpha.id, label: "Pair", factorToBase: 2, sortOrder: 0 },
     });
+    // ProductTierUnit is LISTED by the dry run, never copied (SA-1027 spec b17f0ed7)
+    await prisma.productTierUnit.create({
+      data: { tenantId: s.id, productId: alpha.id, tier: 2, orderUnitRef: "base" },
+    });
     await prisma.productUnit.create({
       data: {
         tenantId: s.id,
@@ -223,6 +227,9 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
       expect(r.differs.orderUnitRef).toEqual(["S-1"]);
       expect(r.differs.familyPriceOverride).toEqual(["S-1"]);
       expect(r.differs.msrp).toEqual(["S-1"]); // the target holds no flag.msrp: create would refuse it
+      expect(r.differs.tierUnits).toEqual(["S-1"]);
+      expect(r.tierUnitRows).toBe(1); // listed, not copied: a non-zero live count goes to the owner
+      expect(r.newUnits).toEqual([]); // no units_v1 at the target: no ladder is written, so no unit name is made
     });
 
     let applied: Awaited<ReturnType<CatalogCopyService["run"]>>;
@@ -355,6 +362,24 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
     expect(units[1].parentUnitId).toBe(units[0].id);
     expect(Number(alpha.msrp)).toBe(1.25); // flag.msrp held: the MSRP copies
     expect(r.packOnly ?? []).toEqual([]);
+  }, 60000);
+
+  it("spec b17f0ed7: the dry run lists each TenantUnit the ladder writer would create; apply makes exactly those", async () => {
+    const t = await tenant("t4");
+    await grant(t.id, "GRANT");
+    await prisma.tenantUnit.create({ data: { tenantId: t.id, name: "pair", nameKey: "pair" } });
+    const dry = await service.run(args(t.slug));
+    expect(dry.newUnits).toEqual(["Half case"]); // "Pair" is already the target's unit, matched by key
+    expect(dry.tierUnitRows).toBe(1);
+    expect((await prisma.tenantUnit.findMany({ where: { tenantId: t.id } })).length).toBe(1);
+
+    const r = await service.run(args(t.slug, { apply: true }));
+    expect(r.errors).toEqual([]);
+    const names = (await prisma.tenantUnit.findMany({ where: { tenantId: t.id } }))
+      .map((u) => u.name)
+      .sort();
+    expect(names).toEqual(["Half case", "pair"]); // the writer made what the dry run listed, nothing else
+    expect(await prisma.productTierUnit.count({ where: { tenantId: t.id } })).toBe(0); // listed, not copied
   }, 60000);
 
   it("no partial family: a variant the service refuses undoes the family; the error is reported", async () => {

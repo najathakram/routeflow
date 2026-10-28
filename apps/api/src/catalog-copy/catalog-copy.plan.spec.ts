@@ -1,5 +1,6 @@
 import {
   isRegulatedSource,
+  listNewUnitNames,
   planCatalogCopy,
   type SourceProduct,
   type TargetCatalog,
@@ -192,5 +193,26 @@ describe("planCatalogCopy", () => {
     const v = src({ parentProductId: parent.id, variantName: "A" });
     const lone = src();
     expect(planCatalogCopy([parent, v, lone], target()).createCount).toBe(3);
+  });
+});
+
+describe("listNewUnitNames (SA-1027 spec b17f0ed7: the tenant units the ladder writer would create)", () => {
+  it("names each level label once, in first-use order, matching the target's names by the writer's key", () => {
+    expect(
+      listNewUnitNames(
+        [["Pair", "Half case"], ["Half case", "Pallet"], ["PAIR"]],
+        new Set(["pair"]),
+      ),
+    ).toEqual(["Half case", "Pallet"]);
+  });
+
+  it("skips what the writer would not make: Piece and its synonyms, blank names, names over the length cap", () => {
+    expect(
+      listNewUnitNames([["Piece", "each", "  ", "x".repeat(31), " Case "]], new Set()),
+    ).toEqual(["Case"]);
+  });
+
+  it("lists nothing for no ladders", () => {
+    expect(listNewUnitNames([], new Set())).toEqual([]);
   });
 });

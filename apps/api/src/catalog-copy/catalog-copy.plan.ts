@@ -1,4 +1,6 @@
 import { roundMoney } from "@routeflow/pricing";
+import { isPieceSynonym, unitNameKey } from "../units/piece-words";
+import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 
 /**
  * SA-1027 rules 3, 4, 6, 7: the pure copy decisions. The service reads the source and the target into these shapes,
@@ -324,4 +326,31 @@ export function buildLadderLevelInput(
     isDefaultSelling: level.isDefaultSelling,
     sortOrder: level.sortOrder,
   };
+}
+
+/**
+ * SA-1027 spec b17f0ed7: the tenant units the ladder writer would create on the target. New unit names come ONLY from
+ * the ladder writer (`ProductUnitsService.create` links a level's label to the tenant's unit list, adding the name when
+ * the tenant has none by that key); this script never writes a TenantUnit itself. This lists them for the dry run: the
+ * labels of the ladders about to be written, once each in first-use order, minus the names the target already holds
+ * (matched by the writer's own key) and minus the names the writer does not list (blank, over the length cap, Piece and
+ * its synonyms). At the tenant's active-unit cap the writer saves a level unlinked instead; the list is what it will try.
+ */
+export function listNewUnitNames(
+  ladders: ReadonlyArray<readonly string[]>,
+  targetKeys: ReadonlySet<string>,
+): string[] {
+  const seen = new Set(targetKeys);
+  const out: string[] = [];
+  for (const labels of ladders) {
+    for (const label of labels) {
+      const name = label.normalize("NFC").trim();
+      if (!name || name.length > MAX_UNIT_NAME_LENGTH || isPieceSynonym(name)) continue;
+      const key = unitNameKey(name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+  }
+  return out;
 }
