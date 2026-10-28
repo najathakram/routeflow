@@ -450,15 +450,32 @@ export interface OrderPool {
    */
   pinned?: Map<string, LineCredit>;
 }
+/**
+ * SA-840 A-2 (F2): THE fill order of an order's creditable invoices, oldest first (`createdAt`, then `id`). The refund pricer
+ * (`billedLinesOf`) and the order pool's replay (`loadOrderPool`) both read it, so the line a pooled lump was PRICED on is the line
+ * the pool CREDITS it to. It is NOT the lock order: `lockOrderPoolRows` stays `id` ascending (deadlock order, SA-214).
+ */
+export const compareInvoiceFillOrder = (
+  a: { createdAt?: Date | string | null; id?: string | null },
+  b: { createdAt?: Date | string | null; id?: string | null },
+): number => {
+  const byTime = new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
+  if (byTime !== 0) return byTime;
+  const ai = String(a.id);
+  const bi = String(b.id);
+  return ai < bi ? -1 : ai > bi ? 1 : 0;
+};
+
 export async function loadOrderPool(
   db: any,
   orderId: string,
   opts: { excludeCreditNoteId?: string } = {},
 ): Promise<OrderPool> {
-  const invoices: Array<{ id: string; items: any[] }> = await db.invoice.findMany({
+  const invoices: Array<{ id: string; createdAt: Date; items: any[] }> = await db.invoice.findMany({
     where: { orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
     select: {
       id: true,
+      createdAt: true,
       items: {
         select: {
           id: true,
@@ -474,8 +491,10 @@ export async function loadOrderPool(
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
     },
-    orderBy: [{ id: "asc" }],
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
+  // the replay fills lines in the pricer's order (SA-840 A-2), whatever order the rows came back in
+  invoices.sort(compareInvoiceFillOrder);
   const ids = invoices.map((i) => i.id);
   const lines: HeadroomLine[] = [];
   let credited = new Map<string, LineCredit>();
