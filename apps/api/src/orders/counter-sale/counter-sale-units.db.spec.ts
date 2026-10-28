@@ -481,9 +481,14 @@ describeDb("Counter Sale sells by unit, the real chain on Postgres (SA-1040 B4a)
     it("boxes on a unit line is a 400 and nothing is written", async () => {
       const k = key();
       const before = await stockOf(widget);
-      await expect(
-        ring(A, k, { items: [{ productId: widget, unitLabel: "Case", boxes: 1 }], payment: cash }),
-      ).rejects.toThrow(BadRequestException);
+      // qty: 2 is what makes this pin something: a mapper that dropped boxes would sell 2 Cases (the N-c2 shape);
+      // without a qty the line is a 400 under either mapper (buildLine refuses a NaN count).
+      const err = await ring(A, k, {
+        items: [{ productId: widget, unitLabel: "Case", qty: 2, boxes: 1 }],
+        payment: cash,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as Error).message).toMatch(/takes a quantity of Case units only/);
       expect((await footprint(A, k, widget)).orders).toHaveLength(0);
       expect(await stockOf(widget)).toBe(before);
     });

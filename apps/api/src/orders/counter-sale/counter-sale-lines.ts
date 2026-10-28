@@ -12,8 +12,8 @@ import type { CounterSaleDto } from "./counter-sale.dto";
  * so `qty` is the explicit qty, else boxes + pieces.
  */
 export function toCounterOrderItem(i: CounterSaleDto["items"][number], unitsPerBox: number | null) {
-  // SA-1040 B4a: a unit line (a Case, a Pallet) sends the unit count as `qty` and NO boxes/pieces; create() prices and
-  // refuses it (buildUnitLine), so the counter adds no rule of its own here.
+  // SA-1040 B4a: a unit line (a Case, a Pallet) sends the unit count as `qty`; boxes/pieces are passed through, never
+  // dropped, so create() (buildUnitLine) refuses a unit line that carries a split. The counter adds no rule of its own.
   const unitLabel = i.unitLabel?.trim() || null;
   if (unitLabel) {
     return {
