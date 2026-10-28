@@ -311,8 +311,8 @@ check(
   check(
     "S11 ci.yml runs pr-size dark on pull_request",
     [
-      /node scripts\/pr-size\.mjs --base origin\/\$\{\{ github\.base_ref \}\}/.test(ci),
-      /pr-size[\s\S]{0,400}continue-on-error: true|continue-on-error: true[\s\S]{0,400}pr-size/.test(
+      /node scripts\/pr-size\.mjs --base "origin\/\$\{BASE_REF\}" --github/.test(ci),
+      /name: PR size \(dark\)\s+if: github\.event_name == 'pull_request'\s+continue-on-error: true/.test(
         ci,
       ),
     ],

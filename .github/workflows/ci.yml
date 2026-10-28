@@ -200,6 +200,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # DARK (R3): report the PR's own counted size (scripts/pr-size.mjs, one rule in
+      # scripts/lib/pr-size.mjs) as a ::warning:: annotation. Never fails the job. The checkout is
+      # shallow, so deepen the PR's base and merge ref first: merge-base needs the history. Measuring
+      # against the PR's own base gives a stacked PR its own size, not the whole stack's.
+      - name: PR size (dark)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags --depth=200 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" "refs/pull/${PR_NUMBER}/merge"
+          node scripts/pr-size.mjs --base "origin/${BASE_REF}" --github
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
