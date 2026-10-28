@@ -112,6 +112,8 @@ export interface CopyReport {
   /** Source rows read (active only). */
   sourceProducts: number;
   inactiveLeftOut: number;
+  /** The inactive products left out, by SKU (id when it has none): the dry run names what it does not copy. */
+  inactiveLeft: string[];
   /** RECIPE products: counted and listed, not built (rule 3: with 0 there is nothing to build). */
   recipesLeftOut: string[];
   families: number;
@@ -271,7 +273,7 @@ export class CatalogCopyService {
 
   private async readSource(tenantId: string) {
     const rows: SourceRow[] = [];
-    let inactive = 0;
+    const inactive: string[] = [];
     const recipes: string[] = [];
     const ladderIds = new Set(
       (
@@ -308,7 +310,7 @@ export class CatalogCopyService {
       cursor = page[page.length - 1].id;
       for (const p of page) {
         if (!p.isActive) {
-          inactive += 1;
+          inactive.push(p.sku ?? p.id);
           continue;
         }
         if (p.kind === "RECIPE") {
@@ -378,7 +380,7 @@ export class CatalogCopyService {
   private buildReport(
     mode: CopyReport["mode"],
     rows: SourceRow[],
-    inactive: number,
+    inactive: string[],
     recipes: string[],
     plan: CopyPlan,
     byId: Map<string, SourceRow>,
@@ -404,7 +406,8 @@ export class CatalogCopyService {
     return {
       mode,
       sourceProducts: rows.length,
-      inactiveLeftOut: inactive,
+      inactiveLeftOut: inactive.length,
+      inactiveLeft: inactive,
       recipesLeftOut: recipes,
       families: plan.create.length,
       toCreate: plan.createCount,

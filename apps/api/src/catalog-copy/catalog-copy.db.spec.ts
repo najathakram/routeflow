@@ -213,6 +213,7 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
       expect(r.skippedByName).toBe(2); // the no-SKU product, and Fam C (name taken)
       expect(r.regulated).toBe(1 + 3); // Lone Regulated + Fam B (container, B1, B2): the family left out whole (C-G10)
       expect(r.inactiveLeftOut).toBe(1);
+      expect(r.inactiveLeft).toEqual(["S-5"]); // the dry run NAMES what it leaves out
       expect(r.recipesLeftOut).toEqual([]); // the recipe cases have their own source (C-G16)
       expect(r.packOnly).toEqual(["S-1"]); // C-G3
       expect(r.codesDropped).toEqual([{ sku: "S-3", kind: "barcode", code: "TAKEN-1" }]); // C-G11

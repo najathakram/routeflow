@@ -17,7 +17,8 @@ const head = (list: readonly string[], n = 20) =>
 export function formatReport(r: CopyReport): string[] {
   const lines = [
     `catalog-copy ${r.mode}`,
-    `  source products read (active): ${r.sourceProducts}   inactive left out: ${r.inactiveLeftOut}`,
+    `  source products read (active): ${r.sourceProducts}`,
+    `  inactive left out: ${r.inactiveLeftOut}${r.inactiveLeftOut ? ` (${head(r.inactiveLeft)})` : ""}`,
     `  to create: ${r.toCreate} product(s) in ${r.families} group(s)`,
     `  skipped by SKU: ${r.skippedBySku.length}   skipped by name: ${r.skippedByName}   variants skipped: ${r.variantsSkipped.length}`,
     `  regulated left out: ${r.regulated}${r.regulated ? ` (${head(r.regulatedIds)})` : ""}`,
