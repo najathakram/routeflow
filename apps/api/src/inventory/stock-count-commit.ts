@@ -14,6 +14,7 @@
  */
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { stockCountSeedState, type StockCountSeedState } from "../common/stock-count-seed-state";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Lines per commit transaction: bounds how long one count batch holds its Product row locks. */
@@ -114,8 +115,35 @@ export interface StockCountCommitOutcome {
   skippedProducts?: StockCountSkippedProduct[];
 }
 
+/**
+ * The reserved head of every count movement reference. Both commit paths read "a movement with this
+ * reference exists" as "already committed" (B640), so no free-text input may ever start with it.
+ */
+export const STOCK_COUNT_REFERENCE_PREFIX = "STOCK_COUNT-" as const;
+
 /** The `StockMovement.reference` of every movement a count session writes (also its movementReference). */
-export const stockCountReference = (sessionId: string): string => `STOCK_COUNT-${sessionId}`;
+export const stockCountReference = (sessionId: string): string =>
+  `${STOCK_COUNT_REFERENCE_PREFIX}${sessionId}`;
+
+/**
+ * `GET stock-counts/:id/progress`: a few hundred bytes the page polls while a long seed or commit runs
+ * (the full detail is about 1 MB at 3.4k lines). `commit` is null until a movement of the count exists.
+ */
+export interface StockCountProgress {
+  status: "OPEN" | "REVIEW" | "COMMITTED" | "DISCARDED";
+  lineCount: number;
+  commit: StockCountCommitProgress | null;
+  /**
+   * SA-999: the seed-state (`stockCountSeedState`). "seeding" = the batched seed has not stamped its completion
+   * (running, or the process died): the commit is 409 STOCK_COUNT_SEEDING. The client shows
+   * "Preparing count… {seeded} of {planned}" and disables Commit.
+   */
+  seedState: StockCountSeedState;
+  /** Lines the count has now (the same number as `lineCount`, named for the seeding sentence). */
+  seeded: number;
+  /** `seedPlannedLines`: the lines the seed will write; null for a legacy count. */
+  planned: number | null;
+}
 
 /**
  * One product that is already on another OPEN / REVIEW count (SA-767 r-note 5 SA-3). `sessionName` is
@@ -196,4 +224,52 @@ export function stockCountCommitting(): ConflictException {
     code: API_ERROR_CODES.STOCK_COUNT_COMMITTING,
     message: "This count is being saved. Try again in a moment.",
   });
+}
+
+/** The coded 409: the count's batched seed has not stamped its completion. Nothing was written; retry is safe. */
+export function stockCountSeeding(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.STOCK_COUNT_SEEDING,
+    message: "This count is still being prepared. Try again in a moment.",
+  });
+}
+
+/** Just enough of a tenant-scoped client to read a session: the real one, a transaction, or a test double. */
+interface SeedStateReader {
+  stockCountSession: { findUnique(args: any): Promise<unknown> };
+}
+
+/**
+ * SA-999: refuse a commit of a count that is still being seeded, 409 STOCK_COUNT_SEEDING, before anything is
+ * written. The commit calls this as the FIRST read under its exclusive `stock-count` lock (the authority: the
+ * seed's batches hold the SHARED form of that lock, so no batch is mid-flight) and again, as the cheap early
+ * answer, on the session it already read. A count that is no longer OPEN / REVIEW keeps its own answers (a
+ * DISCARDED orphan is the existing 400, a COMMITTED one the idempotent replay). A missing session is left to the
+ * caller's 404. "legacy" and "complete" return.
+ */
+export async function refuseWhileSeeding(db: SeedStateReader, sessionId: string): Promise<void> {
+  const row = (await db.stockCountSession.findUnique({
+    where: { id: sessionId },
+    select: { status: true, seedPlannedLines: true, seedCompletedAt: true },
+  })) as {
+    status: string;
+    seedPlannedLines: number | null;
+    seedCompletedAt: Date | null;
+  } | null;
+  if (row) refuseIfSeeding(row);
+}
+
+/** The same refusal on a session row already in hand (the pre-lock early answer). */
+export function refuseIfSeeding(row: {
+  status: string;
+  seedPlannedLines?: number | null;
+  seedCompletedAt?: Date | string | null;
+}): void {
+  if (!(OPEN_COUNT_STATUSES as readonly string[]).includes(row.status)) return;
+  // `?? null`: a column the row did not select is "not seeded in batches", never an impossible row.
+  const state = stockCountSeedState({
+    seedPlannedLines: row.seedPlannedLines ?? null,
+    seedCompletedAt: row.seedCompletedAt ?? null,
+  });
+  if (state === "seeding") throw stockCountSeeding();
 }
