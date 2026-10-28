@@ -266,8 +266,8 @@ import {
   sendRefusal,
   voidRefusal,
   externalPaidOn,
-  writeOffRefusal,
 } from "./invoice-send-guard";
+import { writeOffInvoice } from "./invoice-write-off";
 import { selectEditRevertedInvoices } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
@@ -4959,35 +4959,9 @@ export class InvoicesService {
   // ─── Write-off ────────────────────────────────────────────────────────────
 
   async writeOff(id: string, dto: WriteOffDto) {
-    const inv = await this.findOneOrThrow(id);
-    const early = writeOffRefusal(inv.status);
-    if (early) throw new BadRequestException(early);
-    // Sales agents & commissions: materially a no-op for money (payable
-    // derives from payments, and WRITTEN_OFF releases nothing beyond cash
-    // already collected) but wrapped atomically to refresh the accrual's
-    // display status alongside the write-off.
-    return this.prisma.tenantTransaction(async (tx) => {
-      // #2472 (3): (Order →) Invoice locked FIRST and re-checked there — a void since the pre-read wins.
-      const locked = await lockInvoiceRow(tx, id, inv.orderId);
-      if (!locked) throw new NotFoundException("Invoice not found");
-      const refused = writeOffRefusal(locked.status);
-      if (refused) throw new BadRequestException(refused);
-      const written = await tx.invoice.update({
-        where: { id },
-        data: {
-          status: InvoiceStatus.WRITTEN_OFF,
-          writeOffReason: dto.reason,
-          writtenOffAt: new Date(),
-        },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          items: true,
-          payments: { orderBy: { createdAt: "desc" } },
-        },
-      });
-      await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
-      return written;
-    });
+    // SA-1050 PR-1: the write-off lives in invoice-write-off.ts (one home for the bad-debt rules).
+    const deps = { prisma: this.prisma, commissionEngine: this.commissionEngine };
+    return writeOffInvoice(deps, await this.findOneOrThrow(id), dto);
   }
 
   // ─── Delete ───────────────────────────────────────────────────────────────
