@@ -59,6 +59,11 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "SA-827 rule 5: display snapshot columns only (invoiceUnitLabel/Factor); never a quantity, price or composition write",
   },
+  "invoices/invoice-display-unit.ts::writeIssueBaseLabels": {
+    kind: "exempt",
+    reason:
+      "SA-1029: display snapshot column only (baseLabel); never a quantity, price or composition write",
+  },
   "invoices/invoice-display-unit.ts::clearIssueDisplayUnits": {
     kind: "exempt",
     reason: "SA-827 rule 5: clears the display snapshot on a revert to draft; no composition write",

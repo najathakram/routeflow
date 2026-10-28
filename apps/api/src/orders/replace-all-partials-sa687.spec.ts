@@ -225,7 +225,7 @@ describe("SA-687 M1: a replace-all edit of an order with partial invoices, then 
       delivered,
       50,
       "CASH",
-      { runId: "run-1", stopId: "stop-1" },
+      null,
     );
 
     expect(recorded).toMatchObject({ applied: 0, excess: 50, advancePaymentId: "adv-1" });
