@@ -22,6 +22,7 @@ import { accountAdminsOf } from "./account-admins";
  */
 
 type U = {
+  id: string;
   tenantId: string;
   email: string;
   username: string | null;
@@ -32,6 +33,7 @@ type U = {
 };
 
 const user = (o: Partial<U>): U => ({
+  id: "u-1",
   tenantId: "t1",
   email: "admin@acme.test",
   username: "admin",
@@ -46,10 +48,25 @@ const user = (o: Partial<U>): U => ({
 function usersTable(rows: U[]) {
   const match = (u: U, where: any = {}) =>
     Object.entries(where).every(([k, v]) => (u as any)[k] === v);
-  const sorted = (list: U[], orderBy?: { createdAt?: "asc" | "desc" }) =>
-    orderBy?.createdAt === "asc"
-      ? [...list].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-      : list;
+  /** Honours `orderBy` as one key or a list of keys (createdAt / id, asc), like Prisma; unlisted ties keep insertion order. */
+  const sorted = (list: U[], orderBy?: any) => {
+    const keys: Array<Record<string, "asc" | "desc">> = orderBy
+      ? Array.isArray(orderBy)
+        ? orderBy
+        : [orderBy]
+      : [];
+    return [...list].sort((a, b) => {
+      for (const k of keys) {
+        const [field, dir] = Object.entries(k)[0];
+        const av = (a as any)[field];
+        const bv = (b as any)[field];
+        const cmp =
+          av instanceof Date ? av.getTime() - bv.getTime() : av < bv ? -1 : av > bv ? 1 : 0;
+        if (cmp !== 0) return dir === "desc" ? -cmp : cmp;
+      }
+      return 0;
+    });
+  };
   return {
     findFirst: jest.fn(async ({ where, orderBy }: any = {}) => {
       return (
@@ -126,6 +143,16 @@ describe("ensureStripeCustomer: the email of a NEW customer (SA-1037 r3 PR-3)", 
     ]);
     await h.billing.ensureStripeCustomer("t1");
     expect(emailSent(h)).toBe("oldest@acme.test");
+  });
+
+  it("two admins created at the same instant: the lower id is the account admin, whatever order the table returns them in", async () => {
+    const same = new Date("2026-01-01T00:00:00Z");
+    const h = make([
+      user({ id: "u-b", email: "b@acme.test", createdAt: same }),
+      user({ id: "u-a", email: "a@acme.test", createdAt: same }),
+    ]);
+    await h.billing.ensureStripeCustomer("t1");
+    expect(emailSent(h)).toBe("a@acme.test");
   });
 
   it("a soft-deleted admin and an admin of ANOTHER tenant are never used", async () => {
