@@ -15,6 +15,8 @@ export interface CounterSaleItem {
   qty?: number;
   boxes?: number;
   pieces?: number;
+  /** SA-1040 B4a: sell by a unit of the product (a Case, a Pallet); `qty` then counts the unit and boxes/pieces are omitted. Blank = the pack. */
+  unitLabel?: string | null;
   /**
    * A one-time NET unit price for the line (a boxed line's is the BOX price). Only a caller who may edit prices
    * (account admins today, `canEditPrices`) may send a price that differs from the server's own for this customer:

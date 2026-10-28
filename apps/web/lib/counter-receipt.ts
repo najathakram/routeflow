@@ -34,6 +34,8 @@ export interface ReceiptLineInput {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** SA-1040 B4a: the line's selling unit ("Case"); absent or null on a pack line. A unit line's count is `boxes`, else `qty`. */
+  unitLabel?: string | null;
   /** Row 298: the product's own selling unit ("each", "lb"); printed after the price of a plain line. Absent: no word. */
   unit?: string | null;
   /** POS-3: the cashier's optional per-line note, printed under the line. */
@@ -94,7 +96,8 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
 };
 
 /** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
-const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
+const lineDetail = (l: ReceiptLineInput): string =>
+  receiptLineDetail({ ...l, unitLabel: l.unitLabel ?? null });
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
 const num = (v: unknown): number => Number(v ?? 0) || 0;
@@ -301,6 +304,8 @@ export interface ReprintOrderLike {
     unitsPerBox?: number | null;
     boxes?: number | null;
     pieces?: number | null;
+    /** SA-1040 B4a: the stored selling unit of a unit line (`OrderItem.unitLabel`). */
+    unitLabel?: string | null;
     /** The line note the cashier typed (OrderItem.notes). */
     notes?: string | null;
     status?: string;
@@ -421,6 +426,7 @@ export function receiptModelFromOrder(input: {
         unitsPerBox: l.unitsPerBox == null ? undefined : num(l.unitsPerBox),
         boxes: l.boxes == null ? undefined : num(l.boxes),
         pieces: l.pieces == null ? undefined : num(l.pieces),
+        unitLabel: l.unitLabel ?? null,
         unit: l.product?.unit ?? null,
       };
       // the SAME rule as the live receipt: the stored list price is struck and the difference is a Discounts row, but only

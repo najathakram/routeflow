@@ -15,6 +15,8 @@ export interface ReplayedOrder {
     status?: string | null;
     unitPrice?: unknown;
     overriddenBy?: string | null;
+    /** SA-1040 B4a: the stored unit of a unit line (a Case); null on a pack line. */
+    unitLabel?: string | null;
   }> | null;
 }
 
