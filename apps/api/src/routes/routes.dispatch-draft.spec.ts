@@ -52,6 +52,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
+    loadUnitCatalogs: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -65,6 +66,7 @@ describe("RoutesService — DRAFT orders never ride a dispatch or complete as de
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
+      loadUnitCatalogs: jest.fn().mockResolvedValue(new Map()), // SA-827
     };
 
     gateway = {

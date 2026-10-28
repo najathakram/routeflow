@@ -56,17 +56,14 @@ export const INFRA: Record<Model, string> = {
  */
 const P0A_LABELS: Record<string, GapRef> = { baseLabel: "unfiled", packLabel: "unfiled" };
 /**
- * Units program S6 (SA-795 (g)): the invoice-unit snapshot columns exist (nullable, display-only) but nothing
- * writes them yet; the invoice-unit slice (S23) snapshots them at issue and moves each out of gaps.
+ * SA-827: the invoice-unit snapshot columns are written ONLY by the issue snapshot (writeIssueDisplayUnits in
+ * invoice-display-unit.ts, on the DRAFT -> issued transition), never by a copier. Any copy into a new DRAFT leaves them null (reset): the new invoice
+ * snapshots its own display unit when it is first issued.
  */
-const S6_INVOICE_UNIT: Record<string, GapRef> = {
-  invoiceUnitLabel: "unfiled",
-  invoiceUnitFactor: "unfiled",
-};
+const INVOICE_UNIT_RESET = "invoiceUnitLabel invoiceUnitFactor";
 const P0A_LABELS_LINECODE: Record<string, GapRef> = {
   ...P0A_LABELS,
   lineCode: "unfiled",
-  ...S6_INVOICE_UNIT,
 };
 
 /**
@@ -141,7 +138,7 @@ export const COPIERS: Copier[] = [
     // local spread (invoice-line-composition.ts), for exactly the pieces this bill covers.
     rederived: "description msrp taxRate compositionMode recipeId recipeVersion",
     components: "carried",
-    reset: "discount",
+    reset: "discount " + INVOICE_UNIT_RESET,
     // #2169 (SA-395): built from a request line, never a copy of a system-stamped source line.
     na: "systemKind",
     gaps: { ...P0A_LABELS_LINECODE },
@@ -160,7 +157,9 @@ export const COPIERS: Copier[] = [
       "overrideReason overriddenBy", // H3b: travel with the override price they explain
     // unit lines are refused (409); order-linked invoices are refused (RF-011), and composed lines exist only on those
     na: "unitLabel orderItemId compositionMode recipeId recipeVersion",
-    reset: R510_STAMP, // row 510: a duplicate is a new sale, re-judged; the source line's override is never copied
+    // row 510: a duplicate is a new sale, re-judged; the source line's override is never copied.
+    // SA-827: the display-unit snapshot is re-frozen at the copy's own first issue.
+    reset: R510_STAMP + " " + INVOICE_UNIT_RESET,
     components: "na",
     gaps: { ...P0A_LABELS_LINECODE },
   },
@@ -193,8 +192,9 @@ export const COPIERS: Copier[] = [
     // rate), and the B297 trio is stamped beside it (`...categorySnapshot`, an opaque spread).
     rederived:
       "taxRate msrp trackedCategoryId trackedSubcategoryId categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
-    // row 510: the estimate line has no stamp; a convert is re-judged (a fresh override is a new stamp, not a copy)
-    reset: "discount " + R510_STAMP,
+    // row 510: the estimate line has no stamp; a convert is re-judged (a fresh override is a new stamp, not a copy).
+    // SA-827: the display-unit snapshot is frozen at the new invoice's own first issue.
+    reset: "discount " + R510_STAMP + " " + INVOICE_UNIT_RESET,
     // The estimate line has no such column / no order link; unit-aware lines are refused (409 UNIT_AWARE_LINE).
     // #2169 (SA-395): an estimate line, never a copy of a system-stamped source line.
     // H3b: EstimateItem has no overrideReason / overriddenBy columns.
@@ -218,7 +218,9 @@ export const COPIERS: Copier[] = [
       "subtotal msrp categoryTaxAmount categoryTaxType categoryTaxRate categoryPriceIncludesTax",
     // #2169 (SA-395): a template-generated line, never a copy of a system-stamped source line.
     na: "originalPrice priceType promoFreeUnits notes orderItemId systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy", // RecurringInvoiceItem has none of these columns
-    reset: R510_STAMP, // row 510 (#2093): a breached line is skipped, never stamped; an override is never carried forward
+    // row 510 (#2093): a breached line is skipped, never stamped; an override is never carried forward.
+    // SA-827: the display-unit snapshot is frozen at the generated invoice's own first issue.
+    reset: R510_STAMP + " " + INVOICE_UNIT_RESET,
     components: "na",
     gaps: {
       ...P0A_LABELS_LINECODE,
@@ -342,7 +344,7 @@ export const COPIERS: Copier[] = [
     target: "InvoiceItem",
     anchor: { via: "push", name: "itemsData" },
     carried: "description productId qty unitPrice subtotal discount",
-    reset: "taxRate", // forced 0
+    reset: "taxRate " + INVOICE_UNIT_RESET, // taxRate forced 0
     rederived: R510_STAMP, // row 510: the import marker (see R510_STAMP), written after the loop, not in this literal
     // #2169 (SA-395): an imported CSV line, never a copy of a system-stamped source line.
     na: "originalPrice msrp priceType boxes pieces unitsPerBox promoFreeUnits notes orderItemId trackedCategoryId trackedSubcategoryId categoryTaxAmount unitLabel categoryTaxType categoryTaxRate categoryPriceIncludesTax systemKind compositionMode recipeId recipeVersion overrideReason overriddenBy",
