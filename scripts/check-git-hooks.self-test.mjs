@@ -432,6 +432,51 @@ try {
     JSON.stringify(en),
   );
 
+  // T14r-s — review folds: chmod only this tree's own hooks dir; helpers refreshed, hooks never overwritten.
+  const shared = repo("t14r-main");
+  const sharedHooks = path.join(shared, "shared", "_");
+  withHook(shared, "shared/_");
+  sh(shared, "config", "core.hooksPath", sharedHooks.replaceAll("\\", "/"));
+  const sharedLinked = path.join(tmp, "t14r-linked");
+  sh(shared, "worktree", "add", "-q", "-b", "t14r", sharedLinked);
+  const sharedPp = path.resolve(sharedHooks, "pre-push");
+  const sharedChmods = [];
+  let sharedMode = 0o644;
+  const sharedFs = {
+    ...nodeFs,
+    statSync: (p) => (path.resolve(p) === sharedPp ? { mode: sharedMode } : nodeFs.statSync(p)),
+    chmodSync: (p, m) => (sharedChmods.push(p), (sharedMode = m)),
+  };
+  en = ensureGitHooks({ cwd: sharedLinked, env: {}, fs: sharedFs, platform: "linux" });
+  ok(
+    "T14r a linked tree on the main checkout's shared hooks dir is refused, nothing chmod-ed",
+    en.ok === false && sharedChmods.length === 0 && /main checkout's own hooks/.test(en.message),
+    JSON.stringify([en, sharedChmods]),
+  );
+  sharedMode = 0o644;
+  sharedChmods.length = 0;
+  en = ensureGitHooks({ cwd: shared, env: {}, fs: sharedFs, platform: "linux" });
+  ok(
+    "T14r2 the main checkout may chmod its own hooks dir",
+    en.ok === true && sharedChmods.length === 1,
+    JSON.stringify([en, sharedChmods]),
+  );
+  writeFileSync(path.join(mainWithHook, ".husky/_/h"), "# fresh h\n");
+  const stale = path.join(tmp, "t14s-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14s", stale);
+  mkdirSync(path.join(stale, ".husky/_"), { recursive: true });
+  writeFileSync(path.join(stale, ".husky/_/h"), "# stale h\n");
+  writeFileSync(path.join(stale, ".husky/_/commit-msg"), "# custom commit-msg\n");
+  en = ensureGitHooks({ cwd: stale, env: {} });
+  const staleRead = (f) => readFileSync(path.join(stale, ".husky/_", f), "utf8");
+  ok(
+    "T14s a stale husky helper is replaced; a custom commit-msg is kept",
+    en.ok === true &&
+      staleRead("h") === "# fresh h\n" &&
+      /custom commit-msg/.test(staleRead("commit-msg")),
+    JSON.stringify(en),
+  );
+
   // T12 — structural: the guard is actually wired where it must be.
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
   const FRESHNESS = "node scripts/campaign-check.mjs --freshness-only && ";
