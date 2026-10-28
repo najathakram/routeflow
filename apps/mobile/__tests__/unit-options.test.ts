@@ -6,6 +6,7 @@ import {
   defaultUnitValue,
   marginFactorFor,
   unitLineSubtotal,
+  unitOptionDetail,
   unitOptionText,
   unitPriceBase,
 } from "../lib/unit-options";
@@ -53,6 +54,22 @@ describe("unitOptionText — parity with apps/web/lib/unit-options.test.ts", () 
       "Pallet · 5760 pcs · $10,080.00",
     );
     expect(unitOptionText(piece)).toBe("Piece · $1.75");
+  });
+
+  it("a derived Piece that is not exact to the cent reads the proration, via mobile's own formatters (row 513)", () => {
+    const pack3 = { unit: "Pack", unitsPerBox: 3, pricePerUnit: "10.00" };
+    const piece = buildUnitOptions(pack3, [level({ label: "Case", factorToBase: 72 })]).find(
+      (o) => o.factorToBase === 1,
+    )!;
+    expect(unitOptionText(piece)).toBe("Piece · ≈$3.33 (1/3 of $10.00)");
+  });
+});
+
+describe("unitOptionDetail — the picker row's detail line, via mobile's own formatters (row 513)", () => {
+  it("a level reads pieces then price; a single piece omits the count", () => {
+    const options = buildUnitOptions(product, [CASE, PALLET]);
+    expect(unitOptionDetail(options.find((o) => o.value === "Case")!)).toBe("288 pcs · $480.00");
+    expect(unitOptionDetail(options.find((o) => o.factorToBase === 1)!)).toBe("$1.75");
   });
 });
 

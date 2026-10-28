@@ -169,6 +169,17 @@ describe("buyer order detail - polish (P29-P35)", () => {
     );
   });
 
+  it("a pickup order says Pickup requested, not Delivery requested", () => {
+    mockOrder = order([PLAIN], {
+      fulfillPath: "PICKUP",
+      requestedDeliveryDate: "2026-09-15T00:00:00Z",
+    });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getByText(/Placed/)).toHaveTextContent(
+      "Placed Sep 10, 2026 · Pickup requested Sep 15, 2026",
+    );
+  });
+
   it("P35: the status badge sits with the order number, not at the far edge", () => {
     mockOrder = order([PLAIN]);
     renderWithProviders(<BuyerOrderDetailPage />);

@@ -185,7 +185,7 @@ describe("dayCloseZSections (SA-750r3 §4 order)", () => {
       "Total",
       "Pickup hand-overs (in till cash)",
     ]);
-    // owner ruling 10-12: one name for the expected cash, "Variance" for the over/short row, and the unpaid pickups are a row in
+    // owner ruling 10-12: one name for the expected cash, "Variance" for the over/short row, and paid outside the till is a row in
     // the Drawer group, not an orphan line under the report
     expect(z.groups[0].rows.map((r) => [r.label, r.amount])).toEqual([
       ["Opening float", 100],
@@ -193,7 +193,7 @@ describe("dayCloseZSections (SA-750r3 §4 order)", () => {
       ["Expected cash", 415],
       ["Counted", 412.5],
       ["Variance", -2.5],
-      ["Unpaid pickups", 40],
+      ["Paid outside the till", 40],
     ]);
     expect(z.groups[3].rows.at(-1)).toMatchObject({ label: "Net collected", bold: true });
     expect(z.groups[0].rows[2]).toMatchObject({ label: "Expected cash", bold: true });

@@ -315,5 +315,64 @@ describeDb(
       expect(after).toHaveLength(1);
       expectPackPieces(after[0]);
     });
+
+    // Row 516 (SA-961 R7): a SAVED override pack price is the line's own price, so the derived Piece inherits it.
+    // Normalised by normalizeDerivedBaseLine with price:"drop" (the echoed price is deleted), so the server's own
+    // fallback picks the price: 2 of 3 pieces at the saved $17.50 = roundMoney(17.50 x 2/3) = $11.67, NOT the
+    // tier/list price ($20 x 2/3 = $13.33).
+    it("edit: a pack line saved at an override $17.50, edited to 2 Piece with NO unitPrice, bills $17.50 x 2/3 = $11.67 (not the list $13.33)", async () => {
+      const c = await customer();
+      const order = (await create(c.id, [
+        { productId: product.id, qty: 3, unitPrice: 17.5, overrideReason: "negotiated pack price" },
+      ])) as { id: string };
+      const [held] = await lines(order.id);
+      expect(Number(held.unitPrice)).toBe(17.5); // the override is SAVED before the edit
+      await tenantCtx.run(tenantId, () =>
+        svc.updateOrderItems(
+          order.id,
+          {
+            replaceAll: false,
+            items: [{ id: held.id, qty: 2, unitLabel: "Piece" }],
+          } as never,
+          staff(),
+        ),
+      );
+      const after = await lines(order.id);
+      expect(after).toHaveLength(1);
+      expect({
+        pieces: after[0].pieces,
+        upb: Number(after[0].unitsPerBox),
+        unitPrice: Number(after[0].unitPrice),
+        subtotal: Number(after[0].subtotal),
+      }).toEqual({ pieces: 2, upb: 3, unitPrice: 17.5, subtotal: 11.67 });
+    });
+
+    // KEPT (line-units.ts: a typed per-piece price that is NOT the derived price is a deliberate override).
+    it("edit: a typed per-piece $5.00 that differs from the derived $6.67 stays a deliberate override (2 x $5.00 = $10.00)", async () => {
+      const c = await customer();
+      const order = (await create(c.id, [{ productId: product.id, qty: 3 }])) as { id: string };
+      const [held] = await lines(order.id);
+      await tenantCtx.run(tenantId, () =>
+        svc.updateOrderItems(
+          order.id,
+          {
+            replaceAll: false,
+            items: [
+              {
+                id: held.id,
+                qty: 2,
+                unitLabel: "Piece",
+                unitPrice: 5,
+                overrideReason: "per-piece deal",
+              },
+            ],
+          } as never,
+          staff(),
+        ),
+      );
+      const after = await lines(order.id);
+      expect(after).toHaveLength(1);
+      expect(Number(after[0].subtotal)).toBe(10);
+    });
   },
 );
