@@ -476,7 +476,7 @@ export class InvoicesService {
       ...lineGuardCtx(this.prisma, actor, opts?.warnSite), // tenant, role, and POST /invoices' census site (SA-982 PR-2)
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
-      override: await loadOverride(this.prisma, dto, unitsByProduct, actor?.sub, this.entitlements),
+      override: await loadOverride(this.prisma, dto, unitsByProduct, actor, this.entitlements),
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -3162,7 +3162,7 @@ export class InvoicesService {
         this.prisma,
         { ...inv, items },
         unitsByProduct,
-        actor?.sub,
+        actor,
         this.entitlements,
       );
 
