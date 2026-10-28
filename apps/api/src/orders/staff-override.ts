@@ -15,6 +15,34 @@ export const specialPriceReasonRequired = (name: string | null | undefined) =>
 
 type PricedProduct = { name?: string | null; pricePerUnit: unknown };
 
+/** The pack line's baseline: the customer layer's price when there is one, else the tier price; `decideStaffOverride`'s inputs. */
+function packBaseline(product: PricedProduct, tier: number, layer?: CustomerLayerPrice | null) {
+  const listPrice = layer?.listPrice ?? Number(product.pricePerUnit);
+  return {
+    baselinePrice: layer?.price ?? Number(getTierPrice(product, tier)),
+    listPrice,
+    isSpecialTier: isSpecialPrice(tier, listPrice, layer?.price),
+  };
+}
+
+/**
+ * SA-1034 rule 6: does a typed pack price MOVE off the baseline (more than half a cent)? The same rule and baseline as
+ * `decideTierOverride`, asked as a yes/no: a reason is never required here (no new 400), because a template line has none.
+ */
+export function packPriceMovesBaseline(
+  product: PricedProduct,
+  tier: number,
+  typedPrice: number,
+  layer?: CustomerLayerPrice | null,
+): boolean {
+  const d = decideStaffOverride({
+    overridePrice: typedPrice,
+    ...packBaseline(product, tier, layer),
+    hasReason: true,
+  });
+  return "priceType" in d && (d.priceType === "DISCOUNTED" || d.priceType === "MANUAL");
+}
+
 /**
  * #2696(c) rule A (SA-558 / 558b / 558d): a staff-typed price on a line priced from the customer's
  * TIER — create, the create auto-merge's new line, substitute — goes through `decideStaffOverride`
@@ -32,13 +60,7 @@ export function decideTierOverride(
 ) {
   const decision = decideStaffOverride({
     overridePrice,
-    baselinePrice: layer?.price ?? Number(getTierPrice(product, tier)),
-    listPrice: layer?.listPrice ?? Number(product.pricePerUnit),
-    isSpecialTier: isSpecialPrice(
-      tier,
-      layer?.listPrice ?? Number(product.pricePerUnit),
-      layer?.price,
-    ),
+    ...packBaseline(product, tier, layer),
     hasReason: !!reason?.trim(),
   });
   if ("refused" in decision) throw specialPriceReasonRequired(product.name);

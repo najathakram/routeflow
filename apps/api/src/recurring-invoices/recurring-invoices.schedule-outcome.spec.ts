@@ -9,6 +9,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 // SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
 jest.mock("../auth/permissions/price-edit", () => ({
@@ -51,6 +52,7 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },

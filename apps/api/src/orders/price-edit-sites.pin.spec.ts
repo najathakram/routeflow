@@ -49,6 +49,7 @@ const ASSERT_COUNTS: Record<string, number> = {
   "orders/replace-all-line-build.ts": 1, // replace-all repriced line + the create auto-merge's new line
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit, pack and unit
   "estimates/estimates.service.ts": 1, // estimate create: a typed catalog price under list (rule 5)
+  "recurring-invoices/recurring-invoices.service.ts": 1, // template create + update: a catalog price moved off the baseline (rule 6)
 };
 
 /**
@@ -70,7 +71,7 @@ const COMPUTE_COUNTS: Record<string, number> = {
   "invoices/invoice-line-override.ts": 1, // loadOverride: invoice create and edit
   "returns/inline-returns-quote.service.ts": 1, // priceInlineReturn: the quote and the capture's credit price
   "estimates/estimates.service.ts": 1, // create
-  "recurring-invoices/recurring-invoices.service.ts": 1, // assertCustomLinesAllowed (template create + update)
+  "recurring-invoices/recurring-invoices.service.ts": 1, // assertAuthoredPricesAllowed (template create + update)
 };
 
 describe("SA-1034: price-edit capability is checked at every override site", () => {

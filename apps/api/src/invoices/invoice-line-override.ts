@@ -126,23 +126,18 @@ const ladderProduct = (p: PricedProduct): LadderProduct => ({
 });
 
 /**
- * The customer's tier resolver for a create/edit, or undefined when the caller is internal (no actor).
- * Two reads: the customer's default tier and its per-product CustomerPrice tiers (a null tier = msrp-only row).
+ * The customer's price baseline for these lines: its tier per product and its customer layer (SA-1034 rule 6 asks the same
+ * question for a template line as the invoice create does, so it is read here, once). Two reads: the customer's default
+ * tier and its per-product CustomerPrice tiers (a null tier = msrp-only row).
  */
-export async function loadOverride(
+export async function loadTierBaseline(
   prisma: PrismaService,
   {
     customerId,
     items,
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
-  ladders: ReadonlyMap<string, readonly LadderUnit[]>,
-  actor: { sub?: string; role?: string | null; tenantId?: string | null } | undefined,
-  /** Required, never defaulted here: `create()` and the edit say which they are (SA-1034 rule 6). */
-  source: InvoiceSource,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
-): Promise<LineOverrideCtx | undefined> {
-  const actorId = actor?.sub;
-  if (!actorId) return undefined;
+): Promise<Pick<LineOverrideCtx, "tierOf" | "layerOf">> {
   const db = prisma.forTenant();
   const ids = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const customer = await db.customer.findFirst({
@@ -158,6 +153,25 @@ export async function loadOverride(
     : [];
   // S19: master's `cp.pricingTier ?? customer.pricingTier ?? 1` flag off; customerTierFor + typed prices flag on.
   const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
+  return { tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier, layerOf: pc.layer };
+}
+
+/** The customer's tier resolver for a create/edit, or undefined when the caller is internal (no actor). */
+export async function loadOverride(
+  prisma: PrismaService,
+  {
+    customerId,
+    items,
+  }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
+  ladders: ReadonlyMap<string, readonly LadderUnit[]>,
+  actor: { sub?: string; role?: string | null; tenantId?: string | null } | undefined,
+  /** Required, never defaulted here: `create()` and the edit say which they are (SA-1034 rule 6). */
+  source: InvoiceSource,
+  entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
+): Promise<LineOverrideCtx | undefined> {
+  const actorId = actor?.sub;
+  if (!actorId) return undefined;
+  const baseline = await loadTierBaseline(prisma, { customerId, items }, entitlements);
   return {
     actorId,
     // SA-1034: the one price-edit capability, read once per request here (both callers sit before their transaction).
@@ -171,8 +185,7 @@ export async function loadOverride(
             "InvoicesService.loadOverride",
           ),
     ladders,
-    tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
-    layerOf: pc.layer,
+    ...baseline,
   };
 }
 

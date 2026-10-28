@@ -8,10 +8,13 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 /** What a tenant-scoped read does: only this tenant's own rows come back for an id list. */
 const ownRows = (owned: string[]) => async (args: { where: { id: { in: string[] } } }) =>
-  args.where.id.in.filter((id) => owned.includes(id)).map((id) => ({ id, kind: "SIMPLE" }));
+  args.where.id.in
+    .filter((id) => owned.includes(id))
+    .map((id) => ({ id, kind: "SIMPLE", pricePerUnit: 5 })); // 5 is the items' typed price: at the baseline, no rights needed
 
 // 681 (R5-5) sites 5 and 6: a recurring template stores its customer (create only: update never writes
 // customerId) and every item's productId. Each must resolve in the caller's tenant before the write.
@@ -31,12 +34,17 @@ describe("RecurringInvoicesService — tenant refs (681 sites 5, 6)", () => {
     prisma.customer.findMany.mockImplementation(ownRows(["cust-a"]));
     prisma.product.findMany.mockImplementation(ownRows(["prod-a"]));
     prisma.customer.findUnique.mockResolvedValue({ id: "cust-a" });
-    prisma.recurringInvoice.findUnique.mockResolvedValue({ id: "ri-1", items: [] });
+    prisma.recurringInvoice.findUnique.mockResolvedValue({
+      id: "ri-1",
+      customerId: "cust-a",
+      items: [],
+    });
     prisma.recurringInvoice.create.mockResolvedValue({ id: "ri-1" });
     prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: { create: jest.fn() } },

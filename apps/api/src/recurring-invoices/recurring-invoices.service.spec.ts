@@ -26,6 +26,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 /**
  * Locks the pause/resume contract. `deactivate()` (DELETE) sets isActive=false;
@@ -42,6 +43,7 @@ describe("RecurringInvoicesService (pause/resume)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
@@ -125,6 +127,7 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
@@ -201,6 +204,7 @@ describe("RecurringInvoicesService (cycle claim, B9)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
@@ -306,6 +310,7 @@ describe("RecurringInvoicesService (archived SKU in generation, B142)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
@@ -359,6 +364,7 @@ describe("RecurringInvoicesService (calcNextRunAt MONTHLY pins)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
@@ -406,6 +412,7 @@ describe("RecurringInvoicesService (calcNextRunAt WEEKLY/BIWEEKLY, pin)", () => 
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
@@ -479,6 +486,7 @@ describe("RecurringInvoicesService (cron continues past a failing template, pin)
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         {
           provide: TenantContextService,
@@ -580,6 +588,7 @@ describe("RecurringInvoicesService.generateDueRecurringInvoices — removed cust
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         {
           provide: TenantContextService,
@@ -688,6 +697,7 @@ describe("RecurringInvoicesService.create — removed customer (B131)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },

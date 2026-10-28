@@ -880,6 +880,104 @@ describeDb("SA-1034 — price-edit capability at the line edit, real Postgres", 
       expect(rows.map((r) => Number(r.unitPrice)).sort((a, b) => a - b)).toEqual([6, 50]);
     });
 
+    const cola = (unitPrice: number) => ({
+      description: "Cola",
+      productId,
+      qty: 1,
+      unitPrice,
+    });
+    const templateRows = (templateId: string) =>
+      raw.recurringInvoiceItem.findMany({ where: { recurringInvoiceId: templateId } });
+    const wouldDenyLogged = () =>
+      (Logger.prototype.warn as unknown as jest.Mock).mock.calls.some((c) =>
+        String(c[0]).includes("would-deny"),
+      );
+
+    it("R6-1 live (rule 6): the denied operator's template with a catalog line typed 1.00 under the tier price is a 403; no template row", async () => {
+      live();
+      const before = await raw.recurringInvoice.count({ where: { tenantId } });
+      const err = await caught(
+        inTenant(() => recurring.create({ ...weekly(), items: [cola(9)] } as any, denied())),
+      );
+      expectPriceEditRefused(err); // observed at a97eacd6e: 201, the below-tier line was written
+      expect(await raw.recurringInvoice.count({ where: { tenantId } })).toBe(before);
+    });
+
+    it("R6-2 live (rule 6): the denied operator re-pricing a held template line below the tier price is a 403; the held line is unchanged", async () => {
+      live();
+      const tpl: any = await inTenant(() =>
+        recurring.create({ ...weekly(), items: [cola(10)] } as any, admin()),
+      );
+      const err = await caught(
+        inTenant(() => recurring.update(tpl.id, { items: [cola(9)] } as any, denied())),
+      );
+      expectPriceEditRefused(err);
+      expect((await templateRows(tpl.id)).map((r) => Number(r.unitPrice))).toEqual([10]);
+    });
+
+    it("G6-1 live + shadow (rule 6): the denied operator's template line at the tier price is written, and reads no capability (no would-deny log)", async () => {
+      live();
+      const tpl: any = await inTenant(() =>
+        recurring.create({ ...weekly(), items: [cola(10)] } as any, denied()),
+      );
+      expect(tpl.id).toBeTruthy();
+      jest.restoreAllMocks(); // back to shadow
+      jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const shadow: any = await inTenant(() =>
+        recurring.create({ ...weekly(), items: [cola(10)] } as any, denied()),
+      );
+      expect(shadow.id).toBeTruthy();
+      expect(wouldDenyLogged()).toBe(false);
+    });
+
+    it("G6-2 live (rule 6): a held template line re-sent unchanged after the tier price moved is not authoring; the denied operator's edit is a 200", async () => {
+      live();
+      const tpl: any = await inTenant(() =>
+        recurring.create({ ...weekly(), items: [cola(10)] } as any, admin()),
+      );
+      await raw.product.update({ where: { id: productId }, data: { pricePerUnit: "12.00" } });
+      try {
+        const out: any = await inTenant(() =>
+          recurring.update(
+            tpl.id,
+            {
+              items: [cola(10), { description: "Cola again", productId, qty: 1, unitPrice: 12 }],
+            } as any,
+            denied(),
+          ),
+        );
+        expect(out.id).toBe(tpl.id);
+        expect((await templateRows(tpl.id)).map((r) => Number(r.unitPrice)).sort()).toEqual([
+          10, 12,
+        ]);
+      } finally {
+        await raw.product.update({ where: { id: productId }, data: { pricePerUnit: "10.00" } });
+      }
+    });
+
+    it("Q1-G4 live (rule 5): the denied operator's re-price of a held custom order line is the same 403 by full replace and by the diff; the line is unchanged", async () => {
+      live();
+      const o = await orderWithCustomLine();
+      const line = o.lineItems[0];
+      const viaReplace = await caught(
+        editOrder(
+          o.id,
+          { replaceAll: true, items: [{ id: line.id, name: "Pallet fee", qty: 2, unitPrice: 7 }] },
+          denied(),
+        ),
+      );
+      expectPriceEditRefused(viaReplace);
+      const viaDiff = await caught(
+        editOrder(
+          o.id,
+          { replaceAll: false, items: [{ id: line.id, qty: 2, unitPrice: 7 }] },
+          denied(),
+        ),
+      );
+      expectPriceEditRefused(viaDiff);
+      expect(Number((await lineOf(line.id)).unitPrice)).toBe(5);
+    });
+
     it("Q1-G2: a TENANT_ADMIN makes the same calls as on master (order, invoice, estimate, template)", async () => {
       live();
       const o: any = await inTenant(() => orders.create({ customerId, items: [custom] }, admin()));

@@ -21,7 +21,13 @@ import { assertNsfLinesUntaxed, nsfSafeTaxRate } from "../invoices/nsf-line-tax-
 import { assertSellableLines } from "../products/sellable-lines";
 import { roundMoney } from "@routeflow/pricing";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
-import { assertCustomPricesAllowed } from "../orders/staff-override";
+import {
+  assertCustomPricesAllowed,
+  assertPriceEditAllowed,
+  packPriceMovesBaseline,
+} from "../orders/staff-override";
+import { loadTierBaseline } from "../invoices/invoice-line-override";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 /** REG-B106: RecurringInvoice.lastRunStatus values (schema comment: "SUCCESS" | "FAILED"). */
 export const RUN_STATUS_SUCCESS = "SUCCESS";
@@ -48,6 +54,7 @@ export class RecurringInvoicesService {
     private readonly invoicesService: InvoicesService,
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly notifications: NotificationsService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   // ─── Next run calculation ──────────────────────────────────────────────────
@@ -78,7 +85,8 @@ export class RecurringInvoicesService {
       .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
     await this.assertNoFamilyLines(dto.items ?? []);
-    await this.assertCustomLinesAllowed(
+    await this.assertAuthoredPricesAllowed(
+      dto.customerId,
       dto.items ?? [],
       [],
       actor,
@@ -114,29 +122,78 @@ export class RecurringInvoicesService {
   }
 
   /**
-   * SA-1034 rule 4 (AUTHORING): a template line with no product carries a staff-typed price. One that the template
-   * already holds (same text, same cent price) is only re-sent by an edit and is not authoring. The run itself COPIES
-   * the authored price (InvoicesService.create source "template-run") and never reaches this check.
+   * SA-1034 rules 4 and 6 (AUTHORING): a template line carries a staff-typed price. A line with no product is a custom
+   * charge; a catalog line is judged against the baseline the run would bill it at (the customer's tier or layer price,
+   * `loadTierBaseline`, the invoice create's own). A line the template already holds (a custom one: same text and cent
+   * price; a catalog one: same product and cent price) is only re-sent by an edit and is not authoring. The capability is
+   * read once, and only when something is authored that needs it: a custom charge, or a catalog price moved more than half
+   * a cent. No new reason-required 400: a template line has no reason. The run itself COPIES the authored price
+   * (InvoicesService.create source "template-run") and never reaches this check.
    */
-  private async assertCustomLinesAllowed(
+  private async assertAuthoredPricesAllowed(
+    customerId: string,
     items: ReadonlyArray<{ description: string; productId?: string | null; unitPrice: number }>,
     held: ReadonlyArray<{ description: string; productId?: string | null; unitPrice: unknown }>,
     actor: JwtPayload,
     site: string,
   ) {
     const text = (d: string) => (d ?? "").trim();
-    const authored = items.filter(
-      (i) =>
-        !i.productId &&
-        !held.some(
-          (h) =>
-            !h.productId &&
+    const sameCents = (a: unknown, b: unknown) => roundMoney(Number(a)) === roundMoney(Number(b));
+    const isHeld = (i: (typeof items)[number]) =>
+      held.some((h) =>
+        i.productId
+          ? h.productId === i.productId && sameCents(h.unitPrice, i.unitPrice)
+          : !h.productId &&
             text(h.description) === text(i.description) &&
-            roundMoney(Number(h.unitPrice)) === roundMoney(Number(i.unitPrice)),
-        ),
+            sameCents(h.unitPrice, i.unitPrice),
+      );
+    const authored = items.filter((i) => !isHeld(i));
+    const custom = authored.filter((i) => !i.productId);
+    const moved = await this.catalogPriceMoved(
+      customerId,
+      authored.filter((i) => i.productId),
     );
-    if (authored.length === 0) return;
-    assertCustomPricesAllowed(authored, await priceEditAllowedFor(this.prisma, actor, site));
+    if (custom.length === 0 && !moved) return;
+    const allowed = await priceEditAllowedFor(this.prisma, actor, site);
+    assertCustomPricesAllowed(custom, allowed);
+    if (moved) assertPriceEditAllowed(allowed);
+  }
+
+  /** Does any authored catalog line type a price more than half a cent off the customer's baseline for it? */
+  private async catalogPriceMoved(
+    customerId: string,
+    lines: ReadonlyArray<{ productId?: string | null; unitPrice: number }>,
+  ): Promise<boolean> {
+    if (lines.length === 0) return false;
+    const baseline = await loadTierBaseline(
+      this.prisma,
+      { customerId, items: lines },
+      this.entitlements,
+    );
+    const ids = [...new Set(lines.map((l) => l.productId as string))];
+    const rows: any[] = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        pricePerUnit: true,
+        priceTier2: true,
+        priceTier3: true,
+        priceTier4: true,
+        priceTier5: true,
+      },
+    });
+    const byId = new Map<string, any>((rows ?? []).map((p) => [p.id, p]));
+    return lines.some((l) => {
+      const product = byId.get(l.productId as string);
+      if (!product) return false; // assertRefsInTenant proved it; a row read away since is not this check's refusal
+      return packPriceMovesBaseline(
+        product,
+        baseline.tierOf(product.id),
+        Number(l.unitPrice),
+        baseline.layerOf?.(product, null),
+      );
+    });
   }
 
   /** WS8: a template line never names a FAMILY (the generated invoice line would). */
@@ -192,7 +249,8 @@ export class RecurringInvoicesService {
     // 681 (R5-5): update never writes customerId; the replacement items' productIds are proven before the tx.
     await assertRefsInTenant(this.prisma, { productIds: items.map((i) => i.productId) });
     await this.assertNoFamilyLines(items);
-    await this.assertCustomLinesAllowed(
+    await this.assertAuthoredPricesAllowed(
+      held.customerId,
       items,
       held.items,
       actor,

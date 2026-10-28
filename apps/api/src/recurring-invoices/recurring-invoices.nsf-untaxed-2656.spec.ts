@@ -23,6 +23,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { assertNsfLinesUntaxed } from "../invoices/nsf-line-tax-guard";
 import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 describe("RecurringInvoicesService — #2656 an NSF-described template line is never taxed", () => {
   let service: RecurringInvoicesService;
@@ -42,6 +43,7 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
