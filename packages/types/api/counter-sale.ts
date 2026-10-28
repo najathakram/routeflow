@@ -197,6 +197,8 @@ export interface PickupCompleteResponse {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
+  /** SA-1026 B: every non-void invoice of the order after the hand-over, in issue order, the same list the figures total (`invoiceId` is the first). */
+  invoiceIds: string[];
   invoiceNumber: string;
   total: number;
   paid: number;
