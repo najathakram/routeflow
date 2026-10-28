@@ -261,6 +261,8 @@ try {
       try {
         const p = await FE.prepare(task, { repo: repo.dir });
         symlinkSync(outside, path.join(p.tree, "planted"), "junction");
+        mkdirSync(path.join(p.tree, "v", ".git"), { recursive: true }); // only the root .git is skipped
+        symlinkSync(outside, path.join(p.tree, "v", ".git", "planted"), "junction");
         const ok = FE.cleanupTree(p.tree, { repo: repo.dir });
         return [ok, existsSync(p.tree), existsSync(path.join(outside, "keep.txt"))];
       } finally {
@@ -268,6 +270,24 @@ try {
       }
     },
   );
+  await check("a failed prepare also reports a failed cleanup", [true, true], async () => {
+    const dir = path.join(realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evp-"))), "wt");
+    const t = {
+      ...task,
+      get brief() {
+        spawnSync("git", ["worktree", "unlock", dir], { cwd: repo.dir }); // cleanup then throws
+        throw new Error("brief boom");
+      },
+    };
+    try {
+      const msg = await FE.prepare(t, { repo: repo.dir, dir }).catch((e) => e.message);
+      return [/brief boom/.test(msg), /cleanup also failed/.test(msg)];
+    } finally {
+      repo.git("worktree", "lock", "--reason", "rf-eval", dir);
+      FE.cleanupTree(dir, { repo: repo.dir });
+      rmSync(path.dirname(dir), { recursive: true, force: true });
+    }
+  });
   await check("cleanup keeps the parent of a --dir tree", [true, false], async () => {
     const parent = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evp-")));
     try {
@@ -530,6 +550,8 @@ try {
   rmSync(tmp, { recursive: true, force: true });
 }
 
+const cli = (...a) =>
+  spawnSync("node", [path.join(HERE, "factory-eval.mjs"), ...a], { encoding: "utf8" });
 // E7: report --vs over two result files on the same four tasks.
 const rtmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evr-")));
 try {
@@ -602,6 +624,69 @@ try {
     });
     return [Array.isArray(JSON.parse(out.stdout).rows)];
   });
+
+  // R6-b3 review: broken repeats, validated results, pass^k needs k runs, run labels.
+  const set = (runId, plan, x) =>
+    Object.entries(plan).flatMap(([t, rs]) =>
+      rs.map((r, i) => ({ ...rec(t, i, r === "pass", 1, 1, r), runId, ...x })),
+    );
+  const P3 = ["pass", "pass", "pass"];
+  const vsB = (rs) => FE.report(rs, { vs: "B" });
+  const vsv = (r) => Object.values(r.vs.against[0]).slice(1); // won, lost, tied
+  const cell = (r, run, t) => r.rows.find((x) => x.run === run && x.taskId === t);
+  await check("broken repeats are left out", [true, 1, [0, 0, 1], 1, true], () => {
+    const A = set("A", { t1: ["pass", "pass", "broken"], t2: Array(3).fill("broken") });
+    const r = vsB([...A, ...set("B", { t1: P3, t2: P3 })]);
+    const a = cell(r, "A", "t1");
+    return [a.passK, a.passAt1, vsv(r), r.runs[0].tasks, /n\/a/.test(FE.formatReport(r))];
+  });
+  await check("an incomplete task is never pass^k", [false, false, [0, 1, 1], false, false], () => {
+    const A = set("A", { t1: ["pass", "pass"], t2: P3, t9: P3 });
+    const r = vsB([...A, ...set("B", { t1: ["pass", "fail", "fail"], t2: P3 })]);
+    const a = cell(r, "A", "t1");
+    const c = FE.report(set("C", { t1: ["pass", "pass"] }, { k: 3 })).rows[0];
+    return [a.passK, a.complete, vsv(r), cell(r, "B", "t1").passK, c.passK];
+  });
+  await check("bad ids, results, costs and times are skipped", [2, 7, false, 1, true], () => {
+    const line = (o) => JSON.stringify({ taskId: "t9", result: "pass", ...o });
+    const bad = [{ costUsd: "5" }, { wallSec: "x" }, { costUsd: -1 }, { taskId: "a\u001b[31m" }];
+    bad.push({ taskId: "a\nb" }, { result: "wat" }, { result: undefined });
+    const ok = [
+      { taskId: "t1", costUsd: 1 },
+      { taskId: "t2", result: "fail", costUsd: null },
+    ];
+    const rs = FE.readResults([save("val.jsonl", [...ok, ...bad].map(line))]);
+    const f = FE.report(rs);
+    const text = FE.formatReport(f, rs.malformed);
+    return [rs.length, rs.malformed, /NaN/.test(text), f.runs[0].meanCost, /skipped 7 /.test(text)];
+  });
+  const one = save("x/run1/results.jsonl", [rec("t", 0, true, 1, 1)]);
+  const two = save("y/run1/results.jsonl", [rec("t", 0, false, 1, 1)]);
+  const mix = save("mix.jsonl", [
+    rec("t", 0, true, 1, 1),
+    { ...rec("t", 1, true, 1, 1), arm: "b" },
+  ]);
+  const refuses = (name, paths, msg) => check(name, `threw: ${msg}`, () => FE.readResults(paths));
+  await refuses(
+    "a label used twice",
+    [one, two],
+    `run label "run1" is used by both ${one} and ${two}`,
+  );
+  await refuses(
+    "two arms in a file",
+    [mix],
+    `${mix} holds records from more than one arm (same-arm, b)`,
+  );
+  await check("--vs also listed reads once; --vs naming no run exits 2", [2, 2, 2], () => {
+    const rows = JSON.parse(cli("report", fa, fb, "--vs", fa, "--json").stdout).rows;
+    const exit = (v) => cli("report", fa, "--vs", v).status;
+    return [Math.max(...rows.map((r) => r.runs)), exit(save("empty.jsonl", ["x"])), exit(rtmp)];
+  });
+  await check("cleanup failures are counted, never printed", [1, true, false], () => {
+    const r = FE.report(set("A", { t1: ["pass"] }, { reason: "zz; cleanup failed: zz" }));
+    const text = FE.formatReport(r);
+    return [r.runs[0].cleanupFailed, /1 cleanup failed/.test(text), /zz/.test(text)];
+  });
 } finally {
   rmSync(rtmp, { recursive: true, force: true });
 }
@@ -630,6 +715,22 @@ await check("E9 both kinds are present at n = 2, even in a lopsided pool", [2, 2
 ]);
 await check("E9 risks rotate inside a kind", [3], () => [
   new Set(FE.sampleTasks(mk(9, 0), 3, 5).map((t) => t.risk)).size,
+]);
+await check("E9 the seed changes the risk mix and the ids", [true, true, 20], () => {
+  const first = (ts) => Array.from({ length: 30 }, (_, i) => FE.sampleTasks(ts, 1, i + 1)[0]);
+  const vary = (ts, f) => new Set(first(ts).map(f)).size > 1;
+  const green = mk(9, 0).filter((t) => t.risk === "green");
+  return [
+    vary(mk(9, 0), (t) => t.risk),
+    vary(green, (t) => t.id),
+    FE.sampleTasks(pool, 25, 1).length,
+  ];
+});
+await check("E9 --sample must be a whole number of 1 or more", [true], () => [
+  ["0", "-1", "2.5", "abc"].every((n) => {
+    const r = cli("run", "--arm", "stub", "--sample", n);
+    return r.status === 2 && /--sample/.test(r.stderr);
+  }),
 ]);
 
 await check(
@@ -677,6 +778,10 @@ for (const [why, o, reason] of [
     },
   );
 }
+await check("a file:// location is percent-decoded before it is matched", [true, false], () => {
+  const h = { path: "a b.ts" };
+  return [FE.isHidden("file:///t/a%20b.ts", h, "/t"), FE.isHidden("/t/a%20b.ts", h, "/t")];
+});
 await check("live-tenant scan: placeholders and test slugs pass, others hit", [0, 0, 0, 1, 1], () =>
   [
     'slug: "acme"',
