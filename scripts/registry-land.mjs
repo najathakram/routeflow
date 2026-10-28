@@ -19,7 +19,7 @@
 // M not merged, anchor gap, dirty clone, tracked mode).
 // campaign-check in landing mode is B1-b2b.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUG_ID_RE } from "./campaign/reg-token.mjs";
@@ -56,7 +56,7 @@ function parseClaims(file) {
       if (!Number.isInteger(c.pr) || c.pr <= 0) why("prove needs a positive integer pr");
       if (typeof c.proof !== "string" || !new RegExp(`REG-${id}(?![0-9])`).test(c.proof))
         why(`prove needs a proof citing REG-${id}`);
-      return { id, args: ["prove", id, "--pr", String(c.pr), "--proof", c.proof] };
+      return { id, args: ["prove", id, "--pr", String(c.pr), "--proof", c.proof], prove: c };
     }
     if (c.action !== "note") return why(`action must be prove or note (got ${c.action})`);
     if (typeof c.text !== "string" || !c.text.trim() || c.text.startsWith("--"))
@@ -76,8 +76,27 @@ const cleanNote = (t) =>
 const noteHeld = (body, text) =>
   body.split("\n").some((l) => {
     const m = /^- \d{4}-\d{2}-\d{2} · \*\*note\*\* · (.*?)(?:\s*<!--[^>]*-->)?\s*$/.exec(l.trim());
-    return m !== null && m[1] === cleanNote(text);
+    return m !== null && m[1].trim() === cleanNote(text).trim();
   });
+// A prove is already there when a ledger row for the bug holds the same state's PR and proof.
+const proveHeld = (root, id, { pr, proof }) => {
+  const dir = join(root, "status");
+  if (!existsSync(dir)) return false;
+  return readdirSync(dir)
+    .filter((n) => n.endsWith(".jsonl"))
+    .some((n) =>
+      readFileSync(join(dir, n), "utf8")
+        .split("\n")
+        .some((l) => {
+          try {
+            const r = JSON.parse(l);
+            return r.id === id && /^proven/.test(r.state ?? "") && r.pr === pr && r.proof === proof;
+          } catch {
+            return false;
+          }
+        }),
+    );
+};
 
 function land(sha, claims) {
   const repoDir = syncRepoOverride() || REPO_ROOT;
@@ -136,6 +155,7 @@ function land(sha, claims) {
             const rec = join(root, "bugs", `${k.id}.md`);
             // `note` stamps its own key, so a re-run would add a second line: skip a note already there
             if (k.text && existsSync(rec) && noteHeld(readFileSync(rec, "utf8"), k.text)) continue;
+            if (k.prove && proveHeld(root, k.id, k.prove)) continue; // a redo: already on origin
             bugs(root, k.args);
             applied++;
           }
@@ -155,7 +175,16 @@ function land(sha, claims) {
   } finally {
     rmSync(work, { force: true });
   }
-  const after = JSON.parse(readFileSync(anchorPath, "utf8")).lastSha.slice(0, 8);
+  // The push landed. A child sync that wrote no anchor leaves nothing to move: say so (the landing
+  // is recorded) and let the next sync rescan, instead of crashing on a file that is not there.
+  let after = "unwritten";
+  if (existsSync(anchorPath))
+    after = JSON.parse(readFileSync(anchorPath, "utf8")).lastSha.slice(0, 8);
+  else
+    console.warn(
+      `registry:land: WARNING — no sync anchor at ${anchorPath} after the push; the landing is ` +
+        `recorded and the next sync will rescan`,
+    );
   const was = valid ? prev.slice(0, 8) : prev ? "invalid" : "none";
   console.log(
     `registry:land: ${full.slice(0, 8)}, events ${out.result.events}, claims ${out.result.applied}, ` +
