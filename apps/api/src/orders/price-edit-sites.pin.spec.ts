@@ -147,6 +147,32 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     expect([...svc.matchAll(/"request",\s*this\.entitlements/g)]).toHaveLength(2); // create (default) + edit
   });
 
+  it("a client write names its actor: EstimatesService.create and RecurringInvoicesService.create/update take a REQUIRED actor", () => {
+    const sig = (file: string, method: string) =>
+      code(read(file)).match(new RegExp(`\\n  async ${method}\\(([\\s\\S]*?)\\) \\{`))?.[1] ?? "";
+    for (const [file, method] of [
+      ["estimates/estimates.service.ts", "create"],
+      ["recurring-invoices/recurring-invoices.service.ts", "create"],
+      ["recurring-invoices/recurring-invoices.service.ts", "update"],
+    ]) {
+      const params = sig(file, method);
+      expect(params).toMatch(/\bactor: JwtPayload\b/); // present, required
+      expect(params).not.toMatch(/\bactor\?/);
+    }
+  });
+
+  it("InvoicesService.create has exactly 2 non-spec callers: the controller and the recurring run", () => {
+    const found: Record<string, number> = {};
+    for (const f of files) {
+      const n = callCount(read(f), "invoicesService\\.create");
+      if (n > 0) found[f.split("\\").join("/")] = n;
+    }
+    expect(found).toEqual({
+      "invoices/invoices.controller.ts": 1,
+      "recurring-invoices/recurring-invoices.service.ts": 1,
+    });
+  });
+
   it("priceEditAllowedFor( is called at exactly the compute sites, once each per request path", () => {
     const found: Record<string, number> = {};
     for (const f of files) {

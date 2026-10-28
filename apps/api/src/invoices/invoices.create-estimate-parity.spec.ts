@@ -42,6 +42,7 @@ import { BadRequestException } from "@nestjs/common";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 describe("H5 - an estimate is taxed like an invoice (create parity)", () => {
   let service: InvoicesService;
@@ -170,7 +171,7 @@ describe("H5 - an estimate is taxed like an invoice (create parity)", () => {
       setup(percent, exempt);
       const rate = Number(percent) / 100;
 
-      await estimates.create({ customerId: "cust-1", items: LINES } as any);
+      await estimates.create({ customerId: "cust-1", items: LINES } as any, NO_PRICE_RIGHTS);
       await service.create({
         customerId: "cust-1",
         // an invoice line carries the tenant rate the web form stamps on it (Settings -> tax rate)

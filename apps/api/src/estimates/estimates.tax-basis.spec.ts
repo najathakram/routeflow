@@ -8,6 +8,7 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NSF_FEE_DESCRIPTION_PREFIX } from "@routeflow/pricing";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 // SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
 jest.mock("../auth/permissions/price-edit", () => ({
@@ -78,7 +79,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
         isTaxExempt: false,
       });
 
-      await service.create({ customerId: "c1", items: lines } as any);
+      await service.create({ customerId: "c1", items: lines } as any, NO_PRICE_RIGHTS);
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.subtotal).toBe(50.55);
@@ -90,7 +91,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
       setTenantRate("8.25");
       prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1, isTaxExempt: true });
 
-      await service.create({ customerId: "c1", items: lines } as any);
+      await service.create({ customerId: "c1", items: lines } as any, NO_PRICE_RIGHTS);
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.taxAmount).toBe(0);
@@ -105,7 +106,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
         isTaxExempt: false,
       });
 
-      await service.create({ customerId: "c1", items: lines } as any);
+      await service.create({ customerId: "c1", items: lines } as any, NO_PRICE_RIGHTS);
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.taxAmount).toBe(0);
@@ -126,7 +127,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
           { description: "x", unitPrice: 0.05, qty: 1 },
           { description: "y", unitPrice: 0.05, qty: 1 },
         ],
-      } as any);
+      } as any, NO_PRICE_RIGHTS);
 
       const data = prisma.estimate.create.mock.calls[0][0].data;
       expect(data.taxAmount).toBe(0.01); // round(0.10 x 0.10) once = 0.01; per line it would be 0.01 + 0.01 = 0.02
@@ -149,7 +150,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
           { productId: "p1", qty: 1, unitPrice: 9.994 },
           { description: "free", qty: 2, unitPrice: 4.005 },
         ],
-      } as any);
+      } as any, NO_PRICE_RIGHTS);
 
       const items = prisma.estimate.create.mock.calls[0][0].data.items.create;
       expect(items[0].unitPrice).toBe(9.99);
@@ -253,7 +254,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
           pricingTier: 1,
           isTaxExempt: false,
         });
-        await service.create({ customerId: "c1", items: LINES } as any);
+        await service.create({ customerId: "c1", items: LINES } as any, NO_PRICE_RIGHTS);
         const quote = prisma.estimate.create.mock.calls[0][0].data;
 
         prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
@@ -298,7 +299,7 @@ describe("EstimatesService - H5 estimates carry tax", () => {
       await service.create({
         customerId: "c1",
         items: [{ description: "Big", unitPrice: 10000, qty: 1 }],
-      } as any);
+      } as any, NO_PRICE_RIGHTS);
       const quote = prisma.estimate.create.mock.calls[0][0].data;
       expect(quote.taxAmount).toBe(812.5); // 10000 x 0.08125 (a Decimal(5,4) 0.0813 would give 813)
 

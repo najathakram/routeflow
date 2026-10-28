@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 // SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
 jest.mock("../auth/permissions/price-edit", () => ({
@@ -322,7 +323,7 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
 
       await service.update("ri-1", {
         items: [{ description: "d", qty: 1, unitPrice: 5 } as any],
-      });
+      }, NO_PRICE_RIGHTS);
 
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
       expect(calls).toEqual(["delete", "update"]);

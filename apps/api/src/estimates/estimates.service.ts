@@ -125,7 +125,7 @@ export class EstimatesService {
     });
   }
 
-  async create(dto: CreateEstimateDto, actor?: JwtPayload) {
+  async create(dto: CreateEstimateDto, actor: JwtPayload) {
     // B79: issueDate is optional and, unlike expiresAt, has no legacy loose-parse
     // behavior to preserve — validate the shape before touching the DB so a
     // malformed value 400s instead of writing Invalid Date or a misparsed date.
@@ -160,7 +160,7 @@ export class EstimatesService {
     const tenantId = this.prisma.getTenantId();
     const items: any[] = dto.items ?? [];
     // SA-1034 rules 4-5: a custom estimate line, and a typed catalog price under list, are staff-typed prices. The
-    // capability is read once here, before the write, and only when a line types a price; no actor is no capability.
+    // capability is read once here, before the write, and only when a line types a price. The actor is required: the controller is the only caller.
     const needsPriceRights = items.some((i) => !i.productId || i.unitPrice != null);
     const priceEditAllowed =
       !needsPriceRights ||

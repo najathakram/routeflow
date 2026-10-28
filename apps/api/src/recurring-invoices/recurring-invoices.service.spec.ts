@@ -25,6 +25,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 /**
  * Locks the pause/resume contract. `deactivate()` (DELETE) sets isActive=false;
@@ -716,14 +717,14 @@ describe("RecurringInvoicesService.create — removed customer (B131)", () => {
   it("REG-B131 T17: creating a recurring invoice for a removed customer is refused", async () => {
     await boot(REMOVED_AT);
 
-    await expect(service.create(dto)).rejects.toThrow(new NotFoundException("Customer not found"));
+    await expect(service.create(dto, NO_PRICE_RIGHTS)).rejects.toThrow(new NotFoundException("Customer not found"));
     expect(prisma.recurringInvoice.create).not.toHaveBeenCalled();
   });
 
   it("B131 P16: a live customer's recurring invoice is still created", async () => {
     await boot(null);
 
-    await expect(service.create(dto)).resolves.toEqual({ id: "ri-1" });
+    await expect(service.create(dto, NO_PRICE_RIGHTS)).resolves.toEqual({ id: "ri-1" });
     expect(prisma.recurringInvoice.create).toHaveBeenCalled();
   });
 });

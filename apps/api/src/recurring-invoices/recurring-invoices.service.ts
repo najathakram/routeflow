@@ -63,7 +63,7 @@ export class RecurringInvoicesService {
 
   // ─── CRUD ─────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateRecurringInvoiceDto, actor?: JwtPayload) {
+  async create(dto: CreateRecurringInvoiceDto, actor: JwtPayload) {
     assertNsfLinesUntaxed(dto.items ?? []); // #2656: a template's NSF-described line is never taxed
     // 681 (R5-5): the template stores its customer and each item's productId; prove both in this tenant first.
     await assertRefsInTenant(this.prisma, {
@@ -121,7 +121,7 @@ export class RecurringInvoicesService {
   private async assertCustomLinesAllowed(
     items: ReadonlyArray<{ description: string; productId?: string | null; unitPrice: number }>,
     held: ReadonlyArray<{ description: string; productId?: string | null; unitPrice: unknown }>,
-    actor: JwtPayload | undefined,
+    actor: JwtPayload,
     site: string,
   ) {
     const text = (d: string) => (d ?? "").trim();
@@ -167,7 +167,7 @@ export class RecurringInvoicesService {
     return ri;
   }
 
-  async update(id: string, dto: UpdateRecurringInvoiceDto, actor?: JwtPayload) {
+  async update(id: string, dto: UpdateRecurringInvoiceDto, actor: JwtPayload) {
     assertNsfLinesUntaxed(dto.items ?? []); // #2656: 400 before any read or write
     const held = await this.findOne(id);
     const include = { customer: { select: { id: true, businessName: true } }, items: true };

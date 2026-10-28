@@ -7,6 +7,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 /** What a tenant-scoped read does: only this tenant's own rows come back for an id list. */
 const ownRows = (owned: string[]) => async (args: { where: { id: { in: string[] } } }) =>
@@ -48,7 +49,7 @@ describe("RecurringInvoicesService — tenant refs (681 sites 5, 6)", () => {
 
   describe("site 5 — create", () => {
     const create = (customerId: string, productId: string) =>
-      service.create({ ...base, customerId, items: [item(productId)] } as never);
+      service.create({ ...base, customerId, items: [item(productId)] } as never, NO_PRICE_RIGHTS);
 
     it("another tenant's product on an item is a 404 and no template is written", async () => {
       const err = await create("cust-a", "prod-b").catch((e) => e);
@@ -72,7 +73,7 @@ describe("RecurringInvoicesService — tenant refs (681 sites 5, 6)", () => {
 
   describe("site 6 — update (items replace)", () => {
     const update = (productId: string) =>
-      service.update("ri-1", { items: [item(productId)] } as never);
+      service.update("ri-1", { items: [item(productId)] } as never, NO_PRICE_RIGHTS);
 
     it("another tenant's product on a replacement item is a 404; the lines are not deleted or rewritten", async () => {
       const err = await update("prod-b").catch((e) => e);
@@ -89,7 +90,7 @@ describe("RecurringInvoicesService — tenant refs (681 sites 5, 6)", () => {
     });
 
     it("a header-only update (no items) reads no product", async () => {
-      await service.update("ri-1", { notes: "x" } as never);
+      await service.update("ri-1", { notes: "x" } as never, NO_PRICE_RIGHTS);
       expect(prisma.product.findMany).not.toHaveBeenCalled();
       expect(prisma.recurringInvoice.update).toHaveBeenCalledTimes(1);
     });
