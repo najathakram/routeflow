@@ -246,7 +246,7 @@ try {
         return [open, locked, existsSync(path.join(wt, "wip.txt")), still, probe];
       } finally {
         evalTree.cleanup();
-        spawnSync("git", ["worktree", "unlock", wt], { cwd: repo.dir });
+        spawnSync("git", ["worktree", "unlock", wt], { cwd: repo.dir, env: scrubbedGitEnv() });
         repo.git("worktree", "remove", "--force", wt);
         rmSync(lane, { recursive: true, force: true });
       }
