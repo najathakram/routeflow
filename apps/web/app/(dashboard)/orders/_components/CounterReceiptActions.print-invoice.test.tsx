@@ -35,12 +35,31 @@ beforeEach(() => {
 describe("CounterReceiptActions: Print invoice (SA-1026 B-R1)", () => {
   it("shows Print invoice next to Print, and one tap prints that invoice's PDF", async () => {
     renderWithProviders(
-      <CounterReceiptActions orderId="o1" invoiceId="i1" customer={null} onNewSale={jest.fn()} />,
+      <CounterReceiptActions
+        orderId="o1"
+        invoiceIds={["i1"]}
+        customer={null}
+        onNewSale={jest.fn()}
+      />,
     );
     expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Print invoice" }));
     await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
     expect(get.mock.calls[0][0]).toBe("/invoices/i1/pdf");
+  });
+
+  it("a sale of sibling invoices prints each one's PDF, in order", async () => {
+    renderWithProviders(
+      <CounterReceiptActions
+        orderId="o1"
+        invoiceIds={["i1", "i2"]}
+        customer={null}
+        onNewSale={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(2));
+    expect(get.mock.calls.map((c) => c[0])).toEqual(["/invoices/i1/pdf", "/invoices/i2/pdf"]);
   });
 
   it("without an invoice id (an older response) the control is not offered", () => {

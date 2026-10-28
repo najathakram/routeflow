@@ -1196,7 +1196,7 @@ export function CounterSaleScreen() {
         <CounterCreditOverLimit receipt={receipt} customerName={customer?.businessName} />
         <CounterReceiptActions
           orderId={receipt.orderId}
-          invoiceId={receipt.invoiceId}
+          invoiceIds={receipt.invoiceIds?.length ? receipt.invoiceIds : [receipt.invoiceId]}
           customer={customer}
           onNewSale={resetSale}
         />

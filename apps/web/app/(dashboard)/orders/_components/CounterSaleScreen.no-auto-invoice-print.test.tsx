@@ -145,6 +145,35 @@ describe("CounterSaleScreen: the invoice never prints by itself (SA-1026 B-G2)",
     expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
   });
 
+  it("a mixed sale of two sibling invoices prints both, in issue order, as the hand-over does", async () => {
+    mutateAsync.mockResolvedValue({
+      ...SALE,
+      invoiceIds: ["i1", "i2"],
+      total: 2.5,
+      paid: 2.5,
+    });
+    renderTill(<CounterSaleScreen />);
+    await scan();
+    named();
+    complete();
+    await screen.findByTestId("counter-sale-receipt");
+    fireEvent.click(screen.getByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(2));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf", "/invoices/i2/pdf"]);
+  });
+
+  it("a response without invoiceIds (an older server, a kept sale) still prints its one invoice", async () => {
+    mutateAsync.mockResolvedValue({ ...SALE });
+    renderTill(<CounterSaleScreen />);
+    await scan();
+    named();
+    complete();
+    await screen.findByTestId("counter-sale-receipt");
+    fireEvent.click(screen.getByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
+  });
+
   it("no source keeps an invoice auto-print choice", () => {
     const till = readFileSync(join(__dirname, "CounterSaleScreen.tsx"), "utf8");
     const lib = readFileSync(

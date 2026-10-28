@@ -81,6 +81,8 @@ export interface CounterSaleResponse {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
+  /** SA-1026 B: every invoice the sale made, in issue order, the same list `total` adds up (`invoiceId` is the first); a mixed regulated + unregulated sale has siblings. Absent on an older server or a kept sale: read it as `[invoiceId]`. */
+  invoiceIds?: string[];
   invoiceNumber: string;
   total: number;
   paid: number;

@@ -19,13 +19,13 @@ const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visibl
  */
 export function CounterReceiptActions({
   orderId,
-  invoiceId,
+  invoiceIds,
   customer,
   onNewSale,
 }: {
   orderId: string;
-  /** SA-1026 B: the sale's invoice; with it, "Print invoice" prints the same Letter PDF the invoice page does. */
-  invoiceId?: string;
+  /** SA-1026 B: every invoice the sale made (a mixed sale has siblings); with them, "Print invoice" prints the same Letter PDF the invoice page does, one per invoice. */
+  invoiceIds?: readonly string[];
   customer: { email?: string | null; user?: { email?: string | null } | null } | null;
   onNewSale: () => void;
 }) {
@@ -37,12 +37,12 @@ export function CounterReceiptActions({
         <Button className={RECEIPT_BTN} onClick={() => window.print()}>
           Print
         </Button>
-        {invoiceId ? (
+        {invoiceIds?.length ? (
           <Button
             className={RECEIPT_BTN}
             variant="secondary"
             disabled={printInvoice.printing}
-            onClick={() => void printInvoice.print(invoiceId)}
+            onClick={() => void printInvoice.print(invoiceIds)}
           >
             Print invoice
           </Button>
