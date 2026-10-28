@@ -37,6 +37,8 @@ const stubDb = (
     invoiceGroupBy?: any[];
     creditNoteGroupBy?: any[];
     returnGroupBy?: any[];
+    /** Σ preTax of the write-off events in the window (SA-1050 ledger term). */
+    eventPreTax?: any;
   } = {},
 ) => ({
   invoice: {
@@ -53,6 +55,9 @@ const stubDb = (
   return: {
     aggregate: jest.fn().mockResolvedValue(opts.returnAgg ?? { _sum: {} }),
     groupBy: jest.fn().mockResolvedValue(opts.returnGroupBy ?? []),
+  },
+  invoiceWriteOffEvent: {
+    aggregate: jest.fn().mockResolvedValue({ _sum: { preTax: opts.eventPreTax ?? null } }),
   },
 });
 
@@ -192,7 +197,7 @@ describe("accrual net sales (B440/B455/B456)", () => {
     expect(returnArgs._sum).toEqual({ refundAmount: true });
   });
 
-  it("REG-B456-basis: fetchBadDebtExpense keys on {status:WRITTEN_OFF, writtenOffAt:window} -- never issueDate -- reads only CONFIRMED payments, and sums the unpaid balance at write-off (payments include credit-note-applied amounts, same relation getBadDebtsReport already reads)", async () => {
+  it("REG-B456-basis (legacy term, SA-1050 rule 4): an invoice with NO event keys on {status:WRITTEN_OFF, writtenOffAt:window, no events} -- never issueDate -- reads only CONFIRMED payments, and sums the unpaid balance at write-off (payments include credit-note-applied amounts, same relation getBadDebtsReport already reads)", async () => {
     const db = stubDb({
       invoices: [
         {
@@ -211,11 +216,40 @@ describe("accrual net sales (B440/B455/B456)", () => {
     expect(args.where.tenantId).toBe("tenant-1");
     expect(args.where.status).toBe(InvoiceStatus.WRITTEN_OFF);
     expect(args.where.writtenOffAt).toEqual(window);
+    expect(args.where.writeOffEvents).toEqual({ none: {} }); // an evented invoice is read from the ledger, once
     expect(args.where.issueDate).toBeUndefined();
     // Fix-round finding 1: a VOIDed (bounced) or DRAFT (unconfirmed) payment
     // row must never look like recovered money.
     expect(args.select.payments.where).toEqual(CONFIRMED_PAYMENT);
     expect(total).toBe(300);
+  });
+
+  it("SA-1050 rule 4 (ledger term): Σ preTax of the events whose `at` is in the window, scoped to the tenant", async () => {
+    const db = stubDb({ eventPreTax: D("50.00"), invoices: [] });
+
+    const total = await fetchBadDebtExpense(db, "tenant-1", window);
+
+    expect(db.invoiceWriteOffEvent.aggregate).toHaveBeenCalledWith({
+      where: { tenantId: "tenant-1", at: window },
+      _sum: { preTax: true },
+    });
+    expect(total).toBe(50);
+  });
+
+  it("SA-1050 rule 4: ledger + legacy add, a reinstate's negative row reduces the window it lands in, and the sum is never below the rows", async () => {
+    const db = stubDb({
+      eventPreTax: D("-100.00"), // a March reinstate of a January write-off, plus its re-write-off of +50
+      invoices: [{ total: D(107), taxAmount: D(7), payments: [{ amount: D(53.5) }] }],
+    });
+
+    expect(await fetchBadDebtExpense(db, "tenant-1", window)).toBe(-50); // -100.00 + 50.00 (legacy 53.50 owing, 50.00 pre-tax)
+  });
+
+  it("SA-1050 rule 4: per-invoice rounding -- three 10.70 invoices (tax 0.70, 0.03 paid) are 9.97 each, 29.91, where sum-then-round read 29.92", async () => {
+    const one = { total: D("10.70"), taxAmount: D("0.70"), payments: [{ amount: D("0.03") }] };
+    const db = stubDb({ invoices: [one, one, one] });
+
+    expect(await fetchBadDebtExpense(db, "tenant-1", window)).toBe(29.91);
   });
 
   it("REG-B456-tax (fix-round finding 3): bad-debt expense is the PRE-TAX share of the unpaid balance -- uncollected sales tax is a liability reversal, not an expense", async () => {

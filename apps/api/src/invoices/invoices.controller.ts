@@ -275,8 +275,8 @@ export class InvoicesController {
   }
 
   @Post(":id/write-off")
-  writeOff(@Param("id") id: string, @Body() dto: WriteOffDto) {
-    return this.invoicesService.writeOff(id, dto);
+  writeOff(@Param("id") id: string, @Body() dto: WriteOffDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.writeOff(id, dto, user.sub);
   }
 
   @Post(":id/payments")

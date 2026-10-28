@@ -4959,10 +4959,10 @@ export class InvoicesService {
 
   // ─── Write-off ────────────────────────────────────────────────────────────
 
-  async writeOff(id: string, dto: WriteOffDto) {
+  async writeOff(id: string, dto: WriteOffDto, actorId: string | null = null) {
     // SA-1050 PR-1: the write-off lives in invoice-write-off.ts (one home for the bad-debt rules).
     const deps = { prisma: this.prisma, commissionEngine: this.commissionEngine };
-    return writeOffInvoice(deps, await this.findOneOrThrow(id), dto);
+    return writeOffInvoice(deps, await this.findOneOrThrow(id), dto, actorId);
   }
 
   // ─── Delete ───────────────────────────────────────────────────────────────

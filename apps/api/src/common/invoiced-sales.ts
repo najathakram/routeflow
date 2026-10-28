@@ -1,5 +1,5 @@
 import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { badDebtPreTax, roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { attributeCreditNote, attributeExternalRefund } from "../sales-facts/sales-facts.rules";
 import { localInstantWindow, startOfLocalDay, tenantTodayDay } from "./calendar-date";
@@ -103,6 +103,8 @@ export interface AccrualSalesDb extends InvoicedSalesDb {
     aggregate(args: any): Promise<any>;
     groupBy(args: any): Promise<any[]>;
   };
+  /** SA-1050: the bad-debt ledger, read by `fetchBadDebtExpense` (Σ preTax of the events in the window). */
+  invoiceWriteOffEvent: { aggregate(args: any): Promise<any> };
 }
 
 /** One flattened invoice line of a real sale. qty/subtotal already Number()ed. */
@@ -568,47 +570,52 @@ export async function fetchAccrualNetSalesByCustomerRows(
 }
 
 /**
- * Bad-debt expense (B456): the pre-tax share of the unpaid balance — `(total
- * - paid) × (total - taxAmount) / total` — of every invoice WRITTEN_OFF
- * inside `window`, keyed on `writtenOffAt`, NEVER `issueDate` (a write-off
- * can land in a period long after the sale). Uncollected sales tax is a
- * liability reversal, not an expense (owner ruling 2026-09-15, tax
- * exclusion) — only the pre-tax portion of an unpaid invoice is a genuine
- * cost to the business, consistent with `fetchAccrualNetSales`'s own
- * pre-tax `gross`. `paid` sums only CONFIRMED (PAID) payments — a VOIDed
- * (bounced) or DRAFT (unconfirmed) payment row is not recovered money, same
- * predicate as `getBadDebtsReport`'s own read; a credit-note application is
- * still counted (`applyCreditInTx` writes a CONFIRMED `method:CREDIT_NOTE`
- * payment row) — the same relation `getBadDebtsReport` already reads,
- * extracted here so both share one expression.
+ * Bad-debt expense (B456, SA-1050 rule 4): the PRE-TAX share of what was written off inside `window`, keyed on the
+ * accounting moment, NEVER `issueDate` (a write-off can land in a period long after the sale). Uncollected sales tax is
+ * a liability reversal, not an expense (owner ruling 2026-09-15), so only the pre-tax share counts.
+ *
+ *  - The LEDGER term: Σ `preTax` of the `InvoiceWriteOffEvent` rows whose `at` is in the window. A write-off adds its
+ *    row and a reinstate adds the exact negative (SA-1050 rule 2), so a closed month never moves.
+ *  - The LEGACY term (goes in PR-6, after the owner's prod backfill and a census of 0): WRITTEN_OFF invoices with
+ *    `writtenOffAt` in the window and NO event, `badDebtPreTax` of their confirmed balance, rounded PER INVOICE (the
+ *    old sum-then-round could read half a cent differently: three invoices of 10.70, tax 0.70, 0.03 paid each, were
+ *    29.92 and are 29.91). `paid` sums only CONFIRMED (PAID) payments: a VOIDed (bounced) or DRAFT payment row is not
+ *    recovered money; a credit-note application counts (`applyCreditInTx` writes a CONFIRMED `method:CREDIT_NOTE` row).
  */
 export async function fetchBadDebtExpense(
   db: AccrualSalesDb,
   tenantId: string,
   window: AccrualWindow,
 ): Promise<number> {
-  const invoices = await db.invoice.findMany({
-    where: { tenantId, status: InvoiceStatus.WRITTEN_OFF, writtenOffAt: window },
-    select: {
-      total: true,
-      taxAmount: true,
-      payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
-    },
-  });
+  const [ledger, legacy] = await Promise.all([
+    db.invoiceWriteOffEvent.aggregate({
+      where: { tenantId, at: window },
+      _sum: { preTax: true },
+    }),
+    db.invoice.findMany({
+      where: {
+        tenantId,
+        status: InvoiceStatus.WRITTEN_OFF,
+        writtenOffAt: window,
+        writeOffEvents: { none: {} },
+      },
+      select: {
+        total: true,
+        taxAmount: true,
+        payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
+      },
+    }),
+  ]);
 
-  let total = 0;
-  for (const inv of invoices) {
+  let total = roundMoney(Number(ledger?._sum?.preTax ?? 0));
+  for (const inv of legacy) {
     const paid = (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
-    const invTotal = Number(inv.total ?? 0);
-    // Fable review of #791: an overpaid write-off (paid > total) must never
-    // contribute a NEGATIVE expense — clamp at 0, same as every other
-    // balance computation in this file.
-    const unpaid = Math.max(0, invTotal - paid);
-    const taxAmount = Number(inv.taxAmount ?? 0);
-    const preTaxShare = invTotal > 0 ? (invTotal - taxAmount) / invTotal : 0;
-    total += unpaid * preTaxShare;
+    // Fable review of #791: an overpaid write-off (paid > total) must never contribute a NEGATIVE expense:
+    // clamp at 0, same as every other balance computation in this file.
+    const unpaid = Math.max(0, roundMoney(Number(inv.total ?? 0) - paid));
+    total = roundMoney(total + badDebtPreTax(unpaid, inv.total, inv.taxAmount));
   }
-  return roundMoney(total);
+  return total;
 }
 
 /** Distinct non-null productIds of a line set (cost-resolver input). */

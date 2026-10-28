@@ -121,6 +121,7 @@ import {
   type ImportRestrictedLine,
 } from "./import-restriction-marker";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { ensureWriteOffEvent } from "../invoices/invoice-write-off";
 import { columnEntitlementDenied } from "./import-column-entitlement";
 
 /**
@@ -1567,6 +1568,9 @@ export class ImportService {
                 where: { id: existing.id },
                 data: { status, dueDate, paidAt },
               });
+              // SA-1050 rule 3: a re-import that flips the invoice to WRITTEN_OFF gets its undated event.
+              if (status === InvoiceStatus.WRITTEN_OFF)
+                await ensureWriteOffEvent({ prisma: this.prisma }, tx, existing.id);
               return true;
             });
             if (wrote) updated++;
@@ -1649,6 +1653,9 @@ export class ImportService {
                 where: { id: prior.id },
                 data: { status, dueDate, paidAt },
               });
+              // SA-1050 rule 3: a re-import that flips the invoice to WRITTEN_OFF gets its undated event.
+              if (status === InvoiceStatus.WRITTEN_OFF)
+                await ensureWriteOffEvent({ prisma: this.prisma }, tx, prior.id);
               // F2 (REG-B268-C): a re-import that flips the prior invoice to
               // PAID/PARTIAL must get the SAME synthetic-payment treatment a
               // brand-new PAID/PARTIAL invoice gets on create (:897-915) —
@@ -1742,6 +1749,10 @@ export class ImportService {
               });
             }
           }
+          // SA-1050 rule 3: an imported WRITTEN_OFF invoice has no writtenOffAt (F-8), so its one event is undated
+          // (`at` null: it sits in no window, exactly like today). Same tx as the invoice.
+          if (status === InvoiceStatus.WRITTEN_OFF)
+            await ensureWriteOffEvent({ prisma: this.prisma }, tx, created.id);
           return created;
         });
 

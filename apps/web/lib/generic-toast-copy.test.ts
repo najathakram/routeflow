@@ -17,6 +17,14 @@ const err = (status: number, data: Record<string, unknown> = {}) => ({
   response: { status, data: { message: RAW, ...data } },
 });
 
+describe("genericToastCopy: SA-1050 write-off refusals", () => {
+  it("WRITE_OFF_NOTHING_DUE maps to the nothing-left sentence", () => {
+    expect(genericToastCopy(err(409, { code: API_ERROR_CODES.WRITE_OFF_NOTHING_DUE }))).toBe(
+      "This invoice has nothing left to write off.",
+    );
+  });
+});
+
 describe("genericToastCopy: SA-1050 A-1 delete refusal", () => {
   it("INVOICE_HAS_WRITE_OFF_HISTORY maps to the bad-debt-history sentence, not the neutral 409", () => {
     expect(

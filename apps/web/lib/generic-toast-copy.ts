@@ -211,6 +211,8 @@ const CODE_COPY: Record<string, string> = {
   // SA-1050 A-1 (draft copy, finished in the apple-write pass): the delete door's refusal of a written-off history.
   [API_ERROR_CODES.INVOICE_HAS_WRITE_OFF_HISTORY]:
     "This invoice has a bad-debt history, so it can't be deleted.",
+  // SA-1050 rule 3 (draft copy, finished in the apple-write pass): the write-off refuses an invoice that owes nothing.
+  [API_ERROR_CODES.WRITE_OFF_NOTHING_DUE]: "This invoice has nothing left to write off.",
   [API_ERROR_CODES.INVOICE_HAS_CASH_REFUND]:
     "Part of this invoice was refunded in cash. Issue a credit note for the rest instead of voiding.",
   [API_ERROR_CODES.ORDER_HAS_CASH_REFUND]:

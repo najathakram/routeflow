@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 import { isDayClosedRefusal } from "../day-closed-copy";
+import { isWriteOffReplay } from "../write-off-replay";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
@@ -630,7 +631,14 @@ export function useWriteOffInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string; reason: string }>({
     mutationFn: ({ id, reason }) =>
-      apiClient.post(`/invoices/${id}/write-off`, { reason }).then((r) => r.data),
+      apiClient
+        .post(`/invoices/${id}/write-off`, { reason })
+        .then((r) => r.data)
+        // SA-1050: 409 INVOICE_ALREADY_WRITTEN_OFF is a lost-reply replay: it IS written off, so read it back as done.
+        .catch((err: unknown) => {
+          if (!isWriteOffReplay(err)) throw err;
+          return apiClient.get(`/invoices/${id}`).then((r) => r.data as Invoice);
+        }),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });

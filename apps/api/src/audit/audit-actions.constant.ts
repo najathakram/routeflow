@@ -18,6 +18,8 @@ export const AUDIT_ACTIONS = {
   INVOICE_EMAILED: "invoice.emailed",
   /** SA-763r P-3: a non-DRAFT invoice restated by an order edit; meta {invoiceId, orderId, actor, totalBefore, totalAfter, linesChanged}. */
   INVOICE_REVISED: "invoice.revised",
+  // SA-1050 rule 3: the write-off, in its own transaction, with the actor, amount, preTax and reason in meta.
+  INVOICE_WRITTEN_OFF: "invoice.written_off",
   /** SA-763r P-3 (B1098): a restatement left the invoice paid past its new total; meta {invoiceId, paid, total, overpaidBy, actor}. */
   INVOICE_OVERPAID_AFTER_RESTATEMENT: "invoice.overpaid-after-restatement",
   /** SA-763r P-3 [L-O2]: the operator's deliberate standalone overpayment; meta {invoiceId, paymentGroupId, overpaidBy, actor}. */
