@@ -746,7 +746,7 @@ export class VendorBillsService {
           method: PaymentMethod.CREDIT_NOTE,
           supplierCreditId: credit.id,
           reference: `SUPPLIER_CREDIT-${credit.id.slice(0, 8)}`,
-          notes: `Paid ${draw.toFixed(2)} from account credit`,
+          notes: `Paid ${roundMoney(draw).toFixed(2)} from account credit`,
         },
       });
       await tx.supplierCredit.update({
@@ -3047,7 +3047,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       if (amount > remaining + 0.001) {
         throw new BadRequestException({
           code: API_ERROR_CODES.SUPPLIER_PAYMENT_OVER_BALANCE,
-          message: `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
+          message: `Payment amount exceeds the remaining balance of ${roundMoney(remaining).toFixed(2)}.`,
           remaining,
         });
       }
@@ -3237,7 +3237,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       // further down), and `totalAmount` is the request's UNROUNDED value, so a half-cent overage stays visible.
       throw new BadRequestException({
         code: API_ERROR_CODES.SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT,
-        message: `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
+        message: `Allocations total ${roundMoney(requestedTotal).toFixed(2)} exceed the payment amount of ${roundMoney(Number(dto.totalAmount)).toFixed(2)}.`,
         allocatedTotal: requestedTotal,
         totalAmount: Number(dto.totalAmount),
       });
@@ -3303,7 +3303,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         if (amount > remaining + 0.001) {
           throw new BadRequestException({
             code: API_ERROR_CODES.SUPPLIER_ALLOCATION_OVER_BALANCE,
-            message: `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
+            message: `Allocation of ${roundMoney(amount).toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${roundMoney(remaining).toFixed(2)}.`,
             billId: bill.id,
             billNumber: bill.billNumber,
             amount,

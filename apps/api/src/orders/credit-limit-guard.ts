@@ -174,8 +174,8 @@ export async function assertWithinCreditLimit(
     throw new ConflictException({
       code: API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED,
       message:
-        `This ${action} would take the customer's exposure to ${exposure.toFixed(2)}, ` +
-        `over their credit limit of ${limit.toFixed(2)}.`,
+        `This ${action} would take the customer's exposure to ${roundMoney(exposure).toFixed(2)}, ` +
+        `over their credit limit of ${roundMoney(limit).toFixed(2)}.`,
       limit,
       exposure,
     });

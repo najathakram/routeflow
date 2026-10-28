@@ -140,7 +140,7 @@ const money = (v: unknown): string => {
   }
   const r = roundMoney(Number(v));
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
-  return r.toFixed(2);
+  return roundMoney(r).toFixed(2);
 };
 /** Decimal(10,4) cost, the same rounding-overflow guard (999999.99999 -> 1000000.0000). */
 const cost4 = (v: unknown): string => {

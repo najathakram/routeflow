@@ -163,7 +163,7 @@ const toNum = (val: DecimalLike): number => {
   if (typeof val === "string") return parseFloat(val);
   return val.toNumber();
 };
-const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
+const fmt = (val: DecimalLike) => `$${roundMoney(toNum(val)).toFixed(2)}`;
 // Calendar dates (issueDate/dueDate/paidAt) are stored as UTC-midnight instants.
 // Formatting via local-time components would render them a day early for any
 // negative-UTC-offset viewer, so we read the UTC calendar components directly.
