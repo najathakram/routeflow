@@ -30,6 +30,10 @@ jest.mock("@/lib/platform-admin/capabilities-contract", () => ({
     mockApply(tenantId, body, fingerprint),
 }));
 
+// The server's real answer for an unset tenant: one file, pinned equal to `capabilitiesFromInputs` by the API spec.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const REAL_UNSET = require("../../../../../../../../packages/types/fixtures/business-capabilities.unset.json");
+
 const TENANT_ID = "tenant-1";
 const DELIVERY = "Delivers on own trucks";
 const DOOR = "Collect payment at the door";
@@ -109,6 +113,27 @@ describe("CapabilitiesCard: what is saved", () => {
       await sleep(400);
     });
     expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  // SA-1028 H-R1 (headline): the card is rendered from the SERVER's real answer for an unset shipping tenant (the file the
+  // API spec pins against capabilitiesFromInputs), never a hand-built fixture. Reverting the server read or the web
+  // mapping alone turns one of the two specs red.
+  it("H-R1: an unset shipping tenant's real server answer shows Shipping ticked, saved, with the 'not set up' line", async () => {
+    mockFetchCapabilities.mockResolvedValue(REAL_UNSET.shipping);
+    await renderCard();
+    expect(box(SHIPPING)).toBeChecked();
+    expect(box(DELIVERY)).not.toBeChecked();
+    expect(box(COUNTER)).not.toBeChecked();
+    expect(screen.getByText(NOT_SET_UP_COPY)).toBeVisible();
+    expect(applyButton()).toBeDisabled();
+    expect(screen.getByText("Already set up this way.")).toBeVisible();
+  });
+
+  it("H-R1: with a fleet held the real answer shows Delivery, door payments and Shipping ticked", async () => {
+    mockFetchCapabilities.mockResolvedValue(REAL_UNSET.shippingWithFleet);
+    await renderCard();
+    for (const n of [DELIVERY, DOOR, SHIPPING]) expect(box(n)).toBeChecked();
+    expect(box(COUNTER)).not.toBeChecked();
   });
 
   it("K-R3: adding Counter on that tenant previews Delivery + Shipping kept and Counter added, never a smaller request", async () => {

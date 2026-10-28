@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { BadRequestException } from "@nestjs/common";
 import type { BusinessCapabilityTicks } from "@routeflow/types";
 import {
@@ -83,6 +85,29 @@ describe("capabilitiesFromInputs", () => {
 
   it("a null fleet read counts as no fleet", () => {
     expect(capabilitiesFromInputs(inputs("ship", "unset", null), []).fleetHeld).toBe(false);
+  });
+});
+
+/**
+ * SA-1028 H-R1, the server half: the shared fixture IS the server's answer for an unset tenant. The web card spec renders
+ * the same file, so the rule lives once (here) and a revert of either copy turns one of the two specs red.
+ */
+describe("H-R1: the unset-tenant answer the card renders", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      join(__dirname, "../../../../packages/types/fixtures/business-capabilities.unset.json"),
+      "utf8",
+    ),
+  );
+
+  it("an unset shipping tenant with no fleet: capabilitiesFromInputs equals the fixture", () => {
+    expect(capabilitiesFromInputs(inputs("unset", "unset", false), [])).toEqual(fixture.shipping);
+  });
+
+  it("an unset tenant with a fleet and driver payments held equals the fixture", () => {
+    expect(capabilitiesFromInputs(inputs("unset", "unset", true), ["driver_payments"])).toEqual(
+      fixture.shippingWithFleet,
+    );
   });
 });
 
