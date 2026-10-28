@@ -12,6 +12,7 @@ import sharp from "sharp";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_TASKS } from "../platform-admin/ai-models";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { matchSupplier } from "../import/supplier-match";
@@ -32,7 +33,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * layouts, and a misread here moves money. Worth a more capable model than
  * the invoice scanner's; kept as its own constant so the two can diverge.
  */
-const STATEMENT_MODEL = "claude-sonnet-5";
+const STATEMENT_MODEL = AI_TASKS.statement_scan.fallback; // SA-1035: the one model map; no picker for statements
 
 /** Extension per accepted upload type — the stored key keeps the original bytes readable. */
 const STATEMENT_FILE_EXTENSIONS: Record<string, string> = {

@@ -93,9 +93,6 @@ export interface PriorScanSummary {
   total: number | null;
 }
 
-/** Phase-1 OCR model. Persisted with each scan, so the constant is the single source. */
-const SCAN_MODEL = "claude-haiku-4-5";
-
 /** Extension per accepted upload type — the stored key keeps the original bytes readable. */
 const SCAN_FILE_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -2616,6 +2613,10 @@ export class VendorBillsService {
       );
     }
 
+    // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so the
+    // row says what was actually called even if the setting changes mid-scan.
+    const model = await this.platformConfig.resolveModelFor("bill_scan");
+
     // ── Phase 0: Normalise inputs ─────────────────────────────────────────────
     // Multi-page invoices arrive as N images (HEIC from iPhone, JPEG, PNG, etc.)
     // or one PDF. HEIC isn't a Claude vision media type, so convert it to JPEG
@@ -2715,7 +2716,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     try {
       message = await anthropic.messages.create(
         {
-          model: SCAN_MODEL,
+          model,
           max_tokens: 4096,
           messages: [
             {
@@ -2732,7 +2733,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       await this.platformConfig.recordAiUsage({
         tenantId: this.prisma.getTenantId(),
         feature: "ocr.vendor_bill",
-        model: SCAN_MODEL,
+        model,
         success: false,
       });
       if (status === 401 || status === 403) {
@@ -2764,7 +2765,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     await this.platformConfig.recordAiUsage({
       tenantId: this.prisma.getTenantId(),
       feature: "ocr.vendor_bill",
-      model: SCAN_MODEL,
+      model,
       inputTokens: message.usage?.input_tokens ?? 0,
       outputTokens: message.usage?.output_tokens ?? 0,
     });
@@ -2817,6 +2818,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       items,
       result,
       scanDurationMs,
+      model,
       scannedById,
       supplierId,
     });
@@ -2897,6 +2899,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     items: any[];
     result: Record<string, unknown>;
     scanDurationMs: number;
+    /** The model the scan actually called (required: the stored row never guesses it). */
+    model: string;
     scannedById?: string;
     supplierId?: string | null;
   }): Promise<{ id: string } | null> {
@@ -2913,7 +2917,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           pageCount: files.length,
           fileHash,
           extractedPayload: result as unknown as Prisma.InputJsonValue,
-          model: SCAN_MODEL,
+          model: args.model,
           scanDurationMs: args.scanDurationMs,
           supplierNameRaw: typeof parsed.supplier === "string" ? parsed.supplier : null,
           supplierId: args.supplierId ?? null,

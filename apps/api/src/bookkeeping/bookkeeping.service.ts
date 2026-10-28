@@ -54,13 +54,6 @@ import {
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
 
-/**
- * Receipt-extraction model. Receipts are small documents where a misread line
- * lands directly in the books, so this path pays for the most capable model;
- * kept as its own constant so it can diverge from the OCR scanners'.
- */
-const RECEIPT_MODEL = "claude-opus-4-5-20251101";
-
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
   constructor(
@@ -908,6 +901,9 @@ export class BookkeepingService implements OnModuleInit {
     const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
 
+    // SA-1035: read once; the call and both usage records use this one value. Receipts are small documents where a
+    // misread line lands directly in the books, so this path runs the most capable model (no picker).
+    const model = await this.platformConfig.resolveModelFor("receipt_scan");
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";
@@ -922,7 +918,7 @@ export class BookkeepingService implements OnModuleInit {
     let response: Anthropic.Message;
     try {
       response = await anthropic.messages.create({
-        model: RECEIPT_MODEL,
+        model,
         max_tokens: 2048,
         messages: [
           {
@@ -941,7 +937,7 @@ export class BookkeepingService implements OnModuleInit {
       await this.platformConfig.recordAiUsage({
         tenantId: this.prisma.getTenantId(),
         feature: "ocr.expense_receipt",
-        model: RECEIPT_MODEL,
+        model,
         success: false,
       });
       throw err;
@@ -952,7 +948,7 @@ export class BookkeepingService implements OnModuleInit {
     await this.platformConfig.recordAiUsage({
       tenantId: this.prisma.getTenantId(),
       feature: "ocr.expense_receipt",
-      model: RECEIPT_MODEL,
+      model,
       inputTokens: response.usage?.input_tokens ?? 0,
       outputTokens: response.usage?.output_tokens ?? 0,
     });

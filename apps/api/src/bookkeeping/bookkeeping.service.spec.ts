@@ -29,6 +29,7 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_TASKS, type AiTask } from "../platform-admin/ai-models";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -103,7 +104,11 @@ describe("BookkeepingService", () => {
         },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+            recordAiUsage,
+            resolveModelFor: jest.fn(async (task: AiTask) => AI_TASKS[task].fallback),
+          },
         },
         {
           provide: SystemConfigService,
@@ -2192,7 +2197,7 @@ describe("BookkeepingService", () => {
   });
 
   describe("extractExpenseItems", () => {
-    const RECEIPT_MODEL = "claude-opus-4-5-20251101";
+    const RECEIPT_MODEL = "claude-opus-5-5"; // SA-1035 M-R5: the receipt task's fallback (no picker)
 
     /** `createMockPrisma` predates ExpenseLineItem — graft it onto the object forTenant() returns. */
     const graftExpenseLineItem = () => {
@@ -2234,6 +2239,7 @@ describe("BookkeepingService", () => {
 
       await service.extractExpenseItems("exp-1");
 
+      expect(mockAnthropicCreate.mock.calls[0][0].model).toBe(RECEIPT_MODEL); // M-R5: the call itself
       expect(recordAiUsage).toHaveBeenCalledWith({
         tenantId: "test-tenant",
         feature: "ocr.expense_receipt",
