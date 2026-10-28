@@ -56,10 +56,11 @@ describe("AI_TASKS (SA-1035 rule 2)", () => {
     const tasks: AiTask[] = ["general", "bill_scan", "receipt_scan", "statement_scan"];
     expect(Object.keys(AI_TASKS).sort()).toEqual([...tasks].sort());
   });
-  it("every picker-backed fallback is on the list", () => {
-    for (const t of ["general", "bill_scan", "receipt_scan"] as AiTask[]) {
+  it("every task's fallback is on the list (SA ruling: statements move to Sonnet 5.5 too)", () => {
+    for (const t of Object.keys(AI_TASKS) as AiTask[]) {
       expect(isAiModelId(AI_TASKS[t].fallback)).toBe(true);
     }
+    expect(AI_TASKS.statement_scan).toEqual({ key: null, fallback: "claude-sonnet-5-5" });
   });
 });
 

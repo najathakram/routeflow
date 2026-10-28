@@ -33,8 +33,8 @@ export const AI_TASKS: Record<AiTask, AiTaskDef> = {
   general: { key: "claude.model", fallback: "claude-sonnet-5-5" },
   bill_scan: { key: "claude.scanModel", fallback: "claude-haiku-5-5" },
   receipt_scan: { key: null, fallback: "claude-opus-5-5" },
-  // Supplier statements keep the model they were already scanning with (no picker; moving it is its own decision).
-  statement_scan: { key: null, fallback: "claude-sonnet-5" },
+  // Supplier statements: no picker; the same 5.5 generation as the other scans (SA ruling on #3903).
+  statement_scan: { key: null, fallback: "claude-sonnet-5-5" },
 };
 
 export function isAiModelId(id: unknown): id is string {
