@@ -35,8 +35,6 @@ import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import {
   addCredits,
-  piecesPerQtyOf,
-  planProductRefund,
   toHeadroomLine,
   loadLineCredits,
   loadOrderPool,
@@ -103,12 +101,35 @@ import {
   withLines,
 } from "./return-line-items";
 import { restockReturnItems } from "./returns-restock.util";
+import {
+  NO_SPLIT,
+  addSplit,
+  billedLinesOf,
+  priceProductSlice,
+  refundTaxOpts,
+  splitOfItems,
+  splitTotal,
+  toRefundableInvoice,
+  type RefundSplit,
+} from "./standard-refund-pricing";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
 const INLINE_RETURN_USE_INLINE_ENDPOINTS = API_ERROR_CODES.INLINE_RETURN_USE_INLINE_ENDPOINTS;
+
+/**
+ * SA-840: the invoice columns `refundableLineShare` prices from, spread into ALL THREE reads that feed the pricer
+ * (processRefund, findAll, findOne) so a refund, its list estimate and its detail estimate can never disagree.
+ */
+const INVOICE_TAX_SELECT = { taxAmount: true, discount: true } as const;
+const INVOICE_ITEM_TAX_SELECT = {
+  taxRate: true,
+  categoryTaxAmount: true,
+  systemKind: true,
+  description: true,
+} as const;
 
 /** SA-737: the return read (before the locks, and again under them) that the refund basis is priced from. */
 const REFUND_RETURN_INCLUDE = {
@@ -136,6 +157,7 @@ const REFUND_RETURN_INCLUDE = {
           invoiceNumber: true,
           status: true,
           total: true,
+          ...INVOICE_TAX_SELECT,
           createdAt: true,
           items: {
             select: {
@@ -144,6 +166,7 @@ const REFUND_RETURN_INCLUDE = {
               productId: true,
               qty: true,
               subtotal: true,
+              ...INVOICE_ITEM_TAX_SELECT,
               boxes: true,
               unitsPerBox: true,
               pieces: true,
@@ -175,6 +198,8 @@ type RefundBasis = {
   pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
   unbilledItems?: UnbilledReturnItem[];
   refusal?: string;
+  /** SA-840: net / tax / category tax of the refund, frozen on the Return in the claim; `amount` is their total. */
+  split?: RefundSplit;
 };
 
 /** F08 B166/B75: options object for `findAll`/`findAllForUser` — `search` narrows by
@@ -607,6 +632,7 @@ export class ReturnsService {
                   id: true,
                   status: true,
                   total: true,
+                  ...INVOICE_TAX_SELECT,
                   createdAt: true,
                   items: {
                     select: {
@@ -615,6 +641,7 @@ export class ReturnsService {
                       productId: true,
                       qty: true,
                       subtotal: true,
+                      ...INVOICE_ITEM_TAX_SELECT,
                       boxes: true,
                       unitsPerBox: true,
                       pieces: true,
@@ -800,11 +827,13 @@ export class ReturnsService {
     items?: RefundItem[];
     pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
     unbilledItems?: UnbilledReturnItem[];
+    /** SA-840: net / tax / category tax of `amount`, frozen on the Return by the claim. */
+    split: RefundSplit;
   }> {
     // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
     // preview (`findOne`/`findAll`) uses, so preview == mint.
     const packBases = await this.packBasesOf(order, db);
-    const { amount, invoiceId, creditable, refusal, unresolvedProductId } = this.priceReturn(
+    const { amount, invoiceId, creditable, refusal, unresolvedProductId, split } = this.priceReturn(
       items,
       order,
       packBases,
@@ -834,7 +863,7 @@ export class ReturnsService {
 
     // No invoice rows at all: the amount came from the legacy order-line basis and
     // there is no source invoice for create() to cap against, so nothing to gate.
-    if (creditable.length === 0) return { amount, invoiceId };
+    if (creditable.length === 0) return { amount, invoiceId, split };
 
     // B959: which returned products have NO billed line (qty > 0) on any creditable invoice. A billed $0 (free) line IS billed.
     // Nothing billed at all => refuse (a $0 REFUNDED return with no credit note was a silent under-credit); a MIXED return refunds
@@ -931,13 +960,16 @@ export class ReturnsService {
     // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
     // note's items must belong to its one invoice). B947: the refund is still CHECKED against the older invoices' lines too (pooled).
     // Done BEFORE the invoice-room check so that check reads the amount that will actually be minted.
+    // SA-840: the itemised rows carry the NET slice with its tax shares beside it; what is paid out is their total.
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
+    let effectiveSplit = split;
     if (creditable.length === 1 && latest) {
       const itemised = await this.itemiseRefund(items, latest, packBases, db);
       if (itemised.length > 0) {
         refundItems = itemised;
-        effectiveAmount = roundMoney(itemised.reduce((n, it) => n + it.amount, 0));
+        effectiveSplit = splitOfItems(itemised);
+        effectiveAmount = splitTotal(effectiveSplit);
       }
     }
 
@@ -993,6 +1025,7 @@ export class ReturnsService {
     return {
       amount: effectiveAmount,
       invoiceId,
+      split: effectiveSplit,
       ...(refundItems ? { items: refundItems } : {}),
       ...(pooledRefund ? { pooledRefund } : {}),
       ...(unbilledItems ? { unbilledItems } : {}),
@@ -1085,6 +1118,7 @@ export class ReturnsService {
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
     let credited = await loadLineCredits(db, invoice.id, lines);
     const out: RefundItem[] = [];
+    const refundable = toRefundableInvoice(invoice);
     // SA-1042 rule 7: a line group is credited against the invoice items billed from its line, a pooled group against the product's.
     for (const group of groupReturnItems(returnItems).values()) {
       const { productId, qty: returnedQty } = group;
@@ -1093,26 +1127,15 @@ export class ReturnsService {
       const mine = lines.filter((l) => billedIds.has(l.id));
       const axis = returnPricingAxis(packBases, productId, returnedQty, billed);
       if ("unresolved" in axis) throw this.mixedUnitRefusal(productId);
-      const factorOf = (l: HeadroomLine): number => (axis.pieces ? (l.piecesPerQty ?? 1) : 1);
-      const inPieces = mine.map((l) => ({ ...l, qty: l.qty * factorOf(l), piecesPerQty: 1 }));
-      const creditedInPieces = new Map(credited);
-      for (const l of mine) {
-        const c = credited.get(l.id);
-        if (c) creditedInPieces.set(l.id, { ...c, qty: c.qty * factorOf(l) });
-      }
-      // EPS (0.001) per line on the line's own axis, scaled by its pieces-per-qty, like `pooledRefundRefusal`
-      const qtyTol = Math.max(
-        0.001,
-        mine.reduce((t, l) => t + 0.001 * factorOf(l), 0),
-      );
-      const { items, refusal } = planProductRefund(
-        inPieces,
-        creditedInPieces,
+      // SA-840: the qty FILL and its refusals are planProductRefund's; every figure paid out is refundableLineShare's
+      const { items, refusal } = priceProductSlice({
+        lines: mine,
+        invoiceOf: () => refundable,
+        credited,
         productId,
-        axis.returned,
-        "refund",
-        qtyTol,
-      );
+        axis,
+        mode: "refund",
+      });
       if (refusal) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
@@ -1127,15 +1150,8 @@ export class ReturnsService {
           qtyUnit: axis.pieces ? "pieces" : refusal.qtyUnit,
         });
       }
-      const lineById = new Map(mine.map((l) => [l.id, l]));
-      const inLineAxis = items.map((it) => ({
-        ...it,
-        qty:
-          Math.round((it.qty / factorOf(lineById.get(it.invoiceItemId) as HeadroomLine)) * 1000) /
-          1000,
-      }));
-      out.push(...inLineAxis);
-      credited = addCredits(credited, inLineAxis);
+      out.push(...items);
+      credited = addCredits(credited, items);
     }
     return out;
   }
@@ -1158,6 +1174,8 @@ export class ReturnsService {
     refusal?: "NOTHING_CREDITABLE" | "NOTHING_BILLED" | "UNIT_UNRESOLVED";
     /** B969: the first returned product with no single pricing axis (mixed units); set with `UNIT_UNRESOLVED`. */
     unresolvedProductId?: string;
+    /** SA-840: net / tax / category tax of `amount` (what the claim freezes on the Return). */
+    split: RefundSplit;
   } {
     const allInvoices = order?.invoices ?? [];
 
@@ -1200,7 +1218,13 @@ export class ReturnsService {
         const refundQty = Math.min(Number(item.qty), soldQty);
         amount += refundQty * perUnit;
       }
-      return { amount: roundMoney(amount), invoiceId: undefined, creditable: [] };
+      const net = roundMoney(amount);
+      return {
+        amount: net,
+        invoiceId: undefined,
+        creditable: [],
+        split: { ...NO_SPLIT, net },
+      };
     }
 
     const creditable = allInvoices.filter(
@@ -1209,7 +1233,13 @@ export class ReturnsService {
     if (creditable.length === 0) {
       // Invoices exist but none of them can source a credit (all VOID/WRITTEN_OFF).
       // Pricing reports it; only the mint path (billedBasisFor) turns it into a refusal.
-      return { amount: 0, invoiceId: undefined, creditable, refusal: "NOTHING_CREDITABLE" };
+      return {
+        amount: 0,
+        invoiceId: undefined,
+        creditable,
+        refusal: "NOTHING_CREDITABLE",
+        split: NO_SPLIT,
+      };
     }
 
     // SA-1042 rule 7: price per GROUP (product + line when named): a line group's billed items are the creditable invoice items
@@ -1218,10 +1248,14 @@ export class ReturnsService {
     const groups = groupReturnItems(items);
     const billedQtyOf = (g: { productId: string; orderItemId: string | null }) =>
       groupInvoiceItems<any>(g, billedAll).reduce((t: number, it: any) => t + Number(it.qty), 0);
-    // B969 (SA-628p): the average runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
+    // SA-840: each returned group is FILLED over its billed lines by `planProductRefund` (the same fill the mint uses) and every
+    // filled line is priced by `refundableLineShare` on its own invoice: net after its discount share, plus the tax the invoice
+    // charged on it. The old pooled average ignored all of that (B704). The preview has no credits to read (pure, DB-free), so it
+    // prices from an uncredited line; the mint prices against what the lines already carry.
+    // B969 (SA-628p): the fill runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
     // `standardReturnPieces`, each billed item through `piecesPerQtyOf`) so 1 box of a 2-box line billed as 24 pieces refunds
     // 12 x (120 / 24), not 1 x (120 / 24).
-    let amount = 0;
+    let split = NO_SPLIT;
     let unresolvedProductId: string | undefined;
     for (const g of groups.values()) {
       const billedItems = groupInvoiceItems<any>(g, billedAll);
@@ -1233,14 +1267,20 @@ export class ReturnsService {
         unresolvedProductId ??= g.productId;
         continue;
       }
-      const billed = billedItems.reduce(
-        (t, it) => t + Number(it.qty) * (axis.pieces ? piecesPerQtyOf(it) : 1),
-        0,
-      );
-      const billedSubtotal = billedItems.reduce((t, it) => t + Number(it.subtotal), 0);
-      amount += roundMoney((Math.min(axis.returned, billed) * billedSubtotal) / billed);
+      // SA-840 prices the slice over the group's OWN billed lines (selection first, then pricing): a line group is sliced over
+      // the invoice items billed from its line, a pooled group over the product's.
+      const billed = billedLinesOf(creditable, g.productId);
+      const { items: priced } = priceProductSlice({
+        lines: groupInvoiceItems<HeadroomLine>(g, billed.lines),
+        invoiceOf: billed.invoiceOf,
+        credited: new Map(),
+        productId: g.productId,
+        axis,
+        mode: "count",
+      });
+      split = addSplit(split, splitOfItems(priced));
     }
-    amount = roundMoney(amount);
+    let amount = splitTotal(split);
 
     // B959: nothing the customer returned was billed on any creditable invoice (a billed $0 line is billed): the preview says
     // so (amount 0 WITH a reason) and billedBasisFor refuses it, instead of a plain $0.
@@ -1252,10 +1292,13 @@ export class ReturnsService {
       : nothingBilled
         ? { refusal: "NOTHING_BILLED" as const }
         : {};
-    if (unresolvedProductId) amount = 0;
+    if (unresolvedProductId) {
+      amount = 0;
+      split = NO_SPLIT;
+    }
 
     if (creditable.length === 1) {
-      return { amount, invoiceId: creditable[0].id, creditable, ...why };
+      return { amount, invoiceId: creditable[0].id, creditable, split, ...why };
     }
 
     // 2+ creditable invoices: the source is the LATEST one (by createdAt) so
@@ -1265,7 +1308,7 @@ export class ReturnsService {
       const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return bt - at;
     })[0];
-    return { amount, invoiceId: latest.id, creditable, ...why };
+    return { amount, invoiceId: latest.id, creditable, split, ...why };
   }
 
   async processRefund(id: string, dto?: ProcessRefundDto, actor?: JwtPayload) {
@@ -1315,6 +1358,7 @@ export class ReturnsService {
       items: refundItems,
       pooledRefund,
       unbilledItems,
+      split: refundSplit,
     } = claim.basis;
     const updated = claim.row;
     // B959: a mixed return says WHICH item got no refund, in the same response (never a silent $0)
@@ -1352,6 +1396,8 @@ export class ReturnsService {
         {
           ledgerReversedByReturn: true,
           ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
+          // SA-840: the rows carry NET; the regular tax and the per-line levy slices make the note total the gross refund
+          ...refundTaxOpts(refundItems, refundSplit),
         },
       );
     } catch (err) {
@@ -1365,7 +1411,15 @@ export class ReturnsService {
       try {
         await this.prisma.forTenant().return.updateMany({
           where: { id, status: "REFUNDED", creditNoteId: null },
-          data: { status: "RECEIVED", refundMethod: null, refundAmount: null, refundedAt: null },
+          data: {
+            status: "RECEIVED",
+            refundMethod: null,
+            refundAmount: null,
+            refundedAt: null,
+            creditSubtotal: null,
+            creditTax: null,
+            creditCategoryTax: null,
+          },
         });
         this.logger.warn(
           `Return ${id} bounced REFUNDED→RECEIVED after the failed mint (amount ${refundAmount}, invoice ${sourceInvoiceId ?? "none"})`,
@@ -1497,6 +1551,14 @@ export class ReturnsService {
               refundMethod: method,
               refundAmount,
               refundedAt,
+              // SA-840: the frozen split of the refund (net / tax / category tax), on both methods
+              ...(basis.split
+                ? {
+                    creditSubtotal: basis.split.net,
+                    creditTax: basis.split.tax,
+                    creditCategoryTax: basis.split.categoryTax,
+                  }
+                : {}),
               ...(external ? refundTenderData(tender) : {}),
             },
           });
@@ -1772,6 +1834,7 @@ export class ReturnsService {
                 id: true,
                 status: true,
                 total: true,
+                ...INVOICE_TAX_SELECT,
                 createdAt: true,
                 items: {
                   select: {
@@ -1780,6 +1843,7 @@ export class ReturnsService {
                     productId: true,
                     qty: true,
                     subtotal: true,
+                    ...INVOICE_ITEM_TAX_SELECT,
                     boxes: true,
                     unitsPerBox: true,
                     pieces: true,

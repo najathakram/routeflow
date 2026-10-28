@@ -62,7 +62,11 @@ export interface LineCredit {
 export interface RefundItem {
   invoiceItemId: string;
   qty: number;
+  /** NET of the slice (the headroom invariant): the tax shares below ride beside it, never inside it (SA-840). */
   amount: number;
+  /** SA-840: the slice's regular-tax and category-tax shares as the invoice charged them (a return refund only). */
+  tax?: number;
+  categoryTax?: number;
 }
 
 const EPS = 0.001;
@@ -84,7 +88,8 @@ export type PlanMode = "refund" | "count";
 /**
  * ONE function for the refund PRICE and its ITEMISATION, used by the mint, the refund preview and the legacy history term
  * (SA-628b), so they can never disagree.
- *  - PRICE: master's pooled average, `qty x sum(subtotal) / sum(qty)` over the product's lines (money-neutral vs master).
+ *  - PRICE: master's pooled average, `qty x sum(subtotal) / sum(qty)` over the product's lines. SA-840: this is the refusal
+ *    BOUND only; the money paid out is `refundableLineShare` per filled line (returns/standard-refund-pricing.ts).
  *  - CAP ("refund" mode): refuse (`refusal`, no items) when the qty exceeds the lines' summed qty room, or the price exceeds
  *    their summed money room by more than a cent plus the rounding drift of the prior credit ITEMS (0.5 cent each, capped at
  *    5 cents total). Never clips. "count" mode clips instead.

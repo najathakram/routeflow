@@ -22,6 +22,8 @@ const invoice = (id: string, items: any[]) => ({
   invoiceNumber: id.toUpperCase(),
   status: "SENT",
   total: 100,
+  taxAmount: 0,
+  discount: 0,
   createdAt: new Date("2026-01-01"),
   items,
 });
