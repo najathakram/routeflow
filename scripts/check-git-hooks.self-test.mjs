@@ -434,12 +434,11 @@ try {
 
   // T14r-s — review folds: chmod only this tree's own hooks dir; helpers refreshed, hooks never overwritten.
   const shared = repo("t14r-main");
-  const sharedHooks = path.join(shared, "shared", "_");
   withHook(shared, "shared/_");
-  sh(shared, "config", "core.hooksPath", sharedHooks.replaceAll("\\", "/"));
+  sh(shared, "config", "core.hooksPath", path.join(shared, "shared/_").replaceAll("\\", "/"));
   const sharedLinked = path.join(tmp, "t14r-linked");
   sh(shared, "worktree", "add", "-q", "-b", "t14r", sharedLinked);
-  const sharedPp = path.resolve(sharedHooks, "pre-push");
+  const sharedPp = path.resolve(shared, "shared/_/pre-push");
   const sharedChmods = [];
   let sharedMode = 0o644;
   const sharedFs = {
@@ -459,7 +458,6 @@ try {
   ok(
     "T14r2 the main checkout may chmod its own hooks dir",
     en.ok === true && sharedChmods.length === 1,
-    JSON.stringify([en, sharedChmods]),
   );
   writeFileSync(path.join(mainWithHook, ".husky/_/h"), "# fresh h\n");
   const stale = path.join(tmp, "t14s-linked");
@@ -474,7 +472,6 @@ try {
     en.ok === true &&
       staleRead("h") === "# fresh h\n" &&
       /custom commit-msg/.test(staleRead("commit-msg")),
-    JSON.stringify(en),
   );
 
   // T12 — structural: the guard is actually wired where it must be.

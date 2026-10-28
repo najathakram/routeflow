@@ -179,6 +179,19 @@ export function checkGitHooks({
   return { status: 0, message: `check-git-hooks: ok — pre-push present in ${dir}` };
 }
 
+/** The main checkout of `cwd`'s repo: { top, hooks } or { fail: <message> } (bare or unreadable). */
+function locateMain(cwd, git) {
+  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (common.status !== 0 || path.basename(common.stdout) !== ".git") {
+    return { fail: "ensure-git-hooks: cannot locate the main checkout (no .git common dir)." };
+  }
+  const top = path.dirname(common.stdout);
+  const hooks = resolveHooks(top, git);
+  if (hooks.fail)
+    return { fail: hooks.fail.message.replace("check-git-hooks", "ensure-git-hooks") };
+  return { top, hooks };
+}
+
 const ok = (copied, message) => ({ ok: true, copied, message });
 const no = (message) => ({ ok: false, copied: false, message });
 
@@ -208,18 +221,26 @@ export function ensureGitHooks({
     if (platform === "win32" || (fs.statSync(mine_pp).mode & 0o111) !== 0) {
       return ok(false, `ensure-git-hooks: ok — pre-push already present in ${mine.dir}`);
     }
+    // Only this tree's own hooks: chmod on the main checkout's shared dir would undo a deliberate chmod -x.
+    const owner = locateMain(cwd, git);
+    if (owner.fail) return no(owner.fail);
+    if (
+      path.resolve(owner.top) !== path.resolve(mine.top) &&
+      path.resolve(owner.hooks.dir) === path.resolve(mine.dir)
+    ) {
+      return no(
+        `ensure-git-hooks: ${mine.dir} is the main checkout's own hooks directory; not changing its modes from another tree.`,
+      );
+    }
     fs.chmodSync(mine_pp, 0o755);
     if ((fs.statSync(mine_pp).mode & 0o111) === 0) {
       return no(`ensure-git-hooks: ${mine_pp} is not executable and chmod did not change that.`);
     }
     return ok(false, `ensure-git-hooks: made ${mine_pp} executable`);
   }
-  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  if (common.status !== 0 || path.basename(common.stdout) !== ".git") {
-    return no("ensure-git-hooks: cannot locate the main checkout (no .git common dir).");
-  }
-  const main = resolveHooks(path.dirname(common.stdout), git);
-  if (main.fail) return no(main.fail.message.replace("check-git-hooks", "ensure-git-hooks"));
+  const owner = locateMain(cwd, git);
+  if (owner.fail) return no(owner.fail);
+  const main = owner.hooks;
   if (path.resolve(main.dir) === path.resolve(mine.dir)) {
     return no(
       `ensure-git-hooks: ${mine.dir} is the main checkout's own hooks directory and has no pre-push.`,
@@ -232,6 +253,10 @@ export function ensureGitHooks({
   }
   // A custom hooks dir keeps what it has: only the missing files are copied.
   fs.cpSync(main.dir, mine.dir, { recursive: true, force: false, errorOnExist: false });
+  // The husky helpers are not hooks: a stale one beside a fresh pre-push breaks it, so always refresh.
+  for (const f of ["h", "husky.sh"].filter((n) => isFile(path.join(main.dir, n)))) {
+    fs.copyFileSync(path.join(main.dir, f), path.join(mine.dir, f));
+  }
   const copied = path.join(mine.dir, "pre-push");
   if (platform !== "win32" && (fs.statSync(copied).mode & 0o111) === 0) {
     return no(`ensure-git-hooks: copied, but ${copied} is not executable; git would ignore it.`);
