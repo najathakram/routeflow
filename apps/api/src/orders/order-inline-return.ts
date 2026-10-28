@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, withinStaffOverrideTolerance } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertReplayItems,
@@ -83,7 +83,7 @@ export function assertIssuedCreditCoversPreview(
   if (!(previewed > 0)) return;
   const want = roundMoney(Math.min(previewed, saleTotal));
   const got = roundMoney(Math.min(Number(minted?.amount ?? 0), saleTotal));
-  if (got >= want - 0.005) return;
+  if (got >= want || withinStaffOverrideTolerance(got, want)) return;
   throw new ConflictException({
     code: API_ERROR_CODES.RETURN_CREDIT_CHANGED,
     message:
