@@ -1,12 +1,15 @@
 // mkdir-lock.mjs — the mkdir lock moved out of scripts/campaign/bugs.mjs (B1-b0), where its rules are
-// written up above `lockPath`. A pure move; the one addition is an optional trailing `die` argument.
+// written up above `lockPath`. A pure move; B1-b1 added the optional trailing `die`, `spinMs` and `label` arguments.
+// `die` covers only the give-up path; owner-write faults still throw. `label` is the wording of the
+// messages: today's exact strings by default (bugs.mjs output is byte-identical), a caller's own otherwise.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { uptime } from "node:os";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-const defaultDie = (m) => {
-  console.error(`bugs: ${m}`);
+export const BUGS_LABEL = { prefix: "bugs", holder: "another bugs.mjs process" };
+const defaultDie = (m, label = BUGS_LABEL) => {
+  console.error(`${label.prefix}: ${m}`);
   process.exit(1);
 };
 
@@ -21,6 +24,7 @@ export const ownerPath = (p) => join(p, "owner.json");
 const shardOfLockPath = (p) => basename(p).replace(/\.lock$/, "");
 // lock path -> the token THIS process wrote into that lockdir's owner.json.
 export const heldLocks = new Map();
+const lockLabels = new Map(); // p -> the label its holder gave, for the release message
 
 const readLockOwner = (p) => {
   try {
@@ -140,9 +144,10 @@ function installLockExitHook() {
 // itself for the give-up message. The shard lock and the catalogue lock are the
 // SAME mechanism deliberately: a second, hand-rolled copy for the catalogue is
 // exactly how the two of them would drift apart.
-export function acquireLock(p, name, guarded, die = defaultDie) {
+export function acquireLock(p, name, guarded, die, spinMs = LOCK_SPIN_MS, label = BUGS_LABEL) {
+  const giveUp = die ?? ((m) => defaultDie(m, label));
   mkdirSync(dirname(p), { recursive: true });
-  const deadline = Date.now() + LOCK_SPIN_MS;
+  const deadline = Date.now() + spinMs;
   for (;;) {
     try {
       mkdirSync(p); // NOT recursive: recursive:true succeeds on an existing dir
@@ -181,6 +186,7 @@ export function acquireLock(p, name, guarded, die = defaultDie) {
         throw writeErr;
       }
       heldLocks.set(p, token);
+      lockLabels.set(p, label);
       return p;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
@@ -232,7 +238,7 @@ export function acquireLock(p, name, guarded, die = defaultDie) {
     }
     if (breakWhy) {
       console.error(
-        `bugs: breaking the lock on ${name} — ${breakWhy}; ` +
+        `${label.prefix}: breaking the lock on ${name} — ${breakWhy}; ` +
           `re-read the file if anything looks wrong`,
       );
       try {
@@ -242,9 +248,9 @@ export function acquireLock(p, name, guarded, die = defaultDie) {
       }
     }
     if (Date.now() >= deadline)
-      die(
-        `could not lock ${guarded} within ${LOCK_SPIN_MS}ms — ${name} is held by ` +
-          `${owner?.pid ? `pid ${owner.pid}, which still answers` : "another bugs.mjs process"}. ` +
+      giveUp(
+        `could not lock ${guarded} within ${spinMs}ms — ${name} is held by ` +
+          `${owner?.pid ? `pid ${owner.pid}, which still answers` : label.holder}. ` +
           `Retry; if nothing is running, remove ${p}` +
           // A lockdir with no readable owner.json isn't stuck forever — it is
           // exactly the LAST-RESORT case above, just not yet old enough to
@@ -263,13 +269,14 @@ export function acquireLock(p, name, guarded, die = defaultDie) {
 // if the lockdir now names a DIFFERENT owner, our lock was broken while we were
 // inside the critical section and the directory belongs to our successor —
 // deleting it would admit a third writer, so leave it and say so out loud.
-export function releaseLock(p, token = heldLocks.get(p)) {
+export function releaseLock(p, token = heldLocks.get(p), label = lockLabels.get(p) ?? BUGS_LABEL) {
   heldLocks.delete(p);
+  lockLabels.delete(p);
   if (!existsSync(p)) return; // already gone — nothing to undo
   const owner = readLockOwner(p);
   if (!owner || !token || owner.token !== token) {
     console.error(
-      `bugs: our lock on ${shardOfLockPath(p)} was broken by another process; verify the shard`,
+      `${label.prefix}: our lock on ${shardOfLockPath(p)} was broken by another process; verify the shard`,
     );
     // A stolen lock means a SECOND writer was inside the critical section
     // while this one still believed it held it exclusively — the integrity
@@ -288,9 +295,9 @@ export function releaseLock(p, token = heldLocks.get(p)) {
 
 // Re-entrant: if this process already holds `p`, `fn` runs directly and the
 // OUTER hold owns the release.
-export function withLock(p, name, guarded, fn, die = defaultDie) {
+export function withLock(p, name, guarded, fn, die, spinMs = LOCK_SPIN_MS, label = BUGS_LABEL) {
   if (heldLocks.has(p)) return fn();
-  acquireLock(p, name, guarded, die);
+  acquireLock(p, name, guarded, die, spinMs, label);
   try {
     return fn();
   } finally {
