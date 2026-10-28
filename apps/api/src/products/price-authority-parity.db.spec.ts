@@ -145,6 +145,9 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
       });
     }
     await prisma.productUnit.create({
+      data: { tenantId: tenant.id, productId: product.id, label: "Piece", factorToBase: 1 },
+    });
+    await prisma.productUnit.create({
       data: { tenantId: tenant.id, productId: product.id, label: "Case", factorToBase: 72 },
     });
     return { tenantId: tenant.id, productId: product.id, familyId };
@@ -161,7 +164,7 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
         {
           expectedRevision: g.revision,
           expectedPriceState: g.priceState,
-          patches: [{ ref, tier: 1, to }],
+          patches: [{ ref, tier: ref === "base" ? 2 : 1, to }],
         },
         null,
       ),
@@ -287,7 +290,7 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
           expect(viaEditor).toBe("refused");
         } else {
           // family-page: only the grid refuses; the product editor is where a family is priced
-          expect(viaGrid).toBe("refused");
+          expect(viaGrid).toBe("error:Family prices are edited on the family page.");
         }
       });
     }
