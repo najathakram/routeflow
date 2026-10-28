@@ -235,6 +235,8 @@ comparable batches (per-phase confirmed counts in the ledger); post-merge defect
 the F13 baseline (measured on the pre-rebuild engine). Trades are made on ledger rows, never on taste
 (`model-routing`).
 
+**Repro-first and anti-tamper checks (DARK, R4).** Before opening the PR, run `node scripts/fix-revert-probe.mjs` and paste its table in the PR body: at least one test file should read `repro` (fails without the fix, passes with it); `not-repro` means that test does not prove the fix. `node scripts/test-tamper-check.mjs` flags a weakened test (removed assertion, loosened matcher, `.skip`); an intended edit carries `// tamper-ok: <reason>`. Both exit 0 and only report until the flip review.
+
 ## DO NOT
 
 - Do not fork the engine — `mode` is the only divergence point; a hand-edited engine copy drifts silently.
