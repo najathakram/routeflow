@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildRow, mainRoot } from "./agent-log.mjs";
+import { buildRow, mainFromGitdir, mainRoot } from "./agent-log.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -74,14 +74,9 @@ check(
   "payload",
 );
 check(
-  "A2b no agent_id: the one transcript within 10 s",
-  [buildRow(base).src, buildRow(base).agentId],
-  ["recent", "abc123"],
-);
-check(
-  "A2c a stale transcript is not adopted",
-  buildRow(base, Date.now() + 60_000).nullReason,
-  "no transcript",
+  "A2b no agent_id: a null row, even with one fresh transcript beside it",
+  [buildRow(base).src, buildRow(base).tokens, buildRow(base).nullReason],
+  [null, null, "no agent id"],
 );
 {
   const r = buildRow({
@@ -158,11 +153,6 @@ check(
     line("t1", "claude-haiku-4-5", "2026-10-28T05:00:00.000Z", usage(1, 1)) + "\n",
   );
   check(
-    "A2e two recent transcripts and no agent_id: ambiguous, null",
-    [buildRow(base).tokens, buildRow(base).nullReason],
-    [null, "ambiguous transcript"],
-  );
-  check(
     "A2e an agent_id still resolves its own file",
     buildRow({ ...base, agent_id: "twin" }).src,
     "derived",
@@ -206,6 +196,23 @@ const soloDir = (name, lines) => {
     "a relative, backslashed, CRLF gitdir resolves the main checkout",
     mainRoot(wt2),
     path.join(tmp, "repo", "main"),
+  );
+  // The same text under each path flavour, so a Windows run proves the POSIX (CI) case and the other way round.
+  const text = "gitdir: ..\\main\\.git\\worktrees\\wt2\r\n";
+  check(
+    "POSIX: a backslashed gitdir resolves (Ubuntu CI, macOS)",
+    mainFromGitdir("/srv/repo/wt2", text, path.posix),
+    "/srv/repo/main",
+  );
+  check(
+    "win32: the same gitdir resolves",
+    mainFromGitdir("C:\\repo\\wt2", text, path.win32),
+    "C:\\repo\\main",
+  );
+  check(
+    "POSIX: an absolute forward-slash gitdir resolves",
+    mainFromGitdir("/srv/wt/x", "gitdir: /srv/repo/.git/worktrees/x\n", path.posix),
+    "/srv/repo",
   );
 }
 

@@ -7,8 +7,7 @@
  * The numbers come from the subagent's own transcript, located in this order (the rule that fired is `src`):
  *   payload    payload.agent_transcript_path
  *   derived    <transcript_path without .jsonl>/subagents/agent-<payload.agent_id>.jsonl
- *   recent     with no agent_id only: the one agent-*.jsonl in that directory modified in the last 10 s. Two or
- *              more candidates give a null row ("ambiguous transcript"); a payload with an agent_id never falls back.
+ * With neither, the row is null ("no agent id"): another agent's transcript is never guessed at.
  * and are counted by session-usage.mjs's exported readUsageRecords/aggregate/loadPriceTable/agentDurationMs, the one
  * accounting (message.id dedupe, MODEL-CARDS prices). The sibling agent-<id>.meta.json gives agentType, description and
  * effort. A field that cannot be found stays null with `nullReason`; nothing is guessed.
@@ -18,15 +17,7 @@
  *
  * Never blocks: exit 0 always, prints nothing.
  */
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -38,45 +29,41 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Pure: the main checkout named by a worktree's `.git` file text (`gitdir: <main>/.git/worktrees/<name>`), else root.
+ * `p` is injectable so the spec proves both path flavours on any OS.
+ */
+export function mainFromGitdir(root, gitText, p = path) {
+  const gitdir = String(gitText ?? "")
+    .match(/^gitdir:\s*(.+)$/m)?.[1]
+    ?.trim()
+    // A gitdir written on Windows may use backslashes; POSIX path.resolve would not split on them.
+    ?.replace(/\\/g, "/");
+  const m = gitdir && p.resolve(root, gitdir).match(/^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+$/);
+  return m ? m[1] : root;
+}
+
 /** The MAIN checkout: a worktree's `.git` is a file naming <main>/.git/worktrees/<name>; rows land in one log. */
 export function mainRoot(root) {
   try {
-    const gitdir = readFileSync(path.join(root, ".git"), "utf8")
-      .match(/^gitdir:\s*(.+)$/m)?.[1]
-      ?.trim();
-    const m =
-      gitdir && path.resolve(root, gitdir).match(/^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+$/);
-    return m ? m[1] : root;
+    return mainFromGitdir(root, readFileSync(path.join(root, ".git"), "utf8"));
   } catch {
     return root; // .git is a directory: this is the main checkout
   }
 }
 const REPO = mainRoot(path.resolve(HERE, "..", ".."));
-const NEWEST_WINDOW_MS = 10_000;
 const IDLE_GAP_MS = 600_000;
 
 /** Pure apart from the filesystem: { file, src } or { file: null, src: null }. */
-export function locateTranscript(p, nowMs = Date.now()) {
+export function locateTranscript(p) {
   if (typeof p.agent_transcript_path === "string" && existsSync(p.agent_transcript_path))
     return { file: p.agent_transcript_path, src: "payload" };
   if (typeof p.transcript_path !== "string") return { file: null, src: null };
   const dir = path.join(p.transcript_path.replace(/\.jsonl$/, ""), "subagents");
-  if (typeof p.agent_id === "string") {
-    // An id names exactly one file. Another agent's transcript is never borrowed while this one is not yet written.
-    const file = path.join(dir, `agent-${p.agent_id}.jsonl`);
-    return existsSync(file) ? { file, src: "derived" } : { file: null, src: null };
-  }
-  try {
-    const recent = readdirSync(dir)
-      .filter((f) => /^agent-.*\.jsonl$/.test(f))
-      .map((f) => ({ f: path.join(dir, f), t: statSync(path.join(dir, f)).mtimeMs }))
-      .filter((x) => nowMs - x.t <= NEWEST_WINDOW_MS);
-    if (recent.length === 1) return { file: recent[0].f, src: "recent" };
-    if (recent.length > 1) return { file: null, src: null, ambiguous: true };
-  } catch {
-    /* no subagents directory */
-  }
-  return { file: null, src: null };
+  if (typeof p.agent_id !== "string") return { file: null, src: null, noId: true };
+  // An id names exactly one file. Another agent's transcript is never borrowed while this one is not yet written.
+  const file = path.join(dir, `agent-${p.agent_id}.jsonl`);
+  return existsSync(file) ? { file, src: "derived" } : { file: null, src: null };
 }
 
 const readJson = (file) => {
@@ -104,8 +91,8 @@ export function buildRow(p, nowMs = Date.now()) {
     src: null,
     nullReason: null,
   };
-  const { file, src, ambiguous } = locateTranscript(p, nowMs);
-  if (!file) return { ...row, nullReason: ambiguous ? "ambiguous transcript" : "no transcript" };
+  const { file, src, noId } = locateTranscript(p);
+  if (!file) return { ...row, nullReason: noId ? "no agent id" : "no transcript" };
   const meta = readJson(file.replace(/\.jsonl$/, ".meta.json"));
   const warnings = [];
   const { table, pricesAsOf } = loadPriceTable({});
