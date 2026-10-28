@@ -325,7 +325,8 @@ describe("OrderLineUnitPicker held snapshot (SA-1044)", () => {
     const onChange = jest.fn();
     render(
       <OrderLineUnitPicker
-        line={{ ...caseLine, unitsPerBox: 100, unitPrice: 45 }}
+        line={{ ...caseLine, unitPrice: 45 }}
+        held={{ unitLabel: "Case", unitsPerBox: 100, unitPrice: 45, listPrice: 45 }}
         tier={1}
         onChange={onChange}
       />,
@@ -345,7 +346,8 @@ describe("OrderLineUnitPicker held snapshot (SA-1044)", () => {
     const onChange = jest.fn();
     render(
       <OrderLineUnitPicker
-        line={{ ...caseLine, unitsPerBox: 12, unitPrice: 45 }}
+        line={{ ...caseLine, unitPrice: 45 }}
+        held={{ unitLabel: "Case", unitsPerBox: 12, unitPrice: 45, listPrice: 45 }}
         tier={1}
         onChange={onChange}
       />,
@@ -359,7 +361,84 @@ describe("OrderLineUnitPicker held snapshot (SA-1044)", () => {
     mockUnits = [CASE];
     render(
       <OrderLineUnitPicker
-        line={{ ...caseLine, unitsPerBox: 288 }}
+        line={caseLine}
+        held={{ unitLabel: "Case", unitsPerBox: 288, unitPrice: 480, listPrice: 480 }}
+        tier={1}
+        onChange={jest.fn()}
+      />,
+    );
+    expect(screen.queryByRole("option", { name: /as ordered/ })).toBeNull();
+  });
+});
+
+/**
+ * SA-1044 A-2: the held factor is the stored snapshot (`held`), never `line.unitsPerBox` (the PACK size on a unit line).
+ * A-3: an empty ladder never resets a held unit line to the pack; the snapshot stays offered and selected.
+ */
+describe("OrderLineUnitPicker held snapshot (SA-1044 A-2/A-3)", () => {
+  const heldCase = { unitLabel: "Case", unitsPerBox: 100, unitPrice: 50, listPrice: 55 };
+
+  it("R-A3: held Case x 100 at 50.00, product with 0 unit rows: the snapshot is selected and nothing changes", () => {
+    mockUnits = [];
+    const onChange = jest.fn();
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unitsPerBox: 24, unitPrice: 50, listPrice: 55 }}
+        held={heldCase}
+        tier={1}
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: /Case of 100 \(as ordered\)/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Sell Widget by")).toHaveValue("Case");
+  });
+
+  it("A-2 live: the line carries the pack size 24 but the held Case is 288 — no snapshot, the ladder refreshes", () => {
+    mockUnits = [CASE];
+    const onChange = jest.fn();
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unitsPerBox: 24, unitPrice: 470 }}
+        held={{ unitLabel: "Case", unitsPerBox: 288, unitPrice: 480, listPrice: 480 }}
+        tier={1}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.queryByRole("option", { name: /as ordered/ })).toBeNull();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ value: "Case", price: 480 }),
+      true,
+    );
+  });
+
+  it("A-2 resized: the ladder's Case is 24 (the pack size); the held Case of 100 keeps its snapshot", () => {
+    mockUnits = [{ ...CASE, factorToBase: 24, price: "30.00" }];
+    const onChange = jest.fn();
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unitsPerBox: 24, unitPrice: 45, listPrice: 50 }}
+        held={{ unitLabel: "Case", unitsPerBox: 100, unitPrice: 45, listPrice: 50 }}
+        tier={1}
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: /Case of 100 \(as ordered\)/ })).toBeInTheDocument();
+  });
+
+  it("A-2: a pack line never takes a held unit snapshot", () => {
+    mockUnits = [{ ...CASE, factorToBase: 200 }];
+    render(<OrderLineUnitPicker line={packLine} held={heldCase} tier={1} onChange={jest.fn()} />);
+    expect(screen.queryByRole("option", { name: /as ordered/ })).toBeNull();
+  });
+
+  it("a Piece snapshot at factor 1 is live: no snapshot option", () => {
+    mockUnits = [CASE];
+    render(
+      <OrderLineUnitPicker
+        line={{ ...caseLine, unit: "Piece", unitLabel: "Piece", unitsPerBox: 24, unitPrice: 2 }}
+        held={{ unitLabel: "Piece", unitsPerBox: 1, unitPrice: 2, listPrice: 2 }}
         tier={1}
         onChange={jest.fn()}
       />,
