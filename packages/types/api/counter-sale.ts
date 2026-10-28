@@ -313,6 +313,11 @@ export interface TodaysSaleRow {
    */
   returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
+  /**
+   * SA-1026: "To collect", derived by the server from the sale's live invoices (a check not received yet): the row's chip reads
+   * it. The payment state stays ON_ACCOUNT and no money counts as taken. Omitted by an older server.
+   */
+  toCollect?: ToCollectState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
   /**
