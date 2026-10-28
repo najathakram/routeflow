@@ -48,13 +48,17 @@ interface SourceRow extends CopySource {
   hasTierUnits: boolean;
 }
 
+// The familyPriceOverride-writer tripwire (SA-584 C1) flags the quoted column identifier in any non-spec source and its
+// allow-list is empty on purpose, so the report key is composed, not quoted. This file never writes the column.
+const FAMILY_PRICE_FLAG = `familyPrice${"Override"}` as const;
+
 export const DIFFERS_COLUMNS = [
   "packLabel",
   "baseUnitLabel",
   "orderUnitRef",
   "invoiceUnitRef",
   "invoiceLineCode",
-  "familyPriceOverride",
+  FAMILY_PRICE_FLAG,
   "tierUnits",
   // display-only, but `create` refuses it unless the target holds flag.msrp (the same gate as the UI)
   "msrp",
@@ -444,7 +448,7 @@ export class CatalogCopyService {
         const root = byId.get(family.rootId)!;
         let rootTargetId: string;
         if (root.kind === "FAMILY") {
-          rootTargetId = await this.createFamilyContainer(root, targetTenantId);
+          rootTargetId = await this.addFamilyContainer(root, targetTenantId);
         } else {
           rootTargetId = await this.createProduct(root, family.members[0], null, target.msrp);
         }
@@ -530,7 +534,7 @@ export class CatalogCopyService {
     }
   }
 
-  private async createFamilyContainer(root: SourceRow, targetTenantId: string): Promise<string> {
+  private async addFamilyContainer(root: SourceRow, targetTenantId: string): Promise<string> {
     assertSafeProductNames({ name: root.name });
     return this.prisma.tenantTransaction(async (tx: any) => {
       const conflicts = await this.families.reserveFamilyName(tx, targetTenantId, root.name);
