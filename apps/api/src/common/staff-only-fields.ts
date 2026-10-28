@@ -119,6 +119,7 @@ export const CUSTOMER_INVOICE_ITEM_FIELDS = [
   "notes",
   "categoryTaxAmount",
   "displayUnit", // SA-827: derived { kind, label } of the unit the line is shown in (never a stored column)
+  "perBaseUnit", // SA-1029: derived { price, unit } per base piece of a pack line (the raw baseLabel stays off the wire)
 ] as const;
 
 /** Invoice payment scalars a buyer screen reads (no memo, image key, bank charge, bounce reason or replaced-payment link). */

@@ -131,6 +131,8 @@ export interface InvoiceItem extends Partial<OverrideStampView> {
   components?: LineComponentView[] | null;
   /** SA-827: how this line reads (pieces view or today's layout). */
   displayUnit?: InvoiceDisplayUnitView | null;
+  /** SA-1029: price per base piece beside a pack line (display only); null = no per-piece cell. */
+  perBaseUnit?: { price: number; unit: string } | null;
 }
 
 export interface InvoicePayment {

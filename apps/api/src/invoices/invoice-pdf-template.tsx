@@ -1,7 +1,12 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { invoiceTaxSplit, roundMoney } from "@routeflow/pricing";
+import {
+  formatPerBaseUnitPrice,
+  invoiceTaxSplit,
+  roundMoney,
+  type PerBaseUnitPrice,
+} from "@routeflow/pricing";
 import {
   promoNote,
   qtyCellText,
@@ -131,6 +136,8 @@ export interface InvoicePdfData {
     subLines?: PdfSubLine[];
     /** SA-827: the pieces / components layout; absent = today's row. */
     display?: PdfItemDisplay;
+    /** SA-1029: price per base piece of a pack line; display only, absent = no per-piece figure. */
+    perBaseUnit?: PerBaseUnitPrice | null;
   }>;
   /** #2717 M3: PNG data URI of the order QR (order-linked invoice, mixed_packs on); absent = no QR. */
   qrDataUri?: string;
@@ -313,6 +320,7 @@ function buildStyles(primary: string, navy: string) {
     colDescription: { flex: 3 },
     colQty: { flex: 1, textAlign: "right" },
     colUnit: { flex: 1.4, textAlign: "right" },
+    colPerUnit: { flex: 1.4, textAlign: "right" },
     colSubtotal: { flex: 1.4, textAlign: "right" },
     cellText: { fontSize: 9, color: navy },
     cellTextRight: { fontSize: 9, color: navy, textAlign: "right" },
@@ -467,6 +475,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
     ),
   );
   const hideOriginalPrice = !!invoice.hideOriginalPrice;
+  const showPerPiece = invoice.items.some((i) => !i.display && !!i.perBaseUnit);
   // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
   // service (roundMoney(total*percent/100)); the remainder is simply what's
   // left of the total after it — independent of payments actually recorded.
@@ -601,10 +610,14 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           </View>
 
           {/* Line items */}
+          {/* SA-1029: the Per piece column shows only when a today-layout line has a figure. */}
           <View style={styles.tableHeader}>
             <Text style={[styles.tableHeaderText, styles.colDescription]}>Description</Text>
             <Text style={[styles.tableHeaderText, styles.colQty]}>Qty</Text>
             <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
+            {showPerPiece ? (
+              <Text style={[styles.tableHeaderText, styles.colPerUnit]}>Per piece</Text>
+            ) : null}
             <Text style={[styles.tableHeaderText, styles.colSubtotal]}>Subtotal</Text>
           </View>
           {invoice.items.map((item, idx) => {
@@ -729,6 +742,15 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                     </Text>
                   ) : null}
                 </View>
+                {showPerPiece ? (
+                  <View style={styles.colPerUnit}>
+                    <Text style={styles.cellTextRight}>
+                      {!item.display && item.perBaseUnit
+                        ? formatPerBaseUnitPrice(item.perBaseUnit)
+                        : ""}
+                    </Text>
+                  </View>
+                ) : null}
                 <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
               </View>
             );
@@ -761,6 +783,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                     <View style={styles.colUnit}>
                       <Text style={styles.cellTextRight}>{row.priceText}</Text>
                     </View>
+                    {showPerPiece ? <View style={styles.colPerUnit} /> : null}
                     <Text style={[styles.cellTextRight, styles.colSubtotal]}>{row.amountText}</Text>
                   </View>
                 ))}
@@ -772,6 +795,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                     </View>
                     <View style={styles.colQty} />
                     <View style={styles.colUnit} />
+                    {showPerPiece ? <View style={styles.colPerUnit} /> : null}
                     <Text style={[styles.cellTextRight, styles.colSubtotal]}>
                       {d.categoryTax.amountText}
                     </Text>
