@@ -7,7 +7,7 @@
 {"id":"B1215","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1216","batch":"F65","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1217","batch":"F65","tier":"T3","state":"already-fixed","pr":3284,"proof":null,"evidence":"fixed by #3284, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
-{"id":"B1218","batch":"F65","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1218","batch":"F65","tier":"T3","state":"already-fixed","pr":null,"proof":null,"evidence":"invoices/new/page.tsx:100,:366,:755 and mobile invoices/new.tsx:55,:642 carry the unit line (#3415 U1: 6bdd71cc4, 09a4711d9, on master through #3854); read at master 4be950fdf on 2026-10-28 (fixed in 6bdd71cc493d29c103f33ead3be368829c38f27a)","sha":"6bdd71cc493d29c103f33ead3be368829c38f27a"}
 {"id":"B1219","batch":"F65","tier":"T2","state":"already-fixed","pr":3281,"proof":null,"evidence":"fixed by #3281, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
 {"id":"B1220","batch":"F65","tier":"T2","state":"already-fixed","pr":3286,"proof":null,"evidence":"fixed by #3286, landed on master in the W19+W20 squash 2757454dbd7cd446b950c5172d3484286d5139a4 (#3297)"}
 {"id":"B1221","batch":"F65","tier":"T2","state":"already-fixed","pr":3289,"proof":null,"evidence":"fixed by #3289, landed on master in the W21a squash 1bf58be42541d212c4de9f2a114a391ca2f3896a (#3328): invoice import skips walk-in customer matches"}

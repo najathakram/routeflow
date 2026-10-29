@@ -14,6 +14,7 @@ export const ORDER_LEAK_KEYS = [
   "routeRunId",
   "templateId",
   "commissionRatePct",
+  "toCollect", // SA-1026: staff-only "check not received yet", derived by the server
   "futureStaffColumn",
 ] as const;
 export const LINE_LEAK_KEYS = ["overrideReason", "overriddenBy", "futureStaffColumn"] as const;
@@ -24,6 +25,8 @@ export const INVOICE_LEAK_KEYS = [
   "recurringInvoiceId",
   "invoiceGroupId",
   "deliveryBatchId",
+  "expectedPaymentMethod", // SA-1026: the typed intent behind "To collect"
+  "toCollect",
   "futureStaffColumn",
 ] as const;
 export const PAYMENT_LEAK_KEYS = [
