@@ -243,10 +243,16 @@ const GENERIC_DENIAL = "This order can't be placed right now. Please contact you
 export function creditProjectedTotal(
   total: number,
   options: { creditPaidNow?: (total: number) => number },
+  returnCredit = 0,
 ): number {
-  const paid = options.creditPaidNow?.(total) ?? 0;
-  const safePaid = Number.isFinite(paid) ? Math.min(Math.max(paid, 0), total) : 0;
-  return roundMoney(total - safePaid);
+  // W-863 (SA-945 MUST 6): a return taken with the sale pays down this order before the tender, so the till
+  // tender is judged on what is left, and the credit counts as netted, not on account. The caller passes the
+  // SERVER-priced credit only; it is clamped to [0, total] like the tender.
+  const credit = Number.isFinite(returnCredit) ? Math.min(Math.max(returnCredit, 0), total) : 0;
+  const due = roundMoney(total - credit);
+  const paid = options.creditPaidNow?.(due) ?? 0;
+  const safePaid = Number.isFinite(paid) ? Math.min(Math.max(paid, 0), due) : 0;
+  return roundMoney(due - safePaid);
 }
 
 /** One enforcement point's facts (the tenant is added by the caller's own client). */

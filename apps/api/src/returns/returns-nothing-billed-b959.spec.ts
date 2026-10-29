@@ -22,6 +22,8 @@ const invoice = (id: string, items: any[]) => ({
   invoiceNumber: id.toUpperCase(),
   status: "SENT",
   total: 100,
+  taxAmount: 0,
+  discount: 0,
   createdAt: new Date("2026-01-01"),
   items,
 });
@@ -198,14 +200,14 @@ describe("ReturnsService.processRefund: B959 nothing billed", () => {
 
   it("9. the PREVIEW agrees: an unbilled-only return prices $0 WITH the reason NOTHING_BILLED (not a plain $0); a billed return has no reason", () => {
     const o = order([invoice("inv-1", [LINE_A])]);
-    expect((service as any).priceReturn([{ productId: "pz", qty: 1 }], o, new Map())).toMatchObject(
-      {
-        amount: 0,
-        refusal: "NOTHING_BILLED",
-      },
-    );
     expect(
-      (service as any).priceReturn([{ productId: "pa", qty: 1 }], o, new Map()).refusal,
+      (service as any).priceReturn([{ productId: "pz", qty: 1 }], o, new Map(), new Map()),
+    ).toMatchObject({
+      amount: 0,
+      refusal: "NOTHING_BILLED",
+    });
+    expect(
+      (service as any).priceReturn([{ productId: "pa", qty: 1 }], o, new Map(), new Map()).refusal,
     ).toBeUndefined();
     // a mixed return is NOT a refusal (the billed part is refunded)
     expect(
@@ -215,6 +217,7 @@ describe("ReturnsService.processRefund: B959 nothing billed", () => {
           { productId: "pz", qty: 1 },
         ],
         o,
+        new Map(),
         new Map(),
       ).refusal,
     ).toBeUndefined();

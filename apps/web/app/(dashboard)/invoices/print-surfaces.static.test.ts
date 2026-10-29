@@ -24,13 +24,14 @@ describe("print surfaces — source pins (T11)", () => {
     expect(source).toContain("disabled={printingIds.has(inv.id)}");
   });
 
-  it("orders/[id]/page.tsx: printLoading state used at least 3x, printPdfBlob( called exactly once", () => {
+  it("orders/[id]/page.tsx: printLoading state used at least 3x, printing goes through usePrintInvoice (SA-1026 B)", () => {
     // The page plus its extracted send-invoice modal (move-only split, 0320e6fd1), read as one source.
     const source =
       read("app/(dashboard)/orders/[id]/page.tsx") +
       read("app/(dashboard)/orders/[id]/_components/SendInvoiceModal.tsx");
     expect(countOccurrences(source, "printLoading")).toBeGreaterThanOrEqual(3);
-    expect(countOccurrences(source, "printPdfBlob(")).toBe(1);
+    expect(countOccurrences(source, "printPdfBlob(")).toBe(0);
+    expect(countOccurrences(source, "printInvoice.print(")).toBe(1);
   });
 
   it("orders/[id]/page.tsx: handleDownload and handlePrint fetch the PDF via the shared fetchPdfBlob, never bare apiClient against the storage URL (review finding F3)", () => {
@@ -38,8 +39,8 @@ describe("print surfaces — source pins (T11)", () => {
       read("app/(dashboard)/orders/[id]/page.tsx") +
       read("app/(dashboard)/orders/[id]/_components/SendInvoiceModal.tsx");
     expect(source).toContain('import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";');
-    // Two call sites (handleDownload + handlePrint) each go through fetchPdfBlob(meta.data.url, apiClient).
-    expect(countOccurrences(source, "fetchPdfBlob(meta.data.url, apiClient)")).toBe(2);
+    // handleDownload goes through fetchPdfBlob(meta.data.url, apiClient); handlePrint now goes through usePrintInvoice, which does too.
+    expect(countOccurrences(source, "fetchPdfBlob(meta.data.url, apiClient)")).toBe(1);
     // The old bug: apiClient.get<Blob> hit directly against a dynamic storage
     // URL — either the local-storage-vs-presigned-URL 401 fetchPdfBlob exists
     // to avoid, or (worse, on the presigned branch) the Bearer token leaking
@@ -47,9 +48,10 @@ describe("print surfaces — source pins (T11)", () => {
     expect(source).not.toMatch(/apiClient\.get<Blob>\(meta\.data\.url/);
   });
 
-  it("invoices/[id]/page.tsx: calls the shared printPdfBlob(blob) exactly once, no inline iframe creation left behind", () => {
+  it("invoices/[id]/page.tsx: prints through usePrintInvoice (SA-1026 B), no inline iframe creation left behind", () => {
     const source = read("app/(dashboard)/invoices/[id]/page.tsx");
-    expect(countOccurrences(source, "printPdfBlob(blob)")).toBe(1);
+    expect(countOccurrences(source, "printPdfBlob(")).toBe(0);
+    expect(countOccurrences(source, "printInvoice.print(invoice.id")).toBe(1);
     expect(countOccurrences(source, 'createElement("iframe")')).toBe(0);
   });
 
