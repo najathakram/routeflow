@@ -56,13 +56,13 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
   SUSPENDED: { variant: "danger", label: "Suspended" },
   PENDING: { variant: "warning", label: "Pending" },
   CONFIRMED: { variant: "info", label: "Confirmed" },
-  OUT_FOR_DELIVERY: { variant: "info", label: "Out for Delivery" },
-  // Owner 2026-10-19: a part-delivered order reads "Partly Delivered" (open-orders card, order lists).
-  PARTIALLY_DELIVERED: { variant: "warning", label: "Partly Delivered" },
+  OUT_FOR_DELIVERY: { variant: "info", label: "Out for delivery" },
+  // Owner 2026-10-19: a part-delivered order reads "Partly delivered" (open-orders card, order lists).
+  PARTIALLY_DELIVERED: { variant: "warning", label: "Partly delivered" },
   DELIVERED: { variant: "success", label: "Delivered" },
   CANCELLED: { variant: "danger", label: "Cancelled" },
   SCHEDULED: { variant: "neutral", label: "Scheduled" },
-  IN_PROGRESS: { variant: "info", label: "In Progress" },
+  IN_PROGRESS: { variant: "info", label: "In progress" },
   COMPLETED: { variant: "success", label: "Completed" },
   // Finance / invoice
   SENT: { variant: "warning", label: "Sent" },
@@ -85,17 +85,26 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
   DECLINED: { variant: "danger", label: "Declined" },
   // Payments
   ADVANCE: { variant: "info", label: "Advance" },
-  CREDIT_NOTE: { variant: "neutral", label: "Credit Note" },
+  CREDIT_NOTE: { variant: "neutral", label: "Credit note" },
   // Credit notes
   ISSUED: { variant: "success", label: "Issued" },
   APPLIED: { variant: "success", label: "Applied" },
   // Estimates
   CONVERTED: { variant: "success", label: "Converted" },
   // Returns / logistics
-  IN_TRANSIT: { variant: "info", label: "In Transit" },
-  WRITTEN_OFF: { variant: "neutral", label: "Written Off" },
+  IN_TRANSIT: { variant: "info", label: "In transit" },
+  WRITTEN_OFF: { variant: "neutral", label: "Written off" },
   PROCESSED: { variant: "success", label: "Processed" },
 };
+
+/** The sentence-case label a status renders with: the Badge map's word, else the enum lower-cased
+ *  with underscores turned into spaces and the first letter capitalised. */
+export function badgeStatusLabel(status: string): string {
+  const mapped = (STATUS_MAP as Record<string, { label: string } | undefined>)[status];
+  if (mapped) return mapped.label;
+  const words = status.replace(/_/g, " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 const VARIANT_STYLES: Record<BadgeVariant, { badge: string; dot: string }> = {
   success: {

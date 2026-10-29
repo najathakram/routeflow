@@ -101,7 +101,7 @@ describe("FeatureConsole — loading / empty / error states (test 5)", () => {
         onCustomise={jest.fn()}
       />,
     );
-    expect(screen.getByText("Loading feature console...")).toBeInTheDocument();
+    expect(screen.getByText("Loading feature console…")).toBeInTheDocument();
   });
 
   it("shows the empty state when the registry has no rows, never a blank tab", async () => {
@@ -145,7 +145,7 @@ describe("FeatureConsole — loading / empty / error states (test 5)", () => {
     expect(
       await screen.findByText("Could not load the feature console. Try again."),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Loading feature console...")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading feature console…")).not.toBeInTheDocument();
   });
 });
 
@@ -938,6 +938,9 @@ describe("BO-12: one state readout per console row", () => {
     description: `Description of ${key}.`,
     lifecycle: "ga",
     internal: false,
+    purpose: "commercial",
+    category: "office_tools",
+    keywords: [],
     gate: { via: "RequirePlanFlag", state: "enforced" },
     billing: { skus: [] },
     ...over,
@@ -1449,5 +1452,84 @@ describe("BO-06: console mode radios render for config rows", () => {
       "This business has no delivery fleet, so Delivery and shipping can't be turned on yet.",
     );
     expect(document.body).not.toHaveTextContent("SERVER-TEXT");
+  });
+});
+
+// SA-1028 section 5, P-R2: undoing a stored mode. The preview now answers with the TENANT's stored mode as
+// "before" (On, source TENANT), so the drawer shows the change, Confirm is enabled, and Confirm writes "unset".
+describe("SA-1028 section 5: the console can undo a stored mode", () => {
+  const COUNTER_ROW: FeatureRegistryRow = {
+    ...FULFILMENT_MODEL_ROW,
+    key: "counter_sales",
+    label: "Counter sales",
+    description: "Lets a business that is not in-store sell over the counter too.",
+    config: {
+      fallbackMode: "unset",
+      modes: [
+        { key: "unset", label: "Not configured (today's behavior)", lifecycle: "ga" },
+        { key: "on", label: "On", lifecycle: "ga" },
+      ],
+    },
+  };
+  const modeState = (value: string) => ({
+    value,
+    effective: value,
+    source: "TENANT" as const,
+    allowed: ["unset", "on"],
+    blocked: [] as string[],
+  });
+  const counterEffective = (value: string): EffectiveFeature => ({
+    ...fulfilmentModeEffective(modeState(value)),
+    key: "counter_sales",
+  });
+
+  async function renderStoredOn() {
+    mockFetchRegistry.mockResolvedValue([...REGISTRY_FIXTURE, COUNTER_ROW]);
+    mockFetchEffective.mockResolvedValue([...EFFECTIVE_FIXTURE, counterEffective("on")]);
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+    fireEvent.click(screen.getByLabelText("Show internal"));
+    return document.querySelector('[data-feature-key="counter_sales"]') as HTMLElement;
+  }
+
+  // The API's real answer for `modes: { counter_sales: "unset" }` on a tenant whose stored row is On: both sides
+  // carry the tenant's mode (source TENANT); `changed` names resolver flips only, so it is empty here.
+  const UNDO_RESPONSE = {
+    before: [counterEffective("on")],
+    after: [counterEffective("unset")],
+    changed: [] as string[],
+  };
+
+  it("P-R2: selecting Not configured shows On to Not configured, enables Confirm, and writes unset", async () => {
+    mockPreview.mockResolvedValueOnce(UNDO_RESPONSE);
+    mockWriteConfig.mockResolvedValueOnce({});
+    const row = await renderStoredOn();
+
+    fireEvent.click(within(row).getByRole("radio", { name: "Not configured (today's behavior)" }));
+
+    expect(await screen.findByText("Preview mode change", { selector: "h3" })).toBeInTheDocument();
+    expect(mockPreview).toHaveBeenCalledWith(TENANT_ID, { modes: { counter_sales: "unset" } });
+    expect(screen.queryByTestId("preview-empty")).toBeNull();
+    expect(
+      within(screen.getByTestId("preview-diff")).getByText("Counter sales"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("preview-diff")).toHaveTextContent(
+      "On → Not configured (today's behavior)",
+    );
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).not.toBeDisabled();
+
+    fireEvent.click(confirm);
+    await waitFor(() => expect(mockWriteConfig).toHaveBeenCalledTimes(1));
+    expect(mockWriteConfig).toHaveBeenCalledWith(TENANT_ID, "counter_sales", {
+      mode: "unset",
+      reason: expect.any(String),
+    });
   });
 });

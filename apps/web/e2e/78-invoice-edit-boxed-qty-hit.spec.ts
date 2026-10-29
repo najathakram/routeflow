@@ -103,7 +103,7 @@ test.describe("Invoice edit: a boxed line's Boxes / Pieces are reachable (row 71
         await expect(page.getByLabel("Boxes", { exact: true })).toHaveValue("2", {
           timeout: 15_000,
         });
-        for (const label of ["Boxes", "Pieces", "Unit Price"]) {
+        for (const label of ["Boxes", "Pieces", "Unit price"]) {
           const r = await hitsItself(page, label);
           expect(r.self, `${width}px: the centre of ${label} hits ${r.at}`).toBe(true);
         }

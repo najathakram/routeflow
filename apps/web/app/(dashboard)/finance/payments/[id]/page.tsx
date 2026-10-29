@@ -32,7 +32,7 @@ export default function PaymentDetailPage() {
     setTitle("Payment Receipt");
   }, [setTitle]);
 
-  // Enrich the "Applied Invoice" card with the invoice's own total / balance /
+  // Enrich the "Applied invoice" card with the invoice's own total / balance /
   // status. Guarded below for loading/undefined so the card degrades gracefully.
   const { data: invoice } = useInvoice(payment?.invoice.id ?? "");
 
@@ -130,7 +130,7 @@ export default function PaymentDetailPage() {
               onClick={handleVoid}
               loading={voidPayment.isPending}
             >
-              Void Payment
+              Void payment
             </Button>
           )}
           <Button
@@ -179,7 +179,7 @@ export default function PaymentDetailPage() {
               </div>
             )}
             <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
-              <span className="text-navy/70">Payment mode</span>
+              <span className="text-navy/70">Payment method</span>
               <span className="text-right font-medium text-navy">
                 {paymentMethodLabel(payment.method)}
               </span>
@@ -232,7 +232,7 @@ export default function PaymentDetailPage() {
 
         {/* ── Sidebar ── */}
         <div className="space-y-4">
-          <Card title="Applied Invoice">
+          <Card title="Applied invoice">
             <dl className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
                 <dt className="text-navy/70">Invoice</dt>
@@ -273,7 +273,7 @@ export default function PaymentDetailPage() {
           </Card>
 
           {payment.imageKey && (
-            <Card title="Receipt Image">
+            <Card title="Receipt image">
               {receiptUrl ? (
                 <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
                   <img
@@ -303,7 +303,7 @@ export default function PaymentDetailPage() {
                 onClick={handleVoid}
                 loading={voidPayment.isPending}
               >
-                Void Payment…
+                Void payment…
               </Button>
             </Card>
           )}

@@ -16,7 +16,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { Badge, Button, Card, StatCard, Table, cn } from "@routeflow/ui/web";
+import { Badge, Button, Card, StatCard, Table, cn, badgeStatusLabel } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -63,7 +63,9 @@ const runColumns: ColumnDef<RouteRunRow, unknown>[] = [
   {
     accessorKey: "status",
     header: "Status",
-    cell: ({ row }) => <span className="text-navy/70">{row.original.status}</span>,
+    cell: ({ row }) => (
+      <span className="text-navy/70">{badgeStatusLabel(row.original.status)}</span>
+    ),
   },
 ];
 
@@ -145,7 +147,7 @@ export default function DriverDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Driver not found.</p>
         <Button variant="secondary" href="/drivers">
-          Back to Drivers
+          Back to drivers
         </Button>
       </div>
     );
@@ -231,19 +233,19 @@ export default function DriverDetailPage() {
         {/* ── Profile ─────────────────────────────────────────────────── */}
         <Tabs.Content value="profile" className="mt-5 focus:outline-none">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            <Card title="Driver Information">
+            <Card title="Driver information">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <InfoRow icon={Phone} label="Phone" value={driver.phone ?? "—"} />
                 <InfoRow icon={Truck} label="Vehicle" value={vehicleLabel} />
                 <InfoRow
                   icon={Calendar}
-                  label="Driver Since"
+                  label="Driver since"
                   value={new Date(driver.createdAt).toLocaleDateString()}
                 />
               </div>
             </Card>
 
-            <Card title="Account Status">
+            <Card title="Account status">
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-navy/70">Status</p>
@@ -255,7 +257,9 @@ export default function DriverDetailPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-navy/70">Account</p>
-                  <p className="text-sm font-medium text-navy">{driver.user.status}</p>
+                  <p className="text-sm font-medium text-navy">
+                    {badgeStatusLabel(driver.user.status)}
+                  </p>
                 </div>
               </div>
             </Card>
@@ -264,7 +268,7 @@ export default function DriverDetailPage() {
 
         {/* ── Delivery History ─────────────────────────────────────────── */}
         <Tabs.Content value="history" className="mt-5 focus:outline-none">
-          <Card title="Route Run History">
+          <Card title="Route run history">
             <div className="-mx-6 -mb-6">
               <Table data={runs} columns={runColumns} emptyState="No route runs recorded yet." />
             </div>
@@ -275,13 +279,13 @@ export default function DriverDetailPage() {
         <Tabs.Content value="performance" className="mt-5 focus:outline-none">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard
-              label="Routes Completed"
+              label="Routes completed"
               value={completedRuns}
               icon={<CheckCircle2 className="h-5 w-5" />}
             />
-            <StatCard label="Total Runs" value={totalRuns} icon={<MapPin className="h-5 w-5" />} />
+            <StatCard label="Total runs" value={totalRuns} icon={<MapPin className="h-5 w-5" />} />
             <StatCard
-              label="Completion Rate"
+              label="Completion rate"
               value={`${completionRate}%`}
               icon={
                 <AlertTriangle
@@ -314,7 +318,7 @@ export default function DriverDetailPage() {
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-base font-semibold text-navy">Delete Driver</h2>
+            <h2 className="text-base font-semibold text-navy">Delete driver</h2>
             <p className="mt-2 text-sm text-navy/70">
               Are you sure you want to delete{" "}
               <span className="font-medium text-navy">{driver.contactName}</span>? This will

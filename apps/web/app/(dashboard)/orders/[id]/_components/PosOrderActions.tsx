@@ -16,6 +16,7 @@ import type { Order } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder } from "@/lib/api/invoices";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { POS_COPY } from "@/lib/pos-copy";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { ActionTier } from "./ActionTier";
 import { PickupHandOverButton } from "./PickupHandOver";
@@ -127,6 +128,7 @@ export function PosOrderActions({
 }) {
   const { toast } = useToast();
   const createInvoice = useCreateInvoiceFromOrder({ localErrorToast: true });
+  const printInvoice = usePrintInvoice();
   const invoices = invoicesOf(order);
   const firstInvoice = invoices[0];
 
@@ -234,17 +236,35 @@ export function PosOrderActions({
 
   if (status === "DELIVERED" && firstInvoice) {
     const paid = invoices.every((i) => i.status === "PAID");
-    return (
-      <ActionTier tier="primary">
-        <Button
-          size="sm"
-          className="h-11"
-          href={`/invoices/${firstInvoice.id}`}
-          leftIcon={paid ? <Printer className="h-4 w-4" /> : <Wallet className="h-4 w-4" />}
-        >
-          {paid ? POS_COPY.printInvoice : POS_COPY.recordPayment}
-        </Button>
-      </ActionTier>
+    // SA-1026 B: handed over means issued and numbered, so Print invoice prints every non-void invoice of the order (oldest first)
+    const printButton = (
+      <Button
+        size="sm"
+        className="h-11"
+        variant={paid ? undefined : "secondary"}
+        loading={printInvoice.printing}
+        onClick={() => void printInvoice.print(invoices.map((i) => i.id))}
+        leftIcon={<Printer className="h-4 w-4" />}
+      >
+        {POS_COPY.printInvoice}
+      </Button>
+    );
+    return paid ? (
+      <ActionTier tier="primary">{printButton}</ActionTier>
+    ) : (
+      <>
+        <ActionTier tier="primary">
+          <Button
+            size="sm"
+            className="h-11"
+            href={`/invoices/${firstInvoice.id}`}
+            leftIcon={<Wallet className="h-4 w-4" />}
+          >
+            {POS_COPY.recordPayment}
+          </Button>
+        </ActionTier>
+        <ActionTier tier="secondary">{printButton}</ActionTier>
+      </>
     );
   }
   return null;
@@ -290,11 +310,11 @@ export function ConfirmedPrimaryAction({
             ? "Mark shipped"
             : fulfillPath === "PICKUP"
               ? "Ready for pickup"
-              : "Out for Delivery"}
+              : "Out for delivery"}
         </Button>
         {fulfillPath === "SHIP" && (
           <p className="text-[11px] text-navy/50">
-            {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", fulfillPath as "SHIP")} — the customer is notified it's on the way.`}
+            {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", fulfillPath as "SHIP")} — the customer is notified it's on the way.`}
           </p>
         )}
       </div>

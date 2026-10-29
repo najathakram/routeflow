@@ -169,7 +169,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-purchase-orders",
           group: "Navigate",
-          label: "Purchase Orders",
+          label: "Purchase orders",
           icon: PackageCheck,
           action: () => router.push("/purchase-orders"),
         },
@@ -197,7 +197,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-credit-notes",
           group: "Navigate",
-          label: "Credit Notes",
+          label: "Credit notes",
           icon: Receipt,
           action: () => router.push("/credit-notes"),
         },
@@ -211,7 +211,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-expenses",
           group: "Navigate",
-          label: "Supplier Bills",
+          label: "Supplier bills",
           icon: ShoppingBag,
           action: () => router.push("/vendor-bills"),
         },
@@ -282,7 +282,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "act-plan-trip",
           group: "Actions",
-          label: "Plan delivery trip",
+          label: "Plan delivery",
           icon: RouteIcon,
           action: () => router.push("/deliveries/new"),
           keywords: "adhoc trip dispatch delivery",
@@ -360,10 +360,11 @@ function useSearchResults(
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const [customersRes, ordersRes, invoicesRes] = await Promise.allSettled([
+        const [customersRes, ordersRes, invoicesRes, productsRes] = await Promise.allSettled([
           apiClient.get("/customers", { params: { search: query, limit: 4 } }),
           apiClient.get("/orders", { params: { search: query, limit: 4 } }),
           apiClient.get("/invoices", { params: { search: query, limit: 4 } }),
+          apiClient.get("/products", { params: { search: query, limit: 4 } }),
         ]);
 
         const items: SearchResult[] = [];
@@ -402,6 +403,19 @@ function useSearchResults(
               sublabel: inv.customer?.businessName ?? "",
               href: `/invoices/${inv.id}`,
               icon: FileText,
+              group: "results",
+            });
+          }
+        }
+
+        if (productsRes.status === "fulfilled") {
+          for (const p of productsRes.value.data?.data ?? []) {
+            items.push({
+              id: `product-${p.id}`,
+              label: p.name ?? "Unnamed product",
+              sublabel: p.sku ?? "",
+              href: `/products/${p.id}`,
+              icon: Package,
               group: "results",
             });
           }

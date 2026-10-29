@@ -195,10 +195,10 @@ export function posMoveSuccessCopy(path: "ROUTE" | "SHIP"): string {
  * CONFIRMED: Create invoice (primary) then Hand over, or Hand over (primary) once invoiced; "Ready for
  * pickup" stays secondary on every open order until handed over. DELIVERED: Record payment / Print.
  * An order already "Ready for pickup" (OUT_FOR_DELIVERY) keeps Hand over / Create invoice but does
- * not offer the notification again, nor Switch to delivery (the server locks the fulfil path).
+ * not offer the notification again. The path moves follow the server's `fulfillPathLocked` (row 673).
  */
 export function posOrderActions(
-  order: { invoices?: PosInvoiceLike[] | null },
+  order: { invoices?: PosInvoiceLike[] | null; fulfillPathLocked?: boolean | null },
   status: string,
   moveOptions: PosMoveOptions = DEFAULT_MOVE_OPTIONS,
 ): PosAction[] {
@@ -228,7 +228,7 @@ export function posOrderActions(
         ]
       : []),
   ];
-  if (status === "PENDING") return moves;
+  if (status === "PENDING") return posMayMoveOffPickup(order) ? moves : [];
   if (status === "CONFIRMED" || status === "OUT_FOR_DELIVERY") {
     const out: PosAction[] = first
       ? [{ key: "handOver", label: POS_COPY.handOver, tier: "primary" }]
@@ -239,7 +239,7 @@ export function posOrderActions(
     if (status === "CONFIRMED") {
       out.push({ key: "readyForPickup", label: POS_COPY.readyForPickup, tier: "secondary" });
     }
-    if (posCanSwitchToDelivery(status)) out.push(...moves);
+    if (posMayMoveOffPickup(order)) out.push(...moves);
     return out;
   }
   // A written-off invoice is never a payment or print target.
@@ -261,21 +261,26 @@ export function posOrderActions(
 }
 
 /**
- * "Switch to delivery" is offered only while the order is open. The server refuses a fulfil-path
- * change at OUT_FOR_DELIVERY, DELIVERED and CANCELLED (order-lifecycle.ts), so a "Ready for pickup"
- * order can no longer switch.
+ * Row 673 (SA-831b M6): may "Switch to delivery" / "Ship by carrier…" be offered? The order read's `fulfillPathLocked`
+ * is the server's own PATCH predicate (apps/api/src/orders/fulfil-path-lock.ts); the client never re-derives it from the
+ * status. No answer (an older read) fails closed: a button the server would refuse is never shown.
  */
-export function posCanSwitchToDelivery(status: string): boolean {
-  return status === "PENDING" || status === "CONFIRMED";
+export function posMayMoveOffPickup(order: { fulfillPathLocked?: boolean | null }): boolean {
+  return order.fulfillPathLocked === false;
 }
 
 /**
  * M6 review: why "Switch to delivery" is gone on a "Ready for pickup" order and how to get it back (web shows
- * the same lock on its fulfilment control). Only OUT_FOR_DELIVERY can walk back; a delivered or cancelled
- * order has nothing to switch, so no hint.
+ * the same lock on its fulfilment control). Shown only when the server has locked the path and the order can walk
+ * back (OUT_FOR_DELIVERY); a delivered or cancelled order has nothing to switch, so no hint.
  */
-export function posSwitchToDeliveryHint(status: string): string | null {
-  return status === "OUT_FOR_DELIVERY" ? POS_COPY.switchToDeliveryLocked : null;
+export function posSwitchToDeliveryHint(order: {
+  status: string;
+  fulfillPathLocked?: boolean | null;
+}): string | null {
+  return order.fulfillPathLocked === true && order.status === "OUT_FOR_DELIVERY"
+    ? POS_COPY.switchToDeliveryLocked
+    : null;
 }
 
 /** The note shown while editing a handed-over POS order: a cut never restocks. */

@@ -287,15 +287,15 @@ describe("MailboxCard — return-from-provider flags and their toasts", () => {
     expect(window.location.search).toBe("?tab=email");
   });
 
-  it("mailbox_admin_consent_required: its own copy, which names who must act (the organisation's Microsoft 365 admin)", async () => {
+  it("mailbox_admin_consent_required: its own copy, which names who must act (the organization's Microsoft 365 admin)", async () => {
     setUrl("/settings?tab=email&mailbox_admin_consent_required=1");
     renderCard();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     const [{ title, description, variant }] = toast.mock.calls[0];
-    expect(title).toBe("Your organisation requires admin approval");
+    expect(title).toBe("Your organization requires admin approval");
     expect(description).toMatch(/ask a Microsoft 365 admin to grant consent/);
-    expect(description).toMatch(/approve RouteFlow for your Microsoft organisation/);
+    expect(description).toMatch(/approve RouteFlow for your Microsoft organization/);
     expect(variant).toBe("error");
     expect(toastTitles()).not.toContain("Couldn't connect the mailbox");
     expect(post).not.toHaveBeenCalled();

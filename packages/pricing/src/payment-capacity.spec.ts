@@ -129,7 +129,9 @@ describe("capacityRefusal: recordPayment's three cases, one epsilon", () => {
   });
 });
 
-describe("capacityRefusal overpay policy (SA-863)", () => {
+// W-769 (SA-910 Part 2, owner 7b = A) supersedes SA-863's ALLOW_IF_NO_UNCONFIRMED: [L-O2]'s office overpay is
+// CONFIRMED_BASIS_ALLOW_OVERPAY, allowed WITH unconfirmed rows too (they are flagged, never in the way of real money).
+describe("capacityRefusal overpay policy ([L-O2], W-769)", () => {
   const paid = (amount: number) => ({ amount, status: "PAID" });
   const draft = (amount: number) => ({ amount, status: "DRAFT" });
   const allow = (existing: Array<{ amount: number; status: string }>, amount: number) =>
@@ -138,20 +140,16 @@ describe("capacityRefusal overpay policy (SA-863)", () => {
       existing,
       amount,
       status: "PAID",
-      overpay: "ALLOW_IF_NO_UNCONFIRMED",
+      overpay: "CONFIRMED_BASIS_ALLOW_OVERPAY",
     });
 
   it("[L-O2] with no unconfirmed rows a deliberate over-allocation is allowed (the p3 case: 105 on 100)", () => {
     expect(allow([], 105)).toBeNull();
     expect(allow([paid(100)], 5)).toBeNull(); // already fully paid: still the operator's deliberate choice
   });
-  it("with a DRAFT or PENDING row, above capacity is RESERVED_BY_UNCONFIRMED (R3)", () => {
-    expect(allow([draft(90)], 30)).toEqual({
-      kind: "RESERVED_BY_UNCONFIRMED",
-      remaining: 10,
-      message: "Invoice's remaining balance is already reserved by unconfirmed payments",
-    });
-    expect(allow([{ amount: 90, status: "PENDING" }], 30)?.kind).toBe("RESERVED_BY_UNCONFIRMED");
+  it("with a DRAFT or PENDING row, real money above capacity is allowed (W-769; SA-863 R3 superseded)", () => {
+    expect(allow([draft(90)], 30)).toBeNull();
+    expect(allow([{ amount: 90, status: "PENDING" }], 30)).toBeNull();
   });
   it("within capacity while a DRAFT is present is allowed (R3c)", () => {
     expect(allow([draft(90)], 10)).toBeNull();

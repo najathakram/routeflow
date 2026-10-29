@@ -1,0 +1,92 @@
+[
+  {
+    "number": 101,
+    "title": "feat(api): add widget export",
+    "mergedAt": "2026-10-20T10:00:00Z",
+    "headRefName": "branch/101"
+  },
+  {
+    "number": 102,
+    "title": "fix(web): correct totals label",
+    "mergedAt": "2026-10-21T10:00:00Z",
+    "headRefName": "branch/102"
+  },
+  {
+    "number": 103,
+    "title": "docs: update runbook",
+    "mergedAt": "2026-10-22T10:00:00Z",
+    "headRefName": "branch/103"
+  },
+  {
+    "number": 104,
+    "title": "feat!: breaking thing (#104)",
+    "mergedAt": "2026-10-19T10:00:00Z",
+    "headRefName": "branch/104"
+  },
+  {
+    "number": 105,
+    "title": "fix: stale cache read",
+    "mergedAt": "2026-10-23T10:00:00Z",
+    "headRefName": "branch/105"
+  },
+  {
+    "number": 106,
+    "title": "chore: bump tooling",
+    "mergedAt": "2026-10-24T10:00:00Z",
+    "headRefName": "branch/106"
+  },
+  {
+    "number": 107,
+    "title": "fix: note #102 hotfix wording (#107)",
+    "mergedAt": "2026-10-24T11:00:00Z",
+    "headRefName": "branch/107"
+  },
+  {
+    "number": 108,
+    "title": "hotfix: patch #105 regression (#108)",
+    "mergedAt": "2026-10-24T12:00:00Z",
+    "headRefName": "branch/108"
+  },
+  {
+    "number": 109,
+    "title": "fix(hotfix): patch #101 crash (#109)",
+    "mergedAt": "2026-10-24T15:00:00Z",
+    "headRefName": "branch/109"
+  },
+  {
+    "number": 201,
+    "title": "feat: older feature",
+    "mergedAt": "2026-10-05T10:00:00Z",
+    "headRefName": "branch/201"
+  },
+  {
+    "number": 202,
+    "title": "fix: older fix",
+    "mergedAt": "2026-10-08T10:00:00Z",
+    "headRefName": "branch/202"
+  },
+  {
+    "number": 203,
+    "title": "fix: bad thing (#203)",
+    "mergedAt": "2026-10-09T10:00:00Z",
+    "headRefName": "branch/203"
+  },
+  {
+    "number": 204,
+    "title": "feat: between the windows",
+    "mergedAt": "2026-10-14T09:00:00Z",
+    "headRefName": "branch/204"
+  },
+  {
+    "number": 301,
+    "title": "feat: weekly train bundle",
+    "mergedAt": "2026-10-24T13:00:00Z",
+    "headRefName": "train/2026-10-25"
+  },
+  {
+    "number": 302,
+    "title": "feat: older train bundle",
+    "mergedAt": "2026-10-06T10:00:00Z",
+    "headRefName": "train/2026-10-26"
+  }
+]

@@ -68,20 +68,30 @@ import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
 import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import {
+  editPaymentCap,
+  invoiceDisplayLines,
+  invoiceDisplayCategoryTax,
+  resolveConfirmedAmounts,
+} from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import type { LineComponentView } from "@routeflow/types";
-import { CHECK_TRANSITIONS, withRecordAnyway } from "@routeflow/types";
+import {
+  InvoiceDisplayRows,
+  displayQtyText,
+  formatUnitPrice4,
+} from "@/components/InvoiceDisplayRows";
+import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { InvoiceLineAmount } from "./InvoiceLineAmount";
@@ -109,7 +119,7 @@ import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
@@ -229,7 +239,7 @@ function StatusRibbon({ status }: { status: InvoiceStatus }) {
     PAID: { bg: "bg-green-500", text: "text-white", label: "Paid" },
     VOID: { bg: "bg-red-500", text: "text-white", label: "Void" },
     OVERDUE: { bg: "bg-red-500", text: "text-white", label: "Overdue" },
-    WRITTEN_OFF: { bg: "bg-stone-500", text: "text-white", label: "Written Off" },
+    WRITTEN_OFF: { bg: "bg-stone-500", text: "text-white", label: "Written off" },
   };
 
   const r = ribbonStyle[status];
@@ -239,12 +249,12 @@ function StatusRibbon({ status }: { status: InvoiceStatus }) {
     <div className="pointer-events-none absolute right-0 top-0 h-24 w-24 overflow-hidden">
       <div
         className={cn(
-          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm",
+          "absolute right-[-28px] top-[18px] w-[120px] rotate-45 py-1 text-center text-xs font-bold tracking-wider shadow-sm uppercase",
           r.bg,
           r.text,
         )}
       >
-        {r.label.toUpperCase()}
+        {r.label}
       </div>
     </div>
   );
@@ -284,7 +294,7 @@ function WhatsNextBanner({
           onClick={onRecordPayment}
           leftIcon={<CreditCard className="h-4 w-4" />}
         >
-          Record Payment
+          Record payment
         </WriteButton>
       </div>
     );
@@ -304,7 +314,7 @@ function WhatsNextBanner({
           onClick={onRecordPayment}
           leftIcon={<CreditCard className="h-4 w-4" />}
         >
-          Record Payment
+          Record payment
         </WriteButton>
       </div>
     );
@@ -326,7 +336,7 @@ function WhatsNextBanner({
           leftIcon={<CreditCard className="h-4 w-4" />}
           className="border-orange-300 text-orange-700 hover:bg-orange-100"
         >
-          Record Payment
+          Record payment
         </WriteButton>
       </div>
     );
@@ -436,7 +446,7 @@ function RecordPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Record Payment"
+      title="Record payment"
       description="Log a payment received for this invoice."
       footer={
         <>
@@ -449,7 +459,7 @@ function RecordPaymentModal({
             loading={isPending}
             disabled={statusCheck.unknown}
           >
-            Record Payment
+            Record payment
           </Button>
         </>
       }
@@ -457,7 +467,7 @@ function RecordPaymentModal({
       <form id="invoice-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <PaymentStatusCheck status={statusCheck} />
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -769,7 +779,7 @@ function EditPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Edit Payment"
+      title="Edit payment"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -783,7 +793,7 @@ function EditPaymentModal({
     >
       <form id="edit-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -942,7 +952,7 @@ function VoidConfirmModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Void Invoice?"
+      title="Void invoice?"
       description={`Invoice ${invoiceNumber} will be marked as void. This action cannot be undone.`}
       footer={
         <>
@@ -950,7 +960,7 @@ function VoidConfirmModal({
             Cancel
           </Button>
           <WriteButton variant="danger" onClick={onConfirm} loading={isPending}>
-            Void Invoice
+            Void invoice
           </WriteButton>
         </>
       }
@@ -964,21 +974,28 @@ function VoidConfirmModal({
 
 // ─── Write-off modal ──────────────────────────────────────────────────────────
 
+/** SA-1050: the usual reasons, one tap each. "Other" empties the text so the person writes their own. */
+const WRITE_OFF_REASONS = ["Customer closed", "Bankrupt", "Disputed", "Can't reach them"] as const;
+
 function WriteOffModal({
   isOpen,
   onClose,
   onConfirm,
   invoiceNumber,
+  amount,
   isPending,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
   invoiceNumber: string;
+  /** The balance still owed, already formatted: it is what the write-off takes off the books. */
+  amount: string;
   isPending: boolean;
 }) {
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState("");
+  const reasonRef = React.useRef<HTMLTextAreaElement>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -1001,7 +1018,7 @@ function WriteOffModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Write Off Invoice"
+      title="Write off invoice"
       description={`Mark invoice ${invoiceNumber} as uncollectible (bad debt).`}
       footer={
         <>
@@ -1009,7 +1026,7 @@ function WriteOffModal({
             Cancel
           </Button>
           <Button variant="danger" type="submit" form="write-off-form" loading={isPending}>
-            Write Off
+            Write off
           </Button>
         </>
       }
@@ -1022,9 +1039,48 @@ function WriteOffModal({
             be undone.
           </p>
         </div>
+        <p className="text-sm text-navy">
+          Amount written off:{" "}
+          <span data-testid="write-off-amount" className="money font-semibold">
+            {amount}
+          </span>
+        </p>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reason *</label>
+          <label
+            htmlFor="write-off-reason"
+            className="mb-1.5 block text-sm font-medium text-navy/80"
+          >
+            Reason *
+          </label>
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[...WRITE_OFF_REASONS, "Other"].map((label) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={reason === label}
+                onClick={() => {
+                  setError("");
+                  if (label === "Other") {
+                    setReason("");
+                    reasonRef.current?.focus();
+                  } else {
+                    setReason(label);
+                  }
+                }}
+                className={cn(
+                  "min-h-11 rounded-full border px-3 text-sm font-medium transition-colors",
+                  reason === label
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <textarea
+            id="write-off-reason"
+            ref={reasonRef}
             rows={3}
             placeholder="e.g. Customer declared bankruptcy, debt too old to collect…"
             value={reason}
@@ -1111,7 +1167,7 @@ function EditTermsModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Edit Terms"
+      title="Edit terms"
       description={`Correct the due date, payment terms, reference, or subject on invoice ${invoice.invoiceNumber}. Line items, discounts, and payments are untouched.`}
       footer={
         <>
@@ -1214,7 +1270,7 @@ function DeletePaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Delete Payment?"
+      title="Delete payment?"
       description={`Remove payment of ${fmt(amount)} from this invoice?`}
       footer={
         <>
@@ -1222,7 +1278,7 @@ function DeletePaymentModal({
             Cancel
           </Button>
           <Button variant="danger" onClick={onConfirm} loading={isPending}>
-            Delete Payment
+            Delete payment
           </Button>
         </>
       }
@@ -1453,6 +1509,7 @@ export default function InvoiceDetailPage() {
   const uploadPaymentImage = useUploadPaymentImage();
   const getPaymentImageUrl = useGetPaymentImageUrl();
   const downloadPdf = useDownloadInvoicePdf();
+  const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
@@ -1674,7 +1731,7 @@ export default function InvoiceDetailPage() {
           }
           toast({
             title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
-            description: `Sent to ${res.sentTo}`,
+            description: `Sent to ${res.sentTo}.`,
             variant: "success",
           });
         },
@@ -1727,20 +1784,7 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handlePrint = () => {
-    downloadPdf.mutate(
-      { id: invoice.id, variant: pdfVariant },
-      {
-        onSuccess: ({ blob }) => printPdfBlob(blob),
-        onError: () =>
-          toast({
-            title: "Failed to generate PDF",
-            description: "Please try again.",
-            variant: "error",
-          }),
-      },
-    );
-  };
+  const handlePrint = () => void printInvoice.print(invoice.id, { variant: pdfVariant });
 
   const handleReminder = () => {
     // Import sentinels count as "no email" — they aren't real inboxes.
@@ -1774,7 +1818,7 @@ export default function InvoiceDetailPage() {
           }
           toast({
             title: "Reminder sent",
-            description: `Reminder emailed to ${res.sentTo}`,
+            description: `Reminder emailed to ${res.sentTo}.`,
             variant: "success",
           });
         },
@@ -1959,6 +2003,23 @@ export default function InvoiceDetailPage() {
     );
   };
 
+  // W-769: the flagged unconfirmed row's Void is the EXISTING payment PATCH with status VOID (amount and method kept: the DTO needs them)
+  const handleVoidPayment = (pmt: InvoicePayment) => {
+    updatePayment.mutate(
+      {
+        invoiceId: invoice.id,
+        paymentId: pmt.id,
+        method: pmt.method as SelectablePaymentMethod,
+        amount: Number(pmt.amount),
+        status: "VOID",
+      },
+      {
+        onSuccess: () => toast({ title: "Payment voided", variant: "info" }),
+        onError: () => toast({ title: "Couldn't void this payment. Try again.", variant: "error" }),
+      },
+    );
+  };
+
   const handleDeletePayment = () => {
     if (!deletingPayment) return;
     deletePayment.mutate(
@@ -2087,18 +2148,14 @@ export default function InvoiceDetailPage() {
     );
   };
 
-  // PR-2 (check-payments B1 hardening): mirrors the server guard's capacity
-  // check (invoices.service updatePayment), which moved from summing only
-  // CONFIRMED siblings to remainingCapacity() over every non-VOID sibling — a
-  // DRAFT sibling now reserves capacity on both sides, so the modal still
-  // refuses exactly what the API would refuse.
+  // PR-2 / W-769: mirrors the server guard (invoices.service updatePayment -> assertEditFits) through the ONE pricing
+  // helper: a PAID edit is real money, capped on CONFIRMED siblings only; an unconfirmed edit stays on capacity (a DRAFT
+  // sibling reserves it). So the modal refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? Math.max(
-        0,
-        remainingCapacity(
-          total,
-          payments.filter((p) => p.id !== editingPayment.id),
-        ),
+    ? editPaymentCap(
+        total,
+        payments.filter((p) => p.id !== editingPayment.id),
+        editingPayment.status,
       )
     : 0;
 
@@ -2121,6 +2178,7 @@ export default function InvoiceDetailPage() {
               {invoice.invoiceNumber}
             </h1>
             <Badge status={status} />
+            {user?.role !== "CUSTOMER" && <ToCollectChip state={invoice.toCollect} />}
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
@@ -2165,7 +2223,7 @@ export default function InvoiceDetailPage() {
           )}
 
           {/* #2088: Send (DRAFT) / Email again (SENT/VIEWED/OVERDUE/PARTIAL/PAID), with the tracked state in the
-              confirmation; a locked draft says why instead of hiding the action. Send Reminder stays separate. */}
+              confirmation; a locked draft says why instead of hiding the action. Send reminder stays separate. */}
           {((status === "DRAFT" && !isPendingMirror) ||
             canEmailAgain(status) ||
             invoice.sendLocked) && (
@@ -2187,7 +2245,7 @@ export default function InvoiceDetailPage() {
               onClick={handleReminder}
               loading={sendInvoiceReminder.isPending}
             >
-              Send Reminder
+              Send reminder
             </Button>
           )}
 
@@ -2221,7 +2279,7 @@ export default function InvoiceDetailPage() {
             variant="secondary"
             leftIcon={<Printer className="h-3.5 w-3.5" />}
             onClick={handlePrint}
-            loading={downloadPdf.isPending}
+            loading={printInvoice.printing}
           >
             Print
           </Button>
@@ -2237,7 +2295,7 @@ export default function InvoiceDetailPage() {
             PDF
           </Button>
 
-          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
+          {/* Revert to draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
               revertInvoiceToDraft refuses on `invoicePayment.count > 0`, which
               counts DRAFT and VOID rows too. Gating on amountPaid (a CONFIRMED
               sum) would offer a button the server always rejects. */}
@@ -2250,7 +2308,7 @@ export default function InvoiceDetailPage() {
                 onClick={() => setIsRevertToDraftOpen(true)}
                 loading={revertToDraft.isPending}
               >
-                Revert to Draft
+                Revert to draft
               </Button>
             )}
 
@@ -2267,7 +2325,7 @@ export default function InvoiceDetailPage() {
             </Button>
           )}
 
-          {/* Record Payment dropdown */}
+          {/* Record payment dropdown */}
           {canRecordPayment && readOnlyGate.readOnly && (
             <div>
               <button
@@ -2278,7 +2336,7 @@ export default function InvoiceDetailPage() {
                 className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card opacity-50"
               >
                 <CreditCard className="h-3.5 w-3.5" />
-                Record Payment
+                Record payment
               </button>
               <ReadOnlyHint />
             </div>
@@ -2291,39 +2349,33 @@ export default function InvoiceDetailPage() {
                   className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
                 >
                   <CreditCard className="h-3.5 w-3.5" />
-                  Record Payment
+                  Record payment
                   <ChevronDown className="h-3.5 w-3.5" />
                 </button>
               }
               items={[
                 {
-                  label: "Record Payment",
+                  label: "Record payment",
                   onClick: () => setIsPaymentOpen(true),
                   disabled: readOnlyGate.readOnly,
                 },
                 // B13: web had no way to apply a customer's advance-payment wallet balance —
-                // only mobile could. Same gate as Record Payment; the server also refuses a
+                // only mobile could. Same gate as Record payment; the server also refuses a
                 // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
                 ...(invoice.customerId
                   ? [
                       {
-                        label: "Apply Advance",
+                        label: "Apply advance",
                         onClick: () => setIsAdvanceOpen(true),
                         disabled: readOnlyGate.readOnly,
                       },
                     ]
                   : []),
-                {
-                  label: "Write Off",
-                  onClick: () => setIsWriteOffOpen(true),
-                  danger: true,
-                  disabled: readOnlyGate.readOnly,
-                },
               ]}
             />
           )}
 
-          {/* Adjust Prices — operator-only. Match backend gate exactly:
+          {/* Adjust prices — operator-only. Match backend gate exactly:
               PAID/VOID/WRITTEN_OFF reject with "Cannot adjust prices on a
               ${status} invoice. Issue a credit note instead." Hiding the
               button avoids the dead-click + invisible-toast UX where the
@@ -2339,7 +2391,7 @@ export default function InvoiceDetailPage() {
                 leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
                 onClick={() => setShowAdjustPanel((v) => !v)}
               >
-                Adjust Prices
+                Adjust prices
               </Button>
             )}
 
@@ -2361,21 +2413,34 @@ export default function InvoiceDetailPage() {
               {
                 // WP3: narrow post-issue correction of dueDate/paymentTermsLabel/
                 // reference/subject only — blocked exactly where the API blocks it.
-                label: "Edit Terms",
+                label: "Edit terms",
                 onClick: () => setIsEditTermsOpen(true),
                 disabled: status === "VOID" || status === "WRITTEN_OFF",
               },
               {
-                label: "Reopen Invoice",
+                label: "Reopen invoice",
                 onClick: () => setIsReopenOpen(true),
                 disabled: status !== "PAID",
               },
               {
-                label: "Void Invoice",
+                label: "Void invoice",
                 onClick: () => setIsVoidOpen(true),
                 danger: true,
                 disabled: !canVoid || readOnlyGate.readOnly,
               },
+              // SA-1050: moved here from the Record payment dropdown (a loss is not a way to be paid). Offered on
+              // an open invoice; read-only keeps it in the menu but disabled, like the other writes. The server
+              // still refuses anything that is not an open invoice.
+              ...(canRecordPayment
+                ? [
+                    {
+                      label: "Write off",
+                      onClick: () => setIsWriteOffOpen(true),
+                      danger: true,
+                      disabled: readOnlyGate.readOnly,
+                    },
+                  ]
+                : []),
             ]}
           />
         </div>
@@ -2447,7 +2512,7 @@ export default function InvoiceDetailPage() {
                 />
                 {balanceDue > 0 && (
                   <div className="text-right">
-                    <p className="eyebrow-label">Balance Due</p>
+                    <p className="eyebrow-label">Balance due</p>
                     <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
@@ -2543,8 +2608,43 @@ export default function InvoiceDetailPage() {
                       );
                     }
                     const item = row.item;
-                    return (
-                      <tr key={item.id} className="hover:bg-surface-raised">
+                    // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
+                    const display = invoiceDisplayLines(
+                      {
+                        description: item.description,
+                        qty: Number(item.qty),
+                        boxes: item.boxes,
+                        pieces: item.pieces,
+                        unitsPerBox: item.unitsPerBox,
+                        unitLabel: item.unitLabel,
+                        unitPrice: Number(item.unitPrice),
+                        subtotal: Number(item.subtotal),
+                        categoryTax: invoiceDisplayCategoryTax(item),
+                      },
+                      (item.components ?? []).map((c) => ({
+                        componentProductId: c.componentProductId,
+                        name: c.name,
+                        qty: Number(c.qty),
+                        unitSku: c.unitSku,
+                        unitBarcode: c.unitBarcode,
+                        displayUnitPrice4:
+                          c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
+                        position: c.position,
+                      })),
+                      item.displayUnit,
+                    );
+                    const groupRow = (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-surface-raised"
+                        data-testid={
+                          display.layout === "components"
+                            ? `display-group-row-${item.id}`
+                            : display.layout === "pieces"
+                              ? `display-pieces-${item.id}`
+                              : undefined
+                        }
+                      >
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
@@ -2552,9 +2652,10 @@ export default function InvoiceDetailPage() {
                               {item.notes}
                             </p>
                           )}
-                          <ComponentSubLines
-                            components={(item as { components?: LineComponentView[] }).components}
-                          />
+                          {/* The component rows replace the "(included)" sub-lines in the components layout. */}
+                          {display.layout !== "components" && (
+                            <ComponentSubLines components={item.components} />
+                          )}
                           <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -2566,7 +2667,9 @@ export default function InvoiceDetailPage() {
                                 : undefined
                             }
                           >
-                            {invoiceLineQtyText(item)}
+                            {display.layout === "pieces"
+                              ? displayQtyText(display.qty, display.unitLabel)
+                              : invoiceLineQtyText(item)}
                           </span>
                           {/* BUY_N_GET_M: name the free units, or the reduced
                               subtotal reads as a pricing error. */}
@@ -2578,7 +2681,16 @@ export default function InvoiceDetailPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
-                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          {display.layout === "pieces" ? (
+                            <InvoiceLinePrice
+                              item={item}
+                              hideOriginal={hideOriginal}
+                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              noStrike
+                            />
+                          ) : (
+                            <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          )}
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later
@@ -2592,6 +2704,20 @@ export default function InvoiceDetailPage() {
                         <InvoiceLineAmount item={item} />
                       </tr>
                     );
+                    if (display.layout === "components") {
+                      return (
+                        <InvoiceDisplayRows
+                          key={item.id}
+                          lines={display}
+                          itemId={item.id}
+                          fmt={fmt}
+                          variant="staff"
+                        >
+                          {groupRow}
+                        </InvoiceDisplayRows>
+                      );
+                    }
+                    return groupRow;
                   })}
                 </tbody>
               </table>
@@ -2621,7 +2747,7 @@ export default function InvoiceDetailPage() {
             )}
           </div>
 
-          {/* Adjust Prices Panel */}
+          {/* Adjust prices Panel */}
           {showAdjustPanel && (
             <AdjustPricesPanel invoice={invoice} onClose={() => setShowAdjustPanel(false)} />
           )}
@@ -2734,6 +2860,18 @@ export default function InvoiceDetailPage() {
                                 </span>
                               )}
                             </span>
+                            {pmt.noLongerFits && !isVoided && (
+                              <button
+                                onClick={() => handleVoidPayment(pmt)}
+                                className={cn(
+                                  TAP_TARGET,
+                                  "rounded p-1 text-navy/30 transition-all hover:text-danger",
+                                )}
+                                title="Void payment"
+                              >
+                                <XCircle className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             {isEditable && (
                               <>
                                 <button
@@ -2775,6 +2913,11 @@ export default function InvoiceDetailPage() {
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
                         </div>
+                        {pmt.noLongerFits && !isVoided && (
+                          <p className="mt-1 text-xs font-medium text-warning">
+                            {PAYMENT_NO_LONGER_FITS_COPY}
+                          </p>
+                        )}
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
                         {pmt.imageKey && (
                           <button
@@ -2864,7 +3007,7 @@ export default function InvoiceDetailPage() {
                   leftIcon={<CreditCard className="h-4 w-4" />}
                   onClick={() => setIsPaymentOpen(true)}
                 >
-                  Record Payment
+                  Record payment
                 </WriteButton>
                 <ReadOnlyHint />
               </div>
@@ -2875,7 +3018,7 @@ export default function InvoiceDetailPage() {
           <Card>
             <dl className="space-y-2 text-sm">
               <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Invoice Total</dt>
+                <dt className="text-navy/70">Invoice total</dt>
                 <dd className="money font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex items-center justify-between">
@@ -2902,7 +3045,7 @@ export default function InvoiceDetailPage() {
                   balanceDue > 0 ? "text-danger" : "text-success",
                 )}
               >
-                <dt>Balance Due</dt>
+                <dt>Balance due</dt>
                 <dd className="money">{fmt(balanceDue)}</dd>
               </div>
             </dl>
@@ -2979,7 +3122,7 @@ export default function InvoiceDetailPage() {
       <Modal
         open={isReopenOpen}
         onClose={() => setIsReopenOpen(false)}
-        title="Reopen Invoice?"
+        title="Reopen invoice?"
         description={`Invoice ${invoice.invoiceNumber} will be moved back to the appropriate open state.`}
         footer={
           <>
@@ -2992,7 +3135,7 @@ export default function InvoiceDetailPage() {
             </Button>
             <Button variant="primary" onClick={handleReopen} loading={reopenInvoice.isPending}>
               <RotateCcw className="mr-1.5 h-4 w-4" />
-              Reopen Invoice
+              Reopen invoice
             </Button>
           </>
         }
@@ -3008,6 +3151,7 @@ export default function InvoiceDetailPage() {
         onClose={() => setIsWriteOffOpen(false)}
         onConfirm={handleWriteOff}
         invoiceNumber={invoice.invoiceNumber}
+        amount={fmt(balanceDue)}
         isPending={writeOffInvoice.isPending}
       />
 
@@ -3022,7 +3166,7 @@ export default function InvoiceDetailPage() {
       <Modal
         open={isRevertToDraftOpen}
         onClose={() => setIsRevertToDraftOpen(false)}
-        title="Revert to Draft?"
+        title="Revert to draft?"
         description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
         footer={
           <>
@@ -3039,11 +3183,11 @@ export default function InvoiceDetailPage() {
                 revertToDraft.mutate(invoice.id, {
                   onSuccess: () => {
                     setIsRevertToDraftOpen(false);
-                    toast({ title: "Invoice reverted to Draft", variant: "success" });
+                    toast({ title: "Invoice reverted to draft", variant: "success" });
                   },
                   onError: (e: any) =>
                     toast({
-                      title: "Failed to revert",
+                      title: "Failed to revert the invoice to draft",
                       description: e?.response?.data?.message ?? "Please try again.",
                       variant: "error",
                     }),
@@ -3052,21 +3196,21 @@ export default function InvoiceDetailPage() {
               loading={revertToDraft.isPending}
             >
               <RotateCcw className="mr-1.5 h-4 w-4" />
-              Revert to Draft
+              Revert to draft
             </Button>
           </>
         }
       >
         <p className="text-sm text-navy/70">
-          This will undeliver the invoice from the customer. No payments have been recorded, so this
-          is safe to revert.
+          This returns the invoice to a draft. No payments have been recorded, so this is safe to
+          revert.
         </p>
       </Modal>
 
       <Modal
         open={isUnvoidOpen}
         onClose={() => setIsUnvoidOpen(false)}
-        title="Unvoid Invoice?"
+        title="Unvoid invoice?"
         description={`Invoice ${invoice.invoiceNumber} will be moved back to Draft status.`}
         footer={
           <>
@@ -3086,14 +3230,14 @@ export default function InvoiceDetailPage() {
                     // SA-839 §3: one more line when the void sat in an already-filed month.
                     const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
                     toast({
-                      title: "Invoice unvoided — now in Draft",
+                      title: "Invoice unvoided — now a draft",
                       variant: "success",
                       ...(note ? { description: note } : {}),
                     });
                   },
                   onError: (e: any) =>
                     toast({
-                      title: "Failed to unvoid",
+                      title: "Failed to unvoid the invoice",
                       description:
                         unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
                       variant: "error",

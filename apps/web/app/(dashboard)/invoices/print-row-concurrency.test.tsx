@@ -61,14 +61,22 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
-const deferredA = createDeferred<{ url: string; blob: Blob }>();
-const deferredB = createDeferred<{ url: string; blob: Blob }>();
+const deferredA = createDeferred<{ data: { url: string } }>();
+const deferredB = createDeferred<{ data: { url: string } }>();
 
-const mutateAsyncMock = jest.fn((id: string) => {
-  if (id === "inv-a") return deferredA.promise;
-  if (id === "inv-b") return deferredB.promise;
-  return Promise.reject(new Error(`unexpected id: ${id}`));
+// SA-1026 B: a row prints through usePrintInvoice, which asks GET /invoices/:id/pdf; the test holds each row's answer
+const apiGetMock = jest.fn((url: string) => {
+  if (url === "/invoices/inv-a/pdf") return deferredA.promise;
+  if (url === "/invoices/inv-b/pdf") return deferredB.promise;
+  return Promise.resolve({ data: {} });
 });
+jest.mock("@/lib/api-client", () => ({
+  ...jest.requireActual("@/lib/api-client"),
+  apiClient: { get: (...a: [string]) => apiGetMock(...a), post: jest.fn() },
+}));
+jest.mock("@/lib/fetch-pdf-blob", () => ({
+  fetchPdfBlob: (url: string) => Promise.resolve(new Blob([url])),
+}));
 
 const printPdfBlobMock = jest.fn();
 
@@ -85,7 +93,6 @@ jest.mock("@/lib/api/invoices", () => ({
   }),
   useInvoiceKpiSummary: () => ({ data: undefined }),
   useDeleteInvoice: () => ({ mutate: jest.fn(), isPending: false }),
-  useDownloadInvoicePdf: () => ({ mutateAsync: mutateAsyncMock, isPending: false }),
 }));
 
 jest.mock("@/lib/api/bookkeeping", () => ({
@@ -101,7 +108,7 @@ describe("InvoicesPage — row Print concurrency (F1)", () => {
     const printA = await screen.findByRole("button", { name: "Print invoice INV-A" });
     const printB = await screen.findByRole("button", { name: "Print invoice INV-B" });
 
-    // Start row A's print, then row B's — row A's mutateAsync call is still
+    // Start row A's print, then row B's — row A's request is still
     // pending when row B's fires (the exact concurrency the bug depended on).
     await user.click(printA);
     await user.click(printB);
@@ -112,7 +119,7 @@ describe("InvoicesPage — row Print concurrency (F1)", () => {
     });
 
     // Resolve OUT OF ORDER: B first.
-    deferredB.resolve({ url: "https://x/b.pdf", blob: new Blob(["b"]) });
+    deferredB.resolve({ data: { url: "https://x/b.pdf" } });
     await waitFor(() => expect(printB).not.toBeDisabled());
     expect(printPdfBlobMock).toHaveBeenCalledTimes(1);
 
@@ -121,7 +128,7 @@ describe("InvoicesPage — row Print concurrency (F1)", () => {
     // observer's onSettled fires for whichever row called .mutate() last).
     expect(printA).toBeDisabled();
 
-    deferredA.resolve({ url: "https://x/a.pdf", blob: new Blob(["a"]) });
+    deferredA.resolve({ data: { url: "https://x/a.pdf" } });
     await waitFor(() => expect(printA).not.toBeDisabled());
 
     expect(printPdfBlobMock).toHaveBeenCalledTimes(2);

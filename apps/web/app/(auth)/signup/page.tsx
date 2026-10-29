@@ -280,7 +280,7 @@ function SignupInner() {
 
         {/* Business Name */}
         <Input
-          label="Business Name"
+          label="Business name"
           placeholder="Acme Distribution Co."
           autoComplete="organization"
           register={register("businessName")}
@@ -313,7 +313,7 @@ function SignupInner() {
             <p className="text-xs text-success">This workspace ID is available.</p>
           ) : (
             <p className="text-xs text-navy/70">
-              Used in your login URL. Lowercase letters, numbers, hyphens.
+              Used in your sign-in URL. Lowercase letters, numbers, and hyphens.
             </p>
           )}
         </div>
@@ -395,7 +395,7 @@ function SignupInner() {
         {/* Confirm Password */}
         <div className="flex flex-col gap-1">
           <label htmlFor="signup-confirm" className="text-sm font-medium text-navy">
-            Confirm Password
+            Confirm password
           </label>
           <div className="relative">
             <input
@@ -427,7 +427,7 @@ function SignupInner() {
           disabled={slugStatus === "taken" || usernameStatus === "taken"}
           className="rf-btn mt-2 w-full"
         >
-          Create My Account
+          Create account
         </Button>
       </form>
 
@@ -436,7 +436,7 @@ function SignupInner() {
         <a href="/terms" className="text-brand-600 hover:underline">
           Terms of Service
         </a>
-        {" & "}
+        {" and "}
         <a href="/privacy" className="text-brand-600 hover:underline">
           Privacy Policy
         </a>

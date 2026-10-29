@@ -64,11 +64,11 @@ export const OPERATOR_NAV: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
       // Not plan-gated (never in PLAN_GATED_NAV): manual POs are core inventory, LITE keeps them.
-      { kind: "leaf", label: "Purchase Orders", href: "/purchase-orders", icon: PackageCheck },
+      { kind: "leaf", label: "Purchase orders", href: "/purchase-orders", icon: PackageCheck },
       { kind: "leaf", label: "Products", href: "/products", icon: Package },
       { kind: "leaf", label: "Promotions", href: "/promotions", icon: Megaphone },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
-      { kind: "leaf", label: "Supplier Bills", href: "/vendor-bills", icon: ClipboardList },
+      { kind: "leaf", label: "Supplier bills", href: "/vendor-bills", icon: ClipboardList },
     ],
   },
   {
@@ -80,17 +80,17 @@ export const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
       { kind: "leaf", label: "Shipments", href: "/shipments", icon: Truck },
       { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
+      { kind: "leaf", label: "Credit notes", href: "/credit-notes", icon: Receipt },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
       {
         kind: "leaf",
-        label: "Payment Requests",
+        label: "Payment requests",
         href: "/finance/payment-requests",
         icon: DollarSign,
       },
       {
         kind: "leaf",
-        label: "Supplier Statements",
+        label: "Supplier statements",
         href: "/finance/statements",
         icon: FileSpreadsheet,
       },

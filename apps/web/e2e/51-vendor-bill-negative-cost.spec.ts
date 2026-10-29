@@ -60,7 +60,7 @@ test.describe("Vendor-bill web line entry allows negative cost (B469)", () => {
     request,
   }) => {
     await page.goto("/vendor-bills");
-    await expect(page.getByRole("button", { name: "New Purchase" })).toBeVisible({
+    await expect(page.getByRole("button", { name: "New bill" })).toBeVisible({
       timeout: 15_000,
     });
 
@@ -133,7 +133,7 @@ test.describe("Vendor-bill web line entry allows negative cost (B469)", () => {
       });
     }
 
-    await page.getByRole("button", { name: "Save Changes" }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
     const invariantToast = page.getByText(
       /These lines net to a negative amount.*record it as a supplier credit/i,
     );
@@ -144,7 +144,7 @@ test.describe("Vendor-bill web line entry allows negative cost (B469)", () => {
     // bill's NET total, never a blanket "no negative lines" rule.
     await costInput.fill("-30");
     await costInput.blur();
-    await page.getByRole("button", { name: "Save Changes" }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByText("Bill updated")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible({
       timeout: 10_000,

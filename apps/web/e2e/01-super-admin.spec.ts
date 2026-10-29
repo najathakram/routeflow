@@ -134,7 +134,7 @@ test.describe("Super Admin — Platform Admin Panel", () => {
     await page.getByPlaceholder("acme_admin").fill(`${slug}_admin`);
     await page.getByLabel("Time zone").fill("America/New_York");
     await page.getByPlaceholder("Min. 8 characters").fill("AdminPass@123!");
-    await page.getByRole("button", { name: "Create Tenant", exact: true }).click();
+    await page.getByRole("button", { name: "Create tenant", exact: true }).click();
     // Should redirect back to tenants list and show the new entry
     await page.waitForURL(/\/admin\/tenants/, { timeout: 20_000 });
     await expect(page.getByText(slug).first()).toBeVisible({ timeout: 15_000 });

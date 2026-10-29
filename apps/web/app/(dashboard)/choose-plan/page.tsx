@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Check, Loader2, Sparkles } from "lucide-react";
 import { Card, Button, Badge, useToast, cn } from "@routeflow/ui/web";
+import { fmtDate } from "@/lib/formatting";
 import {
   usePlans,
   useRecommendation,
@@ -296,12 +297,10 @@ export default function ChoosePlanPage() {
             )}
             {changeAction === "DOWNGRADE" && preview.change?.effectiveAt ? (
               <p className="text-xs text-slate-400">
-                Takes effect {new Date(preview.change.effectiveAt).toLocaleDateString()}.
+                Takes effect {fmtDate(preview.change.effectiveAt)}.
               </p>
             ) : (
-              <p className="text-xs text-slate-400">
-                Renews {new Date(preview.renewalAt).toLocaleDateString()}.
-              </p>
+              <p className="text-xs text-slate-400">Renews {fmtDate(preview.renewalAt)}.</p>
             )}
             {preview.change?.warning && (
               <p className="text-xs text-amber-600">{preview.change.warning}</p>

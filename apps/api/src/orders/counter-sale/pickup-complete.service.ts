@@ -10,7 +10,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
-import { mayCompleteAtCounter, roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
@@ -21,11 +21,6 @@ import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
 import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
-import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
   counterCreditPaidNow,
@@ -35,6 +30,11 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
+import {
+  markOpenInvoicesToCollect,
+  rollupToCollect,
+  toCollectState,
+} from "../../invoices/to-collect";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -177,7 +177,7 @@ export class PickupCompleteService {
       await assertCheckNotPostdatedForTenant(this.prisma, sent);
     } else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
     if (walkIn) {
-      // A walk-in leaves no partial on account and takes no credit: the counter sale's two guards.
+      // A walk-in leaves no partial on account (W-913: the sweep never takes credit off the walk-in account).
       if (
         sent &&
         sent.method !== "ON_ACCOUNT" &&
@@ -190,7 +190,6 @@ export class PickupCompleteService {
           message: "A walk-in customer must pay the full balance",
         });
       }
-      await this.assertNoOpenCredit(order.customerId);
     }
     // SA-905 MUST 1: the delivery credit gate the DELIVERED step runs (B585, netted), judged NOW through the same ONE entry,
     // read-only, so a refusal writes nothing (no claim, no switch, no silent CONFIRMED). The DELIVERED step's own gate stays
@@ -336,6 +335,14 @@ export class PickupCompleteService {
       }
     }
     if (issued) invoices = await this.readInvoices(id);
+
+    // SA-1026: "the check is not in hand yet": every invoice of the order that can still be owed after the send step is marked
+    // To collect (a settled sibling is not). No payment row. Replay-safe: the first intent stays, and the retry of a half-finished
+    // hand-over completes the mark. The response reads the column back from the re-read rows.
+    if (sent?.method === "ON_ACCOUNT" && sent.expectedMethod) {
+      await markOpenInvoicesToCollect(this.prisma, invoices as never, sent.expectedMethod);
+      invoices = await this.readInvoices(id);
+    }
 
     // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
     // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
@@ -558,7 +565,7 @@ export class PickupCompleteService {
         if (meta.idempotencyKey !== key || (meta.bodyHash && meta.bodyHash !== bodyHash)) {
           // Unified claim rule (SA-710a + lead): a different key or body REPLACES the claim while no tender for
           // this hand-over is stored (a refused hand-over, or a walk-in short / planner refusal found after
-          // it, must never lock the order out); recordings stay capped by remainingCapacity. Only a STORED
+          // it, must never lock the order out); recordings stay capped by confirmedRemaining. Only a STORED
           // hand-over tender makes a different request a conflict.
           const now = await db.order.findFirst({
             where: { id: orderId },
@@ -647,23 +654,6 @@ export class PickupCompleteService {
     });
   }
 
-  /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
-  private async assertNoOpenCredit(customerId: string | null): Promise<void> {
-    if (!customerId) return;
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
-    });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
-  }
-
   /**
    * The locked half of the tender. The plan is made against each invoice's balance BEFORE this hand-over's
    * tender (its total less every payment that is not this hand-over's), so a replay computes the SAME
@@ -690,7 +680,7 @@ export class PickupCompleteService {
     const mine = isHandOverTender(orderId, handedOverAt);
     const balances = invoices.map((i) => ({
       id: i.id,
-      balance: remainingCapacity(
+      balance: confirmedRemaining(
         Number(i.total),
         (i.payments ?? []).filter((p) => !mine(p)),
       ),
@@ -720,7 +710,7 @@ export class PickupCompleteService {
             (row.payments ?? []).filter(mine).reduce((sum, p) => sum + Number(p.amount), 0),
           );
           const due = roundMoney(
-            Math.min(part.amount - stored, remainingCapacity(Number(row.total), row.payments)),
+            Math.min(part.amount - stored, confirmedRemaining(Number(row.total), row.payments)),
           );
           return { invoiceId: part.invoiceId, due };
         })
@@ -799,7 +789,7 @@ export class PickupCompleteService {
       rows.reduce(
         (sum, i) =>
           sum +
-          remainingCapacity(
+          confirmedRemaining(
             Number(i.total),
             (i.payments ?? []).filter((p) => !mine(p)),
           ),
@@ -869,6 +859,7 @@ export class PickupCompleteService {
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
+      invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list tenderFigures totals, so Print invoice matches the screen
       invoiceNumber: first.invoiceNumber ?? "",
       ...tenderFigures(
         invoices,
@@ -876,6 +867,10 @@ export class PickupCompleteService {
         isHandOverTender(order.id, handedOverAt),
         planError,
         duplicate,
+      ),
+      // SA-1026: read back from the stored rows, staff only
+      toCollect: rollupToCollect(
+        invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
       ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };

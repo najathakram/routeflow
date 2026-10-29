@@ -37,6 +37,7 @@ import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
 import { effectiveCostingMethod } from "./costing-method-policy";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
+import { REPLAY_CORRECTION_PREFIX, foldLedger, isReplayCorrection } from "./fold-ledger";
 import { recordSaleMovement, resolveSaleCost } from "./sale-movement";
 import { poReversalNote, poReversalOf } from "./bill-revert";
 import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
@@ -74,20 +75,29 @@ import {
   COUNT_LOCK_ATTEMPTS,
   COUNT_LOCK_RETRY_MS,
   computeCommitProgress,
-  OPEN_COUNT_STATUSES,
   productInOpenCount,
+  refuseIfSeeding,
+  refuseWhileSeeding,
   roundCountQty,
   STOCK_COUNT_LOCK_FAMILY,
   STOCK_COUNT_PRODUCT_LOCK_FAMILY,
   stockCountCommitting,
   stockCountReference,
   stockCountSkipNote,
-  type OpenCountConflict,
   type StockCountCommitOutcome,
   type StockCountCommitProgress,
   type StockCountSkippedProduct,
   type StockCountSkipReason,
 } from "./stock-count-commit";
+import {
+  discardUnfinishedSeed,
+  findOpenCountConflicts,
+  planSeedLines,
+  seedCompletionStamp,
+  seedStockCountLines,
+} from "./stock-count-seed";
+import { readStockCountProgress } from "./stock-count-progress";
+import { assertNotDurableCountId, assertStockReferenceFree } from "./reserved-reference";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 import { writeFamilyAssigned } from "../products/product-parent";
@@ -99,21 +109,8 @@ import { writeFamilyAssigned } from "../products/product-parent";
  */
 const COUNT_ADD_TX_OPTIONS = STOCK_TX_OPTIONS;
 
-/** B562 PR-3 (SA-136 §4): the reference prefix of a replay's own COST_BASIS correction. */
-export const REPLAY_CORRECTION_PREFIX = "RECOMPUTE:";
-/**
- * A replay correction is the fold's OUTPUT, never an input (see replayProduct). SA-372: all three
- * marks are required — a COST_BASIS row, quantity 0, and the `RECOMPUTE:` reference — so a manual
- * or `B562:REPAIR:` cost-basis row (or any other movement) can never be skipped as one.
- */
-export const isReplayCorrection = (m: {
-  type: string;
-  quantity: Prisma.Decimal | number | string;
-  reference: string | null | undefined;
-}) =>
-  m.type === MovementType.COST_BASIS &&
-  new Prisma.Decimal(m.quantity).isZero() &&
-  (m.reference?.startsWith(REPLAY_CORRECTION_PREFIX) ?? false);
+// B562 PR-3: the fold and its correction marks live in fold-ledger.ts (row 635, SA-902 MUST 3); re-exported for callers.
+export { REPLAY_CORRECTION_PREFIX, isReplayCorrection } from "./fold-ledger";
 // Row 563: the date gate lives in stock-write-date.ts; re-exported for this module's existing spec.
 export { effectiveDateOf } from "./stock-write-date";
 /** Averages closer than this are the same cost (costDecimal keeps 4dp). */
@@ -272,6 +269,7 @@ export class InventoryService {
   }
 
   async recordPurchase(dto: RecordPurchaseDto, performedById: string) {
+    assertStockReferenceFree(dto.reference); // B640
     const product = await this.prisma
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
@@ -404,6 +402,7 @@ export class InventoryService {
   }
 
   async recordAdjustment(dto: RecordAdjustmentDto, performedById: string) {
+    assertStockReferenceFree(dto.reference); // B640
     const product = await this.prisma
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
@@ -1005,6 +1004,7 @@ export class InventoryService {
   // ─── Stock count / audit session ─────────────────────────────────────────────
 
   async commitStockCount(dto: CommitStockCountDto, performedById: string) {
+    await assertNotDurableCountId(this.prisma.forTenant(), dto.sessionId); // B640
     const productIds = Array.from(new Set(dto.items.map((i) => i.productId)));
     const products = await this.prisma
       .forTenant()
@@ -2727,56 +2727,42 @@ export class InventoryService {
       }));
     }
 
-    const session = await this.prisma.tenantTransaction(async (tx) => {
-      // An amendment seeds lines too: the same one-open-count-per-product rule as an add (SA-767 r-note 5
-      // SA-3). The seeded products are locked in SORTED order (two amenders cannot deadlock), then checked once.
-      const seedIds = [...new Set(seedLines.map((l) => l.productId))].sort();
-      for (const productId of seedIds) {
-        // eslint-disable-next-line no-await-in-loop
-        await advisoryXactLock(
-          tx,
-          STOCK_COUNT_PRODUCT_LOCK_FAMILY,
-          `${this.prisma.getTenantId() ?? ""}:${productId}`,
-        );
-      }
-      const taken = await this.findOpenCountConflicts(tx, seedIds);
-      if (taken.length > 0) throw productInOpenCount(taken);
-      const created = await tx.stockCountSession.create({
-        data: {
-          name: dto.name ?? null,
-          startedById: user.sub,
-          amendsSessionId: dto.amendsSessionId ?? null,
-        },
+    // An amendment seeds lines too: the same one-open-count-per-product rule as an add (SA-767 r-note 5 SA-3).
+    // Row 562 S1: a pre-check refuses before anything exists; then the session, then the lines in batches of
+    // COUNT_SEED_BATCH (stock-count-seed.ts: sorted locks, re-check, baseline, one createMany per transaction).
+    // A failure part-way discards the session, so no half-seeded OPEN count holds products.
+    const taken = await findOpenCountConflicts(this.prisma.forTenant(), [
+      ...new Set(seedLines.map((l) => l.productId)),
+    ]);
+    if (taken.length > 0) throw productInOpenCount(taken);
+    // SA-999: the seed-state. The create that makes the session OPEN also says how many lines the seed will write
+    // (the count AFTER the one-line-per-product dedupe); a 0-line seed has no batch to stamp it, so it is complete
+    // in the create. Until the final batch stamps seedCompletedAt the commit answers 409 STOCK_COUNT_SEEDING.
+    const planned = planSeedLines(seedLines);
+    const session = await this.prisma.forTenant().stockCountSession.create({
+      data: {
+        name: dto.name ?? null,
+        startedById: user.sub,
+        amendsSessionId: dto.amendsSessionId ?? null,
+        seedPlannedLines: planned.length,
+        ...(planned.length === 0 ? seedCompletionStamp() : {}),
+      },
+    });
+    try {
+      await seedStockCountLines(this.prisma, {
+        sessionId: session.id,
+        userId: user.sub,
+        lines: planned,
       });
-      if (seedLines.length > 0) {
-        // Re-snapshot `expectedQty` from CURRENT stock: an amendment corrects
-        // today's on-hand, so comparing against the original session's stale
-        // expectation would reproduce the old variance instead of the real one.
-        const products = await tx.product.findMany({
-          where: { id: { in: seedLines.map((l) => l.productId) } },
-          select: { id: true, currentStock: true },
-        });
-        const stockById = new Map(products.map((p) => [p.id, p.currentStock]));
-        for (const line of seedLines) {
-          // Written one-by-one, NOT nested under the session create: a nested
-          // write bypasses the tenant extension's tenantId injection and the
-          // row would land with tenantId = null, invisible to forTenant().
-          await tx.stockCountLine.create({
-            data: {
-              sessionId: created.id,
-              productId: line.productId,
-              mode: line.mode,
-              countedQty: line.countedQty,
-              boxes: line.boxes,
-              pieces: line.pieces,
-              expectedQty: stockById.get(line.productId) ?? new Prisma.Decimal(0),
-              countedById: user.sub,
-            },
-          });
-        }
-      }
-      return created;
-    }, COUNT_ADD_TX_OPTIONS); // N sorted product locks + N creates: the same budget as a single add
+    } catch (err) {
+      await discardUnfinishedSeed(this.prisma, session.id).catch((discardErr: unknown) => {
+        // The seed's own error is what the caller gets; a failed cleanup must not hide behind it unseen.
+        this.logger.warn(
+          `could not discard the unfinished seeded stock count ${session.id}: ${(discardErr as Error)?.message}`,
+        );
+      });
+      throw err;
+    }
 
     return { ...session, otherOpenSessions: openSessions };
   }
@@ -2844,6 +2830,11 @@ export class InventoryService {
     });
     if (!session) throw new NotFoundException("Stock count session not found");
     return { ...session, commit: await this.commitProgressOf(session) };
+  }
+
+  /** Row 562 S1: the pure-read poll behind a long seed or commit (stock-count-progress.ts). */
+  getStockCountProgress(id: string) {
+    return readStockCountProgress(this.prisma, id);
   }
 
   /**
@@ -2989,7 +2980,7 @@ export class InventoryService {
         STOCK_COUNT_PRODUCT_LOCK_FAMILY,
         `${this.prisma.getTenantId() ?? ""}:${dto.productId}`,
       );
-      const taken = await this.findOpenCountConflicts(tx, [dto.productId], sessionId);
+      const taken = await findOpenCountConflicts(tx, [dto.productId], sessionId);
       if (taken.length > 0) throw productInOpenCount(taken);
       return tx.stockCountLine.create({
         data: {
@@ -3004,55 +2995,6 @@ export class InventoryService {
       // 15 s, not Prisma's 5 s default: the product-lock helper bounds its wait with a 5 s lock_timeout, and a
       // tx budget equal to it would expire first as an unmapped P2028 500 instead of 55P03 -> the 503.
     }, COUNT_ADD_TX_OPTIONS);
-  }
-
-  /**
-   * SA-767 r-note 5 SA-3: the products among `productIds` that already have a line on ANOTHER open
-   * (OPEN / REVIEW) count of the tenant, one row per (product, session). `excludeSessionId` is the count
-   * being added to / committed. Read it AFTER the product lock when deciding an add.
-   */
-  private async findOpenCountConflicts(
-    db: {
-      stockCountLine: { findMany(args: Prisma.StockCountLineFindManyArgs): Promise<unknown[]> };
-    },
-    productIds: string[],
-    excludeSessionId?: string,
-  ): Promise<OpenCountConflict[]> {
-    if (productIds.length === 0) return [];
-    const rows = (await db.stockCountLine.findMany({
-      where: {
-        productId: { in: productIds },
-        ...(excludeSessionId ? { sessionId: { not: excludeSessionId } } : {}),
-        session: { status: { in: [...OPEN_COUNT_STATUSES] } },
-      },
-      select: {
-        productId: true,
-        product: { select: { name: true } },
-        session: { select: { id: true, name: true } },
-      },
-      orderBy: [{ productId: "asc" }, { sessionId: "asc" }],
-    })) as Array<{
-      productId: string;
-      product?: { name?: string | null } | null;
-      session: { id: string; name: string | null };
-    }>;
-    const seen = new Set<string>();
-    const out: OpenCountConflict[] = [];
-    for (const r of rows ?? []) {
-      const key = `${r.productId}:${r.session.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        productId: r.productId,
-        productName: r.product?.name ?? null,
-        sessionId: r.session.id,
-        sessionName: r.session.name ?? null,
-      });
-    }
-    // Deterministic whatever order the rows came in: by product, then by the other count.
-    return out.sort(
-      (x, y) => x.productId.localeCompare(y.productId) || x.sessionId.localeCompare(y.sessionId),
-    );
   }
 
   async removeStockCountLine(sessionId: string, productId: string) {
@@ -3128,6 +3070,9 @@ export class InventoryService {
     if (session.lines.length === 0) {
       throw new BadRequestException("Nothing counted yet");
     }
+    // SA-999: the early answer. The read under the lock below is the authority (the seed may finish or start
+    // between these two reads); this one only spares a lock connection.
+    refuseIfSeeding(session);
     // A product that can never be counted (gone, or a FAMILY: WS8) is refused HERE, before a lock
     // connection is spent. The same check runs again on the lines re-read under the lock. "Finish with skips" decides this
     // under the lock instead.
@@ -3139,16 +3084,19 @@ export class InventoryService {
 
     let held;
     try {
-      held = await this.runUnderCountLock(id, () =>
-        this.commitStockCountBatches({
+      held = await this.runUnderCountLock(id, async () => {
+        // SA-999: the FIRST read under the exclusive lock. The seed's batches hold the shared form of it, so
+        // none is mid-flight here; "seeding" (running, or its process died) is the coded 409, nothing written.
+        await refuseWhileSeeding(this.prisma.forTenant(), id);
+        return this.commitStockCountBatches({
           id,
           reference,
           rawEffectiveDate: dto.effectiveDate,
           notes: dto.notes,
           finishWithSkips: dto.finishWithSkips === true,
           user,
-        }),
-      );
+        });
+      });
     } catch (e) {
       // Every "busy" answer the committer can raise - no lock connection, retries exhausted in a batch
       // (retryStockTx's 503), a raw lock timeout / deadlock outside a batch - becomes ONE 503 that also
@@ -3258,7 +3206,7 @@ export class InventoryService {
     // One open count per product (SA-767 r-note 5 SA-3): an overlap left by legacy sessions refuses the
     // commit before anything is written, "finish with skips" included. The operator removes the
     // products from one of the counts.
-    const overlaps = await this.findOpenCountConflicts(
+    const overlaps = await findOpenCountConflicts(
       this.prisma.forTenant(),
       [...new Set(lines.map((l) => l.productId))],
       id,
@@ -3720,58 +3668,11 @@ export class InventoryService {
     // weighted average here would fabricate a bogus correction, so mirror that:
     // carry the existing average forward untouched and never correct it.
     const isStandard = product.costingMethod === CostingMethod.STANDARD;
-
-    let stock = new Prisma.Decimal(0);
-    let avg: Prisma.Decimal | null = isStandard
-      ? product.averageCost != null
-        ? costDecimal(product.averageCost)
-        : null
-      : null;
-    let hasCostfulHistory = isStandard && avg != null;
-
-    for (const m of movements) {
-      const qty = new Prisma.Decimal(m.quantity);
-      const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
-
-      if (!isStandard) {
-        switch (m.type) {
-          case MovementType.COST_BASIS:
-            if (unitCost != null && !isReplayCorrection(m)) {
-              avg = costDecimal(unitCost);
-              hasCostfulHistory = true;
-            }
-            break;
-          case MovementType.PURCHASE:
-            if (unitCost != null) {
-              if (qty.lt(0)) {
-                // B846: a bill-revert row is the exact inverse of its receipt — reverse the average
-                // (kept when the reversal empties stock), never feed a negative qty to nextAverageCost
-                // (stock + qty = 0 divides by zero).
-                if (avg != null) {
-                  avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-                  hasCostfulHistory = true;
-                }
-              } else {
-                avg = nextAverageCost(stock, avg, qty, unitCost);
-                hasCostfulHistory = true;
-              }
-            }
-            break;
-          case MovementType.ADJUSTMENT:
-            // Costed adjustments are bill-void compensations: reverse the average
-            if (unitCost != null && avg != null) {
-              if (qty.gt(0)) avg = nextAverageCost(stock, avg, qty, unitCost);
-              else if (qty.lt(0)) avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-            }
-            break;
-          default:
-            // SALE / RETURN / WRITE_OFF: quantity only, average carries forward
-            break;
-        }
-      }
-
-      stock = stock.add(qty);
-    }
+    // Row 635 (SA-902 MUST 3): the ONE fold, shared with the B562 D2 repair.
+    const { stock, avg, hasCostfulHistory } = foldLedger(movements, {
+      isStandard,
+      averageCost: product.averageCost,
+    });
 
     const stockDrift = new Prisma.Decimal(product.currentStock).sub(stock);
     const gapDetected = !stockDrift.isZero();

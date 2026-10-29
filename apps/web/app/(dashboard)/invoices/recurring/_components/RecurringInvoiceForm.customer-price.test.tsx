@@ -190,7 +190,7 @@ describe("SA-856: a recurring line pre-fills the customer's own price", () => {
     renderCreate();
     await chooseCustomer("Retail Cafe");
     await pickProduct(0);
-    fireEvent.click(screen.getByRole("button", { name: /Add Line Item/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add line item/ }));
     await pickProduct(1);
     expect(screen.getAllByDisplayValue("10.00")).toHaveLength(2);
     // The operator types their own price on line 1.

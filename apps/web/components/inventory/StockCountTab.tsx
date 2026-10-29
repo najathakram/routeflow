@@ -11,6 +11,8 @@ import {
   STOCK_COUNT_RECOUNT_COPY,
   stockCountCommitFailure,
   stockCountCommitPollMs,
+  stockCountPreparingCopy,
+  stockCountPreparingLine,
   stockCountProductInOpenCount,
   stockCountSavingLine,
   type StockCountCommitFailure,
@@ -30,6 +32,7 @@ import {
   useDiscardStockCountSession,
   useRemoveStockCountLine,
   useStartStockCount,
+  useStockCountProgress,
   useStockCountSession,
   useStockCountSessions,
   useUpsertStockCountLine,
@@ -85,9 +88,27 @@ export function StockCountTab() {
   rowsRef.current = rows;
 
   // While a commit runs, re-read the session every 2 s: its `commit` is the "Saving count… N of M".
-  const { data: sessionDetail } = useStockCountSession(sessionId, {
+  const { data: sessionDetail, refetch: refetchDetail } = useStockCountSession(sessionId, {
     pollMs: stockCountCommitPollMs(commitSession.isPending),
   });
+  // SA-999: a seeded count whose seed has not finished is "being prepared": Commit is disabled with the
+  // sentence, and the cheap progress read is polled until the server stamps the completion.
+  const detailPreparing = sessionDetail
+    ? stockCountPreparingLine(sessionDetail, sessionDetail.lines.length)
+    : null;
+  const { data: seedProgress } = useStockCountProgress(sessionId, {
+    pollMs: detailPreparing ? 2000 : false,
+  });
+  const preparingCopy =
+    detailPreparing === null
+      ? null
+      : seedProgress?.seedState === "seeding" && seedProgress.planned !== null
+        ? stockCountPreparingCopy(seedProgress.seeded, seedProgress.planned)
+        : detailPreparing;
+  React.useEffect(() => {
+    // The seed finished: re-read the session once, so the lines it wrote are on the screen.
+    if (detailPreparing && seedProgress?.seedState === "complete") void refetchDetail();
+  }, [detailPreparing, seedProgress?.seedState, refetchDetail]);
   const { data: openSessionsData } = useStockCountSessions({ status: "OPEN", limit: 5 });
   const openSessions = (openSessionsData?.data ?? []).filter((s) => s.id !== sessionId);
 
@@ -378,6 +399,8 @@ export function StockCountTab() {
   // Hydrate local rows from the server once per session id.
   React.useEffect(() => {
     if (!sessionDetail || hydratedSessionRef.current === sessionDetail.id) return;
+    // A count that is still being seeded has only some of its lines: hydrate once the seed has finished.
+    if (stockCountPreparingLine(sessionDetail, sessionDetail.lines.length) !== null) return;
     hydratedSessionRef.current = sessionDetail.id;
     setSessionMeta({
       id: sessionDetail.id,
@@ -731,7 +754,9 @@ export function StockCountTab() {
           ? "Already committed"
           : `Committed ${applied} change${applied === 1 ? "" : "s"}`,
         description:
-          result.skipped > 0 ? `${result.skipped} no-op row(s) were skipped.` : undefined,
+          result.skipped > 0
+            ? `${result.skipped} unchanged ${result.skipped === 1 ? "row was" : "rows were"} skipped.`
+            : undefined,
         variant: "success",
       });
     } catch (err: any) {
@@ -745,7 +770,7 @@ export function StockCountTab() {
       } else if (Array.isArray(missing) && missing.length) {
         toast({
           title: "Some products no longer exist",
-          description: `${missing.length} row(s) reference deleted products — remove them and retry.`,
+          description: `${missing.length} ${missing.length === 1 ? "row references a deleted product" : "rows reference deleted products"}. Remove ${missing.length === 1 ? "it" : "them"} and try again.`,
           variant: "error",
         });
       } else {
@@ -1061,6 +1086,12 @@ export function StockCountTab() {
         </Card>
       )}
 
+      {preparingCopy && (
+        <p role="status" className="text-sm font-medium text-warning">
+          {preparingCopy}
+        </p>
+      )}
+
       {rows.length > 0 && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-navy/70">
@@ -1083,7 +1114,7 @@ export function StockCountTab() {
           <Button
             type="button"
             onClick={() => setReviewOpen(true)}
-            disabled={summary.changes === 0}
+            disabled={summary.changes === 0 || preparingCopy !== null}
           >
             Review &amp; Commit
           </Button>
@@ -1099,6 +1130,7 @@ export function StockCountTab() {
         onConfirm={() => onCommit()}
         isSubmitting={commitSession.isPending}
         commitStatus={{
+          preparingCopy,
           // "Saving count… N of M": while the commit runs, or while the session says one is unfinished.
           savingCopy: stockCountSavingLine({
             pending: commitSession.isPending,

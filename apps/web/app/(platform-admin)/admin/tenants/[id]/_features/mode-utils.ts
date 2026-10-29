@@ -30,7 +30,7 @@ export function selectableOptions(options: FeatureModeOption[]): FeatureModeOpti
 
 export const MIXED_LABEL = "Both";
 
-const UNKNOWN_MODE = "a setting this screen does not recognise";
+const UNKNOWN_MODE = "a setting this screen does not recognize";
 
 /** A mode key as the registry's own label; an unknown key is described, never printed raw. */
 export function modeLabel(options: FeatureModeOption[], key: string): string {
