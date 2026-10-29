@@ -338,6 +338,58 @@ const returnedOf = (
   );
 
 /**
+ * SA-1053 (I-192): the order's refund notes minted BEFORE the order was invoiced. A standard return on a never-invoiced order is
+ * refunded as an ISSUED, itemless store-credit note that hangs on no invoice and has no order link, so the invoice-scoped
+ * readers never see it: once the order is invoiced, a typed credit on the same line is allowed on top of it. This is the ONE
+ * place that finds those notes. A note counts when it is not VOID, has no items and no invoice, and backs a non-INLINE return
+ * of this order (an INLINE return's note is counted by the inline term). `returns` are the backing returns, for the replay
+ * (each carries its `creditNoteId`, so a reader that already counted the note can skip it); `amount` is the sum of the notes.
+ * The mint is unchanged: the note stays unlinked, so settle never applies it to the order's next invoice.
+ */
+export async function loadUnlinkedRefundReturns(
+  db: any,
+  orderId: string,
+  opts: { excludeCreditNoteId?: string } = {},
+): Promise<{
+  returns: Array<{
+    creditNoteId: string;
+    items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+  }>;
+  amount: number;
+}> {
+  const rows: Array<{
+    creditNoteId: string | null;
+    items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+  }> =
+    (await db.return?.findMany?.({
+      where: { orderId, kind: { not: "INLINE" }, creditNoteId: { not: null } },
+      select: {
+        creditNoteId: true,
+        items: { select: { productId: true, qty: true, sourceOrderItemId: true } },
+      },
+    })) ?? [];
+  const noteIds = [
+    ...new Set(rows.map((r) => r.creditNoteId).filter((id): id is string => !!id)),
+  ].filter((id) => id !== opts.excludeCreditNoteId);
+  if (noteIds.length === 0) return { returns: [], amount: 0 };
+  const notes: Array<{ id: string; amount: unknown }> =
+    (await db.creditNote.findMany({
+      where: { id: { in: noteIds }, status: { not: "VOID" }, items: { none: {} }, invoiceId: null },
+      select: { id: true, amount: true },
+    })) ?? [];
+  const live = new Map(notes.map((n) => [n.id, Number(n.amount ?? 0) || 0]));
+  return {
+    returns: rows
+      .filter(
+        (r): r is typeof r & { creditNoteId: string } =>
+          !!r.creditNoteId && live.has(r.creditNoteId),
+      )
+      .map((r) => ({ creditNoteId: r.creditNoteId, items: r.items ?? [] })),
+    amount: roundMoney([...live.values()].reduce((t, a) => t + a, 0)),
+  };
+}
+
+/**
  * The credited amount + qty per invoice line (see the header). `lines` are the invoice's items; `db` is the caller's client
  * (a `tx` inside create(), `forTenant()` for the pre-checks). `excludeCreditNoteId` leaves one note out (the reissue dry run).
  */
@@ -400,18 +452,36 @@ export async function loadLineCredits(
     where: { invoiceId, status: { not: "VOID" }, items: { none: {} }, ...notThis },
     select: { id: true },
   });
+  const returns: Array<{
+    items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+  }> = [];
   if (itemless.length > 0) {
-    const returns: Array<{
-      items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
-    }> = await db.return.findMany({
-      // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a). Row 747: never an INLINE
-      // return (counted by the inline term above), the same filter the order-level query below carries, so a future
-      // stamp of an invoice/credit-note link on an inline note cannot count it twice.
-      where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
-      select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
-    });
-    credited = replayReturnedQty(lines, credited, returnedOf(returns));
+    returns.push(
+      ...(await db.return.findMany({
+        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a). Row 747: never an INLINE
+        // return (counted by the inline term above), the same filter the order-level query below carries, so a future
+        // stamp of an invoice/credit-note link on an inline note cannot count it twice.
+        where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
+        select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
+      })),
+    );
   }
+  // SA-1053 (I-192): the scope above is this invoice's notes only; the order's refunds minted before it was invoiced hang on no
+  // invoice. An invoice with no order adds nothing.
+  const orderId: string | null =
+    (
+      (await db.invoice?.findFirst?.({ where: { id: invoiceId }, select: { orderId: true } })) as {
+        orderId: string | null;
+      } | null
+    )?.orderId ?? null;
+  if (orderId) {
+    const counted = new Set(itemless.map((c) => c.id));
+    const unlinked = await loadUnlinkedRefundReturns(db, orderId, {
+      excludeCreditNoteId: opts.excludeCreditNoteId,
+    });
+    returns.push(...unlinked.returns.filter((r) => !counted.has(r.creditNoteId)));
+  }
+  if (returns.length > 0) credited = replayReturnedQty(lines, credited, returnedOf(returns));
 
   // SA-727 (M4): external refunds of STANDARD returns, attributed to this invoice only when it is its order's SOLE
   // creditable invoice (with 2+ the order pool carries them: a return is not tied to one of several invoices).
@@ -421,10 +491,7 @@ export async function loadLineCredits(
     { excludeReturnId: opts.excludeReturnId },
   );
   if (external.length > 0) {
-    const inv: { orderId: string | null } | null =
-      (await db.invoice?.findFirst?.({ where: { id: invoiceId }, select: { orderId: true } })) ??
-      null;
-    if (inv?.orderId && (await countCreditableInvoices(db, inv.orderId)) === 1)
+    if (orderId && (await countCreditableInvoices(db, orderId)) === 1)
       credited = replayReturnedQty(lines, credited, external);
   }
   return credited;
@@ -528,20 +595,34 @@ export async function loadOrderPool(
           },
           select: { id: true },
         });
+  const returns: Array<{
+    items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+  }> = [];
   if (itemless.length > 0) {
-    const returns: Array<{
-      items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
-    }> = await db.return.findMany({
-      // the CN link, not the status (legacy PROCESSED rows); never an INLINE return (counted by the inline term above)
-      // `orderId`: an order-linked note (OrderCreditNote) can be ANOTHER order's refund lump merely queued to apply here; its
-      // Return belongs to that other order and must not be attributed to this order's lines (a false refusal otherwise).
-      where: {
-        creditNoteId: { in: itemless.map((c) => c.id) },
-        kind: { not: "INLINE" },
-        orderId,
-      },
-      select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
+    returns.push(
+      ...(await db.return.findMany({
+        // the CN link, not the status (legacy PROCESSED rows); never an INLINE return (counted by the inline term above)
+        // `orderId`: an order-linked note (OrderCreditNote) can be ANOTHER order's refund lump merely queued to apply here; its
+        // Return belongs to that other order and must not be attributed to this order's lines (a false refusal otherwise).
+        where: {
+          creditNoteId: { in: itemless.map((c) => c.id) },
+          kind: { not: "INLINE" },
+          orderId,
+        },
+        select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
+      })),
+    );
+  }
+  // SA-1053 (I-192): the order's refunds minted before it was invoiced hang on no invoice and no order link, so the set above
+  // misses them. A note staff later queued to this order (OrderCreditNote) is in BOTH sets: counted once, by note id (G-N13).
+  if (ids.length > 0) {
+    const counted = new Set(itemless.map((c) => c.id));
+    const unlinked = await loadUnlinkedRefundReturns(db, orderId, {
+      excludeCreditNoteId: opts.excludeCreditNoteId,
     });
+    returns.push(...unlinked.returns.filter((r) => !counted.has(r.creditNoteId)));
+  }
+  if (returns.length > 0) {
     pinnedReturned.push(...returnedOf(returns).filter((r) => r.orderItemId));
     credited = replayReturnedQty(lines, credited, returnedOf(returns));
   }
