@@ -135,6 +135,7 @@ describeDb("units_v1 ladder — real Postgres", () => {
     };
     const ladder = (await ladderOf(tenantA)).get(productId) ?? [];
     return buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: ladder,
       resolved: resolveLineUnits(product, ladder, { unitLabel: label }),
