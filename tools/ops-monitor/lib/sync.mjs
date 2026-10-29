@@ -7,15 +7,23 @@
 //
 // syncEvents / planSync are pure. runSync does the IO (pull, build, append) and is what
 // `rf sync`, the PC monitor's 5-minute timer and `rf brief --refresh` call.
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { BUG_ID_RE } from "./schema.mjs";
-import { parseRegisterReport, plain, tables } from "./backfill.mjs";
+import { BUG_ID_RE, DONE_STATUSES } from "./schema.mjs";
+import {
+  parsePlanTrains,
+  parseRegisterReport,
+  pickLatestPlan,
+  planFamilies,
+  plain,
+  tables,
+} from "./backfill.mjs";
 import { loadConfig, machineId, specsDir as defaultSpecsDir } from "./config.mjs";
 import { newEventId } from "./ids.mjs";
 import { fold } from "./fold.mjs";
 import { validateEvent } from "./schema.mjs";
+import { redact } from "./cloud.mjs";
 
 export const SYNC_ACTOR = "register-sync";
 const BACKFILL_ACTOR = "backfill";
@@ -24,7 +32,18 @@ const ANSWERED_WORDS = new Set(["ANSWERED", "DONE", "STANDING YES", "DEFAULT IN 
 const QUEUE_STATUS_RE = /\b(ANSWERED|DONE|STANDING YES|DEFAULT IN EFFECT|BOOKED|OPEN|CHECK)\b/;
 const DECISION_FILE_RE = /\bD-\d{4}-\d{2}-\d{2}-[A-Za-z0-9._-]*?\.md\b/;
 // Fields a register cell can empty; an emptied cell clears them (other fields are never cleared).
-const NULLABLE = new Set(["lane", "train", "area", "parent", "eta", "gate", "trainLabel"]);
+const NULLABLE = new Set([
+  "lane",
+  "train",
+  "area",
+  "parent",
+  "eta",
+  "gate",
+  "trainLabel",
+  "statusText",
+]);
+// A `blocked` event the register raised carries this prefix; only those are lifted by the register.
+const REGISTER_BLOCK = "register status:";
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n).trimEnd() : s);
 const norm = (s) =>
@@ -176,10 +195,13 @@ export function planSync({
   state,
   registerMd = "",
   ownerQueueMd = "",
+  planMd = "",
+  planName = "the plan",
   config,
   machine,
   now,
   rand = Math.random,
+  mask = (t) => t,
 }) {
   const events = [];
   const summary = {
@@ -187,6 +209,9 @@ export function planSync({
     registerEdits: 0,
     answered: 0,
     dropped: 0,
+    planNew: 0,
+    planEdits: 0,
+    planDropped: 0,
     skipped: [],
     invalid: [],
     renamed: [],
@@ -215,17 +240,65 @@ export function planSync({
     return true;
   };
 
+  const emitBlock = (id, text) =>
+    emit("blocked", id, { by: clip(`${REGISTER_BLOCK} ${text}`, 300) });
+
   // ---- register rows ----
   const releases = new Set(
     [...state.items.values()].filter((i) => i.type === "release").map((i) => i.id),
   );
   const known = new Set(state.items.keys());
-  const { drafts: allDrafts } = parseRegisterReport(registerMd ?? "", config);
+  const { drafts: allDrafts } = parseRegisterReport(registerMd ?? "", config, mask);
   // A register with duplicate row ids is a corrupted snapshot: ingest none of it (the owner queue
   // still syncs) and say so, rather than create phantom rows from whichever copy came first.
   const dupes = duplicateRowIds(allDrafts.map((d) => d.id));
   if (dupes.length) summary.refused = `duplicate register row ids: ${dupes.join(", ")}`;
   const drafts = dupes.length ? [] : allDrafts;
+  // ---- plan trains: one release item per family (T5a + T5b -> T5), BEFORE the register rows so a
+  // row's `train: "T5"` is known in this same batch; old trains absent from the plan are dropped ----
+  const planFams = planMd
+    ? planFamilies(parsePlanTrains(planMd), {
+        known: new Set([...known, ...allDrafts.map((d) => d.id)]),
+        extraMembers: (fid) => allDrafts.filter((d) => d.fields.train === fid).map((d) => d.id),
+      })
+    : [];
+  for (const fam of planFams) {
+    const ex = state.items.get(fam.id);
+    const want = { title: fam.title, members: fam.members, parts: fam.parts };
+    if (!ex) {
+      if (
+        emit("item.new", fam.id, {
+          ...want,
+          type: "release",
+          priority: "P1",
+          status: "planned",
+          source: "plan",
+        })
+      ) {
+        summary.planNew++;
+        releases.add(fam.id);
+        known.add(fam.id);
+      }
+      continue;
+    }
+    if (ex.type !== "release") continue;
+    releases.add(fam.id);
+    const diff = {};
+    for (const [k, v] of Object.entries(want)) if (!same(v, ex[k] ?? [])) diff[k] = v;
+    if (Object.keys(diff).length && emit("item.edit", fam.id, { fields: diff }))
+      summary.planEdits++;
+  }
+  if (planFams.length) {
+    const inPlan = new Set(planFams.map((f) => f.id));
+    for (const it of state.items.values()) {
+      if (it.type !== "release" || inPlan.has(it.id) || DONE_STATUSES.includes(it.status)) continue;
+      const creator = (it.history ?? []).find((h) => h.kind === "item.new")?.actor;
+      if (!["plan", "board"].includes(it.source) && creator !== BACKFILL_ACTOR) continue;
+      if (emit("status", it.id, { status: "dropped", note: `not in ${planName}` }))
+        summary.planDropped++;
+    }
+  }
+
   const renamed = new Map(); // old id -> alias, for the later passes of this same batch
   const idNow = (id) => renamed.get(id) ?? id;
   for (const draft of drafts) {
@@ -257,6 +330,7 @@ export function planSync({
         summary.registerNew++;
         known.add(id);
         if (fields.type === "release") releases.add(id);
+        if (draft.blocked) emitBlock(id, draft.blocked);
       }
       continue;
     }
@@ -265,9 +339,15 @@ export function planSync({
         summary.registerNew++;
         known.add(id);
         if (fields.type === "release") releases.add(id);
+        if (draft.blocked) emitBlock(id, draft.blocked);
       }
       continue;
     }
+    // A register row that says "blocked" keeps the item's status and blocks it; leaving "blocked"
+    // lifts only a block the register itself raised.
+    if (draft.blocked && !it.blocked) emitBlock(id, draft.blocked);
+    else if (!draft.blocked && it.blocked && String(it.blocked.by ?? "").startsWith(REGISTER_BLOCK))
+      emit("unblocked", id, { note: "register status no longer blocked" });
     const last = it.registerFields ?? {};
     const diff = {};
     for (const [k, v] of Object.entries(fields)) {
@@ -338,10 +418,13 @@ const readText = (p) => {
 };
 
 /**
- * Pull, build, append: one sync pass over the specs clone. The pull runs under the non-waiting
- * lock, so a busy lock (a lane is writing) skips this pass with `{ ran: false, reason: "busy" }`.
+ * Pull, build, append: one sync pass over the specs clone. The pull runs under the specs lock.
+ * With `lockWaitMs` (the monitor's timer) it waits up to that long for the lock, so the collector's
+ * 30-second specs pass cannot starve it; without it the lock is tried once. A lock still busy skips
+ * this pass with `{ ran: false, reason: "busy" }`.
  * Returns `{ ran, events, appended, pushed, warnings, summary, pullError }`; `dry` builds without
- * appending. In generated register mode nothing runs (the register is an output).
+ * appending. `lockHeld: true` means the caller holds the specs lock and just pulled: no lock, no
+ * pull. In generated register mode nothing runs (the register is an output).
  */
 export async function runSync({
   dir = defaultSpecsDir(),
@@ -353,21 +436,50 @@ export async function runSync({
   push = true,
   bugIds,
   rand,
+  mask,
+  lockWaitMs = 0,
+  lockHeld = false,
 } = {}) {
   const store = await import("./store.mjs");
   const config = loadConfig(dir);
   if (registerModeOf(config) === "generated") return { ran: false, reason: "generated" };
-  const pulled = await store.tryWithSpecsLock(() => store.syncSpecs(dir, { bugIds }), { home });
+  const pull = () => store.syncSpecs(dir, { bugIds });
+  let pulled;
+  if (lockHeld) {
+    // The caller (the collector's specs pass) holds the lock and has just pulled.
+    pulled = { ran: true, value: null };
+  } else if (lockWaitMs > 0) {
+    try {
+      pulled = { ran: true, value: await store.withSpecsLock(pull, { home, waitMs: lockWaitMs }) };
+    } catch (err) {
+      if (!/could not acquire specs lock/.test(String(err?.message ?? err))) throw err;
+      pulled = { ran: false };
+    }
+  } else {
+    pulled = await store.tryWithSpecsLock(pull, { home });
+  }
   if (!pulled.ran) return { ran: false, reason: "busy" };
   const state = fold(store.readAllEvents(dir));
+  const planDir = join(dir, "releases");
+  let planName = null;
+  try {
+    planName = pickLatestPlan(readdirSync(planDir), (f) =>
+      (readText(join(planDir, f)) ?? "").slice(0, 2000),
+    );
+  } catch {
+    // no releases folder: no plan
+  }
   const out = planSync({
     state,
     registerMd: readText(join(dir, "register", "WORK-REGISTER.md")) ?? "",
     ownerQueueMd: readText(join(dir, "priorities", "OWNER-QUEUE.md")) ?? "",
+    planMd: planName ? (readText(join(dir, "releases", planName)) ?? "") : "",
+    planName: planName ?? undefined,
     config,
     machine: machine ?? machineId(config, env),
     now,
     rand,
+    mask,
   });
   const result = {
     ran: true,
@@ -381,9 +493,64 @@ export async function runSync({
     pullError: pulled.value?.error ?? null,
   };
   if (dry || out.events.length === 0) return result;
-  const res = await store.appendEvents(out.events, { dir, home, push, bugIds });
+  const res = await store.appendEvents(out.events, { dir, home, push, bugIds, lockHeld });
   result.appended = res.events.length;
   result.pushed = res.pushed;
   result.warnings = res.warnings;
   return result;
+}
+
+/**
+ * One line for a runSync result that appended nothing (the timer logs it once per change), or null
+ * when the pass appended events (the caller logs those).
+ */
+export function describeSyncOutcome(res, { mask = (t) => t } = {}) {
+  if (!res) return "register sync: no result";
+  if (res.ran === false) {
+    if (res.reason === "busy") return `register sync skipped: busy (specs lock held)`;
+    if (res.reason === "generated") return "register sync off: the register is in generated mode";
+    return `register sync did not run: ${res.reason ?? "unknown reason"}`;
+  }
+  if (res.appended > 0) return null;
+  const parts = [];
+  if (res.pullError) parts.push(`pull failed: ${mask(redact(res.pullError)).slice(0, 200)}`);
+  if (res.warnings?.length)
+    parts.push(`warnings: ${mask(redact(res.warnings.join("; "))).slice(0, 200)}`);
+  if (res.events?.length && !res.appended)
+    parts.push(`${res.events.length} event(s) planned, none appended`);
+  return parts.length
+    ? `register sync: ${parts.join("; ")}`
+    : "register sync: register and events agree (0 changes)";
+}
+
+/**
+ * How many events a sync would append right now: a DRY planSync over the given events and the
+ * hand-kept files (pure, read-only, so the cloud can run it on its clone). null in generated mode.
+ * The items-stale alarm fires only when this is >= 1, so a register commit that syncs to nothing
+ * (notes, formatting) never raises it, and an unrelated lane event never hides a stalled sync.
+ */
+export function pendingRegisterChanges({
+  events,
+  registerMd = "",
+  ownerQueueMd = "",
+  planMd = "",
+  planName,
+  config,
+  now = Date.now(),
+  mask = (t) => t,
+}) {
+  if (registerModeOf(config) === "generated") return null;
+  const out = planSync({
+    state: fold(events ?? []),
+    registerMd,
+    ownerQueueMd,
+    planMd,
+    planName,
+    config,
+    machine: "dry-run",
+    now,
+    rand: () => 0.5,
+    mask,
+  });
+  return out.events.length;
 }

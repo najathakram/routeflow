@@ -95,7 +95,7 @@ export function InstallAppButton({
         {children ?? (
           <>
             <Download className="h-4 w-4" />
-            Get the App
+            Get the app
           </>
         )}
       </button>

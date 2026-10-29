@@ -27,9 +27,15 @@ export async function buildSplitInvoicesService<T>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the (possibly requireActual'd) class
   InvoicesServiceCls: new (...args: any[]) => T,
   prisma: unknown,
-  ledger: { writeSaleEntries: jest.Mock; reverseInvoiceEntries: jest.Mock } = {
+  ledger: {
+    writeSaleEntries: jest.Mock;
+    reverseInvoiceEntries?: jest.Mock;
+    /** SA-839: the one ledger entry point void / unvoid / resync call. */
+    settleRegulatedLedger?: jest.Mock;
+  } = {
     writeSaleEntries: jest.fn(),
     reverseInvoiceEntries: jest.fn(),
+    settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
   },
 ): Promise<T> {
   let invoiceSeq = 0;

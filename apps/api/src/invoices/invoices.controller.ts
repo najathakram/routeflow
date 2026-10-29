@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -20,8 +21,10 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { refDedupeFromRequest } from "./payment-ref-dedupe";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { InvoicesService } from "./invoices.service";
+import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import {
   CreateInvoiceDto,
@@ -33,6 +36,7 @@ import {
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { UpdateInvoiceDto } from "./dto/update-invoice.dto";
+import { DuplicateInvoiceDto } from "./dto/duplicate-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
@@ -51,7 +55,7 @@ export class InvoicesController {
 
   @Post()
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
-    return this.invoicesService.create(dto, user.sub);
+    return this.invoicesService.create(dto, user);
   }
 
   @Post("from-order/:orderId")
@@ -102,8 +106,17 @@ export class InvoicesController {
 
   @Post("payments/record")
   @Roles(UserRole.OPERATOR)
-  recordStandalonePayment(@Body() dto: StandalonePaymentDto, @CurrentUser() user: JwtPayload) {
-    return this.invoicesService.recordStandalonePayment(dto, { actor: user?.sub ?? null });
+  recordStandalonePayment(
+    @Body() dto: StandalonePaymentDto,
+    @CurrentUser() user: JwtPayload,
+    // SA-824: optional (an old client is unchanged); a retry with the same key records once.
+    @Headers("idempotency-key") rawIdempotencyKey?: string,
+  ) {
+    return this.invoicesService.recordStandalonePayment(dto, {
+      actor: user?.sub ?? null,
+      idempotencyKey: optionalIdempotencyKey(rawIdempotencyKey),
+      refDedupe: refDedupeFromRequest(user, dto), // row 498: the staff "record anyway" flag
+    });
   }
 
   @Get("payments/:paymentId")
@@ -174,8 +187,12 @@ export class InvoicesController {
     @Param("id") id: string,
     @Body() dto: UpdateInvoiceDto,
     @CurrentUser() user: JwtPayload,
+    @Headers("user-agent") userAgent?: string,
+    @Headers("x-app-version") appVersion?: string,
+    @Headers("x-client") xClient?: string,
   ) {
-    return this.invoicesService.update(id, dto, user.sub);
+    // SA-837 row 500 step 1: the client identity only feeds the missing-token warn log.
+    return this.invoicesService.update(id, dto, user, { userAgent, appVersion, xClient });
   }
 
   /**
@@ -204,10 +221,14 @@ export class InvoicesController {
   /** Send the invoice as an actual email (marks as SENT). Optional `variant`
    * (draft|final) controls which version of the PDF is attached. */
   @Post(":id/send-email")
-  sendEmail(@Param("id") id: string, @Body() body: { email?: string; variant?: string }) {
+  sendEmail(
+    @Param("id") id: string,
+    @Body() body: { email?: string; variant?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
     const variant =
       body?.variant === "draft" || body?.variant === "final" ? body.variant : undefined;
-    return this.invoicesService.sendEmail(id, body?.email, variant);
+    return this.invoicesService.sendEmail(id, body?.email, variant, user?.sub ?? null);
   }
 
   /** Send a payment reminder email (does not change invoice status). */
@@ -233,8 +254,12 @@ export class InvoicesController {
   @Post(":id/reopen") reopenInvoice(@Param("id") id: string) {
     return this.invoicesService.reopenInvoice(id);
   }
-  @Post(":id/duplicate") duplicate(@Param("id") id: string) {
-    return this.invoicesService.duplicate(id);
+  @Post(":id/duplicate") duplicate(
+    @Param("id") id: string,
+    @Body() dto: DuplicateInvoiceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.duplicate(id, user, dto);
   }
 
   @Get(":id/pdf")
@@ -255,8 +280,16 @@ export class InvoicesController {
   }
 
   @Post(":id/payments")
-  recordPayment(@Param("id") id: string, @Body() dto: RecordInvoicePaymentDto) {
-    return this.invoicesService.recordPayment(id, dto);
+  recordPayment(
+    @Param("id") id: string,
+    @Body() dto: RecordInvoicePaymentDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("idempotency-key") rawIdempotencyKey?: string, // SA-824: optional, as above
+  ) {
+    return this.invoicesService.recordPayment(id, dto, {
+      idempotencyKey: optionalIdempotencyKey(rawIdempotencyKey),
+      refDedupe: refDedupeFromRequest(user, dto), // row 498: the staff "record anyway" flag
+    });
   }
 
   @Patch(":id/payments/:paymentId/void")
@@ -281,8 +314,11 @@ export class InvoicesController {
     @Param("id") id: string,
     @Param("paymentId") paymentId: string,
     @Body() dto: UpdatePaymentDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.invoicesService.updatePayment(id, paymentId, dto);
+    return this.invoicesService.updatePayment(id, paymentId, dto, {
+      refDedupe: refDedupeFromRequest(user, dto), // row 752: the staff "record anyway" flag on an edit
+    });
   }
 
   @Post(":id/price-adjustment")

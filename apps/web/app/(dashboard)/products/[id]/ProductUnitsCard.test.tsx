@@ -267,7 +267,10 @@ describe("ProductUnitsCard", () => {
   describe("the yes/no cascade prompt", () => {
     beforeEach(() => {
       mockUnits = [caseUnit, palletUnit];
-      updateMutate.mockImplementation((_b, opts) => opts?.onSuccess?.());
+      updateMutate.mockImplementation((_b, opts) => {
+        opts?.onSuccess?.();
+        opts?.onSettled?.();
+      });
     });
     const editCasePrice = () => {
       fireEvent.change(screen.getByLabelText("Case price"), { target: { value: "440" } }); // 480 -> 440
@@ -434,6 +437,7 @@ describe("K10e F18: changing the default order unit says so and can be undone (i
   const succeed = (call = updateMutate.mock.calls.length - 1) =>
     act(() => {
       updateMutate.mock.calls[call][1]?.onSuccess?.({});
+      updateMutate.mock.calls[call][1]?.onSettled?.();
     });
 
   it("the status region is mounted empty, before anything has changed (so it is announced when it fills)", () => {

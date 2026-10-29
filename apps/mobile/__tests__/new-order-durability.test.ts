@@ -232,7 +232,7 @@ describe("NewOrderScreen catalog row prices/labels a unit-sold line correctly (S
     const fn = (screen.match(/const renderProduct = useCallback\([\s\S]*?\n    \[/) ?? [""])[0];
     expect(fn).toBeTruthy();
     expect(fn).toMatch(
-      /const price = line \? lineUnitFor\(line, p, effectiveTierFor\(p\.id\)\) : tierPriceFor\(p\);/,
+      /const price = line\s*\?\s*lineUnitFor\(line, p, effectiveTierFor\(p\.id\)\)\s*:\s*pick\.shown\(p\.id, packPriceFor\(p\)\);/, // SA-882: the unadded price is packPriceFor(p).price (= tierPriceFor) or null while the gate blocks
     );
   });
 

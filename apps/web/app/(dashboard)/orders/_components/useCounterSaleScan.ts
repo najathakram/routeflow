@@ -9,12 +9,13 @@ import {
 } from "@/lib/barcode-resolve";
 import { fetchCategoryPage, findCategoryProducts } from "@/lib/counter-category-search";
 import { parseScanField } from "@/lib/counter-sale";
+import { displayProductName } from "@/lib/product-display";
 import { scanLevelForHit } from "./scan/useScanCodeHandler";
+import { ADDED_CONFIRMATION_MS, addedCopy, noProductCopy } from "./counter-scan-feedback";
 
 /** Fixed copy: a FAILED lookup is never "No product found", and never shows the server's own text. */
 export const COUNTER_SCAN_FAILED_COPY =
   "Couldn't look up the code. Check the connection and try again.";
-export const COUNTER_SCAN_NOT_FOUND_COPY = "No product found for that code.";
 
 /** One entry of the scan queue: a code, or a 1-3 digit entry that is a code only if a product matches it EXACTLY. */
 type ScanItem = { kind: "code"; code: string } | { kind: "short"; n: number; code: string };
@@ -53,6 +54,22 @@ export function useCounterSaleScan(deps: Deps) {
   const aliveRef = React.useRef(true);
   const [pendingQty, setPendingQty] = React.useState(1); // display only
   const [message, setMessage] = React.useState("");
+  // F05: "Added <name>" for the latest scan that landed; it fades by itself and goes at once on a miss.
+  const [added, setAdded] = React.useState("");
+  const addedTimerRef = React.useRef<number | null>(null);
+  const clearAdded = React.useCallback(() => {
+    if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
+    addedTimerRef.current = null;
+    setAdded("");
+  }, []);
+  const confirmAdded = React.useCallback((product: any) => {
+    if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
+    setAdded(addedCopy(displayProductName(product)));
+    addedTimerRef.current = window.setTimeout(() => {
+      addedTimerRef.current = null;
+      setAdded("");
+    }, ADDED_CONFIRMATION_MS);
+  }, []);
   const [picker, setPicker] = React.useState<ScanPicker | null>(null);
   const [failed, setFailed] = React.useState(false);
   const [waiting, setWaiting] = React.useState(0);
@@ -61,6 +78,7 @@ export function useCounterSaleScan(deps: Deps) {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
+      if (addedTimerRef.current !== null) window.clearTimeout(addedTimerRef.current);
     };
   }, []);
 
@@ -125,9 +143,11 @@ export function useCounterSaleScan(deps: Deps) {
             });
             return; // the item stays at the head until one is chosen
           }
-          setMessage(COUNTER_SCAN_NOT_FOUND_COPY);
+          clearAdded();
+          setMessage(noProductCopy(item.code));
           setCarry(1);
         } else if (result.archived) {
+          clearAdded();
           setMessage(archivedMessage(result.product));
           setCarry(1);
         } else if (result.ambiguous && result.matches) {
@@ -140,6 +160,7 @@ export function useCounterSaleScan(deps: Deps) {
             scanLevelForHit(item.code, result.product),
             carryRef.current,
           );
+          confirmAdded(result.product);
           setMessage("");
           setCarry(1);
         }
@@ -150,7 +171,7 @@ export function useCounterSaleScan(deps: Deps) {
       if (aliveRef.current && !pausedRef.current && queueRef.current.length > 0) void drain();
       else depsRef.current.refocus();
     }
-  }, []);
+  }, [clearAdded, confirmAdded]);
 
   const resume = () => {
     pausedRef.current = false;
@@ -176,6 +197,7 @@ export function useCounterSaleScan(deps: Deps) {
     const qty = picker?.qty ?? 1;
     setPicker(null);
     depsRef.current.add(product, "BOX", qty); // a picker click is a whole selling unit, as in Create Order
+    confirmAdded(product);
     setCarry(1);
     setMessage("");
     shift();
@@ -234,14 +256,19 @@ export function useCounterSaleScan(deps: Deps) {
     pausedRef.current = false;
     setCarry(1);
     setMessage("");
+    clearAdded();
     setPicker(null);
     setFailed(false);
     setWaiting(0);
   };
+  /** F05: the miss message goes at the next keystroke in the box. */
+  const dismissMessage = () => setMessage("");
 
   return {
     pendingQty,
     message,
+    added,
+    dismissMessage,
     picker,
     failed,
     waiting,

@@ -79,6 +79,16 @@ describe("OrdersService.createSale — counter-sale options and resume", () => {
     expect(b.create.mock.calls[0][2]).not.toHaveProperty("priceEditAllowed");
   });
 
+  it("sale.creditPaidNow reaches create() as the same function, and is absent when unset (S1)", async () => {
+    const fn = (total: number) => total;
+    const a = await setup();
+    await a.h.service.createSale(dto, operatorPayload as never, { creditPaidNow: fn });
+    expect(a.create.mock.calls[0][2]).toMatchObject({ skipAutoMerge: true, creditPaidNow: fn });
+    const b = await setup();
+    await b.h.service.createSale(dto, operatorPayload as never, { counterSale: true });
+    expect(b.create.mock.calls[0][2]).not.toHaveProperty("creditPaidNow");
+  });
+
   it("suppressInvoiceNotify sends the invoice with { suppressNotify: true } (walk-in: no INVOICE_SENT email)", async () => {
     const { h, invoices } = await setup();
     await h.service.createSale(dto, operatorPayload as never, { suppressInvoiceNotify: true });

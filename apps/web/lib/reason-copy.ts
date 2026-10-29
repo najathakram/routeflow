@@ -1,4 +1,5 @@
 import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
+import type { ReturnReason } from "./api/returns";
 import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
 
 /**
@@ -146,6 +147,39 @@ export function describeReturnReason(reason: string): string {
   return Object.prototype.hasOwnProperty.call(RETURN_REASON_COPY, reason)
     ? RETURN_REASON_COPY[reason]
     : "No reason given";
+}
+
+/**
+ * The reason options of a return form, by where the goods came from. The VALUES are the Prisma `ReturnReason` enum (no
+ * enum change, L-072); only the words differ: a delivery return keeps the delivery words, a counter sale says what
+ * happened at the register.
+ */
+export type ReturnReasonContext = "delivery" | "counter";
+
+const RETURN_REASON_OPTION_LABEL: Record<
+  ReturnReasonContext,
+  ReadonlyArray<[ReturnReason, string]>
+> = {
+  delivery: [
+    ["DAMAGED", "Damaged"],
+    ["WRONG_ITEM", "Wrong Item"],
+    ["CUSTOMER_REFUSED", "Customer Refused"],
+    ["QUALITY_ISSUE", "Quality Issue"],
+    ["EXCESS_ORDER", "Excess / Overdelivery"],
+  ],
+  counter: [
+    ["DAMAGED", "Damaged"],
+    ["WRONG_ITEM", "Wrong item"],
+    ["CUSTOMER_REFUSED", "Changed their mind"],
+    ["QUALITY_ISSUE", "Faulty"],
+    ["EXCESS_ORDER", "Bought too many"],
+  ],
+};
+
+export function returnReasonOptions(
+  context: ReturnReasonContext,
+): Array<{ value: ReturnReason; label: string }> {
+  return RETURN_REASON_OPTION_LABEL[context].map(([value, label]) => ({ value, label }));
 }
 
 // ─── Save errors (mutations) ─────────────────────────────────────────────────

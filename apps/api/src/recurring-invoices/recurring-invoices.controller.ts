@@ -20,6 +20,7 @@ import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
+import { RunRecurringInvoiceDto } from "./dto/run-recurring-invoice.dto";
 
 // WP5a (R3b.3, R3b.5): flag.recurring_invoices ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
@@ -64,8 +65,13 @@ export class RecurringInvoicesController {
     return this.recurringInvoicesService.activate(id, user.sub);
   }
 
+  /** Row 510: "Run now" is a staff member deciding; a restricted line warns (409), the resubmit carries the ack. */
   @Post(":id/run")
-  runNow(@Param("id") id: string) {
-    return this.recurringInvoicesService.runNow(id);
+  runNow(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto?: RunRecurringInvoiceDto,
+  ) {
+    return this.recurringInvoicesService.runNow(id, user, dto);
   }
 }

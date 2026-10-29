@@ -51,6 +51,7 @@ function build(enabled: boolean) {
       // An add-on SKU grants a plan flag to a tenant on ANY plan (grantsFlags), like MSRP/forecasting.
       addonSkus: [{ sku: "SOME_SKU", grantsFlags: [SKU_GRANTED] }],
     }),
+    getPublishedCatalog: jest.fn().mockResolvedValue({ addonSkus: [] }),
   };
   const flag = { isEnabled: jest.fn().mockResolvedValue(enabled) };
   const caches = {
@@ -618,5 +619,31 @@ describe("PlanTransitionConfigService (A2 step b)", () => {
     ).toEqual({ action: "none" });
     expect(snapshots.snapshot).not.toHaveBeenCalled();
     expect(snapshots.restoreLatest).not.toHaveBeenCalled();
+  });
+});
+
+// Row 640 review fold: the coverage the restored-GRANT verdict reads.
+describe("PlanTransitionConfigService.planAllowsFor coverage (row 640)", () => {
+  it("prices a SKU the PINNED version predates at the published one, includedAt stays the target version", async () => {
+    const { svc, catalog } = build(true);
+    catalog.getVersionForTenant.mockResolvedValue({
+      definitions: [{ planKey: HIGH, featureFlags: [IN_PLAN] }],
+      addonSkus: [{ sku: "SOME_SKU", monthlyPrice: 5, grantsFlags: [SKU_GRANTED] }],
+    });
+    catalog.getPublishedCatalog.mockResolvedValue({
+      addonSkus: [{ sku: "OCR_PACK_250", monthlyPrice: 19, includedAtPlan: null }],
+    });
+    const allows: any = await svc.planAllowsFor(HIGH, "v-old");
+    expect(allows.coverage.priceOf("OCR_PACK_250")).toBe(19);
+    expect(allows.coverage.priceOf("SOME_SKU")).toBe(5);
+    expect(allows.coverage.includedAt("OCR_PACK_250")).toBe(false);
+  });
+
+  it("exposes the plan own flags apart from the SKU-granted ones, and each SKU grantsFlags", async () => {
+    const { svc } = build(true);
+    const allows: any = await svc.planAllowsFor(HIGH, "v1");
+    expect([...allows.coverage.planFlags]).toEqual([IN_PLAN]);
+    expect(allows.coverage.grantsFlagsOf("SOME_SKU")).toEqual([SKU_GRANTED]);
+    expect(allows.coverage.grantsFlagsOf("OTHER")).toEqual([]);
   });
 });

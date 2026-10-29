@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { usePreferences } from "@/lib/api/users";
 import type { Order } from "@/lib/api/orders";
-import { PREF } from "@routeflow/types";
+import { PREF, type RestrictionAck } from "@routeflow/types";
 
 /**
  * POS mode (SA-763r P-2): a staff order created with `fulfillPath: PICKUP` from Create Order.
@@ -100,10 +100,10 @@ export function usePosFinish() {
   return useMutation<
     Order,
     PosFinishError,
-    { orderId: string; invoice: boolean; fromStatus?: string | null }
+    { orderId: string; invoice: boolean; fromStatus?: string | null } & RestrictionAck
   >({
     meta: { localErrorToast: true }, // the Create Order modal toasts which half is missing
-    mutationFn: async ({ orderId, invoice, fromStatus }) => {
+    mutationFn: async ({ orderId, invoice, fromStatus, ...ack }) => {
       let order: Order | undefined;
       try {
         // The API's table has no DRAFT -> CONFIRMED edge (DRAFT -> PENDING only), so a merge into an open
@@ -111,7 +111,7 @@ export function usePosFinish() {
         // the order now reads PENDING/CONFIRMED (a retry, or someone else promoted it).
         if (fromStatus === "DRAFT") {
           try {
-            await apiClient.patch(`/orders/${orderId}/status`, { status: "PENDING" });
+            await apiClient.patch(`/orders/${orderId}/status`, { status: "PENDING", ...ack });
           } catch (e) {
             const cur = await promotedAlready(orderId, e);
             if (!cur) throw e;
@@ -119,8 +119,9 @@ export function usePosFinish() {
             if (cur.status === "CONFIRMED") order = cur;
           }
         }
-        order ??= (await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" }))
-          .data;
+        order ??= (
+          await apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED", ...ack })
+        ).data;
       } catch (e) {
         throw new PosFinishError("confirm", e);
       }

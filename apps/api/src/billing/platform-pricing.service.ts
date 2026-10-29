@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { StripeService } from "./stripe.service";
+import { ensurePlanProduct, stripeProductId } from "./stripe-product";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { findPlanDefinition, normalizePlanKey } from "./plan-catalog.constants";
 import { toCents } from "@routeflow/pricing";
@@ -22,7 +24,8 @@ export interface ResolvedTenantPricing {
 
 export interface CheckoutPriceData {
   currency: "usd";
-  product_data: { name: string };
+  /** The shared `rf_plan_<code>` product (W-810): active, so the same line can be pushed later. */
+  product: string;
   /** Integer cents — Stripe requires unit_amount as an integer. */
   unit_amount: number;
   recurring: { interval: "month" | "year" };
@@ -43,6 +46,7 @@ export class PlatformPricingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly planCatalog: PlanCatalogService,
+    private readonly stripe: StripeService,
   ) {}
 
   /**
@@ -149,6 +153,8 @@ export class PlatformPricingService {
     tenantId: string,
     interval: "month" | "year",
     proposed?: ProposedOverride,
+    /** `readOnly`: a plan/dry-run/tenant read - name the product by its deterministic id, touch Stripe never. */
+    opts: { readOnly?: boolean } = {},
   ): Promise<CheckoutPriceData> {
     const pricing = proposed
       ? await this.resolveTenantPricingWith(tenantId, proposed)
@@ -156,9 +162,9 @@ export class PlatformPricingService {
     const amount = interval === "year" ? pricing.annual : pricing.monthly;
     return {
       currency: pricing.currency,
-      product_data: {
-        name: `RouteFlow ${pricing.planName}`,
-      },
+      product: opts.readOnly
+        ? stripeProductId("plan", pricing.planKey)
+        : await ensurePlanProduct(this.stripe.client, pricing.planKey, pricing.planName),
       unit_amount: toCents(amount),
       recurring: { interval },
     };

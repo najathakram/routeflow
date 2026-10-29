@@ -15,6 +15,20 @@ export function requireIdempotencyKey(raw: string | undefined, action: string): 
       message: `Idempotency-Key header is required to ${action}`,
     });
   }
+  return assertIdempotencyKeyFormat(key);
+}
+
+/**
+ * SA-824: the OPTIONAL variant, for the customer payment writers (POST /invoices/payments/record,
+ * POST /invoices/:id/payments, POST /customers/:id/advance-payments). Same normaliser and format; an
+ * absent or blank header is `undefined` (an old client keeps today's behaviour), a malformed one is 400.
+ */
+export function optionalIdempotencyKey(raw: string | undefined): string | undefined {
+  const key = raw?.trim();
+  return key ? assertIdempotencyKeyFormat(key) : undefined;
+}
+
+function assertIdempotencyKeyFormat(key: string): string {
   if (!/^[\x21-\x7e]{1,128}$/.test(key)) {
     throw new BadRequestException(
       "Idempotency-Key must be at most 128 printable characters with no spaces",

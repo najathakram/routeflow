@@ -65,7 +65,7 @@ describe("Settings — fleet-off clean UI", () => {
     mockMe = { id: "me", role: "TENANT_ADMIN" };
   });
 
-  it("fleet-OFF: Add User offers no Driver role", async () => {
+  it("fleet-OFF: Add user offers no Driver role", async () => {
     fleet = false;
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
@@ -73,7 +73,7 @@ describe("Settings — fleet-off clean UI", () => {
     expect(roleOptions(within(await screen.findByRole("dialog")))).toEqual(["Operator"]);
   });
 
-  it("fleet-ON (today's UI, unchanged): Add User offers Driver and Operator", async () => {
+  it("fleet-ON (today's UI, unchanged): Add user offers Driver and Operator", async () => {
     fleet = true;
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
@@ -85,7 +85,7 @@ describe("Settings — fleet-off clean UI", () => {
     tab = "account";
     fleet = false;
     const { unmount } = renderWithProviders(<SettingsPage />);
-    expect(await screen.findByText("Google Sign-In")).toBeInTheDocument();
+    expect(await screen.findByText("Google sign-in")).toBeInTheDocument();
     expect(screen.queryByText("Act as driver")).not.toBeInTheDocument();
     unmount();
 

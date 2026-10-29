@@ -71,6 +71,34 @@ describe("ParkedSalesDialog: row total (row 330e)", () => {
     expect(row).not.toHaveTextContent("$108.00");
   });
 
+  it("a parked row names its items instead of '1 line'", async () => {
+    renderWithProviders(
+      <ParkedSalesDialog
+        openerRef={{ current: null }}
+        parked={parkedWith([
+          {
+            ...ROW,
+            lineCount: 3,
+            items: [
+              { name: "Cola 12oz Can", qty: 2 },
+              { name: "Ice Bag 10lb", qty: 1 },
+              { name: "Chips", qty: 1 },
+            ],
+            itemCount: 3,
+          },
+          { ...ROW, id: "p2", lineCount: 1 },
+        ])}
+      />,
+    );
+    const row = await screen.findByTestId("parked-row-p1");
+    expect(within(row).getByTestId("parked-row-items")).toHaveTextContent(
+      "Cola 12oz Can ×2, Ice Bag 10lb +1 more",
+    );
+    expect(row).not.toHaveTextContent("3 lines");
+    // an older server's row (no names) keeps the line count
+    expect(await screen.findByTestId("parked-row-p2")).toHaveTextContent("1 line");
+  });
+
   it("row 368: a default walk-in row reads its time once, in 12 h: Walk-in · 7:26 PM", async () => {
     renderWithProviders(
       <ParkedSalesDialog

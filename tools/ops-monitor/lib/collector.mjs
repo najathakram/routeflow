@@ -19,7 +19,7 @@ export const DEFAULT_INTERVALS = {
 // Cloud: webhooks make it real time; the polls are the backstop.
 export const CLOUD_INTERVALS = {
   github: 120,
-  specs: 120,
+  specs: 30,
   branches: 300,
   bugs: 300,
   areas: 600,
@@ -52,7 +52,7 @@ export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 
 const [OWNER, REPO] = GITHUB_REPO.split("/");
-const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } }`;
+const CONTEXTS = `statusCheckRollup { state contexts(first: 50) { nodes { __typename ... on CheckRun { name conclusion status startedAt completedAt checkSuite { createdAt updatedAt } } ... on StatusContext { context state } } } }`;
 export const GRAPHQL_QUERY = `query {
   repository(owner: "${OWNER}", name: "${REPO}") {
     visibility
@@ -77,13 +77,38 @@ export const GRAPHQL_QUERY = `query {
 
 // ---------- CI checks: contexts -> per-name runs -> gate / probes ----------
 
-const RUN_RANK = { failure: 5, pending: 4, success: 3, cancelled: 2, skipped: 1 };
+const RUN_RANK = { failure: 6, pending: 5, success: 4, cancelled: 3, skipped: 2, notrun: 1 };
+
+/** A check still queued (never started) this long after its suite was last created or updated counts as not-run. */
+export const QUEUED_STALE_MS = 6 * 3600_000;
+
+/**
+ * A CheckRun that never started and whose suite was last created or updated more than
+ * QUEUED_STALE_MS ago (timed by the suite's max(createdAt, updatedAt), the same
+ * assumption D6 makes for a lone queued check). A re-run reuses the original suite, so time from the LATER of the two.
+ */
+function staleQueuedAt(n, nowMs) {
+  if (!n || n.startedAt !== null || n.__typename === "StatusContext") return null;
+  if (!["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(String(n.status ?? "").toUpperCase()))
+    return null;
+  const times = [n.checkSuite?.createdAt, n.checkSuite?.updatedAt]
+    .map((t) => Date.parse(t ?? ""))
+    .filter(Number.isFinite);
+  if (times.length === 0) return null;
+  const at = Math.max(...times);
+  return nowMs - at > QUEUED_STALE_MS ? at : null;
+}
+const isStaleQueued = (n, nowMs) => staleQueuedAt(n, nowMs) !== null;
 
 /**
  * One GraphQL check context (CheckRun | StatusContext) -> { name, state } with state in
- * success | failure | pending | skipped | cancelled. Unknown shapes -> null.
+ * success | failure | pending | skipped | cancelled | notrun. Unknown shapes -> null.
+ * notrun = the check ended without ever starting (startedAt null, conclusion cancelled / skipped /
+ * startup-failure). It is NOT a failure. A queued/waiting check with startedAt null is pending,
+ * until its suite (last created or updated) is older than QUEUED_STALE_MS: a check queued that long is not going to run
+ * (stuck runner, blocked Actions) and reads notrun, so it cannot hold the gate pending forever.
  */
-export function normalizeContext(n) {
+export function normalizeContext(n, nowMs = Date.now()) {
   if (!n || typeof n !== "object") return null;
   if (n.__typename === "StatusContext" || (n.context && !n.name)) {
     if (!n.context) return null;
@@ -94,8 +119,15 @@ export function normalizeContext(n) {
   }
   if (!n.name) return null;
   const status = String(n.status ?? "").toUpperCase();
-  if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
   const c = String(n.conclusion ?? "").toUpperCase();
+  // startedAt present-and-null = never started. (A fixture without the key keeps the old reading.)
+  const neverStarted = n.startedAt === null;
+  if (neverStarted && ["QUEUED", "WAITING", "REQUESTED", "PENDING"].includes(status)) {
+    return { name: String(n.name), state: isStaleQueued(n, nowMs) ? "notrun" : "pending" };
+  }
+  if (status && status !== "COMPLETED") return { name: String(n.name), state: "pending" };
+  if (neverStarted && (c === "CANCELLED" || c === "SKIPPED" || c === "STARTUP_FAILURE"))
+    return { name: String(n.name), state: "notrun" };
   let state = "pending"; // COMPLETED without a conclusion, ACTION_REQUIRED: not finished
   if (c === "SUCCESS" || c === "NEUTRAL") state = "success";
   else if (c === "SKIPPED") state = "skipped";
@@ -107,17 +139,39 @@ export function normalizeContext(n) {
 /**
  * Context nodes -> one run per check NAME (several workflow runs report the same name; a skipped
  * duplicate must never hide the real result). Worst wins: failure > pending > success >
- * cancelled > skipped. First-appearance order.
+ * cancelled > skipped. First-appearance order. Exception: a stale-queued attempt (a re-run stuck
+ * past QUEUED_STALE_MS) stops an OLDER success from winning (the check reads notrun, never
+ * success), decided by time, not node order: the stale attempt's suite time must be newer than the
+ * success's completedAt/startedAt. A success with no time is treated as older (conservative).
  */
-export function collapseRuns(nodes) {
+export function collapseRuns(nodes, nowMs = Date.now()) {
   const by = new Map();
+  const stuckAt = new Map(); // name -> newest stale-queued attempt's suite time
+  const okAt = new Map(); // name -> newest success time (NaN when any success has none)
   for (const raw of nodes ?? []) {
-    const r = normalizeContext(raw);
+    const r = normalizeContext(raw, nowMs);
     if (!r) continue;
+    const st = staleQueuedAt(raw, nowMs);
+    if (st !== null) stuckAt.set(r.name, Math.max(stuckAt.get(r.name) ?? st, st));
+    if (r.state === "success") {
+      const t = Date.parse(raw.completedAt ?? raw.startedAt ?? "");
+      okAt.set(
+        r.name,
+        Number.isNaN(t) || Number.isNaN(okAt.get(r.name))
+          ? NaN
+          : Math.max(okAt.get(r.name) ?? t, t),
+      );
+    }
     const had = by.get(r.name);
     if (!had || RUN_RANK[r.state] > RUN_RANK[had]) by.set(r.name, r.state);
   }
-  return [...by].map(([name, state]) => ({ name, state }));
+  return [...by].map(([name, state]) => ({
+    name,
+    state:
+      state === "success" && stuckAt.has(name) && !(stuckAt.get(name) <= okAt.get(name))
+        ? "notrun"
+        : state,
+  }));
 }
 
 function compileGates(config) {
@@ -147,7 +201,10 @@ export function classifyCheck(name, config) {
 
 /**
  * Runs ([{name,state}]) -> { gate, probesFailing, runs: [{name,kind,state}] }.
- * gate = failure | pending | success | skipped | none over the GATE runs only; a failing probe
+ * gate = failure | pending | not-run | success | skipped | none over the GATE runs only;
+ * not-run = a gate check that ended without ever starting (cancelled / skipped / startup-failure,
+ * e.g. Actions blocked), or sat queued past QUEUED_STALE_MS; shown as its own state. A fresh queued
+ * check is pending, not not-run; a failing probe
  * never fails the gate (it is listed by name in probesFailing). A cancelled gate with nothing
  * better counts as failure (it did not pass and nothing re-ran it).
  */
@@ -163,6 +220,7 @@ export function summarizeChecks(runs, config) {
   if (gates.length) {
     if (has("failure")) gate = "failure";
     else if (has("pending")) gate = "pending";
+    else if (has("notrun")) gate = "not-run";
     else if (has("success")) gate = "success";
     else if (has("cancelled")) gate = "failure";
     else gate = "skipped";
@@ -364,6 +422,10 @@ export function parseLedgerText(text) {
   return rows;
 }
 
+// Text store.exec / git-exec put in stderr when git could not run at all (not a git error).
+const GIT_FAILURE_RE = /git spawn failed|git timed out/;
+// Cloud blob prefetch: one `git fetch` per this many blob shas.
+const PREFETCH_CHUNK = 250;
 const fileNo = (p) => Number(/F(\d+)[^/]*$/i.exec(p)?.[1] ?? 1e9);
 
 /**
@@ -423,12 +485,36 @@ export function parseHandoffLog(text) {
   return [...by].map(([file, at]) => ({ file, at }));
 }
 
+/** `git log --format=%x00%cI --name-only -- incidents` -> { basename: newest commit ISO }. */
+export function parseIncidentLog(text) {
+  const out = {};
+  for (const c of parseGitLogNames(text)) {
+    for (const f of c.files) {
+      if (!f.startsWith("incidents/")) continue;
+      const file = f.slice(f.lastIndexOf("/") + 1);
+      if (!out[file] || c.at > out[file]) out[file] = c.at;
+    }
+  }
+  return out;
+}
+
+const INCIDENT_STATUS_WORDS = [
+  "open",
+  "mitigated",
+  "closed",
+  "resolved",
+  "suspected",
+  "unverified",
+];
+
 /**
- * incidents/*.md [{ file, text }] -> [{ id, file, title, status, date }]. README is skipped.
- * status = the word after `Status:` when it is open | mitigated | closed, else open. The id is
+ * incidents/*.md [{ file, text }] -> [{ id, file, title, status, date, changedAt }]. README is
+ * skipped. status = the first word after `Status:` when it is open | mitigated | closed | resolved |
+ * suspected | unverified, else `unknown` (no Status line is never silently open). `changedAt` =
+ * the file's newest commit time from `changedByFile` (parseIncidentLog), else null. The id is
  * DERIVED (INC-MMDD + a letter in file order); it is never stored anywhere.
  */
-export function parseIncidents(files) {
+export function parseIncidents(files, changedByFile = {}, mask = (t) => t) {
   const out = [];
   const perDay = new Map();
   const list = files
@@ -437,21 +523,21 @@ export function parseIncidents(files) {
   for (const f of list) {
     const d = /^(\d{4})-(\d{2})-(\d{2})-/.exec(f.file);
     const slug = f.file.replace(/\.md$/i, "").replace(/^\d{4}-\d{2}-\d{2}-/, "");
-    let id;
-    if (d) {
-      const k = `${d[2]}${d[3]}`;
-      const n = perDay.get(k) ?? 0;
-      perDay.set(k, n + 1);
-      id = `INC-${k}${String.fromCharCode(97 + (n % 26))}`;
-    } else id = `INC-${slug.slice(0, 24)}`;
-    const title = /^#\s+(.+?)\s*$/m.exec(f.text)?.[1] ?? slug;
+    // The id is date + index only (never a file-name slug: those carry client words).
+    const k = d ? `${d[2]}${d[3]}` : "0000";
+    const n = perDay.get(k) ?? 0;
+    perDay.set(k, n + 1);
+    const id = `INC-${k}${String.fromCharCode(97 + (n % 26))}`;
+    // Masked BEFORE the cut, so a name never survives as a fragment.
+    const title = mask(/^#\s+(.+?)\s*$/m.exec(f.text)?.[1] ?? slug);
     const word = /^[\s>*_-]*status[\s*_]*[:.][\s*_]*([A-Za-z]+)/im.exec(f.text)?.[1]?.toLowerCase();
     out.push({
       id,
       file: f.file,
       title: title.slice(0, 300),
-      status: ["open", "mitigated", "closed"].includes(word) ? word : "open",
+      status: INCIDENT_STATUS_WORDS.includes(word) ? word : "unknown",
       date: d ? `${d[1]}-${d[2]}-${d[3]}` : null,
+      changedAt: changedByFile?.[f.file] ?? null,
     });
   }
   return out;
@@ -512,20 +598,38 @@ export function parseOwnerQueueRows(md) {
  * priorities/OWNER-QUEUE.md and ONE `git log` for the lane handoff commit times. Never throws;
  * every failure is listed in `errors` (a missing piece is data, not a crash).
  */
-export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileSync } }) {
+export async function readSpecsExtras({
+  dir,
+  exec,
+  fs = { readdirSync, readFileSync },
+  mask = (t) => t,
+}) {
   const errors = [];
   let incidents = [];
   let ownerQueueRows = null;
   let laneHandoffs = [];
   let registerRowIds = null;
   let registerDuplicateIds = [];
+  let registerChangedAt = null;
   try {
     const d = join(dir, "incidents");
     const files = fs
       .readdirSync(d)
       .filter((f) => /\.md$/i.test(f))
       .map((f) => ({ file: f, text: fs.readFileSync(join(d, f), "utf8") }));
-    incidents = parseIncidents(files);
+    // ONE git log gives every incident file's last commit time (a failure leaves them null).
+    let changed = {};
+    try {
+      const r = await exec("git", ["log", "--format=%x00%cI", "--name-only", "--", "incidents"], {
+        cwd: dir,
+      });
+      if (r.code !== 0)
+        throw new Error(`git log failed (${r.code}): ${(r.stderr || "").trim().slice(0, 100)}`);
+      changed = parseIncidentLog(r.stdout);
+    } catch (e) {
+      errors.push(`incident times: ${String(e?.message ?? e).slice(0, 120)}`);
+    }
+    incidents = parseIncidents(files, changed, mask);
   } catch (e) {
     errors.push(`incidents: ${String(e?.message ?? e).slice(0, 120)}`);
   }
@@ -550,6 +654,19 @@ export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileS
   } catch (e) {
     if (e?.code !== "ENOENT") errors.push(`register: ${String(e?.message ?? e).slice(0, 120)}`);
   }
+  // When the register file last changed (its last commit), so the snapshot can tell when the work
+  // items (events) have fallen behind it.
+  try {
+    const r = await exec("git", ["log", "-1", "--format=%cI", "--", "register/WORK-REGISTER.md"], {
+      cwd: dir,
+    });
+    if (r.code !== 0)
+      throw new Error(`git log failed (${r.code}): ${(r.stderr || "").trim().slice(0, 100)}`);
+    const t = Date.parse(r.stdout.trim());
+    registerChangedAt = Number.isFinite(t) ? t : null;
+  } catch (e) {
+    errors.push(`register time: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
   try {
     const r = await exec(
       "git",
@@ -568,6 +685,7 @@ export async function readSpecsExtras({ dir, exec, fs = { readdirSync, readFileS
     laneHandoffs,
     registerRowIds,
     registerDuplicateIds,
+    registerChangedAt,
     errors,
   };
 }
@@ -748,6 +866,9 @@ export function createCollector({
   deps = {},
   cloud = false,
   fetch: fetchFn = globalThis.fetch,
+  mask = (t) => t,
+  afterSpecsPull = null, // local only: runs inside the specs-lock hold, right after the pull
+  onSpecsBusy = null, // local only: the specs lock was busy, so the pull and the hook were skipped
 } = {}) {
   // Cloud never writes git: every git call goes through the read-only allow-list.
   const guardedExec = cloud ? readOnlyExec(exec) : exec;
@@ -787,6 +908,7 @@ export function createCollector({
       // Writers (rf, the views writer) hold the specs lock for a whole append; a poll never waits
       // for it. When busy this run skips the sync and reads the working tree as it is.
       const underLock = (fn) => (store.tryWithSpecsLock ? store.tryWithSpecsLock(fn) : fn());
+      let lockResult;
       if (cloud) {
         // Read-only clone made at boot: fetch + reset to origin, never pull --rebase or push.
         await underLock(async () => {
@@ -794,15 +916,42 @@ export function createCollector({
           if (!r.ok) fail(r.error);
         });
       } else {
-        await underLock(async () => {
+        lockResult = await underLock(async () => {
+          const lockStartedAt = now();
           if (store.ensureClone) {
             await store.ensureClone({
               dir: specsDir,
               remote: cfg.specsRemote ? cfg.specsRemote() : undefined,
             });
           }
-          await store.syncSpecs(specsDir);
+          const pullStartedAt = now();
+          const pulled = await store.syncSpecs(specsDir);
+          const pullMs = now() - pullStartedAt;
+          // Piggyback on the lock this pass already holds (a timer would lose to us). A failing
+          // hook never fails the source; the lock is released by underLock's finally.
+          if (afterSpecsPull) {
+            try {
+              await afterSpecsPull({
+                specsDir,
+                pullOk: pulled?.ok !== false,
+                pullError: pulled?.ok === false ? String(pulled.error ?? "pull failed") : null,
+                // "push": the pull went through and the push/reconcile/views step failed after it
+                pullStage: pulled?.ok === false ? (pulled.pulled === true ? "push" : "pull") : null,
+                pullMs,
+                lockStartedAt,
+              });
+            } catch (e) {
+              log(`after-pull hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+            }
+          }
         });
+        if (lockResult?.ran === false && onSpecsBusy) {
+          try {
+            onSpecsBusy();
+          } catch (e) {
+            log(`busy hook failed: ${String(e?.message ?? e).slice(0, 160)}`);
+          }
+        }
       }
       const events = await store.readAllEvents(specsDir);
       const config = (deps.loadConfig ?? cfg.loadConfig)(specsDir);
@@ -810,9 +959,30 @@ export function createCollector({
       // here is listed in extrasErrors and never fails the source (the events are what matters).
       let extras;
       try {
-        extras = await (deps.specsExtras ?? readSpecsExtras)({ dir: specsDir, exec });
+        extras = await (deps.specsExtras ?? readSpecsExtras)({ dir: specsDir, exec, mask });
       } catch (e) {
         extras = { errors: [`extras: ${String(e?.message ?? e).slice(0, 160)}`] };
+      }
+      // What a register sync would still append (dry, read-only): the items-stale alarm needs it.
+      let registerPending = null;
+      try {
+        const read = (rel) => {
+          try {
+            return (deps.readFile ?? readFileSync)(join(specsDir, ...rel), "utf8");
+          } catch {
+            return "";
+          }
+        };
+        const { pendingRegisterChanges } = await import("./sync.mjs");
+        registerPending = pendingRegisterChanges({
+          events,
+          registerMd: read(["register", "WORK-REGISTER.md"]),
+          ownerQueueMd: read(["priorities", "OWNER-QUEUE.md"]),
+          config,
+          mask,
+        });
+      } catch (e) {
+        (extras.errors ??= []).push(`register pending: ${String(e?.message ?? e).slice(0, 120)}`);
       }
       return {
         events,
@@ -822,6 +992,8 @@ export function createCollector({
         laneHandoffs: extras.laneHandoffs ?? [],
         registerRowIds: extras.registerRowIds ?? null,
         registerDuplicateIds: extras.registerDuplicateIds ?? [],
+        registerChangedAt: extras.registerChangedAt ?? null,
+        registerPending,
         extrasErrors: extras.errors ?? [],
       };
     },
@@ -964,8 +1136,11 @@ export function createCollector({
         .split(/\r?\n/)
         .map((x) => x.trim())
         .filter((x) => /^\S+$/.test(x)); // stdout carries only resolved shas (errors go to stderr)
-      if (!shas.length)
+      if (!shas.length) {
+        // A spawn failure / timeout is NOT a missing registry; say what really happened.
+        if (GIT_FAILURE_RE.test(tree.stderr)) fail(tree.stderr.trim().slice(0, 200));
         fail(`bug registry not found on origin/master: ${tree.stderr.trim().slice(0, 200)}`);
+      }
       const treeSha = shas[0];
       const ledgerTree = tree.code === 0 && shas.length > 1 ? shas[1] : null;
       const key = `${treeSha}:${ledgerTree}`;
@@ -998,6 +1173,35 @@ export function createCollector({
       const have = (sha) =>
         (!needBug.includes(sha) || bugBlobCache.has(sha)) &&
         (!needLedger.includes(sha) || ledgerBlobCache.has(sha));
+      if (need.length && cloud) {
+        // The cloud clone is BLOBLESS: every blob cat-file lacks triggers its own lazy https fetch
+        // (a git-remote-https child each). Fetch all missing blobs up front, ONE fetch per chunk,
+        // so the forks per poll are bounded by ceil(N / PREFETCH_CHUNK) instead of by N.
+        for (let i = 0; i < need.length; i += PREFETCH_CHUNK) {
+          // negotiationAlgorithm=noop (as git's own lazy fetch): no negotiation against the clone.
+          const f = await exec(
+            "git",
+            [
+              "fetch",
+              "--quiet",
+              "--no-tags",
+              "--no-write-fetch-head",
+              "--recurse-submodules=no",
+              "origin",
+              ...need.slice(i, i + PREFETCH_CHUNK),
+            ],
+            {
+              cwd: repoRoot,
+              env: {
+                GIT_CONFIG_COUNT: "1",
+                GIT_CONFIG_KEY_0: "fetch.negotiationAlgorithm",
+                GIT_CONFIG_VALUE_0: "noop",
+              },
+            },
+          );
+          if (f.code !== 0) fail(`blob prefetch failed: ${(f.stderr || "").trim().slice(0, 200)}`);
+        }
+      }
       if (need.length) {
         // One batched read when exec supports stdin (opts.input); otherwise (or if it returned
         // nothing) fall back to one `git cat-file blob` per unseen blob, 8 at a time.
@@ -1007,7 +1211,8 @@ export function createCollector({
         });
         if (r.code === 0)
           for (const { sha, content } of parseCatFileBatch(r.stdout)) ingest(sha, content);
-        const left = need.filter((x) => !have(x));
+        // Cloud never fans out per blob: a blob the one batch could not read is an error below.
+        const left = cloud ? [] : need.filter((x) => !have(x));
         for (let i = 0; i < left.length; i += 8) {
           await Promise.all(
             left.slice(i, i + 8).map(async (sha) => {
@@ -1147,32 +1352,47 @@ export function createCollector({
     },
   };
 
-  function runOnce(name) {
+  // A `requeue` request that lands while a run is in flight (a webhook) is REMEMBERED, not dropped: the run that is going may have read
+  // state from before the event, so one more run follows it. Several mid-run requests coalesce into that one rerun.
+  const requeued = new Set();
+  function runOnce(name, { requeue = false } = {}) {
     if (!runners[name]) return Promise.reject(new Error(`unknown source ${name}`));
-    if (running.has(name)) return running.get(name);
+    if (running.has(name)) {
+      if (requeue) requeued.add(name); // only an event (webhook) asks for this; a timer tick need not
+      return running.get(name);
+    }
     const p = (async () => {
-      const s = sources[name];
-      s.tried = now();
-      runCounts[name] = (runCounts[name] ?? 0) + 1;
-      try {
-        s.data = await runners[name]();
-        s.ok = true;
-        s.at = now();
-        s.error = null;
-      } catch (e) {
-        s.ok = false;
-        s.error = String(e?.message ?? e);
-        log(`source ${name} failed: ${s.error}`);
-      }
-      try {
-        onUpdate(name);
-      } catch (e) {
-        log(`onUpdate(${name}) threw: ${e?.message ?? e}`);
-      }
+      let s;
+      do {
+        requeued.delete(name);
+        s = await runCycle(name);
+      } while (requeued.has(name));
       return s;
     })().finally(() => running.delete(name));
     running.set(name, p);
     return p;
+  }
+
+  async function runCycle(name) {
+    const s = sources[name];
+    s.tried = now();
+    runCounts[name] = (runCounts[name] ?? 0) + 1;
+    try {
+      s.data = await runners[name]();
+      s.ok = true;
+      s.at = now();
+      s.error = null;
+    } catch (e) {
+      s.ok = false;
+      s.error = String(e?.message ?? e);
+      log(`source ${name} failed: ${s.error}`);
+    }
+    try {
+      onUpdate(name);
+    } catch (e) {
+      log(`onUpdate(${name}) threw: ${e?.message ?? e}`);
+    }
+    return s;
   }
 
   return {

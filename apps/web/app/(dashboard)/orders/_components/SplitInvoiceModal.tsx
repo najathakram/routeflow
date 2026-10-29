@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { roundMoney } from "@routeflow/pricing";
+import { roundMoney, unitWords } from "@routeflow/pricing";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { formatMoney } from "@/lib/format";
 import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { WriteButton } from "@/lib/read-only-gate";
 
@@ -174,7 +175,9 @@ export function SplitInvoiceModal({
                     <tr key={it.id} className="border-t border-surface-border">
                       <td className="px-3 py-2 text-navy">{it.productName}</td>
                       <td className="px-3 py-2 text-right text-navy/70">
-                        {remaining} {it.unit ?? ""}
+                        {remaining}{" "}
+                        {/* F01: a box-split line counts PIECES (3 cases of 12 = 36), so its unit is the piece word, never the case unit. */}
+                        {it.boxes != null ? unitWords().baseShortFor(remaining) : (it.unit ?? "")}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
@@ -194,7 +197,7 @@ export function SplitInvoiceModal({
                         />
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-navy">
-                        ${previewSplitLineTotal(it, q).toFixed(2)}
+                        {formatMoney(previewSplitLineTotal(it, q))}
                       </td>
                     </tr>
                   );
@@ -243,12 +246,12 @@ export function SplitInvoiceModal({
             onChange={(e) => setSend(e.target.checked)}
             className="h-4 w-4 accent-brand-500"
           />
-          Send immediately (mark as SENT)
+          Send immediately (mark as sent)
         </label>
 
         <div className="flex items-center justify-between border-t border-surface-border pt-3 text-sm">
           <span className="text-navy/70">Invoice subtotal</span>
-          <span className="text-base font-semibold text-navy">${selectedTotal.toFixed(2)}</span>
+          <span className="text-base font-semibold text-navy">{formatMoney(selectedTotal)}</span>
         </div>
       </div>
     </Modal>

@@ -19,7 +19,7 @@ import {
   useDeletePaymentImage,
   useGetPaymentImageUrl,
 } from "../../../../../../../lib/api/payments";
-import { editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
+import { editPaymentDto, editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -28,6 +28,11 @@ import { productImageFile } from "../../../../../../../lib/product-image";
 import { isPaymentEditable } from "../../../../../../../lib/invoices-logic";
 import { showToast } from "../../../../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../../../../lib/confirm";
+import { useAuthStore } from "../../../../../../../lib/auth-store";
+import {
+  duplicateRefChoice,
+  duplicateRefPrompt,
+} from "../../../../../../../lib/duplicate-payment-ref";
 
 // Advance/Credit-Note are not editable (server rejects them); the invoice list
 // gates the pencil affordance via isPaymentEditable so only these reach here.
@@ -45,6 +50,7 @@ export default function EditPaymentScreen() {
   const { data: invoice } = useAdminInvoice(id ?? "");
   const { data: payment, isLoading } = usePayment(paymentId ?? "");
   const mut = useUpdatePayment();
+  const role = useAuthStore((s) => s.user?.role);
   const uploadImageMut = useUploadPaymentImage();
   const deleteImageMut = useDeletePaymentImage();
   const getImageUrlMut = useGetPaymentImageUrl();
@@ -54,7 +60,11 @@ export default function EditPaymentScreen() {
   // DRAFT-inclusive semantics this screen already had, now testable and the
   // one copy web/api also use.
   const otherPayments = (invoice?.payments ?? []).filter((p: any) => p.id !== paymentId);
-  const maxAmount = editPaymentMaxAmount(Number(invoice?.total ?? 0), otherPayments);
+  const maxAmount = editPaymentMaxAmount(
+    Number(invoice?.total ?? 0),
+    otherPayments,
+    payment?.status,
+  );
 
   const [method, setMethod] = useState<SelectablePaymentMethod | null>(null);
   const [amount, setAmount] = useState<string | null>(null);
@@ -165,7 +175,7 @@ export default function EditPaymentScreen() {
     );
   };
 
-  const submit = () => {
+  const submit = (recordAnyway = false) => {
     if (!id || !paymentId || !method) return;
     if (notEditable) {
       setError("This payment can't be edited.");
@@ -184,24 +194,35 @@ export default function EditPaymentScreen() {
     }
     setError(null);
     mut.mutate(
-      {
-        invoiceId: id,
-        paymentId,
-        method,
-        amount: n,
-        reference: (reference ?? "").trim() || undefined,
-        notes: (notes ?? "").trim() || undefined,
-        bankCharges: (bankCharges ?? "").trim() ? Number(bankCharges) || undefined : undefined,
-        paidAt: (paidAt ?? "").trim() || undefined,
-        // Always sent: an emptied field has to clear the stored bank date.
-        settledAt: (settledAt ?? "").trim() || null,
-      },
+      editPaymentDto(
+        {
+          invoiceId: id,
+          paymentId,
+          method,
+          amount: n,
+          reference,
+          notes,
+          bankCharges,
+          paidAt,
+          settledAt,
+        },
+        recordAnyway,
+      ),
       {
         onSuccess: () => {
           showToast("Payment updated");
           router.back();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          // W-718: an edit onto a used reference names the existing payment; staff may "Record anyway".
+          const dup = duplicateRefPrompt(e, role);
+          if (dup) {
+            const c = duplicateRefChoice(dup, () => submit(true));
+            chooseAction(c.title, c.message, c.actions);
+            return;
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
       },
     );
   };
@@ -213,7 +234,7 @@ export default function EditPaymentScreen() {
       submitLabel={mut.isPending ? "Saving…" : "Save changes"}
       submitting={mut.isPending || isLoading}
       submitDisabled={notEditable}
-      onSubmit={submit}
+      onSubmit={() => submit()}
     >
       {notEditable ? (
         <FormSection title="Not editable">

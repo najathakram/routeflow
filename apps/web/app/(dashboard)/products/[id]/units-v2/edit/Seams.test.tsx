@@ -53,6 +53,8 @@ jest.mock("@/lib/api/usePriceWrites", () => ({
       mutate: (req: unknown, o: unknown) => {
         mockSave(req, o);
         setAfter({ error: mockSaveOutcome });
+        // Like the real mutation, every save settles (row 614's in-flight gate opens again on settle).
+        (o as { onSettled?: () => void } | undefined)?.onSettled?.();
       },
       reset: () => {
         mockSaveReset();

@@ -17,6 +17,8 @@ jest.mock("../storage/compress.util", () => ({
   compressDocument: jest.fn(),
 }));
 
+// Row 752: a re-referenced edit takes the payment-ref lock; no DB here (real lock: payment-edit-ref.db.spec.ts R7)
+jest.mock("../common/db-locks", () => require("../common/testing/pass-through-locks").locks());
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService, addCalendarDays } from "./invoices.service";
@@ -170,6 +172,7 @@ describe("InvoicesService", () => {
           useValue: {
             writeSaleEntries: jest.fn(),
             reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
             correctSaleForPriceChange: jest.fn(),
           },
         },
@@ -979,12 +982,12 @@ describe("InvoicesService", () => {
         items: [{ productId: "prod-tob", description: "Cigs", qty: 5, unitPrice: 10 }],
       });
 
-      // Prior SALE reversed (preserveReturns), then a fresh SALE written from new items.
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-e", preserveReturns: true }),
-      );
-      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+      // SA-839 INVOICE_BILLED: the prior sale-record reversed (live returns kept), then a fresh SALE
+      // written from the new items, in one settle.
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
+          kind: "INVOICE_BILLED",
           invoiceId: "inv-e",
           lines: [
             expect.objectContaining({
@@ -4752,17 +4755,19 @@ describe("InvoicesService", () => {
       await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
 
       // Prior SALE rows reversed for BOTH drafts (nets the full-qty entries to 0).
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "d-base" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "d-base" }),
       );
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "d-r1" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "d-r1" }),
       );
       // Fresh SALE rows written; the regulated line (R1) now reports the DELIVERED qty (4)
       // and its prorated netSales (20 = 4/10 of 50), not the full 10 / 50.
-      const r1Write = ledger.writeSaleEntries.mock.calls.find(
-        (c: any) => c[0].invoiceId === "d-r1",
-      )?.[0];
+      const r1Write = ledger.settleRegulatedLedger.mock.calls.find(
+        (c: any) => c[1].invoiceId === "d-r1",
+      )?.[1];
       expect(r1Write).toBeDefined();
       const regLedgerLine = r1Write.lines.find((l: any) => l.trackedCategoryId === "cat-reg");
       expect(regLedgerLine.qty).toBe(4);
@@ -5101,11 +5106,9 @@ describe("InvoicesService", () => {
 
       await service.resyncOrderInvoicesForEdit("ord-1", prisma, q);
 
-      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
-      );
-      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ invoiceId: "inv-1" }),
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED", invoiceId: "inv-1" }),
       );
     });
 
@@ -5339,8 +5342,10 @@ describe("InvoicesService", () => {
       expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
       // The regulated-sales ledger is re-synced on the order basis too.
-      expect((service as any).ledger.reverseInvoiceEntries).toHaveBeenCalled();
-      expect((service as any).ledger.writeSaleEntries).toHaveBeenCalled();
+      expect((service as any).ledger.settleRegulatedLedger).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ kind: "INVOICE_BILLED" }),
+      );
     });
 
     it("an edit that ADDED a standard line bills it on the base (grouping, not provenance)", async () => {
@@ -5860,7 +5865,7 @@ describe("InvoicesService", () => {
     // didn't reserve any capacity, letting a second payment stack on top of it past
     // the invoice total.
     describe("recordPayment — capacity now reserves DRAFT siblings (PR-2 REG)", () => {
-      it("rejects a payment that would push the invoice over its total once a DRAFT sibling is counted", async () => {
+      it("W-769: real money is judged on CONFIRMED money, so a DRAFT sibling no longer counts; only the confirmed remainder bounds it", async () => {
         prisma.invoice.findUnique.mockResolvedValue({
           id: "inv-cap",
           status: InvoiceStatus.SENT,
@@ -5873,7 +5878,7 @@ describe("InvoicesService", () => {
         // this $80 payment sailed through. After PR-2: remainingCapacity reserves
         // the $30 DRAFT too, so only $70 remains and this must be refused.
         await expect(
-          service.recordPayment("inv-cap", { amount: 80, method: "CASH" } as any),
+          service.recordPayment("inv-cap", { amount: 120, method: "CASH" } as any),
         ).rejects.toThrow(BadRequestException);
         expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       });
@@ -5908,7 +5913,7 @@ describe("InvoicesService", () => {
       // PR-2 review (routeflow-Lead, 2026-09-16): `remaining` hitting 0 does not mean
       // the invoice is actually PAID — a DRAFT sibling can reserve the entire
       // capacity while zero dollars are confirmed. The error message must say so.
-      it("says capacity is reserved by unconfirmed payments, not 'already fully paid', when capacity is exhausted by a DRAFT sibling", async () => {
+      it("W-769: a DRAFT reserving everything never turns real money away; EXCEEDS cites the confirmed remainder", async () => {
         prisma.invoice.findUnique.mockResolvedValue({
           id: "inv-cap-3",
           status: InvoiceStatus.SENT,
@@ -5919,8 +5924,8 @@ describe("InvoicesService", () => {
         });
 
         await expect(
-          service.recordPayment("inv-cap-3", { amount: 10, method: "CASH" } as any),
-        ).rejects.toThrow(/reserved by unconfirmed payments/i);
+          service.recordPayment("inv-cap-3", { amount: 120, method: "CASH" } as any),
+        ).rejects.toThrow(/exceeds remaining balance of 100.00/);
       });
 
       it("still says 'already fully paid' when the invoice is genuinely fully CONFIRMED", async () => {
@@ -6337,7 +6342,7 @@ describe("InvoicesService", () => {
       // remainingCapacity() (DRAFT+PAID+PENDING) — mirroring recordPayment's own
       // conversion — so a DRAFT sibling now reserves capacity here too.
       describe("capacity now reserves DRAFT siblings (PR-2 REG)", () => {
-        it("rejects an edit that would push the invoice over its total once a DRAFT sibling is counted", async () => {
+        it("W-769: an edit is judged on CONFIRMED money; a DRAFT sibling does not count", async () => {
           prisma.invoice.findUnique.mockResolvedValue({
             id: "inv-cap-u",
             status: InvoiceStatus.SENT,
@@ -6352,7 +6357,7 @@ describe("InvoicesService", () => {
           // Before PR-2: othersTotal (CONFIRMED-only) was 0, so this $80 edit was
           // allowed. After PR-2: the DRAFT sibling reserves $30, leaving only $70.
           await expect(
-            service.updatePayment("inv-cap-u", "pay-edit", { amount: 80, method: "CASH" } as any),
+            service.updatePayment("inv-cap-u", "pay-edit", { amount: 120, method: "CASH" } as any),
           ).rejects.toThrow(BadRequestException);
           expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
         });
@@ -6378,8 +6383,9 @@ describe("InvoicesService", () => {
           const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
           expect(sql).toContain('"Invoice"');
           expect(sql).toContain("FOR UPDATE");
+          // Row 752 (SA-843 ruling 5): call [0] is the unlocked key pre-read; the LOCKED read is the last call
           expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-            prisma.invoice.findUnique.mock.invocationCallOrder[0],
+            prisma.invoice.findUnique.mock.invocationCallOrder[1],
           );
         });
       });

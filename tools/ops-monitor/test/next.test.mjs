@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fold } from "../lib/fold.mjs";
 import { rankCandidates, pickNext, laneNow } from "../lib/next.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const NOW = Date.UTC(2026, 9, 19, 6, 0, 0);
 let seq = 0;

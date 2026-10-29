@@ -55,6 +55,7 @@ describe("K11-18: the bar is the same height with Change prices open or closed",
     expect(cls(message())).not.toContain("max-sm:sr-only");
     rerender(<PriceEditBar changePricesOpen />);
     expect(message()).toBeInTheDocument();
-    expect(cls(message())).toContain("max-sm:sr-only");
+    // K14 P08: sr-only at every width while Change prices is open (one visible status, not three)
+    expect(cls(message())).toContain("sr-only");
   });
 });

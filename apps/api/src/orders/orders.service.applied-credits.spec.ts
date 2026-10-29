@@ -139,7 +139,13 @@ describe("OrdersService.findOne — credit payments carry their credit note (#24
           useValue: { syncInvoiceCommissionSafe: jest.fn() },
         },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
-        { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
+        },
       ],
     }).compile();
 

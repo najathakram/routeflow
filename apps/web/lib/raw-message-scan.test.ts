@@ -18,6 +18,7 @@ const allow = ALLOWLIST as Record<string, Entry>;
 
 /** Reads that are lookups, classifications or logs and never render the text. Pinned EXACTLY (file -> count). */
 const PERMANENT_EXPECTED: Record<string, number> = {
+  "lib/api/restriction-warning.ts": 1,
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": 2,
   "components/ScanInvoiceModal.tsx": 1,
   "lib/buyer-auth-context.tsx": 2,

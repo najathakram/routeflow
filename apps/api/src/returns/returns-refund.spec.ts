@@ -22,7 +22,7 @@
  */
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { ReturnsService } from "./returns.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -79,12 +79,22 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
   let service: ReturnsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let creditNotesCreate: jest.Mock;
-  let ledger: { reverseReturnEntries: jest.Mock; unreverseReturnEntries: jest.Mock };
+  let ledger: {
+    reverseReturnEntries: jest.Mock;
+    unreverseReturnEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-737: the claim re-reads the Return's status under its row lock
+    prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn();
-    ledger = { reverseReturnEntries: jest.fn(), unreverseReturnEntries: jest.fn() };
+    ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
 
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
@@ -148,7 +158,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     // persists the resolution snapshot in the same write, so a concurrent double-refund
     // can't mint two credits or record two resolutions; update() is only the linkage.
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-1", status: "RECEIVED" },
+      where: { id: "ret-1", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",
@@ -330,7 +340,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     });
     prisma.return.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(service.processRefund("ret-5")).rejects.toBeInstanceOf(BadRequestException);
+    // SA-737: a claim that matches nothing is the lost race: 409, same text
+    await expect(service.processRefund("ret-5")).rejects.toBeInstanceOf(ConflictException);
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
@@ -404,7 +415,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
     expect(creditNotesCreate).not.toHaveBeenCalled();
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-9", status: "RECEIVED" },
+      where: { id: "ret-9", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "EXTERNAL_REFUND",
@@ -444,7 +455,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
     await expect(
       service.processRefund("ret-10", { method: "EXTERNAL_REFUND" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(1); // the claim itself was attempted and lost
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
@@ -488,7 +499,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     const dto = creditNotesCreate.mock.calls[0][0];
     expect(dto.amount).toBe(60); // billed basis (6 × 10), NOT the order line's 10 × 10 = 100
     expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-53a", status: "RECEIVED" },
+      where: { id: "ret-53a", status: "RECEIVED", refundedAt: null, creditNoteId: null },
       data: {
         status: "REFUNDED",
         refundMethod: "CREDIT_NOTE",
@@ -1249,6 +1260,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           create: jest.fn().mockResolvedValue({ id: "mv-rev" }),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
+        // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+        regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1281,7 +1294,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         performedById: "u1",
       });
       expect(rev.quantity.toString()).toBe("-2");
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
@@ -1309,6 +1322,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
           create: jest.fn(),
         },
         returnParkedRestock: { deleteMany: jest.fn() },
+        // SA-839 F3: the cancel reads its ledger rows to lock their Orders / Invoices (none here).
+        regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1326,7 +1341,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       // B562 PR-2: no movement to undo → nothing appended, and nothing is ever deleted.
       expect(tx.stockMovement.create).not.toHaveBeenCalled();
       expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
-      expect(ledger.unreverseReturnEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
         txReturnFindUnique.mock.invocationCallOrder[0],

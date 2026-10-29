@@ -6,6 +6,11 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="robots" content="noindex,nofollow" />
     <title>Sign in - RouteFlow ops</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#2456d6" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body class="login-page">
@@ -13,6 +18,7 @@
       <h1 class="login-title">RouteFlow ops</h1>
       <p class="login-lede">Enter the password to open the board.</p>
       <form class="login-form" method="post" action="/login">
+        <input type="text" class="login-username" name="username" value="owner" autocomplete="username" tabindex="-1" aria-hidden="true" />
         <label class="login-label" for="password">Password</label>
         <input
           class="login-input"

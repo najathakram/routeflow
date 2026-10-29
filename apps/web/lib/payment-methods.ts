@@ -41,10 +41,10 @@ export const PAYMENT_METHOD_LABELS: Record<AnyPaymentMethod, string> = {
   CASH: "Cash",
   CHECK: "Check",
   ZELLE: "Zelle",
-  ACH: "ACH / Bank Transfer",
-  CREDIT_CARD: "Credit Card",
+  ACH: "ACH / bank transfer",
+  CREDIT_CARD: "Credit card",
   OTHER: "Other",
-  CREDIT_NOTE: "Credit Note",
+  CREDIT_NOTE: "Credit note",
   ADVANCE: "Advance",
 };
 

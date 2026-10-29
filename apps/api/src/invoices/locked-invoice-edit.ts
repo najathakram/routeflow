@@ -135,10 +135,59 @@ export function assertInvoiceCurrent(
 
 /** H4: its own channel, so the count of token-less invoice saves is one grep before the token is required. */
 const staleTokenLogger = new Logger("InvoiceStaleToken");
-export const noTokenWarner = (id: string) => () =>
-  staleTokenLogger.warn(
-    `PATCH /invoices/${id} without expectedUpdatedAt (H4: last-writer save accepted)`,
-  );
+
+export type InvoiceEditClient = "web" | "mobile" | "unknown";
+
+/** The request headers that identify an editing client (all optional; none is trusted for anything but this log). */
+export interface InvoiceEditHeaders {
+  xClient?: string;
+  userAgent?: string;
+  appVersion?: string;
+}
+
+/**
+ * SA-837 row 500: who sent a token-less edit. `x-client` (web | mobile, sent by both apps' one HTTP
+ * client) decides first; anything else is ignored. The User-Agent is only the fallback for builds that
+ * predate the header (an RN build is okhttp on Android, CFNetwork/Darwin on iOS; the web app is a
+ * browser). Mobile also ships as an Expo web export with a browser UA, so only the header is reliable.
+ * The app version is the `x-app-version` header, trimmed and capped, else "unknown".
+ */
+export function classifyInvoiceEditClient(h: InvoiceEditHeaders): {
+  client: InvoiceEditClient;
+  appVersion: string;
+} {
+  const ua = h.userAgent ?? "";
+  const declared = h.xClient?.trim().toLowerCase();
+  const client: InvoiceEditClient =
+    declared === "web" || declared === "mobile"
+      ? declared
+      : /okhttp|CFNetwork|Darwin|Expo|ReactNative/i.test(ua)
+        ? "mobile"
+        : /Mozilla|Chrome|Safari|Firefox|Edg\//i.test(ua)
+          ? "web"
+          : "unknown";
+  return { client, appVersion: h.appVersion?.trim().slice(0, 32) || "unknown" };
+}
+
+/** Step 1 (dark): ONE structured warn per request, no PII, the edit proceeds exactly as before. */
+export const noTokenWarner = (
+  id: string,
+  tenantId: string | null | undefined,
+  headers: InvoiceEditHeaders = {},
+) => {
+  let warned = false;
+  return () => {
+    if (warned) return;
+    warned = true;
+    staleTokenLogger.warn({
+      event: "INVOICE_EDIT_TOKEN_MISSING",
+      route: "PATCH /invoices/:id",
+      invoiceId: id,
+      tenantId: tenantId ?? null,
+      ...classifyInvoiceEditClient(headers),
+    });
+  };
+};
 
 /**
  * H4: the header-only save that touches no totals. Without a token it stays one unlocked update (legacy);
@@ -196,10 +245,12 @@ const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Numb
  *  - An EXEMPT customer whose row still carries a levy snapshot (categoryTaxAmount != 0) is stale even when
  *    the stored tax is 0: the items branch would zero the snapshot and resync the regulated ledger, this
  *    branch cannot, so the two must not disagree. Re-saving the lines cleans both (census reason 4).
- *  - B296: create() taxes with the UNROUNDED line rate while InvoiceItem.taxRate is Decimal(5,4), so a fresh
- *    draft with a rate such as 0.08875 can be 409 INVOICE_TAX_STATE_STALE on its first header-only PATCH.
- *    That is a 409 (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it would
- *    change the money charged. SA-761 T-1 (sitting 4) widens InvoiceItem.taxRate and retires this edge.
+ *  - B296 (SA-814 §3): create() taxes with the UNROUNDED line rate. Since the sitting-4 widen
+ *    (20261020090200_invoice_tax_rate_widen, InvoiceItem.taxRate DECIMAL(9,6)) a fresh draft with a rate such
+ *    as 0.08875 keeps it on the line and reproduces its stored tax, so it is NOT stale. Only a legacy row whose
+ *    rate was truncated by the old Decimal(5,4) column still fails to reproduce: that is a 409
+ *    INVOICE_TAX_STATE_STALE (re-save the lines), never a silent re-tax. Do NOT round the rate in create(): it
+ *    would change the money charged.
  */
 export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,

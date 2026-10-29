@@ -2,6 +2,7 @@ import { CREDIT_NOTE_ERROR_CODES } from "@routeflow/types";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_NOTHING_BILLED_COPY,
+  RETURN_REFUND_BASIS_CHANGED_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   RETURN_MIXED_UNIT_PRODUCT_COPY,
   REFUND_EXCEEDS_CASH_PAID_COPY,
@@ -124,6 +125,7 @@ describe("SA-740r2: the refund refusals have fixed copy that names the exits", (
     ["REFUND_NEEDS_PAID_INVOICE", REFUND_NEEDS_PAID_INVOICE_COPY],
     ["REFUND_PAID_WITH_STORE_CREDIT", REFUND_PAID_WITH_STORE_CREDIT_COPY],
     ["REFUND_EXCEEDS_CASH_PAID", REFUND_EXCEEDS_CASH_PAID_COPY],
+    ["RETURN_REFUND_BASIS_CHANGED", RETURN_REFUND_BASIS_CHANGED_COPY],
   ])("%s is mapped to its fixed copy, never the server text", (code, copy) => {
     expect(refundErrorMessage(err(code), "other")).toBe(copy);
     expect(copy).not.toMatch(/RAW SERVER/);
@@ -143,6 +145,7 @@ describe("SA-740r2: the refund refusals have fixed copy that names the exits", (
       REFUND_NEEDS_PAID_INVOICE_COPY,
       REFUND_PAID_WITH_STORE_CREDIT_COPY,
       REFUND_EXCEEDS_CASH_PAID_COPY,
+      RETURN_REFUND_BASIS_CHANGED_COPY,
       RETURN_NOTHING_BILLED_COPY,
       RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
       RETURN_MIXED_UNIT_PRODUCT_COPY,

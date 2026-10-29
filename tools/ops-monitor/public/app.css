@@ -1415,6 +1415,25 @@ th {
   background: var(--err);
 }
 
+.stale-banner {
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+}
+.stale-banner.err {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: var(--err);
+}
+.stale-banner[hidden] {
+  display: none;
+}
+
 /* ---- releases in words ---- */
 .train > .thead {
   align-items: center;
@@ -1815,4 +1834,324 @@ details.answered {
 .linklike:focus-visible {
   outline: 2px solid var(--accent, currentColor);
   outline-offset: 2px;
+}
+
+/* Under the big-picture band: quiet folds (tasks of yours, latent risks, mitigated incidents). */
+#summary .tech.todos,
+#summary .tech.latent,
+#summary .tech.incidents {
+  margin-top: 10px;
+  padding-top: 6px;
+}
+
+/* Username field kept for password managers: present in the DOM, invisible to people. */
+.login-username {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Phone: 44px tap targets for nav chips, buttons and fold summaries. */
+@media (max-width: 640px), (pointer: coarse) {
+  .navlink,
+  .btn,
+  .tech > summary,
+  .alarm .drill > summary,
+  details > summary.row {
+    min-height: 44px;
+  }
+  .navlink,
+  .btn {
+    display: inline-flex;
+    align-items: center;
+  }
+  .tech > summary {
+    display: flex;
+    align-items: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .pill,
+  .lname,
+  .cnt,
+  .sub {
+    font-size: 12px;
+  }
+}
+
+.tpart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.tpart .ptitle {
+  flex: 1 1 12rem;
+}
+
+/* ---------- owner-first bands, folded panels, grouped alarms (UI fixes) ---------- */
+.bmore {
+  margin-top: 8px;
+  width: 100%;
+}
+.pbody[hidden] {
+  display: none;
+}
+.pcount {
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ptoggle {
+  margin-left: 8px;
+}
+.agroup {
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+}
+.agroup:first-of-type {
+  border-top: 0;
+}
+.agroup > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 0;
+  font-weight: 600;
+}
+.agroup .gname {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agroup .gcmds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.agroup .gcmds code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.agroup .gcopy {
+  margin: 2px 0 4px;
+}
+.agroup .alarm {
+  display: block;
+}
+.lane-recent {
+  font-size: 12px;
+  margin-top: 4px;
+}
+/* Every clickable area chip is at least 24 x 24 px. */
+.achip {
+  min-width: 24px;
+  min-height: 28px;
+  padding: 3px 8px;
+  justify-content: center;
+}
+
+/* ---- Phone (<= 600px): a compact header, a swipeable nav, stacked PR cards, a swipeable release strip ----
+   The header was ~196 of ~844 px: nine wrapped tabs, no "updated". Now: one title row (title, live dot, "updated Ns ago",
+   Theme), one scrolling row of source chips, one scrolling row of section tabs, every target 44 px. A scrolling row has a
+   fade at its end so it reads as "more this way"; the fade is dropped under reduced-transparency/contrast. */
+@media (max-width: 600px) {
+  :root {
+    --head-h: 176px;
+  }
+  .top {
+    padding: 6px var(--gutter) 4px;
+  }
+  .top-row {
+    flex-wrap: wrap;
+    gap: 0 8px;
+  }
+  .top h1 {
+    font-size: 16px;
+    flex: none;
+  }
+  .top h1 span {
+    font-weight: 500;
+  }
+  /* master + gate + repo visibility stay (they matter at a glance): one scrolling line under the title row */
+  .hdr-meta {
+    flex: 1 1 100%;
+    order: 3;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+    min-height: 28px;
+  }
+  .hdr-meta::-webkit-scrollbar {
+    display: none;
+  }
+  .hdr-right {
+    flex: 1 1 0;
+    min-width: 0;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .conn > span:not(.dot) {
+    font-size: 12px;
+  }
+  #updated {
+    display: inline;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .hdr-right .btn {
+    flex: none;
+    min-width: 44px;
+  }
+  .chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 2px calc(var(--gutter) * -1) 0;
+    padding: 0 var(--gutter);
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .chips::-webkit-scrollbar {
+    display: none;
+  }
+  .nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 2px calc(var(--gutter) * -1) 0;
+    padding: 0 var(--gutter);
+    gap: 2px;
+    scroll-snap-type: x proximity;
+    scroll-padding: 0 var(--gutter);
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent 100%);
+  }
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+  .navlink {
+    min-height: 44px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    scroll-snap-align: start;
+    font-size: 14px;
+  }
+  .chips.more {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent 100%);
+  }
+  /* Body text never below 13 px on a phone. */
+  body,
+  .card,
+  .chip,
+  .conn,
+  .pill,
+  .lname,
+  .cnt,
+  .sub,
+  .muted,
+  code,
+  .mono {
+    font-size: 13px;
+  }
+  .card .sub,
+  .col h4 {
+    font-size: 12px;
+  }
+
+  /* Release columns: a swipeable strip with the next column peeking, not a 2 x 2 wrap. */
+  .cols {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    gap: 0;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .cols::-webkit-scrollbar {
+    display: none;
+  }
+  .cols > .col {
+    flex: 0 0 74%;
+    scroll-snap-align: start;
+  }
+}
+
+/* The PR table becomes stacked cards wherever its panel is narrow (phone and the two-column tablet grid): no sideways
+   scroll, the column name on the left of each value. */
+@media (max-width: 1000px) {
+  .scroll:has(> table.wide-table) {
+    overflow: visible;
+  }
+  table.wide-table {
+    min-width: 0;
+    width: 100%;
+    display: block;
+  }
+  table.wide-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  table.wide-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  table.wide-table tr {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 6px 12px;
+  }
+  table.wide-table td {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    justify-content: space-between;
+    border: 0;
+    padding: 5px 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  table.wide-table td:first-child {
+    white-space: normal;
+  }
+  table.wide-table td::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+  }
+  table.wide-table td[data-label="Title"] {
+    font-weight: 600;
+  }
+}
+@media (max-width: 600px) and (prefers-reduced-transparency: reduce),
+  (max-width: 600px) and (prefers-contrast: more) {
+  .nav,
+  .chips.more {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }

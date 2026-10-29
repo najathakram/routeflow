@@ -4,11 +4,13 @@ import {
   type CustomerLayerUnit,
   type CustomerLinePrice,
   defaultLadderOptionValue,
+  derivedPiece,
   ladderOptionLineTotal,
   ladderOptionPriceText,
   type LadderOption,
   type LadderProduct,
   type LadderUnit,
+  roundMoney,
 } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { formatMoney, formatQty } from "@/lib/format";
@@ -27,20 +29,39 @@ export type UnitOption = LadderOption & {
 };
 
 /**
+ * An EXISTING line's own pack basis (row 630): the price its pack was sold at and the pack size it was sold at, as stored.
+ * The derived Piece of such a line is that price over that size, whatever the customer's layer or the product's pack size
+ * is now, because the server re-splits the line at its own size and price.
+ */
+export interface OwnPackBasis {
+  unitPrice: number;
+  unitsPerBox: number;
+}
+
+/**
  * Put the customer's layer prices on the picker's options (S19b): each option with a layer row (the pack included) takes
  * `customerLinePrice`'s price and list and records it as `layerLine`. No layer (flag off) or no row for an option = the
- * option unchanged, so master's ladder price stands. Derived-base options are the pack's proration and are left alone.
+ * option unchanged, so master's ladder price stands. A derived Piece bills as the pack's proration, so it takes the layer's PACK
+ * price over the pack size, except on an existing line (`ownPack`, row 630): that line keeps the price and size it was sold at,
+ * whether or not the customer has a layer or a pack row in it (the server re-splits the line at its own size and price).
  */
 export function withLayerPrices(
   options: readonly UnitOption[],
   product: LadderProduct,
   tier: number | string,
   layer?: readonly CustomerLayerUnit[] | null,
+  ownPack?: OwnPackBasis | null,
 ): UnitOption[] {
-  if (!layer || layer.length === 0) return options as UnitOption[];
+  // Row 630: an existing line's derived Piece is its OWN price over its OWN size, before any layer lookup. It is not a layer
+  // line, so no `layerLine` (its price and baseline stay the line's).
+  const own = ownPack && ownPack.unitsPerBox > 1 ? ownPack : null;
+  const ownPiece = (o: UnitOption): UnitOption =>
+    own && o.derived ? { ...o, ...derivedPiece(roundMoney(own.unitPrice), own.unitsPerBox) } : o;
+  if (!layer || layer.length === 0) return own ? options.map(ownPiece) : (options as UnitOption[]);
   const t = Number(tier);
   return options.map((o) => {
     if (o.derived) {
+      if (own) return ownPiece(o);
       // The Piece bills as the pack's proration: the layer's PACK price is what it divides.
       const pack = customerLinePrice({
         product: product as unknown as Record<string, unknown>,
@@ -49,14 +70,7 @@ export function withLayerPrices(
         unitLabel: null,
         tierPrice: o.derived.packPrice,
       });
-      return pack.layered
-        ? {
-            ...o,
-            price: Math.round((pack.price * 100) / o.derived.n) / 100,
-            derived: { ...o.derived, packPrice: pack.price },
-            layerLine: pack,
-          }
-        : o;
+      return pack.layered ? { ...o, ...derivedPiece(pack.price, o.derived.n), layerLine: pack } : o;
     }
     const lp = customerLinePrice({
       product: product as unknown as Record<string, unknown>,

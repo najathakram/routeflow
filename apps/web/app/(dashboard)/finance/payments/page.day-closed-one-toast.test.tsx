@@ -10,6 +10,7 @@ import {
   COUNTER_SALE_DAY_CLOSED_COPY,
   DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
 } from "@/lib/day-closed-copy";
+import { clearPaymentKeyRegistry } from "@routeflow/types/payment-submit-key";
 import FinancePaymentsPage from "./page";
 
 /**
@@ -107,18 +108,21 @@ const CLOSED_DAY = [
 ] as const;
 
 const openRecordModal = () => {
-  fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: "cust-1" } });
+  fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), { target: { value: "cust-1" } });
   fireEvent.change(screen.getAllByPlaceholderText("0.00")[0], { target: { value: "50" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save as paid" }));
 };
 const openVoidConfirm = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Void" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Void Payment" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Void payment" }));
 };
 
 describe("finance/payments: a closed-day refusal raises exactly one toast (row 348)", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clearPaymentKeyRegistry(); // SA-824: a refused attempt's key outlives the dialog; each test starts clean
+  });
 
   it.each(CLOSED_DAY)(
     "Record Payment, %s: the page's one toast, the global one quiet",

@@ -134,3 +134,23 @@ test("item.rename: needs an item and a valid data.to, nothing else", () => {
   assert.equal(validateEvent(ev("item.rename", "614", { to: "" })).ok, false);
   assert.equal(validateEvent(ev("item.rename", "614", { to: "W-1", extra: 1 })).ok, false);
 });
+
+test("X1 harm and statusText item fields validate", () => {
+  for (const harm of ["live", "latent", "none", null])
+    assert.deepEqual(
+      validateEvent(ev("item.edit", "525", { fields: { harm } })).errors,
+      [],
+      String(harm),
+    );
+  assert.equal(validateEvent(ev("item.edit", "525", { fields: { harm: "bad" } })).ok, false);
+  assert.deepEqual(
+    validateEvent(ev("item.edit", "525", { fields: { statusText: "triaged", harm: "latent" } }))
+      .errors,
+    [],
+  );
+  assert.equal(
+    validateEvent(ev("item.edit", "525", { fields: { statusText: "x".repeat(81) } })).ok,
+    false,
+  );
+  assert.equal(validateEvent(ev("item.edit", "525", { fields: { statusText: 5 } })).ok, false);
+});

@@ -23,8 +23,8 @@ for (const vp of VIEWPORTS) {
     }, info) => {
       await setTenantCookie(context, BASE);
       await page.goto("/products");
-      // The /products opener keeps its own name ("New Product"); only the dialog is renamed.
-      await page.getByRole("button", { name: "New Product", exact: true }).click();
+      // The /products opener keeps its own name ("New product"); only the dialog is renamed.
+      await page.getByRole("button", { name: "New product", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "New product" });
       await expect(dialog).toBeVisible({ timeout: 10_000 });
       await expect(dialog.getByRole("button", { name: "Create product" })).toBeVisible();

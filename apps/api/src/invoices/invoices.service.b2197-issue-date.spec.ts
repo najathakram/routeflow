@@ -99,7 +99,11 @@ describe("InvoicesService — #2197 issueDate is the literal calendar day", () =
         { provide: SystemConfigService, useValue: mockSystemConfig },
         {
           provide: RegulatedLedgerService,
-          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: AuthorizationGuardService,

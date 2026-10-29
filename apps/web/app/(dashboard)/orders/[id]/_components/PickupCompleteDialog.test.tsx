@@ -11,7 +11,11 @@ import { PickupHandOverDialog } from "./PickupHandOver";
  * rules are the till's (validatePayment, change, check number); a payment that was not recorded is
  * retried under the SAME key.
  */
-let authUser: { id: string; tenantSlug: string | null } | null = { id: "u-a", tenantSlug: "acme" };
+let authUser: { id: string; tenantSlug: string | null; role?: string } | null = {
+  id: "u-a",
+  tenantSlug: "acme",
+  role: "OPERATOR",
+};
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useOptionalAuth: () => ({ user: authUser }),
@@ -69,7 +73,7 @@ const confirm = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   window.sessionStorage.clear();
-  authUser = { id: "u-a", tenantSlug: "acme" };
+  authUser = { id: "u-a", tenantSlug: "acme", role: "OPERATOR" };
   post.mockResolvedValue(result());
 });
 
@@ -159,6 +163,84 @@ describe("PickupCompleteDialog — tender", () => {
     confirm();
     expect(await screen.findByText("Picked up. $7.58 still due.")).toBeVisible();
     expect(document.body.textContent).not.toMatch(/Picked up —/);
+  });
+
+  // Row 312(b): POS presses 8 vs target 7. The cash amount starts at the amount due (as Exact would set it), so an
+  // exact cash hand-over is one press less; it follows the due amount until the cashier types, and never overwrites them.
+  it("row 312: the cash amount starts at the amount due, so Picked up needs no typing", async () => {
+    balance(25);
+    post.mockResolvedValue(result({ change: 0, paid: 25 }));
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 25 } });
+  });
+
+  it("row 312: what the cashier typed is kept when the dialog re-renders", async () => {
+    balance(25);
+    const { rerender } = mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "40" } });
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <PickupCompleteDialog
+          open
+          onClose={jest.fn()}
+          orderId="o1"
+          orderNumber="ORD-1"
+          total={25}
+          invoices={invoices(25)}
+          isWalkIn={false}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("40");
+  });
+
+  // #3722 review: the prefill is the SAME string Exact sets (roundMoney(due)), byte for byte.
+  it("row 312: the prefill is rounded to cents, exactly what Exact sets", async () => {
+    get.mockResolvedValue({ data: { id: "i1", status: "SENT", total: 25, balanceDue: 12.3456 } });
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("12.35"));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("12.35");
+  });
+
+  it("row 312: a part-paid invoice prefills its balance, not the order total", async () => {
+    balance(12.5);
+    mount();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("12.5"));
+  });
+
+  it("row 312: a typed amount is kept when the amount due then changes (the server reports a new balance)", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(
+      result({ paymentRecorded: false, paymentErrorCode: "COUNTER_TENDER_SHORT", balanceDue: 30 }),
+    );
+    mount({ isWalkIn: true });
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "26" } });
+    confirm();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A walk-in customer must pay the full balance.",
+    );
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("26");
+  });
+
+  it("row 312: an untouched amount follows the balance the server reports after COUNTER_TENDER_SHORT (rounded, as Exact)", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(
+      result({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_TENDER_SHORT",
+        balanceDue: 30.004,
+      }),
+    );
+    mount({ isWalkIn: true });
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("25"));
+    confirm();
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toHaveValue("30"));
   });
 
   it("quick tender fills the amount", async () => {
@@ -612,5 +694,89 @@ describe("PickupCompleteDialog — the global error toast", () => {
     confirm();
     await screen.findByRole("alert");
     expect(toast).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PickupCompleteDialog: SA-837b Record anyway on a duplicate payment reference", () => {
+  const SENTENCE =
+    "A payment with this reference was already recorded on Oct 1, 2026 for $25.00 (INV-0042).";
+  const dupResult = () =>
+    result({
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+      existingPayment: {
+        id: "pay-1",
+        paymentNumber: "PAY-A-0001",
+        paidAt: "2026-10-01T12:00:00.000Z",
+        amount: 25,
+        invoiceId: "inv-9",
+        invoiceNumber: "INV-0042",
+      },
+      paid: 0,
+      balanceDue: 25,
+    });
+
+  it("names the existing payment and Record anyway reposts the SAME key and body with payment.recordAnyway", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(dupResult());
+    post.mockResolvedValueOnce(result());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText(SENTENCE)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Record anyway" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+    expect(post.mock.calls[0][1].payment).not.toHaveProperty("recordAnyway");
+    expect(post.mock.calls[1][1].payment).toEqual({
+      ...post.mock.calls[0][1].payment,
+      recordAnyway: true,
+    });
+  });
+
+  it("a role that may not use the flag sees the sentence and no Record anyway", async () => {
+    authUser = { id: "u-a", tenantSlug: "acme", role: "DRIVER" };
+    balance(25);
+    post.mockResolvedValueOnce(dupResult());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText(SENTENCE)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Record anyway" })).toBeNull();
+  });
+});
+
+describe("PickupCompleteDialog: I-120 the hand-over's credit-over-limit line (SA-849 on the hand-over)", () => {
+  const over = () =>
+    result({
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paid: 0,
+      balanceDue: 25,
+      creditOverLimit: { limit: 20, exposure: 25 },
+    });
+
+  it("a netted tender that did not record: the one sentence inside the not-recorded state", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(over());
+    mount({ customerName: "Acme Co" });
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByTestId("pickup-credit-over-limit")).toHaveTextContent(
+      "Until this payment is recorded, Acme Co is over their credit limit ($25.00 of $20.00).",
+    );
+  });
+
+  it("nothing without the field, and nothing once the payment is recorded", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(result({ paymentRecorded: false, paid: 0, balanceDue: 25 }));
+    mount({ customerName: "Acme Co" });
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText("Payment not recorded")).toBeVisible();
+    expect(screen.queryByTestId("pickup-credit-over-limit")).toBeNull();
   });
 });

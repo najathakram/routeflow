@@ -96,14 +96,21 @@ export function notNsfSql(firstParam) {
 }
 
 /** Pure: one invoice → APPLY / REVIEW / null (skipped). */
-export function classifyInvoice(invoice, lines, fixDate = FIX_DATE) {
+/** settings.taxRate (a PERCENT string) -> the tenant's rate as a 6-dp fraction, or null (none / invalid / out of range). */
+export function tenantRateFraction(value) {
+  const pct = Number(value);
+  if (value == null || !Number.isFinite(pct) || !(pct > 0) || pct > 100) return null;
+  return Math.round((pct / 100) * 1_000_000) / 1_000_000;
+}
+
+export function classifyInvoice(invoice, lines, fixDate = FIX_DATE, tenantRate = null) {
   // #2392 / SA-478: the NSF bounce-fee line is never taxed — excluded from the inference, both its
   // line and its money. #2656: that goods-only rule (rounded) is the ONE shared helper.
-  const inferred = inferredGoodsFlatRate({
-    subtotal: invoice.subtotal,
-    taxAmount: invoice.taxAmount,
-    lines,
-  });
+  // Review MUST-B: the tenant's own rate (read once per tenant) wins when it reproduces the stored tax.
+  const inferred = inferredGoodsFlatRate(
+    { subtotal: invoice.subtotal, taxAmount: invoice.taxAmount, lines },
+    { preferredRate: tenantRate },
+  );
   if (!inferred) return null;
   // #2656 / SA-549: an NSF line ALREADY carrying a rate means the header tax includes tax on the fee,
   // so the goods-only rate is inflated. Never APPLY it (the apply's re-read gate would refuse the whole
@@ -139,6 +146,11 @@ const {
 } = liveTargetGuard;
 
 /** #2639: each tenant's protection inputs (same client as the backfill; read in its transaction). */
+/** The tenant default tax rate (a percent string), read once per tenant in scope. */
+const TAX_RATE_SQL = `
+  SELECT "tenantId", value FROM "SystemConfig"
+  WHERE key = 'settings.taxRate' AND "tenantId" = ANY($1::text[])`;
+
 const PROTECTION_SQL = `
   SELECT t.id, t.slug, t.status, t.class, t."deletedAt", s."planKey", s."stripeSubId", s."couponFull"
   FROM "Tenant" t LEFT JOIN "TenantSubscription" s ON s."tenantId" = t.id
@@ -277,6 +289,11 @@ async function dryRun() {
       scopeTenantIds.length ? (await client.query(PROTECTION_SQL, [scopeTenantIds])).rows : [],
       protectedSlugs,
     );
+    const tenantRates = new Map(
+      (scopeTenantIds.length ? (await client.query(TAX_RATE_SQL, [scopeTenantIds])).rows : []).map(
+        (r) => [r.tenantId, tenantRateFraction(r.value)],
+      ),
+    );
     await client.query("ROLLBACK");
 
     const linesBy = new Map();
@@ -285,7 +302,7 @@ async function dryRun() {
     const review = [];
     for (const inv of invoices) {
       const own = linesBy.get(inv.id) ?? [];
-      const c = classifyInvoice(inv, own);
+      const c = classifyInvoice(inv, own, undefined, tenantRates.get(inv.tenantId) ?? null);
       if (!c) continue;
       if (c.kind === "REVIEW") {
         review.push({ invoiceId: inv.id, rate: c.rate, reason: c.reason });

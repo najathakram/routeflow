@@ -571,7 +571,11 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     await raiseCategoryRate(0.08);
     const existing = await raw.orderItem.findMany({ where: { orderId: id } });
     const trio = await orders.liveTrioByProduct([productId]);
-    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], undefined, trio);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+      liveTrioByProductId: trio,
+    });
     await fold(id, folded.items as any[]);
     const ls = await lines(id);
     expect(ls.map((l) => [l.qty, l.rate, l.amount]).sort()).toEqual(
@@ -640,7 +644,11 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     await raiseCategoryRate(0.08);
     const existing = await raw.orderItem.findMany({ where: { orderId: id } });
     const trio = await orders.liveTrioByProduct([productId]);
-    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], undefined, trio);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+      liveTrioByProductId: trio,
+    });
     await buyerFold(id, folded.items as any[]);
     const ls = await lines(id);
     expect(ls.map((l) => [l.qty, l.rate, l.amount]).sort()).toEqual(
@@ -699,7 +707,11 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     await raiseCategoryRate(0.08);
     const existing = await raw.orderItem.findMany({ where: { orderId: id } });
     const trio = await orders.liveTrioByProduct([productId]);
-    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], undefined, trio);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: 8 }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+      liveTrioByProductId: trio,
+    });
     await fold(id, folded.items as any[]);
     const ls = await lines(id);
     return { id, a: ls.find((l) => l.qty === 12)!, b: ls.find((l) => l.qty === 8)! };
@@ -1037,7 +1049,11 @@ describeDb("B297 PR3 — a recompute reads the line's rate snapshot, real Postgr
     await raiseCategoryRate(0.08);
     const existing = await raw.orderItem.findMany({ where: { orderId: id } });
     const trio = await orders.liveTrioByProduct([productId]);
-    const folded = foldMergeItems(existing as any, [{ productId, qty: b }], undefined, trio);
+    const folded = foldMergeItems(existing as any, [{ productId, qty: b }], {
+      liveUnitsPerBoxByProductId: new Map(),
+      bare: "pieces",
+      liveTrioByProductId: trio,
+    });
     await fold(id, folded.items as any[]);
     const ls = await raw.orderItem.findMany({ where: { orderId: id }, orderBy: { id: "asc" } });
     return { id, lines: ls };

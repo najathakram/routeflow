@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/estimates";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
 import { estimateTaxBasisNotice } from "@/lib/estimate-tax-basis";
 
@@ -47,7 +48,7 @@ function VoidConfirmModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Void Estimate?"
+      title="Void estimate?"
       description={`Estimate ${estimateNumber} will be marked as void. This action cannot be undone.`}
       footer={
         <>
@@ -55,7 +56,7 @@ function VoidConfirmModal({
             Cancel
           </Button>
           <Button variant="danger" onClick={onConfirm} loading={isPending}>
-            Void Estimate
+            Void estimate
           </Button>
         </>
       }
@@ -82,6 +83,7 @@ export default function EstimateDetailPage() {
   const acceptEstimate = useAcceptEstimate();
   const declineEstimate = useDeclineEstimate();
   const convertToInvoice = useConvertEstimateToInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const voidEstimate = useVoidEstimate();
 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
@@ -103,7 +105,7 @@ export default function EstimateDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Estimate not found.</p>
         <Button variant="secondary" href="/estimates">
-          Back to Estimates
+          Back to estimates
         </Button>
       </div>
     );
@@ -121,7 +123,7 @@ export default function EstimateDetailPage() {
       onSuccess: () => {
         toast({
           title: "Estimate marked as sent",
-          description: `${estimate.estimateNumber} is marked Sent. No email was sent.`,
+          description: `${estimate.estimateNumber} is marked as sent. No email was sent.`,
           variant: "success",
         });
       },
@@ -174,7 +176,7 @@ export default function EstimateDetailPage() {
   };
 
   const handleConvert = () => {
-    convertToInvoice.mutate(estimate.id, {
+    convertToInvoice.mutate(rw.attach(estimate.id), {
       onSuccess: (inv) => {
         // H5: the invoice is taxed at TODAY's rate and exempt flag; say so when that differs from the quote.
         const taxNotice = estimateTaxBasisNotice(inv?.taxBasis);
@@ -190,6 +192,7 @@ export default function EstimateDetailPage() {
         if (target) router.push(`/invoices/${target}`);
       },
       onError: (err: unknown) => {
+        if (rw.handle(err, handleConvert)) return; // row 510
         // B15: surface the server's rejection reason (e.g. "Estimate must be
         // ACCEPTED") instead of a fixed "Please try again." that hid why a
         // convert attempt failed. `message` may be a string or an array of
@@ -284,7 +287,7 @@ export default function EstimateDetailPage() {
                 onClick={handleAccept}
                 loading={acceptEstimate.isPending}
               >
-                Mark Accepted
+                Mark accepted
               </Button>
               <Button
                 size="sm"
@@ -293,7 +296,7 @@ export default function EstimateDetailPage() {
                 onClick={handleDecline}
                 loading={declineEstimate.isPending}
               >
-                Mark Declined
+                Mark declined
               </Button>
             </>
           )}
@@ -305,7 +308,7 @@ export default function EstimateDetailPage() {
               onClick={handleConvert}
               loading={convertToInvoice.isPending}
             >
-              Convert to Invoice
+              Convert to invoice
             </Button>
           )}
 
@@ -327,7 +330,7 @@ export default function EstimateDetailPage() {
                 <DocumentLetterhead />
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-navy">ESTIMATE</p>
+                <p className="font-display text-2xl text-navy">Estimate</p>
                 <p className="mt-1 font-mono text-sm text-navy/70">{estimate.estimateNumber}</p>
               </div>
             </div>
@@ -336,7 +339,7 @@ export default function EstimateDetailPage() {
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Prepared For
+                  Prepared for
                 </p>
                 <p className="text-sm font-semibold text-navy">
                   {estimate.customer?.businessName ?? "—"}
@@ -352,14 +355,14 @@ export default function EstimateDetailPage() {
               </div>
               <div className="text-right">
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Estimate Details
+                  Estimate details
                 </p>
                 <p className="text-sm text-navy/70">
-                  <span className="font-medium text-navy">Issue Date:</span>{" "}
+                  <span className="font-medium text-navy">Issue date:</span>{" "}
                   {fmtCalendarDate(estimate.issueDate ?? estimate.createdAt)}
                 </p>
                 <p className="text-sm text-navy/70">
-                  <span className="font-medium text-navy">Valid Until:</span>{" "}
+                  <span className="font-medium text-navy">Valid until:</span>{" "}
                   {fmtCalendarDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </p>
               </div>
@@ -375,7 +378,7 @@ export default function EstimateDetailPage() {
                     </th>
                     <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">Qty</th>
                     <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
-                      Unit Price
+                      Unit price
                     </th>
                     <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/70">
                       Amount
@@ -465,7 +468,7 @@ export default function EstimateDetailPage() {
                   onClick={handleConvert}
                   loading={convertToInvoice.isPending}
                 >
-                  Convert to Invoice
+                  Convert to invoice
                 </Button>
               </div>
             )}
@@ -497,13 +500,13 @@ export default function EstimateDetailPage() {
           <Card title="Dates">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/70">Issue Date</dt>
+                <dt className="text-navy/70">Issue date</dt>
                 <dd className="text-navy">
                   {fmtCalendarDate(estimate.issueDate ?? estimate.createdAt)}
                 </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/70">Valid Until</dt>
+                <dt className="text-navy/70">Valid until</dt>
                 <dd className="text-navy">
                   {fmtCalendarDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </dd>
@@ -518,7 +521,7 @@ export default function EstimateDetailPage() {
                 <dd>{fmtDate(estimate.createdAt)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt>Last Updated</dt>
+                <dt>Last updated</dt>
                 <dd>{fmtDate(estimate.updatedAt)}</dd>
               </div>
             </dl>
@@ -531,7 +534,7 @@ export default function EstimateDetailPage() {
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
               >
                 <Ban className="h-4 w-4" />
-                Void Estimate
+                Void estimate
               </button>
             </div>
           )}
@@ -540,7 +543,7 @@ export default function EstimateDetailPage() {
             <div className="rounded-lg border border-green-200 bg-green-50 p-3">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-green-600" />
-                <p className="text-sm font-medium text-green-800">Customer Accepted</p>
+                <p className="text-sm font-medium text-green-800">Customer accepted</p>
               </div>
               <p className="mt-1 text-xs text-green-700">
                 This estimate has been accepted. Convert it to an invoice to proceed.
@@ -558,6 +561,7 @@ export default function EstimateDetailPage() {
         estimateNumber={estimate.estimateNumber}
         isPending={voidEstimate.isPending}
       />
+      {rw.dialog}
     </div>
   );
 }

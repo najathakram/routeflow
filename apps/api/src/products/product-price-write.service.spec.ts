@@ -309,6 +309,59 @@ describe("ProductPriceWriteService.save", () => {
       expect(world.writes).toEqual([]);
     });
 
+    describe("row 622: a keep that follows an earlier edit in the same draft", () => {
+      const piece = {
+        id: "u-piece",
+        label: "Piece",
+        factorToBase: 1,
+        price: null,
+        priceTier2: null,
+        priceTier3: null,
+        priceTier4: null,
+        priceTier5: null,
+        isDefaultSelling: false,
+        sortOrder: 1,
+        parentUnitId: null,
+        perParent: null,
+        sku: "PIECE-1",
+      };
+      // Pack Retail 12 / T2 24 are set; the Piece follows them, so it shows 2.00 at T2.
+      const saved = () =>
+        build({ product: { ...makeWorld().product!, priceTier2: "24.00" }, units: [{ ...piece }] });
+
+      it("the converted request (pack patches + the keep as a patch, no keeps) is accepted and writes the cell as Set", async () => {
+        const { world, service, grid } = saved();
+        const r = await req(grid, {
+          patches: [
+            { ref: "pack", tier: 1, to: 30 },
+            { ref: "pack", tier: 2, to: 28 },
+            { ref: "base", tier: 2, to: 2.5 },
+          ],
+          keeps: [],
+        });
+        const res = await service.save(PRODUCT_ID, r, null);
+        expect(Number(world.units[0].priceTier2)).toBe(2.5);
+        expect(cellOf(res.grid, "Piece", 2)).toEqual({ tier: 2, source: "set", value: 2.5 });
+        expect(world.audits).toHaveLength(1);
+      });
+
+      it("the pre-fix shape (a keep at the draft's price, not the saved one) is refused as not what it shows now", async () => {
+        const { world, service, grid } = saved();
+        const r = await req(grid, {
+          patches: [
+            { ref: "pack", tier: 1, to: 30 },
+            { ref: "pack", tier: 2, to: 28 },
+          ],
+          keeps: [{ ref: "base", tier: 2, value: 2.5 }],
+        });
+        const err = await rejection(service.save(PRODUCT_ID, r, null));
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
+        expect(JSON.stringify(err.getResponse())).toContain("not what it shows now");
+        expect(world.writes).toEqual([]);
+      });
+    });
+
     it("a keep on a cell that is already set is a no-op", async () => {
       const { world, service, grid } = build();
       const r = await req(grid, {

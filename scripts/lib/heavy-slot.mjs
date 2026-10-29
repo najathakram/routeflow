@@ -19,7 +19,9 @@
 // NOT a reason to give up.
 //
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
-// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 180), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
+// 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
+// process tree and releases the slot with exit 76 and `capped: true` in history; waiters give up only HOLD_GRACE after the cap, so a
+// queued job gets the slot the holder just freed), RF_HEAVY_SLOT=off (owner/lead escape hatch, loud), CI (no slot, silent). Test-only timing
 // knobs: RF_HEAVY_SLOT_POLL_MS, RF_HEAVY_SLOT_HEARTBEAT_MS.
 //
 // Node's spawnSync blocks the event loop, so the heartbeat could never fire: callers must run the
@@ -34,7 +36,10 @@ export const DEFAULT_SLOTS = 1;
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
 export const DEFAULT_MAX_WAIT_MIN = 720;
-export const DEFAULT_MAX_HOLD_MIN = 180;
+export const DEFAULT_MAX_HOLD_MIN = 90;
+export const HOLD_GRACE_MS = 5 * 60_000; // waiters give up at cap + this, never at the cap itself
+export const HOLD_KILL_MS = 15_000; // after the cap's SIGTERM the holder releases the slot regardless of fn
+export const HOLD_CAP_EXIT_CODE = 76; // the job was ended at the hold cap
 export const POLL_MS = 1_000;
 export const WAIT_LOG_MS = 60_000;
 export const HISTORY_MAX_LINES = 500;
@@ -63,7 +68,7 @@ export function parseMaxWaitMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_WAIT_MIN);
 }
 
-/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 180 min. */
+/** RF_HEAVY_SLOT_MAX_HOLD_MIN (minutes, fractions allowed) -> ms; unset/invalid -> 90 min. */
 export function parseMaxHoldMs(raw) {
   return parseMinutesMs(raw, DEFAULT_MAX_HOLD_MIN);
 }
@@ -77,6 +82,158 @@ export function holderOverCap(holder, now, maxHoldMs) {
 export function parseMs(raw, fallback) {
   const n = Number(raw);
   return typeof raw === "string" && raw.trim() !== "" && Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Every npm verb (and alias) that runs lifecycle scripts on install. Source: npm 11.9
+ * `lib/utils/cmd-list.js` (`shorthands`/`aliases`) plus `npm help install` / `npm help ci`.
+ */
+export const NPM_INSTALL_VERBS = new Set([
+  "ci",
+  "clean-install",
+  "ic",
+  "install-clean",
+  "isntall-clean",
+  "install",
+  "i",
+  "add",
+  "in",
+  "ins",
+  "inst",
+  "insta",
+  "instal",
+  "isnt",
+  "isnta",
+  "isntal",
+  "isntall",
+  "it",
+  "install-test",
+  "cit",
+  "install-ci-test",
+  "clean-install-test",
+  "sit",
+]);
+
+/** npm global/config options that consume the NEXT arg unless written `--opt=value`. */
+const NPM_VALUE_OPTS = new Set([
+  "--prefix",
+  "-C",
+  "-w",
+  "--workspace",
+  "--loglevel",
+  "--registry",
+  "--userconfig",
+  "--globalconfig",
+  "--cache",
+  "--include",
+  "--omit",
+  "--tag",
+  "--otp",
+  "--install-strategy",
+  "--before",
+  "--scope",
+  "--omit-lockfile-disabled",
+  "--lockfile-version",
+  "--audit-level",
+  "--fetch-retries",
+  "--logs-dir",
+  "--logs-max",
+  "--script-shell",
+  "--node-options",
+  "--cafile",
+  "--ca",
+  "--proxy",
+  "--https-proxy",
+  "--noproxy",
+  "--auth-type",
+  "--package",
+  "-c",
+  "--call",
+  "--json-pointer",
+]);
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "cmd", "powershell", "pwsh"]);
+
+function npmVerbIndex(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = String(args[i]);
+    if (!a.startsWith("-")) return i;
+    if (NPM_VALUE_OPTS.has(a)) i++; // `--prefix dir`: skip the value too
+  }
+  return -1;
+}
+
+/** Last of --ignore-scripts / --ignore-scripts=<v> / --no-ignore-scripts wins; null = not given. */
+function argIgnoreScripts(args) {
+  let v = null;
+  for (const a of args.map(String)) {
+    if (a === "--ignore-scripts" || a === "--ignore-scripts=true") v = true;
+    else if (a === "--no-ignore-scripts" || a === "--ignore-scripts=false") v = false;
+  }
+  return v;
+}
+
+function envIgnoreScripts(env) {
+  for (const k of ["npm_config_ignore_scripts", "NPM_CONFIG_IGNORE_SCRIPTS"]) {
+    if (String(env[k]).toLowerCase() === "true") return true;
+  }
+  return false;
+}
+
+/**
+ * Why `cmd args` must not run under the slot, or null. A bare `npm ci` / `npm install` (or any alias
+ * of them, after npm's own global options) runs the lifecycle scripts (husky `prepare`), which
+ * rewrite core.hooksPath and silently turn the worktree's pre-push hooks off (W-679); it must carry
+ * `--ignore-scripts` (or npm_config_ignore_scripts=true). Shell-string forms (`"npm ci"`,
+ * `sh -c 'npm ci'`) are parsed too, so they cannot sidestep the guard.
+ */
+export function bareNpmReason(cmd, args = [], env = process.env) {
+  const c = String(cmd ?? "").trim();
+  if (/\s/.test(c)) {
+    // one shell-string "command": split it and judge the first command word as `cmd`.
+    const words = c.split(/\s+/);
+    return bareNpmReason(words[0], [...words.slice(1), ...args], env);
+  }
+  const base = path
+    .basename(c)
+    .replace(/\.(cmd|exe|bat|ps1)$/i, "")
+    .toLowerCase();
+  if (SHELLS.has(base)) {
+    for (const a of args.map(String)) {
+      if (!/\s/.test(a)) continue;
+      for (const seg of a.split(/&&|\|\||[;|\n]/)) {
+        const w = seg
+          .replace(/['"`()]/g, " ")
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        for (let i = 0; i < w.length; i++) {
+          if (
+            path
+              .basename(w[i])
+              .replace(/\.(cmd|exe)$/i, "")
+              .toLowerCase() === "npm"
+          ) {
+            const r = bareNpmReason("npm", w.slice(i + 1), env);
+            if (r) return r;
+          }
+        }
+      }
+    }
+    return null;
+  }
+  if (base !== "npm") return null;
+  const list = args.map(String);
+  const at = npmVerbIndex(list);
+  if (at < 0) return null;
+  const verb = list[at].toLowerCase();
+  if (!NPM_INSTALL_VERBS.has(verb)) return null;
+  const viaArg = argIgnoreScripts(list);
+  if (viaArg !== null ? viaArg : envIgnoreScripts(env)) return null;
+  return (
+    `heavy-slot: refusing a bare \`npm ${verb}\`: its lifecycle scripts rewrite core.hooksPath and ` +
+    `switch the pre-push hooks off. Re-run with \`--ignore-scripts\`. Nothing was run.`
+  );
 }
 
 export function resolveDir(env = process.env, home = os.homedir()) {
@@ -146,7 +303,7 @@ export function trimHistoryText(text, max = HISTORY_MAX_LINES) {
 }
 
 /** One history record (ISO times; waitSec/heldSec to the millisecond). */
-export function historyRecord(lease, endedAt, exit) {
+export function historyRecord(lease, endedAt, exit, extra = {}) {
   return {
     label: lease.label,
     branch: lease.branch,
@@ -158,6 +315,7 @@ export function historyRecord(lease, endedAt, exit) {
     waitSec: Math.round(lease.startedAt - lease.queuedAt) / 1000,
     heldSec: Math.round(endedAt - lease.startedAt) / 1000,
     exit,
+    ...extra,
   };
 }
 
@@ -297,12 +455,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const activeChildren = new Set();
 let interruptedBy = null;
+let holdExpired = false; // W-759: the holder's cap fired; no further child may start under this lease
 
 /** Awaited async spawn with the heartbeat free to run. Resolves `{ status, signal, error }`. */
+export function activeChildCount() {
+  return activeChildren.size;
+}
+
 export function spawnAsync(cmd, args = [], options = {}) {
   return new Promise((resolve) => {
     if (interruptedBy) {
       resolve({ status: interruptedBy === "SIGINT" ? 130 : 143, signal: interruptedBy });
+      return;
+    }
+    if (holdExpired) {
+      resolve({ status: HOLD_CAP_EXIT_CODE, signal: null });
       return;
     }
     let child;
@@ -320,6 +487,9 @@ export function spawnAsync(cmd, args = [], options = {}) {
       activeChildren.delete(child);
       resolve(r);
     };
+    // 'exit' (not only 'close'): 'close' waits for every holder of the child's stdio, and an exited child's PID may be reused;
+    // an exited child must never be a target of the cap's kill (SA review of #3688).
+    child.on("exit", () => activeChildren.delete(child));
     child.on("error", (error) => finish({ status: null, signal: null, error }));
     child.on("close", (code, signal) => finish({ status: code, signal }));
   });
@@ -327,6 +497,7 @@ export function spawnAsync(cmd, args = [], options = {}) {
 
 function forwardSignal(sig) {
   for (const child of activeChildren) {
+    if (child.exitCode !== null || child.signalCode !== null) continue; // already gone: its PID may belong to someone else now
     try {
       if (process.platform === "win32" && child.pid) {
         // child.kill() only ends the shell on Windows; take the child's own tree down.
@@ -361,6 +532,8 @@ function resolveConfig(opts, env) {
     slots: opts.slots ?? parseSlots(env.RF_HEAVY_SLOTS),
     maxWaitMs: opts.maxWaitMs ?? parseMaxWaitMs(env.RF_HEAVY_SLOT_MAX_WAIT_MIN),
     maxHoldMs: opts.maxHoldMs ?? parseMaxHoldMs(env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
+    holdGraceMs: opts.holdGraceMs ?? HOLD_GRACE_MS,
+    holdKillMs: opts.holdKillMs ?? HOLD_KILL_MS,
     pollMs: opts.pollMs ?? parseMs(env.RF_HEAVY_SLOT_POLL_MS, POLL_MS),
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
@@ -467,14 +640,14 @@ async function acquire(cfg, state) {
       if (
         free < 0 &&
         snap.holders.length &&
-        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs))
+        snap.holders.every((h) => holderOverCap(h.entry, now, cfg.maxHoldMs + cfg.holdGraceMs))
       ) {
         const holder = snap.holders[0].entry;
         throw new HeavySlotTimeout(
           `heavy-slot: gave up waiting for a slot (position ${g.position} of ${g.total}); ` +
             `held by ${describeHolder(holder)} for ${((now - holder.startedAt) / 60_000).toFixed(1)} min, ` +
             `over the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min hold cap (RF_HEAVY_SLOT_MAX_HOLD_MIN) ` +
-            `while still heartbeating (wedged but alive?). Nothing was run. ` +
+            `and its ${(cfg.holdGraceMs / 60_000).toFixed(2)} min grace, while still heartbeating (wedged but alive?). Nothing was run. ` +
             `Check \`node scripts/heavy-slot.mjs status\`, then retry.`,
           holder,
         );
@@ -531,7 +704,7 @@ function makeLease(cfg, lock, index) {
   return {
     token: lock.token,
     lock,
-    release(exit = 0) {
+    release(exit = 0, extra = {}) {
       if (released) return;
       released = true;
       clearInterval(beat);
@@ -544,7 +717,7 @@ function makeLease(cfg, lock, index) {
           /* gone */
         }
       }
-      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit));
+      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit, extra));
     },
   };
 }
@@ -602,12 +775,49 @@ export async function withHeavySlot(opts, fn) {
   try {
     lease = await acquire(cfg, state);
     process.env.RF_HEAVY_SLOT_TOKEN = lease.token;
+    holdExpired = false;
+    // W-759: the holder enforces its OWN cap. A job that hangs while this process still heartbeats would otherwise stall every
+    // waiter. At the cap the holder ends its own guarded children (their process tree only); if fn still has not returned
+    // HOLD_KILL_MS later, the slot is released anyway and fn's late result is ignored.
+    // The timers are NOT unref'd: while armed they must keep the process alive, or a job hung on a bare promise would end the
+    // process with the slot never released by this path. They are cleared on release.
+    let capped = false;
+    let hardTimer = null;
+    let hardResolve = () => {};
+    const hard = new Promise((resolve) => {
+      hardResolve = resolve;
+    });
+    const capTimer = setTimeout(() => {
+      capped = true;
+      holdExpired = true;
+      cfg.log(
+        `heavy-slot: WARNING "${cfg.label}" held the slot past the ${(cfg.maxHoldMs / 60_000).toFixed(2)} min cap ` +
+          "(RF_HEAVY_SLOT_MAX_HOLD_MIN); ending its job and releasing the slot",
+      );
+      forwardSignal("SIGTERM");
+      hardTimer = setTimeout(() => {
+        forwardSignal("SIGKILL");
+        hardResolve(HOLD_CAP_EXIT_CODE);
+      }, cfg.holdKillMs);
+    }, cfg.maxHoldMs);
+    const stopTimers = () => {
+      clearTimeout(capTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+    };
     let result;
     try {
-      result = await fn({ token: lease.token, held: true });
+      result = await Promise.race([fn({ token: lease.token, held: true }), hard]);
     } catch (e) {
-      lease.release(1);
+      stopTimers();
+      holdExpired = false;
+      lease.release(capped ? HOLD_CAP_EXIT_CODE : 1, capped ? { capped: true } : {});
       throw e;
+    }
+    stopTimers();
+    holdExpired = false;
+    if (capped) {
+      lease.release(HOLD_CAP_EXIT_CODE, { capped: true });
+      return HOLD_CAP_EXIT_CODE;
     }
     lease.release(typeof result === "number" ? result : 0);
     return result;
@@ -645,7 +855,7 @@ export function formatStatus(
       `holder: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, ${min(now - e.startedAt)} min, ` +
         `heartbeat ${Math.round((now - e.heartbeatAt) / 1000)}s ago (${h.name})` +
         (holderOverCap(e, now, maxHoldMs)
-          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; waiters will give up)`
+          ? ` \u2014 OVER HOLD CAP (> ${(maxHoldMs / 60_000).toFixed(0)} min; the holder ends its job at the cap, waiters give up ${HOLD_GRACE_MS / 60_000} min later)`
           : ""),
     );
   }

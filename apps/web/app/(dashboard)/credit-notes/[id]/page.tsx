@@ -15,7 +15,7 @@ import {
   AlertTriangle,
   Pencil,
 } from "lucide-react";
-import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Button, Badge, Card, Modal, cn, useToast, badgeStatusLabel } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCreditNote, useApplyCreditNote } from "@/lib/api/credit-notes";
 import { useInvoices } from "@/lib/api/invoices";
@@ -84,7 +84,7 @@ function ApplyToInvoiceModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Apply to Invoice"
+      title="Apply to invoice"
       description="Select an open invoice to apply this credit note against."
       footer={
         <>
@@ -98,7 +98,7 @@ function ApplyToInvoiceModal({
             loading={isPending}
             disabled={invoicesLoading || invoices.length === 0}
           >
-            Apply Credit Note
+            Apply credit note
           </Button>
         </>
       }
@@ -136,7 +136,8 @@ function ApplyToInvoiceModal({
               <option value="">Select invoice…</option>
               {invoices.map((inv) => (
                 <option key={inv.id} value={inv.id}>
-                  {inv.invoiceNumber} — {fmt(Number(inv.balanceDue))} due ({inv.status})
+                  {inv.invoiceNumber} — {fmt(Number(inv.balanceDue))} due (
+                  {badgeStatusLabel(inv.status)})
                 </option>
               ))}
             </select>
@@ -182,7 +183,7 @@ export default function CreditNoteDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Credit note not found.</p>
         <Button variant="secondary" href="/credit-notes">
-          Back to Credit Notes
+          Back to credit notes
         </Button>
       </div>
     );
@@ -237,7 +238,7 @@ export default function CreditNoteDetailPage() {
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Credit Notes
+        Credit notes
       </Link>
 
       {/* Header */}
@@ -282,7 +283,7 @@ export default function CreditNoteDetailPage() {
                     : undefined
                 }
               >
-                Apply to Invoice
+                Apply to invoice
               </Button>
               <Button
                 size="sm"
@@ -315,7 +316,7 @@ export default function CreditNoteDetailPage() {
                 <DocumentLetterhead />
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-navy">CREDIT NOTE</p>
+                <p className="font-display text-2xl text-navy">Credit note</p>
                 <p className="mt-1 font-mono text-sm text-navy/70">{cn.creditNoteNumber}</p>
               </div>
             </div>
@@ -324,7 +325,7 @@ export default function CreditNoteDetailPage() {
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Credit To
+                  Credit to
                 </p>
                 <p className="text-sm font-semibold text-navy">
                   {cn.customer?.businessName ?? "—"}
@@ -367,7 +368,7 @@ export default function CreditNoteDetailPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Credit Amount
+                    Credit amount
                   </p>
                   <p className="mt-1 text-3xl font-bold text-navy">{fmt(Number(cn.amount))}</p>
                 </div>
@@ -456,7 +457,7 @@ export default function CreditNoteDetailPage() {
                   onClick={() => setIsApplyOpen(true)}
                   disabled={!canApply}
                 >
-                  Apply to Invoice
+                  Apply to invoice
                 </Button>
                 {isExpired && (
                   <p className="text-xs text-danger">

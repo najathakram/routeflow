@@ -11,9 +11,11 @@ import http from "node:http";
 import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
 import {
   COOKIE_NAME,
   SESSION_MAX_AGE_S,
+  authFromEnv,
   clearCookie,
   clientIp,
   createFailureLimiter,
@@ -23,6 +25,16 @@ import {
   verifyPassword,
   verifySession,
 } from "./lib/auth.mjs";
+import { renderIcon } from "./lib/icon.mjs";
+import { describeSyncOutcome } from "./lib/sync.mjs";
+import {
+  createNameLoader,
+  emptyListReason,
+  fallbackMaskDeep,
+  fallbackMaskText,
+  maskDeep,
+  maskText,
+} from "./lib/mask.mjs";
 import { verifyGithubSignature } from "./lib/webhooks.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,15 +50,41 @@ const STATIC = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/app.css": ["app.css", "text/css; charset=utf-8"],
+  "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
 };
+// PWA icons are generated at runtime (no images in git): path -> [size, full-bleed].
+const ICONS = {
+  "/icon-192.png": [192, false],
+  "/icon-512.png": [512, false],
+  "/apple-touch-icon.png": [180, true],
+};
+const iconCache = new Map();
 const LOGIN_FILE = "login.html";
+const ORIGIN_REFUSED =
+  "This sign-in came from somewhere the monitor doesn&#39;t recognise. Open the monitor&#39;s address directly and try again.";
 const ERROR_MARKER = "<!--login-error-->";
 const LOGIN_ERRORS = {
   1: "Incorrect password. Try again.",
   2: "Too many attempts. Try again in a few minutes.",
 };
 // Reachable without a session (GET).
-const OPEN_GET = new Set(["/login", "/api/health", "/app.css", "/robots.txt"]);
+const OPEN_GET = new Set([
+  "/login",
+  "/api/health",
+  "/app.css",
+  "/robots.txt",
+  "/manifest.webmanifest",
+  ...Object.keys(ICONS),
+]);
+const SESSION_REFRESH_BELOW_MS = (SESSION_MAX_AGE_S * 1000) / 2; // sliding: re-issue under 15 days left
+
+function sessionExp(token) {
+  try {
+    return JSON.parse(Buffer.from(String(token).split(".")[0], "base64url").toString("utf8")).exp;
+  } catch {
+    return null;
+  }
+}
 
 export const CSP =
   "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'";
@@ -67,6 +105,7 @@ export function createMonitorServer({
   auth = null,
   webhook = null,
   cloud = false,
+  log = (m) => console.error(`[ops-monitor] ${m}`),
 }) {
   const now = auth?.now ?? Date.now;
   // Failures only: 10 per client IP per 15 min, plus a coarse global cap of 300 in case the
@@ -115,10 +154,18 @@ export function createMonitorServer({
       req.on("close", () => resolveBody({ tooLarge: true, body: Buffer.alloc(0) }));
     });
 
-  // Cross-site form posts: if the browser sent an Origin it must be this host.
+  // Cross-site form posts. An Origin must name this host. "Origin: null" (what browsers send for a
+  // same-origin POST under Referrer-Policy: no-referrer) is accepted only when the browser-set
+  // Sec-Fetch-Site says same-origin. A request with no Origin at all (curl, tests) is allowed
+  // unless a browser's Sec-Fetch-Site marks it as coming from elsewhere. That allowance is safe
+  // only because the session cookie is SameSite=Lax (pinned by a test): do not loosen the cookie
+  // to None without tightening this check.
   const sameOrigin = (req) => {
     const origin = req.headers.origin;
-    if (origin === undefined) return true;
+    const site = req.headers["sec-fetch-site"];
+    if (origin === undefined)
+      return site === undefined || site === "same-origin" || site === "none";
+    if (origin === "null") return site === "same-origin";
     try {
       return new URL(origin).host === req.headers.host;
     } catch {
@@ -126,23 +173,39 @@ export function createMonitorServer({
     }
   };
 
+  // One line per login attempt. The client tag is a short non-reversible hash of the IP with a
+  // per-boot random salt; nothing else about the request (and never the password) is logged.
+  const loginSalt = randomBytes(16);
+  const clientTag = (ip) =>
+    createHash("sha256").update(loginSalt).update(String(ip)).digest("hex").slice(0, 8);
+  const loginLog = (outcome, ip) => log(`login ${outcome} client ${clientTag(ip)}`);
+
   async function handleLogin(req, res) {
-    if (!sameOrigin(req)) return text(res, 403, "forbidden");
-    const { tooLarge, body } = await readBody(req, LOGIN_BODY_MAX);
-    if (tooLarge) return text(res, 413, "request too large", { connection: "close" });
-    const t = now();
     const ip = clientIp(req, { cloud });
+    if (!sameOrigin(req)) {
+      loginLog("bad-request origin-mismatch", ip);
+      return loginPage(res, "", { status: 403, message: ORIGIN_REFUSED });
+    }
+    const { tooLarge, body } = await readBody(req, LOGIN_BODY_MAX);
+    if (tooLarge) {
+      loginLog("bad-request", ip);
+      return text(res, 413, "request too large", { connection: "close" });
+    }
+    const t = now();
     // A blocked client never reaches scrypt; only failures are counted.
     if (limiter.blocked(ip, t) || globalLimiter.blocked("*", t)) {
+      loginLog("rate-limited", ip);
       return redirect(res, 303, "/login?e=2");
     }
     const password = new URLSearchParams(body.toString("utf8")).get("password") ?? "";
     if (!verifyPassword(password, auth.passwordHash)) {
       limiter.fail(ip, t);
       globalLimiter.fail("*", t);
+      loginLog("wrong", ip);
       return redirect(res, 303, "/login?e=1");
     }
     limiter.reset(ip);
+    loginLog("ok", ip);
     const token = signSession({ exp: t + SESSION_MAX_AGE_S * 1000 }, auth.sessionSecret);
     return redirect(res, 303, "/", {
       "set-cookie": sessionCookie(token, { secure: isHttps(req) }),
@@ -170,19 +233,19 @@ export function createMonitorServer({
     return undefined;
   }
 
-  async function loginPage(res, query) {
+  async function loginPage(res, query, { status = 200, message } = {}) {
     const e = new URLSearchParams(query).get("e");
     let html = await readFile(join(publicDir, LOGIN_FILE), "utf8");
-    const msg = Object.hasOwn(LOGIN_ERRORS, e) ? LOGIN_ERRORS[e] : null;
+    const msg = message ?? (Object.hasOwn(LOGIN_ERRORS, e) ? LOGIN_ERRORS[e] : null);
     html = html.replace(ERROR_MARKER, msg ? `<p class="login-error" role="alert">${msg}</p>` : "");
-    return send(res, 200, "text/html; charset=utf-8", html);
+    return send(res, status, "text/html; charset=utf-8", html);
   }
 
   return http.createServer(async (req, res) => {
     try {
       // Headers on every response; writeHead later merges its own on top.
       res.setHeader("x-content-type-options", "nosniff");
-      res.setHeader("referrer-policy", "no-referrer");
+      res.setHeader("referrer-policy", "same-origin");
       res.setHeader("x-frame-options", "DENY");
       res.setHeader("content-security-policy", CSP);
       res.setHeader("x-robots-tag", "noindex, nofollow");
@@ -232,6 +295,24 @@ export function createMonitorServer({
         return redirect(res, 302, "/login");
       }
 
+      if (auth && !OPEN_GET.has(path)) {
+        // Sliding session: re-issue the cookie once less than half its life remains.
+        const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
+        const exp = sessionExp(token);
+        if (typeof exp === "number" && exp - now() < SESSION_REFRESH_BELOW_MS) {
+          const fresh = signSession({ exp: now() + SESSION_MAX_AGE_S * 1000 }, auth.sessionSecret);
+          res.setHeader("set-cookie", sessionCookie(fresh, { secure: isHttps(req) }));
+        }
+      }
+      if (Object.hasOwn(ICONS, path)) {
+        if (!iconCache.has(path)) {
+          const [size, full] = ICONS[path];
+          iconCache.set(path, renderIcon(size, { full }));
+        }
+        return send(res, 200, "image/png", iconCache.get(path), {
+          "cache-control": "public, max-age=86400",
+        });
+      }
       if (path === "/login") {
         if (!auth || authed(req)) return redirect(res, 302, "/");
         return await loginPage(res, query);
@@ -366,40 +447,111 @@ export function shouldRunRegisterSync(opts) {
 }
 
 /**
- * Runs `run()` after `firstDelayMs`, then every `intervalMs` (never overlapping). `onDone` gets
- * the result of each pass that appended events; errors are logged and the schedule goes on.
- * Returns a stop function. `schedule`/`cancel` are injectable for tests.
+ * A rate-limited step for the collector's specs pass (`afterSpecsPull`): the first `run()` is due
+ * `firstMs` after creation, then every `intervalMs`; calls in between return at once. `onDone`
+ * gets a result that appended events; errors are logged and never thrown (the step is retried
+ * after the next interval). `now` is injectable for tests.
  */
-export function startRegisterSync({
+export function makeSpecsPassStep({
   run,
   onDone = () => {},
   log = () => {},
-  firstDelayMs = REGISTER_SYNC_FIRST_MS,
+  firstMs = REGISTER_SYNC_FIRST_MS,
   intervalMs = REGISTER_SYNC_MS,
-  schedule = (fn, ms) => {
-    const t = setTimeout(fn, ms);
-    t.unref?.();
-    return t;
-  },
-  cancel = clearTimeout,
+  now = Date.now,
 }) {
-  let handle = null;
-  let stopped = false;
-  const tick = async () => {
-    handle = null;
+  let due = now() + firstMs;
+  return async () => {
+    if (now() < due) return false;
+    due = now() + intervalMs;
     try {
       const res = await run();
       if (res?.appended > 0) onDone(res);
     } catch (err) {
       log(`register sync failed: ${err?.message ?? err}`);
     }
-    if (!stopped) handle = schedule(tick, intervalMs);
+    return true;
   };
-  handle = schedule(tick, firstDelayMs);
-  return () => {
-    stopped = true;
-    if (handle !== null) cancel(handle);
+}
+
+// At most one "lock starved the syncs" line per this window.
+export const SYNC_STARVATION_LOG_MS = 600_000;
+
+/**
+ * The collector's specs-pass hooks for the register + status syncs. `afterPull` (inside the lock
+ * hold, right after the pull) runs each step in order, each only when due, then logs one timing
+ * line, only when at least one step ran; a failed pull (or a failed push/reconcile after a good
+ * pull) skips them all for this pass with one log line saying which. `onBusy` (the pass found the specs lock held and
+ * skipped) logs, at most once per `throttleMs`, how long since the last pass that ran the syncs.
+ */
+export function makeSpecsPassHook({
+  steps,
+  log = () => {},
+  now = Date.now,
+  throttleMs = SYNC_STARVATION_LOG_MS,
+}) {
+  const startedAt = now();
+  let lastOkAt = null;
+  let lastBusyLogAt = null;
+  return {
+    async afterPull({
+      pullOk = true,
+      pullError = null,
+      pullStage = "pull",
+      pullMs = 0,
+      lockStartedAt = now(),
+    } = {}) {
+      if (pullOk === false) {
+        log(
+          pullStage === "push"
+            ? `specs push/reconcile failed after a good pull, register and status sync skipped this pass: ${pullError}`
+            : `specs pull failed, register and status sync skipped this pass: ${pullError}`,
+        );
+        return;
+      }
+      lastOkAt = now();
+      const took = {};
+      let ranAny = false;
+      for (const { name, run } of steps) {
+        const t0 = now();
+        const ran = (await run()) !== false;
+        took[name] = ran ? now() - t0 : "skip";
+        ranAny ||= ran;
+      }
+      if (ranAny)
+        log(
+          `specs pass: lock ${now() - lockStartedAt} ms (pull ${pullMs}, register ${took.register ?? "skip"}, status ${took.status ?? "skip"})`,
+        );
+    },
+    onBusy() {
+      if (lastBusyLogAt !== null && now() - lastBusyLogAt < throttleMs) return;
+      lastBusyLogAt = now();
+      const mins = Math.floor((now() - (lastOkAt ?? startedAt)) / 60000);
+      log(
+        `specs lock busy, register and status sync skipped: no sync for ${mins} min` +
+          (lastOkAt === null ? " (since start)" : ""),
+      );
+    },
   };
+}
+
+/**
+ * The register-sync log line for one pass. Every pass that appends nothing says why (busy lock,
+ * pull error, generated mode, no changes), plus a refused register or refused rows, logged once per
+ * change of that text so a stalled sync is never silent and a steady state never spams. Returns
+ * `{ note, log }`: `note` is the new last-logged text, `log` the line to print or null.
+ */
+export function registerSyncLog(lastNote, res, { mask = (t) => t } = {}) {
+  const note = [
+    describeSyncOutcome(res, { mask }),
+    res?.refused ? `register refused: ${res.refused}` : null,
+    res?.collisions?.length
+      ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  return note === lastNote ? { note, log: null } : { note, log: note || null };
 }
 
 /** Writes the last snapshot atomically (`rf audit` reads it). Never throws. */
@@ -444,12 +596,49 @@ export function withMergedDeploys(sources, mergeDeploys) {
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const opts = resolveListenOptions(argv, env);
   const { checkCloudEnv } = await import("./lib/cloud.mjs");
-  const check = checkCloudEnv(env, { cloud: opts.cloud });
+  const check = checkCloudEnv(env, {
+    cloud: opts.cloud,
+    views: opts.views,
+    lan: opts.host !== "127.0.0.1" && opts.host !== "localhost",
+  });
   if (!check.ok) throw new StartupError(check.errors.join("\n"));
-  const auth = env.OPS_PASSWORD_HASH
-    ? { passwordHash: env.OPS_PASSWORD_HASH, sessionSecret: env.OPS_SESSION_SECRET }
-    : null;
+  const auth = authFromEnv(env);
 
+  // Client names are masked in every snapshot (SSE, /api/snapshot, last-snapshot.json, views).
+  const nameLoader = createNameLoader({ env });
+  {
+    // Plain localhost still runs without a list, but says so once (cloud, --lan and --views refused above).
+    nameLoader.get();
+    const problem = nameLoader.error();
+    if (problem || nameLoader.get().length === 0) {
+      console.error(
+        `[ops-monitor] warning: ${problem ?? emptyListReason(env)} - the board is not masked; fill client-names.json in the ops home or set CLIENT_NAMES_JSON.`,
+      );
+    }
+  }
+  // Fail closed: with no readable names list the fallback masker runs on every snapshot and the
+  // snapshot says so (maskStatus), so the page can show a banner.
+  const maskState = () => {
+    const names = nameLoader.get();
+    const problem = nameLoader.error();
+    const ok = !problem && names.length > 0;
+    return {
+      names,
+      fallback: !ok,
+      status: ok
+        ? { ok: true, reason: null }
+        : { ok: false, reason: problem ?? emptyListReason(env) },
+    };
+  };
+  const maskOne = (t) => {
+    const m = maskState();
+    return m.fallback ? fallbackMaskText(maskText(t, m.names)) : maskText(t, m.names);
+  };
+  const maskAll = (obj) => {
+    const m = maskState();
+    const once = maskDeep(obj, m.names);
+    return m.fallback ? fallbackMaskDeep(once) : once;
+  };
   let snapshot;
   const listeners = new Set();
   const subscribe = (fn) => {
@@ -465,7 +654,29 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   let webhook = null;
 
   if (opts.fixture) {
-    snapshot = JSON.parse(await readFile(resolve(opts.fixture), "utf8"));
+    const fx = JSON.parse(await readFile(resolve(opts.fixture), "utf8"));
+    const status = maskState().status;
+    snapshot = maskAll({
+      ...fx,
+      maskStatus: status,
+      alarms: status.ok
+        ? fx.alarms
+        : [
+            {
+              id: "mask-list-missing:mask",
+              kind: "mask-list-missing",
+              severity: "error",
+              message: "client-name mask list missing — tenant names hidden by fallback",
+              suggest: null,
+              item: null,
+              lane: null,
+              pr: null,
+              branch: null,
+              source: "mask",
+            },
+            ...(fx.alarms ?? []),
+          ],
+    });
   } else {
     const cfg = await import("./lib/config.mjs");
     const { createCollector, mergeDeploys } = await import("./lib/collector.mjs");
@@ -485,16 +696,20 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     let refused = null;
     let viewsTimer = null;
     let snapTimer = null;
-    let stopRegisterSync = () => {};
+    let pullHook = null; // (collector hooks) set once the register/status syncs are wired (local --views only)
     let lastViewsHash = null;
     let collector = null;
     const rebuild = () => {
       const config = cfg.loadConfig(specs);
+      // Mask the raw inputs BEFORE the snapshot is built (a name cut in half by a clip or a slice
+      // would no longer match), and the finished snapshot again below.
       const snap = buildSnapshot({
-        sources: withMergedDeploys(collector.sources, mergeDeploys),
+        sources: maskAll(withMergedDeploys(collector.sources, mergeDeploys)),
         config,
         now: Date.now(),
         machine: cfg.machineId(config, env),
+        mask: maskOne,
+        maskStatus: maskState().status,
       });
       if (refused) {
         snap.alarms = [
@@ -513,14 +728,17 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
           },
         ];
       }
-      return snap;
+      return maskAll(snap);
     };
     const persistSnapshot = () => {
       if (opts.cloud || opts.once || snapTimer) return;
-      snapTimer = setTimeout(() => {
-        snapTimer = null;
-        writeLastSnapshot(cfg.opsHome(env), snapshot);
-      }, 30_000);
+      snapTimer = setTimeout(
+        () => {
+          snapTimer = null;
+          writeLastSnapshot(cfg.opsHome(env), snapshot);
+        },
+        Number(env.RF_PERSIST_MS) || 30_000,
+      );
       snapTimer.unref?.();
     };
     const scheduleViews = (snap) => {
@@ -537,6 +755,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
             specsDir: specs,
             boardDir: cfg.boardDir(env),
             snapshot: cur,
+            clientNames: nameLoader.get(),
             push: true,
             dry: false,
             registerMode:
@@ -558,7 +777,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       now: Date.now,
       env,
       cloud: opts.cloud,
+      mask: maskOne,
       log: (m) => console.error(`[ops-monitor] ${m}`),
+      afterSpecsPull: (a) => pullHook?.afterPull(a),
+      onSpecsBusy: () => pullHook?.onBusy(),
       onUpdate: () => {
         try {
           publish(rebuild());
@@ -586,7 +808,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     if (env.GITHUB_WEBHOOK_SECRET) {
       const { createWebhookDispatcher, routeWebhook } = await import("./lib/webhooks.mjs");
-      const dispatcher = createWebhookDispatcher({ runOnce: (n) => collector.runOnce(n) });
+      const dispatcher = createWebhookDispatcher({
+        runOnce: (n) => collector.runOnce(n, { requeue: true }),
+      });
       webhook = {
         secret: env.GITHUB_WEBHOOK_SECRET,
         onEvent: (name, payload) => dispatcher.dispatch(routeWebhook(name, payload)),
@@ -596,42 +820,68 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     collector.start();
     if (shouldRunRegisterSync(opts)) {
+      // Both syncs ride the collector's specs pass: it already holds the specs lock and has just
+      // pulled, so they can never lose the lock to their own process (a timer did, on a slow box).
+      // The pass re-reads the events right after the hook, so appended events show up at once.
+      const { runStatusSync } = await import("./lib/status-sync.mjs");
       const { runSync } = await import("./lib/sync.mjs");
       const { loadBugIds } = await import("./lib/store.mjs");
+      const home = cfg.opsHome(env);
+      // Same fail-closed masker as the snapshot (falls back when the client-name list is missing).
+      const mask = maskOne;
+      const say = (m) => console.error(`[ops-monitor] ${m}`);
+      let lastStatusNote = "";
+      const statusStep = makeSpecsPassStep({
+        firstMs: 30_000,
+        intervalMs: 120_000,
+        run: async () => {
+          const res = await runStatusSync({ dir: specs, home, env, lockHeld: true });
+          const step = registerSyncLog(lastStatusNote, res);
+          lastStatusNote = step.note;
+          if (step.log)
+            say(
+              step.log
+                .replace("register sync", "status sync")
+                .replace("register and events agree", "no heartbeat changes"),
+            );
+          if (res?.capped) say(`status sync capped: ${res.capped} left for the next pass`);
+          return res;
+        },
+        onDone: (res) => say(`status sync appended ${res.appended} heartbeat(s)`),
+        log: (m) => say(m.replace("register sync", "status sync")),
+      });
       let lastRegisterNote = "";
-      stopRegisterSync = startRegisterSync({
+      const registerStep = makeSpecsPassStep({
         run: async () => {
           const res = await runSync({
             dir: specs,
-            home: cfg.opsHome(env),
+            home,
             env,
+            mask,
             bugIds: await loadBugIds(repoRoot),
+            lockHeld: true,
           });
-          // A refused register (duplicate row ids) or refused rows (id collisions): log once per change.
-          const note = [
-            res?.refused ? `register refused: ${res.refused}` : null,
-            res?.collisions?.length
-              ? `register rows refused (id shared with a monitor item): ${res.collisions.join(", ")}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join("; ");
-          if (note !== lastRegisterNote) {
-            lastRegisterNote = note;
-            if (note) console.error(`[ops-monitor] ${note}`);
-          }
+          const step = registerSyncLog(lastRegisterNote, res, { mask });
+          lastRegisterNote = step.note;
+          if (step.log) say(step.log);
           return res;
         },
-        onDone: (res) => {
-          console.error(`[ops-monitor] register sync appended ${res.appended} event(s)`);
-          collector.runOnce("specs").catch(() => {});
-        },
-        log: (m) => console.error(`[ops-monitor] ${m}`),
+        onDone: (res) => say(`register sync appended ${res.appended} event(s)`),
+        log: say,
+      });
+      say(
+        `register sync on: inside the specs pass (holds the specs lock already), first in ${REGISTER_SYNC_FIRST_MS / 1000} s, then every ${REGISTER_SYNC_MS / 60000} min`,
+      );
+      pullHook = makeSpecsPassHook({
+        steps: [
+          { name: "status", run: statusStep },
+          { name: "register", run: registerStep },
+        ],
+        log: say,
       });
     }
     stopCollector = () => {
       collector.stop();
-      stopRegisterSync();
       if (viewsTimer) clearTimeout(viewsTimer);
       if (snapTimer) clearTimeout(snapTimer);
     };

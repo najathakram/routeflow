@@ -1,4 +1,4 @@
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { normalizeBoxesPieces, perUnitPrice, type UnitWords } from "@routeflow/pricing";
 import type { CounterSaleItem } from "@routeflow/types";
 import { mergePieceIntoLine } from "./add-line-merge";
 import type { SaleLine } from "./counter-sale-scan";
@@ -23,6 +23,39 @@ export const lineQtyLabel = (l: SaleLine): string => {
   });
   const boxes = n.boxes ?? 0;
   return `${boxes} box${boxes === 1 ? "" : "es"}${n.pieces ? ` + ${n.pieces} pcs` : ""}`;
+};
+
+/**
+ * The register line's quantity: `lineQtyLabel`'s shape in the tenant's pack word (`unitWords`), then the pack size. A boxed line
+ * with whole boxes only reads "1 box of 24"; with loose pieces "1 box + 3 pcs · box of 24" (so the pack is always named).
+ * The receipt keeps `lineQtyLabel` unchanged. Money is never derived here.
+ */
+export const registerQtyLabel = (l: SaleLine, words: UnitWords): string => {
+  if (!isBoxedLine(l)) return `× ${l.qty}`;
+  const n = normalizeBoxesPieces({
+    boxes: l.boxes,
+    pieces: l.pieces,
+    qty: l.qty,
+    unitsPerBox: l.unitsPerBox,
+  });
+  const boxes = n.boxes ?? 0;
+  const pack = words.packFor(boxes);
+  const size = l.unitsPerBox;
+  if (!n.pieces) return `${boxes} ${pack} of ${size}`;
+  return `${boxes} ${pack} + ${n.pieces} ${words.base.short.other} · ${words.pack.lower} of ${size}`;
+};
+
+/** The register line's price: per pack, then the per-piece figure (`perUnitPrice`); a plain line per its unit word. */
+export const registerPriceLabel = (
+  l: SaleLine,
+  words: UnitWords,
+  money: (n: number) => string,
+  unitWord: (unit: string) => string,
+): string => {
+  if (!isBoxedLine(l))
+    return `${money(l.unitPrice)} / ${l.unit ? unitWord(l.unit) : words.base.lower}`;
+  const each = perUnitPrice(l.unitPrice, l.unitsPerBox);
+  return `${money(l.unitPrice)} / ${words.pack.lower}${each != null ? ` · ${money(each)} each` : ""}`;
 };
 
 /**

@@ -1,6 +1,6 @@
 {
-  "mappedSha": "af182eaadf5814ec751d9407005cce1d3621cf3b",
-  "generatedAt": "2026-10-18T18:00:00.000Z",
+  "mappedSha": "dc95e0eac1052a838dcbbc9a25586e7d4cd38f20",
+  "generatedAt": "2026-10-24T18:29:42.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 24,
-    "web": 20,
-    "mobile": 13,
+    "api": 30,
+    "web": 25,
+    "mobile": 16,
     "packages": 0
   },
-  "fileCount": 1141,
-  "notes": "- **2026-10-18 — Bookkeeping for product-k11 (#3513, merge `af182eaad`; `32fbe0542..af182eaad`) and money-1 (#3480, merge `4b96fee63`, merged 2026-10-16; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-18-k11-money1.md` (TOC row in each area file) and a packages.md section: K11-20 floating price editor as the one editor (`PriceEditWindow`, `PriceWindowHost`, `PriceFigures`, `FloatingPanel`), K11 L2 grid and save-bar cards, partial limit=0 removal; money-1: B920 per-product stock total, L8 store-vs-address state (`sale-fulfilment.ts`, `fulfil-path-restrictions.ts`), `stripe-termination-gate.ts`, price history v1.1 (`usePriceSummary`), legacy box-axis cutoff, graph tooling. Lessons L-317..L-320; L-197, L-201, L-231, L-215 archived. mappedSha af182eaad. Full history: CHANGELOG.md."
+  "fileCount": 1146,
+  "notes": "**2026-10-24 — Bookkeeping for window 5 (#3721 `dc95e0eac`, #3727 `3a3341975`, #3725 `efc056be7`, #3724 `3f3cdadf8`, #3690 `afc5685b8`, #3722 `82e796b5d`, #3713 `a1ec17dcf`, #3716 `03eade81d`, #3666 `dc5f23f5d`, #3663 `4f80a6b56`, #3681 `575185a90`, #3705 `9222bf953`, #3703 `107a5f9fd`, #3704 `b1eb955b7`, #3696 `ff58a2900`, #3706 `3c3d6a3a3`, #3700 `eef55bcdc`, #3692 `aceb7686b`, #3689 `5e7112419`, #3697 `05335ecad`, #3678 `da4fbd879`, #3698 `9063ee980`, #3699 `2d769cedc`, #3455 `5f3b1ddb3`, #3695 `55dcdc28d`, #3597 `17c1a8bda`, #3693 `902db459d`, #3688 `1095a5dd4`, #3685 `991d5e028`, #3680 `316382651`, #3683 `115d1b710`, #3682 `b2048f398`, #3687 `209ec4972`, #3656 `b2d5046d3`, #3684 `bac2724d7`, #3675 `49885435a`, #3679 `d780f67b6`, #3630 `7e7873788`, #3677 `47a951c2b`, #3673 `a006d97ff`, #3669 `c6553d46d`, #3674 `58e20f99c`, #3676 `fe2211786`, #3672 `18f2f6d8f`, #3671 `b6ffe4636`, #3670 `4d55f6715`, #3665 `c02d45f13`, #3658 `6000ad435`, #3659 `843741ab9`, #3668 `259c43ce8`, #3667 `bcc930f62`, #3652 `e9166f2fc`, #3660 `19b7a49ab`, #3661 `56d2bdf09`, #3657 `7d5a58f68`, #3653 `ff4661bf5`, #3640 `affeafbe7`, #3664 `ab57e7be9`, #3654 `5fbc7141d`, #3646 `57402aaff`, #3662 `99ec8aab3`, #3655 `bfd7432d7`, #3642 `c5cf1736d`, #3645 `415f23f10`, #3647 `3b6062c32`, #3639 `8309545ed`, #3651 `3bc401853`, #3644 `82f7580c8`, #3643 `60d0638b0`, #3635 `a75a5b861`, #3649 `1e162686a`, #3638 `d81ff1eb2`, #3650 `97918c4d4`, #3648 `a6aeba8a5`, #3626 `7e633549d`, #3469 `f49ddba76`, #3641 `0f51a712e`, #3636 `e8d7c2e75`, #3601 `f0206ee9c`, #3637 `68825a979`, #3633 `ade9569d1`, #3631 `42f685a76`, #3632 `49307fb08`, #3634 `21a6f4c4b`, #3599 `edfc9834c`, #3628 `a2c563270`, #3627 `e8d934f48`, #3629 `70be1758e`, #3625 `e6acb9955`, #3622 `ece08bd5f`, #3624 `7f4352d9f`, #3620 `b59276ecb`, #3615 `74232e4f1`, #3621 `02f53dad6`, #3618 `77a4e4a9c`, #3623 `49ce9aa44`, #3619 `d4c04f622`, #3614 `240909cab`, #3609 `7ed640a22`, #3616 `b430eed74`, #3617 `ecda4bc1d`, #3611 `315b728af`, #3613 `e29041e20`, #3602 `4deb8c345`, #3612 `327e9abe1`, #3607 `8be238e99`, #3610 `a8b434a5d`, #3606 `0d127b795`, #3603 `a4e6c620f`, #3604 `85c7eef8f`, #3605 `26f5b1d02`, #3608 `475d2c57a`, #3598 `580a98500`, #3600 `5a03e55da`, #3535 `aa9155996`, #3590 `be5085883`, #3594 `3b0dab9ea`, #3587 `95ed0e7dd`, #3595 `0066551de`, #3593 `694ab1428`, #3586 `e8ea28969`; docs-only, Option B follow-up).** New `api/landing-2026-10-24-w5a.md` + `w5b.md`, `web/`, `mobile/` and `packages/landing-2026-10-24-w5.md` (TOC row in each area file; packages.md is at its size cap, so it holds a pointer section): SA-841 pending-order merge fold, payment reference dedupe and record anyway, counter till credit and complete at counter, invoice email again, accrual dashboard, billing admin lock, stock-date gate, one row-lock order, discount-safe re-totals, regulated ledger guards, state restriction warn + override, pricing gate fails closed, shared error codes and payment capacity predicate, mobile web shell (W-830). mappedSha `dc95e0eac`. History: CHANGELOG.md."
 }

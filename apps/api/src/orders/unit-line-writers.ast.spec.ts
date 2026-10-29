@@ -134,6 +134,11 @@ const INVENTORY: Record<string, Row> = {
     kind: "FIELD_ONLY",
     why: "deliveredQty raised on lines with no delivery evidence; never factor or price",
   },
+  // Row 587 (SA-833): PD -> DELIVERED completes office-evidenced lines to their qty.
+  "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": {
+    kind: "FIELD_ONLY",
+    why: "deliveredQty raised to qty on office-evidenced lines at a DELIVERED write; never factor or price",
+  },
   "orders/orders.service.ts::OrdersService.reopenOrder": {
     kind: "FIELD_ONLY",
     why: "line status flips",
@@ -400,6 +405,7 @@ function classMethods(sf: ts.SourceFile): Map<string, ts.MethodDeclaration> {
 const FREE_WRITER_FILES = [
   "orders/order-cancel-tx.ts",
   "orders/delivered-stamp.ts",
+  "orders/office-evidence-completion.ts",
   "orders/recompute-line-category-taxes.ts",
   "orders/settle-split-free-units.ts",
 ];
@@ -454,6 +460,7 @@ const FREE_WRITER_DATA_KEYS: Record<string, string[]> = {
   "orders/order-cancel-tx.ts::cancelOrderInTx": ["status"],
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": ["deliveredQty"],
   "orders/delivered-stamp.ts::stampDeliveredInFull": ["deliveredQty"],
+  "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": ["deliveredQty"],
   "orders/settle-split-free-units.ts::settleSplitFreeUnits": ["promoFreeUnits", "subtotal"],
   "orders/recompute-line-category-taxes.ts::recomputeLineCategoryTaxes": [
     "categoryPriceIncludesTax",
@@ -1047,6 +1054,9 @@ const REVISIONS: Record<string, RevisionRow> = {
     "delivery evidence (deliveredQty), not the sale",
   ),
   "orders/delivered-stamp.ts::clearUnevidencedDelivered": statusOnly(
+    "delivery evidence (deliveredQty), not the sale",
+  ),
+  "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": statusOnly(
     "delivery evidence (deliveredQty), not the sale",
   ),
   // B692: a manual PARTIALLY_DELIVERED records per-line delivery evidence (deliveredQty recompute), not the sale.

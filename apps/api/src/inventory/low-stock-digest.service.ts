@@ -175,13 +175,18 @@ export class LowStockDigestService {
       }));
   }
 
-  /** Active TENANT_ADMINs with an email on file, minus anyone who has explicitly opted out
+  /** Active TENANT_ADMINs and OPERATORs (owner 10-07 OK-6) with an email on file, minus anyone who has explicitly opted out
    * via `UserPreference{key: LOW_STOCK_DIGEST_PREF_KEY, value: "false"}` — B04's per-user
    * opt-out convention, not a new mechanism. Exposed via the existing generic
    * `GET/PATCH /users/me/preferences` endpoints (users.controller.ts) — N4 adds no new API. */
   private async getDigestRecipients(tenantId: string): Promise<{ email: string }[]> {
     const admins = await this.prisma.user.findMany({
-      where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+      where: {
+        tenantId,
+        role: { in: ["TENANT_ADMIN", "OPERATOR"] },
+        status: "ACTIVE",
+        deletedAt: null,
+      },
       select: { id: true, email: true },
     });
     const withEmail = admins.filter((a) => a.email);

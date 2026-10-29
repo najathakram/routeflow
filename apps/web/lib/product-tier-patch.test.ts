@@ -254,3 +254,26 @@ describe("cascadeTiers: the in-form cascade reads fresh values for tiers the ope
     expect(cascadeTiers(old, { ...seeded, priceTier3: "5" }, undefined).priceTier3).toBe("5");
   });
 });
+
+// Row 525(1) guard: the bug did not reproduce. Name and category live beside the price draft; changing them must not
+// make the Details save send a price key (Auto 0 tiers would otherwise be sent as the seeded 0 and pin them).
+describe("row 525: an unrelated details save sends no price keys", () => {
+  const noPriceKeys = (patch: Record<string, string | undefined>) =>
+    ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4", "priceTier5"].forEach((k) =>
+      expect(patch[k]).toBeUndefined(),
+    );
+  const cases: Array<[string, ReturnType<typeof stored>]> = [
+    ["Auto tiers (0)", stored("0.00", "0.00", "0.00", "0.00")],
+    ["fixed tiers (9/8/7/6)", stored("9.00", "8.00", "7.00", "6.00")],
+  ];
+  it.each(cases)("%s: a changed name sends no price key", (_label, s) => {
+    const seeded = shown(s);
+    const draft = { ...seeded, name: "Renamed" };
+    noPriceKeys(detailsPricePatch(s, draft, seeded));
+  });
+  it.each(cases)("%s: a changed category sends no price key", (_label, s) => {
+    const seeded = shown(s);
+    const draft = { ...seeded, category: "Other" };
+    noPriceKeys(detailsPricePatch(s, draft, seeded));
+  });
+});

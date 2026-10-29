@@ -60,6 +60,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/prisma/report-product-barcode-conflicts.ts": "read-only",
   "apps/api/prisma/report-variant-tier-drift.ts": "read-only",
   "apps/api/prisma/seed-expenses.ts": "global-catalog",
+  "apps/api/prisma/seed-legacy-products.ts": "read-only",
   "apps/api/prisma/seed-parity-buyer.ts": "test-slug-only",
   "apps/api/prisma/seed.ts": "test-slug-only",
   "apps/api/scripts/apply-rls.js": "schema-only",
@@ -111,6 +112,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b2197-issuedate-time-component.mjs": "read-only",
   "apps/api/scripts/report-b2230-unit-lines-without-boxes.mjs": "read-only",
   "apps/api/scripts/report-b2436-stripe-missing-sub.mjs": "read-only",
+  "apps/api/scripts/report-cross-tenant-refs.mjs": "read-only", // 681: SELECT COUNT(*) only, default_transaction_read_only = on
   "apps/api/scripts/report-b673-next-delivery-overcharge.mjs": "read-only",
   "apps/api/scripts/report-b861-numbering-config.mjs": "read-only",
   "apps/api/scripts/report-b894-prorate-counts.mjs": "read-only",
@@ -119,10 +121,13 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b961-already-returned-inline.mjs": "read-only",
   "apps/api/scripts/report-b965-mixed-unit-returns.mjs": "read-only",
   "apps/api/scripts/report-escaped-entities.mjs": "read-only",
+  "apps/api/scripts/report-orphaned-delivery-evidence.mjs": "read-only", // SA-842 §5: SELECT/SHOW in a READ ONLY tx
   "apps/api/scripts/report-orphaned-order-docs-b1053.mjs": "read-only",
   "apps/api/scripts/report-profile-grant-overrides.mjs": "read-only",
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
   "apps/api/scripts/report-recurring-boxed-template-qty.mjs": "read-only",
+  "apps/api/scripts/report-exempt-orders-taxed.mjs": "read-only",
+  "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-calendar-census.mjs": "read-only",
   "apps/api/scripts/report-rf-invoice-zero-rows.mjs": "read-only",
@@ -140,6 +145,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/stock-ledger-gap.mjs": "read-only",
   "apps/api/scripts/report-sa740-walkin-return-source.mjs": "read-only",
   "apps/api/scripts/report-sitting4-sizing.mjs": "read-only", // SA-772 §4 step 5 + SA-814 §3 C1-C4
+  "apps/api/scripts/report-640-restored-grants.mjs": "read-only", // row 640 census: read-only counts, no writes
   "apps/api/scripts/t6-backfill-census.mjs": "read-only",
   "apps/api/scripts/t6-drop-guards.mjs": "schema-only",
   "apps/api/scripts/t6-null-census.mjs": "read-only",

@@ -2,11 +2,22 @@
 // JSON document the UI and generated views consume. Pure given its inputs.
 import { BUG_ID_RE, DONE_STATUSES } from "./schema.mjs";
 import { fold } from "./fold.mjs";
-import { parseEta } from "./ids.mjs";
+import { parseEta, tagDue, tagRank, tagWords } from "./ids.mjs";
 import { pickNext, laneNow } from "./next.mjs";
 import { areaDomain, buildAreaTree, fileToArea, guessDomainFromText } from "./areas.mjs";
-import { fixLinksFor, landedAt, linkItemFor, reconcile } from "./reconcile.mjs";
+import {
+  fixLinksFor,
+  incidentBucket,
+  incidentChangedMs,
+  isRevertPr,
+  landedAt,
+  linkItemFor,
+  reconcile,
+  UNKNOWN_LANE_RECENT_DAYS,
+  revertedNumbers,
+} from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
+import { resolveLaneId } from "./config.mjs";
 
 export { linkItemFor };
 
@@ -42,6 +53,45 @@ export function statusLabelFor(item, { booked = false, answered = false } = {}) 
   }
   return STATUS_WORDS[item.status] ?? item.status;
 }
+
+/** Display label for an item whose linked PR merged to master but whose status has not caught up. */
+export const AWAITING_DEPLOY_LABEL = "Merged, awaiting deploy";
+const NOT_AWAITING = new Set(["live", "verified", "dropped", "parked"]);
+
+// Live-harm rule (accuracy round 2): a DONE census/audit/ops item that says nothing reached a
+// customer marks the open bugs it covers as latent risks, not "hurting now".
+const CENSUS_TYPES = new Set(["audit", "ops"]);
+const LATENT_RE = /\blatent\b|\b0 lines\b|\$0\.00|no (?:live )?customer/i;
+const ROWS_IN_TEXT_RE = /\brows?\s+#?(\d{1,5}(?:\s*(?:,|\/|&|\band\b)\s*#?\d{1,5})*)/gi;
+/** Masked first, then cut: a client name must never survive as a fragment of a clipped excerpt. */
+const evidenceClip = (s, mask = (t) => t) => {
+  const t = mask(s);
+  return t.length > 160 ? t.slice(0, 160).trimEnd() : t;
+};
+const NEGATION_RE = /^(?:not|no|never|but|however|except|although|though|nor|yet)$|n't$/i;
+/**
+ * Finds the census verdict phrase in `text`: { negated } where negated = any occurrence has a
+ * negation word within the 3 words before it ("not latent", "but 2 billed"). null = no phrase.
+ */
+function latentVerdict(text) {
+  const re = new RegExp(LATENT_RE.source, "gi");
+  let found = null;
+  for (const m of text.matchAll(re)) {
+    const before = text
+      .slice(0, m.index)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(-3)
+      .map((w) => w.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, ""));
+    found = { negated: Boolean(found?.negated) || before.some((w) => NEGATION_RE.test(w)) };
+  }
+  return found;
+}
+const INCIDENT_LABELS = {
+  hurting: "Open",
+  mitigated: "Mitigated",
+  unverified: "Unverified",
+};
 
 const iso = (ms) =>
   typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : null;
@@ -109,7 +159,8 @@ function trainIdsOf(item, aliases) {
   const out = new Set();
   for (const text of [item.train, item.trainLabel]) {
     if (typeof text !== "string" || !text) continue;
-    for (const m of text.matchAll(/\bR(\d+)\b/g)) out.add(`R${m[1]}`);
+    // "T5 (was: R6 set)": the "was" part is history, never a second train.
+    for (const m of text.replace(/\(was:[^)]*\)/gi, "").matchAll(/\b([RT]\d+)\b/g)) out.add(m[1]);
     for (const [phrase, id] of Object.entries(aliases)) {
       const p = String(phrase)
         .toLowerCase()
@@ -150,6 +201,8 @@ function derivedItem(base) {
     links: { prs: [], branches: [], urls: [] },
     refPrs: [],
     registerFields: {},
+    harm: null,
+    statusText: null,
     problem: null,
     impact: null,
     solution: null,
@@ -182,7 +235,15 @@ function queueRowDate(row, now) {
   return ms;
 }
 
-export function buildSnapshot({ sources = {}, config, now, machine = null, authEnabled }) {
+export function buildSnapshot({
+  sources = {},
+  config,
+  now,
+  machine = null,
+  authEnabled,
+  mask: maskFn = (t) => t,
+  maskStatus = null,
+}) {
   const specsData = sources.specs?.data ?? null;
   const cfg = config ?? specsData?.config;
   const events = specsData?.events ?? [];
@@ -298,6 +359,7 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       status: it.status,
       eta: it.eta,
       etaAt: iso(parseEta(it.eta, now)),
+      ...(it.parts?.length ? { parts: it.parts } : {}),
       members: uniq([
         ...it.members,
         ...stateItems
@@ -432,11 +494,56 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     .sort((a, b) => (b.pr ?? -1) - (a.pr ?? -1) || compareIds(a.id, b.id))
     .slice(0, 50);
 
+  // ---- harm: explicit `harm` wins, else the latent rule from done census items ----
+  // A census marks a bug latent only when it (a) names the bug (row N / its B-id) in its title or
+  // gate, or (b) shares a PR with it that no other open bug cites and that is not a release/train PR.
+  const prsOf = (it) => [...(it.links?.prs ?? []), ...(it.refPrs ?? [])].map(String);
+  const trainPrs = new Set();
+  for (const r of releases) for (const n of prsOf(r)) trainPrs.add(n);
+  for (const p of [...openRaw, ...mergedRaw])
+    if (/^train\//.test(p.branch ?? "")) trainPrs.add(String(p.number));
+  const openBugs = stateItems.filter((x) => x.type === "bug" && !isDone(x));
+  const derivedHarm = new Map(); // bug item id -> evidence
+  for (const c of stateItems) {
+    if (c.overlay || !CENSUS_TYPES.has(c.type) || !["live", "verified"].includes(c.status))
+      continue;
+    const gate = String(c.gate ?? "");
+    const title = String(c.title ?? "");
+    // Any negation in front of a verdict phrase ("not latent", "but 2 billed") voids the census.
+    const verdicts = [latentVerdict(gate), latentVerdict(title)].filter(Boolean);
+    if (verdicts.length === 0 || verdicts.some((v) => v.negated)) continue;
+    const matched = LATENT_RE.test(gate) ? gate : title;
+    const text = `${title} ${gate}`;
+    const prs = new Set(prsOf(c));
+    for (const m of text.matchAll(/#(\d{3,5})\b/g)) prs.add(m[1]);
+    const rows = new Set();
+    for (const m of text.matchAll(ROWS_IN_TEXT_RE))
+      for (const n of m[1].match(/\d+/g) ?? []) rows.add(n);
+    for (const b of openBugs) {
+      if (b.id === c.id || derivedHarm.has(b.id)) continue;
+      const named =
+        rows.has(b.id) ||
+        (BUG_ID_RE.test(b.id) && new RegExp(`(?<![A-Za-z0-9])${b.id}(?![A-Za-z0-9])`).test(text));
+      const shared =
+        !named &&
+        prsOf(b).some(
+          (n) =>
+            prs.has(n) &&
+            !trainPrs.has(n) &&
+            !openBugs.some((o) => o.id !== b.id && prsOf(o).includes(n)),
+        );
+      if (named || shared) derivedHarm.set(b.id, `${c.id}: ${evidenceClip(matched, maskFn)}`);
+    }
+  }
+  const harmOf = (it) => it.harm ?? (derivedHarm.has(it.id) ? "latent" : null);
+
   // ---- items ----
   const items = stateItems.map((it) => {
     const { history: _history, ...rest } = it;
     return {
       ...rest,
+      harm: harmOf(it),
+      harmEvidence: it.harm ? null : (derivedHarm.get(it.id) ?? null),
       domain: itemDomain(it, bugById),
       claimedBy: it.claimedBy,
       blocked: it.blocked
@@ -489,12 +596,71 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       answer: ev?.answer ?? [row?.statusWord, row?.decisionFile].filter(Boolean).join(" → "),
     });
   }
+  // D3: a linked PR already merged to master but the item still reads in-flight -> display
+  // "Merged, awaiting deploy" (itemStatus/itemStatusLabel keep the recorded status; no events).
+  const landedByItem = new Map(); // item id -> { number, at } newest landed merged PR
+  const openByItem = new Set(openPrs.map((p) => p.item).filter(Boolean));
+  // Reverts never label, and clear the label of the PR they undo when they merged after it.
+  const reverted = new Set();
+  for (const r of mergedRaw.filter(isRevertPr)) {
+    const rAt = landedAt(r, mergedRaw).at;
+    const nums = revertedNumbers(r);
+    const t = /^Revert "(.*)"$/.exec(String(r.title ?? ""))?.[1];
+    for (const o of mergedRaw) {
+      if (o === r || !(nums.has(Number(o.number)) || (t && o.title === t))) continue;
+      const oAt = landedAt(o, mergedRaw).at;
+      if (rAt !== null && oAt !== null && oAt < rAt) reverted.add(o.number);
+    }
+  }
+  // An item moved back into work (a status event, or an edit that sets the status) after the merge is not "awaiting deploy".
+  const inWork = new Set(["building", "spec", "planned", "ready"]);
+  const workEventAt = (it) =>
+    Math.max(
+      0,
+      ...(it?.history ?? [])
+        .filter((h) => h.kind === "status" || (h.kind === "item.edit" && h.status !== undefined))
+        .map((h) => toMs(h.ts) ?? 0),
+    );
+  const noteLanded = (id, p) => {
+    if (!id || !state.items.has(id)) return;
+    if (isRevertPr(p) || reverted.has(p.number)) return;
+    const l = landedAt(p, mergedRaw);
+    if (l.at === null) return;
+    const had = landedByItem.get(id);
+    if (!had || l.at > had.at) landedByItem.set(id, { number: p.number, at: l.at });
+  };
+  for (const p of mergedRaw) {
+    noteLanded(
+      // A bare "row N" mention in a merged PR's body is background, not proof the item shipped.
+      linkItemFor({ number: p.number, branch: p.branch, title: p.title, body: p.body }, state, {
+        bodyMentions: false,
+      }),
+      p,
+    );
+  }
+  for (const it of stateItems) {
+    const linked = new Set((it.links?.prs ?? []).map(String));
+    for (const p of mergedRaw) if (linked.has(String(p.number))) noteLanded(it.id, p);
+  }
   for (const out of items) {
     const info = answerInfo.get(out.id);
     out.statusLabel = statusLabelFor(out, {
       answered: Boolean(info?.answered),
       booked: Boolean(info?.booked),
     });
+    const landed = landedByItem.get(out.id);
+    if (
+      landed &&
+      out.type !== "decision" &&
+      !NOT_AWAITING.has(out.status) &&
+      !openByItem.has(out.id) &&
+      !(inWork.has(out.status) && workEventAt(state.items.get(out.id)) > landed.at)
+    ) {
+      out.itemStatus = out.status;
+      out.itemStatusLabel = out.statusLabel;
+      out.statusLabel = AWAITING_DEPLOY_LABEL;
+      out.awaitingDeploy = { pr: landed.number, mergedAt: iso(landed.at) };
+    }
     if (info?.answered && out.answeredAt === null) out.answeredAt = iso(info.at);
   }
   const ownerQueue = stateItems
@@ -502,7 +668,8 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       (it) =>
         !isDone(it) &&
         !boardTagged(it) &&
-        (it.lane === "owner" || (it.type === "decision" && /owner/i.test(it.gate ?? ""))) &&
+        it.type === "decision" &&
+        (it.lane === "owner" || /owner/i.test(it.gate ?? "")) &&
         !answerInfo.get(it.id)?.answered,
     )
     .sort(byPriorityThenId)
@@ -514,6 +681,21 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       etaAt: iso(parseEta(it.eta, now)),
       status: it.status,
       state: answerInfo.get(it.id)?.booked ? "booked" : "open",
+    }));
+  // Owner-lane items that are not decisions (tasks like "Run the EAS build").
+  const ownerTodos = stateItems
+    .filter(
+      (it) => !isDone(it) && !boardTagged(it) && it.type !== "decision" && it.lane === "owner",
+    )
+    .sort(byPriorityThenId)
+    .map((it) => ({
+      id: it.id,
+      title: it.title,
+      gate: it.gate,
+      eta: it.eta,
+      etaAt: iso(parseEta(it.eta, now)),
+      status: it.status,
+      priority: it.priority,
     }));
   const answeredRecently = stateItems
     .filter((it) => answerInfo.get(it.id)?.answered)
@@ -532,9 +714,25 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     .map((d) => ({ ...d, ts: iso(d.ts) }));
 
   // ---- derived items: incidents (incidents/*.md) and B-ids that releases/items reference ----
-  const incidents = (specsData?.incidents ?? []).filter(
-    (i) => i.status === "open" || i.status === "mitigated",
-  );
+  // Incident files are snapshots: the status word + the file's last change decide where one belongs.
+  const incidentFiles = specsData?.incidents ?? [];
+  const incidents = incidentFiles
+    .map((i) => ({ i, bucket: incidentBucket(i, now) }))
+    .filter(({ bucket }) => bucket !== "hidden")
+    .map(({ i, bucket }) => {
+      const at = incidentChangedMs(i);
+      return {
+        id: i.id,
+        title: i.title,
+        file: i.file ?? null,
+        status: i.status,
+        statusLabel: INCIDENT_LABELS[bucket] ?? (i.status === "open" ? "Open" : "No status"),
+        bucket,
+        date: i.date ?? null,
+        changedAt: iso(at),
+        ageDays: at === null ? null : Math.max(0, Math.floor((now - at) / 86400_000)),
+      };
+    });
   const incidentItems = incidents.map((i) =>
     derivedItem({
       id: i.id,
@@ -542,12 +740,15 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       type: "incident",
       priority: i.status === "open" ? "P0" : "P1",
       status: "planned",
-      statusLabel: i.status === "open" ? "Open" : "Mitigated",
+      statusLabel: i.statusLabel,
       source: "incident",
       domain: guessDomainFromText(i.title) ?? "other",
       createdAt: i.date ? `${i.date}T00:00:00.000Z` : null,
-      updatedAt: i.date ? `${i.date}T00:00:00.000Z` : null,
+      updatedAt: i.changedAt ?? (i.date ? `${i.date}T00:00:00.000Z` : null),
     }),
+  );
+  const hurtingIncidentIds = new Set(
+    incidents.filter((i) => i.bucket === "hurting").map((i) => i.id),
   );
   const wantedBugIds = new Set();
   for (const it of stateItems)
@@ -573,19 +774,143 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
   // The page reads times as ISO strings.
   for (const d of [...incidentItems, ...bugItems]) items.push(d);
 
-  // ---- problems: open P0/P1 bugs and incidents + open/mitigated incident files (never features, ops or the board) ----
+  // ---- release state, DERIVED from its parts (display only, never written as events) ----
+  // Only releases of the CURRENT plan (the ones carrying parts) are derived. A release that is not
+  // in the current plan keeps its last explicit status (live / verified / dropped) as history.
+  // A part is done when all its counting members (not dropped / parked) are live or verified; a
+  // part with no linked items is NOT done ("no items linked") and blocks Shipped.
+  const statusOf = new Map(items.map((x) => [x.id, x.status]));
+  const countOf = (ids) => {
+    const counting = ids.filter((m) => !["dropped", "parked"].includes(statusOf.get(m)));
+    const done = counting.filter((m) => ["live", "verified"].includes(statusOf.get(m)));
+    return {
+      total: counting.length,
+      done: done.length,
+      empty: ids.length === 0,
+      isDone: counting.length > 0 && done.length === counting.length,
+    };
+  };
+  for (const t of trains) {
+    const parts = (t.parts ?? []).map((p) => {
+      const c = countOf(p.members);
+      const late = !c.isDone && tagDue(p.tag) !== null && now > tagDue(p.tag);
+      return {
+        ...p,
+        tagWords: tagWords(p.tag),
+        memberCount: p.members.length,
+        done: c.isDone,
+        itemsDone: c.done,
+        itemsTotal: c.total,
+        state: c.isDone ? "done" : late ? "late" : "progress",
+        stateText: c.isDone
+          ? "Done"
+          : late
+            ? "Late"
+            : c.empty
+              ? "no items linked"
+              : `${c.done} of ${c.total} items`,
+        status: c.isDone ? "live" : "building",
+      };
+    });
+    if (!parts.length) continue; // not in the current plan: its explicit status stands
+    if (t.status === "dropped") {
+      t.parts = parts;
+      continue;
+    }
+    const doneUnits = parts.filter((p) => p.done).length;
+    const unfinished = parts.filter((p) => !p.done).sort((a, b) => tagRank(a.tag) - tagRank(b.tag));
+    const due = unfinished.length ? tagDue(unfinished[0].tag) : null;
+    t.itemStatus = t.status;
+    {
+      t.parts = parts;
+      t.partsDone = doneUnits;
+      t.partsTotal = parts.length;
+      const first = parts.reduce((a, p) => (tagRank(p.tag) < tagRank(a.tag) ? p : a));
+      t.tag = first.tag ?? "";
+      t.tagWords = first.tagWords;
+    }
+    if (doneUnits === parts.length) {
+      t.state = "shipped";
+      t.stateText = "Shipped";
+      t.status = "live";
+    } else {
+      const late = due !== null && now > due;
+      t.state = late ? "late" : "progress";
+      t.stateText = late ? "Late" : `In progress ${doneUnits} of ${parts.length} parts`;
+      if (DONE_STATUSES.includes(t.status)) t.status = "building"; // never "Fixed" with work left
+    }
+  }
+  for (const t of trains)
+    if (t.status === "dropped") ((t.state = "dropped"), (t.stateText = "Dropped"));
+
+  // ---- Shipping next: unfinished releases by earliest unfinished part tag, each with its open
+  // PRs that are not draft and whose checks are green (the snapshot has no review state), oldest
+  // update first. At most 5 releases, 3 PRs each. ----
+  const rankOf = (t) =>
+    Math.min(...(t.parts ?? []).filter((p) => !p.done).map((p) => tagRank(p.tag)), 9);
+  const shippingNext = trains
+    .filter((t) => (t.state === "progress" || t.state === "late") && t.parts?.length)
+    .sort((a, b) => rankOf(a) - rankOf(b) || compareIds(a.id, b.id))
+    .slice(0, 5)
+    .map((t) => {
+      const mem = new Set(t.members);
+      const prs = openPrs
+        .filter((p) => !p.draft && p.gate === "success" && p.item && mem.has(p.item))
+        .sort((a, b) => (Date.parse(a.updatedAt) || 0) - (Date.parse(b.updatedAt) || 0))
+        .slice(0, 3)
+        .map((p) => ({ number: p.number, title: p.title, url: p.url, item: p.item }));
+      return { id: t.id, title: t.title, stateText: t.stateText, tagWords: t.tagWords, prs };
+    });
+  // Earliest tag first, then id; releases without parts (old trains) keep their numeric order.
+  const earliest = (t) => (t.parts ? Math.min(...t.parts.map((p) => tagRank(p.tag))) : 10);
+  trains.sort(
+    (a, b) =>
+      earliest(a) - earliest(b) ||
+      (Number(/\d+/.exec(a.id)?.[0]) || 99) - (Number(/\d+/.exec(b.id)?.[0]) || 99) ||
+      compareIds(a.id, b.id),
+  );
+
+  // ---- problems ("Hurting now"): open P0/P1 bugs and incidents whose harm is not latent / none,
+  // plus incident files that are open AND recently changed (never features, ops, the board or
+  // latent bugs) ----
   const problems = [
     ...stateItems.filter(
       (it) =>
         !isDone(it) &&
         !boardTagged(it) &&
         (it.type === "bug" || it.type === "incident") &&
-        (it.priority === "P0" || it.priority === "P1"),
+        (it.priority === "P0" || it.priority === "P1") &&
+        harmOf(it) !== "latent" &&
+        harmOf(it) !== "none",
     ),
-    ...incidentItems,
+    ...incidentItems.filter((it) => hurtingIncidentIds.has(it.id)),
   ]
     .sort(byPriorityThenId)
     .map((it) => it.id);
+  const latentRisks = stateItems
+    .filter((it) => !isDone(it) && !boardTagged(it) && it.type === "bug" && harmOf(it) === "latent")
+    .sort(byPriorityThenId)
+    .map((it) => ({
+      id: it.id,
+      title: it.title,
+      evidence: it.harm ? "set by the team (harm: latent)" : (derivedHarm.get(it.id) ?? ""),
+    }));
+
+  // ---- machines and lanes: latest heartbeat per session, newest first, <= 3 days old ----
+  const machines = [...state.sessions.values()]
+    .filter((s) => now - Date.parse(s.lastActiveAt) <= 3 * 86400000)
+    .sort((a, b) => Date.parse(b.lastActiveAt) - Date.parse(a.lastActiveAt))
+    .map((s) => ({
+      session: s.session,
+      machine: s.machine ?? null,
+      lane: s.lane ?? null,
+      title: s.title ?? null,
+      branch: s.branch ?? null,
+      pr: s.pr ?? null,
+      head: s.head ?? null,
+      lastActiveAt: s.lastActiveAt,
+      last: s.last ?? null,
+    }));
 
   // ---- lanes ----
   const handoffs = specsData?.laneHandoffs ?? [];
@@ -597,14 +922,41 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     for (const b of branches) if (b.item === it.id) set.add(b.branch);
     return set;
   };
-  const laneIds = uniq([...(cfg?.lanes ?? []).map((l) => l.id), ...state.lanes.keys()]);
+  // Configured lanes always show; an alias folds into its target lane; an unconfigured one only
+  // shows with open work or recent activity.
+  const configured = new Set((cfg?.lanes ?? []).map((l) => l.id));
+  const rowOf = (raw) => resolveLaneId(raw, cfg) ?? raw;
+  const group = new Map(); // row id -> raw lane ids folded into it
+  for (const id of [...configured, ...state.lanes.keys()]) {
+    const row = rowOf(id);
+    if (!group.has(row)) group.set(row, new Set());
+    group.get(row).add(id);
+  }
+  const laneShown = (row) => {
+    if (configured.has(row)) return true;
+    const raws = group.get(row);
+    if (stateItems.some((it) => !isDone(it) && (raws.has(it.claimedBy) || raws.has(it.lane))))
+      return true;
+    const last = Math.max(
+      -Infinity,
+      ...[...raws].map((r) => state.lanes.get(r)?.lastEventAt ?? -Infinity),
+    );
+    return Number.isFinite(last) && now - last <= UNKNOWN_LANE_RECENT_DAYS * 24 * 3600_000;
+  };
+  const laneIds = [...group.keys()].filter(laneShown);
   const lanes = laneIds.map((id) => {
     const cl = cfg?.lanes?.find((l) => l.id === id);
-    const seen = state.lanes.get(id);
-    const lastEvent = seen?.lastEventAt ?? null;
+    const raws = group.get(id);
+    const maxOf = (f) =>
+      [...raws].reduce((m, r) => {
+        const v = f(state.lanes.get(r));
+        return v == null || (m !== null && m >= v) ? m : v;
+      }, null);
+    const lastEvent = maxOf((l) => l?.lastEventAt);
+    const lastBeat = maxOf((l) => l?.lastHeartbeatAt);
     let commit = null;
     for (const it of stateItems) {
-      if (isDone(it) || (it.claimedBy !== id && it.lane !== id)) continue;
+      if (isDone(it) || (!raws.has(it.claimedBy) && !raws.has(it.lane))) continue;
       for (const br of branchesOfItem(it)) {
         const d = branchDate.get(br);
         if (d !== undefined && (commit === null || d > commit)) commit = d;
@@ -635,10 +987,13 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
       title: cl?.title ?? id,
       machine: cl?.machine ?? null,
       lastEventAt: iso(lastEvent),
+      lastHeartbeatAt: iso(lastBeat),
+      heartbeatAgeMin: lastBeat == null ? null : Math.max(0, Math.round((now - lastBeat) / 60000)),
+      known: !!cl,
       lastActivityAt: act ? iso(act[1]) : null,
       lastActivitySource: act ? act[0] : null,
       silentMin: act === null ? null : Math.max(0, Math.round((now - act[1]) / 60000)),
-      now: laneNow(state, id),
+      now: uniq([...raws].flatMap((r) => laneNow(state, r))),
       next: pick ? { id: pick.item.id, title: pick.item.title, reason: pick.reason } : null,
     };
   });
@@ -726,23 +1081,46 @@ export function buildSnapshot({ sources = {}, config, now, machine = null, authE
     register: {
       duplicateIds: specsData?.registerDuplicateIds ?? [],
       rowIds: specsData?.registerRowIds ?? null,
+      changedAt: specsData?.registerChangedAt ?? null,
+      pending: specsData?.registerPending ?? null,
     },
+    incidents: incidentFiles,
   });
+  if (maskStatus && maskStatus.ok === false) {
+    alarms.unshift({
+      id: "mask-list-missing:mask",
+      kind: "mask-list-missing",
+      severity: "error",
+      message: "client-name mask list missing — tenant names hidden by fallback",
+      suggest: `fix the client-name list: client-names.json in the ops home or CLIENT_NAMES_JSON (${maskStatus.reason})`,
+      item: null,
+      lane: null,
+      pr: null,
+      branch: null,
+      source: "mask",
+    });
+  }
 
   return {
     generatedAt: iso(now),
     machine,
     ...(typeof authEnabled === "boolean" ? { authEnabled } : {}),
+    ...(maskStatus ? { maskStatus } : {}),
     sources: outSources,
     items,
     bugs,
     bugsFixedByNote,
     trains,
+    shippingNext,
     lanes,
+    machines,
     ownerQueue,
+    ownerTodos,
     answeredRecently,
     decisions,
     problems,
+    latentRisks,
+    incidents,
     prs: { open: openPrs, merged: mergedPrs },
     branches,
     ci,

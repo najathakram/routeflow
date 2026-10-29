@@ -1,10 +1,11 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync as mkdirSync0, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LEGACY_CONFIG } from "./legacy-config.mjs";
 
 const RF = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "rf.mjs");
 const git = (cwd, ...args) =>
@@ -22,6 +23,9 @@ before(() => {
   git(specs, "config", "user.name", "CLI Test");
   git(specs, "config", "user.email", "cli@example.com");
   writeFileSync(join(specs, "README.md"), "specs\n");
+  // Untracked: the fixture lanes (pc-lane, coordinator) predate the live default lane set.
+  mkdirSync0(join(specs, "ops"), { recursive: true });
+  writeFileSync(join(specs, "ops", "config.json"), JSON.stringify(LEGACY_CONFIG));
   git(specs, "add", "README.md");
   git(specs, "commit", "--quiet", "-m", "init");
   git(specs, "push", "--quiet", "-u", "origin", "main");
@@ -438,5 +442,37 @@ test(
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  },
+);
+
+test(
+  "X1 item edit --harm sets live|latent|none, none/null clears, junk is refused",
+  T,
+  async () => {
+    let r = await rf(
+      "item",
+      "new",
+      "--title",
+      "Acme harm check",
+      "--type",
+      "bug",
+      "--priority",
+      "P2",
+      "--json",
+    );
+    assert.equal(r.code, 0, r.stderr);
+    const id = JSON.parse(r.stdout).events[0].item;
+    r = await rf("item", "edit", id, "--harm", "latent", "--json");
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, "latent");
+    r = await rf("item", "show", id, "--json");
+    assert.equal(JSON.parse(r.stdout).harm, "latent");
+    r = await rf("item", "edit", id, "--harm", "none", "--json");
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, "none");
+    r = await rf("item", "edit", id, "--harm", "null", "--json");
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).events[0].data.fields.harm, null);
+    assert.notEqual((await rf("item", "edit", id, "--harm", "bogus")).code, 0);
   },
 );

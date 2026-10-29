@@ -261,6 +261,9 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
   "isTobacco",
   "reorderPoint",
   "reorderQty",
+  "id",
+  "family",
+  "variantName",
 ].map((field): ColumnDef => {
   const canonical = canonicalFor(PRODUCT_IMPORT_COLUMNS, field);
   const aliases = aliasesFor(PRODUCT_IMPORT_COLUMNS, field);
@@ -270,7 +273,12 @@ export const PRODUCT_COLUMNS: ColumnDef[] = [
     case "barcode":
     case "unit":
     case "category":
+    case "family":
+    case "variantName":
       return { field, canonical, aliases, parse: strParser(200) };
+    case "id":
+      // SA-823: a product id is looked up as given (tenant-scoped); one that is not found skips the row.
+      return { field, canonical, aliases, parse: strParser(64) };
     case "description":
       return { field, canonical, aliases, parse: strParser(2000) };
     case "pricePerUnit":

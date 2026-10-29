@@ -277,11 +277,11 @@ export function LimitInPortalDialog({
               checked={legalBan}
               onChange={(e) => setLegalBan(e.target.checked)}
             />
-            <span>Legal ban — also block staff orders and invoices</span>
+            <span>Legal ban — staff are warned and must give a reason</span>
           </label>
           {legalBan && enforcementOff && (
             <p className="mt-1 pl-6 text-xs text-navy/70">
-              Staff orders are blocked once enforcement is on.{" "}
+              Staff are warned once enforcement is on.{" "}
               <NextLink
                 href="/settings/restrictions"
                 className="font-medium text-brand-600 underline"

@@ -44,6 +44,28 @@ describeDb("SA-763r — the delivered stamp on real Postgres", () => {
   let productId = "";
   const orderIds: string[] = [];
   let n = 0;
+  let routeId = "";
+  let runId = "";
+  let routeStopId = "";
+  let runStopId = "";
+
+  /** A real route stop for the ROUTE evidence rows: every route writer sets routeRunStopId (row 587 review). */
+  async function ensureRunStop() {
+    if (runStopId) return runStopId;
+    routeId = (await raw.route.create({ data: { name: `Stamp route ${run}`, tenantId } })).id;
+    routeStopId = (await raw.routeStop.create({ data: { routeId, stopNumber: 1, tenantId } })).id;
+    runId = (
+      await raw.routeRun.create({
+        data: { routeId, scheduledDate: new Date(), status: "COMPLETED", tenantId },
+      })
+    ).id;
+    runStopId = (
+      await raw.routeRunStop.create({
+        data: { routeRunId: runId, routeStopId, stopNumber: 1, podPhotoUrls: [], tenantId },
+      })
+    ).id;
+    return runStopId;
+  }
 
   /** An order with lines [{qty, d}] (and optionally route evidence on the line at that index). */
   async function seed(opts: {
@@ -83,6 +105,7 @@ describeDb("SA-763r — the delivered stamp on real Postgres", () => {
             orderItemId: li.id,
             productId,
             tenantId,
+            routeRunStopId: await ensureRunStop(),
             type: "PARTIAL",
             quantityDelivered: l.evidence,
           },
@@ -139,6 +162,10 @@ describeDb("SA-763r — the delivered stamp on real Postgres", () => {
     await raw.deliveryMutation.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+    if (runStopId) await raw.routeRunStop.deleteMany({ where: { id: runStopId } });
+    if (runId) await raw.routeRun.deleteMany({ where: { id: runId } });
+    if (routeStopId) await raw.routeStop.deleteMany({ where: { id: routeStopId } });
+    if (routeId) await raw.route.deleteMany({ where: { id: routeId } });
     await raw.product.deleteMany({ where: { id: productId } });
     await raw.customer.deleteMany({ where: { id: customerId } });
     await raw.user.deleteMany({ where: { id: userId } });

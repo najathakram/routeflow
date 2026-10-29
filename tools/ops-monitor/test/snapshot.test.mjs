@@ -13,7 +13,7 @@ import {
   parseRailwayStatus,
 } from "../lib/collector.mjs";
 import { buildAreaTree } from "../lib/areas.mjs";
-import { DEFAULT_CONFIG } from "../lib/config.mjs";
+import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const FIX = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures");
 const read = (f) => readFileSync(join(FIX, f), "utf8");
@@ -160,13 +160,18 @@ test("top-level contract keys and stats", () => {
       "ci",
       "decisions",
       "generatedAt",
+      "incidents",
       "items",
       "lanes",
+      "latentRisks",
       "machine",
+      "machines",
       "map",
       "ownerQueue",
+      "ownerTodos",
       "prs",
       "problems",
+      "shippingNext",
       "sources",
       "stats",
       "trains",
@@ -659,10 +664,12 @@ const a2 = (over, extra = {}) =>
     ...extra,
   });
 
-test("A2 ruling 2: problems = open P0/P1 register items + open/mitigated incidents; board-sourced items never", () => {
+test("A2 ruling 2: problems = open P0/P1 register items + open incidents; board-sourced items never", () => {
   const s = a2();
-  // INC-1016a has no Status line (open) and INC-1017a is "suspected": both count as open
-  assert.deepEqual(s.problems, ["950", "INC-1015a", "INC-1016a", "INC-1017a", "INC-1015c"]);
+  // Fixture incidents carry no commit time, so their filename date (10-15) is the freshness.
+  // INC-1016a has no Status line (unknown) and INC-1017a is "suspected": neither is hurting now;
+  // the mitigated INC-1015c is listed apart.
+  assert.deepEqual(s.problems, ["950", "INC-1015a"]);
   // closed incidents are not problems; the incident files come in as derived read-only items
   const inc = s.items.find((i) => i.id === "INC-1015a");
   assert.equal(inc.type, "incident");
@@ -1147,4 +1154,600 @@ test("register duplicate ids and id collisions from the specs source become alar
     build().alarms.some((x) => x.kind === "register-duplicate-rows"),
     false,
   );
+});
+
+// =====================================================================================
+// Accuracy round 2 (X1): live harm, latent risks, incident freshness, decisions-only queue.
+// Shapes copied from the real register (rows 525 / 530) and incidents/*.md, acme placeholders.
+// =====================================================================================
+const DAY_MS = 86400000;
+const x1iso = (days) => new Date(NOW - days * DAY_MS).toISOString();
+
+function x1events() {
+  seq = 0;
+  const t = "2026-10-17T00:00:00Z";
+  const itm = (id, data) => ev(t, "item.new", id, "lead", { lane: "lead", ...data });
+  const reg = { source: "register" };
+  return [
+    // the motivating case: a P0 bug whose code is live, and the census that found no victim
+    itm("525", {
+      ...reg,
+      title: "Acme product page: tier prices flip to fixed on an unrelated save",
+      type: "bug",
+      priority: "P0",
+      status: "review",
+      links: { prs: [3467, 3470] },
+    }),
+    itm("530", {
+      ...reg,
+      title:
+        "Tier price bugs: read-only prod census of blast radius (code live via #3468 and #3470)",
+      type: "ops",
+      priority: "P1",
+      status: "verified",
+      gate: "census 10-19 (read-only): 0 lines / $0.00 mis-billed for both bugs; no live customer on tiers 3-5; latent only. Owner item: acme has 3 products with stale tier values; row 529 checked by hand",
+      links: { prs: [3468] },
+    }),
+    itm("526", {
+      title: "Acme checkout rounds wrong",
+      type: "bug",
+      priority: "P0",
+      status: "building",
+    }),
+    itm("527", { title: "Acme report drifts", type: "bug", priority: "P1", harm: "latent" }),
+    itm("528", { title: "Acme label typo", type: "bug", priority: "P1", harm: "none" }),
+    // an explicit harm wins over the derived latent rule (530 names row 529 in its gate)
+    itm("529", {
+      ...reg,
+      title: "Acme tier price still wrong for one buyer",
+      type: "bug",
+      priority: "P0",
+      harm: "live",
+      links: { prs: [3469] },
+    }),
+    // named by row in an audit's title
+    itm("540", {
+      title: "Audit of rows 531/532: nothing reached a customer",
+      type: "audit",
+      priority: "P2",
+      status: "live",
+      gate: "0 lines affected",
+    }),
+    itm("531", { title: "Acme export gap", type: "bug", priority: "P1" }),
+    itm("532", { title: "Acme export gap two", type: "bug", priority: "P0" }),
+    // a census that is not done marks nothing; a done one that says nothing about harm marks nothing
+    itm("541", {
+      title: "Audit of row 533, no live customer yet",
+      type: "audit",
+      status: "building",
+    }),
+    itm("533", { title: "Acme sync gap", type: "bug", priority: "P1" }),
+    itm("542", {
+      title: "Audit of row 534 finished",
+      type: "audit",
+      status: "live",
+      gate: "reviewed",
+    }),
+    itm("534", { title: "Acme sync gap two", type: "bug", priority: "P1" }),
+    // owner column: a decision and a task
+    itm("901", { title: "Acme decision 901", type: "decision", lane: "owner", priority: "P1" }),
+    itm("902", { title: "Run the EAS build", type: "chore", lane: "owner", priority: "P2" }),
+    itm("903", { title: "Done owner task", type: "chore", lane: "owner", status: "verified" }),
+  ];
+}
+
+const x1inc = (id, status, changedDays, over = {}) => ({
+  id,
+  file: `2026-10-15-acme-${id}.md`,
+  title: `Acme incident ${id}`,
+  status,
+  date: "2026-10-15",
+  changedAt: changedDays === null ? null : x1iso(changedDays),
+  ...over,
+});
+const X1_INCIDENTS = [
+  x1inc("INC-1015a", "open", 2),
+  x1inc("INC-1015b", "open", 10),
+  x1inc("INC-1015c", "mitigated", 1),
+  x1inc("INC-1015d", "suspected", 1),
+  x1inc("INC-1015e", "closed", 1),
+  x1inc("INC-1015f", "unknown", 1),
+  x1inc("INC-1015g", "resolved", 1),
+  x1inc("INC-1015h", "unverified", 20),
+];
+const x1 = (events = x1events(), incidents = X1_INCIDENTS) =>
+  buildSnapshot({
+    sources: {
+      specs: okSource(30, {
+        events,
+        config: DEFAULT_CONFIG,
+        incidents,
+        ownerQueueRows: null,
+        extrasErrors: [],
+      }),
+    },
+    config: DEFAULT_CONFIG,
+    now: NOW,
+    machine: "pc",
+  });
+
+test("X1 harm: a done census whose text says latent / 0 lines / $0.00 / no customer marks the bugs it shares a PR with", () => {
+  const s = x1();
+  const by = Object.fromEntries(s.items.map((i) => [i.id, i]));
+  // 530 and 525 share PR #3470 (530 cites it in its title; 525 in its register links)
+  assert.equal(by["525"].harm, "latent");
+  assert.match(by["525"].harmEvidence, /^530: census 10-19 \(read-only\): 0 lines/);
+  assert.ok(by["525"].harmEvidence.length <= 5 + 160);
+  assert.equal(by["526"].harm, null);
+  assert.equal(by["527"].harm, "latent"); // explicit
+  assert.equal(by["528"].harm, "none");
+  assert.equal(by["529"].harm, "live"); // an explicit harm beats the derived rule
+});
+
+test("X1 harm: a done census names rows in its title or gate; a census still open or silent marks nothing", () => {
+  const by = Object.fromEntries(x1().items.map((i) => [i.id, i]));
+  assert.equal(by["531"].harm, "latent");
+  assert.equal(by["532"].harm, "latent");
+  assert.equal(by["533"].harm, null); // its audit is not done
+  assert.equal(by["534"].harm, null); // its audit says nothing about harm
+});
+
+test("X1 problems: open P0/P1 bugs with no latent/none harm, plus fresh open incidents, never latent bugs", () => {
+  const s = x1();
+  assert.deepEqual(s.problems, ["526", "529", "INC-1015a", "533", "534"]);
+  assert.ok(!s.problems.includes("525"), "525 is latent: not hurting now");
+});
+
+test("X1 latentRisks: open bugs whose harm is latent, with the census evidence", () => {
+  const s = x1();
+  assert.deepEqual(
+    s.latentRisks.map((r) => r.id),
+    ["525", "532", "527", "531"],
+  );
+  const r = s.latentRisks[0];
+  assert.equal(r.title, "Acme product page: tier prices flip to fixed on an unrelated save");
+  assert.match(r.evidence, /^530: census 10-19/);
+  assert.ok(r.evidence.length <= 5 + 160);
+  assert.match(s.latentRisks.find((x) => x.id === "527").evidence, /^set by the team/);
+});
+
+test("X1 incidents: status word and file freshness decide the bucket; only open + fresh hurts", () => {
+  const s = x1();
+  const by = Object.fromEntries(s.incidents.map((i) => [i.id, i]));
+  assert.deepEqual(Object.fromEntries(Object.entries(by).map(([id, i]) => [id, i.bucket])), {
+    "INC-1015a": "hurting",
+    "INC-1015b": "stale",
+    "INC-1015c": "mitigated",
+    "INC-1015d": "unverified",
+    "INC-1015f": "stale",
+    "INC-1015h": "unverified",
+  }); // closed / resolved are hidden
+  assert.equal(by["INC-1015c"].statusLabel, "Mitigated");
+  assert.equal(by["INC-1015d"].statusLabel, "Unverified");
+  const alarm = (id) => s.alarms.find((a) => a.id === `incident-stale:${id}`);
+  assert.equal(alarm("INC-1015b").severity, "warn");
+  assert.match(alarm("INC-1015b").message, /no status update for 10 days/);
+  assert.ok(alarm("INC-1015f"));
+  assert.equal(alarm("INC-1015a"), undefined);
+  assert.equal(alarm("INC-1015c"), undefined);
+});
+
+test("X1 owner queue: decisions only; other owner-lane tasks go to ownerTodos", () => {
+  const s = x1();
+  assert.deepEqual(
+    s.ownerQueue.map((o) => o.id),
+    ["901"],
+  );
+  assert.deepEqual(
+    s.ownerTodos.map((o) => o.id),
+    ["902"],
+  );
+  assert.equal(s.ownerTodos[0].title, "Run the EAS build");
+});
+
+// ---- latent rule hardening (accuracy round 2 review) + mask-before-cut ----
+const lr = (events, { merged = [], extra = {} } = {}) => {
+  const gh = { open: [], merged, master: null };
+  return buildSnapshot({
+    sources: {
+      specs: okSource(30, {
+        events,
+        config: DEFAULT_CONFIG,
+        incidents: [],
+        ownerQueueRows: null,
+        extrasErrors: [],
+      }),
+      github: okSource(60, gh),
+    },
+    config: DEFAULT_CONFIG,
+    now: NOW,
+    machine: "pc",
+    ...extra,
+  });
+};
+const lrItem = (id, data) =>
+  ev("2026-10-17T00:00:00Z", "item.new", id, "lead", { lane: "lead", ...data });
+const CENSUS_GATE = "census: 0 lines / $0.00 mis-billed; latent only";
+
+test("latent rule: a P0 that shares only a release PR with a census stays in Hurting now", () => {
+  seq = 0;
+  const s = lr([
+    lrItem("R2", { title: "Train R2", type: "release", status: "planned", links: { prs: [3600] } }),
+    lrItem("700", { title: "Acme live bug", type: "bug", priority: "P0", links: { prs: [3600] } }),
+    lrItem("701", {
+      title: "Census of the train",
+      type: "ops",
+      status: "verified",
+      gate: CENSUS_GATE,
+      links: { prs: [3600] },
+    }),
+  ]);
+  assert.ok(s.problems.includes("700"), "the train PR proves nothing about this bug");
+  assert.equal(s.items.find((i) => i.id === "700").harm, null);
+});
+
+test("latent rule: a PR whose head branch is train/* is a train PR even without a release item", () => {
+  seq = 0;
+  const merged = [
+    {
+      number: 3601,
+      title: "Train r3",
+      body: "",
+      branch: "train/r3",
+      base: "master",
+      mergedAt: "2026-10-18T00:00:00Z",
+      mergeSha: "a".repeat(40),
+      url: "https://github.com/acme-org/widgets/pull/3601",
+    },
+  ];
+  const s = lr(
+    [
+      lrItem("702", {
+        title: "Acme live bug",
+        type: "bug",
+        priority: "P0",
+        links: { prs: [3601] },
+      }),
+      lrItem("703", {
+        title: "Census",
+        type: "audit",
+        status: "live",
+        gate: CENSUS_GATE,
+        links: { prs: [3601] },
+      }),
+    ],
+    { merged },
+  );
+  assert.ok(s.problems.includes("702"));
+});
+
+test("latent rule: a second open bug citing the same PR keeps both live; a bug alone on its PR is latent", () => {
+  seq = 0;
+  const s = lr([
+    lrItem("710", { title: "Acme bug one", type: "bug", priority: "P0", links: { prs: [3700] } }),
+    lrItem("711", { title: "Acme bug two", type: "bug", priority: "P0", links: { prs: [3700] } }),
+    lrItem("712", {
+      title: "Census",
+      type: "ops",
+      status: "verified",
+      gate: CENSUS_GATE,
+      links: { prs: [3700, 3701] },
+    }),
+    lrItem("713", { title: "Acme bug alone", type: "bug", priority: "P0", links: { prs: [3701] } }),
+  ]);
+  const by = Object.fromEntries(s.items.map((i) => [i.id, i]));
+  assert.equal(by["710"].harm, null);
+  assert.equal(by["711"].harm, null);
+  assert.ok(s.problems.includes("710") && s.problems.includes("711"));
+  assert.equal(by["713"].harm, "latent", "its own PR, no other open bug cites it");
+});
+
+test("latent rule: a negated verdict ('not latent', 'but 2 billed $0.00') never demotes a named row", () => {
+  seq = 0;
+  const s = lr([
+    lrItem("720", { title: "Acme bug 720", type: "bug", priority: "P0" }),
+    lrItem("721", {
+      title: "Census of row 720",
+      type: "audit",
+      status: "live",
+      gate: "found it is not latent, customers hit",
+    }),
+    lrItem("730", { title: "Acme bug 730", type: "bug", priority: "P0" }),
+    lrItem("731", {
+      title: "Census of row 730",
+      type: "ops",
+      status: "verified",
+      gate: "2 billed but $0.00 shown",
+    }),
+    lrItem("740", { title: "Acme bug 740", type: "bug", priority: "P0" }),
+    lrItem("741", {
+      title: "Census of row 740",
+      type: "ops",
+      status: "verified",
+      gate: "0 lines, latent only",
+    }),
+  ]);
+  const by = Object.fromEntries(s.items.map((i) => [i.id, i]));
+  assert.equal(by["720"].harm, null, "not latent");
+  assert.equal(by["730"].harm, null, "but ... $0.00");
+  assert.equal(by["740"].harm, "latent", "the plain verdict still names the row");
+});
+
+test("latent evidence is masked before it is cut at 160 characters", async () => {
+  const { maskText } = await import("../lib/mask.mjs");
+  const name = "acme-foods-distribution";
+  seq = 0;
+  const gate = `0 lines ${"p".repeat(145)} ${name} tail words`;
+  const events = [
+    lrItem("750", { title: "Acme bug 750", type: "bug", priority: "P0" }),
+    lrItem("751", { title: "Census of row 750", type: "ops", status: "verified", gate }),
+  ];
+  const s = lr(events, { extra: { mask: (t) => maskText(t, [name]) } });
+  const ev750 = s.latentRisks.find((r) => r.id === "750").evidence;
+  assert.doesNotMatch(ev750, /acme/i, "no fragment of the name");
+  assert.match(ev750, /a live/);
+  assert.ok(ev750.length <= 5 + 160);
+});
+
+// ---- D3 merged-awaiting-deploy label + D7 maskStatus ----
+test("D3 item with a merged linked PR and in-flight status reads 'Merged, awaiting deploy'", () => {
+  const evs = [
+    lrItem("810", {
+      type: "feature",
+      title: "Picker rework",
+      status: "building",
+      links: { prs: [4101] },
+    }),
+    lrItem("811", { type: "feature", title: "Done thing", status: "live", links: { prs: [4101] } }),
+    lrItem("812", {
+      type: "feature",
+      title: "Parked thing",
+      status: "parked",
+      links: { prs: [4101] },
+    }),
+    lrItem("813", { type: "feature", title: "Other", status: "building", links: { prs: [4102] } }),
+    lrItem("814", { type: "feature", title: "Via title", status: "review" }),
+    lrItem("815", { type: "feature", title: "Only mentioned", status: "building" }),
+    lrItem("816", { type: "feature", title: "Via trailer", status: "building" }),
+  ];
+  const merged = [
+    { number: 4101, title: "t", branch: "feat/x", mergedAt: ago(30), base: "master" },
+    { number: 4103, title: "ship (Row 814)", branch: "feat/y", mergedAt: ago(30), base: "master" },
+    // a background "row 815" mention in the body never marks 815 merged; a trailer does
+    {
+      number: 4104,
+      title: "chore: tidy",
+      branch: "chore/tidy",
+      body: "Context: see row 815 for the follow-up.",
+      mergedAt: ago(30),
+      base: "master",
+    },
+    {
+      number: 4105,
+      title: "chore: other",
+      branch: "chore/other",
+      body: "Done.\n\nRow: 816",
+      mergedAt: ago(30),
+      base: "master",
+    },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("810").statusLabel, "Merged, awaiting deploy");
+  assert.equal(by("810").status, "building");
+  assert.equal(by("810").itemStatus, "building");
+  assert.equal(by("810").itemStatusLabel, "Being built");
+  assert.equal(by("810").awaitingDeploy.pr, 4101);
+  assert.equal(by("811").statusLabel, "Fixed");
+  assert.equal(by("812").statusLabel, "Parked");
+  assert.equal(by("813").statusLabel, "Being built");
+  assert.equal(by("814").statusLabel, "Merged, awaiting deploy");
+  assert.equal(by("814").itemStatusLabel, "In review");
+  assert.equal(by("815").statusLabel, "Being built");
+  assert.equal(by("816").statusLabel, "Merged, awaiting deploy");
+});
+
+test("D3 a merged revert never labels, and clears the label its original PR set", () => {
+  const evs = [
+    lrItem("830", { type: "feature", title: "Reverted thing", status: "building" }),
+    lrItem("831", { type: "feature", title: "Kept thing", status: "building" }),
+  ];
+  const merged = [
+    {
+      number: 4301,
+      title: "feat: a (Row 830)",
+      branch: "feat/a",
+      mergedAt: ago(90),
+      base: "master",
+    },
+    {
+      number: 4302,
+      title: 'Revert "feat: a (Row 830)"',
+      branch: "revert-4301-feat/a",
+      body: "Reverts najathakram/routeflow#4301",
+      mergedAt: ago(30),
+      base: "master",
+    },
+    {
+      number: 4303,
+      title: "feat: b (Row 831)",
+      branch: "feat/b",
+      mergedAt: ago(90),
+      base: "master",
+    },
+    // a revert whose original merged AFTER it does not clear the original
+    {
+      number: 4304,
+      title: 'Revert "feat: b (Row 831)"',
+      branch: "revert-4303-feat/b",
+      body: "Reverts najathakram/routeflow#4303",
+      mergedAt: ago(120),
+      base: "master",
+    },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("830").statusLabel, "Being built");
+  assert.equal(by("830").awaitingDeploy, undefined);
+  assert.equal(by("831").statusLabel, "Merged, awaiting deploy");
+});
+
+test("D3 an item moved back into work after the merge is not relabelled", () => {
+  const evs = [
+    lrItem("840", {
+      type: "feature",
+      title: "Reworked",
+      status: "building",
+      links: { prs: [4401] },
+    }),
+    ev(ago(10), "status", "840", "lead", { status: "building" }),
+    lrItem("841", {
+      type: "feature",
+      title: "Fresh merge",
+      status: "building",
+      links: { prs: [4402] },
+    }),
+  ];
+  const merged = [
+    { number: 4401, title: "t", branch: "feat/y", mergedAt: ago(30), base: "master" },
+    { number: 4402, title: "t", branch: "feat/z", mergedAt: ago(30), base: "master" },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("840").statusLabel, "Being built");
+  assert.equal(by("841").statusLabel, "Merged, awaiting deploy");
+});
+
+test("D3 a post-merge eta/note edit keeps 'Merged, awaiting deploy'; a post-merge status edit does not", () => {
+  const evs = [
+    lrItem("850", {
+      type: "feature",
+      title: "Eta only",
+      status: "building",
+      links: { prs: [4501] },
+    }),
+    ev(ago(10), "item.edit", "850", "lead", { fields: { eta: "2026-10-30" } }),
+    lrItem("851", {
+      type: "feature",
+      title: "Status edit",
+      status: "building",
+      links: { prs: [4502] },
+    }),
+    ev(ago(10), "item.edit", "851", "lead", { fields: { status: "building" } }),
+  ];
+  const merged = [
+    { number: 4501, title: "t", branch: "feat/p", mergedAt: ago(30), base: "master" },
+    { number: 4502, title: "t", branch: "feat/q", mergedAt: ago(30), base: "master" },
+  ];
+  const s = lr(evs, { merged });
+  const by = (id) => s.items.find((i) => i.id === id);
+  assert.equal(by("850").statusLabel, "Merged, awaiting deploy");
+  assert.equal(by("851").statusLabel, "Being built");
+  // intended: an explicit status write after the merge counts even when it re-writes the same status
+  // (a human signal), so 851 above reads "Being built" although it was already "building".
+});
+
+test("D4 merged PR with no item raises untracked-merged-pr through the snapshot", () => {
+  const merged = [
+    { number: 4200, title: "chore: x", branch: "chore/x", mergedAt: ago(60), base: "master" },
+  ];
+  const s = lr([lrItem("820", { type: "feature", title: "Thing", status: "building" })], {
+    merged,
+  });
+  const a = s.alarms.find((x) => x.id === "untracked-merged-pr:4200");
+  assert.equal(a.severity, "warn");
+});
+
+test("D7 maskStatus rides the snapshot; ok:false raises an error alarm", () => {
+  const ok = lr([], { extra: { maskStatus: { ok: true, reason: null } } });
+  assert.deepEqual(ok.maskStatus, { ok: true, reason: null });
+  assert.equal(
+    ok.alarms.find((a) => a.kind === "mask-list-missing"),
+    undefined,
+  );
+  const bad = lr([], {
+    extra: { maskStatus: { ok: false, reason: "client-names.json does not parse" } },
+  });
+  assert.equal(bad.maskStatus.ok, false);
+  const a = bad.alarms.find((x) => x.kind === "mask-list-missing");
+  assert.equal(a.severity, "error");
+  assert.equal(a.message, "client-name mask list missing — tenant names hidden by fallback");
+});
+
+test("lanes: lastHeartbeatAt, heartbeatAgeMin and known", () => {
+  const hb = ev("2026-10-19T11:30:00Z", "heartbeat", null, "sa", {
+    session: "s1",
+    lastActiveAt: "2026-10-19T11:30:00Z",
+  });
+  const unknown = ev("2026-10-19T11:40:00Z", "heartbeat", null, "ghost-lane", {
+    session: "s2",
+    lastActiveAt: "2026-10-19T11:40:00Z",
+  });
+  const s = build({
+    specs: okSource(30, { events: [...events(), hb, unknown], config: DEFAULT_CONFIG }),
+  });
+  const sa = s.lanes.find((l) => l.id === "sa");
+  assert.equal(sa.lastHeartbeatAt, "2026-10-19T11:30:00.000Z");
+  assert.equal(sa.heartbeatAgeMin, 30);
+  assert.equal(sa.known, true);
+  const owner = s.lanes.find((l) => l.id === "owner"); // configured, never heartbeat
+  assert.equal(owner.lastHeartbeatAt, null);
+  assert.equal(owner.heartbeatAgeMin, null);
+  assert.equal(owner.known, true);
+  const ghost = s.lanes.find((l) => l.id === "ghost-lane");
+  assert.equal(ghost.heartbeatAgeMin, 20);
+  assert.equal(ghost.known, false);
+});
+
+test("lanes: unconfigured lanes appear only with open work or activity in the last 7 days", () => {
+  const hb = (at, lane, session) => ev(at, "heartbeat", null, lane, { session, lastActiveAt: at });
+  const s = build({
+    specs: okSource(30, {
+      events: [
+        ...events(),
+        hb("2026-10-10T00:00:00Z", "retired-lane", "s1"), // 9 days
+        hb("2026-10-18T12:00:00Z", "fresh-lane", "s2"), // 1 day
+      ],
+      config: DEFAULT_CONFIG,
+    }),
+  });
+  const ids = s.lanes.map((l) => l.id);
+  assert.ok(!ids.includes("retired-lane"));
+  assert.equal(s.lanes.find((l) => l.id === "fresh-lane").known, false);
+  assert.ok(ids.includes("owner")); // configured lanes always appear
+  assert.ok(!s.alarms.some((a) => a.id === "unknown-lane:retired-lane"));
+  assert.ok(s.alarms.some((a) => a.id === "unknown-lane:fresh-lane"));
+});
+
+test("lanes: aliased lane ids fold into their target row, no separate row", async () => {
+  const { loadConfig } = await import("../lib/config.mjs");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const live = loadConfig(mkdtempSync(join(tmpdir(), "ops-snap-")));
+  const hb = (at, lane, session) => ev(at, "heartbeat", null, lane, { session, lastActiveAt: at });
+  const s = buildSnapshot({
+    config: live,
+    now: NOW,
+    machine: "pc",
+    sources: sources({
+      specs: okSource(30, {
+        events: [
+          hb("2026-10-19T11:50:00Z", "coordinator", "s1"),
+          ev("2026-10-19T11:00:00Z", "item.new", "901", "lead", {
+            title: "Aliased claim",
+            type: "feature",
+            status: "building",
+            lane: "ops-monitor",
+          }),
+          ev("2026-10-19T11:10:00Z", "claim", "901", "ops-monitor", {}),
+        ],
+        config: live,
+      }),
+    }),
+  });
+  const ids = s.lanes.map((l) => l.id);
+  assert.ok(!ids.includes("coordinator") && !ids.includes("ops-monitor"), ids.join());
+  assert.equal(s.lanes.find((l) => l.id === "lead").lastHeartbeatAt, "2026-10-19T11:50:00.000Z");
+  assert.ok(s.lanes.find((l) => l.id === "mm-landing").now.includes("901"));
+  assert.ok(!s.alarms.some((a) => a.kind === "unknown-lane"));
 });

@@ -47,7 +47,12 @@ const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs")
 
 const RUN = randomUUID().slice(0, 8);
 const RULE_REASON = "H2 CA/NY ban";
-const ACTOR = { packPrecondition: "internal" as const, actorId: null, actorName: "h2-keep" };
+const ACTOR = {
+  packPrecondition: "internal" as const,
+  reparentVia: "editor" as const,
+  actorId: null,
+  actorName: "h2-keep",
+};
 
 describeDb("H2: a reparent keeps the CA/NY ban (real Postgres)", () => {
   let prisma: PrismaService;

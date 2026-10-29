@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { NumberWheelGuard } from "@/components/NumberWheelGuard";
 
 // B481: maximumScale/userScalable previously locked pinch-zoom here, failing WCAG 2.1 §1.4.4
 // (Resize Text) — removed to match the root layout, which deliberately avoids this restriction.
@@ -12,7 +13,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: { default: "RouteFlow Buyer Portal", template: "%s · RouteFlow" },
   description:
-    "Order directly from your suppliers. Track deliveries, view invoices, and manage standing orders.",
+    "Order directly from your sellers. Track deliveries, view invoices, and manage standing orders.",
   manifest: "/buyer-manifest.json",
   appleWebApp: {
     capable: true,
@@ -25,11 +26,16 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "RouteFlow Buyer Portal",
-    description: "Order from your suppliers, track deliveries, manage invoices.",
+    description: "Order from your sellers, track deliveries, manage invoices.",
     type: "website",
   },
 };
 
 export default function BuyerLayout({ children }: { children: ReactNode }) {
-  return <>{children}</>;
+  return (
+    <>
+      <NumberWheelGuard />
+      {children}
+    </>
+  );
 }

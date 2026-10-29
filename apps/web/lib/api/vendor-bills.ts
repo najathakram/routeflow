@@ -376,7 +376,13 @@ export function voidFailureToast(err: unknown): {
   const data = (
     err as {
       response?: {
-        data?: { code?: unknown; name?: unknown; period?: unknown; ledgerExcess?: unknown };
+        data?: {
+          code?: unknown;
+          name?: unknown;
+          period?: unknown;
+          filedFor?: unknown;
+          ledgerExcess?: unknown;
+        };
       };
     } | null
   )?.response?.data;
@@ -386,7 +392,12 @@ export function voidFailureToast(err: unknown): {
     description = `${who}'s stock records show more received than this bill, so it can't be voided here. We've flagged it for a repair.`;
   } else if (data?.code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
     const period = typeof data.period === "string" && data.period ? data.period : "This period";
-    description = `${period} is already filed for a product on this bill, so it can't be voided today. Ask an admin before voiding it.`;
+    // W-755: WHAT is filed, when the api names it.
+    const what =
+      typeof data.filedFor === "string" && data.filedFor
+        ? `${data.filedFor}, a product on this bill`
+        : "a product on this bill";
+    description = `${period} is already filed for ${what}, so it can't be voided today. Ask an admin before voiding it.`;
   } else {
     description = codedToastCopy(err) ?? "Please try again.";
   }

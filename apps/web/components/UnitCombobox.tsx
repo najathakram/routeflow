@@ -31,10 +31,15 @@ export function UnitCombobox({
   const [active, setActive] = React.useState(-1);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
-  const allUnits = React.useMemo(
-    () => Array.from(new Set([...COMMON_UNITS, ...extraUnits])).sort(),
-    [extraUnits],
-  );
+  // One suggestion per spelling ignoring case; the tenant's own spelling ("Case") wins over the built-in ("case").
+  const allUnits = React.useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const u of [...extraUnits, ...COMMON_UNITS]) {
+      const k = u.trim().toLowerCase();
+      if (k && !seen.has(k)) seen.set(k, u);
+    }
+    return Array.from(seen.values()).sort();
+  }, [extraUnits]);
 
   const filtered = value.trim()
     ? allUnits.filter((u) => u.toLowerCase().includes(value.toLowerCase()))
@@ -71,6 +76,10 @@ export function UnitCombobox({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
+        onBlur={(e) => {
+          // Tab / focus moving on finishes the choice; a pick inside the list is handled on its own mousedown.
+          if (!isInsideAnchoredList(e.relatedTarget)) setOpen(false);
+        }}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
         onKeyDown={(e) => {

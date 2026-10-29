@@ -104,7 +104,7 @@ describe("SA-815c the checkout adoption bills through ONE predicate (pin)", () =
     }
   });
 
-  it("structural: across the whole api source, ONLY adoptCheckoutAddons and billUnbilledRow call it (never the claim, the booking or any ledger writer)", () => {
+  it("structural: across the whole api source, ONLY adoptCheckoutAddons, billUnbilledRow and the read-only restore verdict call it (never the claim, the booking or any ledger writer)", () => {
     const SRC = path.join(__dirname, "..");
     const files: string[] = [];
     const walk = (dir: string) => {
@@ -132,6 +132,11 @@ describe("SA-815c the checkout adoption bills through ONE predicate (pin)", () =
       }
     }
     expect(callers.sort()).toEqual([
+      // Row 640, SA-834: a restored GRANT is covered only by an active row that passes the billed-row
+      // predicate. This is a read-only verdict (overrideRestoreVerdict) - it never bills, claims, books or
+      // writes a ledger row. The `#owner` is this scan's heuristic (the last 2-space-indented `name(` above
+      // the call - the AddonCoverage interface member), not the function's own name.
+      "billing/override-restore-verdict.ts#grantsFlagsOf",
       "billing/subscription-mutation.service.ts#adoptCheckoutAddons",
       "billing/subscription-mutation.service.ts#billUnbilledRow",
     ]);

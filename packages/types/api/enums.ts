@@ -36,6 +36,10 @@ export const INVOICE_STATUS_VALUES = [
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUS_VALUES)[number];
 
+/** SA-827: the customer-wide invoice unit (Customer.invoiceUnitDefault). LEGACY = not set (falls through). */
+export const INVOICE_UNIT_DEFAULT_VALUES = ["LEGACY", "PIECES", "PACK"] as const;
+export type InvoiceUnitDefault = (typeof INVOICE_UNIT_DEFAULT_VALUES)[number];
+
 /**
  * SA-770: the OPEN invoice statuses - issued and not settled, so they can still be owed and can be overdue
  * (a reminder is sent for them, the Unpaid chip lists them). A SUBSET of INVOICE_STATUS_VALUES, not a Prisma
@@ -621,3 +625,12 @@ export const INVOICE_ORDER_BILLING_ROLE_VALUES = [
   "MANUAL",
 ] as const;
 export type InvoiceOrderBillingRole = (typeof INVOICE_ORDER_BILLING_ROLE_VALUES)[number];
+
+// SA-824: the scope of a payment Idempotency-Key (Prisma `PaymentIdempotencyScope`): the three money-in writers
+// that claim a key. Shared by the api and the key-status answers the web and mobile read (L-072).
+export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
+  "STANDALONE_PAYMENT",
+  "INVOICE_PAYMENT",
+  "ADVANCE_PAYMENT",
+] as const;
+export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];

@@ -39,10 +39,13 @@ export const TRUNCATED_LINE =
 export const STAFF_ORDERS_SWITCH_LABEL =
   "Also block restricted products on staff orders and invoices";
 
-/** What a missing state does, by the staff-orders switch: the portal always hides legal bans; staff orders only if on. */
+/**
+ * What a missing state does, by the staff-orders switch: the portal always hides legal bans; staff orders are checked
+ * only with it on, and then (row 510) staff are warned and may override with a reason, so ON never says "can't be sold".
+ */
 const noStateEffect = (staffOrdersChecked: boolean) =>
   staffOrdersChecked
-    ? "Until it's set, products with a legal state ban stay hidden from them in your portal, and they can't be sold those products on any order. Other state limits won't reach them."
+    ? "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't."
     : `Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to block them).`;
 
 export function headerLine(total: number, truncated = false, staffOrdersChecked: boolean): string {

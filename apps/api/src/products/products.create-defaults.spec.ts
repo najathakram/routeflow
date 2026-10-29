@@ -121,12 +121,15 @@ describe("products.create-defaults — ProductsService", () => {
       prisma.product.findFirst.mockImplementation(({ where }: any) =>
         Promise.resolve(where?.id === "parent-1" ? parent : null),
       );
-      await service.create({
-        name: "Kid",
-        unit: "each",
-        pricePerUnit: "7",
-        parentProductId: "parent-1",
-      } as any);
+      await service.create(
+        {
+          name: "Kid",
+          unit: "each",
+          pricePerUnit: "7",
+          parentProductId: "parent-1",
+        } as any,
+        { reparentVia: "editor" },
+      );
       for (const c of TIERS) expect(dataOfCreate()[c]).toBe("0");
     });
 
@@ -149,12 +152,15 @@ describe("products.create-defaults — ProductsService", () => {
       prisma.product.findFirst.mockImplementation(({ where }: any) =>
         Promise.resolve(where?.id === "parent-2" ? parent : null),
       );
-      await service.create({
-        name: "Kid",
-        unit: "each",
-        pricePerUnit: "10",
-        parentProductId: "parent-2",
-      } as any);
+      await service.create(
+        {
+          name: "Kid",
+          unit: "each",
+          pricePerUnit: "10",
+          parentProductId: "parent-2",
+        } as any,
+        { reparentVia: "editor" },
+      );
       const data = dataOfCreate();
       expect([data.priceTier2, data.priceTier3, data.priceTier4, data.priceTier5]).toEqual([
         "9",

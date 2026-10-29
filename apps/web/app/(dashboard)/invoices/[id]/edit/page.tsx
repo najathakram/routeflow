@@ -7,8 +7,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, Trash2, Search, Loader2 } from "lucide-react";
 import { Button, Card, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useDismissOnLeave } from "@/lib/use-dismiss-on-leave";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useInvoice, useUpdateInvoice, type UpdateInvoiceItem } from "@/lib/api/invoices";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { INVOICE_STALE_COPY, isInvoiceStale } from "@/lib/invoice-stale";
 import { hasUnitLine, unitLabelsOf } from "@/lib/invoice-line-unit";
@@ -20,16 +22,14 @@ import {
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
-import {
-  PRICE_LAYER_FAILED_COPY,
-  PriceLayerNotice,
-  pricesUnconfirmed,
-} from "@/components/PriceLayerNotice";
+import { PRICE_LAYER_FAILED_COPY, PriceLayerNotice } from "@/components/PriceLayerNotice";
+import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { scanRowQty } from "../../invoice-scan-level";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
+import { SoldUnitQty } from "./SoldUnitQty";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
@@ -41,7 +41,9 @@ import {
   normalizeBoxesPieces,
   packFromOwnSplit,
   customerLinePrice,
+  customerTierFor,
   isNsfLine,
+  TAX_RATE_FRACTION_DECIMALS,
 } from "@routeflow/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -134,7 +136,7 @@ function ProductSearchInput({
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const listRef = React.useRef<HTMLDivElement>(null);
+  const leave = useDismissOnLeave(setOpen);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 300);
@@ -177,15 +179,7 @@ function ProductSearchInput({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        // Row 446: Tab (or any focus move) away from the field closes its popup, so it never sits
-        // over the unit select below; focus moving into the popup's own list keeps it open.
-        onBlur={(e) => {
-          if (!listRef.current?.contains(e.relatedTarget as Node | null)) setOpen(false);
-        }}
-        // Tab leaves the field: close first, so focus moves to the next field, never into the list
-        onKeyDown={(e) => {
-          if (e.key === "Tab") setOpen(false);
-        }}
+        {...leave.inputProps} // row 446 / W-686: Tab and blur close the popup (shared hook)
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-surface-raised"
       />
       {/* Hold every product-selection path until the tier data lands: picking or
@@ -232,10 +226,7 @@ function ProductSearchInput({
         debouncedQuery.length > 0 &&
         (products.length > 0 || onCreateProduct) && (
           <div
-            ref={listRef}
-            // a press inside the list keeps focus on the input (Safari never focuses a clicked
-            // button, so a blur would close the list before the click lands)
-            onMouseDown={(e) => e.preventDefault()}
+            {...leave.listProps}
             className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg"
           >
             <ul className="max-h-36 overflow-y-auto">
@@ -446,6 +437,7 @@ export default function EditInvoicePage() {
   const openedUpdatedAt = React.useRef<string | undefined>(undefined);
   const [stale, setStale] = React.useState(false);
   const updateInvoice = useUpdateInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
 
   // #2791: a pending-mirror draft can't be edited here (the API refuses by design — the order is the
   // source of truth until delivery). Send the user to the order instead of showing a form that can only fail.
@@ -479,10 +471,11 @@ export default function EditInvoicePage() {
   // S19b (SA-811a/813): flag-on, billing's own customer layer. Flag off = no request, master's chain below. Until it is read
   // (or after it failed) a pick would price at the tier, so selection waits and Save stays disabled with the M3 copy.
   const priceLayer = useCustomerPriceLayer(invoice?.customerId);
-  const tierPricingPending =
-    customerQuery.isLoading ||
-    customerPricesQuery.isLoading ||
-    (priceLayer.enabled && !priceLayer.ready);
+  // W-725: the one shared gate (money fails closed). A read that FAILED with no data, or was PAUSED offline, blocks the pick
+  // too; with only `isLoading` a failed customer read left the scanner open and every pick priced at LIST. No pick can
+  // land while a read has failed, and the edited lines are the operator's own, so no `openSuggestions` here.
+  const pickGate = customerPricingGate({ customerQuery, customerPricesQuery, priceLayer });
+  const tierPricingPending = pickGate.blockPick;
   // Per-product PRICE resolved from the CustomerPrice TIER override through the
   // product's tier ladder. An msrp-only override row has pricingTier null —
   // price at the customer's default tier (Post-MSRP hazard).
@@ -493,7 +486,7 @@ export default function EditInvoicePage() {
       // No layer row: customerLinePrice returns master's getTierPrice number exactly.
       const price = customerLinePrice({
         product: cp.product as unknown as Record<string, unknown>,
-        tier: cp.pricingTier ?? customer?.pricingTier ?? 1,
+        tier: customerTierFor(cp.pricingTier, customer?.pricingTier),
       }).price;
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
@@ -507,7 +500,7 @@ export default function EditInvoicePage() {
   const tierPriceFor = React.useCallback(
     (product: TierPriceableProduct) => {
       const listPrice = parseFloat(String(product.pricePerUnit ?? 0)) || 0;
-      const customerTier = customer?.pricingTier ?? 1;
+      const customerTier = customerTierFor(undefined, customer?.pricingTier);
       const layer = layerOfRef.current(product.id);
       if (layer) {
         // The layer row, when this product has one for its pack (R3); otherwise master's chain below.
@@ -516,7 +509,7 @@ export default function EditInvoicePage() {
         );
         const r = customerLinePrice({
           product: product as unknown as Record<string, unknown>,
-          tier: cp?.pricingTier ?? customerTier,
+          tier: customerTierFor(cp?.pricingTier, customerTier),
           layer,
           unitLabel: null,
         });
@@ -680,10 +673,12 @@ export default function EditInvoicePage() {
 
   // ── Submit ────────────────────────────────────────────────────────────────────
 
-  const priceBlocked = pricesUnconfirmed(
+  const priceBlocked = customerPricingGate({
+    customerQuery,
+    customerPricesQuery,
     priceLayer,
-    items.map((i) => i.productId),
-  );
+    productIds: items.map((i) => i.productId),
+  }).blockSave;
 
   function handleSubmit() {
     if (priceBlocked) return;
@@ -721,8 +716,9 @@ export default function EditInvoicePage() {
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
           ...(it.locked
             ? { boxes: it.storedBoxes ?? 0, pieces: it.storedPieces ?? 0 }
-            : it.unitsPerBox && it.productId
-              ? { boxes: boxes ?? 0, pieces: pieces ?? 0 }
+            : // Row 688: any boxed line posts its split, product or not; a bare qty re-bills qty × box price.
+              it.unitsPerBox && boxes != null
+              ? { boxes, pieces: pieces ?? 0 }
               : {}),
           // SA-189: only an operator-attested pack is ever sent.
           ...(it.attestedPack ? { unitsPerBox: it.attestedPack } : {}),
@@ -738,7 +734,7 @@ export default function EditInvoicePage() {
       }),
     };
 
-    updateInvoice.mutate(dto, {
+    updateInvoice.mutate(rw.attach(dto), {
       onSuccess: () => {
         toast({
           title: "Invoice updated",
@@ -748,6 +744,7 @@ export default function EditInvoicePage() {
         router.push(`/invoices/${id}`);
       },
       onError: (err: any) => {
+        if (rw.handle(err, handleSubmit)) return; // row 510
         if (isInvoiceStale(err)) {
           setStale(true); // H4: the notice owns it; no toast
           return;
@@ -791,7 +788,7 @@ export default function EditInvoicePage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/invoices">
-          Back to Invoices
+          Back to invoices
         </Button>
       </div>
     );
@@ -814,9 +811,9 @@ export default function EditInvoicePage() {
   if (invoice.status !== "DRAFT") {
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
-        <p className="text-base font-medium text-navy">Only DRAFT invoices can be edited.</p>
+        <p className="text-base font-medium text-navy">Only draft invoices can be edited.</p>
         <Button variant="secondary" href={`/invoices/${id}`}>
-          Back to Invoice
+          Back to invoice
         </Button>
       </div>
     );
@@ -837,7 +834,7 @@ export default function EditInvoicePage() {
           the invoice to review it, or delete this draft and create it again.
         </p>
         <Button variant="secondary" href={`/invoices/${id}`}>
-          Back to Invoice
+          Back to invoice
         </Button>
       </div>
     );
@@ -853,16 +850,16 @@ export default function EditInvoicePage() {
         {invoice.invoiceNumber}
       </Link>
 
-      <h1 className="text-2xl font-bold text-navy">Edit Invoice</h1>
+      <h1 className="text-2xl font-bold text-navy">Edit invoice</h1>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         {/* ── Left column (3/5) ── */}
         <div className="space-y-5 lg:col-span-3">
           {/* Dates */}
-          <Card title="Invoice Dates">
+          <Card title="Invoice dates">
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue date</label>
                 <input
                   type="date"
                   value={issueDate}
@@ -876,7 +873,7 @@ export default function EditInvoicePage() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Payment Terms
+                  Payment terms
                 </label>
                 <select
                   value={paymentTermsLabel}
@@ -891,7 +888,7 @@ export default function EditInvoicePage() {
                 </select>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Due date</label>
                 <input
                   type="date"
                   value={dueDate}
@@ -910,7 +907,7 @@ export default function EditInvoicePage() {
           </Card>
 
           {/* Line items */}
-          <Card title="Line Items">
+          <Card title="Line items">
             <div className="space-y-2">
               {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
               {/* Table header */}
@@ -918,7 +915,7 @@ export default function EditInvoicePage() {
               <div className="hidden gap-2 px-1 sm:grid sm:grid-cols-[1fr_70px_90px_70px_70px_32px]">
                 <span className="text-xs font-medium text-navy/70">Description</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
-                <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Unit price</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Disc. $</span>
                 <span className="text-xs font-medium text-navy/70 text-right">Tax %</span>
                 <span />
@@ -937,7 +934,7 @@ export default function EditInvoicePage() {
                       value={item.description}
                       tierPriceFor={tierPriceFor}
                       pricingPending={tierPricingPending}
-                      pricingFailed={priceLayer.failed}
+                      pricingFailed={pickGate.failed}
                       onCreateProduct={(searchTerm) => {
                         const idx = items.findIndex((it) => it.key === item.key);
                         const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
@@ -1013,18 +1010,28 @@ export default function EditInvoicePage() {
                   ) : (
                     <>
                       <MobileField label="Qty">
-                        <DecimalInput
-                          aria-label="Qty"
-                          decimals={3}
-                          min={0}
-                          value={item.qty}
-                          onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
-                          className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                        />
+                        {Number(item.unitsPerBox ?? 0) > 1 ? (
+                          // Row 688: a boxed line edits in its sold unit (boxes + pieces), not total pieces.
+                          <SoldUnitQty
+                            qty={item.qty}
+                            unitsPerBox={Number(item.unitsPerBox)}
+                            onQtyChange={(qty) => updateItem(item.key, { qty })}
+                            inputClassName="h-11 w-full min-w-[44px] rounded border border-surface-border bg-white px-1.5 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        ) : (
+                          <DecimalInput
+                            aria-label="Qty"
+                            decimals={3}
+                            min={0}
+                            value={item.qty}
+                            onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
+                            className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </MobileField>
-                      <MobileField label="Unit Price">
+                      <MobileField label="Unit price">
                         <MoneyInput
-                          aria-label="Unit Price"
+                          aria-label="Unit price"
                           min={0}
                           value={item.unitPrice}
                           onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
@@ -1059,7 +1066,7 @@ export default function EditInvoicePage() {
                   )}
                   <MobileField label="Tax %">
                     <DecimalInput
-                      decimals={4}
+                      decimals={TAX_RATE_FRACTION_DECIMALS}
                       min={0}
                       max={1}
                       value={isNsfLine(item) ? 0 : item.taxRate}
@@ -1088,13 +1095,13 @@ export default function EditInvoicePage() {
                 className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
               >
                 <Plus className="h-4 w-4" />
-                Add Line Item
+                Add line item
               </button>
             </div>
           </Card>
 
           {/* Notes & Terms */}
-          <Card title="Notes & Terms">
+          <Card title="Notes and terms">
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1156,7 +1163,7 @@ export default function EditInvoicePage() {
             <div className="space-y-3">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Invoice Discount ($)
+                  Invoice discount ($)
                 </label>
                 <input
                   type="number"
@@ -1169,7 +1176,7 @@ export default function EditInvoicePage() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Shipping Fee ($)
+                  Shipping fee ($)
                 </label>
                 <input
                   type="number"
@@ -1184,7 +1191,7 @@ export default function EditInvoicePage() {
           </Card>
 
           {/* Summary */}
-          <Card title="Invoice Summary">
+          <Card title="Invoice summary">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-navy/70">Subtotal</dt>
@@ -1233,8 +1240,11 @@ export default function EditInvoicePage() {
                 </div>
               )}
               <PriceLayerNotice
-                layer={priceLayer}
-                unconfirmed={priceBlocked}
+                layer={gateNoticeLayer(pickGate, priceLayer, () => {
+                  void customerQuery.refetch();
+                  void customerPricesQuery.refetch();
+                })}
+                unconfirmed={priceBlocked || pickGate.readFailed}
                 className="block text-xs text-amber-700"
               />
               <Button
@@ -1243,7 +1253,7 @@ export default function EditInvoicePage() {
                 loading={updateInvoice.isPending}
                 disabled={updateInvoice.isPending || priceBlocked}
               >
-                Save Changes
+                Save changes
               </Button>
               <Button
                 className="w-full"
@@ -1286,6 +1296,7 @@ export default function EditInvoicePage() {
         initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
+      {rw.dialog}
     </div>
   );
 }

@@ -202,12 +202,13 @@ export function processCmdline(pid) {
 }
 
 /** True when the command line is our MCP server (graphify ... serve). */
-export const isOurServer = (cmd) => !!cmd && /-m\s+graphify\.serve\b|graphify-mcp/.test(cmd);
+export const isOurServer = (cmd) =>
+  !!cmd && /-m\s+graphify\.serve\b|(?:^|[\s/\\"'])graphify-mcp(?:\.exe)?(?=$|[\s"'])/.test(cmd);
 
 /** True unless the OS says the PID does not exist (EPERM still means alive). */
-function pidAlive(pid) {
+export function pidAlive(pid, kill = process.kill.bind(process)) {
   try {
-    process.kill(pid, 0);
+    kill(pid, 0);
     return true;
   } catch (e) {
     return e.code !== "ESRCH";

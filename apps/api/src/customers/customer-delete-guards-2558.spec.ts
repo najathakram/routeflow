@@ -50,7 +50,10 @@ describe("CustomersService — in-tx delete guards (#2558, SA-510a)", () => {
         // invoice's regulated-ledger entries, so the collaborator must be provided.
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
         {
           provide: EmailService,

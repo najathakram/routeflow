@@ -101,6 +101,22 @@ describe("VendorBillsService — coded refusals the bill page explains (row 648)
     expect(body.code).toBe("BILL_PO_SUPPLIER_LOCKED");
   });
 
+  it("rejects a reference from another business on an edit (no bill update)", async () => {
+    prisma.vendorBill.findUnique.mockResolvedValue({
+      id: "b",
+      status: "DRAFT",
+      supplierId: "sup-1",
+      purchaseOrderId: null,
+      items: [],
+    });
+    prisma.supplier.findMany.mockResolvedValue([]); // not this tenant's supplier
+    const err: any = await service
+      .update("b", { supplierId: "other-biz-supplier" })
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(404);
+    expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+  });
+
   it("BILL_NEVER_RECEIVED: reverting a PARTIAL bill that was paid but never received", async () => {
     prisma.vendorBill.findUnique.mockResolvedValue({
       id: "b",

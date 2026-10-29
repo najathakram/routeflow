@@ -24,7 +24,7 @@ import {
 import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { fmtCalendarDate } from "@/lib/formatting";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
@@ -153,9 +153,7 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "createdAt",
     header: "Date",
     enableSorting: false,
-    cell: ({ row }) => (
-      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
-    ),
+    cell: ({ row }) => <span className="text-navy/70">{fmtDate(row.original.createdAt)}</span>,
   },
 ];
 
@@ -266,7 +264,7 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
       )}
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
-        <h3 className="text-base font-semibold text-navy">AR Aging</h3>
+        <h3 className="text-base font-semibold text-navy">AR aging</h3>
         <Link
           href="/finance/reports?report=ar-aging"
           className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
@@ -391,7 +389,7 @@ function OverdueInvoicesPanel({
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-semibold text-navy">Overdue Invoices</h3>
+          <h3 className="text-base font-semibold text-navy">Overdue invoices</h3>
           {totalCount > 0 && <Badge variant="danger" label={`${totalCount}`} />}
         </div>
         <Link
@@ -506,7 +504,7 @@ function LowStockPanel({
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-semibold text-navy">Low Stock</h3>
+          <h3 className="text-base font-semibold text-navy">Low stock</h3>
           {total > 0 && <Badge variant="warning" label={fmt(total)} />}
         </div>
         <Link
@@ -915,12 +913,12 @@ export default function DashboardPage() {
               className={cn(quickCreate.storeOnly && "max-sm:h-11")}
             >
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
-              New Invoice
+              New invoice
             </WriteButton>
             {routesAccess && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
-                New Route
+                New route
               </Button>
             )}
             {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
@@ -953,7 +951,7 @@ export default function DashboardPage() {
             {quickCreate.showNewOrder ? (
               <WriteButton href="/orders?action=new" size="sm" variant="primary">
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New Order
+                New order
               </WriteButton>
             ) : null}
           </div>
@@ -972,7 +970,7 @@ export default function DashboardPage() {
           ) : null}
           <WriteButton href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
-            New Order
+            New order
           </WriteButton>
           <ReadOnlyHint className="basis-full text-xs text-slate-600" />
         </div>
@@ -989,7 +987,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/finance" className="block">
               <StatCard
-                label="Today's Revenue"
+                label="Today's revenue"
                 value={
                   todayRevenue === null
                     ? UNKNOWN_KPI
@@ -1010,7 +1008,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/invoices?status=OVERDUE" className="block">
               <StatCard
-                label="Overdue Invoices"
+                label="Overdue invoices"
                 value={overdueCount ?? UNKNOWN_KPI}
                 icon={
                   <FileMinus
@@ -1031,7 +1029,7 @@ export default function DashboardPage() {
         ) : (
           <Link href="/orders" className="block">
             <StatCard
-              label="Active Orders"
+              label="Active orders"
               value={activeOrders ?? UNKNOWN_KPI}
               icon={<ShoppingCart className="h-5 w-5" />}
               className={cn(
@@ -1087,7 +1085,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/routes" className="block">
               <StatCard
-                label="Scheduled Routes"
+                label="Scheduled routes"
                 value={routesToday ?? UNKNOWN_KPI}
                 icon={<MapPin className="h-5 w-5" />}
                 className={cn(
@@ -1105,7 +1103,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/drivers" className="block">
               <StatCard
-                label="Active Drivers"
+                label="Active drivers"
                 value={driversOnRoad ?? UNKNOWN_KPI}
                 icon={
                   <Truck className={cn("h-5 w-5", (driversOnRoad ?? 0) > 0 && "text-success")} />
@@ -1125,7 +1123,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/products?lowStock=true" className="block">
               <StatCard
-                label="Low Stock Items"
+                label="Low stock items"
                 value={lowStockTotal ?? UNKNOWN_KPI}
                 icon={
                   <AlertTriangle
@@ -1170,7 +1168,7 @@ export default function DashboardPage() {
                 bg: "bg-brand-50",
               },
               {
-                label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                label: statusLabel("OUT_FOR_DELIVERY", "Out for delivery"),
                 key: "OUT_FOR_DELIVERY" as const,
                 color: "text-blue-600",
                 bg: "bg-blue-50",
@@ -1267,7 +1265,7 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between border-b border-danger/30 px-5 py-3.5">
                     <h3 className="flex items-center gap-2 text-base font-semibold text-[#B91C1C]">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
-                      Urgent Orders
+                      Urgent orders
                     </h3>
                     <Badge variant="danger" label={`${urgentOrders.length} open`} />
                   </div>
@@ -1280,12 +1278,13 @@ export default function DashboardPage() {
                           </p>
                           <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/70">
                             <Clock className="h-3 w-3" />
-                            {order.lineItems?.length ?? 0} items &middot; placed{" "}
-                            {timeAgo(order.createdAt)}
+                            {order.lineItems?.length ?? 0}{" "}
+                            {(order.lineItems?.length ?? 0) === 1 ? "item" : "items"} &middot;
+                            placed {timeAgo(order.createdAt)}
                           </p>
                         </div>
                         <Button variant="secondary" size="sm" href={`/orders/${order.id}`}>
-                          View Order
+                          View order
                         </Button>
                       </li>
                     ))}
@@ -1311,7 +1310,7 @@ export default function DashboardPage() {
             {(routesAccess || reserveRoutesSlot) && (
               <Card className={!routesAccess || runsLoading ? ROUTE_RUNS_MIN_H : undefined}>
                 <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
+                  <h3 className="text-base font-semibold text-navy">Scheduled route runs</h3>
                   <Link
                     href="/routes"
                     className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
@@ -1351,7 +1350,7 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-6">
               {(routesAccess || reserveRoutesSlot) && (
                 <Card
-                  title="Driver Status"
+                  title="Driver status"
                   className={!routesAccess || driversLoading ? DRIVER_STATUS_MIN_H : undefined}
                 >
                   {!routesAccess || driversLoading ? (
@@ -1406,7 +1405,7 @@ export default function DashboardPage() {
       {readsBusinessData && (
         <Card>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
+            <h2 className="text-base font-semibold text-navy">Recent orders</h2>
             <Link
               href="/orders"
               className="flex items-center gap-1 text-sm text-brand-500 hover:underline"

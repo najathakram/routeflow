@@ -152,6 +152,89 @@ export class ConnectChargeReviewService {
     });
   }
 
+  /**
+   * SA-837b: a Stripe-captured payment repeated an existing payment's customer, method, reference and amount. It was
+   * RECORDED (the money moved; refusing would strand a real charge) and the audit row inside its transaction is the
+   * durable flag. This adds the same `[REVIEW]` breadcrumb on the invoice's internal notes the refund / dispute flags use
+   * (no schema field exists for it) and alerts the operators once, so staff can refund the duplicate in Stripe.
+   * Best-effort and idempotent per payment intent + invoice; the caller never fails a webhook over it.
+   */
+  async flagDuplicateSuspect(input: {
+    tenantId: string | null;
+    paymentIntentId: string;
+    invoiceId: string | null;
+    duplicateOfPaymentId: string;
+    duplicateOfInvoiceNumber: string | null;
+  }): Promise<void> {
+    const { tenantId, paymentIntentId, invoiceId, duplicateOfInvoiceNumber } = input;
+    if (!tenantId || !invoiceId) return;
+    const inv = await this.prisma.forTenant().invoice.findFirst({
+      where: { id: invoiceId },
+      select: { id: true, invoiceNumber: true, internalNotes: true },
+    });
+    if (!inv || inv.internalNotes?.includes(paymentIntentId)) return;
+    const line =
+      `[REVIEW] The card payment ${paymentIntentId} repeats an earlier payment's reference and amount` +
+      `${duplicateOfInvoiceNumber ? ` (${duplicateOfInvoiceNumber})` : ""}. It is recorded because the money moved. ` +
+      `First look for a manual entry of the same charge and void that entry; only if the customer was really ` +
+      `charged twice, refund the duplicate in Stripe.`;
+    const { count } = await this.prisma.forTenant().invoice.updateMany({
+      where: { id: inv.id, internalNotes: inv.internalNotes },
+      data: { internalNotes: inv.internalNotes ? `${inv.internalNotes}\n${line}` : line },
+    });
+    if (count !== 1) throw new Error(`Invoice ${inv.invoiceNumber} changed while flagging — retry`);
+    const title = "Possible duplicate card payment";
+    const body =
+      `A card payment on invoice ${inv.invoiceNumber} repeats an earlier payment's reference and amount. ` +
+      `It was recorded because the money moved. First look for a manual entry of the same charge and void it; ` +
+      `refund in Stripe only if the customer was really charged twice.`;
+    try {
+      const operators = await this.prisma.user.findMany({
+        where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
+        select: { id: true },
+      });
+      await Promise.allSettled(
+        operators.map((op) => this.notifications.sendToUser(op.id, { title, body })),
+      );
+    } catch (err: any) {
+      this.logger.warn(`duplicate-suspect notification failed: ${err?.message}`);
+    }
+  }
+
+  /**
+   * W-769 (SA-862 rule 1, W-706 folded): a captured card / ACH settle is never refused; when it displaced unconfirmed rows
+   * on an invoice (they no longer fit), the operators are told after the commit, so a DRAFT does not sit there unseen.
+   * Best-effort: the payment transaction's PAYMENT_UNCONFIRMED_OVER_RESERVED audit row is the durable record.
+   */
+  async flagUnconfirmedOverReserved(input: {
+    tenantId: string | null;
+    paymentIntentId: string;
+    invoiceId: string;
+    displaced: string[];
+  }): Promise<void> {
+    const { tenantId, invoiceId, displaced } = input;
+    if (!tenantId || displaced.length === 0) return;
+    const inv = await this.prisma.forTenant().invoice.findFirst({
+      where: { id: invoiceId },
+      select: { invoiceNumber: true },
+    });
+    const title = "Unconfirmed payment no longer fits";
+    const body =
+      `A card payment filled invoice ${inv?.invoiceNumber ?? invoiceId}, so ${displaced.length === 1 ? "an unconfirmed payment" : "unconfirmed payments"} ` +
+      `on it no longer ${displaced.length === 1 ? "fits" : "fit"}. Void it or move it to the customer's credit.`;
+    try {
+      const operators = await this.prisma.user.findMany({
+        where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
+        select: { id: true },
+      });
+      await Promise.allSettled(
+        operators.map((op) => this.notifications.sendToUser(op.id, { title, body })),
+      );
+    } catch (err: any) {
+      this.logger.warn(`over-reserved notification failed: ${err?.message}`);
+    }
+  }
+
   private async notifyOperators(
     tenantId: string,
     kind: ChargeReviewKind,

@@ -280,7 +280,11 @@ export function useUnsnoozeReplenishment() {
   });
 }
 
-/** Seed the active order with every running-low item at its suggested qty. */
+/**
+ * Seed the active order with every running-low item at its suggested qty.
+ * @deprecated Row 702: the web shelf's "Add all low" fills the local cart (like each row's Add) and no longer calls
+ * this. Mobile still posts /buyer/shelf/add-all-low until row 703; deprecate the endpoint once nothing calls it.
+ */
 export function useAddAllLow() {
   const qc = useQueryClient();
   return useMutation<BuyerOrder | null, Error, void>({

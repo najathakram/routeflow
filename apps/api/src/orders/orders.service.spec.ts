@@ -281,10 +281,10 @@ describe("OrdersService", () => {
           provide: EntitlementsService,
           useValue: { hasFlag: jest.fn().mockResolvedValue(true) },
         },
-        // B65: deleteOrder's per-invoice teardown reverses regulated-ledger entries.
+        // B65 / SA-839: deleteOrder's per-invoice teardown zeroes the regulated ledger (INVOICE_ZEROED).
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: { settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0 }) },
         },
         // B323: sweepAllPendingOrders() re-enters each group's own tenant scope via
         // tenantCtx.run() before calling into anything ambient-scoped.
@@ -9129,7 +9129,7 @@ describe("OrdersService", () => {
           baseCr({
             type: "CHANGE_QTY",
             orderItemId: "li-1",
-            payload: { orderItemId: "li-1", newQty: 18 },
+            payload: { orderItemId: "li-1", newQty: 30 }, // row 510: an INCREASE, so ORDER_CHANGED is not met first
             requestedByRole: "DRIVER", // staff-filed: keeps this on the staff channel (F1 i)
           }),
         );

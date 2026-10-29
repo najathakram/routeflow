@@ -289,6 +289,54 @@ test("failing run keeps last good data and sets error", async () => {
   assert.equal(s.at, NOW);
 });
 
+test("a requeue request landing mid-run is not lost: one more run follows, several coalesce; a plain call does not rerun", async () => {
+  let release;
+  let n = 0;
+  const gate = () => new Promise((r) => (release = r));
+  const { c } = mk(
+    {},
+    {
+      "gh api graphql": async () => {
+        n++;
+        if (n === 1) await gate();
+        return { code: 0, stdout: read("collector-graphql.json"), stderr: "" };
+      },
+    },
+  );
+  const first = c.runOnce("github");
+  while (!release) await new Promise((r) => setImmediate(r));
+  const a = c.runOnce("github", { requeue: true });
+  const b = c.runOnce("github", { requeue: true });
+  const tick = c.runOnce("github"); // a timer tick: joins, asks for nothing
+  assert.equal(n, 1);
+  release();
+  await Promise.all([first, a, b, tick]);
+  assert.equal(n, 2, "exactly one rerun for the coalesced webhook requests");
+  await c.runOnce("github");
+  assert.equal(n, 3);
+});
+
+test("a plain mid-run call joins the run and does not rerun", async () => {
+  let release;
+  let n = 0;
+  const { c } = mk(
+    {},
+    {
+      "gh api graphql": async () => {
+        n++;
+        await new Promise((r) => (release = r));
+        return { code: 0, stdout: read("collector-graphql.json"), stderr: "" };
+      },
+    },
+  );
+  const first = c.runOnce("github");
+  while (!release) await new Promise((r) => setImmediate(r));
+  const joined = c.runOnce("github");
+  release();
+  await Promise.all([first, joined]);
+  assert.equal(n, 1);
+});
+
 test("runOnce never throws; onUpdate errors are swallowed", async () => {
   const { c } = mk(
     {
@@ -495,6 +543,119 @@ test("specs: the sync runs under tryWithSpecsLock; when the lock is busy it is s
     ["sync", "/specs"],
     ["read", "/specs"],
   ]);
+});
+
+test("specs: afterSpecsPull runs inside the lock hold after syncSpecs; its failure never fails the source; never in cloud", async () => {
+  const seen = [];
+  const mkDeps = () => ({
+    store: {
+      tryWithSpecsLock: async (fn) => {
+        seen.push("lock-in");
+        try {
+          return { ran: true, value: await fn() };
+        } finally {
+          seen.push("lock-out");
+        }
+      },
+      ensureClone: async () => {},
+      syncSpecs: async () => {
+        seen.push("sync-start");
+        await new Promise((r) => setTimeout(r, 200));
+        seen.push("sync-end");
+      },
+      readAllEvents: async () => (seen.push("read"), []),
+    },
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const hookArgs = [];
+  const ok = mk({
+    deps: mkDeps(),
+    afterSpecsPull: async (a) => {
+      hookArgs.push(a);
+      seen.push("hook");
+    },
+  });
+  await ok.c.runOnce("specs");
+  assert.deepEqual(seen, ["lock-in", "sync-start", "sync-end", "hook", "lock-out", "read"]);
+  assert.deepEqual(
+    hookArgs.map(({ pullMs, lockStartedAt, ...a }) => a),
+    [{ specsDir: "/specs", pullOk: true, pullError: null, pullStage: null }],
+  );
+  assert.equal(typeof hookArgs[0].pullMs, "number");
+  assert.equal(typeof hookArgs[0].lockStartedAt, "number");
+
+  seen.length = 0;
+  const bad = mk({
+    deps: mkDeps(),
+    afterSpecsPull: async () => {
+      throw new Error("boom");
+    },
+  });
+  await bad.c.runOnce("specs");
+  assert.equal(bad.c.sources.specs.ok, true, bad.c.sources.specs.error);
+  assert.deepEqual(
+    seen.filter((x) => x.startsWith("lock")),
+    ["lock-in", "lock-out"],
+  );
+
+  seen.length = 0;
+  let cloudCalls = 0;
+  const cloud = mk({
+    cloud: true,
+    deps: { ...mkDeps(), cloudSyncSpecs: async () => ({ ok: true }) },
+    afterSpecsPull: async () => void cloudCalls++,
+  });
+  await cloud.c.runOnce("specs");
+  assert.equal(cloudCalls, 0);
+});
+
+test("specs: a failed pull is passed to the hook (pullOk false + reason); a busy lock calls onSpecsBusy and skips the hook", async () => {
+  const mkStore = (over) => ({
+    tryWithSpecsLock: async (fn) => ({ ran: true, value: await fn() }),
+    ensureClone: async () => {},
+    syncSpecs: async () => ({ ok: true }),
+    readAllEvents: async () => [],
+    ...over,
+  });
+  const base = (store) => ({
+    store,
+    config: { specsRemote: () => "remote" },
+    loadConfig: (d) => ({ dir: d }),
+  });
+  const args = [];
+  const failing = mk({
+    deps: base(mkStore({ syncSpecs: async () => ({ ok: false, error: "network down" }) })),
+    afterSpecsPull: async (a) => void args.push(a),
+  });
+  await failing.c.runOnce("specs");
+  assert.deepEqual(
+    args.map(({ pullMs, lockStartedAt, ...a }) => a),
+    [{ specsDir: "/specs", pullOk: false, pullError: "network down", pullStage: "pull" }],
+  );
+
+  const pushFail = mk({
+    deps: base(
+      mkStore({
+        syncSpecs: async () => ({ ok: false, pulled: true, pushed: false, error: "rejected" }),
+      }),
+    ),
+    afterSpecsPull: async (a) => void args.push(a),
+  });
+  args.length = 0;
+  await pushFail.c.runOnce("specs");
+  assert.equal(args[0].pullStage, "push");
+
+  let hookCalls = 0;
+  let busy = 0;
+  const locked = mk({
+    deps: base(mkStore({ tryWithSpecsLock: async () => ({ ran: false }) })),
+    afterSpecsPull: async () => void hookCalls++,
+    onSpecsBusy: () => void busy++,
+  });
+  await locked.c.runOnce("specs");
+  assert.equal(hookCalls, 0);
+  assert.equal(busy, 1);
 });
 
 test("start/stop: timers run each source once immediately and stop cleanly", async () => {
@@ -842,7 +1003,7 @@ test("Railway documents are read-only: queries only, runtime guard refuses mutat
 test("cloud collector: cloud intervals, fetch every run, specs by fetch+reset, never push/commit/rebase", async () => {
   assert.deepEqual(CLOUD_INTERVALS, {
     github: 120,
-    specs: 120,
+    specs: 30,
     branches: 300,
     bugs: 300,
     areas: 600,
@@ -924,7 +1085,10 @@ const EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 test("A2 GraphQL: asks for PR bodies and check contexts (CheckRun + StatusContext) for open PRs and master", () => {
   assert.match(COL.GRAPHQL_QUERY, /body/);
   assert.match(COL.GRAPHQL_QUERY, /contexts\(first: 50\)/);
-  assert.match(COL.GRAPHQL_QUERY, /\.\.\. on CheckRun \{ name conclusion status \}/);
+  assert.match(
+    COL.GRAPHQL_QUERY,
+    /\.\.\. on CheckRun \{ name conclusion status startedAt completedAt checkSuite \{ createdAt updatedAt \} \}/,
+  );
   assert.match(COL.GRAPHQL_QUERY, /\.\.\. on StatusContext \{ context state \}/);
   // master and the open PRs both carry contexts
   assert.equal((COL.GRAPHQL_QUERY.match(/contexts\(first: 50\)/g) ?? []).length, 2);
@@ -1322,8 +1486,8 @@ test("A2 parseIncidents: title from '# ', Status word (default open), derived IN
       ["INC-1015a", "open", "2026-10-15"],
       ["INC-1015b", "closed", "2026-10-15"],
       ["INC-1015c", "mitigated", "2026-10-15"],
-      ["INC-1016a", "open", "2026-10-16"], // no Status line: open
-      ["INC-1017a", "open", "2026-10-17"], // "suspected" is not a known word: open
+      ["INC-1016a", "unknown", "2026-10-16"], // no Status line: unknown (never silently open)
+      ["INC-1017a", "suspected", "2026-10-17"], // suspected / unverified keep their word
     ],
   );
   assert.equal(inc[0].title, "Acme catch-up billing stuck, awaiting the in-app Pay (2026-10-15)");
@@ -1370,19 +1534,25 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
     const calls = [];
     const exec = async (cmd, args, opts) => {
       calls.push({ line: `${cmd} ${args.join(" ")}`, cwd: opts?.cwd });
+      if (args.includes("register/WORK-REGISTER.md"))
+        return { code: 0, stdout: "2026-10-22T10:27:28-05:00\n", stderr: "" };
       return { code: 0, stdout: read("a2-gitlog-handoff.txt"), stderr: "" };
     };
     const x = await COL.readSpecsExtras({ dir, exec });
     assert.equal(x.incidents.length, 5);
     assert.equal(x.ownerQueueRows.length, 11);
     assert.equal(x.laneHandoffs.length, 4);
+    assert.equal(x.registerChangedAt, Date.parse("2026-10-22T15:27:28Z"));
     assert.deepEqual(x.errors, []);
-    assert.equal(calls.length, 1);
-    assert.equal(
-      calls[0].line,
-      "git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes",
+    // ONE git log each: the handoff times, the incident files' last commit times, the register's
+    assert.equal(calls.length, 3);
+    const lines = calls.map((c) => c.line);
+    assert.ok(lines.includes("git log -1 --format=%cI -- register/WORK-REGISTER.md"));
+    assert.ok(
+      lines.includes("git log --since=7.days --format=%x00%cI --name-only -- handoff/lanes"),
     );
-    assert.equal(calls[0].cwd, dir);
+    assert.ok(lines.includes("git log --format=%x00%cI --name-only -- incidents"));
+    assert.ok(calls.every((c) => c.cwd === dir));
     // missing files are reported, never thrown
     const empty = mkdtempSync(join(tmpdir(), "a2-specs-empty-"));
     try {
@@ -1393,6 +1563,7 @@ test("A2 readSpecsExtras: reads incidents/ and priorities/OWNER-QUEUE.md, ONE gi
       assert.deepEqual(y.incidents, []);
       assert.equal(y.ownerQueueRows, null);
       assert.deepEqual(y.laneHandoffs, []);
+      assert.equal(y.registerChangedAt, null);
       assert.ok(y.errors.length >= 2);
     } finally {
       rmSync(empty, { recursive: true, force: true });
@@ -1489,4 +1660,355 @@ test("specs source carries the register duplicate ids and row ids from the extra
   await c.runOnce("specs");
   assert.deepEqual(c.sources.specs.data.registerDuplicateIds, ["500"]);
   assert.deepEqual(c.sources.specs.data.registerRowIds, ["500", "500"]);
+});
+
+// ---------- X1: incident status words and freshness ----------
+
+test("X1 parseIncidents: first Status word open|mitigated|closed|resolved|suspected|unverified, else unknown", () => {
+  const f = (text) => COL.parseIncidents([{ file: "2026-10-15-acme-x.md", text }])[0].status;
+  assert.equal(f("# T\n\n**Status:** open. x"), "open");
+  assert.equal(f("# T\n\n**Status:** Mitigated. x"), "mitigated");
+  assert.equal(f("# T\n\n**Status:** closed (10-16)."), "closed");
+  assert.equal(f("# T\n\n**Status:** resolved."), "resolved");
+  assert.equal(f("# T\n\n**Status:** suspected, unverified."), "suspected");
+  assert.equal(f("# T\n\n**Status:** unverified."), "unverified");
+  assert.equal(f("# T\n\n**Symptom.** nothing here"), "unknown");
+  assert.equal(f("# T\n\n**Status:** wibble"), "unknown");
+});
+
+test("X1 parseIncidents: changedAt comes from the file's newest commit (basename map)", () => {
+  const inc = COL.parseIncidents(
+    [{ file: "2026-10-15-acme-billing-stuck.md", text: "# T\n\n**Status:** open." }],
+    { "2026-10-15-acme-billing-stuck.md": "2026-10-19T14:30:00.000Z" },
+  );
+  assert.equal(inc[0].changedAt, "2026-10-19T14:30:00.000Z");
+  assert.equal(
+    COL.parseIncidents([{ file: "2026-10-15-acme-z.md", text: "# T" }])[0].changedAt,
+    null,
+  );
+});
+
+test("X1 parseIncidentLog: newest commit time per incidents/ file", () => {
+  assert.deepEqual(COL.parseIncidentLog(read("a2-gitlog-incidents.txt")), {
+    "2026-10-15-acme-billing-stuck.md": "2026-10-19T14:30:00.000Z",
+    "2026-10-17-acme-suspected.md": "2026-10-19T14:30:00.000Z",
+    "2026-10-15-acme-tier-bug.md": "2026-10-18T15:00:00.000Z",
+    "README.md": "2026-10-15T13:00:00.000Z",
+  });
+});
+
+test("X1 readSpecsExtras: incidents carry changedAt from the incidents git log", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "x1-specs-"));
+  try {
+    cpSync(join(FIX, "a2-incidents"), join(dir, "incidents"), { recursive: true });
+    mkdirSync(join(dir, "priorities"));
+    cpSync(join(FIX, "a2-owner-queue.md"), join(dir, "priorities", "OWNER-QUEUE.md"));
+    const exec = async (cmd, args) => ({
+      code: 0,
+      stdout: args.includes("incidents") ? read("a2-gitlog-incidents.txt") : "",
+      stderr: "",
+    });
+    const x = await COL.readSpecsExtras({ dir, exec });
+    const by = Object.fromEntries(x.incidents.map((i) => [i.id, i.changedAt]));
+    assert.equal(by["INC-1015a"], "2026-10-19T14:30:00.000Z");
+    assert.equal(by["INC-1015c"], "2026-10-18T15:00:00.000Z");
+    assert.equal(by["INC-1016a"], null);
+    assert.deepEqual(x.errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseIncidents: ids are date + index only (no file-name slug, dated or not); the title is masked before its 300 cut", () => {
+  const name = "acme-foods-distribution";
+  const files = [
+    {
+      file: `2026-10-15-${name}-outage.md`,
+      text: `# ${"t".repeat(290)} ${name} down\n\n**Status:** open\n`,
+    },
+    { file: `${name}-undated-note.md`, text: `# Note\n\n**Status:** open\n` },
+    { file: `${name}-second-undated.md`, text: `# Second\n\n**Status:** closed\n` },
+  ];
+  const mask = (t) => t.replace(new RegExp(name, "gi"), "a live business");
+  const out = COL.parseIncidents(files, {}, mask);
+  // file order: the dated file, then the two undated ones (second-undated sorts before undated-note)
+  assert.deepEqual(
+    out.map((i) => i.id),
+    ["INC-1015a", "INC-0000a", "INC-0000b"],
+  );
+  for (const i of out) assert.match(i.id, /^INC-\d{4}[a-z]$/, `no slug in ${i.id}`);
+  assert.doesNotMatch(JSON.stringify(out.map((i) => i.id)), /acme|outage|note/i);
+  const dated = out.find((i) => i.date === "2026-10-15");
+  assert.equal(dated.id, "INC-1015a");
+  assert.doesNotMatch(dated.title, /acme/i, "no fragment of the name survives the cut");
+  assert.match(dated.title, /a live/);
+});
+
+// ---------- cloud: bounded git forks, honest spawn errors ----------
+
+test("cloud bugs: ONE prefetch fetch + ONE cat-file for N files; no per-blob fan-out", async () => {
+  const byBlob = Object.fromEntries(
+    BUG_FILES.map((f, i) => [String(i + 1).repeat(40), bugText(f)]),
+  );
+  void byBlob;
+  const { c, calls } = mk(
+    { cloud: true },
+    { "git cat-file --batch": () => ({ code: 0, stdout: "", stderr: "" }) },
+  );
+  await c.runOnce("bugs");
+  const gits = calls.filter((x) => x.cmd === "git");
+  assert.equal(gits.filter((x) => x.line.startsWith("git fetch")).length, 1);
+  assert.equal(gits.filter((x) => x.line.startsWith("git cat-file")).length, 1);
+  assert.equal(gits.filter((x) => x.line.startsWith("git cat-file blob")).length, 0);
+  assert.ok(gits.length <= 7, "bounded git spawns: " + gits.length);
+  const fetch = gits.find((x) => x.line.startsWith("git fetch"));
+  assert.equal(fetch.opts.env.GIT_CONFIG_VALUE_0, "noop");
+  for (let i = 1; i <= BUG_FILES.length; i++) assert.ok(fetch.args.includes(String(i).repeat(40)));
+});
+
+test("bugs: a git spawn failure surfaces as such, never as 'registry not found'", async () => {
+  for (const msg of ["git spawn failed: EAGAIN", "git timed out after 120000ms"]) {
+    const { c } = mk(
+      {},
+      {
+        "git rev-parse origin/master:.claude/campaign/bugs": () => ({
+          code: 1,
+          stdout: "",
+          stderr: msg,
+        }),
+      },
+    );
+    await c.runOnce("bugs");
+    assert.equal(c.sources.bugs.ok, false);
+    assert.ok(c.sources.bugs.error.includes(msg), c.sources.bugs.error);
+    assert.ok(!/not found/.test(c.sources.bugs.error), c.sources.bugs.error);
+  }
+});
+
+test("D6 a queued check is pending, never not-run and never success", () => {
+  const n = COL.normalizeContext;
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", startedAt: null, ...over });
+  for (const status of ["QUEUED", "WAITING", "REQUESTED", "PENDING"])
+    assert.equal(n(cr({ status, conclusion: null })).state, "pending");
+  const g = (runs) => COL.summarizeChecks(runs, {}).gate;
+  assert.equal(g([{ name: "verify", state: "pending" }]), "pending");
+  assert.equal(
+    g([
+      { name: "verify", state: "pending" },
+      { name: "e2e", state: "success" },
+    ]),
+    "pending",
+  );
+  assert.equal(
+    g([
+      { name: "verify", state: "notrun" },
+      { name: "e2e", state: "success" },
+    ]),
+    "not-run",
+  );
+});
+
+test("D6 a check queued for longer than QUEUED_STALE_MS is not-run (stale), a fresh one stays pending", () => {
+  const n = COL.normalizeContext;
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const cr = (createdAt, over = {}) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt },
+    ...over,
+  });
+  assert.equal(COL.QUEUED_STALE_MS, 6 * 3600_000);
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  assert.equal(n(cr(at(COL.QUEUED_STALE_MS - 60_000)), now).state, "pending");
+  assert.equal(n(cr(at(COL.QUEUED_STALE_MS + 60_000)), now).state, "notrun");
+  // no suite time known: keeps the old reading
+  assert.equal(n(cr(undefined, { checkSuite: null }), now).state, "pending");
+  // a run that is genuinely in progress is never aged out
+  assert.equal(
+    n(cr(at(COL.QUEUED_STALE_MS * 2), { status: "IN_PROGRESS", startedAt: at(60_000) }), now).state,
+    "pending",
+  );
+});
+
+test("D6 stale-queued times from the suite's last update: a re-run reuses an old suite", () => {
+  const n = COL.normalizeContext;
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const q = (suite) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: suite,
+  });
+  // (1) created 8 h ago, updated 1 min ago (a re-run): still pending
+  const rerun = q({ createdAt: at(8 * H), updatedAt: at(60_000) });
+  assert.equal(n(rerun, now).state, "pending");
+  // (2) the old success beside that re-run collapses to pending, never success
+  const done = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    startedAt: at(8 * H),
+  };
+  assert.deepEqual(COL.collapseRuns([done, rerun], now), [{ name: "verify", state: "pending" }]);
+  // (3) created AND updated both older than the cut-off: not-run
+  assert.equal(n(q({ createdAt: at(9 * H), updatedAt: at(7 * H) }), now).state, "notrun");
+  assert.match(COL.GRAPHQL_QUERY, /checkSuite \{ createdAt updatedAt \}/);
+});
+
+test("collapseRuns: a stale attempt only outranks a success that is OLDER than it (by time)", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const stuck = (over = {}) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt: at(20 * H), updatedAt: at(10 * H) },
+    ...over,
+  });
+  const ok = (over) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    ...over,
+  });
+  const state = (nodes) => COL.collapseRuns(nodes, now)[0].state;
+  // (a) the stale attempt is older than a newer success: green stays green, either node order
+  const newer = ok({ startedAt: at(2 * H), completedAt: at(H) });
+  assert.equal(state([stuck(), newer]), "success");
+  assert.equal(state([newer, stuck()]), "success");
+  // (b) the success is older than the stale attempt: not-run
+  const older = ok({ startedAt: at(30 * H), completedAt: at(29 * H) });
+  assert.equal(state([older, stuck()]), "notrun");
+  assert.equal(state([stuck(), older]), "notrun");
+  // (c) a success with no times: conservative, not-run
+  assert.equal(state([ok({}), stuck()]), "notrun");
+});
+
+test("collapseRuns: the tie and the success timestamp choice (completedAt first, startedAt fallback)", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const stuck = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt: at(20 * H), updatedAt: at(10 * H) },
+  };
+  const ok = (over) => ({
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    ...over,
+  });
+  const state = (n) => COL.collapseRuns([n, stuck], now)[0].state;
+  // N1: a success completed at exactly the stuck suite time is not older than it: stays success
+  assert.equal(state(ok({ completedAt: at(10 * H) })), "success");
+  // N2(i): completedAt (newer than the stuck time) wins over an older startedAt
+  assert.equal(state(ok({ startedAt: at(12 * H), completedAt: at(9 * H) })), "success");
+  // N2(ii): only startedAt present, newer than the stuck time
+  assert.equal(state(ok({ startedAt: at(9 * H) })), "success");
+  // and one tick older than the stuck time is still not-run
+  assert.equal(state(ok({ completedAt: at(10 * H + 1000) })), "notrun");
+});
+
+test("collapseRuns: an old success beside a STALE queued re-run is never success (reads notrun)", () => {
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs) => new Date(now - ageMs).toISOString();
+  const H = 3600_000;
+  const done = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    startedAt: at(10 * H),
+  };
+  const stuck = {
+    __typename: "CheckRun",
+    name: "verify",
+    status: "QUEUED",
+    conclusion: null,
+    startedAt: null,
+    checkSuite: { createdAt: at(10 * H), updatedAt: at(7 * H) },
+  };
+  for (const nodes of [
+    [done, stuck],
+    [stuck, done],
+  ]) {
+    const runs = COL.collapseRuns(nodes, now);
+    assert.deepEqual(runs, [{ name: "verify", state: "notrun" }]);
+    assert.equal(COL.summarizeChecks(runs, {}).gate, "not-run");
+  }
+});
+
+test("collapseRuns: an old success and a newer queued re-run of the same check read pending (pending outranks success)", () => {
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", ...over });
+  const runs = COL.collapseRuns([
+    cr({ status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-10-23T08:00:00Z" }),
+    cr({ status: "QUEUED", conclusion: null, startedAt: null }),
+  ]);
+  assert.deepEqual(runs, [{ name: "verify", state: "pending" }]);
+});
+
+test("D6 normalizeContext/summarizeChecks: never-started checks are not-run, never failure", () => {
+  const n = COL.normalizeContext;
+  const cr = (over) => ({ __typename: "CheckRun", name: "verify", startedAt: null, ...over });
+  assert.equal(n(cr({ status: "COMPLETED", conclusion: "CANCELLED" })).state, "notrun");
+  assert.equal(n(cr({ status: "COMPLETED", conclusion: "SKIPPED" })).state, "notrun");
+  // a started run keeps its normal reading; a missing startedAt key keeps the old one
+  const t = "2026-10-19T00:00:00Z";
+  assert.equal(
+    n(cr({ status: "COMPLETED", conclusion: "CANCELLED", startedAt: t })).state,
+    "cancelled",
+  );
+  assert.equal(n(cr({ status: "IN_PROGRESS", startedAt: t })).state, "pending");
+  assert.equal(n({ name: "verify", status: "COMPLETED", conclusion: "FAILURE" }).state, "failure");
+  assert.equal(
+    n(cr({ status: "COMPLETED", conclusion: "FAILURE", startedAt: t })).state,
+    "failure",
+  );
+  // a not-run duplicate never hides a real result
+  const runs = COL.collapseRuns([
+    cr({ status: "COMPLETED", conclusion: "CANCELLED" }),
+    cr({ status: "COMPLETED", conclusion: "SUCCESS", startedAt: t }),
+  ]);
+  assert.deepEqual(runs, [{ name: "verify", state: "success" }]);
+  assert.equal(COL.summarizeChecks([{ name: "verify", state: "notrun" }], {}).gate, "not-run");
+  assert.equal(
+    COL.summarizeChecks(
+      [
+        { name: "verify", state: "notrun" },
+        { name: "e2e", state: "success" },
+      ],
+      {},
+    ).gate,
+    "not-run",
+  );
+  assert.equal(
+    COL.summarizeChecks(
+      [
+        { name: "verify", state: "notrun" },
+        { name: "e2e", state: "failure" },
+      ],
+      {},
+    ).gate,
+    "failure",
+  );
+  const probe = COL.summarizeChecks([{ name: "lint", state: "notrun" }], {});
+  assert.equal(probe.gate, "none");
+  assert.deepEqual(probe.probesFailing, []);
 });

@@ -143,13 +143,16 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
             }),
           ),
           inTenant(tenantId, () =>
-            service.create({
-              name: `Flavor ${round}`,
-              variantName: `Flavor ${round}`,
-              parentProductId: family.id,
-              unit: "case",
-              pricePerUnit: "10.00",
-            } as any),
+            service.create(
+              {
+                name: `Flavor ${round}`,
+                variantName: `Flavor ${round}`,
+                parentProductId: family.id,
+                unit: "case",
+                pricePerUnit: "10.00",
+              } as any,
+              { reparentVia: "editor" },
+            ),
           ),
         ]);
         // The create may lose to a stale-dto 409 only if the edit changed a column the dto names;
@@ -197,7 +200,9 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
       },
     });
     await inTenant(tenantA, () =>
-      service.update(family.id, { priceTier3: "7.25" } as any, { packPrecondition: "internal" }),
+      service.update(family.id, { priceTier3: "7.25" } as any, {
+        packPrecondition: "internal",
+      }),
     );
     const after = await prisma.product.findUniqueOrThrow({ where: { id: foreign.id } });
     expect(after.pricePerUnit.toString()).toBe("3");

@@ -180,7 +180,10 @@ describeDb("Order totals honour tax exemption on every writer — real Postgres"
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(true) } },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();

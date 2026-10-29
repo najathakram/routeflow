@@ -95,13 +95,16 @@ describe("CustomersService", () => {
   let catalog: { getPublishedVersion: jest.Mock };
   let authority: { can: jest.Mock };
   let configGet: jest.Mock;
-  let ledger: { reverseInvoiceEntries: jest.Mock };
+  let ledger: { reverseInvoiceEntries: jest.Mock; settleRegulatedLedger: jest.Mock };
   let email: { send: jest.Mock };
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    ledger = { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) };
+    ledger = {
+      reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+    };
     // Defaults to "no key configured" so geocoding is a no-op (returns null without
     // calling fetch) for every pre-existing test — narrow it per-test to exercise
     // the geocode-on-create paths below.
@@ -1191,8 +1194,8 @@ describe("CustomersService", () => {
 
   // ─── mergeCustomers: regulated authorization re-pointing ────────────────────
   describe("mergeCustomers (regulated authorizations)", () => {
-    const PRIMARY = { id: "cust-primary", userId: "user-p" };
-    const SECONDARY = { id: "cust-secondary", userId: "user-s" };
+    const PRIMARY = { id: "cust-primary", userId: "user-p", tenantId: "test-tenant" };
+    const SECONDARY = { id: "cust-secondary", userId: "user-s", tenantId: "test-tenant" };
 
     const setup = (primaryAuths: any[], secondaryAuths: any[]) => {
       prisma.customer.findUnique.mockImplementation(({ where }: any) =>
@@ -2639,8 +2642,8 @@ describe("CustomersService", () => {
   describe("mergeCustomers — re-pointing + FK-violation guard (F02b R4 / B101)", () => {
     const PRIMARY_ID = "cust-primary-b101";
     const SECONDARY_ID = "cust-secondary-b101";
-    const PRIMARY = { id: PRIMARY_ID, userId: "user-p-b101" };
-    const SECONDARY = { id: SECONDARY_ID, userId: "user-s-b101" };
+    const PRIMARY = { id: PRIMARY_ID, userId: "user-p-b101", tenantId: "test-tenant" };
+    const SECONDARY = { id: SECONDARY_ID, userId: "user-s-b101", tenantId: "test-tenant" };
 
     // The same shape Prisma.PrismaClientKnownRequestError carries for a foreign-key
     // RESTRICT violation (code P2003; meta.field_name names the failing constraint) —

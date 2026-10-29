@@ -179,6 +179,7 @@ describe("K10d: V17 Escape closes what you opened and focus returns", () => {
   it("remove panel: opens under its row, Escape closes it and focuses that row's Remove button", async () => {
     const user = userEvent.setup();
     render();
+    await user.click(screen.getByTestId(T.btnEdit));
     await user.click(removeOpener());
     expect(screen.getByTestId("units-v2-remove-panel")).toBeInTheDocument();
     await user.keyboard("{Escape}");
@@ -207,12 +208,25 @@ describe("K10d: V17 Escape closes what you opened and focus returns", () => {
     expect(screen.getByTestId(T.editbar)).toBeInTheDocument();
   });
 
-  it("Remove has one confirm per row and none for the Case or Piece rows", () => {
+  it("Remove has one confirm per row and none for the Case or Piece rows", async () => {
     render();
+    await userEvent.setup().click(screen.getByTestId(T.btnEdit));
     expect(screen.getAllByTestId("units-v2-rm-u-box").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("units-v2-rm-case")).toBeNull();
     expect(screen.queryByTestId("units-v2-rm-piece")).toBeNull();
     expect(screen.queryByTestId("units-v2-rm-base")).toBeNull();
+  });
+});
+
+describe("K12 P03: Remove leaves the read-only grid", () => {
+  it("view mode has no Remove button or Unit actions column; edit mode has it and it opens", async () => {
+    const user = userEvent.setup();
+    render();
+    expect(screen.queryByRole("button", { name: /^Remove/ })).toBeNull();
+    expect(screen.queryByText("Unit actions")).toBeNull();
+    await user.click(screen.getByTestId(T.btnEdit));
+    await user.click(removeOpener());
+    expect(screen.getByTestId("units-v2-remove-panel")).toBeInTheDocument();
   });
 });
 
@@ -300,8 +314,9 @@ describe("K10d: the add-unit pointer", () => {
 });
 
 describe("K10d fold: the row header stays clean", () => {
-  it("each unit's row-header name is just the unit label, and Remove sits in its own cell", () => {
+  it("each unit's row-header name is just the unit label, and Remove sits in its own cell", async () => {
     render();
+    await userEvent.setup().click(screen.getByTestId(T.btnEdit));
     // K11-10: the barcode is now the unit cell's second line, so the NAME is the cell's first text node.
     expect(screen.getAllByRole("rowheader").map((h) => h.firstChild?.textContent)).toEqual([
       "Case",
@@ -315,8 +330,9 @@ describe("K10d fold: the row header stays clean", () => {
     expect(rm.closest("tr")).toBe(screen.getByTestId(T.row("u-box")));
   });
 
-  it("the table row's and the phone card's confirm panels get different ids", () => {
+  it("the table row's and the phone card's confirm panels get different ids", async () => {
     render();
+    await userEvent.setup().click(screen.getByTestId(T.btnEdit));
     const controls = screen
       .getAllByTestId("units-v2-rm-u-box")
       .map((b) => b.getAttribute("aria-controls"));
@@ -337,7 +353,7 @@ describe("K10d fold: the row header stays clean", () => {
 });
 
 describe("K10d fold: one Remove per unit row", () => {
-  it("in v2 the unit row has K7's Remove and the old Units card has none for it", () => {
+  it("in v2 the unit row has K7's Remove and the old Units card has none for it", async () => {
     mockUnits = [
       {
         id: "u-box",
@@ -360,6 +376,7 @@ describe("K10d fold: one Remove per unit row", () => {
         </ToastProvider>
       </QueryClientProvider>,
     );
+    await userEvent.setup().click(screen.getByTestId(T.btnEdit));
     const gridRow = within(screen.getByTestId(T.row("u-box")));
     expect(gridRow.getAllByRole("button", { name: /^Remove/ })).toHaveLength(1);
     expect(screen.getByTestId("unit-row")).toBeInTheDocument();
@@ -390,6 +407,7 @@ describe("K10d fold: after a Remove, focus stays on the page", () => {
     (apiClient.delete as jest.Mock).mockResolvedValue({ data: {} });
     const user = userEvent.setup();
     render();
+    await user.click(screen.getByTestId(T.btnEdit));
     await user.click(removeOpener());
     await user.click(screen.getByTestId("units-v2-rm-confirm"));
     await waitFor(() => expect(screen.queryByTestId("units-v2-remove-panel")).toBeNull());

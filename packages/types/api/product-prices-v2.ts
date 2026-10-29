@@ -91,6 +91,12 @@ export interface SavePricesResponse {
   grid: ProductPriceGridDto;
   /** Undo only: the customer cells the request's `skip` list left as they are (they keep `current`). */
   skipped?: SkippedCustomerCell[];
+  /**
+   * SA-845: this was the same actor's identical write re-sent after its reply was lost (or a double click). Nothing was
+   * written again; `auditId`, `undo` and `skipped` are the original write's. An ordinary success for the client; for
+   * toast copy and telemetry only.
+   */
+  replayed?: true;
 }
 
 /** One customer cell an Undo was told to skip (SA-809 section 2). `seen` = the value the 409 preview showed. */

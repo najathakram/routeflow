@@ -146,7 +146,13 @@ describeDb(
           { provide: SystemConfigService, useValue: mockSystemConfig },
           {
             provide: RegulatedLedgerService,
-            useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+            useValue: {
+              writeSaleEntries: jest.fn(),
+              reverseInvoiceEntries: jest.fn(),
+              settleRegulatedLedger: jest
+                .fn()
+                .mockResolvedValue({ written: 0, amendedPeriod: null }),
+            },
           },
           {
             provide: AuthorizationGuardService,
@@ -541,7 +547,7 @@ describeDb(
           err: r.ok ? null : msg(r),
           blocked: r.notBlocked === undefined,
           emailsWhenPrecheckBlocked,
-          precheckRetries: retryWarns(warn, `invoice send pre-check id=${s.invoiceId}`),
+          precheckRetries: retryWarns(warn, `invoice send snapshot id=${s.invoiceId}`),
           status: inv.status,
           emailsSent: emails() - e0,
         }).toEqual({

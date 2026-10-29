@@ -200,6 +200,19 @@ export default defineConfig({
       },
     },
 
+    // ── Open orders card ────────────────────────────────────────────────────────
+    // "Open orders" on /products/[id], above Sales; every endpoint mocked, writes nothing,
+    // 390/768/1280 overflow + screenshots. Self-skips on web builds that predate the card.
+    {
+      name: "product-open-orders",
+      testMatch: /77-product-open-orders\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Counter "Today's sales" sheet (POS-7b-2) ───────────────────────────────
     // Mocked reads only (POS-7b-1 contract); 1440/768/390 + 80 mm print emulation.
     {
@@ -215,6 +228,16 @@ export default defineConfig({
     {
       name: "day-close-ux",
       testMatch: /74-day-close-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── R7b Batch 3: the counter return form + New Return by number (mocked reads) ──
+    {
+      name: "counter-return",
+      testMatch: /75-counter-return\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -558,6 +581,14 @@ export default defineConfig({
     {
       name: "invoice-edit-pending-mirror",
       testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Row 711: a boxed invoice line's Boxes / Pieces / Unit Price each hit-test to themselves (spec 78).
+    {
+      name: "invoice-edit-boxed-qty-hit",
+      testMatch: /78-invoice-edit-boxed-qty-hit\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -993,6 +1024,18 @@ export default defineConfig({
     {
       name: "date-input-grid-overflow",
       testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // Row 492: the invoice form's bottom action bar wraps at 1440/768/390 and never clips Save and Send.
+    // Read-only (nothing is saved or sent). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "invoice-action-bar",
+      testMatch: /77-invoice-action-bar\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

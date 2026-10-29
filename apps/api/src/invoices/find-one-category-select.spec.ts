@@ -23,7 +23,10 @@ describe("InvoicesService.findOne category select (row 398)", () => {
         getTenantId: () => null,
         forTenant: () => ({
           invoice: { findUnique },
-          auditLog: { groupBy: jest.fn().mockResolvedValue([]) },
+          auditLog: {
+            groupBy: jest.fn().mockResolvedValue([]),
+            findFirst: jest.fn().mockResolvedValue(null), // #2088: no tracked email
+          },
         }),
       },
       systemConfig: { get: jest.fn().mockResolvedValue(null) },

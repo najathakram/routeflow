@@ -94,6 +94,10 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // R5-5: refs resolve inside the tenant unless a test says otherwise.
+    prisma.supplier.findMany.mockImplementation(async (args: any) =>
+      (args?.where?.id?.in ?? []).map((id: string) => ({ id })),
+    );
     // B1236: bill lines are validated against the catalog; by default every named id resolves.
     prisma.product.findMany.mockImplementation(async (args: any) =>
       (args?.where?.id?.in ?? []).map((id: string) => ({ id })),

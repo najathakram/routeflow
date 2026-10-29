@@ -103,7 +103,7 @@ test.describe("Credit-note wallet UI: invoice number over UUID, no Issue afforda
     // "Credit Notes" (via setTitle), so an unscoped match resolves 2 elements
     // and violates strict mode — same trap as 15-stock-count-ui.spec.ts:150-152.
     await expect(
-      page.locator("#main-content").getByRole("heading", { name: "Credit Notes" }),
+      page.locator("#main-content").getByRole("heading", { name: "Credit notes" }),
     ).toBeVisible({
       timeout: 15_000,
     });

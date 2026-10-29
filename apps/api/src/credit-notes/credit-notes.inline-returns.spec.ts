@@ -20,6 +20,7 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
   let ledger: {
     reverseCreditNoteEntries: jest.Mock;
     unreverseCreditNoteEntries: jest.Mock;
+    settleRegulatedLedger: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -27,6 +28,7 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
     ledger = {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+      settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
     };
     const mod = await Test.createTestingModule({
       providers: [
@@ -312,9 +314,10 @@ describe("CreditNotesService — PR-1c (m-1 mintStandaloneInTx, §6.3 met exclus
           data: { status: "VOID" },
         }),
       );
-      expect(ledger.unreverseCreditNoteEntries).toHaveBeenCalledWith(
-        expect.objectContaining({ creditNoteId: "cn-1" }),
-      );
+      expect(ledger.settleRegulatedLedger).toHaveBeenCalledWith(expect.anything(), {
+        kind: "ADJUSTMENT_UNDONE",
+        creditNoteId: "cn-1",
+      });
       expect(result.restored).toBe(30);
     });
 

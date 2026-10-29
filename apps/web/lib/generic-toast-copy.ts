@@ -17,6 +17,7 @@ import {
 import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
 import { COUNTER_VOID_ERROR_COPY } from "./counter-void-copy";
+import { IMPORT_REFUSAL_COPY } from "./import-job-copy";
 import { COUNTER_SALE_DAY_CLOSED_COPY, DAY_CLOSED_FOR_PAYMENT_DATE_COPY } from "./day-closed-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { ORDER_OVERPAY_GENERIC_COPY } from "./order-overpay";
@@ -25,6 +26,7 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 import { sellerUnavailableCopy } from "./seller-unavailable";
 import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { RULE_ERROR_COPY } from "./restriction-rule-errors";
+import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -44,6 +46,14 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
+  // fixed sentences for a surface with no dialog, never the server's text.
+  [API_ERROR_CODES.RESTRICTION_WARNING]:
+    "Some items are restricted. Review them and add a reason to sell them anyway.",
+  [API_ERROR_CODES.RESTRICTION_OVERRIDE_REASON_INVALID]:
+    "Give a reason of 3 to 200 characters to sell a restricted item.",
+  // SA-823 (row 655): the product import refuses a whole file with a Family column (fixed copy, B980).
+  ...IMPORT_REFUSAL_COPY,
   // SA-804 (1): FIFO and LIFO costing are retired; the picker no longer offers them, so this is an old client or a direct API call.
   [API_ERROR_CODES.COSTING_METHOD_RETIRED]:
     "FIFO and LIFO costing are retired. Pick average cost, standard cost or last cost.",
@@ -228,6 +238,9 @@ const CODE_COPY: Record<string, string> = {
   // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
   [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
     "The amount changed. We've refreshed it, please check and try again.",
+  // SA-832 / 453: a subscribe / checkout on a workspace a payment may not reinstate. Fixed sentence, no cause named.
+  [API_ERROR_CODES.TENANT_ADMIN_LOCKED]:
+    "This workspace is locked and can't take a payment right now. Please contact support.",
   [API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]:
     "We couldn't confirm your open invoice just now. Please try again in a moment.",
   // B1102: a catalog add-on whose plan setting is invalid is refused instead of billed; fixed sentence, no ids.
@@ -430,6 +443,15 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
+  // Row 563: a backdated stock write into a filed period (tobacco report / regulated filing). Fixed copy, the period from
+  // the structured field (B986): what is wrong, and the next step.
+  if (code === API_ERROR_CODES.STOCK_DATE_IN_FILED_PERIOD) {
+    const period = typeof data.period === "string" && data.period ? data.period : "That period";
+    // W-755: WHAT is filed ("Tobacco" or the category name), when the api names it.
+    const what =
+      typeof data.filedFor === "string" && data.filedFor ? data.filedFor : "this product";
+    return `${period} is already filed for ${what}, so stock can't be dated on or before it. Choose a later date.`;
+  }
   if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
     return creditLimitSentence(data.limit, data.exposure);
   if (code === API_ERROR_CODES.ACTIVATION_PERIOD_ALREADY_ENDED) return activationEndedCopy(err);
@@ -447,6 +469,10 @@ export function codedToastCopy(err: unknown): string | null {
 }
 
 export function genericToastCopy(err: unknown, surfaceRefusal?: string): string {
+  // SA-824: a payment key conflict means the payment may already be recorded (never "nothing saved"); a
+  // resolved key was cancelled with nothing charged; a key in flight is retryable. Fixed copy, by code.
+  const recorded = paymentKeyRefusalCopy(err);
+  if (recorded) return recorded;
   const coded = codedToastCopy(err);
   if (coded) return coded;
   if (!err || typeof err !== "object") return GENERIC_COPY;

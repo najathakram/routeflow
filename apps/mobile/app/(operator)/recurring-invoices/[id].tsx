@@ -18,6 +18,7 @@ import {
 } from "../../../lib/recurring-invoices-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { useRestrictionWarningRetry } from "../../../lib/use-restriction-warning-retry";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
 function fmtCurrency(n: number | string | undefined): string {
@@ -33,6 +34,7 @@ export default function RecurringInvoiceDetailScreen() {
 
   const { data: template, isLoading, refetch } = useRecurringInvoice(id ?? "");
   const runMut = useRunRecurringInvoice();
+  const rw = useRestrictionWarningRetry(); // row 510 Q2: a manual run is judged for the clicker
   const pauseMut = useDeactivateRecurringInvoice();
   const activateMut = useActivateRecurringInvoice();
 
@@ -57,7 +59,7 @@ export default function RecurringInvoiceDetailScreen() {
 
   const handleRunNow = () => {
     if (!id) return;
-    runMut.mutate(id, {
+    runMut.mutate(rw.attach(id), {
       onSuccess: (inv) => {
         // The server claims the cycle atomically, so a losing racer (a second
         // tap, or the cron) gets an empty body back — never announce/navigate
@@ -71,7 +73,7 @@ export default function RecurringInvoiceDetailScreen() {
         // run returns the created INVOICE (keyed `id`), not the template.
         router.push(`/(operator)/invoices/${inv.id}`);
       },
-      onError: onErr,
+      onError: (e: any) => rw.handle(e, handleRunNow) || onErr(e),
     });
   };
 
@@ -206,6 +208,7 @@ export default function RecurringInvoiceDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+      {rw.modal}
     </SafeAreaView>
   );
 }

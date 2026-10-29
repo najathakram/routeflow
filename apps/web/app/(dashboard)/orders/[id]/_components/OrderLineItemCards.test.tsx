@@ -82,6 +82,36 @@ describe("a unit-aware line names its own unit (units_v1)", () => {
   });
 });
 
+describe("OrderLineItemCards — the unit price states its unit and the price each (B1261, 390)", () => {
+  it("a boxed line sold in pieces shows '/ box' and '$0.75 each' in the card", () => {
+    render(
+      <OrderLineItemCards
+        lineItems={[
+          line({ unitPrice: 18, unitsPerBox: 24, boxes: 0, pieces: 2, qty: 2, subtotal: 1.5 }),
+        ]}
+        orderStatus="CONFIRMED"
+        total={1.5}
+      />,
+    );
+    const note = screen.getByTestId("line-unit-price-unit");
+    expect(note).toHaveTextContent("/ box");
+    expect(note).toHaveTextContent("$0.75 each");
+  });
+
+  it("a boxed line sold in whole boxes has no price each", () => {
+    render(
+      <OrderLineItemCards
+        lineItems={[
+          line({ unitPrice: 18, unitsPerBox: 24, boxes: 2, pieces: 0, qty: 48, subtotal: 36 }),
+        ]}
+        orderStatus="CONFIRMED"
+        total={36}
+      />,
+    );
+    expect(screen.queryByText(/each/)).toBeNull();
+  });
+});
+
 describe("lineRowProps — order line → read-only row", () => {
   it("maps name, sku, money fields and the derived status", () => {
     const p = lineRowProps(line({ notes: "leave at dock" }), "CONFIRMED");
@@ -159,7 +189,7 @@ describe("OrderLineItemCards", () => {
       />,
     );
     expect(screen.getByTestId("order-lines-summary")).toHaveTextContent("1 item · $1,234.50");
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     // the footer repeats the amount on its own (the summary carries it inside one text node)
     expect(screen.getByText("$1,234.50")).toBeInTheDocument();
   });

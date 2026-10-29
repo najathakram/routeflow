@@ -25,6 +25,7 @@ import {
   assertTaxStateRecomputable,
   countOrderInvoices,
   orderSiblingCountOf,
+  tenantPreferredRate,
   type TaxStateVerdict,
 } from "./stored-tax-state";
 import { sumConfirmed, type ConfirmablePaymentRow } from "./payment-predicates";
@@ -293,6 +294,8 @@ export function priceAdjustmentTaxState(
     orderInvoiceCount?: unknown;
   },
   isTaxExempt: boolean,
+  /** The tenant's configured rate (`tenantPreferredRate`): wins the inference when it reproduces the stored tax. */
+  preferredRate?: number | null,
 ): TaxStateVerdict {
   return assertTaxStateRecomputable({
     invoice: inv,
@@ -301,6 +304,7 @@ export function priceAdjustmentTaxState(
     isTaxExempt,
     refuseExemptLevy: true,
     orderSiblingCount: orderSiblingCountOf(inv),
+    preferredRate,
   });
 }
 
@@ -504,6 +508,7 @@ export async function preflightBulkPriceAdjustment(
           orderInvoiceCount: inv.orderId ? orderInvoiceCounts?.get(inv.orderId) : undefined,
         },
         isTaxExempt,
+        await tenantPreferredRate(db),
       );
       const newTotal = projectedTotals(inv, updates, isTaxExempt, restampRate ?? undefined).total;
       projected.set(inv.id, newTotal);

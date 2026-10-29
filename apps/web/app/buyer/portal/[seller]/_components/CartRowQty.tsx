@@ -49,14 +49,14 @@ export function CartRowQty({
   };
 
   const btn =
-    "flex min-h-11 min-w-11 items-center justify-center text-buyer-600 transition-colors hover:bg-buyer-100";
+    "flex min-h-11 min-w-11 items-center justify-center text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy";
   return (
     <div
       className={`flex flex-col items-start gap-1.5 ${align === "center" ? "md:items-center" : ""}`}
     >
       <div
         data-testid="cart-row-stepper"
-        className="grid h-11 grid-cols-[44px_minmax(36px,64px)_44px] overflow-hidden rounded-lg border border-buyer-200 bg-buyer-50"
+        className="grid h-11 grid-cols-[44px_minmax(36px,64px)_44px] overflow-hidden rounded-lg border border-surface-border bg-white"
       >
         <button
           type="button"
@@ -77,7 +77,7 @@ export function CartRowQty({
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
           }}
-          className="h-11 w-full border-none bg-transparent p-0 text-center text-sm font-semibold tabular-nums text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          className="h-11 w-full border-none bg-transparent p-0 text-center text-sm font-semibold tabular-nums text-navy focus:outline-none focus:ring-1 focus:ring-navy/30 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
         <button
           type="button"

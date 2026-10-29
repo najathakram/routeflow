@@ -98,6 +98,12 @@ function errorMessage(err: unknown, fallback: string): string {
 
 export { errorMessage as platformPricingErrorMessage };
 
+/**
+ * SA-832b: the back-office checkout (POST /platform-admin/tenants/:id/billing/checkout) refused because the tenant is
+ * locked by an admin (the API's TENANT_ADMIN_LOCKED). ADMIN-facing wording - what to do - not the tenant's sentence.
+ */
+const TENANT_LOCKED_BY_ADMIN_COPY = "This tenant is locked by an admin; change its status first.";
+
 /** Fixed copy for an admin-created checkout refused in the window before the 1st (the API's CHECKOUT_ANCHOR_WINDOW). */
 const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
 
@@ -114,6 +120,7 @@ export function tenantCheckoutErrorMessage(err: unknown): string {
       ? CHECKOUT_REOPENS_SOON_COPY
       : `Checkout reopens at ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
+  if (body?.code === API_ERROR_CODES.TENANT_ADMIN_LOCKED) return TENANT_LOCKED_BY_ADMIN_COPY;
   return errorMessage(err, "Failed to create checkout session");
 }
 

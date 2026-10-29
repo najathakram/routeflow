@@ -73,7 +73,13 @@ describe("CustomersService.applyAdvancePaymentToInvoice — customer match (B808
         { provide: MeterService, useValue: { read: jest.fn() } },
         { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
         { provide: EntitlementAuthority, useValue: { can: jest.fn() } },
-        { provide: RegulatedLedgerService, useValue: { reverseInvoiceEntries: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
+        },
         { provide: EmailService, useValue: { send: jest.fn() } },
       ],
     }).compile();

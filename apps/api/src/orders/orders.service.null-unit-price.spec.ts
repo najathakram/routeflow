@@ -239,7 +239,10 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
         },
         {
           provide: RegulatedLedgerService,
-          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
         },
       ],
     }).compile();

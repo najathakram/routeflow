@@ -16,6 +16,7 @@ import { Transform, Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
+import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
 class UpdateOrderItemDto {
@@ -115,7 +116,7 @@ class UpdateOrderItemDto {
   overrideReason?: string;
 }
 
-export class UpdateOrderItemsDto {
+export class UpdateOrderItemsDto extends RestrictionAckDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => UpdateOrderItemDto)

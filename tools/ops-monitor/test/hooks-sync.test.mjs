@@ -183,6 +183,30 @@ test("brief hook: SessionStart prints the lane's brief and saves the seen marker
   }
 });
 
+test("brief hook: names in <opsHome>/client-names.json are masked in the SessionStart brief", () => {
+  const env = mkEnv();
+  try {
+    writeFileSync(join(env.home, "client-names.json"), JSON.stringify(["acme-foods"]));
+    writeEvents(env, [
+      item("700", {
+        type: "bug",
+        priority: "P0",
+        status: "building",
+        title: "x",
+        problem: "acme-foods is charged twice",
+        lane: "lead",
+      }),
+    ]);
+    const cwd = checkout(env, "lead");
+    const r = run(BRIEF, env, start("sess-mask", cwd));
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /acme-foods/i);
+    assert.match(r.stdout, /a live business is charged twice/);
+  } finally {
+    rmSync(env.root, { recursive: true, force: true });
+  }
+});
+
 test("brief hook: a session with no lane gets the short global part (<= 8 lines)", () => {
   const env = mkEnv();
   try {
@@ -810,6 +834,7 @@ test("settings.json: the old trackers are retired, the ops hooks are appended, t
   );
   assert.ok(start_.includes("node scripts/check-git-hooks.mjs --warn"), "git-hooks warning kept");
   assert.ok(start_.includes("node .claude/hooks/ops-brief.mjs"), "ops brief on SessionStart");
+  assert.ok(start_.includes("node .claude/hooks/ops-status.mjs"), "status file on SessionStart");
   assert.deepEqual(cmds("UserPromptSubmit"), [
     { matcher: null, command: "node .claude/hooks/ops-brief.mjs" },
   ]);
@@ -828,10 +853,37 @@ test("settings.json: the old trackers are retired, the ops hooks are appended, t
   );
   assert.deepEqual(
     cmds("Stop").map((c) => c.command),
-    ["node .claude/hooks/stop.mjs", "node .claude/hooks/ops-stop.mjs"],
+    [
+      "node .claude/hooks/stop.mjs",
+      "node .claude/hooks/ops-stop.mjs",
+      "node .claude/hooks/ops-status.mjs",
+    ],
   );
   assert.ok(
     Array.isArray(settings.permissions.allow) && settings.permissions.allow.includes("WebFetch"),
     "permissions untouched",
   );
+});
+
+test("brief hook: a client-names.json that does not parse prints one note and no item text (fail open, never unmasked)", () => {
+  const env = mkEnv();
+  try {
+    writeEvents(env, baseItems());
+    const cwd = checkout(env, "lead");
+    writeFileSync(join(env.home, "client-names.json"), '["acme-foods", oops');
+    const r = run(BRIEF, env, start("sess-broken", cwd));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), "ops brief disabled: client-names.json unreadable");
+    assert.doesNotMatch(r.stdout + r.stderr, /Boxed total|charged twice|acme/);
+    // prompts stay silent too
+    const p = run(BRIEF, env, prompt("sess-broken", cwd));
+    assert.equal(p.status, 0);
+    assert.equal(p.stdout, "");
+    // a good file brings the brief back
+    writeFileSync(join(env.home, "client-names.json"), '["acme-foods"]');
+    const ok = run(BRIEF, env, start("sess-broken-2", cwd));
+    assert.match(ok.stdout, /Ops monitor brief for lane lead/);
+  } finally {
+    rmSync(env.root, { recursive: true, force: true });
+  }
 });
