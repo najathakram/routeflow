@@ -27,6 +27,7 @@ import {
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOnTenantToday, useTenantToday } from "@/lib/tenant-timezone";
+import { useResetOnOpen } from "@/lib/use-reset-on-open";
 import {
   useRoutes,
   useRouteRuns,
@@ -124,22 +125,22 @@ function DispatchModal({
   const startTimeRef = React.useRef(startTime);
   startTimeRef.current = startTime;
 
-  // Reset form when modal opens
+  // Reset form when modal opens. Keyed on `open` alone: the tenant's day resolving on a cold load must not wipe what the
+  // operator typed since (it fills only an empty date, via useOnTenantToday above).
+  useResetOnOpen(open, today, (day) => {
+    setDate(day);
+    setDriverId("");
+    setStartTime("");
+    // Keep the ref in lockstep so the seed effect below (same commit,
+    // declared after this one) sees the cleared value immediately instead
+    // of the stale pre-open startTime the render captured it with.
+    startTimeRef.current = "";
+    setAcknowledged(false);
+    setLateStops([]);
+  });
   React.useEffect(() => {
-    if (open) {
-      setDate(today ?? "");
-      setDriverId("");
-      setStartTime("");
-      // Keep the ref in lockstep so the seed effect below (same commit,
-      // declared after this one) sees the cleared value immediately instead
-      // of the stale pre-open startTime the render captured it with.
-      startTimeRef.current = "";
-      setAcknowledged(false);
-      setLateStops([]);
-    } else {
-      setWindowCheck("idle");
-    }
-  }, [open, today]);
+    if (!open) setWindowCheck("idle");
+  }, [open]);
 
   // Seed the default departure time once route settings arrive — one shot per
   // open, and only into an empty field, so an emptied field stays empty

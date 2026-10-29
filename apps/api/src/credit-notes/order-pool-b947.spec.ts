@@ -54,8 +54,9 @@ function fakeDb(f: Fake) {
     },
     return: {
       findMany: jest.fn(async (args: any) =>
-        // SA-727: the external-refund read (refundMethod EXTERNAL_REFUND, no credit note) finds none in this fixture
-        args.where.refundMethod === "EXTERNAL_REFUND"
+        // SA-727: the external-refund read (refundMethod EXTERNAL_REFUND, no credit note) finds none in this fixture;
+        // SA-1053: nor does the read of refunds minted before the order was invoiced (`creditNoteId: { not: null }`)
+        args.where.refundMethod === "EXTERNAL_REFUND" || args.where.creditNoteId?.not === null
           ? []
           : (f.itemless ?? [])
               .filter((n) => args.where.creditNoteId.in.includes(n.id))
@@ -76,12 +77,12 @@ describe("B947 order pool", () => {
     });
     const pool = await loadOrderPool(db, "ord-1");
     expect(pool.invoiceCount).toBe(2);
-    expect(pooledRefundRefusal(pool, "pa", 1)).toMatchObject({
+    expect(pooledRefundRefusal(pool, { productId: "pa", orderItemId: null }, 1)).toMatchObject({
       remainingAmount: 0,
       remainingQty: 0,
     });
-    expect(pooledRefundRefusal(pool, "pb", 1)).toBeNull(); // another product is unaffected
-    expect(pooledRefundRefusal(pool, "pc", 1)).toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "pb", orderItemId: null }, 1)).toBeNull(); // another product is unaffected
+    expect(pooledRefundRefusal(pool, { productId: "pc", orderItemId: null }, 1)).toBeNull();
   });
 
   it("an itemless refund lump (on the LATEST invoice Y) of product A counts against A's line on X: a second refund and a CN item on A are refused", async () => {
@@ -90,7 +91,7 @@ describe("B947 order pool", () => {
       itemless: [{ id: "cn-lump", returnItems: [{ productId: "pa", qty: 1 }] }],
     });
     const pool = await loadOrderPool(db, "ord-1");
-    expect(pooledRefundRefusal(pool, "pa", 1)).not.toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "pa", orderItemId: null }, 1)).not.toBeNull();
     expect(pooledTakeRefusal(pool, "pa", { amount: 100 })).not.toBeNull();
     expect(pooledTakeRefusal(pool, "pb", { amount: 100 })).toBeNull(); // a different product on X stays unaffected
   });
@@ -99,8 +100,8 @@ describe("B947 order pool", () => {
     const XP = { id: "inv-x", items: [line("x-p", "pp", 60, 6)] };
     const YP = { id: "inv-y", items: [line("y-p", "pp", 40, 4)] };
     const clean = await loadOrderPool(fakeDb({ invoices: [XP, YP] }).db, "ord-1");
-    expect(pooledRefundRefusal(clean, "pp", 10)).toBeNull();
-    expect(pooledRefundRefusal(clean, "pp", 11)).toBeNull(); // a refund is capped at the billed qty (min(returned, billed))
+    expect(pooledRefundRefusal(clean, { productId: "pp", orderItemId: null }, 10)).toBeNull();
+    expect(pooledRefundRefusal(clean, { productId: "pp", orderItemId: null }, 11)).toBeNull(); // a refund is capped at the billed qty (min(returned, billed))
     const lumped = await loadOrderPool(
       fakeDb({
         invoices: [XP, YP],
@@ -108,8 +109,8 @@ describe("B947 order pool", () => {
       }).db,
       "ord-1",
     );
-    expect(pooledRefundRefusal(lumped, "pp", 4)).toBeNull();
-    expect(pooledRefundRefusal(lumped, "pp", 5)).not.toBeNull(); // counted once, not twice
+    expect(pooledRefundRefusal(lumped, { productId: "pp", orderItemId: null }, 4)).toBeNull();
+    expect(pooledRefundRefusal(lumped, { productId: "pp", orderItemId: null }, 5)).not.toBeNull(); // counted once, not twice
   });
 
   it("an inline return sourced to X's line pools with a refund of the same product on the order", async () => {
@@ -118,13 +119,13 @@ describe("B947 order pool", () => {
       inline: [{ sourceInvoiceItemId: "x-a", qty: 1, subtotal: 100 }],
     });
     const pool = await loadOrderPool(db, "ord-1");
-    expect(pooledRefundRefusal(pool, "pa", 1)).not.toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "pa", orderItemId: null }, 1)).not.toBeNull();
   });
 
   it("a manual itemless note (no Return) is never counted", async () => {
     const { db } = fakeDb({ invoices: [X, Y], itemless: [{ id: "cn-manual", returnItems: [] }] });
     const pool = await loadOrderPool(db, "ord-1");
-    expect(pooledRefundRefusal(pool, "pa", 1)).toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "pa", orderItemId: null }, 1)).toBeNull();
   });
 
   it("lockOrderPoolRows: Order, then EVERY creditable invoice id-sorted, FOR UPDATE, before any credit is read; none with one creditable invoice or no order", async () => {
