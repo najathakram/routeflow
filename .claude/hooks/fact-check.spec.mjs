@@ -117,7 +117,14 @@ const drive = (id, input = {}) => {
 
 {
   // A header stamp three hours ahead is a hit on the clock alone: no PR, sha or branch, so no gh or git network call.
-  const ahead = new Date(Date.now() + 3 * 3600_000).toISOString().slice(11, 16) + "Z";
+  // An HH:MMZ stamp is read as today (over 12 h ahead means yesterday), so "3 h ahead" must not cross UTC
+  // midnight: cap it before 23:58 and, in the day's last 4 minutes, wait for the new day first.
+  const untilMidnight = () => 86_400_000 - (Date.now() % 86_400_000);
+  if (untilMidnight() < 4 * 60_000) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, untilMidnight() + 1_000);
+  }
+  const offset = Math.min(3 * 3600_000, untilMidnight() - 2 * 60_000);
+  const ahead = new Date(Date.now() + offset).toISOString().slice(11, 16) + "Z";
   const logDir = mkdtempSync(path.join(os.tmpdir(), "fact-check-spec-"));
   const r = spawnSync(process.execPath, [path.join(HERE, "fact-check.mjs")], {
     input: JSON.stringify({
