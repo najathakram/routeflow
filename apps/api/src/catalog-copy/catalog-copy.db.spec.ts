@@ -384,9 +384,11 @@ describeDb("SA-1027 catalog copy - real Postgres", () => {
           order.push("copy");
           return [];
         }) as never);
-        const beforeWrite = jest.fn(async () => {
-          order.push("hook");
-        });
+        const beforeWrite = jest.fn(
+          async (_info: { targetTenantId: string; createCount: number }) => {
+            order.push("hook");
+          },
+        );
         await service.resumePhotos(manifestFor(t.id, "p"), args(t.slug, { apply: true }), {
           beforeWrite,
         });
