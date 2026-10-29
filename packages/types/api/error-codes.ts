@@ -806,6 +806,8 @@ export const API_ERROR_CODES = {
    * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
    */
   RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** W-863 (SA-945 MUST 6, G5): the return's credit actually issued in the sale's transaction is below what the credit gate netted (a concurrent return of the same sold line landed between the preview and the capture). 409; nothing is committed; carries `previewed` and `issued`. */
+  RETURN_CREDIT_CHANGED: "RETURN_CREDIT_CHANGED",
   /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
