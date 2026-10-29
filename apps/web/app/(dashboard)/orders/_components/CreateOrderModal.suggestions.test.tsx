@@ -228,6 +228,33 @@ describe("Usually buys chips", () => {
     fireEvent.click(chip());
     await waitFor(() => expect(screen.getAllByTitle("Remove")).toHaveLength(1));
   });
+
+  // apple-ux r5 N07: a chip looked identical after its product was on the order. It now shows an added state.
+  it("a chip shows an added state (aria-pressed + check) once its product is on the order, and only that chip", async () => {
+    await openWithCustomer();
+    const bar = screen.getByTestId("order-suggestions");
+    const cola = () => within(bar).getByRole("button", { name: /Sample Cola/ });
+    const chipsChip = () => within(bar).getByRole("button", { name: /Sample Chips/ });
+    expect(cola()).toHaveAttribute("aria-pressed", "false");
+    expect(cola().querySelector('[data-testid="chip-added-check"]')).toBeNull();
+    fireEvent.click(cola());
+    await waitFor(() => expect(cola()).toHaveAttribute("aria-pressed", "true"));
+    expect(cola().querySelector('[data-testid="chip-added-check"]')).not.toBeNull();
+    expect(cola().className).toContain("bg-brand-50");
+    // the other chip is untouched
+    expect(chipsChip()).toHaveAttribute("aria-pressed", "false");
+    expect(chipsChip().className).not.toContain("bg-brand-50");
+  });
+
+  it("the added state follows the order: removing the line clears it", async () => {
+    await openWithCustomer();
+    const bar = screen.getByTestId("order-suggestions");
+    const cola = () => within(bar).getByRole("button", { name: /Sample Cola/ });
+    fireEvent.click(cola());
+    await waitFor(() => expect(cola()).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(screen.getByTitle("Remove"));
+    await waitFor(() => expect(cola()).toHaveAttribute("aria-pressed", "false"));
+  });
 });
 
 describe("Order again", () => {

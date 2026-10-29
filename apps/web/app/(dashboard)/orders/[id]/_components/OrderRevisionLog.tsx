@@ -30,7 +30,7 @@ export function OrderRevisionLog({ revisions }: { revisions: OrderRevision[] }) 
         aria-expanded={open}
         aria-controls={open ? logId : undefined}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-navy/5 px-2 py-1 text-xs font-medium text-navy/80 hover:bg-navy/10 max-sm:min-h-11 max-sm:px-3"
+        className="inline-flex items-center gap-1 rounded-full border border-surface-border bg-navy/5 px-2 py-1 text-xs font-medium text-navy/80 hover:bg-navy/10 max-sm:order-5 max-sm:min-h-11 max-sm:px-3"
       >
         Edited {revisions.length}×
         <ChevronDown
@@ -42,7 +42,7 @@ export function OrderRevisionLog({ revisions }: { revisions: OrderRevision[] }) 
         <ol
           id={logId}
           data-testid="order-revision-log"
-          className="w-full basis-full space-y-1 rounded-lg border border-surface-border bg-white p-3 text-xs text-navy"
+          className="w-full basis-full space-y-1 max-sm:order-6 rounded-lg border border-surface-border bg-white p-3 text-xs text-navy"
         >
           {newestFirst.map((r) => (
             <li key={r.id} className="flex flex-wrap gap-x-2">
