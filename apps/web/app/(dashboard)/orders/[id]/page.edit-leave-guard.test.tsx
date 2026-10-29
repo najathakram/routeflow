@@ -98,6 +98,37 @@ describe("Edit Items leave guard (F24)", () => {
     );
   });
 
+  // r5 Q23: the page has no "← Orders" link of its own; the dashboard top bar's back arrow (layout.tsx Header, which
+  // calls router.back() = history.back()) is the one back control. This pins the guard on that remaining path, with
+  // a stand-in arrow that does exactly what the Header's does.
+  it("the top-bar Back arrow asks too while editing", async () => {
+    await openEdit();
+    render(
+      <button type="button" aria-label="Go back" onClick={() => window.history.back()}>
+        back
+      </button>,
+    );
+    fireEvent.change(qty(), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    const dialog = await screen.findByRole("dialog", { name: /discard your changes/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /keep editing/i }));
+    expect(qty()).toHaveValue(7); // still on the order, edits intact
+  });
+
+  it("the top-bar Back arrow asks nothing when nothing was changed", async () => {
+    await openEdit();
+    render(
+      <button type="button" aria-label="Go back" onClick={() => window.history.back()}>
+        back
+      </button>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByRole("dialog", { name: /discard your changes/i })).toBeNull();
+  });
+
   it("an untouched edit session asks nothing", async () => {
     await openEdit();
     pressBack();
@@ -113,14 +144,5 @@ describe("Edit Items leave guard (F24)", () => {
     const dirty = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(dirty);
     expect(dirty.defaultPrevented).toBe(true);
-  });
-
-  it("the Orders link asks too when edits are unsaved", async () => {
-    await openEdit();
-    fireEvent.change(qty(), { target: { value: "7" } });
-    fireEvent.click(screen.getByRole("link", { name: /^orders$/i }));
-    expect(
-      await screen.findByRole("dialog", { name: /discard your changes/i }),
-    ).toBeInTheDocument();
   });
 });

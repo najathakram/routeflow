@@ -61,6 +61,7 @@ function OrderLineUnitPickerInner({
   onChange,
   startOnDefaultUnit = false,
   disabled = false,
+  className,
 }: {
   line: OrderLineUnitPickerLine;
   /**
@@ -68,6 +69,8 @@ function OrderLineUnitPickerInner({
    * line, neither a pick nor the automatic default-unit / ladder-refresh changes, until they are (the tier would read as 1).
    */
   disabled?: boolean;
+  /** W-961: merged onto the select (the order-edit row raises it to a 44px tap target below lg). */
+  className?: string;
   /**
    * #2784: a NEW line (the picker tap / a scan) starts on the level flagged `isDefaultSelling`, else stays on the pack.
    * Applied once when the ladder first arrives, and never over a unit the line already holds or a price the operator typed.
@@ -193,6 +196,7 @@ function OrderLineUnitPickerInner({
       ariaLabel={`Sell ${line.productName} by`}
       value={unitPickerValueOf(line)}
       disabled={disabled}
+      className={className}
       onChange={(label) => {
         if (disabled) return;
         // "" = back to the pack, which must work even when the ladder is gone (no options to look in):

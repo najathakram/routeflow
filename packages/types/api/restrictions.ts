@@ -116,7 +116,7 @@ export interface RestrictionWarningRule {
   id: string;
   states: string[];
   legal: boolean;
-  /** Fixed server copy ("This product is banned in CA by law."); display only, never hashed. */
+  /** Fixed server copy ("Restricted in CA: State ban."); display only, never hashed. */
   reasonText: string;
 }
 

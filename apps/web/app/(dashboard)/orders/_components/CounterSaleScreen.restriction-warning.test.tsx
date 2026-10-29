@@ -81,7 +81,7 @@ const warning409 = {
               id: "r1",
               states: ["CA"],
               legal: true,
-              reasonText: "This product is banned in CA by law.",
+              reasonText: "Restricted in CA: State ban.",
             },
           ],
         },
@@ -118,7 +118,7 @@ describe("CounterSaleScreen: row 510 restriction warning", () => {
     renderTill(<CounterSaleScreen />);
     await ringCola();
     fireEvent.click(complete());
-    expect(await screen.findByText("This product is banned in CA by law.")).toBeInTheDocument();
+    expect(await screen.findByText("Restricted in CA: State ban.")).toBeInTheDocument();
     // not the unknown-outcome lock, not the generic refusal banner
     expect(screen.queryByTestId("counter-outcome-unknown")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();

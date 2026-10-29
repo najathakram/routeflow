@@ -1,0 +1,29 @@
+{
+  "_comment": "SA-1028 H-R1. The server's answer for GET business-capabilities on a tenant whose fulfilment_model is unset. The API spec asserts capabilitiesFromInputs produces exactly this; the web card spec renders it. Change one side and the other spec goes red.",
+  "shipping": {
+    "configured": false,
+    "delivery": false,
+    "doorPayments": false,
+    "shipping": true,
+    "counter": false,
+    "opensAs": "order",
+    "opensAsChoosable": false,
+    "counterCapability": "off",
+    "fleetHeld": false,
+    "matchedPreset": null,
+    "unavailable": {}
+  },
+  "shippingWithFleet": {
+    "configured": false,
+    "delivery": true,
+    "doorPayments": true,
+    "shipping": true,
+    "counter": false,
+    "opensAs": "order",
+    "opensAsChoosable": false,
+    "counterCapability": "off",
+    "fleetHeld": true,
+    "matchedPreset": null,
+    "unavailable": {}
+  }
+}

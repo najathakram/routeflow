@@ -24,6 +24,57 @@ export type EntitlementsMode = (typeof ENTITLEMENTS_MODE_VALUES)[number];
 
 export type FeatureLifecycle = "proposed" | "beta" | "ga" | "deprecated" | "sunset";
 
+// ─── Back office for business nature (SA-950 piece A) ──────────────────────────────────────
+// What KIND of choice a registry row is. Purpose answers one question and never encodes who
+// pays (paid-ness stays derived from billing.skus, gate.via and the grant source):
+//   business   - it changes how this business takes, hands over, prices or gets paid for orders
+//   commercial - a tool, report, integration or allowance the business buys
+//   release    - a version of our code (global, never a per-business choice)
+// The union below makes the compiler enforce the purpose/category pairs. `allowance` is exactly
+// the non-boolean rows (limit and metered); they live in Plan & billing, never in Features.
+export const FEATURE_PURPOSE_VALUES = ["business", "commercial", "release"] as const;
+export type FeaturePurpose = (typeof FEATURE_PURPOSE_VALUES)[number];
+
+export const FEATURE_BUSINESS_CATEGORY_VALUES = [
+  "hand_over",
+  "what_it_sells",
+  "how_it_gets_paid",
+] as const;
+export type FeatureBusinessCategory = (typeof FEATURE_BUSINESS_CATEGORY_VALUES)[number];
+
+export const FEATURE_COMMERCIAL_CATEGORY_VALUES = ["office_tools", "allowance"] as const;
+export type FeatureCommercialCategory = (typeof FEATURE_COMMERCIAL_CATEGORY_VALUES)[number];
+
+export type FeatureCategory = FeatureBusinessCategory | FeatureCommercialCategory;
+
+export const FEATURE_RELEASE_STAGE_VALUES = ["building", "per_tenant_legacy", "default"] as const;
+export type FeatureReleaseStage = (typeof FEATURE_RELEASE_STAGE_VALUES)[number];
+
+/**
+ * A release row's life. `endDate` (flip date + 14 days) exists only once the row is `default`;
+ * before that the row carries `reviewBy`, the same convention dark gates use. `per_tenant_legacy`
+ * names what the three flag.units_* rows really are today; it is count-pinned and shrink-only.
+ * `removalIssue` is the board id of the work that removes the row.
+ */
+export type FeatureRelease =
+  | {
+      stage: "building" | "per_tenant_legacy";
+      introduced: string;
+      removalIssue: string;
+      reviewBy: string;
+    }
+  | { stage: "default"; introduced: string; removalIssue: string; endDate: string };
+
+export type FeatureNature =
+  | { purpose: "business"; category: FeatureBusinessCategory }
+  | { purpose: "commercial"; category: FeatureCommercialCategory }
+  | { purpose: "release"; release: FeatureRelease };
+
+/** Present only on a row whose feature does not work end to end yet; `missing` says what is absent. */
+export interface FeatureIncomplete {
+  missing: string;
+}
+
 export interface FeatureModeOption {
   key: string;
   label: string;
@@ -39,6 +90,16 @@ export interface FeatureRegistryRow {
   description: string;
   lifecycle: FeatureLifecycle;
   internal: boolean;
+  /** SA-950 A3: what kind of choice this row is (see FEATURE_PURPOSE_VALUES). */
+  purpose: FeaturePurpose;
+  /** Absent on a `release` row. */
+  category?: FeatureCategory;
+  /** Lower-case search terms beyond the label and description ("till", "walk-in"). */
+  keywords: string[];
+  /** Present only when the feature does not work end to end yet. */
+  incomplete?: FeatureIncomplete;
+  /** Present only on a `release` row. */
+  release?: { stage: FeatureReleaseStage };
   gate: {
     via: "RequireAddon" | "RequirePlanFlag" | "guard" | "service" | "none";
     state: "dark" | "enforced" | "none";

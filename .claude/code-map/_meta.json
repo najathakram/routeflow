@@ -1,6 +1,6 @@
 {
-  "mappedSha": "14e7072d933b265b6046785ea8ac556c05d3388c",
-  "generatedAt": "2026-10-25T08:17:16.153Z",
+  "mappedSha": "75f433f568bf666cc416af3eb0e3d2c171c11b82",
+  "generatedAt": "2026-10-29T19:04:59.920Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-25 — Bookkeeping for window 6 (#3739 `9cd783913`, #3708 `c3d269f8d`, #3719 `b7b0a1a34`, #3718 `9c47dc317`, #3744 `a9a471888`, #3720 `d9e4477ba`, #3040 `78e7d266b`, #3746 `259f59be5`, W-785 text sweep #3733/#3734/#3735/#3740/#3751; docs-only, Option B follow-up that #3753 deferred).** New `api/landing-2026-10-25-w6.md`, `web/`, `mobile/` and `packages/landing-2026-10-25-w6.md` (TOC row in each area file; packages.md keeps a pointer). Covers 681 refs proved in tenant, W-769 confirmed-basis payments, W-810 owned Stripe products, DB-lane argv, the W-785 sentence-case sweep, bugs close verb, skip-verify pushed refs, ops-monitor NUL guard. Retires DRIFT-2026-10-25.md. mappedSha stamped to HEAD. History: CHANGELOG.md."
+  "notes": "**2026-10-29 — Bookkeeping catch-up for b1a2fc3d1..75f433f56 (101 first-parent merges: windows W1-W9, trains W21-W25 #3965 #3966 #3968 #3970 #3971; docs-only, Option B follow-up).** New `api/landing-2026-10-29-w26-catchup-a.md`, `-b.md`, `web/landing-2026-10-29-w26-catchup.md`, `packages/landing-2026-10-29-w26-catchup.md` (pricing, types, ui, mobile, control); TOC rows in api.md and web.md, pointer in packages.md. PR-to-sha attribution inside train merges is inferred from commit content; scripts/tools/ops and registry PRs are outside the mapped areas. mappedSha stamped to `75f433f56`. History: CHANGELOG.md."
 }

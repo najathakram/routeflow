@@ -67,15 +67,14 @@ conservation invariant that doesn't balance") finds what reading a screen never 
 
 **Model tiering (empirical, not decorative):**
 
-| Work                                                                                                                      | Model             | Why                                                                                                                |
-| ------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Conservation invariants, state-machine reachability, shared-mirror math, schema/migrations, test-gap inference, forensics | **Fable**         | Needs constructing adversarial sequences and counter-examples. Produced 5 of round 2's 14 criticals from 6 agents. |
-| Concurrency/races, security composition, freshly-merged code, triage/dedup judging                                        | **Opus**          | Threat-modelling and cross-PR reasoning.                                                                           |
-| Mechanical per-class sweeps (dead UI, dropped DTO fields, cache invalidation, date formatting)                            | **Sonnet**        | High volume, low ambiguity — but only behind a strong verifier.                                                    |
-| **Verification of any critical claim**                                                                                    | **Fable or Opus** | Never weaker than the finder. This is where being wrong is most expensive.                                         |
+| Work                                                                                                                      | Model      | Why                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| Conservation invariants, state-machine reachability, shared-mirror math, schema/migrations, test-gap inference, forensics | **Opus**   | Needs constructing adversarial sequences and counter-examples. Produced 5 of round 2's 14 criticals from 6 agents. |
+| Concurrency/races, security composition, freshly-merged code, triage/dedup judging                                        | **Opus**   | Threat-modelling and cross-PR reasoning.                                                                           |
+| Mechanical per-class sweeps (dead UI, dropped DTO fields, cache invalidation, date formatting)                            | **Sonnet** | High volume, low ambiguity — but only behind a strong verifier.                                                    |
+| **Verification of any critical claim**                                                                                    | **Opus**   | Never weaker than the finder. This is where being wrong is most expensive.                                         |
 
-(Mythos is not selectable in the agent picker; Fable is the same underlying model, so Fable _is_
-the top tier here.)
+(HISTORICAL: Mythos is not selectable in the agent picker; Fable (retired 2026-10-15) was the same underlying model. Opus is the top tier here.)
 
 Give every finder: the register (to dedup), the money-discipline context, the evidence contract,
 and an explicit instruction to report **what it checked and found sound** — that list is as

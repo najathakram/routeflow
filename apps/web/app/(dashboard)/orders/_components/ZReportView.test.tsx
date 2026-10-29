@@ -120,11 +120,11 @@ describe("ZReportView", () => {
     expect(row("Expected cash")).toHaveTextContent("$285.00");
     expect(row("Counted")).toHaveTextContent("$282.50");
     expect(row("Variance")).toHaveTextContent("−$2.50");
-    // the unpaid pickups are a Drawer row, never an orphan line under the report
-    expect(row("Unpaid pickups")).toHaveTextContent("$40.00");
-    expect(within(screen.getByTestId("z-group-Drawer")).getByTestId("z-row-Unpaid pickups")).toBe(
-      row("Unpaid pickups"),
-    );
+    // paid outside the till is a Drawer row, never an orphan line under the report
+    expect(row("Paid outside the till")).toHaveTextContent("$40.00");
+    expect(
+      within(screen.getByTestId("z-group-Drawer")).getByTestId("z-row-Paid outside the till"),
+    ).toBe(row("Paid outside the till"));
   });
 
   it("prints zero rows as $0.00, never a dash or a blank", () => {
@@ -176,10 +176,10 @@ describe("ZReportView", () => {
       expect(screen.getByTestId("z-report").textContent).not.toContain(gone);
   });
 
-  it("shows Unpaid pickups in the Drawer and warns only when a refund has no method", () => {
+  it("shows Paid outside the till in the Drawer and warns only when a refund has no method", () => {
     const { unmount } = renderWithProviders(<ZReportBody snapshot={snap()} />);
     expect(screen.queryByTestId("z-not-at-till")).toBeNull();
-    expect(row("Unpaid pickups")).toHaveTextContent("$40.00");
+    expect(row("Paid outside the till")).toHaveTextContent("$40.00");
     expect(screen.queryByTestId("z-tender-warning")).toBeNull();
     unmount();
     renderWithProviders(
