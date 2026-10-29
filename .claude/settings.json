@@ -51,6 +51,14 @@
         "hooks": [{ "type": "command", "command": "node .claude/hooks/ops-brief.mjs" }]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "SendMessage|mcp__ccd_session_mgmt__send_message",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/fact-check.mjs", "timeout": 25 }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
