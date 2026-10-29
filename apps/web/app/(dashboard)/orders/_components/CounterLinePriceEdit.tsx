@@ -180,6 +180,7 @@ export function CounterLinePriceEdit({
         onClose={close}
         title={`Change the price for ${name}`}
         className="max-w-md"
+        closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
         // Focus goes to the number field, not the first radio.
         onOpenAutoFocus={(e) => {
           e.preventDefault();
