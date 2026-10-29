@@ -169,6 +169,51 @@ describe("SA-786 P2 - every writer of TenantSubscription.planKey is classified",
   });
 });
 
+/**
+ * SA-774 (card first, then active) - every `planKey` writer sits in ONE named class, so a new writer cannot appear
+ * without deciding whether a payment must come first:
+ *
+ *   GATED       a self-serve entry point; `enforceCardFirst` (-> `selfServePlanGate`) runs before any write;
+ *   ACTIVATION  the paid-checkout path (becomes `activateCheckout` -> `applySubscribedPlanTx`, chunk 2);
+ *   SANCTIONED  an admin action, the renewal sweep or a creation mirror: not a self-serve pick.
+ *
+ * The list is derived from the same scan as above; the gate is also pinned on the three self-serve entry points.
+ */
+const SA774_CLASS: Record<string, "GATED" | "ACTIVATION" | "SANCTIONED"> = {
+  "billing/subscription-mutation.service.ts#subscribe": "GATED",
+  "billing/subscription-mutation.service.ts#upgradeLocked": "GATED",
+  "billing/billing.service.ts#onCheckoutCompleted": "ACTIVATION",
+  "billing/billing-cron.service.ts#applyScheduledDowngrades": "SANCTIONED",
+  "platform-admin/platform-admin.service.ts#updatePlanLocked": "SANCTIONED",
+  "platform-admin/platform-admin.service.ts#activateManualSubscription": "SANCTIONED",
+  "platform-admin/platform-admin.service.ts#updateStatus": "SANCTIONED",
+  "platform-admin/platform-admin.service.ts#createTenant": "SANCTIONED",
+  "tenants/tenants.service.ts#register": "SANCTIONED",
+};
+
+describe("SA-774 - every planKey writer is GATED, ACTIVATION or SANCTIONED", () => {
+  const writers = scanSource(SUBSCRIPTION_WRITE).filter(setsPlanKey);
+  const SELF_SERVE_ENTRY = [
+    "billing/subscription-mutation.service.ts#subscribe",
+    "billing/subscription-mutation.service.ts#upgrade",
+    "billing/subscription-mutation.service.ts#downgrade",
+  ];
+
+  it("each scanned writer has exactly one SA-774 class, and none is stale", () => {
+    const found = new Set(writers.map(siteId));
+    expect([...found].filter((id) => !(id in SA774_CLASS))).toEqual([]);
+    expect(Object.keys(SA774_CLASS).filter((id) => !found.has(id))).toEqual([]);
+  });
+
+  it.each(SELF_SERVE_ENTRY)("%s runs the card-first gate before its first write", (id) => {
+    const [file, fn] = id.split("#");
+    const code = fs.readFileSync(path.join(API_SRC_ROOT, file), "utf8");
+    const body = functionBody(code, fn);
+    expect(body).not.toBe("");
+    expect(body).toMatch(/\bthis\.enforceCardFirst\(/);
+  });
+});
+
 /** The source of the method/function called `fn` (declaration line to the next sibling declaration). */
 function functionBody(code: string, fn: string): string {
   const decl = new RegExp(

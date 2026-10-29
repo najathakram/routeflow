@@ -545,12 +545,12 @@ describe("AuthService", () => {
 
   describe("changePassword", () => {
     it("should hash the new password and update the user", async () => {
-      prisma.user.findUnique.mockResolvedValue(MOCK_USER);
+      prisma.user.findUnique.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
       (bcrypt.compare as jest.Mock)
         .mockResolvedValueOnce(true) // current password is correct
         .mockResolvedValueOnce(false); // new password differs from old
       (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
-      prisma.user.update.mockResolvedValue({} as any);
+      prisma.user.update.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
 
       const result = await service.changePassword("user-1", "old", "new");
 
@@ -570,7 +570,7 @@ describe("AuthService", () => {
     });
 
     it("should throw BadRequestException when current password is incorrect", async () => {
-      prisma.user.findUnique.mockResolvedValue(MOCK_USER);
+      prisma.user.findUnique.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
       (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
       await expect(service.changePassword("user-1", "wrong", "new")).rejects.toThrow(
@@ -587,10 +587,10 @@ describe("AuthService", () => {
     });
 
     it("N2 review fix: invalidates any outstanding PasswordResetToken so a 72h staff-invite/admin-reset link can't outlive a self-service password change", async () => {
-      prisma.user.findUnique.mockResolvedValue(MOCK_USER);
+      prisma.user.findUnique.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
       (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
       (bcrypt.hash as jest.Mock).mockResolvedValue("new-hash");
-      prisma.user.update.mockResolvedValue({} as any);
+      prisma.user.update.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
 
       await service.changePassword("user-1", "old", "new");
 

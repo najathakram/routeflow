@@ -50,6 +50,8 @@ export interface ReceiptLineInput {
   unitsPerBox: number | null;
   boxes: number | null;
   pieces: number | null;
+  /** SA-1040 B4a: the stored selling unit of a unit line ("Case"); null or absent on a pack line */
+  unitLabel?: string | null;
   product: {
     name: string;
     variantName: string | null;
@@ -200,6 +202,7 @@ function lineDetail(l: ReceiptLineInput): string {
     boxes: l.boxes,
     pieces: l.pieces,
     unit: l.product?.unit,
+    unitLabel: l.unitLabel ?? null,
   });
 }
 

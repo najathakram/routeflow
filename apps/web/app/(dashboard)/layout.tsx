@@ -979,11 +979,11 @@ function ImpersonationBanner() {
       <span>
         {imp.expired ? (
           <>
-            ⚠️ Impersonation of <strong>{imp.slug}</strong> has expired
+            ⚠️ Support session on <strong>{imp.slug}</strong> has expired
           </>
         ) : (
           <>
-            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as{" "}
+            ⚠️ Support session on <strong>{imp.slug}</strong> — signed in as{" "}
             {imp.username ?? "Tenant Admin"}
           </>
         )}
@@ -992,7 +992,7 @@ function ImpersonationBanner() {
         onClick={exitImpersonation}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
-        {imp.expired ? "Return to admin" : "Exit impersonation"}
+        {imp.expired ? "Return to admin" : "Exit support session"}
       </button>
     </div>
   );
