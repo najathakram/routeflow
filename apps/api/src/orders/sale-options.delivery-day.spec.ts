@@ -150,3 +150,23 @@ describe("resolveSaleDelivery — the tenant's day (row 735b)", () => {
     );
   });
 });
+
+describe("resolveSaleDelivery — orderDate is judged on the tenant's day too (row 751)", () => {
+  const withOrderDate = (orderDate: string) =>
+    ({ customerId: "c1", items: [], deliveredNow: true, orderDate }) as unknown as CreateSaleDto;
+  const now = new Date("2026-10-25T20:00:00Z"); // 09:00 on the 26th in Auckland
+
+  it("Pacific/Auckland may back-date to its own today (the 26th), which is tomorrow in UTC", () => {
+    const r = resolveSaleDelivery(withOrderDate("2026-10-26"), staff, "Pacific/Auckland", now);
+    expect(r.deliveredAt?.toISOString().slice(0, 10)).toBe("2026-10-26");
+  });
+
+  it("control: a UTC tenant is refused the 26th, and Auckland the 27th", () => {
+    expect(() => resolveSaleDelivery(withOrderDate("2026-10-26"), staff, "UTC", now)).toThrow(
+      BadRequestException,
+    );
+    expect(() =>
+      resolveSaleDelivery(withOrderDate("2026-10-27"), staff, "Pacific/Auckland", now),
+    ).toThrow(BadRequestException);
+  });
+});

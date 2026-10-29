@@ -36,6 +36,8 @@ export class CounterSaleItemDto {
   @IsOptional() @IsInt() @Min(1) @Max(100_000) qty?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
+  /** SA-1040 B4a: sell by a unit of the product (a Case, a Pallet). Same decorators as `OrderItemDto.unitLabel`; create() decides everything else. */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
   @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
   @IsOptional() @IsString() @MaxLength(200) priceReason?: string;
   /** POS-3: an optional per-line note, stored on OrderItem.notes (max 200, HTML stripped). */
