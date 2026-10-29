@@ -29,9 +29,11 @@ import {
   decideScope,
   fastStampLine,
   isFastMode,
+  loadScriptSpecs,
   loadWorkspaces,
   mergeBaseSha,
   repoPinsNeeded,
+  selectScriptSpecs,
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
@@ -240,14 +242,15 @@ function planFastCalls({ scope, drop, excluded }) {
 
 /**
  * FAST only: a diff that can break a repo-wide pin (`repoPinsNeeded`) appends ONE jest call, run from
- * apps/api, over `REPO_WIDE_PINS` plus the whole `-script` set (`SCRIPT_SPEC_PATTERN`). `pins` falsy leaves
- * the plan untouched; a failure here fails the push.
+ * apps/api, over `REPO_WIDE_PINS` plus the `-script` specs `pins.scriptSpecs` names (an array from
+ * `selectScriptSpecs`; anything else, incl. `pins: true`, means ALL via `SCRIPT_SPEC_PATTERN`). `pins`
+ * falsy leaves the plan untouched; a failure here fails the push.
  */
 function withPins(plan, pins, drop) {
   if (!pins || drop.has("@routeflow/api")) return plan;
   const files = [
     ...REPO_WIDE_PINS.map((p) => p.file.replace(/^apps\/api\//, "")),
-    SCRIPT_SPEC_PATTERN,
+    ...(Array.isArray(pins.scriptSpecs) ? pins.scriptSpecs : [SCRIPT_SPEC_PATTERN]),
   ];
   // "--" ends the array option: --testPathIgnorePatterns would otherwise swallow every file as one
   // more ignore pattern and jest would run the whole api suite.
@@ -387,18 +390,22 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * cannot be computed (`files` null) runs the pins rather than skipping them. VERIFY_EXCLUDE naming
  * api drops the pins (they are api specs), with no line. `pins: null` means "plan none".
  */
-export function planPins({ fast, files, excluded = [] }) {
+export function planPins({ fast, files, excluded = [], specs }) {
   if (!fast || excluded.includes("@routeflow/api")) return { pins: null, line: null };
   if (files === null) {
     return {
       pins: true,
-      line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and the -script set run (fail closed).",
+      scriptSpecs: "all",
+      line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and ALL -script specs run (fail closed).",
     };
   }
   if (!repoPinsNeeded(files)) return { pins: null, line: null };
+  const picked = selectScriptSpecs({ files, specs: specs ?? loadScriptSpecs(ROOT) });
   return {
     pins: true,
-    line: `+ REPO PINS: this diff can break a repo-wide pin, so ${REPO_WIDE_PINS.length} pin specs and the -script set run too.`,
+    scriptSpecs: picked.files,
+    scriptLine: picked.line,
+    line: `+ REPO PINS: this diff can break a repo-wide pin, so ${REPO_WIDE_PINS.length} pin specs and the related -script specs run too.`,
   };
 }
 
@@ -508,8 +515,9 @@ export async function main() {
   let pins = null;
   if (runMode.fast) {
     const planned = planPins({ fast: true, files: changedFilesSince(ROOT), excluded });
-    pins = planned.pins;
+    pins = planned.pins ? { scriptSpecs: planned.scriptSpecs } : null;
     if (planned.line) console.log(planned.line);
+    if (planned.scriptLine) console.log(planned.scriptLine);
   }
   const plan = planTurboCalls({
     scope,

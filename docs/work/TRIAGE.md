@@ -37,4 +37,4 @@ For each issue:
    specific question for the owner.
 
 Never put client names, tenant ids, credentials or production data in an issue (issues go public
-during CI windows). Never assign workers. Claiming is theirs (`npm run work:claim`).
+during CI windows). Never assign workers. Claiming: retired, see scripts/work/RETIRED.md.
