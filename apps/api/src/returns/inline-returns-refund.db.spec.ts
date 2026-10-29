@@ -871,4 +871,29 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     expect(codeOf(await fail(storeCredit(f, rf.id)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(await creditNoteCount(f)).toBe(0);
   }, 60_000);
+
+  it("23. SA-980: cancelling an inline store-credit return voids its note and hands NO frozen tax back to net sales (the row keeps refundMethod, creditNoteId and the split)", async () => {
+    const s = await seed("cancel-credited");
+    const r = await capture(s, 4); // omitted resolution = STORE_CREDIT: REFUNDED / CREDIT_NOTE, note minted for the gross
+    // The seed sells at 0% tax, so freeze a split by hand: $40.00 gross = 37.04 net + 2.96 tax, the shape a taxed sale leaves.
+    await prisma.return.update({
+      where: { id: r.id },
+      data: { creditSubtotal: 37.04, creditTax: 2.96, creditCategoryTax: 0 },
+    });
+    // live: the note is in the credit-note term and its frozen tax comes off it, so only the NET leaves net sales
+    expect((await netSales(s)).net).toBe(62.96);
+
+    await inTenant(s, () => inline.cancel(r.id, staff(s)));
+
+    const stored = await row(r.id);
+    expect(stored.status).toBe("CANCELLED");
+    // the premise: the cancel leaves the pointers and the split on the row, and voids the note
+    expect(stored.refundMethod).toBe("CREDIT_NOTE");
+    expect(stored.creditNoteId).toBe(r.creditNoteId);
+    expect(Number(stored.creditTax)).toBe(2.96);
+    const note = await prisma.creditNote.findUniqueOrThrow({ where: { id: r.creditNoteId } });
+    expect(note.status).toBe("VOID");
+    // the voided note is out of the credit-note term, so its tax must not be given back: net sales are whole again, not 102.96
+    expect((await netSales(s)).net).toBe(100);
+  }, 60_000);
 });
