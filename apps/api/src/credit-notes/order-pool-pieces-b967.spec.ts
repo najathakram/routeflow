@@ -17,8 +17,8 @@ const boxPool = (credited: Record<string, { qty: number; amount: number }> = {})
 describe("pooledRefundRefusal — PIECES (B967)", () => {
   it("a 12-per-box product with 6 pieces credited has 18 pieces of room, not 1.5", () => {
     const pool = boxPool({ a: { qty: 0.5, amount: 60 } }); // a credit note item for 6 pieces
-    expect(pooledRefundRefusal(pool, "p", 18)).toBeNull(); // exactly the room, in pieces
-    expect(pooledRefundRefusal(pool, "p", 19)).toMatchObject({
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 18)).toBeNull(); // exactly the room, in pieces
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 19)).toMatchObject({
       remainingQty: 18,
       requestedQty: 19,
       qtyUnit: "pieces",
@@ -27,14 +27,14 @@ describe("pooledRefundRefusal — PIECES (B967)", () => {
 
   it("a standard return of 2 boxes (24 pieces) is refused against 18 pieces of room", () => {
     const pool = boxPool({ a: { qty: 0.5, amount: 60 } });
-    expect(pooledRefundRefusal(pool, "p", 2 * 12)).not.toBeNull();
-    expect(pooledRefundRefusal(pool, "p", 1.5 * 12)).toBeNull(); // 1.5 boxes fits exactly
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 2 * 12)).not.toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 1.5 * 12)).toBeNull(); // 1.5 boxes fits exactly
   });
 
   it("preview and mint agree: the refund check and the take check give the same verdict", () => {
     const pool = boxPool({ a: { qty: 0.5, amount: 60 } });
     for (const pieces of [6, 18, 18.5, 24]) {
-      const refund = pooledRefundRefusal(pool, "p", pieces);
+      const refund = pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, pieces);
       const take = pooledTakeRefusal(pool, "p", { amount: (pieces * 10) as number, qty: pieces });
       expect(Boolean(refund)).toBe(Boolean(take));
     }
@@ -49,8 +49,8 @@ describe("pooledRefundRefusal — PIECES (B967)", () => {
       ],
       credited: new Map([["a", { qty: 4, amount: 20 }]]),
     };
-    expect(pooledRefundRefusal(pool, "p", 16)).toBeNull();
-    expect(pooledRefundRefusal(pool, "p", 17)).not.toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 16)).toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 17)).not.toBeNull();
   });
 
   it("keeps the rounding rule: 1.8333 boxes of room is 22 pieces, not 21.996", () => {
@@ -59,6 +59,6 @@ describe("pooledRefundRefusal — PIECES (B967)", () => {
       lines: [{ id: "a", productId: "p", subtotal: 120, qty: 2, piecesPerQty: 12 }],
       credited: new Map([["a", { qty: 0.16667, amount: 10 }]]),
     };
-    expect(pooledRefundRefusal(pool, "p", 22)).toBeNull();
+    expect(pooledRefundRefusal(pool, { productId: "p", orderItemId: null }, 22)).toBeNull();
   });
 });
