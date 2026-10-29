@@ -35,6 +35,7 @@ const noTax = (qty: number, subtotal: number) => categoryTaxForLine(null, qty, s
 
 function bothPaths(typed: number, reason?: string) {
   const order = buildUnitLine({
+    priceEditAllowed: true,
     product,
     units,
     resolved,
