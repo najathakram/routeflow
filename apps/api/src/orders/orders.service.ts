@@ -80,7 +80,7 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
-import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
+import { assertPriceEditAllowed, decideTierOverride, staffMay } from "./staff-override";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -1239,6 +1239,8 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    // SA-1034: the counter sale's own value, else the role's; denied groups arrive with the permissions rollout.
+    const priceEditAllowed = options.priceEditAllowed ?? staffMay(user.role, "EDIT_LINE_PRICE", []);
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
     // appliedCreditNotes for non-staff callers — a buyer or driver token could
     // otherwise spend a customer's credit notes on create, a right the edit path
@@ -1573,12 +1575,10 @@ export class OrdersService implements OnApplicationBootstrap {
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
-          // buildUnitLine copies this onto the line ONLY when staff really changed the price; the EDIT_LINE_PRICE gate below keys on
-          // that stamp, so a ladder-priced line (customer layer MANUAL, no stamp) is never refused for a right the cashier lacks.
+          // stamped ONLY on a real staff price change, where buildUnitLine checks the capability (POS-5 / SA-1034)
           overriddenBy: user.sub,
+          priceEditAllowed,
         });
-        // POS-5, as the pack branch. A staff override carries the editor's stamp; a layer-MANUAL line (SA-811a R2) is priced by the ladder and has none.
-        if (unitLine.overriddenBy != null) assertPriceEditAllowed(options.priceEditAllowed);
         subtotal += unitLine.subtotal;
         return unitLine;
       }
@@ -1678,8 +1678,8 @@ export class OrdersService implements OnApplicationBootstrap {
             )
           : null;
       if (staff?.overridden) {
-        // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
-        assertPriceEditAllowed(options.priceEditAllowed);
+        // POS-5 / SA-1034: judged vs the SERVER tier price, before any lock or write.
+        assertPriceEditAllowed(priceEditAllowed);
         ({ unitPrice, originalPrice } = staff);
         priceType = PriceType[staff.priceType];
         staffOverride = {
@@ -3184,6 +3184,8 @@ export class OrdersService implements OnApplicationBootstrap {
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
+            // SA-1034: the operator's denied groups arrive with the permissions rollout.
+            priceEditAllowed: staffMay(user?.role, "EDIT_LINE_PRICE", []),
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
@@ -3233,6 +3235,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isCreateMerge: opts?.isCreateMerge,
               buyerPromos,
               userId: user?.sub ?? null,
+              priceEditAllowed: uctx.priceEditAllowed,
               operatorReplaceCategoryMap,
             };
 
@@ -3438,6 +3441,7 @@ export class OrdersService implements OnApplicationBootstrap {
                       })
                     : null;
                 const isManualOverride = !!addDecision && isOverride(addDecision);
+                if (isManualOverride) assertPriceEditAllowed(uctx.priceEditAllowed); // SA-1034
                 const priced = addDecision
                   ? { ...addDecision, freeUnits: 0 }
                   : tierCaller
@@ -3573,24 +3577,16 @@ export class OrdersService implements OnApplicationBootstrap {
                     : null;
                 const qtyVal = split ? split.qty : (item.qty ?? Number(existingQty));
                 if (qtyVal <= 0) continue;
-                // B3: staff (OPERATOR/TENANT_ADMIN) may re-price the substitute line —
-                // same house override convention as create()'s operator-override ladder
-                // and the operator update branches above: net unitPrice, DISCOUNTED
-                // below the substitute's list price, MANUAL above it, originalPrice =
-                // the displaced list price. This branch is reached by staff and by a
-                // driver diff (A4: substituteProductId makes it a diff; buyers never
-                // get here), but the role check stays explicit so a
-                // driver/customer DTO can never buy price control here — B13, non-staff
-                // never set prices. No override (or one equal to the substitute's own
-                // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior. B1036: a DRIVER substitute
-                // resolves the same tier (ruling 2026-10-03); only staff's typed price counts.
-                // B466: this branch never checked tier at all — a bare unitPrice on a
-                // substitute to a SPECIAL-tier product was compared only against LIST
-                // price, so a correctly-priced substitute (typed at this customer's real
-                // contract price) was silently stored as DISCOUNTED with no reason. Same
-                // tier resolution as the ADD/UPDATE branches above (reuse isSpecialTier(),
-                // operatorCpMap/operatorDefaultTier — operatorProductIds now also collects
-                // substituteProductId so the per-product CustomerPrice row is fetched).
+                // B3: staff (OPERATOR/TENANT_ADMIN) may re-price the substitute line — the house override
+                // convention: net unitPrice, DISCOUNTED below the substitute's list price, MANUAL above it,
+                // originalPrice = the displaced list price. Reached by staff and by a driver diff (A4:
+                // substituteProductId makes it a diff; buyers never get here), but the role check stays
+                // explicit — B13, non-staff never set prices. No override (or one equal to the substitute's
+                // own tier price) keeps SPECIAL/STANDARD tier pricing. B1036: a DRIVER substitute resolves
+                // the same tier (ruling 2026-10-03); only staff's typed price counts. B466: the tier is
+                // resolved like the ADD/UPDATE branches (operatorProductIds also collects
+                // substituteProductId so the per-product CustomerPrice row is fetched), never LIST alone.
+                // SA-1034: a real override checks the price-edit capability before the write.
                 const tierForProduct = tierCaller
                   ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
                   : 1;
@@ -3609,6 +3605,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   layerSub,
                 );
                 const { unitPrice, originalPrice, overridden: isOverridden } = decided;
+                if (isOverridden) assertPriceEditAllowed(uctx.priceEditAllowed); // SA-1034
                 const priceType: PriceType = PriceType[decided.priceType];
                 const subtotal = computeLineSubtotal({
                   unitPrice,
@@ -3821,6 +3818,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   productName: editProduct?.name ?? null,
                 });
                 const isManualOverride = !!repriced && isOverride(repriced);
+                if (isManualOverride) assertPriceEditAllowed(uctx.priceEditAllowed); // SA-1034
                 const unitPrice = repriced ? repriced.unitPrice : existingUnitPrice;
                 // This branch keeps the line's stored (agreed) price — it never re-runs
                 // applyBestPromotion for the UNIT PRICE. BUY_N_GET_M free units are a function of
