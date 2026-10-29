@@ -29,14 +29,24 @@ describeDb("row 354 - StockMovement(tenantId, reference) index", () => {
   });
 
   it("(I2) the tenant-scoped reference lookup is plannable on it", async () => {
-    // With enable_seqscan off the planner must pick the best index; an index probe on the new one proves it can serve
-    // the lookup (the table here is near-empty, where a seq scan would otherwise win on cost).
-    const plan = await prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
-      return tx.$queryRawUnsafe<Array<Record<string, string>>>(
-        `EXPLAIN SELECT id FROM "StockMovement" WHERE "tenantId" = 'qa-plan-354' AND reference = 'STOCK_COUNT-x'`,
-      );
-    });
+    // The planner may legitimately prefer the older single-column "StockMovement_tenantId_idx" (tied or cheaper once
+    // other specs have filled the table and ANALYZE has run), so the choice between the two is not what this proves.
+    // It proves the composite index can serve the lookup: drop the single-column one inside a transaction that is
+    // always rolled back (DDL is transactional in Postgres), with seq scans off, and read the plan.
+    const ROLLBACK = new Error("rollback after reading the plan");
+    let plan: Array<Record<string, string>> = [];
+    await prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
+        await tx.$executeRawUnsafe('DROP INDEX "StockMovement_tenantId_idx"');
+        plan = await tx.$queryRawUnsafe<Array<Record<string, string>>>(
+          `EXPLAIN SELECT id FROM "StockMovement" WHERE "tenantId" = 'qa-plan-354' AND reference = 'STOCK_COUNT-x'`,
+        );
+        throw ROLLBACK;
+      })
+      .catch((e) => {
+        if (e !== ROLLBACK) throw e;
+      });
     const text = plan.map((r) => Object.values(r)[0]).join("\n");
     expect(text).toContain("StockMovement_tenantId_reference_idx");
   });
