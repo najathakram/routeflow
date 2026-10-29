@@ -38,6 +38,7 @@ export function useCustomerListbox<C extends CustomerMatch>(
     "aria-autocomplete": "list" as const,
     "aria-expanded": open,
     "aria-controls": open ? `${baseId}-list` : undefined,
+    "aria-describedby": open ? `${baseId}-keys` : undefined,
     "aria-activedescendant": open && active >= 0 ? optionId(active) : undefined,
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (matches.length === 0) return;
@@ -61,7 +62,7 @@ export function useCustomerListbox<C extends CustomerMatch>(
   };
   return {
     inputProps,
-    listbox: { id: `${baseId}-list`, open, active, optionId },
+    listbox: { id: `${baseId}-list`, keysId: `${baseId}-keys`, open, active, optionId },
   };
 }
 
@@ -92,32 +93,45 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   if (matches.length > 0) {
     if (listbox && !listbox.open) return null;
     return (
-      <ul
-        className="rounded border text-sm"
-        role={listbox ? "listbox" : undefined}
-        id={listbox?.id}
-        aria-label={listbox ? "Matching customers" : undefined}
-      >
-        {matches.map((c, i) => (
-          <li
-            key={c.id}
-            role={listbox ? "option" : undefined}
-            id={listbox?.optionId(i)}
-            aria-selected={listbox ? listbox.active === i : undefined}
-            aria-disabled={disabled || undefined}
-            className={cn(
-              "min-h-[44px] w-full px-3 py-2 text-left",
-              disabled ? "opacity-40" : "cursor-pointer hover:bg-gray-50",
-              listbox?.active === i && "bg-gray-100",
-            )}
-            onClick={() => {
-              if (!disabled) onPick(c);
-            }}
+      <>
+        <ul
+          className="rounded border text-sm"
+          role={listbox ? "listbox" : undefined}
+          id={listbox?.id}
+          aria-label={listbox ? "Matching customers" : undefined}
+        >
+          {matches.map((c, i) => (
+            <li
+              key={c.id}
+              role={listbox ? "option" : undefined}
+              id={listbox?.optionId(i)}
+              aria-selected={listbox ? listbox.active === i : undefined}
+              aria-disabled={disabled || undefined}
+              className={cn(
+                "min-h-[44px] w-full px-3 py-2 text-left",
+                disabled ? "opacity-40" : "cursor-pointer hover:bg-gray-50",
+                listbox?.active === i && "bg-gray-100",
+              )}
+              onClick={() => {
+                if (!disabled) onPick(c);
+              }}
+            >
+              {c.businessName}
+            </li>
+          ))}
+        </ul>
+        {listbox && !disabled ? (
+          // arrow keys exist on a keyboard only: phones and tablets never see the line
+          <p
+            id={listbox.keysId}
+            className="hidden text-xs text-navy/70 lg:block"
+            data-testid="counter-customer-keys"
           >
-            {c.businessName}
-          </li>
-        ))}
-      </ul>
+            <span aria-hidden="true">↑↓ to choose · Enter to pick</span>
+            <span className="sr-only">Up and down arrows to choose, Enter to pick</span>
+          </p>
+        ) : null}
+      </>
     );
   }
   if (search.trim() && answered) {
