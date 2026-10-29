@@ -1,20 +1,25 @@
 #!/usr/bin/env node
 // Frozen eval set for routine changes: a fixed set of past tasks, re-run when a skill, hook, model or routing
-// rule changes, graded on end state. `run` comes in R6-b2; `report` (pass^k, pass@1, --vs) and --sample in R6-b3.
+// rule changes, graded on end state. `report` (pass^k, pass@1, --vs) and --sample come in R6-b3.
 //
 //   node scripts/factory-eval.mjs select --since <YYYY-MM-DD> [--landings <file>]   (read-only, proposes)
 //   node scripts/factory-eval.mjs prepare <id> [--dir <d>]    detached worktree at baseSha + BRIEF.md
 //   node scripts/factory-eval.mjs grade <id> --tree <d>       pass | fail | broken; exit 0 only on pass
 //   node scripts/factory-eval.mjs cleanup <tree>              unlink every link in it, remove the tree
-//   common: --repo <dir> --tasks <dir> --include-example
+//   node scripts/factory-eval.mjs run [<id>] --arm <name> [--k 3] [--budget <usd>]
+//   common: --repo <dir> --tasks <dir> --arms <file> --include-example
 //
 // A task (evals/factory/tasks/<id>.json, schema in its README) is a real past change: the repo at the parent
 // of the change (baseSha), the brief an agent gets, and the change's own test files at its merge sha
 // (hiddenTests, copied in only at grading time). Tests run through R4's runner table (defaultRun in
 // fix-revert-probe.mjs); the size limit for candidates is R3's WARN_AT. `select` prefers R1's landing
 // telemetry and falls back to gh; it never prints a live-tenant identifier, only that a candidate was dropped.
-// Dark: no gate calls this.
-// Exit: 0 ok, 1 a graded tree did not pass, 2 bad usage.
+// An arm (evals/factory/arms.json) is a named command template. `run` spends real money for any arm but the
+// free stub: it refuses a real arm unless EVAL_ALLOW_REAL_ARM is set, and refuses before any spawn when
+// k x tasks x arm.capUsd exceeds EVAL_BUDGET_USD (default $40; --budget overrides). Each agent run has a
+// wall-clock cap (timeoutSec) and a dollar cap (capUsd; cost = the agent's total_cost_usd). Results go to
+// local-assets/evals/<run-id>/results.jsonl (gitignored). Dark: no gate calls this.
+// Exit: 0 ok, 1 a graded tree did not pass, 2 bad usage or a refused run.
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -45,12 +50,16 @@ const SCRIPT = fileURLToPath(import.meta.url);
 const EVALS = path.join(path.dirname(SCRIPT), "..", "evals", "factory");
 const TASKS = path.join(EVALS, "tasks");
 export const SELECT_MAX_LINES = WARN_AT;
+export const DEFAULT_K = 3;
+export const DEFAULT_BUDGET_USD = 40;
 const GH_LIMIT = 200;
+const BIG = 64 * 1024 * 1024;
 const EVAL_LOCK = "rf-eval"; // prepare's own lock reason: cleanup touches no other tree (not R4's rf-probe)
 const OWNER_FILE = "rf-eval-owner"; // second ownership factor, in the tree's own per-worktree gitdir
 export const RUN_ID = `${randomUUID()}-${process.pid}-${Date.now()}`;
 const TOKEN = /^rf-eval-owner v1 run=(\S+) pid=\d+ at=\S+\s*$/;
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+const cents = (n) => Math.round(Number(n) * 100); // money compares in cents: 3 x $0.10 is $0.30
 const toplevel = (dir) =>
   realpathSync.native(gitIn(dir ?? process.cwd(), ["rev-parse", "--show-toplevel"]).stdout.trim());
 const HEX = /^[0-9a-f]{7,40}$/i;
@@ -326,6 +335,150 @@ export async function grade(task, tree, { run = defaultRun } = {}) {
   return { result: "pass", reason: "hidden tests pass" };
 }
 
+// ---- budget, sampling, arms ----
+
+/** Refuses a run whose worst case (k x tasks x the arm's per-task dollar cap) exceeds the budget. */
+export function checkBudget({ k, taskCount, capUsd, budget, env = process.env }) {
+  const fromEnv =
+    Number(env.EVAL_BUDGET_USD) > 0 ? Number(env.EVAL_BUDGET_USD) : DEFAULT_BUDGET_USD;
+  const limit = budget ?? fromEnv;
+  const total = k * taskCount * Number(capUsd);
+  const capOk = Number.isFinite(Number(capUsd)) && Number(capUsd) > 0; // no capUsd, 0 or below: refused
+  const ok = capOk && cents(total) <= cents(limit);
+  const money = (n) => `$${Number(n).toFixed(2)}`;
+  const message = ok
+    ? "ok"
+    : `refusing to start: k=${k} x ${taskCount} tasks x ${money(capUsd)} cap = ${money(total)} exceeds the budget of ${money(limit)} (EVAL_BUDGET_USD); pass --budget <usd> to allow it`;
+  return { ok, total, limit, message };
+}
+
+export const loadArms = (file = path.join(EVALS, "arms.json")) =>
+  JSON.parse(readFileSync(file, "utf8"));
+
+/** The free stub arm is the only one a test may run; any other needs EVAL_ALLOW_REAL_ARM. */
+const isStubArm = (arm) =>
+  arm.cmd?.[0] === "node" && arm.cmd[1] === "{script}" && arm.cmd[2] === "stub-arm";
+
+// ---- run ----
+
+export const parseCost = (out) => {
+  try {
+    const c = JSON.parse(out.trim().split(/\r?\n/).pop()).total_cost_usd;
+    return typeof c === "number" && Number.isFinite(c) && c >= 0 ? c : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The agent gets the stub arm's two inputs and nothing else of the runner's EVAL_ settings. */
+export const agentEnv = (env = process.env) =>
+  Object.fromEntries(
+    ["EVAL_STUB_SHA", "EVAL_STUB_PATHS"]
+      .filter((n) => env[n] !== undefined)
+      .map((n) => [n, env[n]]),
+  );
+
+/** Runs the arm's command in `tree`: { costUsd, wallSec, timedOut, overCap }. Throws if it cannot start. */
+function spawnArm(arm, tree, extraEnv) {
+  const fill = (s) =>
+    s
+      .replaceAll("{tree}", tree)
+      .replaceAll("{brief}", path.join(tree, "BRIEF.md"))
+      .replaceAll("{script}", SCRIPT)
+      .replaceAll("{capUsd}", String(arm.capUsd));
+  const [bin, ...args] = arm.cmd.map(fill);
+  const noEval = (env) =>
+    Object.fromEntries(Object.entries(env).filter(([n]) => !n.startsWith("EVAL_")));
+  const t0 = Date.now();
+  const r = spawnSync(bin === "node" ? process.execPath : bin, args, {
+    cwd: tree,
+    env: { ...noEval(scrubbedGitEnv()), ...extraEnv },
+    encoding: "utf8",
+    timeout: (arm.timeoutSec ?? 3600) * 1000,
+    maxBuffer: BIG,
+  });
+  const timedOut = r.error?.code === "ETIMEDOUT";
+  if (r.error && !timedOut) throw new Error(`arm command did not start: ${r.error.message}`);
+  const costUsd = parseCost(r.stdout ?? "");
+  return {
+    costUsd,
+    wallSec: Math.round((Date.now() - t0) / 100) / 10,
+    timedOut,
+    overCap: costUsd !== null && costUsd > arm.capUsd,
+  };
+}
+
+/** k graded runs per task, each in a fresh tree removed in a finally: { records } or { refused, records }. */
+export async function runEval({
+  tasks,
+  armName,
+  arms = loadArms(),
+  k = DEFAULT_K,
+  repo,
+  budget,
+  env = process.env,
+  extraEnv = {},
+  gradeFn = grade,
+  prepareFn = prepare,
+}) {
+  const arm = arms[armName];
+  if (!arm) throw new Error(`unknown arm "${armName}"`);
+  if (!isStubArm(arm) && env.EVAL_ALLOW_REAL_ARM !== "1")
+    return {
+      refused: `arm "${armName}" is not the stub arm; set EVAL_ALLOW_REAL_ARM=1 to run a real, paid agent`,
+      records: [],
+    };
+  const gate = checkBudget({ k, taskCount: tasks.length, capUsd: arm.capUsd, budget, env });
+  if (!gate.ok) return { refused: gate.message, records: [] };
+  const records = [];
+  let spent = 0;
+  for (const task of tasks) {
+    for (let run = 1; run <= k; run++) {
+      if (cents(spent + Number(arm.capUsd)) > cents(gate.limit))
+        return { stopped: "budget used up mid-run", records };
+      const rec = { result: "broken", reason: "", costUsd: null, wallSec: null };
+      let p;
+      try {
+        p = await prepareFn(task, { repo });
+        Object.assign(rec, spawnArm(arm, p.tree, extraEnv));
+        if (rec.timedOut) rec.reason = `arm timed out after ${arm.timeoutSec ?? 3600}s`;
+        else Object.assign(rec, await gradeFn(task, p.tree));
+      } catch (e) {
+        rec.result = "broken";
+        rec.reason = e instanceof Error ? e.message : String(e);
+      } finally {
+        try {
+          p?.cleanup();
+        } catch (e) {
+          rec.reason = `${rec.reason}; cleanup failed: ${e instanceof Error ? e.message : e}`;
+        }
+      }
+      spent += rec.costUsd ?? Number(arm.capUsd);
+      records.push({
+        v: 1,
+        ts: new Date().toISOString(),
+        taskId: task.id,
+        arm: armName,
+        run,
+        kind: task.kind,
+        risk: task.risk,
+        example: task.example === true,
+        ...rec,
+      });
+    }
+  }
+  return { records };
+}
+
+/** Writes one run's records to <baseDir>/local-assets/evals/<runId>/results.jsonl; returns the file. */
+export function saveRun(baseDir, runId, records) {
+  const dir = path.join(baseDir, "local-assets", "evals", runId);
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "results.jsonl");
+  writeFileSync(file, records.map((r) => `${JSON.stringify(r)}\n`).join(""));
+  return file;
+}
+
 // ---- select ----
 
 /** The merged-PR list from gh may be cut at its limit; say so when it is exactly full. */
@@ -412,6 +565,22 @@ function select(o, root) {
   );
 }
 
+/** The stub arm: copies EVAL_STUB_PATHS from EVAL_STUB_SHA into the tree and reports a fake cost. */
+function stubArm() {
+  const paths = (process.env.EVAL_STUB_PATHS ?? "").split(",").filter(Boolean);
+  for (const p of paths) {
+    const rel = path.relative(process.cwd(), path.resolve(process.cwd(), p));
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel))
+      throw new Error(`stub arm: ${p} is outside the eval tree`);
+  }
+  for (const p of paths) {
+    const r = gitIn(process.cwd(), ["show", `${process.env.EVAL_STUB_SHA}:${p}`]);
+    if (r.status !== 0) throw new Error(`stub arm: cannot read ${p}`);
+    writeFileSync(p, r.stdout);
+  }
+  console.log(JSON.stringify({ total_cost_usd: 0.25 }));
+}
+
 export async function main(argv) {
   const [cmd, ...rest] = argv;
   const o = { _: [] };
@@ -421,6 +590,7 @@ export async function main(argv) {
     else o[rest[i].slice(2)] = rest[++i];
   }
   const usage = (m) => (console.error(`factory-eval: ${m}`), 2);
+  if (cmd === "stub-arm") return (stubArm(), 0);
   if (cmd === "cleanup") {
     if (!o._[0] || !existsSync(path.join(o._[0], "BRIEF.md")))
       return usage("cleanup needs the <tree> that prepare printed (it holds BRIEF.md)");
@@ -429,11 +599,31 @@ export async function main(argv) {
   const root = toplevel(o.repo);
   if (cmd === "select")
     return o.since ? (select(o, root), 0) : usage("select needs --since <date>");
-  if (!["prepare", "grade"].includes(cmd))
-    return usage("commands: select | prepare | grade | cleanup");
+  if (!["prepare", "grade", "run"].includes(cmd))
+    return usage("commands: select | prepare | grade | cleanup | run");
   const { tasks, errors } = loadTasks(o.tasks ?? TASKS, { includeExample: o.includeExample });
   if (errors.length) return usage(`task files are invalid:\n  ${errors.join("\n  ")}`);
   const byId = (id) => tasks.find((t) => t.id === id);
+  if (cmd === "run") {
+    if (!o.arm) return usage("run needs --arm <name>");
+    const pick = o._[0] ? [byId(o._[0])].filter(Boolean) : tasks;
+    if (!pick.length) return usage("no such task");
+    const extraEnv = agentEnv();
+    const out = await runEval({
+      tasks: pick,
+      armName: o.arm,
+      arms: loadArms(o.arms),
+      k: Number(o.k ?? DEFAULT_K),
+      repo: root,
+      budget: o.budget === undefined ? undefined : Number(o.budget),
+      extraEnv,
+    });
+    if (out.refused) return usage(out.refused);
+    const runId = `${o.arm}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const file = saveRun(homeOf(root), runId, out.records);
+    console.log(`${out.stopped ? `stopped: ${out.stopped}; ` : ""}run ${runId}\nresults: ${file}`);
+    return out.stopped ? 2 : 0;
+  }
   const task = byId(o._[0]);
   if (!task) return usage(`no task "${o._[0]}" (the example needs --include-example)`);
   if (cmd === "prepare") {

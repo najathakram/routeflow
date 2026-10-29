@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup).
-// Plain node; exit 0 when every check passes. Planted repos stand in for history; no agent runs.
+// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup, budget, run).
+// Plain node; exit 0 when every check passes. Planted repos stand in for history; only the free stub arm runs.
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -385,6 +385,186 @@ try {
     return /timed out or could not start/.test((await gradeWith("", null)).reason);
   });
 
+  // E5/E6/E8: run, with the stub arm only.
+  const arms = FE.loadArms();
+  const env = { EVAL_STUB_SHA: fix, EVAL_STUB_PATHS: "x.mjs" };
+  const go = (o) => FE.runEval({ tasks: [task], armName: "stub", arms, repo: repo.dir, ...o });
+  const before = trees();
+  await check(
+    "E5 a throw inside run: no worktree left, the run is recorded broken",
+    ["broken", true, 0, true],
+    async () => {
+      const out = await go({
+        k: 1,
+        extraEnv: env,
+        gradeFn: () => {
+          throw new Error("boom");
+        },
+      });
+      const r = out.records[0];
+      return [r.result, /boom/.test(r.reason), trees() - before, marker()];
+    },
+  );
+  await check(
+    "E6 stub arm at k=3: three passes, pass^3 = 1, the reported cost, nothing left behind",
+    [["pass", "pass", "pass"], true, 1, [0.25, 0.25, 0.25], 0],
+    async () => {
+      const out6 = await go({ k: 3, extraEnv: env });
+      const passes = out6.records.filter((r) => r.result === "pass").length;
+      const costs = out6.records.map((r) => r.costUsd);
+      return [out6.records.map((r) => r.result), passes === 3, passes / 3, costs, trees() - before];
+    },
+  );
+  await check(
+    "stub arm refuses a ../ or absolute path outside the eval tree, writing nothing",
+    [[2, 2], [true, true], false],
+    async () => {
+      const away = path.join(path.dirname(repo.dir), "rf-esc-away.txt");
+      const arm = (p) =>
+        spawnSync(process.execPath, [path.join(HERE, "factory-eval.mjs"), "stub-arm"], {
+          cwd: repo.dir,
+          encoding: "utf8",
+          env: { ...scrubbedGitEnv(), EVAL_STUB_SHA: fix, EVAL_STUB_PATHS: p },
+        });
+      try {
+        const runs = [arm(path.join("..", path.basename(away))), arm(away)];
+        return [
+          runs.map((r) => r.status),
+          runs.map((r) => /outside the eval tree/.test(r.stderr)),
+          existsSync(away),
+        ];
+      } finally {
+        rmSync(away, { force: true });
+      }
+    },
+  );
+  await check(
+    "a dollar-cap overrun is flagged; a wall-clock overrun is broken",
+    [true, "broken"],
+    async () => {
+      const dear = { stub: { ...arms.stub, capUsd: 0.1 } };
+      const slow = {
+        stub: { ...arms.stub, cmd: ["node", "-e", "setTimeout(()=>{},30000)"], timeoutSec: 1 },
+      };
+      const a = await go({ k: 1, extraEnv: env, arms: dear });
+      const b = await go({ k: 1, arms: slow, env: { EVAL_ALLOW_REAL_ARM: "1" } });
+      return [a.records[0].overCap, b.records[0].result];
+    },
+  );
+  await check(
+    "run refuses an arm that is not the stub unless EVAL_ALLOW_REAL_ARM is set",
+    [true, 0, 0],
+    async () => {
+      const real = { real: { cmd: ["node", "-e", "process.exit(9)"], estUsd: 1, capUsd: 1 } };
+      const out = await go({ armName: "real", arms: real, k: 1, env: {} });
+      const zero = await go({
+        armName: "real",
+        arms: real,
+        k: 1,
+        env: { EVAL_ALLOW_REAL_ARM: "0" },
+      });
+      const refused = [out, zero].every((o) => /EVAL_ALLOW_REAL_ARM/.test(o.refused ?? ""));
+      return [refused, out.records.length + zero.records.length, trees() - before];
+    },
+  );
+  const twenty = Array.from({ length: 20 }, (_, i) => ({ ...task, id: `acme-${i}` }));
+  const dollar = { stub: { ...arms.stub, capUsd: 1 } };
+  await check(
+    "E8 3 x 20 x $1 exceeds the default $40: refused with the total, before any spawn",
+    [true, 0, 0],
+    async () => {
+      const out = await go({ tasks: twenty, arms: dollar, k: 3, env: {} });
+      return [/\$60\.00/.test(out.refused), out.records.length, trees() - before];
+    },
+  );
+  await check("E8 --budget 80 and EVAL_BUDGET_USD=70 allow it", [true, true, false], () => {
+    const g = (o) => FE.checkBudget({ k: 3, taskCount: 20, capUsd: 1, env: {}, ...o }).ok;
+    return [g({ budget: 80 }), g({ env: { EVAL_BUDGET_USD: "70" } }), g({})];
+  });
+  await check(
+    "mid-run: a run that overspends stops the next one when spent + cap would pass the budget",
+    ["budget used up mid-run", 1, 2.5],
+    async () => {
+      const cmd = ["node", "-e", "console.log(JSON.stringify({total_cost_usd:2.5}))"];
+      const pricey = { p: { cmd, capUsd: 1, timeoutSec: 60 } };
+      const allow = { EVAL_ALLOW_REAL_ARM: "1" };
+      const out = await go({ armName: "p", arms: pricey, k: 3, budget: 3, env: allow });
+      return [out.stopped, out.records.length, out.records[0]?.costUsd];
+    },
+  );
+  await check("a cleanup that throws is recorded on the run, not lost", [1, true, 0], async () => {
+    const prepareFn = async (t, o) => {
+      const p = await FE.prepare(t, o);
+      const cleanup = () => {
+        p.cleanup();
+        throw new Error("rm failed");
+      };
+      return { tree: p.tree, cleanup };
+    };
+    const out = await go({ k: 1, extraEnv: env, prepareFn });
+    return [out.records.length, /rm failed/.test(out.records[0]?.reason), trees() - before];
+  });
+  await check(
+    "money compares in cents: 3 x $0.10 fits a $0.30 budget, before and during the run",
+    [true, 3, undefined],
+    async () => {
+      const dime = {
+        d: { cmd: ["node", "-e", "console.log('{\"total_cost_usd\":0.1}')"], capUsd: 0.1 },
+      };
+      const allow = { EVAL_ALLOW_REAL_ARM: "1" };
+      const ok = FE.checkBudget({ k: 3, taskCount: 1, capUsd: 0.1, budget: 0.3, env: {} }).ok;
+      const out = await go({ armName: "d", arms: dime, k: 3, budget: 0.3, env: allow });
+      return [ok, out.records.length, out.stopped];
+    },
+  );
+  await check(
+    "the arm's process never inherits the runner's own EVAL_ settings",
+    "undefined",
+    async () => {
+      const probe = path.join(repo.dir, "probe.txt");
+      const cmd = [
+        "node",
+        "-e",
+        "require('fs').writeFileSync(process.argv[1], String(process.env.EVAL_PROBE))",
+        probe,
+      ];
+      process.env.EVAL_PROBE = "leak";
+      try {
+        await go({
+          armName: "p",
+          arms: { p: { cmd, capUsd: 1 } },
+          k: 1,
+          env: { EVAL_ALLOW_REAL_ARM: "1" },
+        });
+      } finally {
+        delete process.env.EVAL_PROBE;
+      }
+      return readFileSync(probe, "utf8");
+    },
+  );
+  await check("a cap of 0, below 0 or not a number is refused", [false, false, false], () =>
+    [0, -1, "x"].map((capUsd) => FE.checkBudget({ k: 1, taskCount: 1, capUsd, env: {} }).ok),
+  );
+  await check(
+    "total_cost_usd must be a finite number >= 0; anything else is unknown",
+    [null, null, null, null, null, 0.3],
+    () =>
+      [null, '""', "-1", '"0.5"', "1e999", "0.3"].map((v) =>
+        FE.parseCost(`{"total_cost_usd":${v}}`),
+      ),
+  );
+  await check(
+    "the agent sees only the stub's EVAL_ variables",
+    { EVAL_STUB_SHA: "a", EVAL_STUB_PATHS: "x" },
+    () =>
+      FE.agentEnv({
+        EVAL_STUB_SHA: "a",
+        EVAL_STUB_PATHS: "x",
+        EVAL_LIVE_DENYLIST: "/secret",
+        EVAL_ALLOW_REAL_ARM: "1",
+        PATH: "p",
+      }),
+  );
   await check(
     "a malformed landings row is skipped and counted, never echoed",
     [2, [7, 8], false],
@@ -404,6 +584,38 @@ await check(
   "select warns when gh returns exactly 200 PRs (possible truncation)",
   [true, null],
   () => [/200/.test(FE.truncationWarning(200)), FE.truncationWarning(199)],
+);
+
+// Results land under local-assets/evals/<run-id>/ and that path is gitignored.
+const tmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evr-")));
+try {
+  await check(
+    "results are saved under local-assets/evals/<run-id>/, which is gitignored",
+    [true, true, 0],
+    () => {
+      const f = FE.saveRun(tmp, "run-1", [{ taskId: "t1" }]);
+      const rel = path.relative(tmp, f).split(path.sep).join("/");
+      const top = path.join(HERE, "..");
+      const git = ["check-ignore", "-q", "local-assets/evals/run-1/results.jsonl"];
+      return [
+        rel === "local-assets/evals/run-1/results.jsonl",
+        JSON.parse(readFileSync(f, "utf8")).taskId === "t1",
+        spawnSync("git", git, { cwd: top, env: scrubbedGitEnv() }).status,
+      ];
+    },
+  );
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
+
+await check(
+  "arms file: a stub arm and one real template; the stub is free",
+  [["claude-sonnet", "stub"], "node", "claude", ["number", "number", "number"]],
+  () => {
+    const a = FE.loadArms();
+    const nums = ["estUsd", "capUsd", "timeoutSec"].map((k) => typeof a.stub[k]);
+    return [Object.keys(a).sort(), a.stub.cmd[0], a["claude-sonnet"].cmd[0], nums];
+  },
 );
 
 // E10: inventory pin, select rules, live-tenant scan, and the shipped files.
