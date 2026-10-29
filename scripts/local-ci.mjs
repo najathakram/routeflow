@@ -12,7 +12,7 @@
 // Steps, in ci.yml order (see .github/workflows/ci.yml `verify` job):
 //   lockdeps (semver@6.3.1 into a side dir) -> validate-lock-edges (NODE_PATH=lockdeps)
 //   -> [npm ci --ignore-scripts, when package-lock.json or ANY package.json differs from the clone]
-//   -> husky (`prepare` is skipped by --ignore-scripts) -> prisma generate
+//   -> hooks (scripts/ensure-git-hooks.mjs: copies the main checkout's hooks, no husky) -> prisma generate
 //   -> npm run verify (VERIFY_EXCLUDE=@routeflow/control) -> ci-audit-critical
 //   -> ci-audit high report (advisory, never fails the run).
 // DB lane (only when the diff touches a path listed under pull_request.paths in the merge tree's own
@@ -41,7 +41,6 @@ import { fileURLToPath } from "node:url";
 import {
   discoverNodeModules,
   planWorktree,
-  runHuskyKeepingSharedConfig,
 } from "../.claude/skills/bug-swarm/scripts/worktree.mjs";
 import { withHeavySlot } from "./lib/heavy-slot.mjs";
 
@@ -357,9 +356,9 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, installStale, dbLan
   for (const s of wt) {
     if (s.cmd[0] === "git" && s.cmd[1] === "fetch") continue; // main() fetches the PR refs itself
     if (s.cmd[0] === "npx" && s.cmd[1] === "prisma") continue; // re-added below in ci.yml order
-    // B642 (#3880): planWorktree now installs hooks itself; local-ci re-adds the `husky` step below, and
-    // verify runs check-git-hooks, so neither may be mistaken for the packages build (retarget + heavy).
-    if (s.cmd[0] === "npx" && s.cmd[1] === "husky") continue;
+    // B642 / #3951: planWorktree installs hooks itself (ensure-git-hooks, then check-git-hooks); local-ci
+    // re-adds ensure-git-hooks as the `hooks` step below in ci.yml order, and verify runs check-git-hooks.
+    if (s.cmd[0] === "node" && String(s.cmd[1]).endsWith("ensure-git-hooks.mjs")) continue;
     if (s.cmd[0] === "node" && String(s.cmd[1]).endsWith("check-git-hooks.mjs")) continue;
     if (s.cmd[0] === "npx") {
       // the packages build comes after the clone has been retargeted into the worktree
@@ -419,15 +418,14 @@ export function planLocalCi({ mergeSha, dir, from, lockdeps, installStale, dbLan
     });
   }
   plan.push(
-    // `npm ci --ignore-scripts` skips `prepare` (husky); verify's check-git-hooks needs .husky/_.
-    // keepSharedHooksPath: `npx husky` runs a plain `git config core.hooksPath` that rewrites the SHARED
-    // repo config (B642); runSteps puts the shared value back, as worktree.mjs does for its own husky step.
+    // `npm ci --ignore-scripts` skips `prepare` (husky); verify's check-git-hooks needs the hooks.
+    // ensure-git-hooks copies the main checkout's hooks and never writes git config: `npx husky` would
+    // rewrite the SHARED core.hooksPath for every worktree (B642, #3951).
     {
-      name: "husky",
+      name: "hooks",
       cwd: dir,
-      cmd: ["npx", "husky"],
+      cmd: ["node", "scripts/ensure-git-hooks.mjs"],
       timeoutMs: 5 * MIN,
-      keepSharedHooksPath: true,
     },
     {
       name: "prisma-generate",
@@ -508,9 +506,7 @@ export async function runSteps({ steps, exec, now = Date.now, log = () => {} }) 
     const s0 = now();
     let r;
     try {
-      r = await (step.keepSharedHooksPath
-        ? runHuskyKeepingSharedConfig(step.cwd, () => exec(step))
-        : exec(step));
+      r = await exec(step);
     } catch (e) {
       r = { status: 1, error: e };
     }

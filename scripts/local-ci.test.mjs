@@ -1,7 +1,6 @@
 // node --test scripts/local-ci.test.mjs — contract tests for scripts/local-ci.mjs (no network, steps stubbed).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +27,6 @@ import {
   isOwnWorktreeDir,
   main,
 } from "./local-ci.mjs";
-import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const base = {
@@ -58,7 +56,7 @@ test("plan mirrors ci.yml Verify order", () => {
     "retarget-links",
     "lockdeps",
     "validate-lock-edges",
-    "husky",
+    "hooks",
     "prisma-generate",
     "verify",
     "audit-critical",
@@ -97,15 +95,15 @@ test("validate-lock-edges gets NODE_PATH from the lockdeps install", () => {
   assert.match(s.env.NODE_PATH.replace(/\\/g, "/"), /out\/lockdeps\/node_modules$/);
 });
 
-test("npm ci runs only when the install is stale, always --ignore-scripts, then husky", () => {
+test("npm ci runs only when the install is stale, always --ignore-scripts, then hooks", () => {
   assert.ok(!names(planLocalCi(base)).includes("npm-ci"));
   const plan = planLocalCi({ ...base, installStale: true });
   const ci = plan.find((s) => s.name === "npm-ci");
   assert.ok(ci.cmd.includes("--ignore-scripts"));
   assert.ok(ci.heavy);
   const n = names(plan);
-  assert.ok(n.indexOf("npm-ci") < n.indexOf("husky"));
-  assert.ok(n.indexOf("husky") < n.indexOf("prisma-generate"));
+  assert.ok(n.indexOf("npm-ci") < n.indexOf("hooks"));
+  assert.ok(n.indexOf("hooks") < n.indexOf("prisma-generate"));
 });
 
 test("installIsStale: package.json change without a lockfile change still counts (MEDIUM 7)", () => {
@@ -578,50 +576,24 @@ test("removeWorktree source: removeAllLinks runs before any recursive delete (MU
   assert.match(body, /isOwnWorktreeDir\(repo, dir\)/);
 });
 
-test("husky step is flagged keepSharedHooksPath (B642)", () => {
-  const husky = planLocalCi(base).find((s) => s.name === "husky");
-  assert.equal(husky.keepSharedHooksPath, true);
+test("hooks come from ensure-git-hooks, once, and husky never runs (B642, #3951)", () => {
+  for (const installStale of [false, true]) {
+    const plan = planLocalCi({ ...base, installStale });
+    const hooks = plan.filter((s) =>
+      s.cmd?.some((c) => String(c).endsWith("ensure-git-hooks.mjs")),
+    );
+    assert.equal(hooks.length, 1, "exactly one ensure-git-hooks step");
+    assert.equal(hooks[0].name, "hooks");
+    assert.deepEqual(hooks[0].cmd, ["node", "scripts/ensure-git-hooks.mjs"]);
+    assert.ok(
+      !plan.some((s) => s.cmd?.includes("husky")),
+      "`npx husky` rewrites the shared core.hooksPath",
+    );
+    assert.ok(!plan.some((s) => "keepSharedHooksPath" in s));
+  }
 });
 
-test("runSteps puts the shared core.hooksPath back after the husky step rewrote it (B642)", async () => {
-  const env = scrubbedGitEnv();
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "local-ci-husky-"));
-  const git = (...a) => execFileSync("git", a, { cwd: repo, encoding: "utf8", env }).trim();
-  const shared = () => {
-    try {
-      return git("config", "--local", "--get", "core.hooksPath");
-    } catch {
-      return null;
-    }
-  };
-  try {
-    git("init", "-q");
-    // What `npx husky` does: a plain `git config core.hooksPath`, which lands in the shared config.
-    const huskyLike = async () => {
-      git("config", "core.hooksPath", ".husky/_");
-      return { status: 0 };
-    };
-    const steps = [{ name: "husky", cwd: repo, cmd: ["npx", "husky"], keepSharedHooksPath: true }];
-    git("config", "core.hooksPath", "/orig/hooks");
-    const res = await runSteps({ steps, exec: huskyLike });
-    assert.equal(res.ok, true);
-    assert.equal(shared(), "/orig/hooks");
-    git("config", "--local", "--unset-all", "core.hooksPath");
-    await runSteps({ steps, exec: huskyLike });
-    assert.equal(shared(), null);
-    // A step without the flag is left alone (the guard is opt-in per step).
-    await runSteps({ steps: [{ ...steps[0], keepSharedHooksPath: false }], exec: huskyLike });
-    assert.equal(shared(), ".husky/_");
-    // A failing husky step still restores the shared value.
-    git("config", "core.hooksPath", "/orig/hooks");
-    const failing = async () => {
-      git("config", "core.hooksPath", ".husky/_");
-      return { status: 1 };
-    };
-    const bad = await runSteps({ steps, exec: failing });
-    assert.equal(bad.ok, false);
-    assert.equal(shared(), "/orig/hooks");
-  } finally {
-    fs.rmSync(repo, { recursive: true, force: true });
-  }
+test("local-ci no longer imports the removed husky config guard", () => {
+  const src = fs.readFileSync(path.join(HERE, "local-ci.mjs"), "utf8");
+  assert.doesNotMatch(src, /runHuskyKeepingSharedConfig|keepSharedHooksPath/);
 });
