@@ -1,4 +1,11 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -6,10 +13,15 @@ import { AuditService } from "../audit/audit.service";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { roundMoney } from "@routeflow/pricing";
-import { filingPeriod, FilingCadence } from "./period";
+import { filingPeriod, FilingCadence, periodEndedForTenant } from "./period";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { isDeepStrictEqual } from "util";
+import { assertFilingLockReady } from "./filing-lock-ready";
+import { claimFilingLock, findLockedFiling, updateFilingUnlessLocked } from "./filed-periods";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
 import { assertNoParkedReversals, listParkedReversals } from "./parked-reversals";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Round a quantity to 3 decimals — matches Decimal(12,3) + the CSV's .toFixed(3). */
 const roundQty = (n: number) => Math.round(n * 1000) / 1000;
@@ -23,6 +35,48 @@ interface FilingRow {
   unitBasisQty: number;
   netSales: number;
   categoryTax: number;
+}
+
+/** The four rounded totals of a filing (always the ledger aggregate, whatever the template). */
+interface FilingTotals {
+  qty: number;
+  unitBasisQty: number;
+  netSales: number;
+  categoryTax: number;
+}
+
+/**
+ * SA-995: the 409 FILING_STALE sentence. A literal copy of `FILING_STALE_COPY` in @routeflow/types (the API never
+ * value-imports that package at runtime), pinned byte-equal by filing-stale-message-parity.spec.ts.
+ */
+export const FILING_STALE_MESSAGE =
+  "Sales were added to this period after the filing was generated. Regenerate the filing, check it, then lock it.";
+
+/** JSON-normalised, so a Json column read back and a freshly built value compare by content, key order aside. */
+const jsonOf = (v: unknown) => JSON.parse(JSON.stringify(v ?? null));
+
+/**
+ * SA-995 §1: would locking freeze what a regeneration gives now? The stored per-bucket rows (or TX report) and the
+ * four totals against the figures just rebuilt from the ledger. The content, never timestamps: a transaction can
+ * stamp before it commits, and a pair that nets to zero leaves an aggregate filing unchanged (not stale).
+ */
+function sameFilingFigures(
+  stored: {
+    rows: unknown;
+    totalQty: unknown;
+    totalUnitBasisQty: unknown;
+    totalNetSales: unknown;
+    totalCategoryTax: unknown;
+  },
+  fresh: { rowsJson: unknown; totals: FilingTotals },
+): boolean {
+  return (
+    isDeepStrictEqual(jsonOf(stored.rows), jsonOf(fresh.rowsJson)) &&
+    roundQty(Number(stored.totalQty)) === fresh.totals.qty &&
+    roundQty(Number(stored.totalUnitBasisQty)) === fresh.totals.unitBasisQty &&
+    roundMoney(Number(stored.totalNetSales)) === fresh.totals.netSales &&
+    roundMoney(Number(stored.totalCategoryTax)) === fresh.totals.categoryTax
+  );
 }
 
 /**
@@ -65,54 +119,175 @@ export class RegulatedFilingService {
   }
 
   /**
-   * (Re)generate the filing for a PAST period. Upserts the (tenant, category,
-   * period) row — regeneration overwrites the CSV at a deterministic key, bumps
-   * generationCount, and is audit-logged. Totals are the ledger's pre-signed nets,
-   * so a reversal-heavy period legitimately nets down (never re-signed/clamped).
+   * B297 PR5 (SA-088 D4): lock a GENERATED filing. A tenant-admin action with a required reason and an audit
+   * row; there is NO unlock in this work. Refused while the period is still running (a running period never
+   * locks), for a FAILED filing, for an already LOCKED one, and while return reversals for the period are
+   * parked (the figures the lock would freeze are incomplete).
    */
-  async prepareFiling(params: {
-    trackedCategoryId: string;
-    cadence?: FilingCadence;
-    year: number;
-    index?: number;
-    userId?: string | null;
-  }) {
+  async lockFiling(
+    id: string,
+    params: { userId: string; reason: string; impersonatedBy?: string | null },
+  ) {
+    assertFilingLockReady(); // SA-997: switched off, before any read
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
+    const reason = (params.reason ?? "").trim();
+    if (reason.length < 3)
+      throw new BadRequestException(
+        "A reason (at least 3 characters) is required to lock a filing.",
+      );
+
+    const filing = await this.prisma.forTenant().regulatedFiling.findUnique({ where: { id } });
+    if (!filing) throw new NotFoundException("Filing not found");
+    if (filing.status === "LOCKED")
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
+        message: "This filing is already locked.",
+      });
+    if (filing.status !== "GENERATED")
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_NOT_LOCKABLE,
+        message: "Only a successfully generated filing can be locked.",
+      });
+    if (!periodEndedForTenant(filing.periodEnd, await tenantTimeZone(this.prisma)))
+      throw new ConflictException({
+        code: API_ERROR_CODES.FILING_PERIOD_RUNNING,
+        message: "A running period cannot be locked: lock a filing once its period has ended.",
+      });
 
     const category = await this.prisma
       .forTenant()
-      .trackedCategory.findUnique({ where: { id: params.trackedCategoryId } });
+      .trackedCategory.findUnique({ where: { id: filing.trackedCategoryId } });
+    const period = filingPeriod(
+      filing.cadence as FilingCadence,
+      Number(filing.periodStart.getUTCFullYear()),
+      this.indexOf(filing.cadence as FilingCadence, filing.periodStart),
+    );
     if (!category) throw new NotFoundException("Tracked category not found");
 
-    const cadence = (params.cadence ?? category.reportCadence) as FilingCadence;
-    const index = params.index ?? 1; // ANNUAL ignores it
-    // Cadence-specific range → a clean 400 rather than filingPeriod's RangeError.
-    if (cadence === "QUARTERLY" && (index < 1 || index > 4))
-      throw new BadRequestException("index (quarter) must be 1-4 for a QUARTERLY filing");
-    if (cadence === "MONTHLY" && (index < 1 || index > 12))
-      throw new BadRequestException("index (month) must be 1-12 for a MONTHLY filing");
-
-    const { periodKey, buckets, from, to } = filingPeriod(cadence, params.year, index);
-
-    // `to` is the exclusive end; the period is complete once now >= to.
-    if (to > new Date()) {
-      throw new BadRequestException(
-        "Filings can only be prepared for completed periods — the period must be in the past.",
+    // ONE transaction (Opus review of #3726, MUST 4): the conditional claim and its audit row commit together or
+    // not at all, so a filing can never be LOCKED without the row that says who locked it and why, nor the
+    // reverse. The audit row is written on the tx (`AuditService.log` swallows errors and uses its own client, so
+    // it could not roll back with the claim). Claimed conditionally: a concurrent lock (or a regeneration that
+    // flipped it) cannot double-lock.
+    //
+    // SA-995 §1: the order inside is the design. (1) The claim's UPDATE takes the row's exclusive lock and waits for
+    // every ledger writer holding the share lock on it (`lockFilingRowsCovering`); later writers wait for this
+    // transaction. (2) The parked reversals are re-read, and (3) the figures are rebuilt from the ledger, both after
+    // the claim, so they see every writer that committed before it. (4) Any difference from the stored figures is a
+    // 409 FILING_STALE and the whole transaction rolls back: the filing stays GENERATED. (5) The audit row.
+    // READ COMMITTED on purpose (no isolation option): each statement after the claim must see the writers that
+    // committed while it waited; a Serializable snapshot would have been taken before the claim.
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      const claimed = await claimFilingLock(tx, { id, lockedById: params.userId, reason });
+      if (claimed.count !== 1)
+        throw new ConflictException({
+          code: API_ERROR_CODES.FILING_ALREADY_LOCKED,
+          message: "This filing changed while it was being locked; reload and retry.",
+        });
+      assertNoParkedReversals(
+        await listParkedReversals(this.prisma.forTenant(), {
+          trackedCategoryId: filing.trackedCategoryId,
+          buckets: period.buckets,
+        }),
+        { categoryName: category.name, periodKey: filing.periodKey },
       );
+      const stored = await tx.regulatedFiling.findUnique({ where: { id } });
+      const fresh = await this.buildFilingFigures(category, {
+        trackedCategoryId: filing.trackedCategoryId,
+        cadence: filing.cadence as FilingCadence,
+        periodKey: filing.periodKey,
+        buckets: period.buckets,
+        from: period.from,
+        to: period.to,
+      });
+      if (!sameFilingFigures(stored, fresh))
+        throw new ConflictException({
+          code: API_ERROR_CODES.FILING_STALE,
+          message: FILING_STALE_MESSAGE,
+        });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: params.userId,
+          impersonatedBy: params.impersonatedBy ?? null,
+          action: "regulated_filing.locked",
+          entityType: "RegulatedFiling",
+          entityId: id,
+          meta: {
+            trackedCategoryId: filing.trackedCategoryId,
+            periodKey: filing.periodKey,
+            reason,
+            totalCategoryTax: Number(filing.totalCategoryTax),
+            generationCount: filing.generationCount,
+          },
+        },
+      });
+      return tx.regulatedFiling.findUnique({ where: { id } });
+    });
+  }
+
+  /**
+   * B297 PR5: a regeneration's row write that can never UNLOCK a filing. Conditional on the row not being LOCKED:
+   * when a lock committed first the stored (locked) row is returned unchanged instead of being flipped back to
+   * GENERATED.
+   */
+  private async regenerateUnlessLocked(id: string, data: Record<string, unknown>) {
+    const db = this.prisma.forTenant();
+    try {
+      return await updateFilingUnlessLocked(db, id, data);
+    } catch (err: any) {
+      if (err?.code !== "P2025") throw err; // no row matched: it is LOCKED now
+      return db.regulatedFiling.findUniqueOrThrow({ where: { id } });
     }
+  }
 
-    // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
-    // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an
-    // unresolved parked row can never be filed around; the nightly cron retries and logs.
-    assertNoParkedReversals(
-      await listParkedReversals(this.prisma.forTenant(), {
-        trackedCategoryId: params.trackedCategoryId,
-        buckets,
-      }),
-      { categoryName: category.name, periodKey },
-    );
+  /** Best-effort object delete: a leaked object is harmless, a failed delete must not fail the filing. */
+  private async dropObject(key: string): Promise<void> {
+    try {
+      await this.storage.delete(key);
+    } catch (err: any) {
+      this.logger.warn(`Could not delete superseded filing object ${key}: ${err?.message ?? err}`);
+    }
+  }
 
+  /** The 1-based month / quarter index of a period's start (ANNUAL ignores it). */
+  private indexOf(cadence: FilingCadence, start: Date): number {
+    const m = start.getUTCMonth();
+    if (cadence === "MONTHLY") return m + 1;
+    if (cadence === "QUARTERLY") return Math.floor(m / 3) + 1;
+    return 1;
+  }
+
+  /**
+   * The figures one filing freezes, built from the ledger NOW: the per-bucket rows (or the TX per-invoice report),
+   * the four rounded totals, and the CSV. `prepareFiling` stores them; `lockFiling` rebuilds them after its claim
+   * and refuses (FILING_STALE) when they differ from what was stored (SA-995). Reads only; nothing is uploaded.
+   */
+  async buildFilingFigures(
+    category: {
+      id: string;
+      name: string;
+      reportTemplate: any;
+      unitBasis: any;
+      wholesalerLicenseNo: string | null;
+    },
+    period: {
+      trackedCategoryId: string;
+      cadence: FilingCadence;
+      periodKey: string;
+      buckets: string[];
+      from: Date;
+      to: Date;
+    },
+  ): Promise<{
+    rows: FilingRow[];
+    totals: FilingTotals;
+    csv: string;
+    rowsJson: Prisma.InputJsonValue;
+  }> {
+    const { periodKey, buckets, from, to } = period;
+    const params = { trackedCategoryId: period.trackedCategoryId };
     // Reuse the netting-correct read model, then defensively keep only rows whose
     // periodBucket is in this filing's bucket set. getLedger's from/to is a soldAt
     // window, so a cross-period reversal (booked in a later period) could otherwise
@@ -195,8 +370,84 @@ export class RegulatedFilingService {
       });
       rowsJson = rows as unknown as Prisma.InputJsonValue;
     }
-    // Deterministic, tenant-scoped key — regeneration overwrites in place.
-    const csvKey = `regulated-filings/${tenantId}/${params.trackedCategoryId}/${periodKey}.csv`;
+    return { rows, totals, csv, rowsJson };
+  }
+
+  /**
+   * (Re)generate the filing for a PAST period. Upserts the (tenant, category,
+   * period) row — regeneration overwrites the CSV at a deterministic key, bumps
+   * generationCount, and is audit-logged. Totals are the ledger's pre-signed nets,
+   * so a reversal-heavy period legitimately nets down (never re-signed/clamped).
+   */
+  async prepareFiling(params: {
+    trackedCategoryId: string;
+    cadence?: FilingCadence;
+    year: number;
+    index?: number;
+    userId?: string | null;
+  }) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("Filings are tenant-scoped");
+
+    const category = await this.prisma
+      .forTenant()
+      .trackedCategory.findUnique({ where: { id: params.trackedCategoryId } });
+    if (!category) throw new NotFoundException("Tracked category not found");
+
+    const cadence = (params.cadence ?? category.reportCadence) as FilingCadence;
+    const index = params.index ?? 1; // ANNUAL ignores it
+    // Cadence-specific range → a clean 400 rather than filingPeriod's RangeError.
+    if (cadence === "QUARTERLY" && (index < 1 || index > 4))
+      throw new BadRequestException("index (quarter) must be 1-4 for a QUARTERLY filing");
+    if (cadence === "MONTHLY" && (index < 1 || index > 12))
+      throw new BadRequestException("index (month) must be 1-12 for a MONTHLY filing");
+
+    const { periodKey, buckets, from, to } = filingPeriod(cadence, params.year, index);
+
+    // `to` is the exclusive end; the period is complete once now >= to.
+    // SA-995 §3: complete on the TENANT's day, not UTC's (no grace window).
+    if (!periodEndedForTenant(to, await tenantTimeZone(this.prisma))) {
+      throw new BadRequestException(
+        "Filings can only be prepared for completed periods — the period must be in the past.",
+      );
+    }
+
+    // B297 PR5: a LOCKED filing is closed. It is never regenerated: the stored artifact and totals ARE the
+    // filing (re-running the ledger read could only differ by what the lock exists to keep out).
+    const locked = await findLockedFiling(this.prisma.forTenant(), {
+      trackedCategoryId: params.trackedCategoryId,
+      periodKey,
+    });
+    if (locked?.status === "LOCKED") return locked;
+
+    // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
+    // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an
+    // unresolved parked row can never be filed around; the nightly cron retries and logs.
+    assertNoParkedReversals(
+      await listParkedReversals(this.prisma.forTenant(), {
+        trackedCategoryId: params.trackedCategoryId,
+        buckets,
+      }),
+      { categoryName: category.name, periodKey },
+    );
+
+    const { totals, csv, rowsJson } = await this.buildFilingFigures(category, {
+      trackedCategoryId: params.trackedCategoryId,
+      cadence,
+      periodKey,
+      buckets,
+      from,
+      to,
+    });
+    // Tenant-scoped, UNIQUE-per-generation key. B297 PR5 (Opus review of #3726, MUST 3): the CSV is staged at a
+    // fresh key and the row is pointed at it only when the conditional write below wins, so a lock that commits
+    // anywhere between the re-read and the write can never have its stored CSV overwritten. The re-read is
+    // still here as the cheap exit; the conditional row write is the actual guard.
+    const csvKey = `regulated-filings/${tenantId}/${params.trackedCategoryId}/${periodKey}.${randomUUID()}.csv`;
+    const lockedNow = await this.prisma.forTenant().regulatedFiling.findFirst({
+      where: { trackedCategoryId: params.trackedCategoryId, periodKey },
+    });
+    if (lockedNow?.status === "LOCKED") return lockedNow;
     await this.storage.upload(csvKey, Buffer.from(csv, "utf8"), "text/csv");
 
     // forTenant() can't inject into a composite-unique upsert — findFirst + create/update.
@@ -232,7 +483,7 @@ export class RegulatedFilingService {
     let filing;
     try {
       filing = existing
-        ? await this.prisma.forTenant().regulatedFiling.update({ where: { id: existing.id }, data })
+        ? await this.regenerateUnlessLocked(existing.id, data)
         : await (this.prisma.forTenant().regulatedFiling.create as any)({ data });
     } catch (err: any) {
       if (err?.code !== "P2002") throw err;
@@ -240,11 +491,20 @@ export class RegulatedFilingService {
         where: { trackedCategoryId: params.trackedCategoryId, periodKey },
       });
       if (!raced) throw err;
-      filing = await this.prisma.forTenant().regulatedFiling.update({
-        where: { id: raced.id },
-        data: { ...data, generationCount: raced.generationCount + 1 },
+      filing = await this.regenerateUnlessLocked(raced.id, {
+        ...data,
+        generationCount: raced.generationCount + 1,
       });
     }
+
+    // A lock that committed while this regeneration ran won: nothing was regenerated, so nothing is audited as
+    // such, the staged CSV is dropped, and the locked row (and its own CSV) is returned untouched.
+    if (filing.status === "LOCKED") {
+      await this.dropObject(csvKey);
+      return filing;
+    }
+    // The row now points at the staged CSV: the previous generation's object is orphaned.
+    if (existing?.csvKey && existing.csvKey !== csvKey) await this.dropObject(existing.csvKey);
 
     await this.audit.log({
       tenantId,

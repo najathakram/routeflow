@@ -29,6 +29,8 @@ export class ListInvoicesDto {
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortOrder?: "asc" | "desc";
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isOverdue?: boolean;
+  /** SA-1026: only invoices staff are waiting on a payment for (the To collect list). Ignored for a buyer. */
+  @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() toCollect?: boolean;
   /** Shipments view: only invoices that carry a carrier tracking number. */
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() shipped?: boolean;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) page?: number;

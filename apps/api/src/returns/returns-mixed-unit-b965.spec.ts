@@ -278,7 +278,7 @@ describe("ReturnsService.processRefund — the order pool in PIECES (B967)", () 
     withReturn(1.5);
     await service.processRefund("ret-1");
     expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({
-      pooledRefund: [{ productId: "pp", qty: 18 }],
+      pooledRefund: [{ productId: "pp", orderItemId: null, qty: 18 }],
     });
   });
 

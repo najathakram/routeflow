@@ -132,15 +132,16 @@ const hrefs = () =>
     .filter((h): h is string => !!h);
 
 describe("hub list (below xl)", () => {
-  it("shows the 7 groups in order, with the old testids kept and no Billing group", async () => {
+  it("shows the 8 groups in order, with the old testids kept and no Billing group", async () => {
     renderWithProviders(<SettingsHub isAdmin />);
     const ids = screen.getAllByTestId(/^settings-group-/).map((g) => g.dataset.testid);
     expect(ids).toEqual(
       [
-        "fulfilment",
         "business",
-        "payments",
+        "fulfilment",
+        "counter",
         "selling",
+        "payments",
         "notifications",
         "compliance",
         "integrations",
@@ -149,12 +150,13 @@ describe("hub list (below xl)", () => {
     expect(screen.queryByTestId("settings-group-billing")).not.toBeInTheDocument();
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(titles).toEqual([
-      "How you sell",
       "Business & team",
+      "Orders & delivery",
+      "Counter",
+      "Pricing & products",
       "Invoicing & payments",
-      "Selling & pricing",
-      "Notifications",
-      "Compliance",
+      "Notifications & email",
+      "Compliance & restrictions",
       "Integrations & import",
     ]);
   });
@@ -321,9 +323,28 @@ describe("hub list (below xl)", () => {
     expect(
       within(list).getAllByText("Counter", { selector: "strong, b, mark" }).length,
     ).toBeGreaterThan(0);
-    expect(within(list).getAllByText("How you sell › Counter quick keys").length).toBeGreaterThan(
-      0,
+    expect(within(list).getAllByText("Counter › Quick keys").length).toBeGreaterThan(0);
+  });
+
+  it("a Store pickup result is not a dead end: it carries a 'Go to Orders' link", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), {
+      target: { value: "store pickup" },
+    });
+    const list = screen.getByRole("list", { name: "Search results" });
+    expect(within(list).getByText("Orders & delivery › Store pickup")).toBeInTheDocument();
+    expect(within(list).getByRole("link", { name: "Go to Orders" })).toHaveAttribute(
+      "href",
+      "/orders",
     );
+  });
+
+  it("the SMTP sub-results read 'Email sending (SMTP)' in their crumb, never the old label", () => {
+    renderWithProviders(<SettingsHub isAdmin />);
+    fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "smtp" } });
+    const list = screen.getByRole("list", { name: "Search results" });
+    expect(within(list).getAllByText(/Email sending \(SMTP\)/).length).toBeGreaterThan(1);
+    expect(within(list).queryByText(/Notifications & email › Email \(SMTP\)/)).toBeNull();
   });
 
   it("the empty state keeps its copy and suggests words", () => {
@@ -465,7 +486,7 @@ describe("rail (xl and up)", () => {
     const nav = screen.getByRole("navigation", { name: "Settings" });
     expect(within(nav).getByLabelText("Search settings")).toBeInTheDocument();
     expect(within(nav).getByTestId("business-card-rail")).toBeInTheDocument();
-    expect(within(nav).getAllByTestId(/^settings-group-/)).toHaveLength(7);
+    expect(within(nav).getAllByTestId(/^settings-group-/)).toHaveLength(8);
   });
 
   it("the first focusable in the rail skips to the content, which is a focus target", () => {

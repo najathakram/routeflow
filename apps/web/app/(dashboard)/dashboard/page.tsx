@@ -43,7 +43,8 @@ import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusB
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { quickCreateRule } from "@/lib/counter-sale";
-import { staffMay } from "@routeflow/types";
+import { ORDER_STATUS_VALUES, staffMay } from "@routeflow/types";
+import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
@@ -314,6 +315,35 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 
 /** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
 const UNKNOWN_KPI = "—";
+
+/** A placed order's lifecycle status (DRAFT is not an order yet, so it has no tile and no count). */
+type PipelineStatus = Exclude<OrderStatusValue, "DRAFT">;
+
+// One tile per placed-order status, rendered in ORDER_STATUS_VALUES order. The Record is exhaustive, so a new
+// server status is a compile error here, not a silently missing tile (SA-1049 R1). `tenantLabel` tiles take the
+// workspace's own wording (useOrderStatusLabel).
+const PIPELINE_TILES: Record<
+  PipelineStatus,
+  { label: string; color: string; bg: string; tenantLabel?: boolean }
+> = {
+  PENDING: { label: "Pending", color: "text-warning", bg: "bg-warning-bg" },
+  CONFIRMED: { label: "Confirmed", color: "text-brand-600", bg: "bg-brand-50" },
+  OUT_FOR_DELIVERY: {
+    label: "Out for delivery",
+    color: "text-blue-600",
+    bg: "bg-blue-50",
+    tenantLabel: true,
+  },
+  PARTIALLY_DELIVERED: {
+    label: "Partly delivered",
+    color: "text-warning",
+    bg: "bg-warning-bg",
+    tenantLabel: true,
+  },
+  DELIVERED: { label: "Delivered", color: "text-success", bg: "bg-success-bg" },
+  CANCELLED: { label: "Cancelled", color: "text-navy/70", bg: "" },
+};
+const PIPELINE_STATUSES = ORDER_STATUS_VALUES.filter((st): st is PipelineStatus => st !== "DRAFT");
 
 /**
  * Layout for a KPI tile (CSS only; the shared StatCard is untouched): the label wraps instead of
@@ -729,6 +759,11 @@ export default function DashboardPage() {
     { page: 1, limit: 1, status: "OUT_FOR_DELIVERY" },
     { ...POLL, enabled: readsBusinessData },
   );
+  // Partly delivered is not terminal (a remainder is still owed), so it is polled like Out for delivery.
+  const partlyDeliveredQ = useOrders(
+    { page: 1, limit: 1, status: "PARTIALLY_DELIVERED" },
+    { ...POLL, enabled: readsBusinessData },
+  );
   // All-time terminal totals barely move: fetched once, not polled (every poll was 7 GET /orders).
   const deliveredQ = useOrders(
     { page: 1, limit: 1, status: "DELIVERED" },
@@ -738,7 +773,11 @@ export default function DashboardPage() {
     { page: 1, limit: 1, status: "CANCELLED" },
     { enabled: readsBusinessData && isOperator },
   );
-  const ordersLoading = pendingQ.isLoading || confirmedQ.isLoading || outForDeliveryQ.isLoading;
+  const ordersLoading =
+    pendingQ.isLoading ||
+    confirmedQ.isLoading ||
+    outForDeliveryQ.isLoading ||
+    partlyDeliveredQ.isLoading;
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
     { urgent: true, limit: 5 },
     { ...POLL, enabled: readsBusinessData },
@@ -807,10 +846,11 @@ export default function DashboardPage() {
   // An UNKNOWN figure (request failed or unanswered) is null and renders "—", never a zero.
   const sumKnown = (parts: Array<number | null>): number | null =>
     parts.some((n) => n === null) ? null : parts.reduce<number>((a, n) => a + (n as number), 0);
-  const orderPipeline = {
+  const orderPipeline: Record<PipelineStatus, number | null> = {
     PENDING: shipCount(pendingQ),
     CONFIRMED: shipCount(confirmedQ),
     OUT_FOR_DELIVERY: shipCount(outForDeliveryQ),
+    PARTIALLY_DELIVERED: shipCount(partlyDeliveredQ),
     DELIVERED: shipCount(deliveredQ),
     CANCELLED: shipCount(cancelledQ),
   };
@@ -818,6 +858,7 @@ export default function DashboardPage() {
     orderPipeline.PENDING,
     orderPipeline.CONFIRMED,
     orderPipeline.OUT_FOR_DELIVERY,
+    orderPipeline.PARTIALLY_DELIVERED,
   ]);
 
   const routesToday = shipCount({ data: routeRunsData });
@@ -1153,57 +1194,36 @@ export default function DashboardPage() {
             ordersLoading && "animate-pulse [&_span]:invisible",
           )}
         >
-          <div className="grid min-w-[520px] grid-cols-5 divide-x divide-surface-border">
-            {[
-              {
-                label: "Pending",
-                key: "PENDING" as const,
-                color: "text-warning",
-                bg: "bg-warning-bg",
-              },
-              {
-                label: "Confirmed",
-                key: "CONFIRMED" as const,
-                color: "text-brand-600",
-                bg: "bg-brand-50",
-              },
-              {
-                label: statusLabel("OUT_FOR_DELIVERY", "Out for delivery"),
-                key: "OUT_FOR_DELIVERY" as const,
-                color: "text-blue-600",
-                bg: "bg-blue-50",
-              },
-              {
-                label: "Delivered",
-                key: "DELIVERED" as const,
-                color: "text-success",
-                bg: "bg-success-bg",
-              },
-              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/70", bg: "" },
-            ].map(({ label, key, color, bg }) => (
-              <Link
-                key={key}
-                href={`/orders?status=${key}`}
-                tabIndex={ordersLoading ? -1 : undefined}
-                className={cn(
-                  "flex flex-col gap-1 whitespace-nowrap px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
-                  bg && (orderPipeline[key] ?? 0) > 0 && bg,
-                )}
-              >
-                <span
+          <div className="grid min-w-[624px] grid-cols-6 divide-x divide-surface-border">
+            {PIPELINE_STATUSES.map((key) => {
+              const tile = PIPELINE_TILES[key];
+              const { color, bg } = tile;
+              const label = tile.tenantLabel ? statusLabel(key, tile.label) : tile.label;
+              return (
+                <Link
+                  key={key}
+                  href={`/orders?status=${key}`}
+                  tabIndex={ordersLoading ? -1 : undefined}
                   className={cn(
-                    "text-xl font-semibold tabular-nums",
-                    (orderPipeline[key] ?? 0) > 0 ? color : "text-navy/20",
+                    "flex flex-col gap-1 whitespace-nowrap px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
+                    bg && (orderPipeline[key] ?? 0) > 0 && bg,
                   )}
                 >
-                  {orderPipeline[key] ?? UNKNOWN_KPI}
-                </span>
-                <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
-                {(key === "DELIVERED" || key === "CANCELLED") && (
-                  <span className="-mt-0.5 text-[10.5px] font-medium text-navy/50">all time</span>
-                )}
-              </Link>
-            ))}
+                  <span
+                    className={cn(
+                      "text-xl font-semibold tabular-nums",
+                      (orderPipeline[key] ?? 0) > 0 ? color : "text-navy/20",
+                    )}
+                  >
+                    {orderPipeline[key] ?? UNKNOWN_KPI}
+                  </span>
+                  <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
+                  {(key === "DELIVERED" || key === "CANCELLED") && (
+                    <span className="-mt-0.5 text-[10.5px] font-medium text-navy/50">all time</span>
+                  )}
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

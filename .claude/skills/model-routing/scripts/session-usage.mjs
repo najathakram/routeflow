@@ -246,6 +246,7 @@ const NAME_TO_PREFIX = [
   { test: (name) => name === "Claude Opus 5", prefix: "claude-opus-5" },
   { test: (name) => name === "Claude Opus 5.5", prefix: "claude-opus-5-5" },
   { test: (name) => name === "Claude Sonnet 5", prefix: "claude-sonnet-5" },
+  { test: (name) => name === "Claude Sonnet 5.5", prefix: "claude-sonnet-5-5" },
   { test: (name) => name === "Claude Sonnet 4.6", prefix: "claude-sonnet-4-6" },
   { test: (name) => name === "Claude Haiku 4.5", prefix: "claude-haiku-4-5" },
 ];
@@ -296,7 +297,7 @@ function parseModelCards(mdText) {
   return { table, pricesAsOf };
 }
 
-function loadPriceTable(flags) {
+export function loadPriceTable(flags) {
   const warnings = [];
   let table = {};
   let pricesAsOf = null;
@@ -332,7 +333,10 @@ function ratesForModel(modelId, priceTable) {
   // it today, but sort defensively in case new ids are added).
   const prefixes = Object.keys(priceTable).sort((a, b) => b.length - a.length);
   for (const prefix of prefixes) {
-    if (modelId.startsWith(prefix)) return priceTable[prefix];
+    // The prefix must end the id or be followed by a date, an @ pin or a [context] suffix: claude-sonnet-5 never
+    // prices claude-sonnet-5-5, a different model with its own row (or none, and then its cost is null).
+    if (modelId.startsWith(prefix) && /^(?:$|-\d{8}|@|\[)/.test(modelId.slice(prefix.length)))
+      return priceTable[prefix];
   }
   return null;
 }
@@ -400,7 +404,7 @@ function cacheHitRatio(b) {
 // call's usage is repeated on every streamed content-block line sharing the
 // same message.id (verified: 112 usage-bearing lines / 54 unique ids in one
 // real session transcript), so counting every line would inflate sums ~2x.
-function* readUsageRecords(filePath, warnings) {
+export function* readUsageRecords(filePath, warnings) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -442,7 +446,7 @@ function* readUsageRecords(filePath, warnings) {
 
 // Folds a list of { model, usage, timestamp } records into
 // { byModel, total, messages, firstAt, lastAt, activeMs, cacheHitRatio }.
-function aggregate(records, priceTable, idleGapMs, warnings) {
+export function aggregate(records, priceTable, idleGapMs, warnings) {
   const byModel = {};
   const times = [];
   const unknownModels = new Set();
@@ -506,7 +510,7 @@ const PHASE_LABEL_RX = /^PHASE:\s*(.+?)\s*\u00b7\s*LABEL:\s*(.+?)\s*$/m;
 // first, from the SAME aggregate() an agent's tokens/cost are already computed
 // from (owner ruling 2026-09-10, session-usage.mjs durations). 0 when there
 // are fewer than two distinct timestamps to span.
-function agentDurationMs(agentAgg) {
+export function agentDurationMs(agentAgg) {
   if (!agentAgg.firstAt || !agentAgg.lastAt) return 0;
   const d = Date.parse(agentAgg.lastAt) - Date.parse(agentAgg.firstAt);
   return Number.isFinite(d) && d > 0 ? d : 0;
@@ -957,6 +961,17 @@ function runSelftest() {
   const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "session-usage-selftest-"));
   let ok = true;
   try {
+    // Sonnet 5.5 is the house builder: its own row prices it, and the strict prefix match keeps the Sonnet 5 row
+    // from pricing it (and an unlisted version, such as claude-sonnet-5-9, from pricing at all).
+    {
+      const parsed = parseModelCards(fs.readFileSync(MODEL_CARDS_PATH, "utf8"));
+      const r55 = ratesForModel("claude-sonnet-5-5", parsed.table);
+      assert(r55 && r55 === parsed.table["claude-sonnet-5-5"], "claude-sonnet-5-5 did not resolve to its own row");
+      assert(r55.in === 2 && r55.out === 10 && r55.cacheRead === 0.2, `Sonnet 5.5 rates wrong: ${JSON.stringify(r55)}`);
+      assert(ratesForModel("claude-sonnet-5", parsed.table) === parsed.table["claude-sonnet-5"], "claude-sonnet-5 lost its row");
+      assert(ratesForModel("claude-sonnet-5-9", parsed.table) === null, "an unlisted version was priced on a family row");
+      assert(ratesForModel("claude-haiku-4-5-20251001", parsed.table) === parsed.table["claude-haiku-4-5"], "a dated id lost its row");
+    }
     const claudeHome = path.join(tmpBase, "fakehome", ".claude");
     const fakeRepo = path.join(tmpBase, "fakerepo"); // never touched on disk; only its string is encoded
     const enc = encodeProjectDir(path.resolve(fakeRepo));
@@ -1307,4 +1322,13 @@ function main() {
   }
 }
 
-main();
+// Run only as a CLI: importing this module (the agent-log hook, R1) must run nothing.
+// realpath: run through a junction (~/.claude/skills is one), argv[1] is the link while import.meta.url is the target.
+const isCli = () => {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (process.argv[1] && isCli()) main();

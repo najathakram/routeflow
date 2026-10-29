@@ -42,7 +42,7 @@ export type CapabilityPresetSummary = Omit<BusinessProfileSummary, "key"> & {
 
 /** `GET /platform-admin/tenants/:id/business-capabilities` (BO-03): the ticks, read back from the server. */
 export interface BusinessCapabilities {
-  /** false = `fulfilment_model` is unset: nothing is ticked and the business works as before. */
+  /** false = `fulfilment_model` is unset: the ticks show what the business does today, and the model stays unset until a box changes. */
   configured: boolean;
   delivery: boolean;
   doorPayments: boolean;

@@ -25,6 +25,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 import { IdempotencyService } from "../common/idempotency.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -120,14 +121,14 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   });
 
   /**
-   * A walk-in customer, one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
+   * A customer (not a walk-in unless `walkIn`: W-913 refuses store credit to a walk-in, and these cases exercise it), one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
    * `method` (CASH unless a case needs another tender, e.g. CREDIT_NOTE for the store-credit rule).
    */
   async function seed(
     label: string,
     opts: { paid?: boolean; walkIn?: boolean; method?: string } = {},
   ) {
-    const { paid = true, walkIn = true, method = "CASH" } = opts;
+    const { paid = true, walkIn = false, method = "CASH" } = opts;
     seq += 1;
     const slug = assertTestTenant(
       `qa-refund-${RUN}-${seq}-${label}`,
@@ -291,7 +292,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
 
   /**
    * F8: a DETERMINISTIC race. A raw pg connection takes the Return row lock first; `start()` then launches the competing
-   * service calls; the helper polls pg_stat_activity (a recursive walk of pg_blocking_pids from the holder, so a second
+   * service calls; the helper polls the blocked backends (a recursive walk from the holder, so a second
    * waiter queued behind the first waiter counts too) until ALL of them are queued behind that lock, and only then
    * releases it. So the calls really do contend for the lock (no timing luck, no call that finished before the other
    * started), and the winner is whoever Postgres wakes first. Returns what the calls settled to.
@@ -315,19 +316,15 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       const holderPid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
       const calls = start();
       settled = Promise.allSettled(calls);
-      let queued = 0;
-      for (let i = 0; i < 200 && queued < calls.length; i++) {
-        const r = await poller.query(
-          `WITH RECURSIVE w(pid) AS (
-             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-             UNION
-             SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
-           ) SELECT count(*)::int AS n FROM w`,
-          [holderPid],
-        );
-        queued = Number(r.rows[0].n);
-        if (queued < calls.length) await new Promise((res) => setTimeout(res, 50));
-      }
+      const queued = (
+        await waitUntilBlocked(poller, {
+          holderPid,
+          transitive: true,
+          atLeast: calls.length,
+          timeoutMs: 10_000,
+          intervalMs: 50,
+        })
+      ).length;
       if (queued < calls.length) {
         throw new Error(`only ${queued} of ${calls.length} calls queued behind the Return lock`);
       }
@@ -675,7 +672,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   }, 60_000);
 
   it("15. the quote carries the additive refund fields for a paid walk-in sale (canRefund true, paidMethods [CASH]) and canRefund false for an unpaid one", async () => {
-    const s = await seed("quote");
+    const s = await seed("quote", { walkIn: true });
     const q = await inTenant(s, () =>
       inline.quoteService.quote(
         {
