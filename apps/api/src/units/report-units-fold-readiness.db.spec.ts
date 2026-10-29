@@ -42,7 +42,7 @@ describeDb("units fold-in readiness census (SA-984 D4), real Postgres, through t
   let planVersionId = "";
 
   const census = (...extra: string[]) =>
-    spawnSync(process.execPath, [SCRIPT, "--target-host=127.0.0.1", ...extra], {
+    spawnSync(process.execPath, [SCRIPT, `--target-host=${new URL(url).hostname}`, ...extra], {
       env: { ...process.env, DATABASE_URL: url, PROTECTED_TENANT_SLUGS: "" },
       encoding: "utf8",
     });
