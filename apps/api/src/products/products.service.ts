@@ -2049,9 +2049,10 @@ export class ProductsService {
   async bulkDelete(ids: string[]): Promise<{
     deleted: number;
     softDeleted: number;
+    softDeletedIds: string[];
     skipped: BulkDeleteSkip[];
   }> {
-    if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
+    if (ids.length === 0) return { deleted: 0, softDeleted: 0, softDeletedIds: [], skipped: [] };
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
 
@@ -2067,7 +2068,7 @@ export class ProductsService {
     const nameById = new Map(products.map((p) => [p.id, p.name]));
     const peek = await planProductDelete(db, tenantId, ids, nameById);
     if (peek.softIds.length === 0 && peek.hardIds.length === 0) {
-      return { deleted: 0, softDeleted: 0, skipped: peek.skipped };
+      return { deleted: 0, softDeleted: 0, softDeletedIds: [], skipped: peek.skipped };
     }
 
     let outcome: ProductDeleteOutcome;

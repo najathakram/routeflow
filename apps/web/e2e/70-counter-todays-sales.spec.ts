@@ -182,6 +182,30 @@ test("R7b 2.2: the Void dialog title names the sale total", async ({ page, conte
   await expect(page.getByRole("dialog", { name: /Void sale/ })).toContainText("$");
 });
 
+test("W-713 / F11: the reprint of a check sale reads the check number beside the method", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const check = {
+    ...ROW,
+    methods: [{ method: "CHECK", amount: 22.5 }],
+    checkReference: "1042",
+  };
+  await page.route(/\/api\/v1\/orders\/counter-sale\/today/, (r) =>
+    r.fulfill({ json: { ...PAGE1, data: [check] } }),
+  );
+  await page.route(/\/api\/v1\/orders\/e2e-o1$/, (r) => r.fulfill({ json: ORDER }));
+  await page.goto("/orders/counter-sale");
+  await page.getByRole("button", { name: "Today's sales" }).click();
+  await page.getByTestId("today-row-e2e-o1").getByRole("button", { name: "Reprint" }).click();
+  await expect(page.getByTestId("receipt-print-root").getByTestId("receipt-method")).toContainText(
+    "Check #1042",
+  );
+});
+
 test("R7b 2.4: on a day with 7 sales the first sale row is visible without scrolling at 390", async ({
   page,
   context,

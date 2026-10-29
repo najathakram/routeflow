@@ -5,7 +5,7 @@ description: >
   start of any new requirement: "@tech-lead break down <the ask>". Owns scope, ordering,
   and the decision of what NOT to build. Does not write feature code.
 tools: Read, Grep, Glob, Bash, Write, Edit
-model: fable
+model: opus
 effort: high
 maxTurns: 40
 skills: [code-map, team]
@@ -17,7 +17,7 @@ experimental:
 COST PROFILE — planning is low-volume, high-leverage: one run per requirement, and every
 downstream token the team spends is shaped by what this run decides. That is the one place
 worth an expensive model.
-  model: fable   house rule — Fable plans and specs, Sonnet builds, Opus reviews.
+  model: opus   house rule — Opus plans and specs, Sonnet builds, Opus reviews.
   effort: high   a bad breakdown is paid for by every builder and reviewer after it.
   cacheTtl 1h    this role re-reads the same code map and plan corpus across turns; a 1h
                  cache window means those reads are billed once, not per turn.
