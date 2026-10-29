@@ -467,7 +467,12 @@ export async function loadLineCredits(
     );
   }
   // SA-1053 (I-192): the scope above is this invoice's notes only; the order's refunds minted before it was invoiced hang on no
-  // invoice. An invoice with no order adds nothing.
+  // invoice. An invoice with no order adds nothing. Like the SA-727 (M4) term below, they are attributed to this invoice only
+  // when it is its order's SOLE creditable invoice (A-1): with 2+ the order pool counts them once per product, and replaying them
+  // onto every invoice that bills the product would refuse an inline capture of a unit still owed. ONE count gates both terms.
+  let sole: boolean | undefined;
+  const isSoleInvoice = async (): Promise<boolean> =>
+    (sole ??= orderId != null && (await countCreditableInvoices(db, orderId)) === 1);
   const orderId: string | null =
     (
       (await db.invoice?.findFirst?.({ where: { id: invoiceId }, select: { orderId: true } })) as {
@@ -479,7 +484,8 @@ export async function loadLineCredits(
     const unlinked = await loadUnlinkedRefundReturns(db, orderId, {
       excludeCreditNoteId: opts.excludeCreditNoteId,
     });
-    returns.push(...unlinked.returns.filter((r) => !counted.has(r.creditNoteId)));
+    const fresh = unlinked.returns.filter((r) => !counted.has(r.creditNoteId));
+    if (fresh.length > 0 && (await isSoleInvoice())) returns.push(...fresh);
   }
   if (returns.length > 0) credited = replayReturnedQty(lines, credited, returnedOf(returns));
 
@@ -490,10 +496,8 @@ export async function loadLineCredits(
     { order: { invoices: { some: { id: invoiceId } } } },
     { excludeReturnId: opts.excludeReturnId },
   );
-  if (external.length > 0) {
-    if (orderId && (await countCreditableInvoices(db, orderId)) === 1)
-      credited = replayReturnedQty(lines, credited, external);
-  }
+  if (external.length > 0 && (await isSoleInvoice()))
+    credited = replayReturnedQty(lines, credited, external);
   return credited;
 }
 

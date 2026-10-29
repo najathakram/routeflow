@@ -13,6 +13,11 @@
  *   G-N9  the unlinked note is VOID: not counted, allowed.
  *   G-N10 an INLINE return's note is counted once, by the inline term (not twice by the helper).
  *   G-N11 a refund minted ON an invoice is counted once, by the invoice term.
+ *   R-A1  (A-1) X billed on invoices A and B, 1 unit refunded before invoicing: an INLINE capture of the 1 owed unit is allowed
+ *         by line (the unlinked term follows the SA-727 sole-invoice rule); the pool still counts the refunded unit once.
+ *   G-A2  (A-1) the order pool bind (loadOrderPool + pooledTakeRefusal, what the capture runs) counts the refunded unit once: the 1
+ *         owed unit fits, a 2nd is refused.
+ *   G-A3  (A-1) R-N5 above is still refused through the pool.   G-A4 (A-1) R-N1 above is still refused through loadLineCredits.
  *   G-N13 staff later queue the unlinked note to the order (OrderCreditNote): counted once, so the line keeps exactly its
  *         remaining room (a second typed credit is refused, the first one is not).
  *
@@ -32,7 +37,17 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
-import { loadLineCredits, toHeadroomLine } from "./line-credit-headroom";
+import {
+  loadLineCredits,
+  loadOrderPool,
+  pooledTakeRefusal,
+  toHeadroomLine,
+} from "./line-credit-headroom";
+import { IdempotencyService } from "../common/idempotency.service";
+import { EncryptionService } from "../common/encryption.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.service";
+import { InlineReturnsService } from "../returns/inline-returns.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -64,6 +79,7 @@ describeDb(
     let tenantCtx: TenantContextService;
     let creditNotes: CreditNotesService;
     let returns: ReturnsService;
+    let inline: any;
     const tenantIds: string[] = [];
     let seq = 0;
     let cnSeq = 0;
@@ -103,7 +119,24 @@ describeDb(
       }).compile();
       creditNotes = mod.get(CreditNotesService);
       returns = mod.get(ReturnsService);
-    });
+      const numbering = {
+        reserveNext: jest.fn().mockImplementation(async () => `CN-I192-${RUN}-i${++cnSeq}`),
+      };
+      const systemConfig = new SystemConfigService(
+        prisma,
+        new EncryptionService({ get: () => undefined } as any),
+      );
+      inline = Object.assign(Object.create(InlineReturnsService.prototype), {
+        prisma,
+        gateway: anyMethod,
+        ledger: mod.get(RegulatedLedgerService),
+        creditNotes,
+        numbering,
+        addonService: { hasAddon: async () => true },
+        quoteService: new InlineReturnsQuoteService(prisma, systemConfig),
+        idempotency: new IdempotencyService(),
+      });
+    }, 120_000);
 
     afterAll(async () => {
       const swallow = () => undefined;
@@ -119,6 +152,7 @@ describeDb(
         await prisma.invoice.deleteMany(where).catch(swallow);
         await prisma.orderItem.deleteMany(where).catch(swallow);
         await prisma.order.deleteMany(where).catch(swallow);
+        await prisma.stockMovement.deleteMany({ where: { product: { tenantId } } }).catch(swallow);
         await prisma.product.deleteMany(where).catch(swallow);
         await prisma.customer.deleteMany(where).catch(swallow);
         await prisma.user.deleteMany(where).catch(swallow);
@@ -367,6 +401,80 @@ describeDb(
       refused(await typed(fx, a.id, a.lines[0].id, 100));
       expect(await liveNotes(fx)).toBe(before);
     });
+
+    /** A real inline capture (staff, STORE_CREDIT) of `pieces` of the order's product X; returns the error or undefined. */
+    let keySeq = 0;
+    async function inlineCapture(fx: Fx, orderId: string, productId: string, pieces: number) {
+      const user = {
+        sub: fx.userId,
+        username: "operator",
+        role: "OPERATOR" as any,
+        status: "ACTIVE" as any,
+        forcePasswordChange: false,
+        tenantId: fx.tenantId,
+        tenantSlug: "x",
+      };
+      try {
+        await tenantCtx.run(fx.tenantId, () =>
+          inline.capture(
+            {
+              customerId: fx.customerId,
+              orderId,
+              items: [
+                { productId, qty: pieces, boxes: 0, pieces, alreadyReturnedReason: "i192 test" },
+              ],
+              returnKey: `i192-${RUN}-${++keySeq}`,
+              resolution: "STORE_CREDIT",
+            },
+            user,
+          ),
+        );
+        return undefined;
+      } catch (e: any) {
+        return {
+          code: e?.getResponse?.()?.code,
+          message: String(e?.getResponse?.()?.message ?? e?.message),
+        };
+      }
+    }
+
+    /** X (qty 2) billed 1 + 1 on invoices A and B, after 1 unit was refunded on a never-invoiced order: 1 unit is still owed. */
+    async function twoInvoiceOwedUnit(label: string) {
+      const fx = await mkFx(label);
+      const order = await mkOrder(fx, ["X"], [2]);
+      await refundNeverInvoiced(fx, order.id, order.lines[0]);
+      const one = { ...order.lines[0], qty: 1 };
+      const a = await invoice(fx, order.id, [one]);
+      const b = await invoice(fx, order.id, [one]);
+      return { fx, order, a, b };
+    }
+
+    it("R-A1: X billed on A and B, 1 unit refunded before invoicing — an inline capture of the 1 owed unit is allowed by line", async () => {
+      const { fx, order } = await twoInvoiceOwedUnit("ra1");
+      // the real inline capture (entry: assertWithinLineHeadroom): refused on each invoice before A-1 (a false refusal of an owed unit)
+      const err = await inlineCapture(fx, order.id, order.lines[0].productId, 1);
+      console.info(`SA1053 OBSERVED ${JSON.stringify({ case: "ra1-capture", err: err ?? null })}`);
+      expect(err).toBeUndefined();
+    }, 60_000);
+
+    it("R-A1b: the single-invoice reader does not replay the order's unlinked refund onto either of 2+ creditable invoices", async () => {
+      const { fx, a, b } = await twoInvoiceOwedUnit("ra1b");
+      expect(await readCredited(fx, a, a.lines[0].id)).toEqual({ amount: 0, qty: 0 });
+      expect(await readCredited(fx, b, b.lines[0].id)).toEqual({ amount: 0, qty: 0 });
+    }, 60_000);
+
+    it("G-A2: the order pool still counts the refunded unit once — 1 owed unit fits, a 2nd does not", async () => {
+      const { fx, order } = await twoInvoiceOwedUnit("ga2");
+      const pool = await tenantCtx.run(fx.tenantId, () =>
+        loadOrderPool(prisma.forTenant(), order.id),
+      );
+      const credited = [...pool.credited.values()].reduce((t, c) => t + c.qty, 0);
+      console.info(`SA1053 OBSERVED ${JSON.stringify({ case: "ga2", creditedQty: credited })}`);
+      expect(credited).toBe(1); // once across both invoices, not once per invoice
+      const productId = order.lines[0].productId;
+      expect(pooledTakeRefusal(pool, productId, { amount: 100, qty: 1 })).toBeNull();
+      expect(pooledTakeRefusal(pool, productId, { amount: 200, qty: 2 })).not.toBeNull();
+    }, 60_000);
 
     it("G-N7: an invoice with no order is unchanged — the credit is allowed", async () => {
       const fx = await mkFx("gn7");

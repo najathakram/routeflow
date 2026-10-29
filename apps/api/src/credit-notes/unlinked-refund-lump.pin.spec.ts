@@ -40,6 +40,16 @@ describe("SA-1053: one helper counts the refunds minted before the order was inv
     );
   });
 
+  it("A-1: loadLineCredits counts the order's creditable invoices ONCE, and that one count gates both order-scoped terms", () => {
+    const text = readFileSync(HEADROOM, "utf8");
+    const start = text.indexOf("export async function loadLineCredits");
+    const end = text.indexOf("\nexport ", start + 1);
+    const body = text.slice(start, end);
+    expect(body.match(/countCreditableInvoices\(/g)).toHaveLength(1);
+    // both the unlinked-refund replay and the SA-727 external-refund replay sit behind the same helper
+    expect(body.match(/await isSoleInvoice\(\)/g)).toHaveLength(2);
+  });
+
   it("the no-invoice predicate is written once in line-credit-headroom.ts, in the helper", () => {
     const text = readFileSync(HEADROOM, "utf8");
     const at = text.indexOf("invoiceId: null");
