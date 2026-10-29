@@ -94,6 +94,33 @@ function nearestFunction(n: ts.Node): ts.Node | null {
   return null;
 }
 
+/**
+ * True when `obj` is a Prisma write payload: the value of a `data` / `create` / `update` property,
+ * directly, as an element of an array literal, or returned by a `.map` / `.flatMap` callback.
+ */
+function isPayloadObject(obj: ts.ObjectLiteralExpression, sf: ts.SourceFile): boolean {
+  let c: ts.Node = obj.parent;
+  for (;;) {
+    if (ts.isParenthesizedExpression(c) || ts.isArrayLiteralExpression(c) || ts.isAsExpression(c)) {
+      c = c.parent;
+    } else if (
+      ts.isReturnStatement(c) &&
+      ts.isBlock(c.parent) &&
+      ts.isArrowFunction(c.parent.parent)
+    ) {
+      c = c.parent.parent;
+    } else if (
+      ts.isArrowFunction(c) &&
+      ts.isCallExpression(c.parent) &&
+      ts.isPropertyAccessExpression(c.parent.expression) &&
+      ["map", "flatMap"].includes(c.parent.expression.name.text)
+    ) {
+      c = c.parent.parent;
+    } else break;
+  }
+  return ts.isPropertyAssignment(c) && ["data", "create", "update"].includes(c.name.getText(sf));
+}
+
 /** Write sites: `currentStock: { increment|decrement: … }` and raw SQL that SETs "currentStock". */
 function stockWriteSites(sf: ts.SourceFile): ts.Node[] {
   const out: ts.Node[] = [];
@@ -107,22 +134,31 @@ function stockWriteSites(sf: ts.SourceFile): ts.Node[] {
       )
     )
       out.push(n);
-    // Absolute: `currentStock: <non-object>` as a key of a payload object (`data:` / `create:` /
-    // `update:`), so a response mapping like `{ ...p, currentStock: Number(p.currentStock) }` is not
-    // a site.
+    // Absolute: `currentStock: <non-object>` (or the shorthand `{ currentStock }`) as a key of a payload
+    // object (`data:` / `create:` / `update:`, directly, as an array element, or returned by a `.map`
+    // callback), so a response mapping like `{ ...p, currentStock: Number(p.currentStock) }` is not a site.
     if (
-      ts.isPropertyAssignment(n) &&
-      n.name.getText(sf) === "currentStock" &&
-      !ts.isObjectLiteralExpression(n.initializer) &&
+      ((ts.isPropertyAssignment(n) &&
+        n.name.getText(sf) === "currentStock" &&
+        !ts.isObjectLiteralExpression(n.initializer)) ||
+        (ts.isShorthandPropertyAssignment(n) && n.name.text === "currentStock")) &&
       ts.isObjectLiteralExpression(n.parent) &&
-      ts.isPropertyAssignment(n.parent.parent) &&
-      ["data", "create", "update"].includes(n.parent.parent.name.getText(sf))
+      isPayloadObject(n.parent, sf)
     )
       out.push(n);
     if (ts.isTaggedTemplateExpression(n)) {
       const text = n.template.getText(sf);
       if (/SET\s+"currentStock"/i.test(text)) out.push(n);
     }
+    // Raw SQL in a plain string / untagged template (`$executeRawUnsafe('UPDATE ... SET "currentStock" ...')`).
+    if (
+      (ts.isStringLiteral(n) ||
+        ts.isNoSubstitutionTemplateLiteral(n) ||
+        ts.isTemplateExpression(n)) &&
+      !ts.isTaggedTemplateExpression(n.parent) &&
+      /SET\s+"currentStock"/i.test(n.getText(sf))
+    )
+      out.push(n);
     ts.forEachChild(n, visit);
   };
   visit(sf);
@@ -997,7 +1033,8 @@ describe("SA-767 L-2.2 - the batched count committer (structural pins)", () => {
  * EXACT (file::function -> count): a new writer anywhere, or a second insert inside a listed function, is a red
  * `npm run verify`. The named exceptions are the two quantity-0 COST_BASIS rows that only restate the average
  * (`replayProduct`, `applyD2InTx`); SA-927 moves them onto the helper with the trigger in PR-B, not here.
- * Test support under a `testing/` folder (DB-spec fixtures that set up a booked state) is skipped, as in R6.
+ * Named test-support fixtures (DB-spec setup that books a state) are skipped one by one in HELPER_SKIP_FILES, as in R6
+ * (SEED_FIXTURES); a new writer anywhere under `testing/` still fails the census.
  */
 const HELPER = "inventory/stock-movements.ts::applyStockMovements";
 const COUNTER_WRITERS: Record<string, number> = { [HELPER]: 1 };
@@ -1007,7 +1044,12 @@ const MOVEMENT_INSERTS: Record<string, number> = {
   "inventory/inventory.service.ts::InventoryService.replayProduct": 1,
   "inventory/b562-repair/d2-repair.ts::applyD2InTx": 1,
 };
-const HELPER_SKIP = /(?:^|\/)testing\//;
+/** Named fixture files only (not a directory): a new writer under a `testing/` folder still counts. */
+const HELPER_SKIP_FILES = new Set<string>([
+  "inventory/testing/count-db-harness.ts", // sell(): books a sale in a count DB spec
+  "inventory/testing/ledger-consistency.ts", // seedOpeningRow(): opening row for a ledger DB spec
+]);
+const isCensusSkipped = (rel: string) => HELPER_SKIP_FILES.has(rel);
 
 /** StockMovement inserts: `<x>.stockMovement.create|createMany|createManyAndReturn|upsert(...)` and raw INSERTs. */
 function movementInsertSites(sf: ts.SourceFile): ts.Node[] {
@@ -1058,7 +1100,7 @@ function helperCensus(files: Array<{ rel: string; text: string }>): {
 describe("SA-927 PR-A - applyStockMovements is the ONE writer of currentStock and StockMovement (exact census)", () => {
   const files = collectSourceFiles(SRC_ROOT)
     .map((abs) => ({ abs, rel: path.relative(SRC_ROOT, abs).split(path.sep).join("/") }))
-    .filter(({ rel }) => !HELPER_SKIP.test(rel))
+    .filter(({ rel }) => !isCensusSkipped(rel))
     .map(({ abs, rel }) => ({ rel, text: fs.readFileSync(abs, "utf8") }));
   const census = helperCensus(files);
 
@@ -1107,6 +1149,51 @@ describe("SA-927 PR-A - applyStockMovements is the ONE writer of currentStock an
       );
       expect(r.inserts).toEqual({ "x.ts::a": 2, "x.ts::b": 1, "x.ts::c": 1 });
       expect(r.counter).toEqual({});
+    });
+
+    it("an absolute currentStock inside a createMany array or a mapped array is a counter writer", () => {
+      expect(
+        run(
+          "async function a(tx) { await tx.product.createMany({ data: [{ currentStock: 3 }] }); }\n" +
+            "async function b(tx, rows) { await tx.product.createMany({ data: rows.map((r) => ({ currentStock: r.n })) }); }\n" +
+            "async function c(tx) { await tx.product.createManyAndReturn({ data: [{ name: 'x', currentStock: 1 }] }); }",
+        ).counter,
+      ).toEqual({ "x.ts::a": 1, "x.ts::b": 1, "x.ts::c": 1 });
+    });
+
+    it("a raw SET of currentStock in a plain string or an interpolated template is a counter writer", () => {
+      expect(
+        run(
+          'async function a(tx) { await tx.$executeRawUnsafe(\'UPDATE "Product" SET "currentStock" = 1\'); }\n' +
+            'async function b(tx, n) { await tx.$executeRawUnsafe(`UPDATE "Product" SET "currentStock" = ${n}`); }\n' +
+            'async function c(tx) { await tx.$executeRaw`UPDATE "Product" SET "currentStock" = 1`; }',
+        ).counter,
+      ).toEqual({ "x.ts::a": 1, "x.ts::b": 1, "x.ts::c": 1 });
+    });
+
+    it("a shorthand currentStock in a payload is a counter writer", () => {
+      expect(
+        run(
+          "async function a(tx, currentStock) { await tx.product.update({ data: { currentStock } }); }",
+        ).counter,
+      ).toEqual({ "x.ts::a": 1 });
+    });
+
+    it("a response mapping is still not a site, plain or mapped", () => {
+      expect(
+        run(
+          "const a = (p) => ({ ...p, currentStock: Number(p.currentStock) });\n" +
+            "const b = (rows) => ({ items: rows.map((p) => ({ ...p, currentStock: Number(p.currentStock) })) });",
+        ).counter,
+      ).toEqual({});
+    });
+
+    it("only the named fixture files are skipped: a new writer under testing/ still counts", () => {
+      expect(isCensusSkipped("inventory/testing/a-brand-new-writer.ts")).toBe(false);
+      expect(isCensusSkipped("orders/testing/a-brand-new-writer.ts")).toBe(false);
+      for (const rel of HELPER_SKIP_FILES) {
+        expect(fs.existsSync(path.join(SRC_ROOT, rel))).toBe(true);
+      }
     });
   });
 });
