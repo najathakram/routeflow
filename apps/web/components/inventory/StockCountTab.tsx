@@ -1032,8 +1032,8 @@ export function StockCountTab() {
           </p>
         </Card>
       ) : (
-        <Card className="overflow-hidden p-0">
-          <table className="w-full">
+        <Card className="overflow-x-auto p-0">
+          <table className="min-w-[720px] w-full">
             <thead>
               <tr className="border-b border-surface-border bg-surface-raised text-left text-xs uppercase tracking-wide text-navy/70">
                 <th className="px-3 py-2 w-10"></th>
