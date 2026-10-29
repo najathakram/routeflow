@@ -20,7 +20,6 @@ import { readAutoPrint } from "@/lib/counter-sale";
 import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import * as React from "react";
 import Link from "next/link";
-import { DIALOG_FOOTER_BUTTON as FOOT } from "@/components/dialog-mobile-fit";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
 import {
@@ -467,6 +466,7 @@ export function RecordInlineReturnDialog({
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
+      closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
       scroll
     >
       {/* The order picker is dialog-owned state (carryingOrderId) — safe to unmount/remount
@@ -476,6 +476,7 @@ export function RecordInlineReturnDialog({
       {phase === "capture" && !orderId && sectionState.step === "lines" && (
         <div className="mb-4">
           <Select
+            className="max-lg:h-11"
             label="Which order should this credit apply to?"
             value={carryingOrderId}
             onChange={(e) => setCarryingOrderId(e.target.value)}
@@ -542,7 +543,7 @@ export function RecordInlineReturnDialog({
           ) : null
         }
         renderLinesActions={() => (
-          <Button className={FOOT} variant="ghost" onClick={onClose}>
+          <Button className="max-lg:min-h-11" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
         )}
@@ -561,7 +562,7 @@ export function RecordInlineReturnDialog({
                 {/* SA-959: a walk-in cannot hold store credit, so it is never offered here */}
                 {!walkIn && (
                   <Button
-                    className={FOOT}
+                    className="max-lg:min-h-11"
                     variant="secondary"
                     disabled={refunding}
                     loading={crediting}
@@ -572,7 +573,7 @@ export function RecordInlineReturnDialog({
                 )}
                 {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
-                    className={FOOT}
+                    className="max-lg:min-h-11"
                     loading={refunding}
                     disabled={crediting}
                     onClick={() => saved && doRetry(saved)}
@@ -580,13 +581,13 @@ export function RecordInlineReturnDialog({
                     Retry refund
                   </Button>
                 ) : (
-                  <Button className={FOOT} onClick={handleClose}>
+                  <Button className="max-lg:min-h-11" onClick={handleClose}>
                     Close
                   </Button>
                 )}
               </>
             ) : (
-              <Button className={FOOT} onClick={handleClose}>
+              <Button className="max-lg:min-h-11" onClick={handleClose}>
                 Close
               </Button>
             )
@@ -598,7 +599,7 @@ export function RecordInlineReturnDialog({
                 </p>
               ) : null}
               <Button
-                className={FOOT}
+                className="max-lg:min-h-11"
                 disabled={
                   refunding ||
                   requoting ||
@@ -636,7 +637,10 @@ export function RecordInlineReturnDialog({
               <div className="flex justify-between">
                 <dt className="text-navy/70">Return</dt>
                 <dd>
-                  <a className="text-brand-600 underline" href={`/returns/${result.id}`}>
+                  <a
+                    className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
+                    href={`/returns/${result.id}`}
+                  >
                     #{result.returnNumber}
                   </a>
                 </dd>
@@ -647,7 +651,7 @@ export function RecordInlineReturnDialog({
                 <dt className="text-navy/70">Store credit</dt>
                 <dd>
                   <a
-                    className="text-brand-600 underline"
+                    className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
                     href={`/credit-notes/${result.creditNoteId}`}
                   >
                     View store credit
@@ -664,7 +668,10 @@ export function RecordInlineReturnDialog({
             <div className="flex justify-between">
               <dt className="text-navy/70">Order</dt>
               <dd>
-                <a className="text-brand-600 underline" href={`/orders/${result.orderId}`}>
+                <a
+                  className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
+                  href={`/orders/${result.orderId}`}
+                >
                   View order
                 </a>
               </dd>
@@ -702,7 +709,9 @@ export function RecordInlineReturnDialog({
             </div>
           )}
           <div className="flex justify-end">
-            <Button onClick={onClose}>Done</Button>
+            <Button className="max-lg:min-h-11" onClick={onClose}>
+              Done
+            </Button>
           </div>
         </div>
       )}
@@ -714,13 +723,17 @@ export function RecordInlineReturnDialog({
             <Link
               data-testid="inline-return-recorded-link"
               href={`/returns/${recordedReturn.returnId}`}
-              className="text-sm font-medium text-plum underline"
+              className="inline-flex items-center text-sm font-medium text-plum underline max-lg:min-h-11"
             >
               Open {recordedReturn.returnNumber ?? "the recorded return"}
             </Link>
           )}
           <div className="flex justify-end gap-2">
-            <Button className={FOOT} variant="secondary" onClick={() => setPhase("capture")}>
+            <Button
+              className="max-lg:min-h-11"
+              variant="secondary"
+              onClick={() => setPhase("capture")}
+            >
               Back
             </Button>
           </div>
@@ -806,7 +819,7 @@ function RefundChoice({
     <div className="mt-4 rounded-lg border border-surface-border p-3">
       <fieldset className="m-0 min-w-0 space-y-2 border-0 p-0">
         <legend className="mb-2 p-0 text-sm font-medium text-navy">{REFUND_COPY.heading}</legend>
-        <label className="flex items-center gap-2 text-sm text-navy">
+        <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
           <input
             type="radio"
             name="return-resolution"
@@ -817,7 +830,7 @@ function RefundChoice({
           />
           Store credit
         </label>
-        <label className="flex items-center gap-2 text-sm text-navy">
+        <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
           <input
             type="radio"
             name="return-resolution"

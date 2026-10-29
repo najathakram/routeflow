@@ -268,7 +268,7 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
     expect(h.records()).toHaveLength(0);
   });
 
-  it("a Stripe pointer alone writes no record; the two automatic pointer-only sources always do", async () => {
+  it("a Stripe pointer alone records (SA-970 §2.1: every diff), from every source", async () => {
     const h = harness([
       { stripeItemId: "si_1" },
       { stripeItemId: "si_2" },
@@ -279,7 +279,7 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
       data: { stripeItemId: null },
       actor: actor("checkout.adopt", "SYSTEM"),
     });
-    expect(h.records()).toHaveLength(0);
+    expect(h.records()).toHaveLength(1);
     await updateAddonRowTx(h.tx, h.events, {
       id: "r2",
       data: { stripeItemId: null },
@@ -291,11 +291,12 @@ describe("SA-788 (a) contract: one addon.state_changed per change, always, never
       actor: actor("lock.cancel_clear_item", "SYSTEM"),
     });
     expect(h.records().map((c: any[]) => c[2].source)).toEqual([
+      "checkout.adopt",
       "plan_change.revert",
       "lock.cancel_clear_item",
     ]);
-    expect(h.records()[0][2].changes).toEqual({ stripeItemId: ["si_2", null] });
-    expect(h.records()[0][3].actorId).toBeNull(); // SYSTEM
+    expect(h.records()[1][2].changes).toEqual({ stripeItemId: ["si_2", null] });
+    expect(h.records()[1][3].actorId).toBeNull(); // SYSTEM
   });
 
   it("a multi-row write records each row it wrote once, and a guarded row that no longer matches none", async () => {
