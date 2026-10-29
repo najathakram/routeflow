@@ -111,7 +111,7 @@ const TABLE: Record<string, Row> = {
   [f("messages/messages.service.ts", "MessagesService.create")]: P(PR_B),
   [f("messaging/messaging.service.ts", "MessagingService.sendMessage")]: P(PR_B),
   [f("orders/orders.service.ts", "OrdersService.create")]: P(PR_B),
-  [f("orders/order-lifecycle.ts", "updateFulfillPathImpl")]: P(PR_B),
+  [f("orders/order-lifecycle.ts", "releaseFinishedRunLink")]: P(PR_B),
   [f("orders/counter-sale/complete-at-counter-run.ts", "takeOrderOffRun")]: P(PR_B),
   [f("returns/inline-returns.service.ts", "InlineReturnsService.captureInTx")]: P(PR_B),
   [f("routes/routes.service.ts", "RoutesService.createRun")]: P(PR_B),
