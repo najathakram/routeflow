@@ -318,6 +318,47 @@ const main = () => {
     }
   });
 
+  // ── H: mappedSha's commit object PRESENT in a shallow clone, but history is
+  // cut at the depth boundary -> `merge-base --is-ancestor` exits 1 although
+  // the sha IS an ancestor in the full history (CI run on a real master whose
+  // mappedSha sat past `fetch-depth`). In a shallow repo a miss is
+  // UNVERIFIABLE: warn, exit 0, never MAPPED SHA NOT ANCESTOR.
+  withRepo("master", (origin) => {
+    origin.commitFile("apps/api/src/thing.ts", "export const x = 1;\n", "touch apps");
+    origin.writeMeta({ mappedSha: origin.seedSha, generatedAt: "2026-01-01T00:00:00.000Z" });
+    git(["add", ".claude/code-map/_meta.json"], origin.scratch);
+    git(["commit", "-m", "pin mappedSha to seed"], origin.scratch);
+
+    const shallow = mkdtempSync(join(tmpdir(), "code-map-self-test-shallow-present-"));
+    try {
+      git(["clone", "--no-local", "--depth", "1", origin.scratch, shallow], tmpdir());
+      // Fetch the seed commit as its own shallow tip: the object is now
+      // present, yet HEAD's history is still grafted off before it.
+      git(["fetch", "--depth", "1", "origin", origin.seedSha], shallow);
+      const probe = (args) =>
+        spawnSync("git", args, { cwd: shallow, encoding: "utf8", env: scrubbedGitEnv() });
+      const present = probe(["cat-file", "-e", `${origin.seedSha}^{commit}`]);
+      check("H: fixture has the mappedSha object present", present.status, 0);
+      const anc = probe(["merge-base", "--is-ancestor", origin.seedSha, "HEAD"]);
+      check("H: fixture reproduces the shallow ancestry miss (exit 1)", anc.status, 1);
+      const scriptCopy = join(shallow, "scripts", "validate-code-map.mjs");
+      const res = runScript(scriptCopy, [], shallow);
+      check("H: shallow clone with present-but-cut mappedSha exits 0", res.status, 0);
+      check(
+        "H: shallow clone WARNS unverifiable, not an error",
+        (res.stdout + res.stderr).includes("unverifiable"),
+        true,
+      );
+      check(
+        "H: shallow clone never reports MAPPED SHA NOT ANCESTOR",
+        (res.stdout + res.stderr).includes("MAPPED SHA NOT ANCESTOR"),
+        false,
+      );
+    } finally {
+      cleanup(shallow);
+    }
+  });
+
   // ── REG-B420: an ambient GIT_DIR/GIT_WORK_TREE (exactly what git sets when
   // invoking a hook from a linked worktree) must never leak into this file's
   // OWN scratch-repo git calls. A "victim" repo stands in for the real outer
