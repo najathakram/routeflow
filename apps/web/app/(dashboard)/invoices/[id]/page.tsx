@@ -974,21 +974,28 @@ function VoidConfirmModal({
 
 // ─── Write-off modal ──────────────────────────────────────────────────────────
 
+/** SA-1050: the usual reasons, one tap each. "Other" empties the text so the person writes their own. */
+const WRITE_OFF_REASONS = ["Customer closed", "Bankrupt", "Disputed", "Can't reach them"] as const;
+
 function WriteOffModal({
   isOpen,
   onClose,
   onConfirm,
   invoiceNumber,
+  amount,
   isPending,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
   invoiceNumber: string;
+  /** The balance still owed, already formatted: it is what the write-off takes off the books. */
+  amount: string;
   isPending: boolean;
 }) {
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState("");
+  const reasonRef = React.useRef<HTMLTextAreaElement>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -1032,9 +1039,48 @@ function WriteOffModal({
             be undone.
           </p>
         </div>
+        <p className="text-sm text-navy">
+          Amount written off:{" "}
+          <span data-testid="write-off-amount" className="money font-semibold">
+            {amount}
+          </span>
+        </p>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reason *</label>
+          <label
+            htmlFor="write-off-reason"
+            className="mb-1.5 block text-sm font-medium text-navy/80"
+          >
+            Reason *
+          </label>
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[...WRITE_OFF_REASONS, "Other"].map((label) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={reason === label}
+                onClick={() => {
+                  setError("");
+                  if (label === "Other") {
+                    setReason("");
+                    reasonRef.current?.focus();
+                  } else {
+                    setReason(label);
+                  }
+                }}
+                className={cn(
+                  "min-h-11 rounded-full border px-3 text-sm font-medium transition-colors",
+                  reason === label
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <textarea
+            id="write-off-reason"
+            ref={reasonRef}
             rows={3}
             placeholder="e.g. Customer declared bankruptcy, debt too old to collect…"
             value={reason}
@@ -2325,12 +2371,6 @@ export default function InvoiceDetailPage() {
                       },
                     ]
                   : []),
-                {
-                  label: "Write off",
-                  onClick: () => setIsWriteOffOpen(true),
-                  danger: true,
-                  disabled: readOnlyGate.readOnly,
-                },
               ]}
             />
           )}
@@ -2388,6 +2428,19 @@ export default function InvoiceDetailPage() {
                 danger: true,
                 disabled: !canVoid || readOnlyGate.readOnly,
               },
+              // SA-1050: moved here from the Record payment dropdown (a loss is not a way to be paid). Offered on
+              // an open invoice; read-only keeps it in the menu but disabled, like the other writes. The server
+              // still refuses anything that is not an open invoice.
+              ...(canRecordPayment
+                ? [
+                    {
+                      label: "Write off",
+                      onClick: () => setIsWriteOffOpen(true),
+                      danger: true,
+                      disabled: readOnlyGate.readOnly,
+                    },
+                  ]
+                : []),
             ]}
           />
         </div>
@@ -3098,6 +3151,7 @@ export default function InvoiceDetailPage() {
         onClose={() => setIsWriteOffOpen(false)}
         onConfirm={handleWriteOff}
         invoiceNumber={invoice.invoiceNumber}
+        amount={fmt(balanceDue)}
         isPending={writeOffInvoice.isPending}
       />
 
