@@ -46,6 +46,7 @@ import {
   decideScope,
   fastStampLine,
   isFastMode,
+  loadScriptSpecs,
   loadWorkspaces,
   mergeBaseSha,
   repoPinsNeeded,
@@ -1824,8 +1825,10 @@ check(
       "owner-report-db-url.spec.ts",
       "no-ui-package-import.spec.ts",
       "wipe-order-fk-pin.spec.ts",
+      "schema-folder.spec.ts",
+      "no-single-schema-path.spec.ts",
     ].map((f) => pinned.includes(f)),
-    [true, true, true, true],
+    [true, true, true, true, true, true],
   );
   // SHOULD 1: fail closed
   check(
@@ -1909,6 +1912,154 @@ check(
     }),
     [true, true],
   );
+}
+// R3C: a fast push runs the repo pins plus only the RELATED `-script` specs (lane ruling 2026-10-28:
+// the whole 66-spec set is ~568 s serial). Always skip-verify-audit-script; uncomputable diff = all.
+{
+  const S = (f, text) => ({ file: `src/common/${f}`, text });
+  const AUDIT = "src/common/skip-verify-audit-script.spec.ts";
+  const specs = [
+    S("alpha-script.spec.ts", 'readFileSync("scripts/pr-size.mjs")'),
+    S("beta-script.spec.ts", "reads package.json and tsconfig.json"),
+    S("gamma-script.spec.ts", "nothing to do with it"),
+    S("skip-verify-audit-script.spec.ts", "audits .git/skip-verify.log"),
+    S("delta-script.spec.ts", "spawns scripts/other-tool.mjs"),
+  ];
+  const plan = (files) => planPins({ fast: true, files, excluded: [], specs });
+  check(
+    "R3C-a a scripts/pr-size.mjs change selects the specs naming pr-size.mjs plus the audit spec, only",
+    [plan(["scripts/pr-size.mjs"]).scriptSpecs, plan(["scripts/pr-size.mjs"]).pins],
+    [[AUDIT, "src/common/alpha-script.spec.ts"], true],
+  );
+  check(
+    "R3C-a2 a changed -script spec selects itself; an unrelated scripts change selects the audit spec only",
+    [
+      plan(["apps/api/src/common/gamma-script.spec.ts"]).scriptSpecs,
+      plan(["scripts/zzz-unrelated.mjs"]).scriptSpecs,
+    ],
+    [[AUDIT, "src/common/gamma-script.spec.ts"], [AUDIT]],
+  );
+  check(
+    "R3C-b a package.json-only change runs the pins plus the audit spec, not every spec that names it",
+    [plan(["package.json"]).pins, plan(["apps/web/package.json"]).scriptSpecs],
+    [true, [AUDIT]],
+  );
+  check(
+    "R3C-c an uncomputable diff selects ALL -script specs",
+    (({ pins, scriptSpecs }) => [pins, scriptSpecs])(plan(null)),
+    [true, "all"],
+  );
+  check(
+    "R3C-c2 a docs-only diff plans no pins and no script specs",
+    (({ pins, scriptSpecs }) => [pins, scriptSpecs ?? null])(plan(["docs/a.md"])),
+    [null, null],
+  );
+  const selectedCall = planTurboCalls({
+    scope: fvScope,
+    excluded: [],
+    splitJest: false,
+    fast: true,
+    pins: { scriptSpecs: [AUDIT, "src/common/alpha-script.spec.ts"] },
+  }).calls.find((c) => c.pins);
+  const sArgv = selectedCall?.argv ?? [];
+  const sDash = sArgv.indexOf("--");
+  check(
+    "R3C-d the planned argv has --runInBand before --, the chosen specs after it and no pattern",
+    [
+      sArgv.indexOf("--runInBand") > 0,
+      sArgv.indexOf("--runInBand") < sDash,
+      sArgv.slice(sDash + 1).includes("src/common/alpha-script.spec.ts"),
+      sArgv.includes(SCRIPT_SPEC_PATTERN),
+    ],
+    [true, true, true, false],
+  );
+  const allCall = planTurboCalls({
+    scope: fvScope,
+    excluded: [],
+    splitJest: false,
+    fast: true,
+    pins: { scriptSpecs: "all" },
+  }).calls.find((c) => c.pins);
+  check(
+    "R3C-d2 scriptSpecs 'all' keeps the full -script pattern, still serialized",
+    [allCall?.argv.includes(SCRIPT_SPEC_PATTERN), allCall?.argv.includes("--runInBand")],
+    [true, true],
+  );
+  const line = plan(["scripts/pr-size.mjs"]).scriptLine ?? "";
+  check(
+    "R3C-f one line prints the count and why",
+    [line.split("\n").length, /^\+ SCRIPT SPECS: 2 /.test(line), /pr-size\.mjs/.test(line)],
+    [1, true, true],
+  );
+  check(
+    "R3C-g the real repo has the audit spec on disk and loads every -script spec with its text",
+    (({ real }) => [
+      real.length > 20,
+      real.some((s) => s.file === AUDIT),
+      real.every((s) => typeof s.text === "string" && s.file.startsWith("src/")),
+    ])({ real: loadScriptSpecs(ROOT) }),
+    [true, true, true],
+  );
+  // R3C-h: TypeScript imports drop the extension, so the basename alone never matches them
+  const T = (f, text) => ({ file: `src/common/${f}`, text });
+  const tsSpecs = [
+    T("skip-verify-audit-script.spec.ts", "audits"),
+    T("overdue-sweep-script.spec.ts", 'import { toDay } from "./calendar-date";'),
+    T("tz-census-script.spec.ts", "import { zone } from '../tenant-time-zone';"),
+    T("quiet-script.spec.ts", 'import { x } from "./calendar-dated";'),
+    ...Array.from({ length: 12 }, (_, i) => T(`idx${i}-script.spec.ts`, 'from "./index"')),
+  ];
+  const tsPlan = (files) => planPins({ fast: true, files, excluded: [], specs: tsSpecs });
+  check(
+    "R3C-h an extensionless import ('./calendar-date') selects the spec; a longer name does not",
+    [
+      tsPlan(["apps/api/src/common/calendar-date.ts"]).scriptSpecs,
+      tsPlan(["apps/api/src/common/tenant-time-zone.ts"]).scriptSpecs,
+    ],
+    [
+      ["src/common/skip-verify-audit-script.spec.ts", "src/common/overdue-sweep-script.spec.ts"],
+      ["src/common/skip-verify-audit-script.spec.ts", "src/common/tz-census-script.spec.ts"],
+    ],
+  );
+  check(
+    "R3C-i a generic basename such as index.ts does not select every spec",
+    tsPlan(["apps/api/src/common/index.ts"]).scriptSpecs.length < 10,
+    true,
+  );
+  // R3C-j: a changed -script spec selects itself wherever it lives
+  const outSpec = { file: "src/orders/outside-script.spec.ts", text: "nothing" };
+  const outPlan = planPins({
+    fast: true,
+    files: ["apps/api/src/orders/outside-script.spec.ts"],
+    excluded: [],
+    specs: [...tsSpecs, outSpec],
+  });
+  check(
+    "R3C-j a changed -script spec outside src/common selects itself and runs the pins",
+    [outPlan.pins, outPlan.scriptSpecs?.includes("src/orders/outside-script.spec.ts")],
+    [true, true],
+  );
+  // R3C-k: no specs on disk must not read as "0 of 0"
+  const none = planPins({ fast: true, files: ["scripts/pr-size.mjs"], excluded: [], specs: [] });
+  check(
+    "R3C-k an empty spec list fails closed to all, with a reason",
+    [none.scriptSpecs, /no -script specs/.test(none.scriptLine ?? "")],
+    ["all", true],
+  );
+  // (e) FR2 covers every pin that walks apps/api/scripts
+  const walkers = REPO_WIDE_PINS.filter((p) => /apps\/api\/scripts/.test(p.why)).map((p) =>
+    p.file.replace(/^apps\/api\/src\/common\//, ""),
+  );
+  check("R3C-e the apps/api/scripts walkers are exactly the eight FR2 names", walkers.sort(), [
+    "no-runtime-ddl.spec.ts",
+    "no-single-schema-path.spec.ts",
+    "no-ui-package-import.spec.ts",
+    "owner-report-db-url.spec.ts",
+    "schema-folder.spec.ts",
+    "scripts-product-mirror-tripwire.spec.ts",
+    "scripts-unscoped-delete.spec.ts",
+    "wipe-order-fk-pin.spec.ts",
+  ]);
 }
 // (e) every listed pin exists, with a reason
 check(
