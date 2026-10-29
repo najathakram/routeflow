@@ -37,7 +37,7 @@
  * until an invoice is actually generated), `regulated-filing.autoPrepareClosedFilings` (a DAILY
  * tick targeting a monthly/quarterly/annual closed period, so many ticks cover each period), and
  * the due-date sweeps — `billing-cron.expireTrials`/`expireGrace`/`applyScheduledDowngrades`/
- * `applyScheduledCancellations`, `billing.suspendOverdueTenants`,
+ * `applyScheduledCancellations`, `billing.reconcileCanceledSubscriptions`,
  * `authorization-expiry.runExpirySweep`, `orders.cronSweepPendingOrders`.
  *
  * TWO DO NOT self-repair. `tobacco-report.generateMonthlyReports` generates exactly `now − 1
