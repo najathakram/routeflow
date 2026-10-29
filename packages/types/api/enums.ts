@@ -648,3 +648,41 @@ export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
   "ADVANCE_PAYMENT",
 ] as const;
 export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];
+
+// SA-1049 R5: the status/plan enums the platform-admin badge renders (Prisma `TenantStatus`, `TenantPlan`,
+// `UserStatus`, `BuyerAccountStatus`, `CustomerLinkStatus`). The derived types are `…Value`: `../index.ts` still
+// exports a hand-written legacy `enum UserStatus`, and a local export would silently shadow it.
+export const TENANT_STATUS_VALUES = [
+  "TRIAL",
+  "ACTIVE",
+  "READ_ONLY",
+  "SUSPENDED",
+  "CANCELLED",
+] as const;
+export type TenantStatusValue = (typeof TENANT_STATUS_VALUES)[number];
+
+export const TENANT_PLAN_VALUES = [
+  "STARTER",
+  "TEAM",
+  "BUSINESS",
+  "PROFESSIONAL",
+  "ENTERPRISE",
+  "GROWTH",
+  "SCALE",
+  "LITE",
+] as const;
+export type TenantPlanValue = (typeof TENANT_PLAN_VALUES)[number];
+
+export const USER_STATUS_VALUES = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
+export type UserStatusValue = (typeof USER_STATUS_VALUES)[number];
+
+export const BUYER_ACCOUNT_STATUS_VALUES = ["ACTIVE", "SUSPENDED", "DELETED"] as const;
+export type BuyerAccountStatusValue = (typeof BUYER_ACCOUNT_STATUS_VALUES)[number];
+
+export const CUSTOMER_LINK_STATUS_VALUES = [
+  "INVITED",
+  "PENDING_SELLER_APPROVAL",
+  "ACTIVE",
+  "DISCONNECTED",
+] as const;
+export type CustomerLinkStatusValue = (typeof CUSTOMER_LINK_STATUS_VALUES)[number];
