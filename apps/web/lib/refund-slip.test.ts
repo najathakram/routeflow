@@ -48,6 +48,22 @@ describe("buildRefundSlip", () => {
     expect(m.printedBy).toBe("pat");
   });
 
+  it("row 257: 'Refunded by' is the stored refund actor, trimmed; null when the API names nobody", () => {
+    expect(build({ refundedBy: " casey " }).refundedBy).toBe("casey");
+    expect(build({ refundedBy: null }).refundedBy).toBeNull();
+    expect(build({ refundedBy: "   " }).refundedBy).toBeNull();
+    expect(build({}).refundedBy).toBeNull();
+    // the viewer who prints it is a different person and stays its own field
+    expect(build({ refundedBy: "casey" }).printedBy).toBe("pat");
+  });
+
+  it("a refund that is only pending has no 'Refunded by' even if the API sent a name", () => {
+    expect(
+      build({ status: "RECEIVED", refundedAt: null, refundAmount: null, refundedBy: "casey" })
+        .refundedBy,
+    ).toBeNull();
+  });
+
   it("a delivered (non-counter) order reads as Order N", () => {
     expect(
       build({ order: { id: "o2", orderNumber: "ORD-9", counterSale: false } }).sourceSale,

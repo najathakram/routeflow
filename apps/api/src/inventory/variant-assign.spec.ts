@@ -337,6 +337,39 @@ describe("InventoryService.assignToVariants", () => {
     expect(variantMovement.unitCost.toString()).toBe("4");
   });
 
+  it("GUARD (SA-975, row 646 / SA-814m P2): a transfer after sales costs the child at the parent's AVERAGE, never at the old lots' cost", async () => {
+    // Parent average 3. Two lots were received (100 @ 1, then 50 @ 4 = 150 units) and 100 were sold since; sales since
+    // #3487 never lower remainingQty, so both lots still read as fully available while currentStock is 50. The lots
+    // are chosen so that every lot-derived cost differs from the average AND from each other: oldest lot = 1, weighted
+    // blend = (100*1 + 50*4) / 150 = 2.0, unweighted mean of the lot costs = (1 + 4) / 2 = 2.5, newest lot = 4, parent
+    // average = 3. A child costed from any of them reads as its own wrong value, never as 3.
+    // The child must be costed at the parent's average 3: movement, lot and its own average.
+    prisma.product.findUnique.mockResolvedValue(parent({ currentStock: D(50), averageCost: D(3) }));
+    prisma.product.findFirst.mockResolvedValueOnce(
+      variant({ id: "variant-1", currentStock: D(0), averageCost: null }),
+    );
+    prisma.stockLot.findMany.mockResolvedValue([
+      { id: "lot-old", remainingQty: D(100), unitCost: D(1) },
+      { id: "lot-new", remainingQty: D(50), unitCost: D(4) },
+    ]);
+    const result = await service.assignToVariants(
+      { parentProductId: "parent-1", assignments: [{ productId: "variant-1", qty: 10 }] } as any,
+      "user-1",
+    );
+    expect(result.assignments[0].unitCost).toBe(3);
+    const movement = prisma.stockMovement.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.productId === "variant-1");
+    expect(movement.unitCost.toString()).toBe("3");
+    expect(movement.avgCostAfter.toString()).toBe("3");
+    expect(prisma.stockLot.create.mock.calls[0][0].data.unitCost.toString()).toBe("3");
+    expect(
+      prisma.product.update.mock.calls
+        .find((c: any) => c[0].where.id === "variant-1")[0]
+        .data.averageCost.toString(),
+    ).toBe("3");
+  });
+
   it("conserves lots: the parent's lot drawdown sums to exactly what the variant lots gain", async () => {
     prisma.product.findUnique.mockResolvedValue(parent({ currentStock: D(50) }));
     prisma.product.findFirst

@@ -92,6 +92,7 @@ export function CounterVoidSaleDialog({
       onClose={close}
       title={`Void sale ${orderNumber} · ${formatReceiptMoney(total)}`}
       className="max-w-md"
+      closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
       footer={
         done ? (
           <Button className="min-h-11" onClick={close}>
@@ -148,9 +149,10 @@ export function CounterVoidSaleDialog({
             can&apos;t undo this.
           </p>
           <label className="block">
-            Reason for voiding
+            Reason for voiding <span className="text-slate-600">(required)</span>
             <textarea
-              aria-label="Reason for voiding"
+              aria-label="Reason for voiding (required)"
+              aria-required="true"
               aria-invalid={touched && reasonProblem ? true : undefined}
               className="mt-1 min-h-[88px] w-full rounded border px-3 py-2"
               maxLength={VOID_REASON_MAX}
@@ -187,9 +189,12 @@ export function CounterVoidSaleDialog({
 export function CounterVoidSaleAction({
   orderNumber,
   onOpen,
+  describedBy,
 }: {
   orderNumber: string;
   onOpen: () => void;
+  /** the id of the read-only line this control points at while read-only; Today's sales' own line by default, the receipt passes its own */
+  describedBy?: string;
 }) {
   const role = useOptionalAuth()?.user?.role;
   const gate = useReadOnlyGate();
@@ -202,7 +207,7 @@ export function CounterVoidSaleAction({
       className="min-h-11 inline-flex items-center justify-center rounded border border-red-300 px-3 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
       aria-label={`Void sale ${orderNumber}`}
       disabled={gate.readOnly}
-      aria-describedby={gate.readOnly ? `${gate.hintId}-today` : undefined}
+      aria-describedby={gate.readOnly ? (describedBy ?? `${gate.hintId}-today`) : undefined}
       title={gate.readOnly ? (gate.line ?? undefined) : undefined}
       onClick={onOpen}
     >

@@ -40,6 +40,7 @@ const REFUNDED = {
   refundTender: "CARD",
   refundedAt: "2026-10-09T14:00:00Z",
   createdAt: "2026-10-09T13:00:00Z",
+  refundedBy: "casey",
 };
 
 const print = jest.fn();
@@ -122,6 +123,7 @@ describe("RefundSlipAction", () => {
       "Cola",
       "Refunded to Card",
       "$5.00",
+      "Refunded by: casey",
       "Printed by: pat",
       "Thanks for shopping!",
     ]) {
@@ -130,6 +132,20 @@ describe("RefundSlipAction", () => {
     window.dispatchEvent(new Event("afterprint")); // the print is over
     await waitFor(() => expect(document.body.classList.contains("refund-slip-open")).toBe(false));
     expect(document.querySelector("[data-refund-slip-portal]")).toBeNull();
+  });
+
+  it("row 257: a refund the API names no actor for prints no 'Refunded by' line (and never invents one)", async () => {
+    mockReturn = { ...REFUNDED, refundedBy: null };
+    renderWithProviders(<RefundSlipAction returnId="r1" />);
+    let text = "";
+    print.mockImplementation(() => {
+      text = document.querySelector("[data-refund-slip-portal]")?.textContent ?? "";
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Print slip" }));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    expect(text).not.toContain("Refunded by");
+    expect(text).toContain("Printed by: pat");
+    window.dispatchEvent(new Event("afterprint"));
   });
 
   it("the print scope stays until the browser says the print is over (print() does not block on tablets)", async () => {

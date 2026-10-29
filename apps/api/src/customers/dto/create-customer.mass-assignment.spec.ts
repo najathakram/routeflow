@@ -60,4 +60,14 @@ describe("CreateCustomerDto — mass assignment (B451 gap 1)", () => {
     const errors = await validate(instance, { whitelist: true, forbidNonWhitelisted: true });
     expect(errors.some((e) => e.property === "isSuperAdmin")).toBe(true);
   });
+
+  it("invoiceUnitDefault (SA-827) IS a declared field limited to the shared enum — not a raw pass-through", async () => {
+    const ok = attackPayload({ invoiceUnitDefault: "PACK" });
+    expect(await validate(ok, { whitelist: true, forbidNonWhitelisted: true })).toHaveLength(0);
+    const bad = attackPayload({ invoiceUnitDefault: "DROP TABLE" });
+    const errors = await validate(bad, { whitelist: true, forbidNonWhitelisted: true });
+    expect(errors.some((e) => e.property === "invoiceUnitDefault" && e.constraints?.isEnum)).toBe(
+      true,
+    );
+  });
 });

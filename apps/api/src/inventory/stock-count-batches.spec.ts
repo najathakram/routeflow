@@ -358,8 +358,10 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
 
   it("a CAS that matches no row (someone else finished) returns the alreadyCommitted outcome", async () => {
     seed([pid(1)]);
-    // pre-check: OPEN; the re-read (status + lines) under the lock: OPEN; the re-read after the failed CAS: COMMITTED
+    // pre-check: OPEN; the seed-state read under the lock (SA-999): OPEN; the re-read (status + lines) under the
+    // lock: OPEN; the re-read after the failed CAS: COMMITTED
     prisma.stockCountSession.findUnique
+      .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValue({ status: "COMMITTED" });

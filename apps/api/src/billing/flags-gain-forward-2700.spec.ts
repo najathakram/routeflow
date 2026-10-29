@@ -8,7 +8,7 @@
  */
 import { FeatureResolverService } from "./feature-resolver.service";
 import { FeaturePreviewService } from "./feature-preview.service";
-import { LITE_FIXTURE, mockCollaborators } from "./feature-fixtures";
+import { LITE_FIXTURE, featureConfigOver, mockCollaborators } from "./feature-fixtures";
 
 /** A LITE tenant pinned to a v12-shaped version (LITE has no flags); v13 is published. */
 const PINNED_V12 = {
@@ -77,6 +77,7 @@ describe("#2700 flags gain forward — FeaturePreviewService (F3)", () => {
       c.featureOverrides as any,
       c.catalog as any,
       c.prisma as any,
+      featureConfigOver().service,
     );
 
   it("a no-op preview shows the gained-forward flag held BEFORE and AFTER (apply keeps it; never a false 'lost')", async () => {
