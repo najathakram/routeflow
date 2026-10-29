@@ -462,6 +462,9 @@ export class CustomersService {
           ...(dto.defaultDepositPercent !== undefined && {
             defaultDepositPercent: dto.defaultDepositPercent,
           }),
+          ...(dto.invoiceUnitDefault !== undefined && {
+            invoiceUnitDefault: dto.invoiceUnitDefault,
+          }),
         },
       });
 
