@@ -5,8 +5,12 @@ import { PaidReturnNotice } from "./PaidReturnNotice";
 
 let mockQuery = "";
 let mockSub: Record<string, unknown> | undefined;
+let lastOpts: { refetchInterval?: (q: { state: { data?: unknown } }) => number | false } = {};
 jest.mock("@/lib/api/billing", () => ({
-  useSubscription: () => ({ data: mockSub }),
+  useSubscription: (opts: typeof lastOpts) => {
+    lastOpts = opts;
+    return { data: mockSub };
+  },
 }));
 jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(mockQuery),
@@ -79,5 +83,46 @@ describe("PaidReturnNotice", () => {
       expect(container.textContent).toBe("");
       unmount();
     }
+  });
+
+  describe("refetch interval (706)", () => {
+    const poll = (data: unknown) => lastOpts.refetchInterval?.({ state: { data } });
+
+    it("never polls without ?paid=1, even while the state is unknown", () => {
+      mockQuery = "";
+      renderWithProviders(<PaidReturnNotice />);
+      expect(poll(undefined)).toBe(false);
+      expect(poll({ billingState: "due" })).toBe(false);
+    });
+
+    it("polls every 15 s on ?paid=1 while processing or unknown", () => {
+      mockQuery = "paid=1";
+      renderWithProviders(<PaidReturnNotice />);
+      expect(poll({ billingState: "processing", paymentProcessing: true })).toBe(15_000);
+      expect(poll(undefined)).toBe(15_000);
+    });
+
+    it("stops once settled", () => {
+      mockQuery = "paid=1";
+      renderWithProviders(<PaidReturnNotice />);
+      expect(poll({ billingState: "current" })).toBe(false);
+    });
+
+    it("gives up after the cap (5 min) so an unknown state cannot poll forever", () => {
+      mockQuery = "paid=1";
+      const now = jest.spyOn(Date, "now");
+      now.mockReturnValue(1_000_000);
+      renderWithProviders(<PaidReturnNotice />);
+      expect(poll(undefined)).toBe(15_000);
+      now.mockReturnValue(1_000_000 + 5 * 60_000 + 1);
+      expect(poll(undefined)).toBe(false);
+      now.mockRestore();
+    });
+
+    it("card add (&card=1) does not poll", () => {
+      mockQuery = "paid=1&card=1";
+      renderWithProviders(<PaidReturnNotice />);
+      expect(poll({ billingState: "processing" })).toBe(false);
+    });
   });
 });

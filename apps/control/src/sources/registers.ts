@@ -26,7 +26,45 @@ export interface LoadOpts {
   sha?: string;
   /** Injectable git runner (tests count spawns); defaults to execFileSync. */
   run?: (repoDir: string, args: string[]) => string;
+  /**
+   * Where bugs.jsonl and status/ live: { repoDir, sha, prefix }. Omitted = tracked mode, the
+   * register sits in `repoDir` at `sha` (today's behaviour). The cache key carries both shas.
+   */
+  registry?: RegistrySourceOpt;
 }
+
+export interface RegistrySourceOpt {
+  repoDir: string;
+  sha: string;
+  /** Path of the register inside that repo; defaults to the tracked-mode location. */
+  prefix?: string;
+}
+
+export interface RegistrySourceFile {
+  repo: string;
+  branch: string;
+  prefix: string;
+}
+
+/** The shared contract file (scripts/lib/registry-source.json), COPYed into the image. */
+export function readRegistrySource(): RegistrySourceFile {
+  // src/sources and dist/sources are both four levels below the repo root (and /app in the image)
+  const file = path.resolve(
+    __dirname,
+    "..",
+    "..",
+    "..",
+    "..",
+    "scripts",
+    "lib",
+    "registry-source.json",
+  );
+  return JSON.parse(fs.readFileSync(file, "utf8")) as RegistrySourceFile;
+}
+
+// Tracked mode (B1-a/b): the register is in the product repo. Deleted with the mode in B1-c, when
+// the default becomes readRegistrySource().prefix.
+const TRACKED_PREFIX = [".claude", "campaign"].join("/");
 
 /** Parse JSONL; malformed lines are skipped with a `label:line` warning. */
 export function parseJsonl(text: string, label = "jsonl", warnings: string[] = []): Row[] {
@@ -118,13 +156,16 @@ export function loadRegisters(opts: LoadOpts = {}): Registers {
   if (opts.repoDir && opts.sha) {
     const { repoDir, sha } = opts;
     if (!SHA.test(sha)) throw new Error("loadRegisters: sha must be a full 40-hex commit id");
-    const key = `${repoDir}\0${sha}`;
+    const reg = opts.registry ?? { repoDir, sha };
+    if (!SHA.test(reg.sha)) throw new Error("loadRegisters: sha must be a full 40-hex commit id");
+    const prefix = reg.prefix ?? TRACKED_PREFIX;
+    const key = `${repoDir}\0${sha}\0${reg.repoDir}\0${reg.sha}\0${prefix}`;
     if (cache?.key === key) return cache.value;
     const gitOut = opts.run ?? defaultRun;
     let gitFailed = false;
-    const show = (p: string): Row[] => {
+    const show = (p: string, at = { repoDir, sha }): Row[] => {
       try {
-        const text = gitOut(repoDir, ["show", "--end-of-options", `${sha}:${p}`]);
+        const text = gitOut(at.repoDir, ["show", "--end-of-options", `${at.sha}:${p}`]);
         return parseJsonl(text, p, warnings);
       } catch (e) {
         gitFailed = true;
@@ -134,13 +175,13 @@ export function loadRegisters(opts: LoadOpts = {}): Registers {
     };
     let shardFiles: string[] = [];
     try {
-      shardFiles = gitOut(repoDir, [
+      shardFiles = gitOut(reg.repoDir, [
         "ls-tree",
         "-r",
         "--name-only",
         "--end-of-options",
-        sha,
-        ".claude/campaign/status/",
+        reg.sha,
+        `${prefix}/status/`,
       ])
         .split("\n")
         .filter((n) => n.endsWith(".jsonl"))
@@ -151,10 +192,10 @@ export function loadRegisters(opts: LoadOpts = {}): Registers {
     }
     const res = build(
       show(".claude/roadmap/features.jsonl"),
-      show(".claude/campaign/bugs.jsonl"),
+      show(`${prefix}/bugs.jsonl`, reg),
       show(".claude/roadmap/deferred.jsonl"),
       show(".claude/roadmap/releases.jsonl"),
-      shardFiles.flatMap(show),
+      shardFiles.flatMap((p) => show(p, reg)),
       warnings,
     );
     if (!gitFailed) cache = { key, value: res };

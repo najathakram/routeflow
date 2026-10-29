@@ -1,0 +1,7 @@
+{"time":"2026-10-21T06:30:00Z","event":"poll","status":"public"}
+{"time":"2026-10-21T06:50:00Z","event":"incident","action":"flipped-private"}
+{"time":"2026-10-22T11:00:00Z","event":"incident","action":"flip-unconfirmed"}
+{"time":"2026-10-23T12:00:00Z","event":"incident","action":"unexpected-public"}
+{"time":"2026-10-24T12:00:00Z","event":"incident","reason":"not-admin"}
+{"time":"2026-10-24T12:01:00Z","event":"incident","reason":"not-admin"}
+{"time":"2026-10-24T12:02:00Z","event":"incident","reason":"not-admin"}

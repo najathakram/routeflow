@@ -21,6 +21,9 @@ function outcomeOf(
   return "checking";
 }
 
+const POLL_MS = 15_000;
+const POLL_CAP_MS = 5 * 60_000;
+
 const COPY: Record<Outcome, string> = {
   processing: "Your payment is processing. Your bank hasn't cleared it yet.",
   received: "Payment received.",
@@ -33,19 +36,24 @@ const COPY: Record<Outcome, string> = {
  * notice; the shell hides the payment-due banner while `?paid=1` is present (the payment can still be processing).
  * SA-801: a card add (nothing charged) returns with `&card=1` and must never say "Payment received".
  * B1256 / Row 623: the wording follows the subscription's server-derived billing state (processing, received, failed,
- * or neutral while it loads), re-read every 15 s until it settles.
+ * or neutral while it loads), re-read every 15 s until it settles, for at most 5 minutes.
  */
 export function PaidReturnNotice() {
   const params = useSearchParams();
   const [hidden, setHidden] = React.useState(false);
+  const paid = params?.get("paid") === "1";
+  const cardAdded = params?.get("card") === "1";
+  const startedAt = React.useRef(Date.now());
+  // 706: poll only on the Stripe return (`?paid=1`, not a card add) and give up after POLL_CAP_MS, so an unknown
+  // state cannot refetch the subscription forever; past the cap the neutral "checking" wording stays.
   const { data } = useSubscription({
     refetchInterval: (q) => {
+      if (!paid || cardAdded || Date.now() - startedAt.current > POLL_CAP_MS) return false;
       const o = outcomeOf(q.state.data);
-      return o === "processing" || o === "checking" ? 15_000 : false;
+      return o === "processing" || o === "checking" ? POLL_MS : false;
     },
   });
-  if (hidden || params?.get("paid") !== "1") return null;
-  const cardAdded = params?.get("card") === "1";
+  if (hidden || !paid) return null;
   const outcome = outcomeOf(data);
   const bad = !cardAdded && outcome === "failed";
   const wait = !cardAdded && (outcome === "processing" || outcome === "checking");

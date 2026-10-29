@@ -79,7 +79,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: exactly one notification per PENDING alert, each flipped to NOTIFIED", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 12 }]);
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
       { id: "a2", customerId: "c2", productId: "p1", status: "PENDING" },
@@ -90,7 +90,7 @@ describe("StockAlertService (P5-03)", () => {
     const res = await service.fireForProducts(["p1", "p1"]);
 
     expect(res).toEqual({ notified: 2 });
-    expect(prisma.product.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.product.findMany).toHaveBeenCalledTimes(1); // one read for all products, however many
     expect(notifications.sendToCustomer).toHaveBeenCalledTimes(2);
     expect(notifications.sendToCustomer).toHaveBeenCalledWith(
       "c1",
@@ -107,7 +107,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: a buyer a selling restriction hides this product from gets no push, and their alert is left PENDING", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 12 }]);
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", tenantId: "t1", customerId: "c1", productId: "p1", status: "PENDING" },
       { id: "a2", tenantId: "t1", customerId: "c2", productId: "p1", status: "PENDING" },
@@ -130,7 +130,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: when the restriction read fails the buyer is not pushed (fail closed) and the other alerts still fire", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 12 }]);
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", tenantId: "t1", customerId: "c1", productId: "p1", status: "PENDING" },
       { id: "a2", tenantId: "t1", customerId: "c2", productId: "p1", status: "PENDING" },
@@ -150,7 +150,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: one restriction read per customer, not per product", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 12 }]);
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", tenantId: "t1", customerId: "c1", productId: "p1", status: "PENDING" },
     ]);
@@ -164,7 +164,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: a lost atomic claim (concurrent restock already took it) sends no push", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 12 }]);
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
     ]);
@@ -178,7 +178,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: second fire is a no-op (no PENDING rows remain)", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 12 }]);
     prisma.stockAlert.findMany.mockResolvedValue([]);
 
     const res = await service.fireForProducts(["p1"]);
@@ -189,17 +189,21 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: in-stock guard — no fire while on-hand <= 0", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 0 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 0 }]);
+    prisma.stockAlert.findMany.mockResolvedValue([
+      { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
+    ]);
 
     const res = await service.fireForProducts(["p1"]);
 
     expect(res).toEqual({ notified: 0 });
-    expect(prisma.stockAlert.findMany).not.toHaveBeenCalled();
+    // The pending alerts are read first (one query); a product still at 0 is never claimed or pushed.
+    expect(prisma.stockAlert.updateMany).not.toHaveBeenCalled();
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
   });
 
   it("fire: a push failure is swallowed and the entry is STILL cleared", async () => {
-    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 3 });
+    prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "Cola 24pk", currentStock: 3 }]);
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
     ]);
@@ -211,6 +215,64 @@ describe("StockAlertService (P5-03)", () => {
     expect(prisma.stockAlert.updateMany).toHaveBeenCalledWith({
       where: { id: "a1", status: "PENDING" },
       data: { status: "NOTIFIED", notifiedAt: expect.any(Date) },
+    });
+  });
+
+  // Row 562 S1 (T15): the pending lookup is one query per call, not two per product.
+  describe("fire: batched lookup (row 562 S1, T15)", () => {
+    const lookups = () =>
+      prisma.product.findFirst.mock.calls.length +
+      prisma.product.findMany.mock.calls.length +
+      prisma.stockAlert.findMany.mock.calls.length;
+
+    it("T15: 50 product ids with no pending alerts cost ONE lookup", async () => {
+      const ids = Array.from({ length: 50 }, (_, i) => `p${i}`);
+      // Every product is in stock, so a per-product loop would read each one and then its alerts.
+      prisma.product.findFirst.mockResolvedValue({ id: "px", name: "X", currentStock: 5 });
+      prisma.product.findMany.mockResolvedValue(
+        ids.map((id) => ({ id, name: id, currentStock: 5 })),
+      );
+      prisma.stockAlert.findMany.mockResolvedValue([]);
+
+      const res = await service.fireForProducts(ids);
+
+      expect(res).toEqual({ notified: 0 });
+      expect(lookups()).toBe(1);
+    });
+
+    it("50 ids, alerts on two of them: the alerts are read once, then only those two products", async () => {
+      const ids = Array.from({ length: 50 }, (_, i) => `p${i}`);
+      prisma.stockAlert.findMany.mockResolvedValue([
+        { id: "a1", tenantId: "t1", customerId: "c1", productId: "p7", status: "PENDING" },
+        { id: "a2", tenantId: "t1", customerId: "c2", productId: "p9", status: "PENDING" },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p7", name: "Seven", currentStock: 4 },
+        { id: "p9", name: "Nine", currentStock: 0 }, // still at 0: its alert must stay PENDING
+      ]);
+      prisma.stockAlert.updateMany.mockResolvedValue({ count: 1 });
+
+      const res = await service.fireForProducts(ids);
+
+      expect(res).toEqual({ notified: 1 });
+      expect(lookups()).toBe(2);
+      expect(prisma.stockAlert.findMany.mock.calls[0][0].where).toMatchObject({
+        productId: { in: ids },
+        status: "PENDING",
+      });
+      expect(prisma.product.findMany.mock.calls[0][0].where).toMatchObject({
+        id: { in: ["p7", "p9"] },
+      });
+      expect(prisma.stockAlert.updateMany).toHaveBeenCalledTimes(1);
+      expect(notifications.sendToCustomer.mock.calls[0][3]).toEqual({
+        type: "STOCK_ALERT",
+        productId: "p7",
+      });
+    });
+
+    it("no ids: no lookup at all", async () => {
+      await expect(service.fireForProducts([])).resolves.toEqual({ notified: 0 });
+      expect(lookups()).toBe(0);
     });
   });
 });
