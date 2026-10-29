@@ -65,6 +65,8 @@ export interface PlanChangeFlowArgs {
   targetPlanName: string;
   /** The RESOLVED price; null when the target has no catalog price and the row no override. */
   price: { monthly: number; annual: number } | null;
+  /** True when `price` is null because a price is not a finite number (not because none is set): the push says so. */
+  priceInvalid?: boolean;
   proration: PlanChangeProration;
   /**
    * An upgrade stops billing the add-ons the new plan includes (B1103 / SA-786: the rows stay ON at $0); a
@@ -166,6 +168,7 @@ export async function beginStripeFirstPlanChange(
       targetPlanVersionId: a.targetPlanVersionId,
       planName: a.targetPlanName,
       price: a.price,
+      priceInvalid: a.priceInvalid,
       proration: a.proration,
       knownAddonItemIds,
       deleteItems,
@@ -431,6 +434,7 @@ export function planChangeArgs(p: {
     targetPlanVersionId: p.version.id,
     targetPlanName: p.def.name,
     price: price.ok ? { monthly: price.monthly, annual: price.annual } : null,
+    priceInvalid: !price.ok && price.reason === "non_finite_price",
     proration: p.proration,
     stopBillingAddons: p.stopBillingAddons,
     addonSkus: p.version.addonSkus ?? [],
