@@ -169,4 +169,25 @@ describe("counterMethodLine (the ONE Payment method line, email and reprint; SA-
   it("no tenders is an empty line", () => {
     expect(counterMethodLine([])).toBe("");
   });
+
+  it("W-713: a check number rides right after the word Check, on the check leg only", () => {
+    expect(counterMethodLine([{ method: "CHECK", amount: 25 }], { checkReference: "1042" })).toBe(
+      "Check #1042 $25.00",
+    );
+    expect(
+      counterMethodLine(
+        [
+          { method: "CASH", amount: 5 },
+          { method: "CHECK", amount: 20 },
+        ],
+        { checkReference: " 1042 " },
+      ),
+    ).toBe("Cash $5.00 + Check #1042 $20.00");
+    expect(counterMethodLine([{ method: "CHECK", amount: 25 }], { checkReference: null })).toBe(
+      "Check $25.00",
+    );
+    expect(counterMethodLine([{ method: "CASH", amount: 25 }], { checkReference: "1042" })).toBe(
+      "Cash $25.00",
+    );
+  });
 });

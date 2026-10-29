@@ -365,10 +365,11 @@ function useSearchResults(
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const [customersRes, ordersRes, invoicesRes] = await Promise.allSettled([
+        const [customersRes, ordersRes, invoicesRes, productsRes] = await Promise.allSettled([
           apiClient.get("/customers", { params: { search: query, limit: 4 } }),
           apiClient.get("/orders", { params: { search: query, limit: 4 } }),
           apiClient.get("/invoices", { params: { search: query, limit: 4 } }),
+          apiClient.get("/products", { params: { search: query, limit: 4 } }),
         ]);
 
         const items: SearchResult[] = [];
@@ -407,6 +408,19 @@ function useSearchResults(
               sublabel: inv.customer?.businessName ?? "",
               href: `/invoices/${inv.id}`,
               icon: FileText,
+              group: "results",
+            });
+          }
+        }
+
+        if (productsRes.status === "fulfilled") {
+          for (const p of productsRes.value.data?.data ?? []) {
+            items.push({
+              id: `product-${p.id}`,
+              label: p.name ?? "Unnamed product",
+              sublabel: p.sku ?? "",
+              href: `/products/${p.id}`,
+              icon: Package,
               group: "results",
             });
           }
