@@ -75,13 +75,22 @@ import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { editPaymentCap, resolveConfirmedAmounts } from "@routeflow/pricing";
+import {
+  editPaymentCap,
+  invoiceDisplayLines,
+  invoiceDisplayCategoryTax,
+  resolveConfirmedAmounts,
+} from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import type { LineComponentView } from "@routeflow/types";
+import {
+  InvoiceDisplayRows,
+  displayQtyText,
+  formatUnitPrice4,
+} from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
@@ -2558,8 +2567,43 @@ export default function InvoiceDetailPage() {
                       );
                     }
                     const item = row.item;
-                    return (
-                      <tr key={item.id} className="hover:bg-surface-raised">
+                    // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
+                    const display = invoiceDisplayLines(
+                      {
+                        description: item.description,
+                        qty: Number(item.qty),
+                        boxes: item.boxes,
+                        pieces: item.pieces,
+                        unitsPerBox: item.unitsPerBox,
+                        unitLabel: item.unitLabel,
+                        unitPrice: Number(item.unitPrice),
+                        subtotal: Number(item.subtotal),
+                        categoryTax: invoiceDisplayCategoryTax(item),
+                      },
+                      (item.components ?? []).map((c) => ({
+                        componentProductId: c.componentProductId,
+                        name: c.name,
+                        qty: Number(c.qty),
+                        unitSku: c.unitSku,
+                        unitBarcode: c.unitBarcode,
+                        displayUnitPrice4:
+                          c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
+                        position: c.position,
+                      })),
+                      item.displayUnit,
+                    );
+                    const groupRow = (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-surface-raised"
+                        data-testid={
+                          display.layout === "components"
+                            ? `display-group-row-${item.id}`
+                            : display.layout === "pieces"
+                              ? `display-pieces-${item.id}`
+                              : undefined
+                        }
+                      >
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
@@ -2567,9 +2611,10 @@ export default function InvoiceDetailPage() {
                               {item.notes}
                             </p>
                           )}
-                          <ComponentSubLines
-                            components={(item as { components?: LineComponentView[] }).components}
-                          />
+                          {/* The component rows replace the "(included)" sub-lines in the components layout. */}
+                          {display.layout !== "components" && (
+                            <ComponentSubLines components={item.components} />
+                          )}
                           <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -2581,7 +2626,9 @@ export default function InvoiceDetailPage() {
                                 : undefined
                             }
                           >
-                            {invoiceLineQtyText(item)}
+                            {display.layout === "pieces"
+                              ? displayQtyText(display.qty, display.unitLabel)
+                              : invoiceLineQtyText(item)}
                           </span>
                           {/* BUY_N_GET_M: name the free units, or the reduced
                               subtotal reads as a pricing error. */}
@@ -2593,7 +2640,16 @@ export default function InvoiceDetailPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
-                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          {display.layout === "pieces" ? (
+                            <InvoiceLinePrice
+                              item={item}
+                              hideOriginal={hideOriginal}
+                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              noStrike
+                            />
+                          ) : (
+                            <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          )}
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later
@@ -2607,6 +2663,20 @@ export default function InvoiceDetailPage() {
                         <InvoiceLineAmount item={item} />
                       </tr>
                     );
+                    if (display.layout === "components") {
+                      return (
+                        <InvoiceDisplayRows
+                          key={item.id}
+                          lines={display}
+                          itemId={item.id}
+                          fmt={fmt}
+                          variant="staff"
+                        >
+                          {groupRow}
+                        </InvoiceDisplayRows>
+                      );
+                    }
+                    return groupRow;
                   })}
                 </tbody>
               </table>
