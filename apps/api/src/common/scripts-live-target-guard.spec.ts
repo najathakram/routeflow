@@ -112,6 +112,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b2187-subscription-period-census.mjs": "read-only",
   "apps/api/scripts/report-b2188-duplicate-addon-rows.mjs": "read-only",
   "apps/api/scripts/report-b2197-issuedate-time-component.mjs": "read-only",
+  "apps/api/scripts/report-standard-refund-tax-shortfall.mjs": "read-only",
   "apps/api/scripts/report-b2230-unit-lines-without-boxes.mjs": "read-only",
   "apps/api/scripts/report-b2436-stripe-missing-sub.mjs": "read-only",
   "apps/api/scripts/report-cross-tenant-refs.mjs": "read-only", // 681: SELECT COUNT(*) only, default_transaction_read_only = on
