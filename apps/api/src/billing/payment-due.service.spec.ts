@@ -767,6 +767,14 @@ describe("SA-801: PaymentDueService.pay for a card-needed tenant", () => {
  * that completed first is the claim's AWAITING_FIRST_PAYMENT, never a second session.
  */
 describe("542d: a live session whose terms differ from the fresh plan is stale", () => {
+  // The lost-race re-plan reads the wall clock on purpose (`new Date()`, "the fresh clock"). The fixtures bill a 2026-11-01
+  // trial_end, which the 72 h floor refuses once the real date passes 2026-10-29T12:00Z, so pin the clock a minute past NOW.
+  beforeAll(() => {
+    jest.useFakeTimers({ now: new Date(NOW.getTime() + 60_000) });
+  });
+  afterAll(() => {
+    jest.useRealTimers();
+  });
   const LIVE_UNTIL = Math.floor(NOW.getTime() / 1000) + 3600;
   const held = {
     sub: { catchupState: "SESSION_OPEN", catchupSessionId: "cs_old" },

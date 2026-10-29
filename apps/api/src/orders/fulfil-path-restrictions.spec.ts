@@ -1,3 +1,4 @@
+import * as fulfilPathRestrictions from "./fulfil-path-restrictions";
 import { judgeFulfilSwitch } from "./fulfil-path-restrictions";
 
 /**
@@ -74,5 +75,15 @@ describe("judgeFulfilSwitch needsTx", () => {
       ),
     ).toBeNull();
     expect(gate).not.toHaveBeenCalled();
+  });
+});
+
+describe("W-748: the module exports only live callees", () => {
+  it("assertFulfilPathSwitchAllowed (production never called it; only a DB spec did) is gone", () => {
+    expect(Object.keys(fulfilPathRestrictions)).toEqual(
+      expect.not.arrayContaining(["assertFulfilPathSwitchAllowed"]),
+    );
+    expect(typeof fulfilPathRestrictions.assertFulfilPathAddress).toBe("function");
+    expect(typeof fulfilPathRestrictions.judgeFulfilSwitch).toBe("function");
   });
 });

@@ -7,7 +7,7 @@
  * Each case is one deterministic interleaving on two connections:
  *   1. the WRITER (a raw `pg` connection) takes the Order row FOR UPDATE;
  *   2. the SERVICE under test starts, and a barrier waits until Postgres reports it BLOCKED by the
- *      writer (`pg_blocking_pids`), so the interleaving is real, never a timing guess;
+ *      writer (the blocked-wait helper), so the interleaving is real, never a timing guess;
  *   3. only then does the writer take the Invoice row FOR UPDATE and commit.
  * Master: the service already holds that Invoice when it blocks on the Order (it wrote the Invoice
  * first), so step 3 closes a cycle and Postgres aborts one side with 40P01. Fixed: the service
@@ -31,6 +31,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "./testing/db-spec";
+import { waitUntilBlockedBy } from "./testing/blocked-wait";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { CustomersService } from "../customers/customers.service";
@@ -107,20 +108,6 @@ describeDb(
       return { orderId: order.id, invoiceId: invoice.id };
     }
 
-    /** Polls until some backend is blocked by `blockerPid`; false if `done()` or the deadline comes first. */
-    async function waitUntilBlockedBy(blockerPid: number, done: () => boolean): Promise<boolean> {
-      const deadline = Date.now() + 10_000;
-      while (Date.now() < deadline && !done()) {
-        const { rows } = await pool.query(
-          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-          [blockerPid],
-        );
-        if (rows[0].n > 0) return true;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      return false;
-    }
-
     /** Steps 1–3 of the header, against `service`. Every failure is captured, never thrown early. */
     async function raceAgainstOrderThenInvoiceWriter(
       ids: { orderId: string; invoiceId: string },
@@ -147,7 +134,11 @@ describeDb(
           .finally(() => {
             settled = true;
           });
-        blocked = await waitUntilBlockedBy(pid, () => settled);
+        blocked = await waitUntilBlockedBy(pool, pid, {
+          timeoutMs: 10_000,
+          intervalMs: 20,
+          until: () => settled,
+        });
 
         try {
           await writer.query('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', [ids.invoiceId]);

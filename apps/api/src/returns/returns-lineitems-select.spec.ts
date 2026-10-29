@@ -120,4 +120,34 @@ describe("returns.service.ts — every order.lineItems select fetches status (PR
     const args = prisma.return.findUnique.mock.calls[0][0];
     expect(args.include.order.select.counterSale).toBe(true);
   });
+
+  it("REG-B704 (SA-840, L-262): the three invoice selects carry every tax input the refund pricer reads", async () => {
+    // wrong today: none of processRefund's, findOne's or findAll's invoice selects asks for taxAmount, discount, or the
+    // items' taxRate / categoryTaxAmount / systemKind / description, so a mock-fed pricer would see tax 0 and a real one 500
+    prisma.return.findUnique.mockResolvedValue(null);
+    prisma.return.findMany.mockResolvedValue([]);
+    await service.processRefund("ret-1").catch(() => {});
+    await service.findOne("ret-1").catch(() => {});
+    await service.findAll({});
+    const selects = [
+      prisma.return.findUnique.mock.calls[0][0].include.order.select.invoices.select,
+      prisma.return.findUnique.mock.calls[1][0].include.order.select.invoices.select,
+      prisma.return.findMany.mock.calls[0][0].include.order.select.invoices.select,
+    ];
+    expect(selects).toHaveLength(3);
+    for (const select of selects) {
+      expect(select).toMatchObject({
+        taxAmount: true,
+        discount: true,
+        items: {
+          select: {
+            taxRate: true,
+            categoryTaxAmount: true,
+            systemKind: true,
+            description: true,
+          },
+        },
+      });
+    }
+  });
 });

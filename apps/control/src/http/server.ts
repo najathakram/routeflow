@@ -437,7 +437,12 @@ export function createControlServer(deps: ControlDeps): ControlApp {
 
   const loadRegs = (): Registers => {
     if (cfg.fixtureDir) return loadRegisters({ fixtureDir: cfg.fixtureDir });
-    if (masterSha) return loadRegisters({ repoDir: masterDir, sha: masterSha });
+    if (masterSha)
+      return loadRegisters({
+        repoDir: masterDir,
+        sha: masterSha,
+        registry: { repoDir: masterDir, sha: masterSha },
+      });
     return {
       tasks: [],
       releases: [],

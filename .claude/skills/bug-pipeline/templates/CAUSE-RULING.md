@@ -1,6 +1,6 @@
 # Fix ruling — <bug id(s)> <slug>
 
-> Fable @ high rules over the S1 brief + S2 refutation verbatim; it opens no file. One ruling per run.
+> Opus @ high rules over the S1 brief + S2 refutation verbatim; it opens no file. One ruling per run.
 > S2's verdict must be attached below this header, quoted in full.
 
 ## 1. Cause verdict

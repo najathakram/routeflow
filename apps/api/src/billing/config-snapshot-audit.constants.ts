@@ -51,6 +51,15 @@ export function heldAuditMeta(
  */
 export const STRIPE_CHECKOUT_ENTITY = "stripe_checkout_session";
 export const STRIPE_CHECKOUT_APPLIED_ACTION = "STRIPE_CHECKOUT_APPLIED";
+/**
+ * SA-774 (card first, then active): a checkout LINKS a Stripe subscription to the tenant without activating it.
+ * The LINKED marker (entityType `STRIPE_CHECKOUT_LINK`, entityId = the Stripe subscription id, meta carries the
+ * session id and the pick) stays "link-pending" until the ACTIVATED marker (`STRIPE_CHECKOUT_APPLIED_ACTION`,
+ * keyed by the session id, which now means "activated"; legacy rows already do) exists or the link is unlinked.
+ */
+export const STRIPE_CHECKOUT_LINK_ENTITY = "STRIPE_CHECKOUT_LINK";
+export const STRIPE_CHECKOUT_LINKED_ACTION = "STRIPE_CHECKOUT_LINKED";
+export const STRIPE_CHECKOUT_UNLINKED_ACTION = "STRIPE_CHECKOUT_UNLINKED";
 export const STRIPE_CHECKOUT_STALE_ACTION = "STRIPE_CHECKOUT_PLAN_SKIPPED_STALE";
 /** A checkout session refused outright (unknown tenant / a customer that is not the tenant's). */
 export const STRIPE_CHECKOUT_REFUSED_ACTION = "STRIPE_CHECKOUT_REFUSED";

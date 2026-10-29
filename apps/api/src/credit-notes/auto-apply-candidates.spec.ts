@@ -9,6 +9,8 @@ describe("autoApplyCandidateWhere", () => {
       status: { not: "VOID" },
       autoApplyExcluded: false,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      // W-913: the shared walk-in account is never a sweep target (NULL = every legacy row = not a walk-in)
+      customer: { OR: [{ isWalkIn: null }, { isWalkIn: false }] },
     });
   });
 

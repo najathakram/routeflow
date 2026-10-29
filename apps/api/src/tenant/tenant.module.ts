@@ -2,6 +2,7 @@ import { Global, Module } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { TenantContextService } from "./tenant-context.service";
 import { TenantInterceptor } from "./tenant.interceptor";
+import { TenantRequiredInterceptor } from "./tenant-required.interceptor";
 import { SuperAdminGuard } from "./super-admin.guard";
 import { TenantStatusGuard } from "./tenant-status.guard";
 
@@ -19,6 +20,8 @@ import { TenantStatusGuard } from "./tenant-status.guard";
       provide: APP_INTERCEPTOR,
       useClass: TenantInterceptor,
     },
+    // W-767 (SA-908): a SUPER_ADMIN write with no business in the session (DARK: warns; see the interceptor).
+    { provide: APP_INTERCEPTOR, useClass: TenantRequiredInterceptor },
   ],
   exports: [TenantContextService, SuperAdminGuard, TenantStatusGuard],
 })

@@ -16,7 +16,7 @@ import {
 import { formatMoney } from "@/lib/format";
 import { EditCasesPieces } from "./EditCasesPieces";
 import { isCasesPiecesLine } from "../edit-cases-pieces";
-import { EDIT_QTY_INPUT } from "../edit-line-controls";
+import { EDIT_QTY_INPUT, EDIT_TAP_BELOW_LG } from "../edit-line-controls";
 import { EditScanBar } from "./EditScanBar";
 import { DeliveredLockedHint, DeliveredLockedQty } from "./DeliveredLineLock";
 import {
@@ -1013,7 +1013,7 @@ export function EditableLineItems({
                     value={item.productName}
                     onChange={(e) => update(item.id, { productName: e.target.value })}
                     placeholder="Item name"
-                    className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy max-lg:h-11 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
                     Custom
@@ -1084,6 +1084,7 @@ export function EditableLineItems({
               !item.countLocked &&
               !isLocked(item.id) && (
                 <OrderLineUnitPicker
+                  className="max-lg:h-11"
                   line={{
                     productId: item.productId,
                     productName: item.productName,
@@ -1131,7 +1132,10 @@ export function EditableLineItems({
             <div className="flex items-center gap-1.5 max-sm:-ml-2">
               {item.cancelled ? (
                 <button
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
+                  className={cn(
+                    "flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50",
+                    EDIT_TAP_BELOW_LG,
+                  )}
                   onClick={() =>
                     update(item.id, {
                       cancelled: false,
@@ -1160,7 +1164,10 @@ export function EditableLineItems({
                 <>
                   {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
-                      className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
+                      className={cn(
+                        "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50",
+                        EDIT_TAP_BELOW_LG,
+                      )}
                       disabled={!pricingReady}
                       onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
                     >
@@ -1169,7 +1176,10 @@ export function EditableLineItems({
                   )}
                   {item.substituteProductId && (
                     <button
-                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
+                      className={cn(
+                        "flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50",
+                        EDIT_TAP_BELOW_LG,
+                      )}
                       onClick={() =>
                         update(item.id, {
                           productId: item.originalProductId,
@@ -1190,7 +1200,10 @@ export function EditableLineItems({
                     </button>
                   )}
                   <button
-                    className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
+                    className={cn(
+                      "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy",
+                      EDIT_TAP_BELOW_LG,
+                    )}
                     onClick={() => update(item.id, { cancelled: true })}
                   >
                     Not available
@@ -1198,13 +1211,15 @@ export function EditableLineItems({
                   <button
                     className={cn(
                       TAP_TARGET,
-                      "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
+                      "flex items-center gap-1 rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors max-sm:px-2 max-sm:text-navy/70",
                     )}
                     title={`Remove ${item.productName?.trim() || "item"}`}
                     aria-label={`Remove ${item.productName?.trim() || "item"}`}
                     onClick={() => onDelete(item.id)}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {/* r5 F11: the word on a phone (icon-only from sm up; aria-label still names the line) */}
+                    <span className="text-xs sm:sr-only">Remove</span>
                   </button>
                 </>
               )}
@@ -1262,7 +1277,7 @@ export function EditableLineItems({
                 value={item.notes ?? ""}
                 onChange={(e) => update(item.id, { notes: e.target.value })}
                 placeholder="Note for this line (prints on invoice)"
-                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy max-lg:min-h-11 placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
           )}
@@ -1343,8 +1358,9 @@ export function EditableLineItems({
           }}
           onError={(message) => toast({ variant: "error", title: message })}
         />
+        {/* r5 N09: below sm the results open ABOVE the field; below it the pinned Save bar hid all but one row. */}
         {addOpen && products.length > 0 && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg max-sm:bottom-full max-sm:top-auto max-sm:mb-1 max-sm:mt-0">
             <ul className="max-h-52 overflow-y-auto py-1">
               {products.map((p: any) => (
                 <li key={p.id}>

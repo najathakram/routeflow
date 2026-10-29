@@ -166,6 +166,12 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // SA-827 PR2: Customer.invoiceUnitDefault, a brand-new Prisma enum.
   ["INVOICE_UNIT_DEFAULT_VALUES", "InvoiceUnitDefault"],
   ["ADJUSTMENT_REASON_VALUES", "AdjustmentReason"],
+  // SA-1049 R5: the platform-admin badge's five status/plan enums, existing Prisma enums that were hand-typed.
+  ["TENANT_STATUS_VALUES", "TenantStatus"],
+  ["TENANT_PLAN_VALUES", "TenantPlan"],
+  ["USER_STATUS_VALUES", "UserStatus"],
+  ["BUYER_ACCOUNT_STATUS_VALUES", "BuyerAccountStatus"],
+  ["CUSTOMER_LINK_STATUS_VALUES", "CustomerLinkStatus"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -294,6 +300,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // AdjustmentReason (SA-804(3), SA-828 row 657, migration 20261020130000_stock_movement_adjustment_reason): two
 // brand-new Prisma enums, mirrored as `INVOICE_UNIT_DEFAULT_VALUES` / `ADJUSTMENT_REASON_VALUES` + their `ENUM_TABLE`
 // rows (118 → 120).
+// Triage for TenantStatus, TenantPlan, UserStatus, BuyerAccountStatus and CustomerLinkStatus (SA-1049 R5): five
+// EXISTING Prisma enums the platform-admin badge hand-typed, now mirrored as `TENANT_STATUS_VALUES` …
+// `CUSTOMER_LINK_STATUS_VALUES` + their `ENUM_TABLE` rows above. No enum was added, so the count stays 120.
 const PINNED_PRISMA_ENUM_COUNT = 120;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {

@@ -210,6 +210,9 @@ describe("PickupCompleteService.complete", () => {
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             changeStatus,
             decrementStockForSale,
             updateFulfillPath,
@@ -343,6 +346,19 @@ describe("PickupCompleteService.complete", () => {
         ["inv-2", 10],
       ]);
       expect(res).toMatchObject({ invoiceId: "inv-1", total: 40, paid: 40, balanceDue: 0 });
+    });
+    // SA-1026 B-R4: the response lists every invoice the figures total, so "Print invoice" prints exactly what the screen shows.
+    it("B-R4: a two-invoice hand-over answers invoiceIds in issue order, and invoiceId stays the first", async () => {
+      invoices = [inv("inv-1", 30, "DRAFT", [], 1), inv("inv-2", 10, "DRAFT", [], 2)];
+      const res = (await run()) as { invoiceId: string; invoiceIds?: string[] };
+      expect(res.invoiceIds).toEqual(["inv-1", "inv-2"]);
+      expect(res.invoiceId).toBe(res.invoiceIds?.[0]);
+    });
+    it("B-G3: an order invoiced before pickup (nothing to send now) still lists its invoice", async () => {
+      invoices = [inv("inv-1", 37.25, "SENT")];
+      const res = (await run()) as { invoiceIds?: string[] };
+      expect(send).not.toHaveBeenCalled();
+      expect(res.invoiceIds).toEqual(["inv-1"]);
     });
     it("a walk-in's invoice is sent without the INVOICE_SENT message", async () => {
       order = orderRow("CONFIRMED", { customer: { isWalkIn: true } });
@@ -994,13 +1010,12 @@ describe("PickupCompleteService.complete", () => {
         nothingWritten();
       },
     );
-    it("open credit with the sweep on is 409 WALK_IN_OPEN_CREDIT before any write", async () => {
+    it("W-913: a legacy open credit on the walk-in account with the sweep on no longer blocks the hand-over, and is never consulted", async () => {
       mockSweepOn.on = true;
       prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 0 }]);
-      const e = await errorOf(run());
-      expect(e.getStatus()).toBe(409);
-      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
-      nothingWritten();
+      const res = await run(cash(37.25));
+      expect(res).toMatchObject({ balanceDue: 0, paymentRecorded: true });
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     });
     it("a full CASH tender still completes", async () => {
       const res = await run(cash(37.25));

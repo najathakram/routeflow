@@ -256,7 +256,15 @@ export class CommissionEngineService {
       where: { id: invoiceId },
       include: {
         payments: { select: { id: true, amount: true, method: true, status: true } },
-        items: { select: { description: true, qty: true, unitPrice: true, systemKind: true } },
+        items: {
+          select: {
+            description: true,
+            qty: true,
+            unitPrice: true,
+            subtotal: true,
+            systemKind: true,
+          },
+        },
         order: {
           select: {
             orderDate: true,
@@ -320,7 +328,7 @@ export class CommissionEngineService {
     const nsfFees = roundMoney(
       (invoice.items ?? [])
         .filter((i: any) => isNsfLine(i))
-        .reduce((s: number, i: any) => s + Number(i.qty) * Number(i.unitPrice), 0),
+        .reduce((s: number, i: any) => s + Number(i.subtotal), 0), // the stored line figure inside invoice.subtotal (row 139)
     );
     const moneyState: InvoiceMoneyState = {
       subtotal: Number(invoice.subtotal),
