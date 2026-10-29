@@ -94,6 +94,15 @@ describe("CounterLinePriceEdit: the dialog", () => {
     await waitFor(() => expect(field("Price per item")).toHaveFocus());
   });
 
+  it("the dialog close button is a 44 px target (W-851)", async () => {
+    mount();
+    open();
+    const close = await screen.findByRole("button", { name: "Close" });
+    expect(close).toHaveClass("max-lg:min-h-11");
+    expect(close).toHaveClass("max-lg:min-w-11");
+    expect(close).not.toHaveClass("min-h-[44px]"); // desktop density is unchanged
+  });
+
   it("percent off 10 on a 10.00 item: preview, then Apply hands back net 9", async () => {
     const { onApply } = mount();
     open();
