@@ -124,6 +124,8 @@ export function useBuyerSocket() {
         void qc.invalidateQueries({ queryKey: ["buyer-invoices"] });
         void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
         void qc.invalidateQueries({ queryKey: ["buyer-payments"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-statement-months"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-remittance"] });
         void qc.invalidateQueries({ queryKey: ["buyer-statement"] });
       });
 
@@ -132,11 +134,18 @@ export function useBuyerSocket() {
         void qc.invalidateQueries({ queryKey: ["buyer-order-tracking"] });
       });
 
-      socket.on("creditNote.created", () => {
+      // B546: an issued and a voided credit note move the same views.
+      const refreshCreditViews = () => {
         void qc.invalidateQueries({ queryKey: ["buyer-credit-notes"] });
         void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
         void qc.invalidateQueries({ queryKey: ["buyer-statement"] });
-      });
+        void qc.invalidateQueries({ queryKey: ["buyer-invoices"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-payments"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-statement-months"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-remittance"] });
+      };
+      socket.on("creditNote.created", refreshCreditViews);
+      socket.on("creditNote.voided", refreshCreditViews);
     };
 
     void connect();

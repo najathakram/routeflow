@@ -3004,6 +3004,7 @@ describe("bulkDelete — REG-B24 / T-B24a (reference classification guard)", () 
     expect(result).toEqual({
       deleted: 1,
       softDeleted: 1,
+      softDeletedIds: ["prod-b"],
       skipped: [
         {
           id: "prod-a",

@@ -100,15 +100,26 @@ export function archivedMessage(product: { name?: string | null } | undefined): 
   return `${product?.name || "Item"} is archived — reactivate it first`;
 }
 
+/**
+ * Row 541: every scan lookup's deadline (the axios timeout). The web apiClient has none, and both scan queues (the order
+ * builder's and the till's) are ONE FIFO, so a lookup that never answered held every scan behind it. At the deadline it
+ * fails as a connectivity error: nothing is committed, and each queue shows its own retry cue.
+ */
+export const SCAN_LOOKUP_TIMEOUT_MS = 6000;
+
 export async function resolveProductByCode<T = any>(
   rawCode: string,
+  /** Row 541: a per-request deadline (the axios timeout); the web apiClient has none of its own. */
+  opts?: { timeoutMs?: number },
 ): Promise<BarcodeResolveResult<T>> {
   const code = rawCode.trim();
   if (!code) return { notFound: true };
+  const timeout = opts?.timeoutMs ? { timeout: opts.timeoutMs } : undefined;
 
   // 1) Exact barcode match
   try {
-    const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
+    const url = `/products/barcode/${encodeURIComponent(code)}`;
+    const res = timeout ? await apiClient.get(url, timeout) : await apiClient.get(url);
     if (res.data?.id) {
       // The API's findByBarcode intentionally matches inactive products too
       // (no isActive filter) — align with that instead of silently adding an
@@ -133,6 +144,7 @@ export async function resolveProductByCode<T = any>(
   try {
     const res = await apiClient.get("/products", {
       params: { scanCode: code, limit: 20, includeVariants: true },
+      ...timeout,
     });
     const matches: any[] = res?.data?.data ?? res?.data ?? [];
     if (matches.length > 0) {

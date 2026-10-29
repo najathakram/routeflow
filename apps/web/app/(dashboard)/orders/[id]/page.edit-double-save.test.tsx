@@ -89,6 +89,13 @@ describe("double Save on Edit Items (F23 / row 698)", () => {
     expect(patch).toHaveBeenCalledTimes(1);
   });
 
+  it("mm-ux retake: Save Changes is a 44 px target below sm (min-h-11 sm:min-h-0)", async () => {
+    await openEdit();
+    expect(screen.getByRole("button", { name: /^save changes$/i }).className).toMatch(
+      /min-h-11 sm:min-h-0/,
+    );
+  });
+
   it("a Save after the first one failed is allowed again", async () => {
     patch
       .mockRejectedValueOnce(new Error("boom"))
