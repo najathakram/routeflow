@@ -2,7 +2,7 @@ import { WRITE_METHODS, balancedGeneric, trackedDelegateWrites } from "../produc
 
 /**
  * Row 430 (SA-958 §3.2) writer scanner, shared by the audit pin. Pure text functions. A tracked category is written by
- * a delegate call (`tx.trackedCategory.create(...)`), and the shapes that slip past a plain `.trackedCategory.create(`
+ * a delegate call (`tx.trackedCategory.create(...)`), and the shapes that slip past a plain `.trackedCategory.create`
  * search are caught here too: bracket access, an alias of the delegate, a destructured delegate, raw SQL, and a nested
  * relation write (`tenant.update({ data: { trackedCategories: { create: ... } } })`).
  */
@@ -41,7 +41,7 @@ export interface WriterSite {
   receiver?: string;
 }
 
-/** Comments say what the code does not do; a `// tx.trackedCategory.create(` in one is not a writer. */
+/** Comments say what the code does not do; a `// tx.trackedCategory.create()` in one is not a writer. */
 const stripComments = (text: string): string =>
   text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/^\s*\/\/.*$/gm, "");
 
