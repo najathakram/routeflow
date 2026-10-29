@@ -80,6 +80,8 @@ const driverPayload = {
   tenantSlug: "test",
 };
 
+const CATALOG = { customerId: "cust-1" } as any; // SA-967: what the pre-tx load returns
+
 describe("RoutesService", () => {
   let service: RoutesService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -100,6 +102,7 @@ describe("RoutesService", () => {
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
+    loadUnitCatalog: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -112,6 +115,7 @@ describe("RoutesService", () => {
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
+      loadUnitCatalog: jest.fn().mockResolvedValue(CATALOG),
     };
 
     gateway = {
@@ -1997,6 +2001,7 @@ describe("RoutesService", () => {
         ["ord-1"],
         50,
         "CASH",
+        CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
       );
       // B663: reconciled unconditionally too, even though a payment was ALSO
@@ -2078,6 +2083,7 @@ describe("RoutesService", () => {
         ["ord-1", "ord-2"],
         50,
         "CASH",
+        CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
       );
       // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
@@ -2212,6 +2218,43 @@ describe("RoutesService", () => {
     // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
     // filter doesn't cover routes/**, so a regression that moved the reconcile call
     // back behind `if (dto.payment...)` — B663's ENTIRE bug — would pass CI unnoticed.
+    it("SA-967: the stop's unit catalog is loaded ONCE before the tx opens, never inside it", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock: any = { ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      let loadedBeforeTx = false;
+      invoicesService.loadUnitCatalog.mockImplementation(async () => {
+        loadedBeforeTx = (prisma.tenantTransaction as jest.Mock).mock.calls.length === 0;
+        return CATALOG;
+      });
+      await service
+        .completeWithPayment(
+          "run-1",
+          "stop-1",
+          { payment: { amount: 50, method: "CASH" } },
+          operatorPayload,
+        )
+        .catch(() => undefined);
+      expect(invoicesService.loadUnitCatalog).toHaveBeenCalledTimes(1);
+      expect(invoicesService.loadUnitCatalog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "stop-1",
+          orders: [expect.objectContaining({ id: "ord-1" })],
+        }),
+      );
+      expect(loadedBeforeTx).toBe(true);
+    });
+
     it("B663: an on-account completion (no payment) still reconciles to the delivered basis, and never calls recordDeliveryPaymentInTx", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
       prisma.routeRunStop.findFirst.mockResolvedValue({

@@ -21,6 +21,8 @@ import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
+import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
+import { TO_COLLECT_METHOD_VALUES, type ToCollectMethod } from "../../invoices/to-collect";
 
 /** Mirrors `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types (API source never value-imports that package). */
 export const COUNTER_SALE_METHODS = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
@@ -49,6 +51,8 @@ export class CounterSalePaymentDto {
   @IsOptional() @IsBoolean() recordAnyway?: boolean;
   /** CHECK only: the date written on the check, a strict YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. */
   @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/) checkDate?: string;
+  /** SA-1026: "the check is not in hand yet"; valid only with ON_ACCOUNT (assertPaymentShape). Mirrors TO_COLLECT_METHOD_VALUES. */
+  @IsOptional() @IsIn(TO_COLLECT_METHOD_VALUES) expectedMethod?: ToCollectMethod;
 }
 
 /**
@@ -77,4 +81,13 @@ export class CounterSaleDto extends RestrictionAckDto {
   payment: CounterSalePaymentDto;
 
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
+
+  /**
+   * W-863 (SA-945 PR-1): a return taken inside this sale, Create Order's own `inlineReturn` (the SAME dto, so there is one
+   * return writer: create() -> applyReturn, L-167). Named customers only: a walk-in return is refunded, never credited (SA-932).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InlineReturnLinesDto)
+  inlineReturn?: InlineReturnLinesDto;
 }
