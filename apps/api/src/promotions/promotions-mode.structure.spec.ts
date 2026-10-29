@@ -41,6 +41,63 @@ describe("SA-1032 — promotions off switch has one door", () => {
     expect(service.match(/assertPromotionsOn\(/g) ?? []).toHaveLength(4);
   });
 
+  // SA-1032 §G4 / review-a 6506151572: the class is "every read AND every write of a Promotion row".
+  // The inventory below is the 7 write sites at this change. A write added anywhere else, or in a
+  // method of promotions.service.ts that does not call assertPromotionsOn, turns this red.
+  const WRITE_CALL =
+    /\.promotion(?:Product)?\s*\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|upsert|delete|deleteMany)\s*\(/g;
+  const RAW_WRITE =
+    /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:"public"\.)?"Promotion(?:Product)?"/i;
+
+  function stripComments(text: string): string {
+    return text
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/\/\/.*$/gm, "");
+  }
+
+  /** The class member whose body holds `offset`: nearest 2-space-indented `name(` above it. */
+  function enclosingMethod(text: string, offset: number): string {
+    let name = "<top level>";
+    const member = /^ {2}(?:(?:private|public|protected)\s+)?(?:async\s+)?(\w+)\(/gm;
+    for (let m = member.exec(text); m && m.index < offset; m = member.exec(text)) name = m[1];
+    return name;
+  }
+
+  function methodBody(text: string, method: string): string {
+    const start = text.search(
+      new RegExp(`^ {2}(?:(?:private|public|protected)\\s+)?(?:async\\s+)?${method}\\(`, "m"),
+    );
+    return start < 0 ? "" : text.slice(start, text.indexOf("\n  }\n", start));
+  }
+
+  it("every Promotion write lives in promotions.service.ts, in a method that asserts the mode (exactly 7 sites)", () => {
+    const sites: string[] = [];
+    const unasserted: string[] = [];
+    const raw: string[] = [];
+    for (const f of sourceFiles(SRC)) {
+      const rel = path.relative(SRC, f).split(path.sep).join("/");
+      const text = stripComments(fs.readFileSync(f, "utf8"));
+      if (RAW_WRITE.test(text)) raw.push(rel);
+      for (let m = WRITE_CALL.exec(text); m; m = WRITE_CALL.exec(text)) {
+        const method = enclosingMethod(text, m.index);
+        sites.push(`${rel}#${method}`);
+        if (!/assertPromotionsOn\(/.test(methodBody(text, method)))
+          unasserted.push(`${rel}#${method}`);
+      }
+    }
+    expect(raw).toEqual([]);
+    expect(unasserted).toEqual([]);
+    expect(sites).toEqual([
+      "promotions/promotions.service.ts#create", // promotion.create
+      "promotions/promotions.service.ts#create", // promotionProduct.createMany
+      "promotions/promotions.service.ts#update", // promotion.update
+      "promotions/promotions.service.ts#update", // promotionProduct.deleteMany
+      "promotions/promotions.service.ts#update", // promotionProduct.createMany
+      "promotions/promotions.service.ts#setActive",
+      "promotions/promotions.service.ts#remove",
+    ]);
+  });
+
   it("activeForCatalog checks promotionsOn before serving", () => {
     const start = service.indexOf("activeForCatalog(");
     expect(start).toBeGreaterThan(-1);
