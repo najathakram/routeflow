@@ -30,6 +30,11 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
+import {
+  markOpenInvoicesToCollect,
+  rollupToCollect,
+  toCollectState,
+} from "../../invoices/to-collect";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -330,6 +335,14 @@ export class PickupCompleteService {
       }
     }
     if (issued) invoices = await this.readInvoices(id);
+
+    // SA-1026: "the check is not in hand yet": every invoice of the order that can still be owed after the send step is marked
+    // To collect (a settled sibling is not). No payment row. Replay-safe: the first intent stays, and the retry of a half-finished
+    // hand-over completes the mark. The response reads the column back from the re-read rows.
+    if (sent?.method === "ON_ACCOUNT" && sent.expectedMethod) {
+      await markOpenInvoicesToCollect(this.prisma, invoices as never, sent.expectedMethod);
+      invoices = await this.readInvoices(id);
+    }
 
     // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
     // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
@@ -846,6 +859,7 @@ export class PickupCompleteService {
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
+      invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list tenderFigures totals, so Print invoice matches the screen
       invoiceNumber: first.invoiceNumber ?? "",
       ...tenderFigures(
         invoices,
@@ -853,6 +867,10 @@ export class PickupCompleteService {
         isHandOverTender(order.id, handedOverAt),
         planError,
         duplicate,
+      ),
+      // SA-1026: read back from the stored rows, staff only
+      toCollect: rollupToCollect(
+        invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
       ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };

@@ -1,0 +1,7 @@
+[
+  { "body": "**#101 (swarm 7) @ 1111aaa2b: Opus FAIL, 1 test-only MUST.** detail" },
+  { "body": "**#3893 (other) @ 4ab8597: PASS.** unrelated" },
+  { "body": "**#101 (swarm 7) @ 2222bbb3c: delta re-review PASS.** detail" },
+  { "body": "**#101 (swarm 7) @ 2222bbb3c: second reviewer PASS.** detail" },
+  { "body": "**SA-902 (row 635): PASS with 5 MUSTs.** not a PR verdict" }
+]

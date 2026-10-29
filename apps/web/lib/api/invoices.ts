@@ -1,14 +1,18 @@
 import type {
+  InvoiceDisplayUnitView,
   InvoiceItemSystemKind,
   InvoiceStatus,
+  LineComponentView,
   OverrideStampView,
   RestrictionAck,
+  ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 import { isDayClosedRefusal } from "../day-closed-copy";
+import { isWriteOffReplay } from "../write-off-replay";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { priceAdjustmentFailure } from "../price-adjustment-failure";
 import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
@@ -124,6 +128,10 @@ export interface InvoiceItem extends Partial<OverrideStampView> {
    * invoice's MSRP never changes. null/absent = render nothing.
    */
   msrp?: number | null;
+  /** SA-827: frozen component pieces of a composed line (display only). */
+  components?: LineComponentView[] | null;
+  /** SA-827: how this line reads (pieces view or today's layout). */
+  displayUnit?: InvoiceDisplayUnitView | null;
 }
 
 export interface InvoicePayment {
@@ -156,6 +164,8 @@ export interface InvoicePayment {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** SA-1026: STAFF reads only: "To collect" (a check not received yet), derived by the server. Never computed here. */
+  toCollect?: ToCollectState;
   /** P-4: derived by the API; absent = never revised (no badge). */
   revisedAt?: string | null;
   /** P-4: > 0 only when overpaid; absent = nothing shown. */
@@ -297,6 +307,8 @@ export function useInvoices(
      * `ListInvoicesDto.isOverdue`).
      */
     isOverdue?: boolean;
+    /** SA-1026: only invoices that read To collect (a check not received yet); staff only, honoured by the server. */
+    toCollect?: boolean;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
@@ -630,7 +642,14 @@ export function useWriteOffInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string; reason: string }>({
     mutationFn: ({ id, reason }) =>
-      apiClient.post(`/invoices/${id}/write-off`, { reason }).then((r) => r.data),
+      apiClient
+        .post(`/invoices/${id}/write-off`, { reason })
+        .then((r) => r.data)
+        // SA-1050: 409 INVOICE_ALREADY_WRITTEN_OFF is a lost-reply replay: it IS written off, so read it back as done.
+        .catch((err: unknown) => {
+          if (!isWriteOffReplay(err)) throw err;
+          return apiClient.get(`/invoices/${id}`).then((r) => r.data as Invoice);
+        }),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });

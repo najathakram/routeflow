@@ -108,6 +108,7 @@ export function OrderLineItemsTable({
                     {lineBackorderPieces(li, orderStatus) > 0 && (
                       <BackorderTag
                         pieces={lineBackorderPieces(li, orderStatus)}
+                        soldPieces={Number(li.qty)}
                         // The stored facts the line was sold by, never the live product's (L-332).
                         unit={{
                           boxes: li.boxes,
@@ -245,10 +246,11 @@ export function OrderLineItemsTable({
             </tr>
           ))}
         </tbody>
-        <tfoot role="rowgroup" className="border-t-2 border-surface-border max-md:block">
+        {/* r5 Q20: from lg the Summary card sits beside the lines and carries the total; below it this footer does. */}
+        <tfoot role="rowgroup" className="border-t-2 border-surface-border max-md:block lg:hidden">
           <tr
             role="row"
-            className="max-md:flex max-md:items-center max-md:justify-between max-md:px-6 max-md:py-3"
+            className="max-md:flex max-md:items-center max-md:justify-between max-md:px-6 max-md:py-3 lg:hidden"
           >
             <td
               role="cell"

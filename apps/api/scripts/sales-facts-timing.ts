@@ -669,6 +669,10 @@ async function cleanup(prisma: PrismaService, tenantId: string, c: any) {
   await del(c.invoices, (ids) =>
     prisma.invoiceItem.deleteMany({ where: { invoiceId: { in: ids } } }),
   );
+  // SA-1050 A-1 (WIPE): the invoices' write-off events (FK RESTRICT) go first.
+  await del(c.invoices, (ids) =>
+    prisma.invoiceWriteOffEvent.deleteMany({ where: { invoiceId: { in: ids } } }),
+  );
   await del(c.invoices, (ids) => prisma.invoice.deleteMany({ where: { id: { in: ids } } }));
   await del(c.orders, (ids) => prisma.order.deleteMany({ where: { id: { in: ids } } }));
   await del(c.products, (ids) => prisma.product.deleteMany({ where: { id: { in: ids } } }));

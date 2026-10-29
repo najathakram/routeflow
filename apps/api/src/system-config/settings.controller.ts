@@ -517,6 +517,8 @@ export class SettingsController {
 
       await tx.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
       await tx.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
+      // SA-1050 A-1 (WIPE): the write-off events FK the invoice ON DELETE RESTRICT, so they go first, matched through the parent.
+      await tx.invoiceWriteOffEvent.deleteMany({ where: { invoice: { tenantId } } });
       await tx.invoice.deleteMany({ where: { tenantId } });
 
       // OrderCreditNote.creditNoteId is ON DELETE RESTRICT, so these join rows must

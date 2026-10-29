@@ -112,6 +112,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-b2187-subscription-period-census.mjs": "read-only",
   "apps/api/scripts/report-b2188-duplicate-addon-rows.mjs": "read-only",
   "apps/api/scripts/report-b2197-issuedate-time-component.mjs": "read-only",
+  "apps/api/scripts/report-standard-refund-tax-shortfall.mjs": "read-only",
   "apps/api/scripts/report-b2230-unit-lines-without-boxes.mjs": "read-only",
   "apps/api/scripts/report-b2436-stripe-missing-sub.mjs": "read-only",
   "apps/api/scripts/report-cross-tenant-refs.mjs": "read-only", // 681: SELECT COUNT(*) only, default_transaction_read_only = on
@@ -163,6 +164,8 @@ const EXEMPT: Record<string, Reason> = {
   // Postgres (SPEC_DB_PATTERN enforced), never a tenant table.
   "scripts/local-db-specs.mjs": "local-only",
   "scripts/local-super-admin.mjs": "local-only",
+  // In scope only through risk-class.mjs's computed import(); it reads git and prints a line count.
+  "scripts/pr-size.mjs": "not-a-db-client",
   "scripts/repair-integrity.mjs": "retired-stub",
   "scripts/report-f25-licence-dates.mjs": "read-only",
   // Computed import() loads only the base ref's risk-path rules from a tmpdir copy; it reads git, nothing else.

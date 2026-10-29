@@ -171,6 +171,7 @@ export function createMockPrisma(): MockPrisma {
     invoiceItem: modelProxy(),
     invoiceItemComponent: modelProxy(),
     invoicePayment: modelProxy(),
+    invoiceWriteOffEvent: modelProxy(), // SA-1050 (read by assertNoWriteOffHistory)
     paymentCounter: modelProxy(),
     creditNote: modelProxy(),
     advancePayment: modelProxy(),
@@ -301,6 +302,7 @@ export function createMockPrisma(): MockPrisma {
     invoiceItem: modelProxy(),
     invoiceItemComponent: modelProxy(),
     invoicePayment: modelProxy(),
+    invoiceWriteOffEvent: modelProxy(), // SA-1050 (read by assertNoWriteOffHistory)
     paymentCounter: modelProxy(),
     creditNote: modelProxy(),
     vendorBill: modelProxy(),

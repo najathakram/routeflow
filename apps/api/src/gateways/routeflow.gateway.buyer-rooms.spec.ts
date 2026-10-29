@@ -1116,6 +1116,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
           deleteMany: jest.fn(async () => ({ count: 0 })),
         },
         return: { findFirst: jest.fn(async () => null) }, // ... and finds no cash refund
+        invoiceWriteOffEvent: { findFirst: jest.fn(async () => null) }, // SA-1050: no write-off history
       };
       const db = {
         tenantTransaction: (fn: (t: typeof tx) => unknown) => fn(tx),

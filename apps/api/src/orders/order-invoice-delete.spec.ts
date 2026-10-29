@@ -33,6 +33,8 @@ describe("REG-ROW259: deleteOrderInvoice", () => {
           return Promise.resolve({ count: notes.length });
         }),
       },
+      // SA-1050 A-1: deleteOrderInvoice first refuses an invoice that has write-off history; none here.
+      invoiceWriteOffEvent: { findFirst: jest.fn().mockResolvedValue(null) },
       auditLog: {
         createMany: jest.fn().mockImplementation(() => {
           calls.push("audit");

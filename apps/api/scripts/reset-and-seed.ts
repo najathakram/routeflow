@@ -37,6 +37,7 @@ async function main() {
   await prisma.creditNote.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.invoiceLineItem.deleteMany();
+  await prisma.invoiceWriteOffEvent.deleteMany(); // SA-1050 A-1 (WIPE): FK RESTRICT to Invoice, so first
   await prisma.invoice.deleteMany();
   await prisma.orderItem.deleteMany();
   await prisma.order.deleteMany();

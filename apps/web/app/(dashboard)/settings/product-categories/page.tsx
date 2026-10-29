@@ -105,7 +105,7 @@ export default function ProductCategoriesPage() {
       <h2 className="text-2xl font-bold text-navy">Product labels</h2>
       <p className="mb-5 mt-1 text-sm text-navy/70">
         Labels group products for selling restrictions. Apply them on each product&apos;s page.
-        {!isAdmin && " Only a workspace admin can change labels."}
+        {!isAdmin && " Only an account admin can change labels."}
       </p>
 
       {isAdmin && (

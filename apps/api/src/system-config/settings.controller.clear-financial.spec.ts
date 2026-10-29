@@ -32,6 +32,8 @@ import { createMockPrisma } from "../testing/prisma-mock";
 const MODELS = [
   "invoicePayment",
   "invoiceItem",
+  // SA-1050 A-1: the write-off events FK the invoice ON DELETE RESTRICT, so the wipe clears them first.
+  "invoiceWriteOffEvent",
   "invoice",
   // OrderCreditNote.creditNoteId is ON DELETE RESTRICT, so the join rows must be cleared
   // before their credit notes or the whole transaction aborts on a FK violation.
@@ -67,6 +69,7 @@ const CHILD_FK: Partial<
 > = {
   invoicePayment: { parent: "invoice", fk: "invoiceId", relation: "invoice" },
   invoiceItem: { parent: "invoice", fk: "invoiceId", relation: "invoice" },
+  invoiceWriteOffEvent: { parent: "invoice", fk: "invoiceId", relation: "invoice" },
   orderCreditNote: { parent: "creditNote", fk: "creditNoteId", relation: "creditNote" },
   billPayment: { parent: "vendorBill", fk: "vendorBillId", relation: "vendorBill" },
   vendorBillItem: { parent: "vendorBill", fk: "vendorBillId", relation: "vendorBill" },

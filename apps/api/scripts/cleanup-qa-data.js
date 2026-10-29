@@ -109,6 +109,10 @@ async function cleanupFromManifest(filePath) {
 
   // Invoices
   if (manifest.orders?.length) {
+    // SA-1050 A-1 (WIPE): the invoices' write-off events (FK RESTRICT) go first.
+    await prisma.invoiceWriteOffEvent.deleteMany({
+      where: { invoice: { orderId: { in: manifest.orders } } },
+    });
     const inv = await prisma.invoice.deleteMany({ where: { orderId: { in: manifest.orders } } });
     totalDeleted += inv.count;
     console.log(`   ✓ Deleted ${inv.count} invoices`);
