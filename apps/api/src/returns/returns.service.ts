@@ -86,6 +86,7 @@ import { NumberingService } from "../import/numbering.service";
 import {
   PACK_LINE_SELECT,
   capBasis,
+  returnedPiecesByLine,
   returnedPiecesByProduct,
   soldQtyForProduct,
   returnPricingAxis,
@@ -93,6 +94,7 @@ import {
   standardPackBasesForOrders,
   standardReturnPieces,
 } from "./returns-pieces.util";
+import { assertLineCaps, resolveLineItems } from "./return-line-items";
 import { restockReturnItems } from "./returns-restock.util";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
@@ -354,8 +356,27 @@ export class ReturnsService {
       const packBases = await standardPackBases(tx, dto.orderId, order.lineItems as any);
       const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId, packBases);
 
+      // SA-1042 B9b: an item may name its order line. Resolve the line and the count (the stored qty is in the line's own
+      // unit, so the pool cap below runs unchanged), then cap each line on its own pieces. Pooled items pass through.
+      const lineItems = resolveLineItems(order as any, dto.items, packBases);
+      const lineQty = new Map(lineItems.map((r) => [r.index, r.qty]));
+      if (lineItems.length)
+        assertLineCaps(
+          lineItems,
+          order as any,
+          await returnedPiecesByLine(
+            tx,
+            [...new Set(lineItems.map((r) => r.orderItemId))],
+            packBases,
+          ),
+          packBases,
+        );
+      const items: any[] = dto.items.map((it: any, i: number) =>
+        lineQty.has(i) ? { ...it, qty: lineQty.get(i) } : it,
+      );
+
       // Validate return qty does not exceed ordered qty per item (cumulative)
-      for (const item of dto.items) {
+      for (const item of items) {
         if (!item.qty || item.qty <= 0)
           throw new BadRequestException("Return item quantity must be greater than zero");
         // The ITEM-level reason overrides dto.reason when deciding restock below, and
@@ -431,9 +452,10 @@ export class ReturnsService {
           status: "PENDING",
           kind: "STANDARD",
           items: {
-            create: dto.items.map((i: any) => ({
+            create: items.map((i: any) => ({
               productId: i.productId,
               qty: i.qty,
+              sourceOrderItemId: i.orderItemId || undefined, // SA-1042: a line item records its line
               reason: i.reason,
               condition: i.condition ?? undefined,
               notes: i.notes ?? undefined,
