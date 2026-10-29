@@ -96,6 +96,9 @@ One `Agent` call, `model: opus`, `effort: high`, `subagent_type: general-purpose
 above. **Never the lane's own session**, never a reviewer that already reviewed this branch.
 Two PRs → two agents in one message, in parallel.
 
+**DARK until the flip (R5):** the dispatch count is `node scripts/review-tier.mjs` (tier 1 = two
+independent PASSes, tier 2 = one). Record its line next to the hand tier; keep tiering by hand.
+
 ### 4. Record the verdict where merges are decided
 
 Write it on the PR's row in the merge queue (`local-assets/handoff/<date>/MERGE-QUEUE.md`):
@@ -107,6 +110,10 @@ hygiene the owner lane clears before the window; otherwise it is a BLOCK.
 
 - The **owning lane** fixes it — red-first test for the finding, Sonnet fix, **one** in-lane
   Opus refute of the delta. Not the reviewer, not the lead.
+- **DARK until the flip (R5):** label each finding **MECH** (format, commit subject or trailer,
+  comment typo, import order) or **MUST**; label only while dark, the delta re-read below is still
+  dispatched. For each MUST the builder replies **ACCEPT** (fixed at sha) or **REJECT** (reason
+  plus evidence); a REJECT goes to the same reviewer's delta read, which holds or withdraws it.
 - Then the lead dispatches an **independent re-review of the delta only** (`git diff
 <verdict-sha>..HEAD`), same model, a brief that quotes the original finding and asks: is it
   closed, and did the fix introduce anything? Never re-review the whole PR.
