@@ -28,6 +28,8 @@
 //   ORDER_INVOICES_NEED_REVIEW — `body.code` of the 409 when more would be billed on an order whose
 //                    invoices no longer match its lines (orphaned invoice line / counter out of step,
 //                    SA-687); nothing billed, NOT retriable until the invoices are reviewed.
+//   PLAN_PRICE_INVALID — `body.code` of the 400 when a plan's monthly or annual price (catalog or a tenant's custom fee) is not a finite number;
+//                    nothing was changed, fix the price (row 280).
 //   NSF_LINE_UNTAXED — `body.code` of the 400 when an invoice write gives the NSF fee line a
 //                    tax rate (#2656: the NSF line is never taxed; clients lock the field at 0).
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
@@ -516,6 +518,7 @@ export const API_ERROR_CODES = {
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
   PRICE_OVERRIDE_STRIPE_AHEAD: "PRICE_OVERRIDE_STRIPE_AHEAD",
   PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
+  PLAN_PRICE_INVALID: "PLAN_PRICE_INVALID",
   CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
   CHECKOUT_ANCHOR_WINDOW: "CHECKOUT_ANCHOR_WINDOW",
   TENANT_ADMIN_LOCKED: "TENANT_ADMIN_LOCKED",

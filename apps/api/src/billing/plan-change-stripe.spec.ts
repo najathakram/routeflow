@@ -527,3 +527,45 @@ describe("pushPlanChange - W-810 a Checkout-born subscription whose product is i
     expect(fake.products.update).not.toHaveBeenCalledWith("prod_growth", expect.anything());
   });
 });
+
+describe("a non-finite price is refused with its own code, not 'set a custom fee' (review-b N1 on row 280)", () => {
+  const flowArgs = (def: Record<string, unknown>, override: unknown = null) =>
+    planChangeArgs({
+      tenantId: "t1",
+      sub: { stripeSubId: "sub_1", priceOverrideMonthly: override },
+      version: { id: "v8", addonSkus: [] },
+      def: { planKey: "GROWTH", name: "Growth", ...def },
+      proration: "none",
+      stopBillingAddons: false,
+    });
+  const push = (a: ReturnType<typeof flowArgs>) =>
+    pushPlanChange(
+      { stripe: stripeWith() as any, logger },
+      args({ price: a.price, priceInvalid: a.priceInvalid }),
+    ).catch((e) => e);
+
+  it("planChangeArgs marks an unparseable price, and only that, as invalid", () => {
+    expect(flowArgs({ monthlyPrice: "abc" })).toMatchObject({ price: null, priceInvalid: true });
+    expect(flowArgs({ monthlyPrice: 249 }, "abc")).toMatchObject({
+      price: null,
+      priceInvalid: true,
+    });
+    expect(flowArgs({ monthlyPrice: null })).toMatchObject({ price: null, priceInvalid: false });
+    expect(flowArgs({ monthlyPrice: 249 })).toMatchObject({ priceInvalid: false });
+  });
+
+  it("the push refuses it as a 400 PLAN_PRICE_INVALID whose copy says what to fix", async () => {
+    const err: any = await push(flowArgs({ monthlyPrice: "abc" }));
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse().code).toBe("PLAN_PRICE_INVALID");
+    expect(String(err.getResponse().message)).toMatch(/not a valid number/i);
+    expect(String(err.getResponse().message)).not.toMatch(/set the tenant's custom monthly fee/i);
+  });
+
+  it("a plan with no price at all keeps the 'set a custom fee' advice and carries no code", async () => {
+    const err: any = await push(flowArgs({ monthlyPrice: null }));
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(String(err.getResponse()?.message ?? err.message)).toMatch(/custom monthly fee/i);
+    expect(err.getResponse()?.code).toBeUndefined();
+  });
+});
