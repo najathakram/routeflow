@@ -1,0 +1,338 @@
+{
+  "_about": "Real lead failures from .claude/skills/fleet-lead/references/LEAD-LOG.md, rebuilt as messages plus the gh/git/clock truth at that moment. PR heads, rollups and shas are the real values read with gh on 2026-10-28.",
+  "prs": {
+    "3893": {
+      "state": "OPEN",
+      "headRefOid": "4ab8597716b1a44994062b529e84022eca81821c",
+      "headRefName": "fix/sa1028-card-reads-unset-keep-rule",
+      "mergeCommit": null,
+      "rollup": [
+        { "name": "Verify", "status": "IN_PROGRESS", "conclusion": null },
+        { "name": "Replay migrations on a fresh database", "status": "QUEUED", "conclusion": null },
+        { "name": "E2E gate (freshness)", "status": "COMPLETED", "conclusion": "SKIPPED" },
+        { "name": "E2E (Playwright)", "status": "COMPLETED", "conclusion": "SKIPPED" }
+      ]
+    },
+    "3840": {
+      "state": "OPEN",
+      "headRefOid": "4bdf040578ef5ee752ec88620c4990ee92d1e00f",
+      "headRefName": "fix/w740-x",
+      "mergeCommit": null,
+      "rollup": [
+        { "name": "Verify", "status": "COMPLETED", "conclusion": "SUCCESS" },
+        { "name": "E2E gate (freshness)", "status": "COMPLETED", "conclusion": "SKIPPED" },
+        { "name": "E2E (Playwright)", "status": "COMPLETED", "conclusion": "SKIPPED" }
+      ]
+    },
+    "3844": {
+      "state": "OPEN",
+      "headRefOid": "52245384f52d6eac5dc698930dad378e955faeae",
+      "headRefName": "fix/w800-y",
+      "mergeCommit": null,
+      "rollup": []
+    },
+    "3760": {
+      "state": "MERGED",
+      "headRefOid": "4a96538fb474b10b71b2248fa5fa7f0290a3b6b3",
+      "headRefName": "fix/w760-z",
+      "mergeCommit": "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d",
+      "rollup": []
+    },
+    "3874": {
+      "state": "MERGED",
+      "headRefOid": "38308c1c43473f133f22db0e381e35b39dd0a171",
+      "headRefName": "feat/b1a2-registry-consumers",
+      "mergeCommit": "2271fa2bb89b714fb7bbf9513ad51f6cfe2cc752",
+      "rollup": []
+    },
+    "3838": {
+      "state": "OPEN",
+      "headRefOid": "378e97a73375f63eb49844553195936657a6b475",
+      "headRefName": "fix/row590-office-delivered-run-stop",
+      "mergeCommit": null,
+      "rollup": []
+    }
+  },
+  "issues": ["3686", "2554"],
+  "branches": [
+    "fix/sa1028-card-reads-unset-keep-rule",
+    "feat/b1a2-registry-consumers",
+    "fix/row590-office-delivered-run-stop"
+  ],
+  "commits": [
+    "4a96538fb474b10b71b2248fa5fa7f0290a3b6b3",
+    "c60c0aee8795ac2a3fc209541963613969f40206"
+  ],
+  "cases": [
+    {
+      "id": "T1",
+      "log": "LEAD-LOG 1977: #3893 called gate-complete while its CI had never run",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Lead 05:04Z: W13 order. #3893 gate-complete, land it first.",
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T2",
+      "log": "all checks SKIPPED (private-repo skip) is not green",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 CI green, ready to land.",
+      "override": {
+        "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "SKIPPED" }] }
+      },
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T3",
+      "log": "empty rollup: no CI run at that head",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 is ready for W13.",
+      "override": { "3893": { "rollup": [] } },
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T4",
+      "log": "LEAD-LOG 1983: stamps 05:08Z-05:20Z typed while date -u read 05:02-05:05Z",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Lead 05:08Z: win-heavy, take the #3838 DB lanes.\nLead 05:20Z: review-a, hold until the slot frees.",
+      "hits": [
+        ["stamp", "05:08Z"],
+        ["stamp", "05:20Z"]
+      ]
+    },
+    {
+      "id": "T5",
+      "log": "LEAD-LOG 1809 shape, but inside the 59 s tolerance",
+      "now": "2026-10-28T08:50:30Z",
+      "message": "Lead 08:50Z: next window opens after the coordinator posts.",
+      "hits": []
+    },
+    {
+      "id": "T6",
+      "log": "day rule: 23:58Z sent at 00:01Z is yesterday",
+      "now": "2026-10-28T00:01:00Z",
+      "message": "Lead 23:58Z: handoff written.",
+      "hits": []
+    },
+    {
+      "id": "T7",
+      "log": "deadlines are not stamps",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Re-pins happen after the 10-30 13:00Z reset. Post the card by 13:00Z.",
+      "hits": []
+    },
+    {
+      "id": "T8",
+      "log": "LEAD-LOG 1755: #3840 claimed unchanged at 631d718de, head was 4bdf04057",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Coordinator: #3840 unchanged at 631d718de, ready for W4.",
+      "hits": [["sha", "631d718de"]]
+    },
+    {
+      "id": "T9",
+      "log": "LEAD-LOG 1626 (reconstructed; the sent text is not in the log): the train plan gave #3760's head 4a96538fb for #3844",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Train 4 members: #3874 @ 2271fa2bb, #3844 head 4a96538fb.",
+      "hits": [["sha", "4a96538fb"]]
+    },
+    {
+      "id": "T9b",
+      "log": "a possessive binds the sha to the possessor, which is correct here",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3760's head 4a96538fb merged into the train.",
+      "hits": []
+    },
+    {
+      "id": "T9c",
+      "log": "a master/base sha in a PR clause is not that PR's head",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3840 rebased onto master c60c0aee8.",
+      "hits": []
+    },
+    {
+      "id": "T9d",
+      "log": "two PRs and two shas in one clause with no pairing word is ambiguous, never a mismatch",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3840 and #3844 at 631d718de and 52245384f",
+      "hits": [],
+      "unverified": [
+        ["sha", "631d718de"],
+        ["sha", "52245384f"]
+      ]
+    },
+    {
+      "id": "T19",
+      "log": "board issues are cited constantly and exist without a head",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Posted on #3686 and #2554.",
+      "hits": []
+    },
+    {
+      "id": "T20",
+      "log": "a PR number that does not exist",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Re-pin #38930 after lunch.",
+      "hits": [["pr", "#38930"]]
+    },
+    {
+      "id": "T21",
+      "log": "LEAD-LOG 1977: #3893's real first CI run FAILED (type ratchet + web lint)",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 gate-complete.",
+      "override": {
+        "3893": { "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "FAILURE" }] }
+      },
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T22",
+      "log": "billing-blocked runs show as STARTUP_FAILURE",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 gate-complete.",
+      "override": {
+        "3893": {
+          "rollup": [{ "name": "Verify", "status": "COMPLETED", "conclusion": "STARTUP_FAILURE" }]
+        }
+      },
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T23",
+      "log": "negations, questions and other subjects are not ready claims",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Mac mini ready, #3893 next.\n#3893 not ready.\n#3893 ready?\n#3893: PASS, CI never ran.",
+      "hits": []
+    },
+    {
+      "id": "T24",
+      "log": "gh unavailable: PR-bound facts are unverified, not mismatches",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 gate-complete at 4ab859771.",
+      "ghDown": true,
+      "hits": [],
+      "unverified": [
+        ["pr", "#3893"],
+        ["sha", "4ab859771"],
+        ["ready", "#3893"]
+      ]
+    },
+    {
+      "id": "T25",
+      "log": "a green head (SUCCESS plus SKIPPED/NEUTRAL) is ready",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3840 ready to land @ 4bdf04057.",
+      "hits": []
+    },
+    {
+      "id": "T26",
+      "log": "file paths under docs/ or test/ are not branch names",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "See docs/runbooks/deploy-visibility-flip.md and test/fixtures/a.json.",
+      "hits": []
+    },
+    {
+      "id": "T10",
+      "log": "LEAD-LOG 1833: padded sha 17664a2370",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "SA-1020 is pinned at 17664a2370 on the board.",
+      "hits": [["sha", "17664a2370"]]
+    },
+    {
+      "id": "T11",
+      "log": "branch present vs a branch name typed from memory",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Rebase fix/sa1028-card-reads-unset-keep-rule, then fix/sa1028-card-read.",
+      "hits": [["branch", "fix/sa1028-card-read"]]
+    },
+    {
+      "id": "T12",
+      "log": "quoted material in a fenced block is not a claim",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "The push printed:\n```\n   abc1234def..f00ba12 HEAD -> x\n```\nPlease check.",
+      "hits": []
+    },
+    {
+      "id": "T16",
+      "log": "a MERGED PR with its merge-commit sha is correct",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3874 landed as 2271fa2bb; base is c60c0aee8.",
+      "hits": []
+    },
+    {
+      "id": "T17",
+      "log": "English hex words and all-digit comment ids are not shas",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "The defaced label, deadbeef, effaced, comment 6436803617 on W-1009; B1265 too; tenant 1f2e3d4c-5b6a-7980-a1b2-c3d4e5f60718.",
+      "hits": []
+    },
+    {
+      "id": "T18",
+      "log": "a stale head sha in backticks is still checked",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "Re-pin #3838 at `0a1b2c3d4`.",
+      "hits": [["sha", "0a1b2c3d4"]]
+    },
+    {
+      "id": "T27",
+      "log": "code review M2: bare directories are not branches",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "See docs/runbooks and test/fixtures/ for the shape.",
+      "hits": []
+    },
+    {
+      "id": "T28",
+      "log": "code review M3: deadlines in short lines, bullets and ISO dates are not now-claims",
+      "now": "2026-10-28T05:00:00Z",
+      "message": "ETA 06:00Z\nnext 06:00Z\nResume 06:00Z (reset)\n- by 06:00Z, then merge\nlanded 2026-10-27T10:00Z",
+      "hits": []
+    },
+    {
+      "id": "T29",
+      "log": "code review M4: a range end is not a now-claim",
+      "now": "2026-10-28T05:00:00Z",
+      "message": "train 04:50-05:20Z, window 04:50–05:20Z",
+      "hits": []
+    },
+    {
+      "id": "T30",
+      "log": "a bulleted speaker header stamp is still checked (LEAD-LOG 1983 shape)",
+      "now": "2026-10-28T05:00:00Z",
+      "message": "- Lead 05:20Z: review-a, hold.\nCoordinator: 05:12Z queue posted.",
+      "hits": [
+        ["stamp", "05:20Z"],
+        ["stamp", "05:12Z"]
+      ]
+    },
+    {
+      "id": "T31",
+      "log": "PR#3893 is the same claim as #3893; '.#' splits; a parenthesised sha binds",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "PR#3893 gate-complete.#3838 waits (378e97a73)",
+      "hits": [["ready", "#3893"]]
+    },
+    {
+      "id": "T32",
+      "log": "an unrelated 'not' does not silence a claim; a stale parenthesised head is caught",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "#3893 gate-complete (not blocked). #3840 (631d718de) next.",
+      "hits": [
+        ["sha", "631d718de"],
+        ["ready", "#3893"]
+      ]
+    },
+    {
+      "id": "T33",
+      "log": "scientific notation is not a sha",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "1e10000 and 1234e56 rows.",
+      "hits": []
+    },
+    {
+      "id": "T34",
+      "log": "a merged branch is deleted on origin: unverified, not a mismatch",
+      "now": "2026-10-28T05:05:00Z",
+      "message": "fix/w785-followups landed.",
+      "hits": [],
+      "unverified": [["branch", "fix/w785-followups"]]
+    }
+  ]
+}

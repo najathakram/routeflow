@@ -175,6 +175,34 @@ const out = [
 ].join("\n");
 check("D5 bug titles never appear in the output", /SECRET TITLE/.test(out), false);
 
+// 7. landings (R1-b): read-only over local-assets/telemetry/landings.jsonl
+check("G1 no ledger: the row says so, nothing invented", base.landings, null);
+check(
+  "G2 window rows only, newest row per PR, a torn line skipped, coverage against the window's merges",
+  json("instrumented").landings,
+  {
+    rows: 3,
+    mergedInWindow: 10,
+    routes: { lane: 1, "bug-swarm": 1, docs: 1 },
+    reviewed: 2,
+    medianReviewRounds: 1.5,
+    firstPass: 1,
+    medianLines: 450,
+    over400: 2,
+    over600: 1,
+    rework: 1,
+    costed: 2,
+    medianCostUsd: 3,
+  },
+);
+check(
+  "G3 the markdown row reads coverage, review, size, rework and cost",
+  run(["--fixture", path.join(FIX, "instrumented")]).stdout.includes(
+    "| 7 | Landings | 3 of 10 merged PRs have a landing row (lane 1, bug-swarm 1, docs 1); review: median 1.5 rounds, 1 of 2 first-pass; size: median 450 lines, 2 over 400, 1 over 600; rework: 1; cost: median $3 (2 of 3 costed) |",
+  ),
+  true,
+);
+
 // 5. unsourced numbers say so
 check(
   "E1 owner-blocked hours and release ETA are not instrumented",
