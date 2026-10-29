@@ -49,8 +49,10 @@ export const RESTRICTION_REMEDY_VALUES = ["ADD_CUSTOMER_STATE", "ADD_STORE_STATE
 export type RestrictionRemedy = (typeof RESTRICTION_REMEDY_VALUES)[number];
 
 /**
- * Response-only and staff-only: set on an unresolved-state INDETERMINATE line, absent otherwise (and never on a buyer
- * body, B612). Display only: never part of `warningHash`.
+ * Response-only: set on an unresolved-state INDETERMINATE line, absent otherwise. The staff lines carry it with
+ * `customerId` / `addressId`; the buyer 409 carries only the bare `remedy: "ADD_CUSTOMER_STATE"` marker
+ * ({@link BuyerSellingRestrictedError}, SA-924), never an id or rule detail (B612). Display only: never part of
+ * `warningHash`.
  */
 export interface RestrictionRemedyFields {
   remedy?: RestrictionRemedy;
@@ -111,7 +113,7 @@ export interface BuyerSellingRestrictedError {
   remedy?: "ADD_CUSTOMER_STATE";
 }
 
-/** The buyer cart's copy for a refusal that waits on the buyer's own state, or null for any other error (web and mobile). */
+/** The buyer cart's copy for a refusal that waits on the buyer's own state, or null for any other error (web; the phone is covered by the web shell). */
 export function buyerNeedsStateCopy(err: unknown): string | null {
   const res = (err as { response?: { status?: number; data?: { code?: string; remedy?: string } } })
     ?.response;
@@ -235,7 +237,7 @@ export const RESTRICTION_OVERRIDE_LABEL = "Sold despite restriction";
  */
 export const RESTRICTION_OVERRIDE_IMPORTED_REASON = "Imported (historical)";
 
-// ─── Row 672 (SA-844): the remedy beside the override — one source for the web dialog and the mobile modal ───
+// ─── Row 672 (SA-844): the remedy beside the override — one source for the web dialog ───
 
 /** One fix the warned lines ask for: give this customer a state, or give the store one. */
 export type RemedyAction =

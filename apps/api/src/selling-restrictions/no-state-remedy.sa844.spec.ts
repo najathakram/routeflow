@@ -9,7 +9,7 @@
  *   R3  as R1 with the owner-only switch OFF -> OFF, no warning (owner ruling 09-25; pinned so nobody "fixes" it).
  *   R4  the buyer portal on ROUTE / SHIP (the order-create seam): a portal-only limit is ALLOWED for a no-state buyer
  *       (owner Option A, "Owner ruling 2"); a legal ban fails closed with the "add your delivery state" copy and the
- *       B612 names-only body (no remedy, no customer id).
+ *       B612 names-only body plus the bare `remedy: "ADD_CUSTOMER_STATE"` marker (SA-924; no customer id, no rule detail).
  *   R5  DELIVERY with no customer (an order-less staff judgement) and a legal ban -> INDETERMINATE, no remedy to offer.
  *   R6  the customer gets NV (not banned) -> no warning; CA (banned) -> BLOCK, which needs no remedy.
  *   +   a sale judged at the STORE (counter, pickup, the walk-in) with no store state -> `ADD_STORE_STATE`, no customer.
