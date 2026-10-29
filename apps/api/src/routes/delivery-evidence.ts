@@ -1,5 +1,5 @@
 import { ConflictException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, RouteRunStopStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRunOrdersForTerminalStatus } from "./delivery-lines.util";
 
@@ -40,9 +40,9 @@ export function deliveryEvidenceRefusal(): ConflictException {
   });
 }
 
-/** A RouteRunStop that recorded anything the driver did or captured. */
+/** A RouteRunStop that recorded anything the driver did or captured. Any status past PENDING counts (over-refusal is recoverable). */
 const STOP_EVIDENCE = [
-  { status: { in: ["IN_PROGRESS", "COMPLETED", "SKIPPED"] } },
+  { status: { not: RouteRunStopStatus.PENDING } },
   { arrivedAt: { not: null } },
   { completedAt: { not: null } },
   { podPhotoUrls: { isEmpty: false } },
