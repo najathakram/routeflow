@@ -50,6 +50,7 @@ function recordedLine(recorded: RecordedInfo, customer: string | null | undefine
 export function CounterReturnAction({
   orderId,
   onDone,
+  onRecorded: onRecordedProp,
   canReturn = true,
 }: {
   orderId: string;
@@ -58,6 +59,8 @@ export function CounterReturnAction({
   canReturn?: boolean;
   /** called when the return dialog closes or records (Today's sales refetches its list) */
   onDone?: () => void;
+  /** called once a return is recorded (the receipt stops offering Void sale for a sale with a return) */
+  onRecorded?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
   // the line lands at the foot of a scrolling sheet: bring it into view so the confirmation is never below the fold
@@ -124,6 +127,7 @@ export function CounterReturnAction({
         }}
         onRecorded={(_ret, info) => {
           setRecorded(info ?? { resolution: "STORE_CREDIT" });
+          onRecordedProp?.();
           onDone?.();
         }}
       />
@@ -131,7 +135,7 @@ export function CounterReturnAction({
         <p
           ref={statusRef}
           role="status"
-          className="order-last basis-full text-sm font-medium text-navy"
+          className="order-last col-span-2 basis-full text-sm font-medium text-navy"
         >
           {recordedLine(recorded, order.customer?.businessName)}
         </p>
