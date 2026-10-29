@@ -208,10 +208,10 @@ is another reason to create the workspace only when they're ready to pay.
 **Goal:** their workspace holds their real, correct data. The step-by-step detail is in
 [§5](#5-loading-their-data). In order:
 
-1. [ ] **Log in as them:** Back office → tenant → Overview → **Impersonate**.
+1. [ ] **Log in as them:** Back office → tenant → Overview → **Sign in as admin**.
    - Each session lasts **15 minutes** and is audited.
-   - A red banner shows while you're impersonating; leave through the banner or the avatar
-     menu's **Exit impersonation**.
+   - A red bar shows during the support session; leave through the bar or the avatar
+     menu's **Exit support session**.
    - Re-impersonate as needed, and re-check the result of any import that was running when a
      session expired.
 2. [ ] **Settings** from sections B–D:
