@@ -294,6 +294,22 @@ describeDb(
       }
     }
 
+    /** A lump staff credit note (no line items): the invoice-total cap was its only check before SA-1053 rule 3c. */
+    async function lump(fx: Fx, invoiceId: string, amount: number) {
+      try {
+        const cn = (await tenantCtx.run(fx.tenantId, () =>
+          creditNotes.create({ customerId: fx.customerId, invoiceId, amount } as any),
+        )) as { amount: unknown };
+        return { allowed: true as const, amount: Number(cn.amount) };
+      } catch (e: any) {
+        return {
+          allowed: false as const,
+          code: e?.getResponse?.()?.code,
+          message: String(e?.message),
+        };
+      }
+    }
+
     const refused = (r: Awaited<ReturnType<typeof typed>>) => {
       expect(r.allowed).toBe(false);
       expect((r as { code?: string }).code).toBe(API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM);
@@ -466,6 +482,28 @@ describeDb(
       await invoice(fx, order.id, [order.lines[1]]);
       expect(await typed(fx, a.id, a.lines[0].id, 100)).toEqual({ allowed: true, amount: 100 });
       refused(await typed(fx, a.id, a.lines[0].id, 100));
+    });
+
+    it("R-N4: one invoice — a lump staff note (no line items) past what the order was billed is refused", async () => {
+      const fx = await mkFx("rn4");
+      const order = await mkOrder(fx, ["X"]);
+      await refundNeverInvoiced(fx, order.id, order.lines[0]);
+      const inv = await invoice(fx, order.id, order.lines);
+      const before = await liveNotes(fx);
+      const r = await lump(fx, inv.id, 100);
+      refused(r);
+      expect((r as { message: string }).message).toContain("already refunded as store credit");
+      expect(await liveNotes(fx)).toBe(before);
+    });
+
+    it("G-N14: a lump staff note inside the order's remaining room is allowed; the one past it is refused", async () => {
+      const fx = await mkFx("gn14");
+      // X is 2 x 100.00; 1 was refunded (100.00) before invoicing, so 100.00 of the 200.00 billed is left
+      const order = await mkOrder(fx, ["X"], [2]);
+      await refundNeverInvoiced(fx, order.id, order.lines[0], 1);
+      const inv = await invoice(fx, order.id, order.lines);
+      expect(await lump(fx, inv.id, 100)).toEqual({ allowed: true, amount: 100 });
+      refused(await lump(fx, inv.id, 0.02));
     });
   },
 );
