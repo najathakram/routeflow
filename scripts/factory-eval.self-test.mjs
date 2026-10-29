@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup, budget, run).
+// Self-test for scripts/factory-eval.mjs (schema, select rules, prepare, grade, cleanup, budget, sample, report, run).
 // Plain node; exit 0 when every check passes. Planted repos stand in for history; only the free stub arm runs.
 import { spawnSync } from "node:child_process";
 import {
@@ -316,6 +316,8 @@ try {
       try {
         const p = await FE.prepare(task, { repo: repo.dir });
         symlinkSync(outside, path.join(p.tree, "planted"), "junction");
+        mkdirSync(path.join(p.tree, "v", ".git"), { recursive: true }); // only the root .git is skipped
+        symlinkSync(outside, path.join(p.tree, "v", ".git", "planted"), "junction");
         const ok = FE.cleanupTree(p.tree, { repo: repo.dir });
         return [ok, existsSync(p.tree), existsSync(path.join(outside, "keep.txt"))];
       } finally {
@@ -323,6 +325,20 @@ try {
       }
     },
   );
+  await check("a failed prepare also reports a failed cleanup", [true, true], async () => {
+    const dir = path.join(realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-eval-"))), "wt");
+    const unlock = () =>
+      spawnSync("git", ["worktree", "unlock", dir], { cwd: repo.dir, env: scrubbedGitEnv() });
+    const get = () => (unlock(), new URL("x")); // throws; cleanup then finds no lock and throws too
+    const t = Object.defineProperty({ ...task }, "brief", { get });
+    try {
+      const msg = await FE.prepare(t, { repo: repo.dir, dir }).catch((e) => e.message);
+      return [/Invalid URL/.test(msg), /cleanup also failed/.test(msg)];
+    } finally {
+      repo.git("worktree", "lock", "--reason", "rf-eval", dir);
+      FE.cleanupTree(dir, { repo: repo.dir }); // also removes the empty rf-eval- parent
+    }
+  });
   await check("cleanup keeps the parent of a --dir tree", [true, false], async () => {
     const parent = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evp-")));
     try {
@@ -413,6 +429,17 @@ try {
       const passes = out6.records.filter((r) => r.result === "pass").length;
       const costs = out6.records.map((r) => r.costUsd);
       return [out6.records.map((r) => r.result), passes === 3, passes / 3, costs, trees() - before];
+    },
+  );
+  await check(
+    "a real k=3 run with one broken repeat per task is complete but never pass^k",
+    [3, true, false],
+    async () => {
+      let n = 0;
+      const gradeFn = () => ({ result: ++n % 3 === 0 ? "broken" : "pass" });
+      const out = await go({ k: 3, extraEnv: env, gradeFn });
+      const row = FE.report(out.records).rows[0];
+      return [out.records[0].k, row.complete, row.passK];
     },
   );
   await check(
@@ -607,6 +634,307 @@ try {
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
+
+const cli = (...a) =>
+  spawnSync("node", [path.join(HERE, "factory-eval.mjs"), ...a], { encoding: "utf8" });
+// E7: report --vs over two result files on the same four tasks.
+const rtmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rf-evr-")));
+try {
+  const rec = (taskId, run, ok, costUsd, wallSec, result = ok ? "pass" : "fail") => ({
+    taskId,
+    arm: "same-arm",
+    run,
+    result,
+    costUsd,
+    wallSec,
+  });
+  const plan = { t1: [2, 0], t2: [2, 1], t3: [0, 2], t4: [2, 2] }; // passes of 2 runs: [cand, base]
+  const lines = (i, cost) =>
+    Object.entries(plan).flatMap(([t, p]) =>
+      [0, 1].map((r) => rec(t, r + 1, r < p[i], cost, 10 * (r + 1))),
+    );
+  const save = (name, rows) => {
+    const f = path.join(rtmp, name);
+    mkdirSync(path.dirname(f), { recursive: true });
+    writeFileSync(f, rows.map((r) => (typeof r === "string" ? r : JSON.stringify(r))).join("\n"));
+    return f;
+  };
+  const fa = save("cand.jsonl", lines(0, 3));
+  const fb = save("base/results.jsonl", lines(1, 1));
+  const R = () => FE.report(FE.readResults([fa, path.dirname(fb)]), { vs: "base" });
+  await check(
+    "E7 won 2, lost 1, tied 1 (two runs of one arm, told apart by file)",
+    [2, 1, 1],
+    () => {
+      const v = R().vs.against[0];
+      return [v.won, v.lost, v.tied];
+    },
+  );
+  await check(
+    "a run dir and its results.jsonl are one input, read once",
+    8,
+    () => FE.readResults([path.dirname(fb), fb]).length,
+  );
+  await check("E7 pass^k per task", [true, true, false, true], () =>
+    R()
+      .rows.filter((r) => r.run === "cand")
+      .map((r) => r.passK),
+  );
+  await check("pass@1 is exact for k = 3 and shown with 2 decimals", [2 / 3, true], () => {
+    const rs = [rec("t", 0, true, 1, 1), rec("t", 1, true, 1, 1), rec("t", 2, false, 1, 1)];
+    const rep = FE.report(rs);
+    return [rep.rows[0].passAt1, /0\.67/.test(FE.formatReport(rep))];
+  });
+  await check("a null cost is left out of the mean and counted as unknown", [2, 1, true], () => {
+    const rs = [rec("t", 0, true, 1, 1), rec("t", 1, true, 3, 1), rec("t", 2, true, null, 1)];
+    const rep = FE.report(rs);
+    return [rep.runs[0].meanCost, rep.runs[0].unknownCost, /1 unknown/.test(FE.formatReport(rep))];
+  });
+  await check("broken is counted on its own line, not folded into fail", [1, true], () => {
+    const rep = FE.report([rec("t", 0, true, 1, 1), rec("t", 1, false, 1, 1, "broken")]);
+    return [rep.rows[0].broken, /^broken/m.test(FE.formatReport(rep))];
+  });
+  await check(
+    "a malformed line is skipped and counted; its text is never printed",
+    [1, false],
+    () => {
+      const rs = FE.readResults([
+        save("bad.jsonl", [rec("t", 1, true, 1, 1), "{zzsecret not json"]),
+      ]);
+      return [rs.malformed, FE.formatReport(FE.report(rs), rs.malformed).includes("zzsecret")];
+    },
+  );
+  await check("the report text names pass^k, pass@1 and won/lost/tied", [true, true, true], () => {
+    const text = FE.formatReport(R());
+    return [/pass\^k/.test(text), /pass@1/.test(text), /won 2, lost 1, tied 1/.test(text)];
+  });
+  await check("report --json prints the report as JSON", [true], () => {
+    const out = spawnSync("node", [path.join(HERE, "factory-eval.mjs"), "report", fa, "--json"], {
+      encoding: "utf8",
+    });
+    return [Array.isArray(JSON.parse(out.stdout).rows)];
+  });
+
+  // R6-b3 review: broken repeats, validated results, pass^k needs k runs, run labels.
+  const set = (runId, plan, x) =>
+    Object.entries(plan).flatMap(([t, rs]) =>
+      rs.map((r, i) => ({ ...rec(t, i, r === "pass", 1, 1, r), runId, ...x })),
+    );
+  const P3 = ["pass", "pass", "pass"];
+  const vsv = (r) => Object.values(r.vs.against[0]).slice(1); // won, lost, tied
+  const cell = (r, run, t) => r.rows.find((x) => x.run === run && x.taskId === t);
+  // A broken repeat is out of pass@1 and blocks pass^k, but it is not a missing repeat: the task is complete.
+  await check(
+    "broken repeats are left out of pass@1, block pass^k, and do not make a task incomplete",
+    [false, true, 1, [0, 1, 0], 1, true],
+    () => {
+      const A = set("A", { t1: ["pass", "pass", "broken"], t2: Array(3).fill("broken") });
+      const r = FE.report([...A, ...set("B", { t1: P3, t2: P3 })], { vs: "B" });
+      const a = cell(r, "A", "t1");
+      const na = /n\/a/.test(FE.formatReport(r));
+      return [a.passK, a.complete, a.passAt1, vsv(r), r.runs[0].tasks, na];
+    },
+  );
+  await check(
+    "neither side pass^k, both complete: pass@1 decides (1.00 beats 0.33)",
+    [1, 0, 0],
+    () => {
+      const A = set("A", { t1: ["pass", "pass", "broken"] });
+      return vsv(FE.report([...A, ...set("B", { t1: ["pass", "fail", "fail"] })], { vs: "B" }));
+    },
+  );
+  await check("an incomplete task is never pass^k", [false, false, [0, 1, 1], false, false], () => {
+    const A = set("A", { t1: ["pass", "pass"], t2: P3, t9: P3 });
+    const r = FE.report([...A, ...set("B", { t1: ["pass", "fail", "fail"], t2: P3 })], { vs: "B" });
+    const a = cell(r, "A", "t1");
+    const c = FE.report(set("C", { t1: ["pass", "pass"] }, { k: 3 })).rows[0];
+    return [a.passK, a.complete, vsv(r), cell(r, "B", "t1").passK, c.passK];
+  });
+  await check("bad ids, results, costs and times are skipped", [2, 7, false, 1, true], () => {
+    const line = (o) => JSON.stringify({ taskId: "t9", result: "pass", run: 1, ...o });
+    const bad = [{ costUsd: "5" }, { wallSec: "x" }, { costUsd: -1 }, { taskId: "a\u001b[31m" }];
+    bad.push({ taskId: "a\nb" }, { result: "wat" }, { result: undefined });
+    const ok = [
+      { taskId: "t1", costUsd: 1 },
+      { taskId: "t2", costUsd: null },
+    ];
+    const rs = FE.readResults([save("val.jsonl", [...ok, ...bad].map(line))]);
+    const f = FE.report(rs);
+    const text = FE.formatReport(f, rs.malformed);
+    return [rs.length, rs.malformed, /NaN/.test(text), f.runs[0].meanCost, /skipped 7 /.test(text)];
+  });
+  const t0 = rec("t", 1, true, 1, 1);
+  const one = save("x/run1/results.jsonl", [t0]);
+  const two = save("y/run1/results.jsonl", [{ ...t0, result: "fail" }]);
+  const mix = save("mix.jsonl", [t0, { ...t0, arm: "b" }]);
+  const msg = (p) =>
+    Promise.resolve(p)
+      .then(FE.readResults)
+      .catch((e) => e.message);
+  await check("a label used twice, or two arms in a file, is refused", [true, true], async () => [
+    (await msg([one, two])).includes(`${one} and ${two}`),
+    /more than one arm/.test(await msg([mix])),
+  ]);
+  await check("--vs also listed reads once; --vs naming no run exits 2", [2, 2, 2], () => {
+    const rows = JSON.parse(cli("report", fa, fb, "--vs", fa, "--json").stdout).rows;
+    const exit = (v) => cli("report", fa, "--vs", v).status;
+    return [Math.max(...rows.map((r) => r.runs)), exit(save("empty.jsonl", ["x"])), exit(rtmp)];
+  });
+  // R6-b3 fold 2: pin the k fixes, one test per mutant.
+  const kline = (o) => JSON.stringify({ taskId: "t1", result: "pass", run: 1, ...o });
+  const kread = (name, os) => FE.readResults([save(name, os.map(kline))]);
+  await check("a record with k 0 is malformed", [1, 1], () => {
+    const rs = kread("k0.jsonl", [{ k: 3 }, { k: 0 }]);
+    return [rs.length, rs.malformed];
+  });
+  await check("a record with k 1e6 is malformed", [1, 1], () => {
+    const rs = kread("k1e6.jsonl", [{ k: 3 }, { k: 1e6 }]);
+    return [rs.length, rs.malformed];
+  });
+  await check("a run that is not an integer 1..1000 (or absent) is malformed", [2, 7], () => {
+    const rs = kread("runs.jsonl", [
+      { run: 1 },
+      { run: 1000 },
+      { run: undefined },
+      { run: 0 },
+      { run: -1 },
+    ]);
+    const bad = kread("runs2.jsonl", [{ run: 1001 }, { run: 1.5 }, { run: "x" }, { run: null }]);
+    return [rs.length, rs.malformed + bad.malformed];
+  });
+  await check("a run above the record's own k is malformed", [1, 1], () => {
+    const rs = kread("runk.jsonl", [
+      { k: 2, run: 2 },
+      { k: 2, run: 3 },
+    ]);
+    return [rs.length, rs.malformed];
+  });
+  await check("run 0 plus run 1 at k 2 is not complete and not pass^k", [1, false, false], () => {
+    const rs = kread("run0.jsonl", [
+      { k: 2, run: 0 },
+      { k: 2, run: 1 },
+    ]);
+    const row = FE.report(rs).rows[0];
+    return [rs.malformed, row.complete, row.passK];
+  });
+  await check("a record with no run beside run 1 at k 2 is not pass^k", [1, false, false], () => {
+    const rs = kread("norun.jsonl", [
+      { k: 2, run: undefined },
+      { k: 2, run: 1 },
+    ]);
+    const row = FE.report(rs).rows[0];
+    return [rs.malformed, row.complete, row.passK];
+  });
+  await check(
+    "runs 1, 1, 2 are two runs; a failed duplicate fails the run",
+    [2, 1, 0.5, false],
+    () => {
+      const mk = (run, result) => ({ taskId: "t", result, run, k: 2, runId: "A" });
+      const row = FE.report([mk(1, "pass"), mk(1, "fail"), mk(2, "pass")]).rows[0];
+      return [row.runs, row.passes, row.passAt1, row.passK];
+    },
+  );
+  // A broken duplicate of a failed run must not drop the fail out of pass@1 (it breaks --vs ties).
+  await check(
+    "a failed run with a broken duplicate stays a fail in pass@1",
+    [0.5, 0, false],
+    () => {
+      const mk = (run, result) => ({ taskId: "t", result, run, k: 2, runId: "A" });
+      const row = FE.report([mk(1, "pass"), mk(2, "fail"), mk(2, "broken")]).rows[0];
+      return [row.passAt1, row.broken, row.passK];
+    },
+  );
+  const sameDir = (order) => {
+    const abs = path.join(rtmp, "cd", "run1");
+    save("cd/run1/results.jsonl", [t0]);
+    const cwd = process.cwd();
+    try {
+      process.chdir(path.join(rtmp, "cd"));
+      return FE.readResults(order === "abs-first" ? [abs, "run1"] : ["run1", abs]).length;
+    } finally {
+      process.chdir(cwd);
+    }
+  };
+  await check("an absolute and a relative path to one run dir read once (absolute first)", 1, () =>
+    sameDir("abs-first"),
+  );
+  await check("an absolute and a relative path to one run dir read once (relative first)", 1, () =>
+    sameDir("rel-first"),
+  );
+  await check(
+    "records with no k and runs 1 and 3 (run 2 missing) are incomplete",
+    [false, false],
+    () => {
+      const rs = [1, 3].map((run) => ({ ...rec("t", run, true, 1, 1), runId: "A" }));
+      const row = FE.report(rs).rows[0];
+      return [row.complete, row.passK];
+    },
+  );
+  await check(
+    "a task's own record k decides it, not the run-wide maximum",
+    [true, true, false],
+    () => {
+      const one = { ...rec("t1", 1, true, 1, 1), runId: "A", k: 1 };
+      const three = [1, 2, 3].map((run) => ({ ...rec("t2", run, true, 1, 1), runId: "A", k: 3 }));
+      const bare = [1, 2].map((run) => ({ ...rec("t3", run, true, 1, 1), runId: "A" }));
+      const r = FE.report([one, ...three, ...bare]);
+      return [cell(r, "A", "t1").passK, cell(r, "A", "t2").passK, cell(r, "A", "t3").complete];
+    },
+  );
+  await check(
+    "two records of run 1 with k 2 are one run: incomplete, never pass^k",
+    [false, false],
+    () => {
+      const rs = [1, 1].map((run) => ({ ...rec("t", run, true, 1, 1), runId: "A", k: 2 }));
+      const row = FE.report(rs).rows[0];
+      return [row.complete, row.passK];
+    },
+  );
+  await check("run numbers above a task's recorded k leave it incomplete", [false, false], () => {
+    const rs = [1, 3].map((run) => ({ ...rec("t", run, true, 1, 1), runId: "A", k: 2 }));
+    const row = FE.report(rs).rows[0];
+    return [row.complete, row.passK];
+  });
+} finally {
+  rmSync(rtmp, { recursive: true, force: true });
+}
+
+// E9: seeded sample, kinds in proportion to the pool.
+const mk = (bugs, feats) =>
+  [...Array(bugs).fill("bug"), ...Array(feats).fill("feature")].map((kind, i) => ({
+    ...base,
+    id: `acme-${kind}-${i}`,
+    kind,
+    risk: ["green", "amber", "red"][i % 3],
+  }));
+const pool = mk(10, 10);
+const ids = (n, seed) => FE.sampleTasks(pool, n, seed).map((t) => t.id);
+await check("E9 --sample 6 --seed 1 twice gives the same 6 ids", [true, 6], () => {
+  const a = ids(6, 1);
+  return [JSON.stringify(a) === JSON.stringify(ids(6, 1)), new Set(a).size];
+});
+await check("E9 a 15-bug / 5-feature pool at n = 8 gives 6 bugs and 2 features", [6, 2], () => {
+  const got = FE.sampleTasks(mk(15, 5), 8, 3);
+  return ["bug", "feature"].map((k) => got.filter((t) => t.kind === k).length);
+});
+await check("E9 both kinds are present at n = 2, even in a lopsided pool", [2, 2], () => [
+  new Set(FE.sampleTasks(pool, 2, 7).map((t) => t.kind)).size,
+  new Set(FE.sampleTasks(mk(19, 1), 2, 7).map((t) => t.kind)).size,
+]);
+await check("E9 risks rotate inside a kind", [3], () => [
+  new Set(FE.sampleTasks(mk(9, 0), 3, 5).map((t) => t.risk)).size,
+]);
+await check("E9 the seed changes the ids; n caps at the pool", [true, 20], () => {
+  const green = mk(9, 0).filter((t) => t.risk === "green");
+  const ids = Array.from({ length: 30 }, (_, i) => FE.sampleTasks(green, 1, i + 1)[0].id);
+  return [new Set(ids).size > 1, FE.sampleTasks(pool, 25, 1).length];
+});
+await check("E9 --sample must be a whole number of 1 or more", [true], () => [
+  ["0", "-1", "2.5", "abc"].every((n) => {
+    const r = cli("run", "--arm", "stub", "--sample", n);
+    return r.status === 2 && /--sample/.test(r.stderr);
+  }),
+]);
 
 await check(
   "arms file: a stub arm and one real template; the stub is free",
