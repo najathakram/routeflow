@@ -599,6 +599,13 @@ try {
     !/check-git-hooks/.test(pkg.scripts.prepare ?? ""),
     pkg.scripts.prepare,
   );
+  const dispatch = readFileSync(path.join(ROOT, ".claude/commands/dispatch.md"), "utf8");
+  ok(
+    "T12d the worktree-setup instructions: npm ci --ignore-scripts, then ensure, then the check",
+    /npm ci --ignore-scripts[\s\S]*ensure-git-hooks\.mjs[\s\S]*check-git-hooks\.mjs/.test(
+      dispatch,
+    ) && !/never\s+`--ignore-scripts`/.test(dispatch),
+  );
   const settings = JSON.parse(readFileSync(path.join(ROOT, ".claude/settings.json"), "utf8"));
   const sessionStart = JSON.stringify(settings.hooks.SessionStart);
   ok(

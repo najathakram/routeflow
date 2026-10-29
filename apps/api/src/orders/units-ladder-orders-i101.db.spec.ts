@@ -55,7 +55,11 @@ const VARIANTS = [
 ] as const;
 const LEVELS = [
   { level: "Case", factor: CASE.factor, price: (v: (typeof VARIANTS)[number]) => v.casePrice },
-  { level: "Pallet", factor: PALLET.factor, price: (v: (typeof VARIANTS)[number]) => v.palletPrice },
+  {
+    level: "Pallet",
+    factor: PALLET.factor,
+    price: (v: (typeof VARIANTS)[number]) => v.palletPrice,
+  },
 ] as const;
 const START_STOCK = 100_000;
 const PACK_BOXES = 3; // pack boxes on the mixed order = 30 pieces
@@ -346,9 +350,9 @@ describeDb("I-101 orders branch: unit lines on the ladder 10 / 200 / 4800, real 
         await inTenant(() =>
           orders.changeStatus(order.id, { status: "CANCELLED" } as any, staff() as any),
         );
-        expect(
-          (await raw.order.findUniqueOrThrow({ where: { id: order.id } })).status,
-        ).toBe("CANCELLED");
+        expect((await raw.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe(
+          "CANCELLED",
+        );
         expect((await linesOf(order.id)).map((x) => x.status)).toEqual(["CANCELLED", "CANCELLED"]);
         expect(await stockOf(productId)).toBe(stock0);
         const cancelMoves = await raw.stockMovement.findMany({
@@ -376,9 +380,7 @@ I101 O11 ${v.name} ${l.level} cancel movements: ${JSON.stringify(cancelMoves.map
       const productId = variantIds[v.name];
       const { customerId } = await newCustomer(`o9-${v.name}-${l.level}`);
       const o1 = await createOrder(customerId, [{ productId, qty: 1, unitLabel: l.level }]);
-      const o2 = await createOrder(customerId, [
-        { productId, qty: 20, boxes: 2, pieces: 0 },
-      ]);
+      const o2 = await createOrder(customerId, [{ productId, qty: 20, boxes: 2, pieces: 0 }]);
       const stock0 = await stockOf(productId);
       const snapshot = async () => ({
         orders: (
