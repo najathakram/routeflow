@@ -15,12 +15,13 @@
  *  - Outcome: exactly one reopen resolves and the other is refused 409 ORDER_CHANGED_DURING_EDIT.
  *  - Entry is ASSERTED before the outcome is trusted: exactly 1 blocked backend (blocked by the holder),
  *    then exactly 2 (one by the holder, one by a non-holder). Count = every blocked backend of this
- *    database (`datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`).
+ *    database (blockedBackends in common/testing/blocked-wait).
  *  - Every wait is <= 3 s (Prisma's interactive tx timeout is 5 s; the stock lock timeout is 5 s).
  *  - Lock order here is the single Product row; reopen locks Product rows sorted by (rank, id).
  */
 import { Client } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { blockedBackends } from "../common/testing/blocked-wait";
 import { buildOrderStockWorld, type OrderStockWorld } from "../inventory/testing/order-stock-world";
 import { expectLedgerConsistent } from "../inventory/testing/ledger-consistency";
 
@@ -36,11 +37,7 @@ describeDb("O5 / B695: concurrent reopen of one cancelled order re-decrements on
 
   /** Every blocked backend of THIS database, with who blocks it. */
   async function blocked(): Promise<Array<{ pid: number; blockers: number[] }>> {
-    const { rows } = await w.pool.query(
-      `SELECT pid, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
-        WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`,
-    );
-    return rows.map((r: any) => ({ pid: Number(r.pid), blockers: r.blockers.map(Number) }));
+    return blockedBackends(w.pool);
   }
 
   /** Polls (<= 3 s) until exactly `n` backends are blocked; throws with what it saw otherwise. */

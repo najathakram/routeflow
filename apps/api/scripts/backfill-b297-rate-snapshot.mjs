@@ -916,14 +916,35 @@ async function dryRun() {
   }
 }
 
-function verifyGuardSha(guardSha) {
+/**
+ * Row 360: the oldest build this backfill may run from. The first master merge (#3392) that contains the last B297
+ * PR3 writer commit (429976433, "paired lines carry through every builder", row 373; the fold, buyer and invoice
+ * copier writers landed before it): from here on no code path writes a NULL trio, so the dry run's census of NULL
+ * lines stops growing. A `--guard-sha` older than this, or a checkout whose HEAD lacks it, is refused: the backfill would
+ * "complete" while the old writers keep minting the lines it just repaired.
+ */
+export const MIN_GUARD_SHA = "0dab5867977782287a22fbfe7791022cdf79581d";
+
+const gitIsAncestor = (ancestor, descendant) => {
+  try {
+    execFileSync("git", ["-C", REPO_ROOT, "merge-base", "--is-ancestor", ancestor, descendant]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export function verifyGuardSha(guardSha, isAncestor = gitIsAncestor, minSha = MIN_GUARD_SHA) {
   const head = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim();
-  try {
-    execFileSync("git", ["-C", REPO_ROOT, "merge-base", "--is-ancestor", guardSha, head]);
-  } catch {
+  if (!isAncestor(guardSha, head)) {
     throw refuse(`--guard-sha ${guardSha} is not an ancestor of this checkout's HEAD (${head})`);
+  }
+  if (!isAncestor(minSha, guardSha)) {
+    throw refuse(
+      `--guard-sha ${guardSha} predates B297 PR3 (${minSha.slice(0, 9)}); name a sha at or after it`,
+    );
   }
 }
 

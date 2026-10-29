@@ -136,7 +136,7 @@ describe("Product labels page", () => {
     role = "OPERATOR";
     categories = [cat()];
     render();
-    expect(screen.getByText(/only a workspace admin/i)).toBeInTheDocument();
+    expect(screen.getByText(/only an account admin/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("New label name")).toBeNull();
     expect(screen.queryByRole("button", { name: /rename|archive/i })).toBeNull();
   });

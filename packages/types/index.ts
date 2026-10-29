@@ -127,6 +127,7 @@ export * from "./trip-grouping";
 
 export * from "./internal-email";
 export * from "./stock-count-commit-copy";
+export * from "./api/stock-count";
 
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 

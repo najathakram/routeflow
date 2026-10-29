@@ -299,6 +299,7 @@ const READ_ONLY_STATUS_FILES = [
   "apps/web/components/ReadOnlyBanner.tsx",
   "apps/web/lib/read-only-gate.tsx", // SA-733r6: `view.status === "READ_ONLY"`
   "apps/web/lib/subscription-banner-state.ts", // SA-733r6: `view.status === "READ_ONLY"`
+  "packages/types/api/enums.ts", // SA-1049 R5: TENANT_STATUS_VALUES, the shared mirror of the Prisma `TenantStatus`
 ];
 
 /**

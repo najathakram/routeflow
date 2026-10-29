@@ -152,6 +152,8 @@ function fakeTenant(start: {
     forgetCachedModes: jest.fn(() => {
       stale = {};
     }),
+    // SA-1028: planCapabilities reads the tenant's current ticks through the card's own read (capabilities())
+    getEffectiveMode: jest.fn(async (_t: string, key: string) => stale[key] ?? modes[key]),
     getState: jest.fn(async (_t: string, key: string) => ({
       value: stale[key] ?? modes[key],
       effective: stale[key] ?? modes[key],
