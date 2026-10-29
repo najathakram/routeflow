@@ -131,6 +131,7 @@ export class ReceiptService {
             unitsPerBox: true,
             boxes: true,
             pieces: true,
+            unitLabel: true,
             product: {
               select: {
                 name: true,
