@@ -17,7 +17,7 @@ import {
   authStatusBadge,
   type CustomerAuthorization,
 } from "@/lib/api/authorizations";
-import { useTenantToday } from "@/lib/tenant-timezone";
+import { useTenantTimeZone, useTenantToday } from "@/lib/tenant-timezone";
 import { renderLicenceExpiry } from "./authorizations-expiry.logic";
 
 function sourceLabel(source: CustomerAuthorization["source"]): string {
@@ -215,6 +215,7 @@ type ModalState =
 
 export function AuthorizationsTab({ customerId }: { customerId: string }) {
   const { data: auths, isLoading } = useCustomerAuthorizations(customerId);
+  const zone = useTenantTimeZone();
   const approve = useApproveAuthorization(customerId);
   const { toast } = useToast();
   const [modal, setModal] = React.useState<ModalState>(null);
@@ -259,7 +260,7 @@ export function AuthorizationsTab({ customerId }: { customerId: string }) {
       ) : (
         <div className="divide-y divide-surface-border rounded-xl border border-surface-border bg-white">
           {auths.map((auth) => {
-            const display = displayAuthStatus(auth);
+            const display = displayAuthStatus(auth, zone);
             const badge = authStatusBadge(display);
             return (
               <div key={auth.id} className="flex items-center justify-between gap-4 p-4">

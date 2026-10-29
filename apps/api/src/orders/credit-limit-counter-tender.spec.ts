@@ -164,6 +164,18 @@ describe("creditProjectedTotal", () => {
     }
     expect(creditProjectedTotal(50, { creditPaidNow: () => 80 })).toBe(0);
   });
+  // W-863 (SA-945 MUST 6): a return taken with the sale pays the order down BEFORE the tender
+  it("nets the server-priced return credit: $10.00 on account with a $4.00 return judges $6.00", () => {
+    expect(creditProjectedTotal(10, {}, 4)).toBe(6);
+  });
+  it("the tender is judged on what the credit leaves: $10.00, $4.00 credit, $6.00 cash judges $0", () => {
+    const cash = (due: number) => Math.min(6, due);
+    expect(creditProjectedTotal(10, { creditPaidNow: cash }, 4)).toBe(0);
+  });
+  it("a return worth more than the sale judges $0; a garbage credit cannot loosen or tighten past [0, total]", () => {
+    expect(creditProjectedTotal(10, {}, 12)).toBe(0);
+    for (const bad of [NaN, Infinity, -5]) expect(creditProjectedTotal(10, {}, bad)).toBe(10);
+  });
 });
 
 // A setter: `creditPaidNow: ...`, `creditPaidNow = ...`, or the shorthand `{ creditPaidNow }` / `{ creditPaidNow, ...}`.
@@ -181,9 +193,14 @@ describe("S1 wiring pins", () => {
     expect(SETTER.test("options.creditPaidNow?.(total)")).toBe(false);
   });
   const src = (f: string) => fs.readFileSync(path.join(__dirname, f), "utf8");
-  it("create() hands the B585 gate creditProjectedTotal(total, options), not the bare total", () => {
+  it("create() hands the B585 gate creditProjectedTotal(total, options, returnCredit), not the bare total", () => {
     expect(src("orders.service.ts")).toMatch(
-      /const projectedTotal = creditProjectedTotal\(total,\s*options\);[^\n]*\n\s*await this\.creditGate\(\{ customerId, projectedTotal,/,
+      /const projectedTotal = creditProjectedTotal\(total,\s*options,\s*returnCredit\);[^\n]*\n\s*await this\.creditGate\(\{ customerId, projectedTotal,/,
+    );
+  });
+  it("only the COUNTER sale nets a return credit at the gate (Create Order keeps SA-194)", () => {
+    expect(src("orders.service.ts")).toMatch(
+      /returnCredit = options\.counterSale\s*\?\s*await inlineReturn\.previewInlineReturnCredit\([^)]*\)\s*:\s*0;/,
     );
   });
   it("only the counter sale sets creditPaidNow (repo-wide scan of apps/api/src, specs excluded)", () => {

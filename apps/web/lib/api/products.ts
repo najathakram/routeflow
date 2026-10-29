@@ -265,6 +265,8 @@ const BULK_DELETE_CHUNK = 500;
 export interface BulkDeleteProductsResult {
   deleted: number;
   softDeleted: number;
+  /** Row 493: which products were archived (kept with their history). */
+  softDeletedIds: string[];
   skipped: Array<{ id: string; code?: string; reason?: string }>;
 }
 
@@ -281,15 +283,17 @@ export function useBulkDeleteProducts() {
     mutationFn: async (ids: string[]): Promise<BulkDeleteProductsResult> => {
       let deleted = 0;
       let softDeleted = 0;
+      const softDeletedIds: string[] = [];
       const skipped: BulkDeleteProductsResult["skipped"] = [];
       for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
         const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
         const r = await apiClient.delete("/products/bulk", { data: { ids: chunk } });
         deleted += Number(r.data?.deleted ?? 0);
         softDeleted += Number(r.data?.softDeleted ?? 0);
+        if (Array.isArray(r.data?.softDeletedIds)) softDeletedIds.push(...r.data.softDeletedIds);
         if (Array.isArray(r.data?.skipped)) skipped.push(...r.data.skipped);
       }
-      return { deleted, softDeleted, skipped };
+      return { deleted, softDeleted, softDeletedIds, skipped };
     },
     onSuccess: () => invalidateProductSet(qc),
   });

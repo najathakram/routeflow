@@ -160,6 +160,212 @@ export function isFastMode(env = process.env) {
   return env.RF_VERIFY_MODE === "fast" && !env.CI && env.FULL_VERIFY !== "1";
 }
 
+/**
+ * "A fast push is not proof" (lead ruling 2026-10-28). Three PRs passed a fast push while red on a
+ * full verify: the related-only lane never runs the repo-wide pins, and the api unit config ignores
+ * every `-script.spec.ts`. So (1) every fast run ends with this exact line, here, in verify-turbo and
+ * in .husky/pre-push (its skip line too), and (2) a diff that can break a pin also runs them.
+ */
+export const FAST_NOT_PROOF_LINE =
+  "fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)";
+
+/** The final line of a run: the stamp for a fast run, null (print nothing new) otherwise. */
+export function fastStampLine(fast) {
+  return fast ? FAST_NOT_PROOF_LINE : null;
+}
+
+/**
+ * Specs under apps/api/src that read the WHOLE repo (scripts/, hooks, manifests) rather than one
+ * module, so `--changedSince` never relates them to a scripts/hooks/manifest edit. Run on a fast
+ * push whose diff `repoPinsNeeded`. Keep each entry's reason honest; the self-test pins existence.
+ */
+export const REPO_WIDE_PINS = [
+  {
+    file: "apps/api/src/common/scripts-live-target-guard.spec.ts",
+    why: "walks every scripts/*.mjs for live-DB targeting",
+  },
+  {
+    file: "apps/api/src/common/fixture-git-env-scrub.spec.ts",
+    why: "walks scripts/.claude/.husky for unscrubbed git spawns",
+  },
+  {
+    file: "apps/api/src/common/scripts-product-mirror-tripwire.spec.ts",
+    why: "scans scripts/ and apps/api/scripts for product mirrors",
+  },
+  {
+    file: "apps/api/src/common/script-money-writers.spec.ts",
+    why: "scans scripts/ for unrounded money writes",
+  },
+  {
+    file: "apps/api/src/common/script-spec-lane.spec.ts",
+    why: "reads apps/api/package.json jest lanes against the spec tree",
+  },
+  {
+    file: "apps/api/src/common/local-scripts-forwarding.spec.ts",
+    why: "reads the root package.json local:* contract",
+  },
+  {
+    file: "apps/api/src/common/local-db-specs.spec.ts",
+    why: "reads the root package.json and scripts/local-db-specs.mjs",
+  },
+  {
+    file: "apps/api/src/common/turbo-inputs.spec.ts",
+    why: "reads the root package.json and turbo.json inputs",
+  },
+  {
+    file: "apps/api/src/common/scan-signatures-selftest.spec.ts",
+    why: "walks .claude/skills/*/scripts and scripts/",
+  },
+  {
+    file: "apps/api/src/common/no-runtime-ddl.spec.ts",
+    why: "greps apps/api/scripts and src for runtime DDL",
+  },
+  {
+    file: "apps/api/src/common/scripts-unscoped-delete.spec.ts",
+    why: "walks apps/api/scripts and scripts/ for unscoped deleteMany/updateMany",
+  },
+  {
+    file: "apps/api/src/common/owner-report-db-url.spec.ts",
+    why: "walks apps/api/scripts for report scripts that read a DB url unsafely",
+  },
+  {
+    file: "apps/api/src/common/no-ui-package-import.spec.ts",
+    why: "scans apps/api/scripts (and src, prisma) for imports of the ui package",
+  },
+  {
+    file: "apps/api/src/common/wipe-order-fk-pin.spec.ts",
+    why: "reads apps/api/scripts/wipe-tenant-fresh-start.js and reset-and-seed.ts",
+  },
+  {
+    file: "apps/api/src/common/schema-folder.spec.ts",
+    why: "runs apps/api/scripts/split-prisma-schema.mjs --check against the schema folder",
+  },
+  {
+    file: "apps/api/src/common/no-single-schema-path.spec.ts",
+    why: "scans for single-file schema paths; exempts apps/api/scripts/split-prisma-schema.mjs",
+  },
+];
+
+/** Paths whose edit can break a repo-wide pin or a `-script` spec. */
+const PIN_TRIGGERS = [
+  /^scripts\//,
+  /^\.husky\//,
+  /^\.claude\/hooks\//,
+  /^\.claude\/skills\/[^/]+\/scripts\//,
+  /(^|\/)package\.json$/,
+  /^apps\/api\/src\/common\//,
+  // The api jest rootDir is src, so --changedSince never relates a file here to the specs that walk it.
+  /^apps\/api\/scripts\//,
+  // A changed `-script` spec outside src/common must run itself too.
+  /-script\.spec\.ts$/,
+];
+
+export function repoPinsNeeded(files) {
+  return (files ?? []).some((f) => PIN_TRIGGERS.some((re) => re.test(f.replaceAll("\\", "/"))));
+}
+
+/**
+ * Every `-script.spec.ts` (the api unit config ignores them). A full or fail-closed run uses this pattern
+ * to select all of them. Literal-dot classes keep cmd.exe quoting trivial.
+ */
+export const SCRIPT_SPEC_PATTERN = "-script[.]spec[.]ts$";
+
+/**
+ * Serial, the whole set measured ~568 s (66 specs), too slow for a fast push, so a fast run picks the
+ * RELATED `-script` specs instead (`selectScriptSpecs`). This one always runs: it guards the escape hatch.
+ */
+export const ALWAYS_SCRIPT_SPEC = "skip-verify-audit-script.spec.ts";
+
+// Basenames too common to relate a spec by name: the pins already cover manifests.
+const GENERIC_BASENAMES = new Set([
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+  "turbo.json",
+  "index.ts",
+  "index.js",
+  "index.mjs",
+  "README.md",
+]);
+
+/** Every apps/api `-script.spec.ts` as { file (relative to apps/api), text }. */
+export function loadScriptSpecs(root) {
+  const out = [];
+  const walk = (dir, rel) => {
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === "node_modules") continue;
+      if (e.isDirectory()) walk(join(dir, e.name), `${rel}/${e.name}`);
+      else if (e.name.endsWith("-script.spec.ts")) {
+        out.push({ file: `${rel}/${e.name}`, text: readFileSync(join(dir, e.name), "utf8") });
+      }
+    }
+  };
+  walk(join(root, "apps", "api", "src"), "src");
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
+
+/**
+ * Which `-script` specs a fast run executes: the always-on audit spec plus every spec whose file name
+ * or source text mentions a changed file's path or basename (plain substring reads, no import parsing).
+ * `files` null (diff not computable) selects ALL ("all"): fail closed. Returns
+ * { files: string[] | "all", line }, one line with the count and why.
+ */
+export function selectScriptSpecs({ files, specs }) {
+  if (files === null) {
+    return {
+      files: "all",
+      line: `+ SCRIPT SPECS: all ${specs.length} (cannot diff, fail closed).`,
+    };
+  }
+  if (specs.length === 0) {
+    return {
+      files: "all",
+      line: "+ SCRIPT SPECS: all (no -script specs found on disk, fail closed).",
+    };
+  }
+  const changed = files.map((f) => f.replaceAll("\\", "/"));
+  const needles = changed.flatMap((f) => {
+    const base = f.slice(f.lastIndexOf("/") + 1);
+    if (GENERIC_BASENAMES.has(base)) return [];
+    const bare = base.replace(/\.[^.]+$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return [{ path: f, base, importRe: new RegExp(`/${bare}["'\`]`) }];
+  });
+  const always = specs.filter((s) => s.file.endsWith(ALWAYS_SCRIPT_SPEC));
+  const why = [];
+  const related = [];
+  for (const s of specs) {
+    if (always.includes(s)) continue;
+    const name = s.file.slice(s.file.lastIndexOf("/") + 1);
+    const hit = needles.find(
+      (n) =>
+        name === n.base ||
+        // TypeScript imports drop the extension: `from "./calendar-date"`.
+        n.importRe.test(s.text) ||
+        name === `${n.base.replace(/\.[^.]+$/, "")}-script.spec.ts` ||
+        s.text.includes(n.path) ||
+        s.text.includes(n.base),
+    );
+    if (hit) {
+      related.push(s.file);
+      why.push(`${name} (${hit.base})`);
+    }
+  }
+  const picked = [...always.map((s) => s.file), ...related];
+  return {
+    files: picked,
+    line:
+      `+ SCRIPT SPECS: ${picked.length} of ${specs.length} (always ${ALWAYS_SCRIPT_SPEC}` +
+      (why.length ? `; related: ${why.join(", ")}` : "; none related") +
+      ").",
+  };
+}
+
 /** The checked-out branch name ("HEAD" when detached), or null when git cannot say. */
 export function currentBranch(root) {
   const out = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
