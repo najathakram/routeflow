@@ -49,7 +49,7 @@ they share files; analysing them individually re-reads the same service ten time
 most wasteful thing available here. The exception is a freshly filed bug with no batch yet — give
 that one a quick pass so it can be routed.
 
-Use a **Fable** agent (high effort). Fill each section with `npm run bugs -- note B### "<text>" --section "<name>"`:
+Use an **Opus** agent (high effort). Fill each section with `npm run bugs -- note B### "<text>" --section "<name>"`:
 
 1. **What this feature is for** — the user-visible purpose. You cannot judge a fix without it.
 2. **Root cause** — the actual defect, and its **class**. Check whether that class already has a

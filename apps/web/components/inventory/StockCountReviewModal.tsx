@@ -43,6 +43,11 @@ interface StockCountReviewModalProps {
    * is offered only when `canFinishWithSkips` (a partly saved count that hit a permanent refusal).
    */
   commitStatus?: {
+    /**
+     * SA-999: "Preparing count… N of M" while the count's seed has not finished. Shown in the footer and the
+     * Commit button stays disabled (the server answers 409 STOCK_COUNT_SEEDING until it finishes).
+     */
+    preparingCopy: string | null;
     savingCopy: string | null;
     notice: string | null;
     canFinishWithSkips: boolean;
@@ -96,7 +101,8 @@ export function StockCountReviewModal({
     `(+${fmt(posSum)} / −${fmt(Math.abs(negSum))} at avg cost); ` +
     `${uncountedCount.toLocaleString("en-US")} uncounted product${uncountedCount === 1 ? "" : "s"} unchanged.`;
 
-  const canCommit = changed.length > 0 && unsavedCount === 0 && !isSubmitting;
+  const canCommit =
+    changed.length > 0 && unsavedCount === 0 && !isSubmitting && !commitStatus?.preparingCopy;
 
   const renderRow = ({
     row,
@@ -280,6 +286,11 @@ export function StockCountReviewModal({
 
         {/* Footer */}
         <div className="border-t border-surface-border px-6 py-4">
+          {commitStatus?.preparingCopy && (
+            <p role="status" className="mb-2 text-sm font-medium text-warning">
+              {commitStatus.preparingCopy}
+            </p>
+          )}
           {commitStatus?.savingCopy && (
             <p role="status" className="mb-2 text-sm font-medium text-warning">
               {commitStatus.savingCopy}

@@ -42,6 +42,32 @@ const DOOR = "Collect payment at the door";
 const SHIPPING = "Ships by carrier";
 const COUNTER = "Sells at the counter";
 
+describe("CapabilityChoices: keepOpensAs (SA-1028 K-R3 / K-G7)", () => {
+  const shippingTicks: CapabilityTicks = { ...NO_TICKS, shipping: true };
+
+  it("K-G7: the create form passes no keepOpensAs: ticking Counter on Shipping opens as a counter sale (D6)", () => {
+    const onChange = jest.fn();
+    render(<Harness initial={shippingTicks} onChange={onChange} />);
+    fireEvent.click(box(COUNTER));
+    expect(onChange.mock.calls.at(-1)![0]).toMatchObject({ counter: true, opensAs: "counter" });
+  });
+
+  it("K-R3: an unset tenant's card passes keepOpensAs 'order': the tick keeps order", () => {
+    const onChange = jest.fn();
+    render(
+      <CapabilityChoices
+        idPrefix="k"
+        ticks={shippingTicks}
+        onChange={onChange}
+        presets={CAPABILITY_PRESETS_FIXTURE}
+        keepOpensAs="order"
+      />,
+    );
+    fireEvent.click(box(COUNTER));
+    expect(onChange.mock.calls.at(-1)![0]).toMatchObject({ counter: true, opensAs: "order" });
+  });
+});
+
 describe("CapabilityChoices: the three boxes", () => {
   it("is one fieldset 'What this business does' with the three native checkboxes, nothing ticked", () => {
     render(<Harness />);

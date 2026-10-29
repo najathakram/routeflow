@@ -44,6 +44,7 @@ function ctxFor(ladders: Record<string, LadderUnit[]>) {
     overriddenBy: "u-now",
     held: new Map([[held.id, held]]),
     categoryMap: new Map(),
+    priceEditAllowed: true,
   };
   return ctx as unknown as UnitWriteContext & typeof ctx;
 }
