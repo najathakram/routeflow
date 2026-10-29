@@ -105,6 +105,25 @@ describe("PlatformPricingService", () => {
       expect(catalog.getVersionForTenant).toHaveBeenCalledWith("ver-latest");
     });
 
+    it("an unparseable price is refused as 400 PLAN_PRICE_INVALID, never a 'set a custom fee' error (review-b N1)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue(
+        makeTenant({
+          subscription: {
+            planKey: "STARTER",
+            priceOverrideMonthly: "abc",
+            priceOverrideAnnual: null,
+          },
+        }),
+      );
+      catalog.getVersionForTenant.mockResolvedValue(
+        makeVersion([makeDefinition({ planKey: "STARTER", name: "Starter", monthlyPrice: 99 })]),
+      );
+      const err: any = await service.resolveTenantPricing("tenant-1").catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse().code).toBe("PLAN_PRICE_INVALID");
+      expect(String(err.getResponse().message)).toMatch(/not a valid number/i);
+    });
+
     it("uses the catalog's explicit annualPrice instead of the 10x fallback when set", async () => {
       prisma.tenant.findUnique.mockResolvedValue(
         makeTenant({

@@ -78,7 +78,7 @@ describe("InvoicesService — a typed price is judged against the customer's tie
   });
   const caseLine = (over: Record<string, unknown> = {}) =>
     line({ productId: "p1", unitLabel: "Case", ...over });
-  const USER = { sub: "user-1" } as JwtPayload;
+  const USER = { sub: "user-1", role: "OPERATOR" } as JwtPayload;
   const create = (items: unknown[], actor: JwtPayload | undefined = USER) =>
     service.create({ customerId: "cust-1", items } as never, actor);
   const createdRow = () => prisma.invoice.create.mock.calls[0][0].data.items.create[0];

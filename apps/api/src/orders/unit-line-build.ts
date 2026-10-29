@@ -31,7 +31,7 @@ import {
   type ResolvedLineUnits,
 } from "../products/line-units";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { specialPriceReasonRequired } from "./staff-override";
+import { assertPriceEditAllowed, specialPriceReasonRequired } from "./staff-override";
 import { norm } from "./unit-label-norm";
 
 /**
@@ -363,6 +363,8 @@ export function buildUnitLine(input: {
   tenantId: string | null | undefined;
   /** The staff user whose typed price overrides the ladder (H3); stamped only on a real override. */
   overriddenBy?: string | null;
+  /** SA-1034: the acting user's price-edit capability, checked where this line takes a NEW override stamp. */
+  priceEditAllowed: boolean;
   /**
    * H3: the stored line this one re-writes. Sending NO price, or re-sending the price ALREADY on it, is not a new override: the
    * line keeps its stored price, type, original price, reason and stamp, no reason needed (an internal
@@ -545,6 +547,8 @@ export function buildUnitLine(input: {
               overriddenBy: input.overriddenBy,
             }
           : null;
+  // SA-1034: a new override stamp (a typed price, not a held one kept) checks the price-edit capability first
+  if (stamp && decision != null && !echoesHeld) assertPriceEditAllowed(input.priceEditAllowed);
 
   // The real subtotal, now that tier pricing has resolved the actual unitPrice — the split
   // above is already buildLine-validated, so computeLineSubtotalStrict never throws here.
