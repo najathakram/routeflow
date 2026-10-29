@@ -1,4 +1,5 @@
 import { PrismaService } from "../prisma/prisma.service";
+import { catalogNameResolver } from "./catalog-display-name";
 import type { Prisma } from "@prisma/client";
 import { BadGatewayException } from "@nestjs/common";
 import { fromCents } from "@routeflow/pricing";
@@ -172,6 +173,7 @@ export async function beginStripeFirstPlanChange(
       proration: a.proration,
       knownAddonItemIds,
       deleteItems,
+      fromPlanKey: a.fromPlanKey,
       localState: a.localState,
       audience: a.audience,
     },
@@ -306,7 +308,10 @@ async function compensate(
   }
   let restored;
   try {
-    restored = await revertPlanChange({ stripe, logger }, toRevert);
+    restored = await revertPlanChange(
+      { stripe, logger, resolveName: deps.resolveName ?? catalogNameResolver(prisma) },
+      toRevert,
+    );
   } catch (revertErr) {
     return stripeAhead(revertErr);
   }
