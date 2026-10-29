@@ -470,15 +470,18 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
         expect(prisma.order.findMany).toHaveBeenCalledTimes(2);
       });
 
-      it("includeExposure adds ONLY the two keys — every existing statement field is identical", async () => {
+      it("includeExposure adds ONLY the three staff keys (creditExposure, pendingExposure, toCollect) — every existing statement field is identical", async () => {
         const plain: any = await service.getStatementForOperator("cust-1");
         const withExposure: any = await service.getStatementForOperator("cust-1", {
           includeExposure: true,
         });
 
-        const { creditExposure, pendingExposure, ...rest } = withExposure;
+        // SA-1026 A: toCollect is the third key under includeExposure (the staff statement route's flag; the buyer route never sets it)
+        const { creditExposure, pendingExposure, toCollect, ...rest } = withExposure;
         expect(typeof creditExposure).toBe("number");
         expect(typeof pendingExposure).toBe("number");
+        expect(toCollect).toEqual({ count: expect.any(Number), balance: expect.any(Number) });
+        expect(Object.keys(plain)).not.toContain("toCollect");
         expect(rest).toEqual(plain);
       });
 

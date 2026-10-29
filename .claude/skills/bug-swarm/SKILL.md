@@ -90,7 +90,7 @@ choreography into one Workflow script. The v0 steps above stay valid as the fall
   `{ run, rows, idSpace, repo, runDir, fromWorktree, maxClusters, avoidFiles? }` (`scriptsDir`, `registerPath` optional).
   `idSpace` is REQUIRED, `row` (WORK-REGISTER rows, W- ids, via `rf.mjs item show`) or `bug` (B### via
   `bugs.mjs show`); there is no default, because run 2026-10-23-bug-swarm-3 fixed the wrong bug by resolving rows as B### ids.
-- **Scripts** (`scripts/`): `cluster.mjs` (union by shared file, ratchet files, cap), `worktree.mjs` (worktree +
+- **Scripts** (`scripts/`): `cluster.mjs` (union by shared file, ratchet files, cap), `worktree.mjs` (worktree + hooks guard (B642, exit 1 if missing) +
   cloned node_modules + packages build + prisma generate), `gate.mjs` (argv-array gate on the merge-base diff,
   `--json`, `--needs-db`). `workflow.dry-run.mjs` proves the workflow against stubbed agents; run it with
   `node --test .claude/skills/bug-swarm/scripts/*.test.mjs` after any edit to `workflow.js`.

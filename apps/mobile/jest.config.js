@@ -64,6 +64,8 @@ module.exports = {
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
     "^@routeflow/types/regulated-auth-copy$":
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
+    // B330: the shared licence-validity rule (pure, Intl only), same subpath trick.
+    "^@routeflow/types/licence-validity$": "<rootDir>/../../packages/types/licence-validity.ts",
     // H5: the shared estimate tax-basis notice (pure), same subpath trick.
     "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
     // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
