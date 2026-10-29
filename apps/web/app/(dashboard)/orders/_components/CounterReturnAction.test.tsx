@@ -78,6 +78,23 @@ describe("CounterReturnAction", () => {
       /w-full sm:w-auto/,
     );
   });
+  it("SHOULD 3: the recorded line spans both columns of the receipt's 2-column grid and keeps its flex behaviour", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
+    const cls = screen.getByRole("status").className;
+    expect(cls).toMatch(/(^|\s)col-span-2(\s|$)/);
+    expect(cls).toMatch(/(^|\s)basis-full(\s|$)/);
+    expect(cls).toMatch(/(^|\s)order-last(\s|$)/);
+  });
+  it("calls onRecorded once a return is recorded (not on a bare close)", () => {
+    const onRecorded = jest.fn();
+    render(<CounterReturnAction orderId="o1" onRecorded={onRecorded} />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    expect(onRecorded).not.toHaveBeenCalled();
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
+    expect(onRecorded).toHaveBeenCalledTimes(1);
+  });
   it("store credit: names the amount and the customer, and never says to hand money back", () => {
     orderState = { data: { id: "o1", customerId: "c1", customer: { businessName: "Acme Deli" } } };
     const { container } = render(<CounterReturnAction orderId="o1" />);

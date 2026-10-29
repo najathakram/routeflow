@@ -1,5 +1,6 @@
 import { roundMoney, type LadderUnit } from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
+import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
@@ -212,4 +213,34 @@ export function derivedBaseAsPackItems<T extends { productId?: string | null }>(
       { price: "pack", packPrice: layerPackPrice?.(p) },
     );
   });
+}
+
+/**
+ * Moved verbatim from InvoicesService (#3542, size ratchet).
+ * B294: the REGULAR (non-category) tax rate to stamp on order-derived invoice
+ * lines. The order never carries a per-line/category rate for regular tax — it
+ * applies one tenant-wide flat rate (orders.service.getTaxRate(), sourced from
+ * `settings.taxRate`) to its whole subtotal (`order.tax = subtotal * rate`), so
+ * `order.tax / order.subtotal` recovers that same rate exactly (0 for an
+ * exempt customer, mirroring foldCategoryTax's contract). Every order-derived
+ * InvoiceItem.taxRate must carry this value: `applyPriceAdjustment` recomputes
+ * an invoice's regular tax as `Σ li.subtotal * li.taxRate`, and a line built
+ * with `taxRate: 0` silently zeroes the tax on the very next adjustment even
+ * though the invoice was issued with the correct total.
+ */
+export function orderDerivedTaxRate(
+  order: { tax?: unknown; subtotal?: unknown },
+  isTaxExempt: boolean,
+): number {
+  return effectiveTaxRateFromTotals(order?.tax, order?.subtotal, isTaxExempt);
+}
+
+/** Stamps `orderDerivedTaxRate` onto every built line in place (mirrors foldCategoryTax's shape). */
+export function applyOrderDerivedTaxRate(
+  itemsData: Array<{ taxRate?: number }>,
+  order: { tax?: unknown; subtotal?: unknown },
+  isTaxExempt: boolean,
+): void {
+  const rate = orderDerivedTaxRate(order, isTaxExempt);
+  for (const it of itemsData) it.taxRate = rate;
 }

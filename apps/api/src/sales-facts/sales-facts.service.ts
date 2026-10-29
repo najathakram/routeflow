@@ -14,6 +14,7 @@ import {
   EXTERNAL_REFUND_FILTER,
   roundQty,
 } from "../common/invoiced-sales";
+import { noteReturnWhere, refundNet, splitTax, type SplitTax } from "../common/refund-net-terms";
 import { addCalendarDays } from "../analytics/demand-range";
 import { standardRestockResolver } from "../returns/returns-restock-pieces";
 import {
@@ -446,6 +447,7 @@ export class SalesFactsService {
         orderId: true,
         refundMethod: true,
         refundAmount: true,
+        creditSubtotal: true, // SA-840: an external refund nets its frozen NET, like every other net-sales reader
         refundedAt: true,
         creditNoteId: true,
         customerId: true,
@@ -518,7 +520,7 @@ export class SalesFactsService {
       if (r.refundMethod === "EXTERNAL_REFUND" && inWindow(r.refundedAt)) {
         const split = attributeExternalRefund({
           kind: r.kind,
-          refundAmount: Number(r.refundAmount ?? 0),
+          refundAmount: refundNet(r),
           items: (r.items ?? []).map((it: any) => ({
             productId: it.productId ?? null,
             subtotal: it.subtotal != null ? Number(it.subtotal) : null,
@@ -768,7 +770,7 @@ export class SalesFactsService {
     externalRefunds: number;
   }> {
     const db = this.db();
-    const [notes, refunds] = await Promise.all([
+    const [notes, refunds, noteReturns] = await Promise.all([
       db.creditNote.findMany({
         where: { tenantId, ...ACCRUAL_CREDIT_NOTE_FILTER, createdAt: window },
         select: CREDIT_NOTE_ATTRIBUTION_SELECT,
@@ -778,8 +780,14 @@ export class SalesFactsService {
         select: {
           kind: true,
           refundAmount: true,
+          creditSubtotal: true,
           items: { select: { productId: true, subtotal: true } },
         },
+      }),
+      // SA-840: the frozen tax of the store-credit refunds minted in the window (their notes carry it, gross)
+      db.return.findMany({
+        where: noteReturnWhere({ tenantId, refundedAt: window }),
+        select: { creditTax: true, creditCategoryTax: true },
       }),
     ]);
     const lineProduct = await this.lineProducts(tenantId, referencedLineIds(notes as any[]));
@@ -798,11 +806,15 @@ export class SalesFactsService {
       unlisted += split.unlisted;
       unattributed += split.unattributed;
     }
+    // SA-840: those notes' tax is unattributed (their items are NET), so it leaves the credit term and the unattributed rest together
+    const noteTax = (noteReturns as SplitTax[]).reduce((t, r) => t + splitTax(r), 0);
+    creditNotes -= noteTax;
+    unattributed -= noteTax;
     for (const r of refunds as any[]) {
-      externalRefunds += Number(r.refundAmount ?? 0);
+      externalRefunds += refundNet(r);
       const split = attributeExternalRefund({
         kind: r.kind,
-        refundAmount: Number(r.refundAmount ?? 0),
+        refundAmount: refundNet(r),
         items: (r.items ?? []).map((it: any) => ({
           productId: it.productId ?? null,
           subtotal: it.subtotal != null ? Number(it.subtotal) : null,

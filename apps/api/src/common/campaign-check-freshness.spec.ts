@@ -1144,3 +1144,178 @@ describe("campaign-check --print-stale (read-only list for the affected-scope ve
     }
   });
 });
+
+// Landing mode (B1-b2b, `registry:land` step 2): the ledger lives in the register clone, no longer
+// co-versioned with the code, so a report cannot be judged against the ledger's commit time. Gated on
+// BOTH `--landing` and CAMPAIGN_CHECK_CODE_ROOT; either alone changes nothing.
+describe("campaign-check landing mode (--landing + CAMPAIGN_CHECK_CODE_ROOT)", () => {
+  // The T1 fixture: a ledger commit NEWER than api.json, so the ledger term alone refuses it.
+  function staleByLedgerFixture(): { dir: string; runsDir: string } {
+    const dir = mkFixtureDir();
+    initFixtureRepo(dir);
+    writeApiSpecCommit(dir, T0);
+    writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+    const runsDir = path.join(dir, ".campaign", "runs");
+    writeReport(runsDir, "api", { generatedAt: iso(T0 + 300) });
+    for (const ws of ["mobile", "pricing", "web"]) {
+      writeReport(runsDir, ws, { generatedAt: iso(T0 + 10_000), tokens: [] });
+    }
+    return { dir, runsDir };
+  }
+
+  it("a report older than the newest ledger commit passes in landing mode, and says so", () => {
+    const { dir, runsDir } = staleByLedgerFixture();
+    try {
+      const landing = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--landing"],
+        env: { CAMPAIGN_CHECK_CODE_ROOT: dir },
+      });
+      const out = combined(landing);
+      expect(out).toContain("api.json fresh");
+      expect(out).toMatch(/landing mode.*ledger freshness skipped/);
+      expect(out).toContain(dir);
+      expect(landing.status).toBe(0);
+
+      // The same fixture without --landing is refused: this is the mutant (drop the gate -> red).
+      const tracked = runCampaignCheck({ fixtureDir: dir, runsDir });
+      expect(combined(tracked)).toContain("the ledger shards");
+      expect(tracked.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("landing mode still refuses a report older than the code's test files", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeLedgerCommit(dir, T0, [B1_DONE_ROW]);
+      writeApiSpecCommit(dir, T0 + 600);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 300) });
+      for (const ws of ["mobile", "pricing", "web"]) {
+        writeReport(runsDir, ws, { generatedAt: iso(T0 + 10_000), tokens: [] });
+      }
+      const res = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--landing"],
+        env: { CAMPAIGN_CHECK_CODE_ROOT: dir },
+      });
+      expect(combined(res)).toContain("apps/api test files");
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("CAMPAIGN_CHECK_CODE_ROOT without --landing changes nothing", () => {
+    const { dir, runsDir } = staleByLedgerFixture();
+    try {
+      const plain = runCampaignCheck({ fixtureDir: dir, runsDir });
+      const withEnv = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        env: { CAMPAIGN_CHECK_CODE_ROOT: dir },
+      });
+      expect(withEnv.status).toBe(1);
+      expect(combined(withEnv)).toBe(combined(plain));
+      expect(combined(withEnv)).not.toContain("landing mode");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("RF_VERIFY_MODE=fast never weakens landing mode: a T1 row with no report is refused", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs"); // no report written at all
+      // CI / FULL_VERIFY are blanked so the switch is genuinely on for a plain run
+      const fast = { RF_VERIFY_MODE: "fast", CI: "", FULL_VERIFY: "" };
+      const plain = runCampaignCheck({ fixtureDir: dir, runsDir, env: fast });
+      expect(combined(plain)).toContain("report coverage deferred to CI (fast verify)");
+      expect(plain.status).toBe(0);
+
+      const landing = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--landing"],
+        env: { ...fast, CAMPAIGN_CHECK_CODE_ROOT: dir },
+      });
+      const out = combined(landing);
+      expect(out).not.toContain("deferred to CI");
+      expect(out).toContain("RF_VERIFY_MODE=fast ignored (landing mode)");
+      expect(landing.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--landing without CAMPAIGN_CHECK_CODE_ROOT warns and runs as a non-landing check", () => {
+    const { dir, runsDir } = staleByLedgerFixture();
+    try {
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--landing"] });
+      const out = combined(res);
+      expect(out).toContain("--landing ignored (CAMPAIGN_CHECK_CODE_ROOT is not set)");
+      expect(out).not.toContain("landing mode on");
+      expect(out).toContain("the ledger shards"); // the ledger freshness term still applies
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the runs dir and a ledger row's buildPlan resolve under the code root; the ledger under STATUS_DIR", () => {
+    const code = mkFixtureDir();
+    const reg = mkFixtureDir(); // a register clone: ledger only, not a code checkout
+    try {
+      initFixtureRepo(code);
+      writeApiSpecCommit(code, T0);
+      const runsDir = path.join(code, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 600) });
+      for (const ws of ["mobile", "pricing", "web"]) {
+        writeReport(runsDir, ws, { generatedAt: iso(T0 + 600), tokens: [] });
+      }
+      fs.mkdirSync(path.join(code, "plans"), { recursive: true });
+      fs.writeFileSync(
+        path.join(code, "plans", "build-plan.md"),
+        "## Manual verification\n\n| REG-B2 | open the page |\n",
+      );
+      const statusDir = path.join(reg, "status");
+      fs.mkdirSync(statusDir, { recursive: true });
+      const rows = [
+        B1_DONE_ROW,
+        { id: "B2", batch: "F01", tier: "T3", state: "done", proof: "REG-B2 …" },
+      ].map((r, i) => JSON.stringify(i ? { ...r, buildPlan: "plans/build-plan.md" } : r));
+      fs.writeFileSync(path.join(statusDir, "F01.jsonl"), rows.join("\n") + "\n");
+
+      // No --runs-dir: the default must land under the code root, not under this script's checkout.
+      const env = scrubGitEnv({
+        CAMPAIGN_CHECK_STATUS_DIR: statusDir,
+        CAMPAIGN_CHECK_CODE_ROOT: code,
+        CAMPAIGN_CHECK_FORCE_RUN: "FAIL", // never launch a real jest if the runs dir is wrong
+      });
+      delete env.CAMPAIGN_CHECK_TURBO_DRY_RUN;
+      const res = spawnSync(process.execPath, [SCRIPT, "--landing"], {
+        cwd: reg,
+        env,
+        encoding: "utf8",
+        timeout: 60_000,
+        shell: false,
+      });
+      const out = combined(res);
+      expect(out).toContain("api.json fresh");
+      // passes are not printed: exit 0 proves the T3 row found its plan under the code root
+      expect(out).not.toContain("build-plan.md not found");
+      expect(res.status).toBe(0);
+    } finally {
+      fs.rmSync(code, { recursive: true, force: true });
+      fs.rmSync(reg, { recursive: true, force: true });
+    }
+  });
+});
