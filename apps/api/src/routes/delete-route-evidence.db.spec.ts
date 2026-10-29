@@ -50,6 +50,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { prismaQueryable, waitUntilBlocked } from "../common/testing/blocked-wait";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -268,9 +269,9 @@ describeDb("SA-842 route / run delete keys on delivery evidence — real Postgre
     );
 
   /**
-   * SA-425b: poll until some backend is WAITING on another (`pg_blocking_pids` non-empty, with
-   * `pg_stat_clear_snapshot()` each poll so the stats view is re-read) or until `done` settles.
-   * Counts ALL blocked backends in the database. Returns true only when one was actually observed.
+   * SA-425b: poll until some backend is WAITING on another (through `blocked-wait.ts`, which re-reads
+   * the stats view on every probe) or until `done` settles. Counts ALL blocked backends in the
+   * database. Returns true only when one was actually observed.
    */
   async function observeBlocked(done: Promise<unknown>, timeoutMs = 20_000): Promise<boolean> {
     let settled = false;
@@ -278,18 +279,14 @@ describeDb("SA-842 route / run delete keys on delivery evidence — real Postgre
       () => (settled = true),
       () => (settled = true),
     );
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      await prisma.$executeRaw`SELECT pg_stat_clear_snapshot()`; // returns void: $executeRaw
-      const rows: Array<{ n: bigint | number }> = await prisma.$queryRaw`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`;
-      if (Number(rows[0]?.n ?? 0) > 0) return true;
-      if (settled) return false;
-      if (Date.now() > deadline) throw new Error("the delete neither blocked nor finished");
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    const blocked = await waitUntilBlocked(prismaQueryable(prisma), {
+      timeoutMs,
+      intervalMs: 50,
+      until: () => settled,
+    });
+    if (blocked.length > 0) return true;
+    if (settled) return false;
+    throw new Error("the delete neither blocked nor finished");
   }
 
   it("REG-B209 R4-DB: deleteRoute waits for an uncommitted start + signed completion, then refuses; the stop, signature and order pins persist", async () => {
