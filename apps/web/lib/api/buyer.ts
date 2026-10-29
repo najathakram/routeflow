@@ -11,6 +11,7 @@ import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
 import { isSellerUnavailableRefusal } from "@/lib/seller-unavailable";
 import {
+  API_ERROR_CODES,
   isTrackingLive,
   type FulfilmentMethod,
   type InvoiceStatus,
@@ -457,7 +458,7 @@ export function useBuyerUpdateOrderItems() {
     meta: {
       localErrorToast: (e: unknown) =>
         (e as { response?: { data?: { code?: string } } })?.response?.data?.code ===
-        "ORDER_REVISION_STALE",
+        API_ERROR_CODES.ORDER_REVISION_STALE,
     },
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
