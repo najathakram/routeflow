@@ -52,7 +52,7 @@ export interface Return {
   /** #2406: STANDARD (post-delivery RMA) or INLINE (captured during order edit/create). */
   kind: ReturnKind;
   customerId: string;
-  customer?: { id: string; businessName: string; contactName?: string };
+  customer?: { id: string; businessName: string; contactName?: string; isWalkIn?: boolean | null };
   orderId: string;
   order?: { id: string; orderNumber: string; counterSale?: boolean | null };
   status: ReturnStatus;
@@ -70,6 +70,8 @@ export interface Return {
   /** The tender an EXTERNAL_REFUND was paid out in (SA-740r2, `Return.refundTender`); null when none was recorded. */
   refundTender?: "CASH" | "CARD" | "CHECK" | null;
   refundedAt?: string | null;
+  /** Row 257: the user who made the refund (the stored refund actor), staff reads only; null when unknown or removed. */
+  refundedBy?: string | null;
   /**
    * Server-computed Σ qty × (subtotal/qty) across the return's items — the same
    * box-price-safe figure processRefund would mint/record. Always present so the

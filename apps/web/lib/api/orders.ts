@@ -15,6 +15,7 @@ import type {
   InlineReturnLinesRequest,
   LineComponentView,
   OrderInvoicesNeedReview,
+  ToCollectState,
   PriceType,
   OrderCancelBlockedReason,
 } from "@routeflow/types";
@@ -141,6 +142,8 @@ export interface Order {
   };
   /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
   invoicesNeedReview?: OrderInvoicesNeedReview;
+  /** SA-1026: STAFF reads only; derived by the server from the order's invoices. */
+  toCollect?: ToCollectState;
   /** P5-09: post-dispatch change requests, newest first (absent on older API). */
   changeRequests?: ChangeRequest[];
   /** P5-11: filtered relation counts from the LIST endpoint — `changeRequests`

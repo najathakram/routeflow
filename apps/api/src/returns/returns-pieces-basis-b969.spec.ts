@@ -47,6 +47,8 @@ const invoice = (id: string, items: any[], over: Record<string, unknown> = {}) =
   invoiceNumber: id.toUpperCase(),
   status: "SENT",
   total: items.reduce((t, i) => t + i.subtotal, 0),
+  taxAmount: 0,
+  discount: 0,
   createdAt: new Date("2026-01-01"),
   items,
   ...over,

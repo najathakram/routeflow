@@ -11,6 +11,8 @@ import { BusinessProfileService, planFingerprint } from "./business-profile.serv
 import { presetTicks } from "./business-capabilities";
 import { businessProfileByKey } from "./business-profiles";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { FeaturePreviewService } from "./feature-preview.service";
+import { V11_PIN_FIXTURE, featureConfigOver, mockCollaborators } from "./feature-fixtures";
 
 const T = "tenant-a";
 const DAY = 86_400_000;
@@ -35,6 +37,8 @@ function build(
     modes?: Record<string, string>;
     /** Open SHIP orders already handed to the carrier (shippedAt set). */
     inTransit?: number;
+    /** Replaces the preview stub (the real FeaturePreviewService, for the stored-mode cases). */
+    featurePreview?: unknown;
   } = {},
 ) {
   const addonRows = (opts.addons ?? []).map((a) =>
@@ -84,11 +88,15 @@ function build(
       value: modes[key] ?? "unset",
       effective: modes[key] ?? "unset",
     })),
+    // SA-1028: planCapabilities reads the tenant's current ticks through the same read as the card (capabilities())
+    getEffectiveMode: jest.fn(async (_t: string, key: string) => modes[key] ?? "unset"),
     set: jest.fn(),
     clear: jest.fn(),
   };
   const previewResponse = { before: [], after: [], changed: ["driver_payments"] };
-  const featurePreview = { preview: jest.fn().mockResolvedValue(previewResponse) };
+  const featurePreview = opts.featurePreview ?? {
+    preview: jest.fn().mockResolvedValue(previewResponse),
+  };
   const svc = new BusinessProfileService(
     prisma as never,
     featureOverrides as never,
@@ -96,7 +104,15 @@ function build(
     featureConfig as never,
     featurePreview as never,
   );
-  return { svc, prisma, featureOverrides, addons, featureConfig, featurePreview, previewResponse };
+  return {
+    svc,
+    prisma,
+    featureOverrides,
+    addons,
+    featureConfig,
+    featurePreview: featurePreview as { preview: jest.Mock },
+    previewResponse,
+  };
 }
 
 describe("BusinessProfileService.list", () => {
@@ -593,15 +609,54 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
     );
   });
 
+  // SA-1028: these run on a tenant that is SET (pickup): moving it to ship is a real mode move. A tenant nobody set up
+  // that ticks the same Shipping the card read keeps its model unset (its own tests below).
+  const PICKUP = { fulfilment_model: "pickup", counter_sales: "unset" };
+
   it("two orders in transit: planCapabilities RESOLVES with blocked.count 2 (it does not throw)", async () => {
-    const { svc } = build({ inTransit: 2 });
+    const { svc } = build({ inTransit: 2, modes: PICKUP });
     const res = await svc.planCapabilities(T, { shipping: true });
     expect(res.blocked).toEqual({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 2 });
-    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
+    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "pickup", to: "ship" }]);
+  });
+
+  it("K-R2 (service): an unset tenant that ticks what the card read plus Counter plans counter_sales only, not blocked, with orders in transit", async () => {
+    const { svc } = build({ inTransit: 2 });
+    const res = await svc.planCapabilities(T, { shipping: true, counter: true, opensAs: "order" });
+    expect(res.blocked).toBeNull();
+    expect(res.plan.modes).toEqual([{ key: "counter_sales", from: "unset", to: "on" }]);
+    expect(res.preset).toBeNull();
+    expect(res.capabilities).toEqual({
+      delivery: false,
+      doorPayments: false,
+      shipping: true,
+      counter: true,
+      opensAs: "order",
+    });
+  });
+
+  it("K-G1 (service): the same unset tenant unticking nothing but moving to pickup_ship is blocked as before", async () => {
+    const { svc } = build({ inTransit: 2 });
+    const res = await svc.planCapabilities(T, { shipping: true, counter: true });
+    expect(res.blocked).toEqual({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 2 });
+    expect(res.plan.modes.map((m) => m.key)).toContain("fulfilment_model");
+  });
+
+  it("planCapabilities reads the tenant's current ticks once (the card's own read), and an empty request reads nothing", async () => {
+    const { svc, featureConfig, prisma } = build();
+    await svc.planCapabilities(T, { shipping: true, counter: true });
+    expect(
+      featureConfig.getEffectiveMode.mock.calls.filter((c) => c[1] === "fulfilment_model"),
+    ).toHaveLength(1);
+    featureConfig.getEffectiveMode.mockClear();
+    prisma.tenant.findUnique.mockClear();
+    await expect(svc.planCapabilities(T, {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(featureConfig.getEffectiveMode).not.toHaveBeenCalled();
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
   });
 
   it("previewCapabilities with orders in transit is a 200 with the plan, the fingerprint and blocked", async () => {
-    const { svc, featurePreview, previewResponse } = build({ inTransit: 1 });
+    const { svc, featurePreview, previewResponse } = build({ inTransit: 1, modes: PICKUP });
     const res = await svc.previewCapabilities(T, { shipping: true });
     expect(res).toMatchObject({
       ...previewResponse,
@@ -610,10 +665,8 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
       blocked: { code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 },
       planFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
-    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "unset", to: "ship" }]);
-    expect(res.changes).toEqual([
-      "Where orders go: Not configured (today's behavior) → Ship by carrier",
-    ]);
+    expect(res.plan.modes).toEqual([{ key: "fulfilment_model", from: "pickup", to: "ship" }]);
+    expect(res.changes).toEqual(["Where orders go: In store only → Ship by carrier"]);
     expect(featurePreview.preview).toHaveBeenCalledTimes(1);
   });
 
@@ -635,7 +688,7 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
   });
 
   it("assertNotBlocked: in transit is the Settings guard's own 409 body; a clear plan passes", async () => {
-    const { svc } = build({ inTransit: 2 });
+    const { svc } = build({ inTransit: 2, modes: PICKUP });
     const blocked = await svc.planCapabilities(T, { shipping: true });
     expect(() => svc.assertNotBlocked(blocked)).toThrow(
       expect.objectContaining({
@@ -675,5 +728,35 @@ describe("BO-04 — capabilities (ticks) through the one planner", () => {
         }),
       }),
     );
+  });
+});
+
+// SA-1028 section 5, P-G4: the card previews through the REAL FeaturePreviewService, which now reads the stored mode.
+describe("BusinessProfileService.previewCapabilities - the stored mode (SA-1028 section 5)", () => {
+  it("P-G4: stored counter_sales On with the ticks unchanged shows no counter_sales diff", async () => {
+    const c = mockCollaborators(V11_PIN_FIXTURE);
+    const realPreview = new FeaturePreviewService(
+      c.entitlements as any,
+      c.featureOverrides as any,
+      c.catalog as any,
+      c.prisma as any,
+      featureConfigOver({ counter_sales: "on" }).service,
+    );
+    const { svc } = build({
+      modes: { fulfilment_model: "unset", counter_sales: "on" },
+      featurePreview: realPreview,
+    });
+
+    // the unset tenant works today as Ship + Counter (the card shows exactly that); the admin changes nothing
+    const res = await svc.previewCapabilities(T, {
+      delivery: false,
+      shipping: true,
+      counter: true,
+    });
+
+    const modeOf = (side: typeof res.before) => side.find((f) => f.key === "counter_sales")?.mode;
+    expect(modeOf(res.before)).toMatchObject({ value: "on", source: "TENANT" });
+    expect(modeOf(res.after)).toEqual(modeOf(res.before));
+    expect(res.changed).not.toContain("counter_sales");
   });
 });

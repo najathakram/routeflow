@@ -3,6 +3,7 @@ import type { SubscriptionView, TodaysSaleRow, TodaysSalesResponse } from "@rout
 import { renderWithProviders, screen, fireEvent } from "@/test-utils/render";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { CounterTodaysSales } from "./CounterTodaysSales";
+import { CounterVoidSaleAction } from "./CounterVoidSaleDialog";
 
 /**
  * CQ-34: in a READ-ONLY workspace the Today's sales "Void sale" control is disabled UP FRONT with the shared read-only line
@@ -101,7 +102,7 @@ describe("Void sale in a read-only workspace (CQ-34)", () => {
     expect(btn).toHaveAttribute("aria-describedby", line.id);
     expect(btn).toHaveAttribute("title", line.textContent as string);
     fireEvent.click(btn);
-    expect(screen.queryByLabelText("Reason for voiding")).toBeNull();
+    expect(screen.queryByLabelText("Reason for voiding (required)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Void sale" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
   });
@@ -113,6 +114,24 @@ describe("Void sale in a read-only workspace (CQ-34)", () => {
     expect(btn).not.toHaveAttribute("aria-describedby");
     expect(screen.queryByTestId("today-read-only-line")).toBeNull();
     fireEvent.click(btn);
-    expect(await screen.findByLabelText("Reason for voiding")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Reason for voiding (required)")).toBeInTheDocument();
+  });
+});
+
+describe("Void sale's read-only description id (W-716)", () => {
+  it("points at the id it is given (the receipt's own hint), and at Today's sales' line by default", () => {
+    renderWithProviders(
+      <ReadOnlyGateProvider view={view("READ_ONLY")}>
+        <CounterVoidSaleAction orderNumber="ORD-1" onOpen={jest.fn()} describedBy="receipt-hint" />
+        <CounterVoidSaleAction orderNumber="ORD-2" onOpen={jest.fn()} />
+      </ReadOnlyGateProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Void sale ORD-1" })).toHaveAttribute(
+      "aria-describedby",
+      "receipt-hint",
+    );
+    expect(
+      screen.getByRole("button", { name: "Void sale ORD-2" }).getAttribute("aria-describedby"),
+    ).toMatch(/-today$/);
   });
 });

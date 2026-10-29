@@ -77,7 +77,7 @@ export default function RestrictionsSettingsPage() {
       <h2 className="text-2xl font-bold text-navy">Selling restrictions</h2>
       <p className="mb-2 mt-1 text-sm text-navy/70">
         Portal limits always apply. These settings decide what else is checked.
-        {!isAdmin && " Only a workspace admin can change these settings."}
+        {!isAdmin && " Only an account admin can change these settings."}
       </p>
       <p className="mb-5 text-sm">
         <NextLink
@@ -110,7 +110,8 @@ export default function RestrictionsSettingsPage() {
           />
         </label>
         <p className="mt-1 text-xs text-navy/60">
-          Portal limits always apply. Turn this on for legal bans your staff must not sell.
+          Portal limits always apply. Turn this on to warn staff about restricted products on orders
+          and invoices.
         </p>
       </section>
 
