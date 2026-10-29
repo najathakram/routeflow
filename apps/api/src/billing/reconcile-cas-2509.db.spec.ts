@@ -4,7 +4,7 @@
  * the (planKey, snapshot) it read, and emits PLAN_CHANGED in the SAME transaction.
  *
  * ENTRY (asserted, never timed): T2 holds the TenantSubscription row with an uncommitted write; the
- * reconcile has read the committed row and is BLOCKED on its compare-and-set (pg_blocking_pids, polled
+ * reconcile has read the committed row and is BLOCKED on its compare-and-set (blocked-wait helper, polled
  * from the pool until blocked or settled — #2666: condition-based, asserted before T2 is released). T2 commits; under
  * READ COMMITTED the blocked UPDATE re-checks its WHERE against the committed row.
  *   - A concurrent upgrade (planKey + snapshot moved) ⇒ the CAS misses, the re-read sees another plan
@@ -21,6 +21,7 @@ import { Client, Pool } from "pg";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { blockedPids } from "../common/testing/blocked-wait";
 import { BillingService } from "./billing.service";
 import { BillingEventService } from "./billing-event.service";
 
@@ -111,6 +112,8 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
   };
 
   async function waitersOn(t2pid: number): Promise<Waiter[]> {
+    const pids = await blockedPids(pool, { holderPid: t2pid });
+    if (pids.length === 0) return [];
     const q = await pool.query(
       `SELECT a.pid, a.query,
          EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted) AS waiting,
@@ -121,8 +124,8 @@ describeDb("#2509 reconcilePriceLedger compare-and-set (real Postgres, two conne
          (SELECT json_agg(json_build_object('locktype', l.locktype, 'relation', l.relation::regclass::text,
                    'mode', l.mode, 'granted', l.granted))
             FROM pg_locks l WHERE l.pid = a.pid) AS locks
-       FROM pg_stat_activity a WHERE $1 = ANY(pg_blocking_pids(a.pid))`,
-      [t2pid],
+       FROM pg_stat_activity a WHERE a.pid = ANY($1::int[])`,
+      [pids],
     );
     return q.rows as Waiter[];
   }

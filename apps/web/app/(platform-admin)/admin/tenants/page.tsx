@@ -5,6 +5,7 @@ import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
+import { tenantDisplayName } from "@/lib/tenant-display-name";
 import {
   DeleteTenantDialog,
   TENANT_ACTION_COPY,
@@ -540,7 +541,7 @@ export default function AdminTenantsPage() {
                         />
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-300">{t.slug}</td>
-                      <td className="px-4 py-3 text-white">{t.businessName ?? t.name}</td>
+                      <td className="px-4 py-3 text-white">{tenantDisplayName(t)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
                           <AdminBadge>{t.status}</AdminBadge>

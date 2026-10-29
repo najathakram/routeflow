@@ -13,10 +13,14 @@ import type {
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
 import { duplicateCause } from "./counter-duplicate-ref";
+import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 
 export type InvoiceRow = {
   id: string;
   invoiceNumber?: string;
+  /** the stored status and payment intent: "To collect" is derived from them on every read (SA-1026) */
+  status?: string;
+  expectedPaymentMethod?: string | null;
   total: unknown;
   /** the stored lines: the rate the tax rate is read from (`storedTaxRatePercent`) and the price facts a receipt strikes a list price from */
   items?: Array<{
@@ -188,6 +192,7 @@ export function buildCounterSaleResponse(input: {
     orderId: order.id,
     orderNumber: order.orderNumber ?? "",
     invoiceId: first.id,
+    invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list `total` adds up, so the done screen's Print invoice matches it
     invoiceNumber: first.invoiceNumber ?? "",
     total,
     paid,
@@ -196,6 +201,10 @@ export function buildCounterSaleResponse(input: {
     ...(firstTender ? { paymentId: firstTender.id } : {}),
     ...(method ? { method } : {}),
     paymentRecorded: settled,
+    // SA-1026: read back from the stored rows (never echoed from the request), staff only
+    toCollect: rollupToCollect(
+      invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
+    ),
     ...(!settled
       ? {
           paymentErrorCode: error ?? API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED,

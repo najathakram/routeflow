@@ -3,7 +3,7 @@
 //
 // WHY THIS EXISTS
 // The campaign already had two of the three things a bug tracker needs. The
-// *state machine* lives in `.claude/campaign/status/F##.jsonl` (one row per bug
+// *state machine* lives in the register's `status/F##.jsonl` (one row per bug
 // ID, guarded by campaign-check). The *board* lives in GitHub Issues, one card
 // per batch, with lanes derived from live PR/CI state. What was missing was the
 // *catalogue* — the description of what each bug actually IS. That lived only in
@@ -91,12 +91,20 @@ import {
   realpathSync,
   symlinkSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { tmpdir, uptime } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
 import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
+import {
+  LOCK_ABANDON_MS,
+  bootStamp,
+  ownerPath,
+  pidAlive,
+  sleepSync,
+  withLock,
+} from "../lib/mkdir-lock.mjs";
+import { registryMissingMessage, registryRoot, registrySource } from "../lib/registry-root.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -111,11 +119,22 @@ import {
 // direct `node scripts/campaign/bugs.mjs` from some other directory.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// Overridable via BUGS_ROOT so the self-test can point the REAL commands at a
-// throwaway directory instead of re-implementing their logic against a fixture
-// (see cmds["self-test"]). Read lazily (never cached in a top-level const) so a
-// self-test that sets process.env.BUGS_ROOT mid-run is honoured immediately.
-const rootDir = () => process.env.BUGS_ROOT || ".claude/campaign";
+// The register's location comes from scripts/lib/registry-root.mjs and nowhere else (B1-a): it is
+// anchored on the repo root, not the cwd (B278), and BUGS_ROOT still points the REAL commands at a
+// throwaway directory instead of re-implementing their logic against a fixture (see
+// cmds["self-test"]). Read lazily (never cached in a top-level const) so a self-test that sets
+// process.env.BUGS_ROOT mid-run is honoured immediately.
+//
+// `allowMissing` is deliberate and narrow: the writers (import, file) create the register on an
+// empty fixture. Every command except self-test is stopped at dispatch (bottom of this file) when
+// the register is missing, with exit 2 and the fix command, so a read never sees "0 rows".
+const rootDir = () => registryRoot({ allowMissing: true });
+// The register path as a person should read it in a message: repo-relative while it sits inside
+// the repo, absolute otherwise. Never a hardcoded string.
+const shownRoot = () => {
+  const rel = relative(REPO_ROOT, rootDir()).split(sep).join("/");
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : rootDir();
+};
 const CATALOGUE = () => join(rootDir(), "bugs.jsonl");
 const STATUS_DIR = () => join(rootDir(), "status");
 // Overridable via BUGS_REGISTER for the same reason as rootDir(): the self-test
@@ -941,7 +960,7 @@ function selectBatches(args) {
         b.claimCheck = b.issue
           ? `claim check unavailable (${c.why}) — relying on in-flight rows only`
           : `no board card for ${b.batch} — no lease could be checked; add its issue number to ` +
-            `.claude/campaign/board.json once one exists, or rely on in-flight rows only`;
+            `${shownRoot()}/board.json once one exists, or rely on in-flight rows only`;
         keep(b);
       } else if (c?.informal) {
         b.claimCheck = `issue #${b.issue} carries an informal claim (no team.mjs lease) — VERIFY before taking it: "${c.why}"`;
@@ -1185,7 +1204,7 @@ cmds.stats = () => {
 };
 
 // ── the per-bug record ────────────────────────────────────────────────────
-// One markdown file per bug, at `.claude/campaign/bugs/B###.md`. This is the
+// One markdown file per bug, at `<register>/bugs/B###.md`. This is the
 // Jira-card equivalent and it is deliberately a FILE, not a row:
 //   * an agent tackling B129 reads ~1 KB, not a 200-row catalogue or a 614 KB
 //     HTML — the single biggest token lever in the whole loop;
@@ -1520,9 +1539,12 @@ cmds.expand = () => {
 //
 // Branch scope is intentional: `git log` walks this worktree's HEAD, which is
 // the branch whose records are being written.
+//
+// It is anchored on REPO_ROOT, never on the register or the cwd: the register may live outside
+// this tree (B1-c) and BUGS_ROOT is only a fixture seam, so neither may decide where machine-local
+// state is written. A fixture that runs `sync` sets BUGS_SYNC_STATE itself.
 const SYNC_STATE = () =>
-  process.env.BUGS_SYNC_STATE ||
-  (process.env.BUGS_ROOT ? join(rootDir(), "sync-state.json") : ".campaign/bugs-sync-state.json");
+  process.env.BUGS_SYNC_STATE || join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
 const FIRST_RUN_WINDOW = 400;
 
 const git = (cmd) =>
@@ -1898,294 +1920,7 @@ const shardPath = (batch) => join(STATUS_DIR(), `${batch}.jsonl`);
 // The spin has to outlast a legitimate critical section, so it is now far
 // longer than any single write: a waiter that gives up while a LIVE holder is
 // still writing is the same lost work by another route.
-const LOCK_SPIN_MS = 10000;
-const LOCK_STEP_MS = 20;
-// Last resort ONLY, for a lockdir carrying no readable owner.json (a crash
-// between the mkdir and the owner write, or a lock left by an older build).
-// Deliberately far larger than any real critical section — this threshold must
-// never be the thing that breaks a lock a live process is holding.
-const LOCK_ABANDON_MS = 120000;
 const lockPath = (batch) => `${shardPath(batch)}.lock`;
-const ownerPath = (p) => join(p, "owner.json");
-const shardOfLockPath = (p) => basename(p).replace(/\.lock$/, "");
-// lock path -> the token THIS process wrote into that lockdir's owner.json.
-const heldLocks = new Map();
-
-const readLockOwner = (p) => {
-  try {
-    const o = JSON.parse(readFileSync(ownerPath(p), "utf8"));
-    return o && typeof o === "object" ? o : null;
-  } catch {
-    return null; // missing, half-written, or not ours to read — unknowable
-  }
-};
-
-// A boot-epoch stamp: current time minus how long THIS boot has been up, so
-// it is (near enough) constant across every process started on the same
-// boot and DIFFERENT after a reboot — even if the OS immediately reuses the
-// exact same pid. Without this, `pidAlive(owner.pid)` alone cannot tell "the
-// original writer is still running" from "an unrelated process now happens
-// to hold this pid", and a lockdir whose owner pid gets reused by ANY live
-// process was never broken — permanently wedged, since `process.kill(pid,0)`
-// answers `true` for the impostor forever. A live pid on the SAME boot is
-// still unbreakable — bootAt only ever proves a NEGATIVE (this cannot be the
-// same process), never used to break a lock whose boot actually matches.
-const bootStamp = () => Math.round(Date.now() - uptime() * 1000);
-// A few seconds of slop for clock/measurement jitter between the stamp this
-// process wrote and the one read back moments (or days) later — comfortably
-// smaller than any real reboot gap, which is measured in minutes at least.
-const BOOT_STAMP_SLOP_MS = 5000;
-
-// A pid that `process.kill(pid, 0)` accepts can still be DEAD on POSIX: a child
-// that exited (or was SIGKILLed) stays a ZOMBIE — pid allocated, signal 0
-// accepted, no ESRCH — until its parent reaps it, and a parent blocked in a
-// synchronous `sleepSync` loop never does. That is exactly what CI's ubuntu
-// runner showed: the self-test's dead holder was never "gone", so its lock was
-// never broken and every later case inherited it. Linux exposes the state as
-// the "Z" field of /proc/<pid>/stat; treat that as gone. macOS has no /proc but
-// `ps -o stat= -p <pid>` prints the same state letter (B574: without this a
-// SIGKILLed, unreaped lock holder read as alive on a Mac and its lock was never
-// broken); a missing/failing `ps` means "cannot tell" = keep the signal-0 answer
-// (alive — the safe default). Windows has no zombie state (the pid check fails the
-// moment the process ends), and any other host without /proc keeps the signal-0 answer.
-const zombieProcess = (pid) => {
-  if (process.platform === "darwin") {
-    try {
-      const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
-        encoding: "utf8",
-        timeout: 2000,
-      });
-      return ps.status === 0 && ps.stdout.trim().startsWith("Z");
-    } catch {
-      return false;
-    }
-  }
-  if (process.platform !== "linux") return false;
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    // "<pid> (<comm>) <state> …" — comm may itself contain spaces or ")", so
-    // the state is the first field after the LAST ")".
-    const close = stat.lastIndexOf(")");
-    return close !== -1 && stat.charAt(close + 2) === "Z";
-  } catch {
-    return false;
-  }
-};
-
-// true = alive, false = definitely gone (ESRCH, or a zombie on Linux/macOS) OR its owner
-// pid predates this boot (so it cannot possibly be the process that wrote the
-// lock), null = cannot tell. EPERM means the pid exists and belongs to someone
-// else — alive, not free, UNLESS the boot stamp already proved it can't be ours.
-const pidAlive = (pid, ownerBootAt) => {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  if (typeof ownerBootAt === "number" && Math.abs(ownerBootAt - bootStamp()) > BOOT_STAMP_SLOP_MS)
-    return false;
-  try {
-    process.kill(pid, 0);
-    return zombieProcess(pid) ? false : true;
-  } catch (e) {
-    return e.code === "ESRCH" ? false : true;
-  }
-};
-// Synchronous sleep — this whole file is synchronous by design (it is a CLI a
-// hook shells out to), so a promise-based wait would need every caller to be
-// async. `Atomics.wait` on the main thread is permitted in Node.
-const sleepSync = (ms) => {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-};
-let exitHookInstalled = false;
-function installLockExitHook() {
-  if (exitHookInstalled) return;
-  exitHookInstalled = true;
-  process.on("exit", () => {
-    for (const [p, token] of [...heldLocks]) {
-      try {
-        releaseLock(p, token);
-      } catch {
-        /* nothing useful to do while exiting */
-      }
-    }
-  });
-  // Node's DEFAULT action for these three signals terminates the process
-  // WITHOUT running `exit` listeners, so a Ctrl-C (or an orchestrator's
-  // SIGTERM) mid-write left the lockdir behind and wedged the next writer.
-  // Routing them through process.exit runs the hook above with the
-  // conventional 128+signal status.
-  for (const [sig, code] of [
-    ["SIGINT", 130],
-    ["SIGTERM", 143],
-    ["SIGHUP", 129],
-  ]) {
-    try {
-      process.on(sig, () => process.exit(code));
-    } catch {
-      /* not every signal is listenable on every platform */
-    }
-  }
-}
-
-// The one lock primitive. `p` is the lock DIRECTORY, `name` the thing it
-// guards as a human says it ("F01.jsonl", "bugs.jsonl"), `guarded` the file
-// itself for the give-up message. The shard lock and the catalogue lock are the
-// SAME mechanism deliberately: a second, hand-rolled copy for the catalogue is
-// exactly how the two of them would drift apart.
-function acquireLock(p, name, guarded) {
-  mkdirSync(dirname(p), { recursive: true });
-  const deadline = Date.now() + LOCK_SPIN_MS;
-  for (;;) {
-    try {
-      mkdirSync(p); // NOT recursive: recursive:true succeeds on an existing dir
-      installLockExitHook();
-      // The owner stamp is what makes both the break and the release
-      // identity-checked. Written immediately after the mkdir wins the race;
-      // a waiter that reads the lockdir in that sub-millisecond window sees no
-      // owner, cannot conclude anything, and simply spins again.
-      const token = randomUUID();
-      try {
-        // TEST SEAM, gated exactly like BUGS_TEST_STALL_MS: a real disk-full
-        // or permission fault here is not reproducible on demand, so the
-        // self-test drives this exact path through an env var instead of a
-        // hand-rolled re-implementation of the cleanup logic below.
-        if (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_TEST_FAIL_OWNER_WRITE === "1")
-          throw Object.assign(new Error("BUGS_TEST_FAIL_OWNER_WRITE fixture"), {
-            code: "EFIXTURE",
-          });
-        writeFileSync(
-          ownerPath(p),
-          JSON.stringify({ pid: process.pid, token, at: Date.now(), bootAt: bootStamp() }),
-        );
-      } catch (writeErr) {
-        // A crash here (disk full, a permission fault) must not leave behind
-        // a lockdir with no owner stamp — that is exactly the "no readable
-        // owner.json" case that wedges every later waiter for a full
-        // LOCK_ABANDON_MS before it self-heals. Remove the directory THIS
-        // call just created (never one it merely found already there)
-        // before rethrowing — the crash itself is a real fault the caller
-        // needs to see, not something to retry silently.
-        try {
-          rmSync(p, { recursive: true, force: true });
-        } catch {
-          /* best effort — surfacing writeErr matters more than this cleanup */
-        }
-        throw writeErr;
-      }
-      heldLocks.set(p, token);
-      return p;
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
-    }
-    const owner = readLockOwner(p);
-    const alive = owner ? pidAlive(owner.pid, owner.bootAt) : null;
-    // TEST SEAM (B598): the holder finishes and releases in the gap between the owner read above
-    // and the break decision below — the window a descheduled waiter on a loaded host really hits.
-    if (
-      process.env.BUGS_SELF_TEST === "1" &&
-      process.env.BUGS_TEST_RELEASE_AFTER_OWNER_READ === "1"
-    )
-      rmSync(p, { recursive: true, force: true });
-    // TEST SEAM (B588): announce "I am now blocked behind a LIVE holder" exactly once, so a test
-    // can release the holder only after the waiter is provably in the spin loop.
-    if (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_TEST_WAIT_MARKER && alive === true) {
-      try {
-        writeFileSync(process.env.BUGS_TEST_WAIT_MARKER, p, { flag: "wx" });
-      } catch {
-        /* already announced */
-      }
-    }
-    const bootMismatch =
-      alive === false &&
-      typeof owner?.bootAt === "number" &&
-      Math.abs(owner.bootAt - bootStamp()) > BOOT_STAMP_SLOP_MS;
-    let age = null;
-    try {
-      age = Date.now() - statSync(p).mtimeMs;
-    } catch {
-      age = null; // it vanished between the mkdir and the stat — just retry
-    }
-    let breakWhy = null;
-    if (bootMismatch)
-      breakWhy = `its owner (pid ${owner.pid}) predates this boot — it cannot possibly still be that process`;
-    else if (alive === false)
-      breakWhy = `its owner (pid ${owner.pid}) is gone — a writer was killed mid-write`;
-    else if (alive === null && age !== null && age > LOCK_ABANDON_MS)
-      breakWhy =
-        `LAST RESORT: it is ${Math.round(age / 1000)}s old and carries no readable owner.json, ` +
-        `so its holder cannot be verified either way`;
-    // B598: `owner` was read BEFORE the pid probe, and a loaded host can deschedule this waiter
-    // between the two for as long as the holder needs to finish, release and exit. The stale read
-    // then convicts a lock that is already gone — or that a third writer has just taken, which the
-    // rm below would rob. Break only a lockdir that STILL carries the very owner judged dead.
-    if (breakWhy) {
-      const now = readLockOwner(p);
-      if (owner ? now?.token !== owner.token : now !== null) breakWhy = null;
-    }
-    if (breakWhy) {
-      console.error(
-        `bugs: breaking the lock on ${name} — ${breakWhy}; ` +
-          `re-read the file if anything looks wrong`,
-      );
-      try {
-        rmSync(p, { recursive: true, force: true });
-      } catch {
-        /* another process won the race to break it — retry below */
-      }
-    }
-    if (Date.now() >= deadline)
-      fail(
-        `could not lock ${guarded} within ${LOCK_SPIN_MS}ms — ${name} is held by ` +
-          `${owner?.pid ? `pid ${owner.pid}, which still answers` : "another bugs.mjs process"}. ` +
-          `Retry; if nothing is running, remove ${p}` +
-          // A lockdir with no readable owner.json isn't stuck forever — it is
-          // exactly the LAST-RESORT case above, just not yet old enough to
-          // trip it. Without this, the give-up message reads as a permanent
-          // wedge needing a manual `rm`, when the honest story is "wait".
-          (!owner
-            ? ` — it carries no owner stamp and will be broken automatically ` +
-              `once it is ${LOCK_ABANDON_MS / 1000}s old`
-            : ""),
-      );
-    sleepSync(LOCK_STEP_MS);
-  }
-}
-
-// Identity-checked. `token` defaults to whatever this process recorded for `p`;
-// if the lockdir now names a DIFFERENT owner, our lock was broken while we were
-// inside the critical section and the directory belongs to our successor —
-// deleting it would admit a third writer, so leave it and say so out loud.
-function releaseLock(p, token = heldLocks.get(p)) {
-  heldLocks.delete(p);
-  if (!existsSync(p)) return; // already gone — nothing to undo
-  const owner = readLockOwner(p);
-  if (!owner || !token || owner.token !== token) {
-    console.error(
-      `bugs: our lock on ${shardOfLockPath(p)} was broken by another process; verify the shard`,
-    );
-    // A stolen lock means a SECOND writer was inside the critical section
-    // while this one still believed it held it exclusively — the integrity
-    // of whatever this process just wrote is exactly what is now unknown.
-    // Left at the default 0, a caller that shells out and branches on the
-    // exit code (a hook, a CI step) read this as a clean success.
-    process.exitCode = 1;
-    return;
-  }
-  try {
-    rmSync(p, { recursive: true, force: true });
-  } catch {
-    /* already gone (someone broke it between the read and the rm) */
-  }
-}
-
-// Re-entrant: if this process already holds `p`, `fn` runs directly and the
-// OUTER hold owns the release.
-function withLock(p, name, guarded, fn) {
-  if (heldLocks.has(p)) return fn();
-  acquireLock(p, name, guarded);
-  try {
-    return fn();
-  } finally {
-    releaseLock(p);
-  }
-}
 
 // Runs `fn` with an exclusive hold on `batch`'s shard.
 function withShardLock(batch, fn) {
@@ -2468,7 +2203,7 @@ cmds.brief = (args) => {
       const m = new RegExp(`## ${s}\\n\\n([\\s\\S]*?)(?=\\n## |$)`).exec(rec.body);
       if (m) out.push(`\n**${s}**\n\n${m[1].trim()}`);
     }
-    out.push(`\nFull record: \`.claude/campaign/bugs/${id}.md\``);
+    out.push(`\nFull record: \`${shownRoot()}/bugs/${id}.md\``);
   }
 
   out.push(`\n## When you finish`);
@@ -3290,11 +3025,10 @@ const runCli = (argv, root, cwd, extraEnv) => {
         env: { ...process.env, BUGS_ROOT: root, BUGS_SELF_TEST: "1", ...extraEnv },
         stdio: ["ignore", "pipe", "pipe"],
         // A real-tree run (`root` undefined — T13b, the pre-push guard) must
-        // not depend on the INVOKER's cwd: `rootDir()` resolves `.claude/campaign`
-        // relative to `process.cwd()`, so a caller running from any other
-        // directory (`apps/api`, say) silently sees an empty catalogue and
-        // `--check` reports clean having examined zero real records. A fixture
-        // run (`root` given) keeps the inherited cwd — irrelevant there since
+        // depend on the INVOKER's cwd. (`registryRoot()` is anchored on the repo
+        // root now, so the cwd no longer decides which register is read; it is
+        // pinned here anyway for the other cwd-relative paths.) A fixture run
+        // (`root` given) keeps the inherited cwd — irrelevant there since
         // BUGS_ROOT already points every path helper at the tmp fixture.
         ...(root === undefined ? { cwd: REPO_ROOT } : cwd ? { cwd } : {}),
       }),
@@ -3393,6 +3127,13 @@ cmds["self-test"] = () => {
   // Deliberately not restored: `self-test` is a terminal command.
   const cleanGit = scrubbedGitEnv();
   for (const k of Object.keys(process.env)) if (!(k in cleanGit)) delete process.env[k];
+  // The sync anchor now lives under the repo root (`.campaign/`), not in BUGS_ROOT, so a fixture
+  // that syncs with only BUGS_ROOT set would write the REAL anchor. Point it at a throwaway.
+  if (!process.env.BUGS_SYNC_STATE)
+    process.env.BUGS_SYNC_STATE = join(
+      mkdtempSync(join(tmpdir(), "bugs-selftest-sync-")),
+      "sync-state.json",
+    );
 
   let failures = 0;
   const check = (name, got, want) => {
@@ -4874,7 +4615,11 @@ cmds["self-test"] = () => {
   {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
+    const prevAnchor = process.env.BUGS_SYNC_STATE;
     process.env.BUGS_ROOT = tmp;
+    writeFileSync(join(tmp, "bugs.jsonl"), ""); // a register exists once it has a ledger file
+    // The anchor is no longer inside BUGS_ROOT; keep it beside the fixture register.
+    process.env.BUGS_SYNC_STATE = join(tmp, "sync-state.json");
     try {
       // First run: no anchor exists yet — the "not re-derived" note.
       const first = runCli(["sync", "--quiet"], tmp);
@@ -4900,6 +4645,8 @@ cmds["self-test"] = () => {
     } finally {
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
+      if (prevAnchor === undefined) delete process.env.BUGS_SYNC_STATE;
+      else process.env.BUGS_SYNC_STATE = prevAnchor;
       rmSync(tmp, { recursive: true, force: true });
     }
   }
@@ -5605,8 +5352,10 @@ cmds["self-test"] = () => {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
-    const relPlanPath = ".claude/campaign/self-test-buildplan/plan.md";
-    const planDir = join(REPO_ROOT, ".claude", "campaign", "self-test-buildplan");
+    // `.campaign/` is the gitignored, machine-local scratch dir: a fixture never writes into the
+    // register tree (B428), which a crash would otherwise leave dirty in a tracked directory.
+    const relPlanPath = ".campaign/self-test-buildplan/plan.md";
+    const planDir = join(REPO_ROOT, ".campaign", "self-test-buildplan");
     const planPath = join(REPO_ROOT, ...relPlanPath.split("/"));
     mkdirSync(planDir, { recursive: true });
     try {
@@ -5726,10 +5475,10 @@ cmds["self-test"] = () => {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
-    const junctionDir = join(REPO_ROOT, ".claude", "campaign", "self-test-junction");
+    const junctionDir = join(REPO_ROOT, ".campaign", "self-test-junction");
     const outsideDir = mkdtempSync(join(tmpdir(), "bugs-self-test-outside-"));
     const junctionPath = join(junctionDir, "link");
-    const relJunctionPlan = ".claude/campaign/self-test-junction/link/plan.md";
+    const relJunctionPlan = ".campaign/self-test-junction/link/plan.md";
     try {
       mkdirSync(junctionDir, { recursive: true });
       writeFileSync(
@@ -6718,7 +6467,7 @@ cmds["self-test"] = () => {
   }
 
   // Lock directories are NOT gitignored by accident — the shards and the
-  // catalogue they guard live in the TRACKED .claude/campaign/ tree, so
+  // catalogue they guard live in the TRACKED register tree (registrySource().prefix), so
   // without an explicit rule a lockdir left behind by a crash (or committed
   // by an agent that ran `git add -A`) lands in a commit. Checked against the
   // REAL repo root, not a throwaway BUGS_ROOT — .gitignore rules are read
@@ -6739,12 +6488,12 @@ cmds["self-test"] = () => {
     };
     check(
       "gitignore: a shard lockdir is ignored",
-      checkIgnore(".claude/campaign/status/F01.jsonl.lock/owner.json"),
+      checkIgnore(`${registrySource().prefix}/status/F01.jsonl.lock/owner.json`),
       true,
     );
     check(
       "gitignore: the catalogue lockdir is ignored",
-      checkIgnore(".claude/campaign/bugs.jsonl.lock/owner.json"),
+      checkIgnore(`${registrySource().prefix}/bugs.jsonl.lock/owner.json`),
       true,
     );
   }
@@ -9299,7 +9048,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;ba
 .hide{display:none!important}
 </style></head><body><div class="wrap">
 <h1>RouteFlow bug registry</h1>
-<p class="sub">Generated from <code>.claude/campaign/bugs/</code> — a derived view. Edit the records, not this file.</p>
+<p class="sub">Generated from <code>${esc(shownRoot())}/bugs/</code> — a derived view. Edit the records, not this file.</p>
 <div class="stats">
 <div class="stat"><b>${rows.length}</b><span>bugs</span></div>
 <div class="stat"><b>${open}</b><span>open</span></div>
@@ -9346,6 +9095,20 @@ function apply(){
 const [, , cmd, ...rest] = process.argv;
 if (!cmd || !cmds[cmd])
   fail(`unknown command '${cmd ?? ""}' — try: ${Object.keys(cmds).join(", ")}`);
+// Fail closed: a missing register is never "0 rows". `self-test` builds its own fixtures.
+if (cmd !== "self-test") {
+  try {
+    // The creators (file, import) may start from an EMPTY existing directory (a fixture); every
+    // other command needs the register itself (bugs.jsonl), so an empty dir is never "0 rows".
+    if (cmd === "file" || cmd === "import") {
+      const dir = registryRoot({ allowMissing: true });
+      if (!existsSync(dir)) throw new Error(registryMissingMessage(dir));
+    } else registryRoot();
+  } catch (e) {
+    console.error(`bugs: ${e.message}`);
+    process.exit(2);
+  }
+}
 // An exception `fail()` did not anticipate (an IO error, a malformed shard a
 // command forgot to guard) used to surface as a raw Node stack trace — this
 // is a CLI a hook shells out to, and that reads as a crash rather than the

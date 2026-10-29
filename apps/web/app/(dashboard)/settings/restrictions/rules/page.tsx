@@ -95,7 +95,7 @@ function RuleCard({
       <div className="space-y-1.5">
         <p className="text-sm text-navy/80">{jurisdictionText(rule)}</p>
         {rule.jurisdiction === "STATE" && rule.states.length > 0 && (
-          <ul className="flex flex-wrap gap-1.5" aria-label="Banned states">
+          <ul className="flex flex-wrap gap-1.5" aria-label="Restricted states">
             {rule.states.map((code) => (
               <li
                 key={code}

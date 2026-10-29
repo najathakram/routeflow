@@ -104,7 +104,7 @@ export const Modal = ({
         {/* print:hidden: a printed page never carries the dimmed, blurred backdrop (CQ-21) */}
         <Dialog.Overlay
           data-modal-overlay
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:!animate-none"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm print:hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:duration-200 data-[state=open]:ease-out data-[state=closed]:duration-150 data-[state=closed]:ease-in motion-reduce:!animate-none"
         />
         <Dialog.Content
           ref={contentRef}
@@ -129,6 +129,9 @@ export const Modal = ({
             scroll && "flex max-h-[92vh] flex-col",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+            // Ease out on the way in (200 ms), ease in on the way out (150 ms); never linear (W-710).
+            "data-[state=open]:duration-200 data-[state=open]:ease-out",
+            "data-[state=closed]:duration-150 data-[state=closed]:ease-in",
             // prefers-reduced-motion: the fade / slide / zoom entry and exit do not run (important: the
             // data-[state] variants above out-rank a plain motion-reduce utility).
             "motion-reduce:!animate-none",

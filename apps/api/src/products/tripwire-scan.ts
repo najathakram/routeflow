@@ -23,17 +23,19 @@ export function balanced(text: string, openIdx: number): string {
   return text.slice(openIdx, i);
 }
 
+/**
+ * Every `<x>.<receiver>.<method>(` call, as the balanced `( ... )` text. Tolerant of what a formatter or a bypass does to the
+ * call: whitespace and newlines around the dots and before the paren (`tx\n  .receiver\n  .create (`), optional chaining
+ * (`tx?.receiver?.create?.(`) and a non-null receiver (`tx.receiver!.create(`).
+ */
 export function callBlocks(text: string, receiver: string, methods: string[]): string[] {
   const out: string[] = [];
   for (const method of methods) {
-    const needle = `.${receiver}.${method}(`;
-    let from = 0;
-    for (;;) {
-      const idx = text.indexOf(needle, from);
-      if (idx === -1) break;
-      out.push(balanced(text, idx + needle.length - 1));
-      from = idx + needle.length;
-    }
+    const call = new RegExp(
+      `(?:\\?\\.|\\.)\\s*${receiver}\\s*!?\\s*(?:\\?\\.|\\.)\\s*${method}\\s*(?:\\?\\.\\s*)?\\(`,
+      "g",
+    );
+    for (const m of text.matchAll(call)) out.push(balanced(text, (m.index ?? 0) + m[0].length - 1));
   }
   return out;
 }

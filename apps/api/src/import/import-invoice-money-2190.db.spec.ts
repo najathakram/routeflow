@@ -138,6 +138,23 @@ describeDb("#2190 invoice import: a bad Total writes nothing (real Postgres)", (
     expect(await prisma.invoiceItem.count({ where: { invoice: { tenantId } } })).toBe(0);
   }, 30_000);
 
+  it("W-924: a stated Item Total of 0.00 is stored at 0.00; an empty cell keeps qty x price", async () => {
+    const { tenantId } = await seed("item-total-zero");
+    const lines = (itemTotal: string, number: number) =>
+      "Invoice Number,Customer Name,Total,Item Name,Quantity,Item Price,Item Total\n" +
+      `INV-${YEAR}-${number},QA Import Co,"10.00",Widget,2,5.00,"${itemTotal}"\n`;
+    expect((await importInvoices(tenantId, lines("0.00", 9191))).imported).toBe(1);
+    expect((await importInvoices(tenantId, lines("", 9192))).imported).toBe(1);
+    const stated = await prisma.invoiceItem.findFirstOrThrow({
+      where: { invoice: { tenantId, invoiceNumber: `INV-${YEAR}-9191` } },
+    });
+    const empty = await prisma.invoiceItem.findFirstOrThrow({
+      where: { invoice: { tenantId, invoiceNumber: `INV-${YEAR}-9192` } },
+    });
+    expect(Number(stated.subtotal)).toBe(0);
+    expect(Number(empty.subtotal)).toBe(10);
+  }, 30_000);
+
   it("control: a valid Total imports the invoice", async () => {
     const { tenantId } = await seed("ok-total");
     const r = await importInvoices(tenantId, csv("$1,234.50"));

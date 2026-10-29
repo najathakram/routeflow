@@ -21,6 +21,8 @@ export interface HeadroomLine {
   qty: number;
   /** pieces per unit of `qty` (inline ReturnItem.qty is PIECES; a boxed selling-unit line's qty is boxes). Default 1. */
   piecesPerQty?: number;
+  /** SA-1042 A-2: the ORDER line this invoice item was billed from, so a return that names a line is counted on that line alone. */
+  orderItemId?: string | null;
 }
 /**
  * The pieces-per-qty factor of an invoice line, resolved exactly like the inline pricing's `piecesQty`: a box-split line's qty is
@@ -49,6 +51,7 @@ export const toHeadroomLine = (it: any): HeadroomLine => ({
   subtotal: Number(it.subtotal),
   qty: Number(it.qty),
   piecesPerQty: piecesPerQtyOf(it),
+  orderItemId: it.orderItemId ?? null,
 });
 export interface LineCredit {
   amount: number;
@@ -218,6 +221,56 @@ export function addCredits(
 }
 
 /**
+ * SA-1042 A-2: a return group is priced and capped on the same set of invoice items. A GROUP is a product, and the order line
+ * when the return item names one; a pooled group (`orderItemId` null) is the product's lines, a line group is the invoice items
+ * billed from that one order line.
+ */
+export interface RefundGroup {
+  productId: string;
+  orderItemId: string | null;
+}
+/** A Return's item as the history terms read it: its group and qty (in the line's own unit). */
+export interface ReturnedQty extends RefundGroup {
+  qty: number;
+}
+/** The lines a group is counted on: a line group's own, a pooled group's every line of the product. */
+export const groupLines = (lines: readonly HeadroomLine[], group: RefundGroup): HeadroomLine[] =>
+  lines.filter(
+    (l) =>
+      l.productId === group.productId &&
+      (group.orderItemId == null || l.orderItemId === group.orderItemId),
+  );
+/**
+ * ONE replay of returned items into per-line credit (the four history terms below call only this). Line groups fill their own
+ * line first (never another line), then pooled groups fill what is left of the product's lines, like the pooled average does.
+ * A line group whose line has no billed item among `lines` counts nothing here: it never falls back to the product pool.
+ */
+export function replayReturnedQty(
+  lines: readonly HeadroomLine[],
+  credited: ReadonlyMap<string, LineCredit>,
+  returned: Iterable<ReturnedQty>,
+): Map<string, LineCredit> {
+  const byGroup = new Map<string, ReturnedQty>();
+  for (const r of returned) {
+    const key = r.orderItemId ? `${r.productId}|${r.orderItemId}` : r.productId;
+    const cur = byGroup.get(key);
+    if (cur) cur.qty += r.qty;
+    else
+      byGroup.set(key, { productId: r.productId, orderItemId: r.orderItemId ?? null, qty: r.qty });
+  }
+  const ordered = [...byGroup.values()].sort(
+    (a, b) => Number(b.orderItemId != null) - Number(a.orderItemId != null),
+  );
+  let acc: ReadonlyMap<string, LineCredit> = credited;
+  for (const g of ordered)
+    acc = addCredits(
+      acc,
+      planProductRefund(groupLines(lines, g), acc, g.productId, g.qty, "count").items,
+    );
+  return new Map(acc);
+}
+
+/**
  * SA-727 (M4): a STANDARD return resolved by an EXTERNAL_REFUND (money returned outside RouteFlow, `processRefund`'s other
  * method) mints NO credit note, so neither the credit-note-item term nor the legacy itemless-note term sees it: the
  * line it refunded would have its full headroom back for a credit note (a double pay-out). It counts like the legacy
@@ -225,14 +278,14 @@ export function addCredits(
  * the lines. An INLINE return's EXTERNAL_REFUND needs nothing here: the INLINE term already counts every non-cancelled,
  * non-rejected INLINE return's items whatever its resolution.
  */
-async function externalRefundQtyByProduct(
+async function externalRefundReturned(
   db: any,
   where: Record<string, unknown>,
-): Promise<Map<string, number>> {
+): Promise<ReturnedQty[]> {
   const rows: Array<{
     orderId?: string | null;
     refundMethod?: string | null;
-    items?: Array<{ productId: string; qty: unknown }>;
+    items?: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
   }> =
     (await db.return?.findMany?.({
       where: {
@@ -245,18 +298,36 @@ async function externalRefundQtyByProduct(
       select: {
         orderId: true,
         refundMethod: true,
-        items: { select: { productId: true, qty: true } },
+        items: { select: { productId: true, qty: true, sourceOrderItemId: true } },
       },
     })) ?? [];
-  const qtyByProduct = new Map<string, number>();
+  const out: ReturnedQty[] = [];
   for (const ret of rows) {
     // re-asserted on the row: the query's own filter is the contract, this keeps a row of any other resolution out
     if (!ret.orderId || ret.refundMethod !== "EXTERNAL_REFUND") continue;
     for (const it of ret.items ?? [])
-      qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) ?? 0) + Number(it.qty));
+      out.push({
+        productId: it.productId,
+        orderItemId: it.sourceOrderItemId ?? null,
+        qty: Number(it.qty),
+      });
   }
-  return qtyByProduct;
+  return out;
 }
+
+/** The items of the Returns behind these itemless credit notes, as the replay reads them. */
+const returnedOf = (
+  returns: Array<{
+    items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+  }>,
+): ReturnedQty[] =>
+  returns.flatMap((ret) =>
+    (ret.items ?? []).map((it) => ({
+      productId: it.productId,
+      orderItemId: it.sourceOrderItemId ?? null,
+      qty: Number(it.qty),
+    })),
+  );
 
 /**
  * The credited amount + qty per invoice line (see the header). `lines` are the invoice's items; `db` is the caller's client
@@ -322,41 +393,29 @@ export async function loadLineCredits(
     select: { id: true },
   });
   if (itemless.length > 0) {
-    const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
-      await db.return.findMany({
-        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a)
-        where: { creditNoteId: { in: itemless.map((c) => c.id) } },
-        select: { items: { select: { productId: true, qty: true } } },
-      });
-    const qtyByProduct = new Map<string, number>();
-    for (const ret of returns) {
-      for (const it of ret.items ?? []) {
-        qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) ?? 0) + Number(it.qty));
-      }
-    }
-    let acc: ReadonlyMap<string, LineCredit> = credited;
-    for (const [productId, qty] of qtyByProduct) {
-      acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
-    }
-    credited = new Map(acc);
+    const returns: Array<{
+      items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+    }> = await db.return.findMany({
+      // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a). Row 747: never an INLINE
+      // return (counted by the inline term above), the same filter the order-level query below carries, so a future
+      // stamp of an invoice/credit-note link on an inline note cannot count it twice.
+      where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
+      select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
+    });
+    credited = replayReturnedQty(lines, credited, returnedOf(returns));
   }
 
   // SA-727 (M4): external refunds of STANDARD returns, attributed to this invoice only when it is its order's SOLE
   // creditable invoice (with 2+ the order pool carries them: a return is not tied to one of several invoices).
-  const external = await externalRefundQtyByProduct(db, {
+  const external = await externalRefundReturned(db, {
     order: { invoices: { some: { id: invoiceId } } },
   });
-  if (external.size > 0) {
+  if (external.length > 0) {
     const inv: { orderId: string | null } | null =
       (await db.invoice?.findFirst?.({ where: { id: invoiceId }, select: { orderId: true } })) ??
       null;
-    if (inv?.orderId && (await countCreditableInvoices(db, inv.orderId)) === 1) {
-      let acc: ReadonlyMap<string, LineCredit> = credited;
-      for (const [productId, qty] of external) {
-        acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
-      }
-      credited = new Map(acc);
-    }
+    if (inv?.orderId && (await countCreditableInvoices(db, inv.orderId)) === 1)
+      credited = replayReturnedQty(lines, credited, external);
   }
   return credited;
 }
@@ -391,6 +450,7 @@ export async function loadOrderPool(
       items: {
         select: {
           id: true,
+          orderItemId: true,
           productId: true,
           subtotal: true,
           qty: true,
@@ -430,35 +490,24 @@ export async function loadOrderPool(
           select: { id: true },
         });
   if (itemless.length > 0) {
-    const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
-      await db.return.findMany({
-        // the CN link, not the status (legacy PROCESSED rows); never an INLINE return (counted by the inline term above)
-        // `orderId`: an order-linked note (OrderCreditNote) can be ANOTHER order's refund lump merely queued to apply here; its
-        // Return belongs to that other order and must not be attributed to this order's lines (a false refusal otherwise).
-        where: {
-          creditNoteId: { in: itemless.map((c) => c.id) },
-          kind: { not: "INLINE" },
-          orderId,
-        },
-        select: { items: { select: { productId: true, qty: true } } },
-      });
-    const qtyByProduct = new Map<string, number>();
-    for (const ret of returns)
-      for (const it of ret.items ?? [])
-        qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) ?? 0) + Number(it.qty));
-    let acc: ReadonlyMap<string, LineCredit> = credited;
-    for (const [productId, qty] of qtyByProduct)
-      acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
-    credited = new Map(acc);
+    const returns: Array<{
+      items: Array<{ productId: string; qty: unknown; sourceOrderItemId?: string | null }>;
+    }> = await db.return.findMany({
+      // the CN link, not the status (legacy PROCESSED rows); never an INLINE return (counted by the inline term above)
+      // `orderId`: an order-linked note (OrderCreditNote) can be ANOTHER order's refund lump merely queued to apply here; its
+      // Return belongs to that other order and must not be attributed to this order's lines (a false refusal otherwise).
+      where: {
+        creditNoteId: { in: itemless.map((c) => c.id) },
+        kind: { not: "INLINE" },
+        orderId,
+      },
+      select: { items: { select: { productId: true, qty: true, sourceOrderItemId: true } } },
+    });
+    credited = replayReturnedQty(lines, credited, returnedOf(returns));
   }
-  // SA-727 (M4): the order's EXTERNAL_REFUND STANDARD returns (no credit note), pooled like the legacy term above.
-  const external = await externalRefundQtyByProduct(db, { orderId });
-  if (external.size > 0) {
-    let acc: ReadonlyMap<string, LineCredit> = credited;
-    for (const [productId, qty] of external)
-      acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
-    credited = new Map(acc);
-  }
+  // SA-727 (M4): the order's EXTERNAL_REFUND STANDARD returns (no credit note), replayed like the legacy term above.
+  const external = await externalRefundReturned(db, { orderId });
+  if (external.length > 0) credited = replayReturnedQty(lines, credited, external);
   return { invoiceCount: invoices.length, lines, credited };
 }
 
@@ -490,13 +539,17 @@ export function toPiecesPool(pool: OrderPool): OrderPool {
  */
 export function pooledRefundRefusal(
   pool: OrderPool,
-  productId: string,
+  // SA-1042 A-2: REQUIRED. The group is checked on the lines it is priced on: a line group on its own line's invoice items
+  // (none billed: nothing to refuse, the price is 0), a pooled group on the product's lines.
+  group: RefundGroup,
   qty: number,
 ): RefundRefusal | null {
-  const qtyTol = pool.lines
-    .filter((l) => l.productId === productId && l.qty > 0)
+  const { productId } = group;
+  const scoped: OrderPool = { ...pool, lines: groupLines(pool.lines, group) };
+  const qtyTol = scoped.lines
+    .filter((l) => l.qty > 0)
     .reduce((t, l) => t + EPS * (l.piecesPerQty ?? 1), 0);
-  const inPieces = toPiecesPool(pool);
+  const inPieces = toPiecesPool(scoped);
   const { refusal } = planProductRefund(
     inPieces.lines,
     inPieces.credited,

@@ -453,18 +453,18 @@ describe("ParkedReversalResolutionService", () => {
     );
     // the wrapper (resolve + list) never touches the filing table itself
     expect(wrapper).not.toMatch(/regulatedFiling/);
-    // in the ledger service exactly one query reads it, and it is findFiledPeriod's
-    const uses = ledgerSrc.match(/regulatedFiling\.(findFirst|findMany|findUnique)/g) ?? [];
+    // SA-819 MUST 1: the query itself lives in filed-periods.ts; the ledger service holds NO filing query and
+    // its findFiledPeriod only delegates (so the resolve and list() paths still share the one lookup)
+    const filedSrc: string = fs.readFileSync(require.resolve("./filed-periods"), "utf8");
+    expect(ledgerSrc.match(/regulatedFiling\.(findFirst|findMany|findUnique)/g) ?? []).toEqual([]);
     const finder = ledgerSrc.slice(
       ledgerSrc.indexOf("async findFiledPeriod("),
       ledgerSrc.indexOf("async filedPeriodForParked("),
     );
-    expect(uses.length).toBeGreaterThanOrEqual(1);
-    expect(finder).toMatch(/regulatedFiling\.findFirst/);
-    const outside =
-      ledgerSrc.replace(finder, "").match(/regulatedFiling\.(findFirst|findMany|findUnique)/g) ??
-      [];
-    expect(outside).toEqual([]);
+    expect(finder).toMatch(/findFiledPeriodIn\(db, categoryIds, bucket\)/);
+    const filedFinder = filedSrc.slice(filedSrc.indexOf("export async function findFiledPeriod("));
+    expect(filedFinder).toMatch(/regulatedFiling\.findFirst/);
+    expect(filedFinder.match(/regulatedFiling\.(findFirst|findMany|findUnique)/g)).toHaveLength(1);
   });
 
   it("#2108: a REJECTING in-transaction audit create makes resolve() reject — the audit is inside the transaction, never a post-commit best-effort write", async () => {
