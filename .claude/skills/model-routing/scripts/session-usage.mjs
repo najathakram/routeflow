@@ -958,7 +958,9 @@ function writeJsonl(filePath, records) {
 }
 
 function runSelftest() {
-  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "session-usage-selftest-"));
+  // Real path: git reports resolved paths, so a symlinked tmpdir (macOS /var -> /private/var,
+  // a Windows junction) would otherwise fail every git-resolution comparison below.
+  const tmpBase = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "session-usage-selftest-")));
   let ok = true;
   try {
     // Sonnet 5.5 is the house builder: its own row prices it, and the strict prefix match keeps the Sonnet 5 row
