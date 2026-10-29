@@ -47,6 +47,18 @@
 //   ... --local --tenant <id> --apply
 //   railway run --service postgres node apps/api/scripts/backfill-tenant-units.mjs --tenant <id>
 //   ... --tenant <id> --apply --live-tenant-override --backup-taken [--allow-protected <id>]
+//   ... --local --tenant <id> --expect-zero      (SA-984 §3: the read-only re-run check)
+//
+// --expect-zero: runs the normal dry run (same snapshot, same plan), then prints one line and exits by
+//   the plan's counts (SA-984 §3 as amended by SA-986), one ordered decision, first hit wins:
+//     pending (exit 3): tenantUnitsCreated / productUnitsLinked / productUnitsParentFilled above 0, or a
+//       gated count missing or malformed;
+//     residue (exit 4): tenantUnitsOverflow / skippedTooLong / skippedParent above 0;
+//     else all six are 0 (exit 0).
+//   It is read-only: combining it with --apply is refused as an argument error.
+// Exit codes: 0 = done (with --expect-zero: all six gated counts are 0); 1 = refused or failed (an
+//   argument, target, guard or database error); 3 = --expect-zero found a re-run still plans rows;
+//   4 = --expect-zero found residue no re-run clears (overflow, too-long names, skipped parent fills).
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
@@ -72,6 +84,45 @@ const { applyTenantUnitsPlan, BACKFILL_BATCH_SIZE } = require("./lib/tenant-unit
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Every argv token this script (and the guards it forwards argv to) reads. live-target-guard.cjs reads
+// --allow-protected <tenantId> and --backup-taken (its older backup aliases are not passed here, so none
+// is accepted); the retired paying-tenant flags are refused earlier, by refuseRetiredFlags.
+export const ACCEPTED_FLAGS = Object.freeze({
+  boolean: Object.freeze([
+    "--apply",
+    "--local",
+    "--live-tenant-override",
+    "--backup-taken",
+    "--expect-zero",
+  ]),
+  value: Object.freeze(["--tenant", "--allow-protected"]),
+});
+export const USAGE =
+  "Usage: backfill-tenant-units.mjs --tenant <tenantId> [--local] [--apply] [--expect-zero] " +
+  "[--live-tenant-override] [--backup-taken] [--allow-protected <tenantId>]";
+
+/**
+ * Refuses any argv token the script does not read, so a typo (`--expectzero`) can never pass as an OK
+ * dry run. A flag's value is consumed with it; a stray positional is refused without echoing it (it
+ * could be a slug); an unknown flag is named up to any `=`.
+ */
+function refuseUnknownArgs(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i];
+    if (ACCEPTED_FLAGS.value.includes(t)) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith("--")) throw new Error(`${t} requires a value. ${USAGE}`);
+      i++;
+    } else if (!ACCEPTED_FLAGS.boolean.includes(t)) {
+      throw new Error(
+        t.startsWith("--")
+          ? `unknown flag: ${t.split("=")[0]}. ${USAGE}`
+          : `unexpected argument (a value without a flag). ${USAGE}`,
+      );
+    }
+  }
+}
+
 export function parseArgs(argv) {
   refuseRetiredFlags(argv);
   const idx = argv.indexOf("--tenant");
@@ -80,8 +131,13 @@ export function parseArgs(argv) {
   const tenantId = argv[idx + 1];
   if (!tenantId || tenantId.startsWith("--")) throw new Error("--tenant requires a tenant id");
   if (!UUID.test(tenantId)) throw new Error("--tenant takes the tenant id (a uuid), never a slug");
+  refuseUnknownArgs(argv);
+  if (argv.includes("--expect-zero") && argv.includes("--apply")) {
+    throw new Error("--expect-zero is a read-only check; do not combine it with --apply");
+  }
   return {
     apply: argv.includes("--apply"),
+    expectZero: argv.includes("--expect-zero"),
     local: argv.includes("--local"),
     liveOverride: argv.includes("--live-tenant-override"),
     backupTaken: hasBackupAttestation(argv),
@@ -171,6 +227,77 @@ const fmt = (c) =>
   `productUnits linked=${c.productUnitsLinked} parentFilled=${c.productUnitsParentFilled} ` +
   `unlinkedOverflow=${c.productUnitsUnlinkedOverflow}; ` +
   `skipped tooLong=${c.skippedTooLong} synonyms=${c.skippedSynonyms} parent=${c.skippedParent}`;
+
+/**
+ * The --expect-zero decision (SA-984 §3 as amended by SA-986): ONE ordered pure decision over the plan's
+ * counts, first hit wins.
+ *   1. pending, exit 3: tenantUnitsCreated, productUnitsLinked or productUnitsParentFilled above 0 (a
+ *      re-run still plans rows), OR any of the six gated counts missing or not a number >= 0 (fails
+ *      closed, never OK);
+ *   2. residue, exit 4: tenantUnitsOverflow, skippedTooLong or skippedParent above 0 (no re-run clears
+ *      these, so a re-apply is pointless: the counts go to the SA);
+ *   3. zero, exit 0: all six are exactly 0.
+ * Both holding: exit 3, and the line names both. The gate on the cap is the NAME count
+ * tenantUnitsOverflow (a pack word with no ladder level is still a unit missing from Settings > Units);
+ * productUnitsUnlinkedOverflow is printed, gated through it. Counts by design not gated are classed in
+ * BY_DESIGN_COUNTS; a spec pins every key of the plan's counts as one or the other. Exit 3 and 4 are
+ * distinct from a real error (1).
+ */
+export const PENDING_COUNTS = Object.freeze([
+  "tenantUnitsCreated",
+  "productUnitsLinked",
+  "productUnitsParentFilled",
+]);
+export const RESIDUE_COUNTS = Object.freeze([
+  "tenantUnitsOverflow",
+  "skippedTooLong",
+  "skippedParent",
+]);
+export const BY_DESIGN_COUNTS = Object.freeze([
+  "tenantUnitsExisting", // done work
+  "productUnitsUnlinkedOverflow", // printed; gated through tenantUnitsOverflow
+  "skippedSynonyms", // piece words are never a TenantUnit
+  "explicitPieceParent", // left as it is (#3336), only listed
+]);
+
+export function expectZeroResult(counts) {
+  const isCount = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  const malformed = [...PENDING_COUNTS, ...RESIDUE_COUNTS].filter((k) => !isCount(counts?.[k]));
+  const pending = PENDING_COUNTS.some((k) => isCount(counts?.[k]) && counts[k] > 0);
+  const residue = RESIDUE_COUNTS.some((k) => isCount(counts?.[k]) && counts[k] > 0);
+  const c = counts ?? {};
+  const pendingPart = `created=${c.tenantUnitsCreated} linked=${c.productUnitsLinked} parentFilled=${c.productUnitsParentFilled}`;
+  const residuePart =
+    `overflow=${c.tenantUnitsOverflow} unlinkedOverflow=${c.productUnitsUnlinkedOverflow} ` +
+    `tooLong=${c.skippedTooLong} parentSkipped=${c.skippedParent}`;
+  if (pending || malformed.length > 0) {
+    const notes = [];
+    if (pending) notes.push("a re-run still plans rows");
+    if (malformed.length > 0)
+      notes.push(`a count is missing or malformed: ${malformed.join(", ")}`);
+    if (residue) notes.push("the residue stays after it; send the counts to the SA");
+    return {
+      ok: false,
+      line:
+        `Expect-zero: FAIL ${pendingPart}` +
+        (residue ? `; RESIDUE ${residuePart}` : "") +
+        ` (${notes.join("; ")})`,
+      exitCode: 3,
+    };
+  }
+  if (residue) {
+    return {
+      ok: false,
+      line: `Expect-zero: RESIDUE ${residuePart} (no re-run clears this; send the counts to the SA)`,
+      exitCode: 4,
+    };
+  }
+  return {
+    ok: true,
+    line: `Expect-zero: OK ${pendingPart} overflow=0 tooLong=0 parentSkipped=0`,
+    exitCode: 0,
+  };
+}
 
 /** The skipped parent fills, counted by reason (never an id). */
 export function parentSkipLines(parentSkips) {
@@ -295,6 +422,11 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     for (const line of parentSkipLines(plan.parentSkips)) console.log(line);
     for (const line of explicitPieceLines(plan.explicitPieceParents)) console.log(line);
     if (!args.apply) console.log("Dry run only; pass --apply to write.");
+    if (args.expectZero) {
+      const check = expectZeroResult(plan.counts);
+      console.log(check.line);
+      process.exitCode = check.exitCode;
+    }
   } catch (err) {
     console.error(`Refusing: ${err.message}`);
     process.exitCode = 1;
