@@ -130,7 +130,7 @@ export class OverdueSweepService {
  * Fails closed without a tenant. `dryRun` COUNTS with the same where and writes nothing.
  */
 export async function markOverdueForTenant(
-  prisma: Pick<PrismaService, "tenantConfig" | "$queryRaw" | "$executeRaw">,
+  prisma: Pick<PrismaService, "tenantConfig" | "$queryRaw" | "$executeRaw" | "tenantTransaction">,
   tenantId: string,
   now: Date,
   opts: { dryRun?: boolean } = {},
@@ -139,9 +139,10 @@ export async function markOverdueForTenant(
   const { zone } = await resolveZone(prisma, { tenantId });
   const cutoff = overdueCutoff(now, zone);
   // SA-770 (row 294): "overdue" means a balance is owed. The count and the write share ONE predicate
-  // (invoice-balance-sql.ts), and the write is a single UPDATE, so a fully-paid or overpaid SENT/VIEWED
+  // (invoice-balance-sql.ts), and the write locks the candidates then re-tests the balance (CM2a), so a fully-paid or overpaid SENT/VIEWED
   // invoice (P-3 keeps an overpaid one out of PAID) is never flipped, even if a payment lands mid-run.
   const statuses = [...SWEPT_INVOICE_STATUSES];
   if (opts.dryRun) return overdueInvoiceCount(prisma, tenantId, cutoff, { statuses });
-  return markInvoicesOverdue(prisma, tenantId, cutoff, statuses);
+  // CM2a: lock-first inside ONE transaction, so the balance is read after the row locks are held.
+  return prisma.tenantTransaction((tx) => markInvoicesOverdue(tx, tenantId, cutoff, statuses));
 }

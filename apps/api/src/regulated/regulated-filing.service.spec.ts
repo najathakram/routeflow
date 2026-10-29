@@ -14,7 +14,7 @@ describe("RegulatedFilingService", () => {
   let service: RegulatedFilingService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let regulated: { getLedger: jest.Mock };
-  let storage: { upload: jest.Mock; presignedUrl: jest.Mock };
+  let storage: { upload: jest.Mock; delete: jest.Mock; presignedUrl: jest.Mock };
   let audit: { log: jest.Mock };
 
   // A period 2 years back is always complete regardless of the wall clock.
@@ -47,6 +47,7 @@ describe("RegulatedFilingService", () => {
     regulated = { getLedger: jest.fn().mockResolvedValue({ rows: [], totals: {} }) };
     storage = {
       upload: jest.fn().mockResolvedValue("key"),
+      delete: jest.fn().mockResolvedValue(undefined),
       presignedUrl: jest.fn().mockResolvedValue("https://signed"),
     };
     audit = { log: jest.fn().mockResolvedValue(undefined) };
@@ -97,10 +98,11 @@ describe("RegulatedFilingService", () => {
       expect(filing.totalNetSales).toBe(100);
       expect(filing.totalCategoryTax).toBe(5);
       expect(storage.upload).toHaveBeenCalledTimes(1);
-      // csv key is deterministic + tenant-scoped
-      expect(storage.upload.mock.calls[0][0]).toBe(
-        `regulated-filings/test-tenant/cat-1/${pastYear}-01.csv`,
+      // csv key is tenant-scoped and unique per generation (a lock can never lose its CSV to a rewrite)
+      expect(storage.upload.mock.calls[0][0]).toMatch(
+        new RegExp(`^regulated-filings/test-tenant/cat-1/${pastYear}-01\\..+\\.csv$`),
       );
+      expect(filing.csvKey).toBe(storage.upload.mock.calls[0][0]);
     });
 
     it("does NOT clamp a reversal-heavy period that nets negative", async () => {
@@ -222,6 +224,8 @@ describe("RegulatedFilingService", () => {
     it("retries as an update when a concurrent create hits the unique constraint", async () => {
       regulated.getLedger.mockResolvedValue({ rows: [ledgerRow()], totals: {} });
       prisma.regulatedFiling.findFirst
+        .mockResolvedValueOnce(null) // B297 PR5: the early LOCKED check
+        .mockResolvedValueOnce(null) // B297 PR5: the re-read right before the artifact upload
         .mockResolvedValueOnce(null) // initial: no existing → create path
         .mockResolvedValueOnce({ id: "raced-1", generationCount: 1 }); // post-P2002 lookup
       prisma.regulatedFiling.create.mockRejectedValueOnce({ code: "P2002" });
@@ -231,7 +235,8 @@ describe("RegulatedFilingService", () => {
         index: 1,
       });
       expect(prisma.regulatedFiling.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: "raced-1" } }),
+        // B297 PR5: the regeneration write is conditional, so a lock that committed first is never overwritten
+        expect.objectContaining({ where: { id: "raced-1", status: { not: "LOCKED" } } }),
       );
       expect(filing.generationCount).toBe(2); // raced.generationCount + 1
     });

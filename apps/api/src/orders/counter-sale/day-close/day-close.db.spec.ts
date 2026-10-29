@@ -28,6 +28,7 @@ import { Pool } from "pg";
 import type { DenominationCount } from "@routeflow/types";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { describeDb, requireLocalDatabaseUrl } from "../../../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../../../common/testing/blocked-wait";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { TenantContextService } from "../../../tenant/tenant-context.service";
 import { dbClockNow, lockCounterClose } from "../../../returns/counter-close-lock";
@@ -260,15 +261,8 @@ describeDb("counter day close on real Postgres", () => {
     return { hasLock, release, done };
   }
 
-  async function waitUntilBlockedBy(pid: number): Promise<void> {
-    for (let i = 0; i < 200; i++) {
-      const r = await pool.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-        [pid],
-      );
-      if (Number(r.rows[0].n) > 0) return;
-      await new Promise((res) => setTimeout(res, 50));
-    }
+  async function waitQueuedBehind(pid: number): Promise<void> {
+    if (await waitUntilBlockedBy(pool, pid, { timeoutMs: 10_000, intervalMs: 50 })) return;
     throw new Error("the close never queued behind the in-flight writer");
   }
 
@@ -282,7 +276,7 @@ describeDb("counter day close on real Postgres", () => {
     const closing = as("A", () =>
       service.close({ openingFloat: 10, denominations: tens(2), registerKey: REG }, operator),
     );
-    await waitUntilBlockedBy(writerPid);
+    await waitQueuedBehind(writerPid);
     writer.release();
     await writer.done;
     const snap = await closing;

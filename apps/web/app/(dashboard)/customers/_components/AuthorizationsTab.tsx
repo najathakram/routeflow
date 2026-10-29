@@ -17,9 +17,8 @@ import {
   authStatusBadge,
   type CustomerAuthorization,
 } from "@/lib/api/authorizations";
+import { useTenantTimeZone, useTenantToday } from "@/lib/tenant-timezone";
 import { renderLicenceExpiry } from "./authorizations-expiry.logic";
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
 
 function sourceLabel(source: CustomerAuthorization["source"]): string {
   return source === "RETAILER_SUBMITTED" ? "Submitted by buyer" : "Added by you";
@@ -39,6 +38,7 @@ function LicenseModal({
   onClose: () => void;
 }) {
   const { toast } = useToast();
+  const tenantToday = useTenantToday(); // SA-964 §4: the expiry floor is the tenant's day, never the browser's
   const { data: categories } = useTrackedCategories({ active: true });
   const create = useCreateAuthorization(customerId);
   const renew = useRenewAuthorization(customerId);
@@ -60,8 +60,7 @@ function LicenseModal({
     if (mode === "create" && !trackedCategoryId) return setError("Choose a category.");
     if (!licenseNumber.trim()) return setError("Enter the license number.");
     if (!expiresAt) return setError("Enter the expiry date.");
-    if (new Date(expiresAt) < new Date(todayIso()))
-      return setError("The expiry date is in the past.");
+    if (tenantToday && expiresAt < tenantToday) return setError("The expiry date is in the past.");
 
     const iso = new Date(expiresAt).toISOString();
     const onSuccess = () => {
@@ -140,7 +139,7 @@ function LicenseModal({
         <Input
           label="Expiry date"
           type="date"
-          min={todayIso()}
+          min={tenantToday}
           value={expiresAt}
           onChange={(e) => setExpiresAt(e.target.value)}
         />
@@ -216,6 +215,7 @@ type ModalState =
 
 export function AuthorizationsTab({ customerId }: { customerId: string }) {
   const { data: auths, isLoading } = useCustomerAuthorizations(customerId);
+  const zone = useTenantTimeZone();
   const approve = useApproveAuthorization(customerId);
   const { toast } = useToast();
   const [modal, setModal] = React.useState<ModalState>(null);
@@ -260,7 +260,7 @@ export function AuthorizationsTab({ customerId }: { customerId: string }) {
       ) : (
         <div className="divide-y divide-surface-border rounded-xl border border-surface-border bg-white">
           {auths.map((auth) => {
-            const display = displayAuthStatus(auth);
+            const display = displayAuthStatus(auth, zone);
             const badge = authStatusBadge(display);
             return (
               <div key={auth.id} className="flex items-center justify-between gap-4 p-4">

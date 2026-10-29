@@ -209,7 +209,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
+      <div className="flex h-screen supports-[height:100dvh]:h-dvh w-full items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
@@ -979,11 +979,11 @@ function ImpersonationBanner() {
       <span>
         {imp.expired ? (
           <>
-            ⚠️ Impersonation of <strong>{imp.slug}</strong> has expired
+            ⚠️ Support session on <strong>{imp.slug}</strong> has expired
           </>
         ) : (
           <>
-            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as{" "}
+            ⚠️ Support session on <strong>{imp.slug}</strong> — signed in as{" "}
             {imp.username ?? "Tenant Admin"}
           </>
         )}
@@ -992,7 +992,7 @@ function ImpersonationBanner() {
         onClick={exitImpersonation}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
-        {imp.expired ? "Return to admin" : "Exit impersonation"}
+        {imp.expired ? "Return to admin" : "Exit support session"}
       </button>
     </div>
   );
@@ -1272,7 +1272,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="surface-operator flex h-screen overflow-hidden">
+    <div className="surface-operator flex h-screen supports-[height:100dvh]:h-dvh overflow-hidden">
       <SkipToContentLink />
       {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside

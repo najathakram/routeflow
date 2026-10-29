@@ -56,7 +56,9 @@ import {
   Printer,
 } from "lucide-react";
 import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
-import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
+import type { ToCollectState } from "@routeflow/types";
+import { depositOverdueLine, groupArAgingByCustomer, toCollectLookup } from "@/lib/ar-aging-rows";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
@@ -259,6 +261,7 @@ function ArAgingReport({
   // #1529 (SA-517 PR-B): the same per-customer sums, plus a marker when any invoice carries an
   // overdue deposit; the buckets and totals are unchanged.
   const customerMap = groupArAgingByCustomer(buckets);
+  const toCollect = toCollectLookup(data?.toCollectByCustomer); // SA-1026: the server's sums, never re-derived here
   const depositLine = depositOverdueLine(data?.depositOverdue, fmt);
 
   return (
@@ -296,14 +299,15 @@ function ArAgingReport({
               </th>
             ))}
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Total</th>
+            <th className="px-4 py-3 text-right text-xs font-semibold uppercase">To collect</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">
           {isLoading || isFetching ? (
-            <SkeletonRows cols={7} />
+            <SkeletonRows cols={8} />
           ) : Object.keys(customerMap).length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-4 py-10 text-center text-sm text-navy/70">
+              <td colSpan={8} className="px-4 py-10 text-center text-sm text-navy/70">
                 No outstanding invoices
               </td>
             </tr>
@@ -334,6 +338,9 @@ function ArAgingReport({
                   <td className="px-4 py-2.5 text-right font-semibold text-navy">
                     {fmt(rowTotal)}
                   </td>
+                  <td className="px-4 py-2.5 text-right text-navy" data-testid="ar-to-collect">
+                    {toCollect[customerId] ? fmt(toCollect[customerId].balance) : "\u2014"}
+                  </td>
                 </tr>
               );
             })
@@ -348,6 +355,7 @@ function ArAgingReport({
               </td>
             ))}
             <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(totals.total)}</td>
+            <td />
           </tr>
         </tfoot>
       </table>
@@ -985,6 +993,7 @@ function ArAgingDetailsReport({
     ageDays: number;
     amount: number;
     balance: number;
+    toCollect?: ToCollectState;
   }> = data?.data ?? [];
   return (
     <table className="w-full text-sm">
@@ -1023,7 +1032,10 @@ function ArAgingDetailsReport({
                 </Link>
               </td>
               <td className="px-4 py-2.5">
-                <StatusBadge status={r.status} />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={r.status} />
+                  <ToCollectChip state={r.toCollect} />
+                </div>
               </td>
               <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
               <td className="px-4 py-2.5 text-right text-navy">{r.ageDays}</td>

@@ -93,6 +93,11 @@ export function orderSourceForRole(role: string | null | undefined): "APP" | "PH
   return channelOfRole(role) === "STAFF" ? "PHONE" : "APP";
 }
 
+/** What an unattended or role-less path stamps on `Order.source` for the channel it was judged on: STAFF is PHONE, else APP. */
+export function orderSourceForChannel(channel: RestrictionChannel): "APP" | "PHONE" {
+  return channel === "STAFF" ? "PHONE" : "APP";
+}
+
 /** The creation channel an `Order.source` records; APP, a missing or unknown value is the buyer. */
 export function channelOfOrderSource(source: string | null | undefined): RestrictionChannel {
   return source === "PHONE" || source === "ROUTE" ? "STAFF" : "BUYER_PORTAL";

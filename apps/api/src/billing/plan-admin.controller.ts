@@ -6,6 +6,7 @@ import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { UpdatePlanDefinitionDto } from "./dto/update-plan-definition.dto";
 import { UpdateAddonSkuDto } from "./dto/update-addon-sku.dto";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * Platform-admin authoring of the versioned plan catalog (admin-plans surface).
@@ -15,6 +16,7 @@ import { UpdateAddonSkuDto } from "./dto/update-addon-sku.dto";
 @ApiTags("billing")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("billing/admin/plans")
 export class PlanAdminController {
   constructor(private readonly catalog: PlanCatalogService) {}

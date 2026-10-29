@@ -5,6 +5,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { EmailService } from "../email/email.service";
 import { AdminAuditAction, ADMIN_AUDIT_ENTITY } from "../platform-admin/audit-actions.constant";
 import { PrismaService } from "../prisma/prisma.service";
+import { classOfSource } from "./addon-change-source-class";
 import { addonBillingModeOf, inclusionOf, usd, type AddonSkuDef } from "./addon-inclusion";
 import { writeAdminNotice } from "./manual-invoice-notice";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -16,6 +17,7 @@ import {
   planKeyFromEnum,
 } from "./plan-catalog.constants";
 import { StripeService } from "./stripe.service";
+import { TRACKED_ADDON_FIELDS } from "./tenant-addon-writer";
 
 /**
  * SA-788 (b) - the daily add-on invariant: detect, record, alert.
@@ -28,7 +30,10 @@ import { StripeService } from "./stripe.service";
  *   I2  an active, non-comp row at $0 whose SKU the tenant's plan does NOT include, on a STRIPE or MANUAL tenant (a
  *       re-price is owed: SA-786's after-commit failure leftover);
  *   I3  an active, non-comp row that is priced or holds a Stripe item although the tenant's plan INCLUDES the SKU
- *       (billing an included add-on).
+ *       (billing an included add-on);
+ *   I4  (SA-970 §2.2) an active / price / comp / quantity change in the window whose last actor is the SYSTEM (or has
+ *       no kind) and whose source is not `expected_system` in {@link ADDON_SOURCE_CLASS}; a SYSTEM actor on an
+ *       `owner` source is flagged too. An impersonated tenant change reads as a platform admin's (owned).
  * Every NEW finding (one `BillingNotificationLog` claim per finding, released on a failed send) is logged at ERROR,
  * becomes an in-app notice (`ADDON_INVARIANT_BROKEN`), and - only when `ADDON_INVARIANT_EMAIL=email` and
  * `PLATFORM_ALERT_EMAILS` is set - is listed in ONE email per run. The email is DARK by default (`log`): the owner reads
@@ -42,7 +47,7 @@ export const ADDON_INVARIANT_WINDOW_HOURS = 26;
 /** Tenants read per page (one rows query and one events query per page). */
 export const ADDON_INVARIANT_PAGE_SIZE = 200;
 
-export type InvariantId = "I1" | "I2" | "I3";
+export type InvariantId = "I1" | "I2" | "I3" | "I4";
 
 export interface InvariantTenant {
   id: string;
@@ -81,10 +86,18 @@ export interface InvariantContext {
   rowsOf(tenantId: string): readonly InvariantRow[];
   /** The latest `addon.state_changed` actor kind per row id inside the window (absent = no record). */
   latestActorKind(rowId: string): string | null | undefined;
+  /** The last `addon.state_changed` that changed a business field (active/price/comp/qty) inside the window. */
+  lastBusinessChange(rowId: string): BusinessChange | undefined;
   /** The tenant's catalog SKUs (its pinned version), or null when the catalog cannot be resolved. */
   skusOf(tenant: InvariantTenant): readonly AddonSkuDef[] | null;
   planKeyOf(tenant: InvariantTenant): string | null;
   modeOf(tenant: InvariantTenant): "STRIPE" | "MANUAL" | "UNBILLED";
+}
+
+export interface BusinessChange {
+  actorKind: string | null;
+  source: string | null;
+  impersonatedBy: string | null;
 }
 
 export interface InvariantFinding {
@@ -209,6 +222,31 @@ export const ADDON_INVARIANTS: readonly InvariantCheck[] = [
       return out;
     },
   },
+  {
+    id: "I4",
+    run(ctx) {
+      const out: InvariantFinding[] = [];
+      for (const t of ctx.tenants) {
+        for (const r of ctx.rowsOf(t.id)) {
+          const c = ctx.lastBusinessChange(r.id);
+          if (!c) continue;
+          const kind = c.impersonatedBy ? "PLATFORM_ADMIN" : c.actorKind; // impersonation is owned (visible on the event)
+          if (kind === "TENANT_USER" || kind === "PLATFORM_ADMIN") continue;
+          if (classOfSource(c.source) === "expected_system") continue;
+          out.push(
+            finding(
+              "I4",
+              t,
+              r,
+              ctx.skusOf(t)?.find((sk) => sk.sku === codeOf(r))?.name ?? codeOf(r),
+              `was changed by ${c.source ?? "an unknown source"} with no owner, admin or tenant action behind it`,
+            ),
+          );
+        }
+      }
+      return out;
+    },
+  },
 ];
 
 const isUnique = (e: unknown) =>
@@ -292,9 +330,24 @@ export class AddonInvariantJob {
         byTenant.set(r.tenantId, list);
       }
       const latest = new Map<string, string | null>();
+      const business = new Map<string, BusinessChange>();
       for (const e of events) {
-        const p = e.payload as { rowId?: string; actor?: { kind?: string } } | null;
-        if (p?.rowId) latest.set(p.rowId, p.actor?.kind ?? null);
+        const p = e.payload as {
+          rowId?: string;
+          actor?: { kind?: string };
+          source?: string;
+          changes?: Record<string, unknown>;
+          impersonatedBy?: string;
+        } | null;
+        if (!p?.rowId) continue;
+        latest.set(p.rowId, p.actor?.kind ?? null);
+        if (TRACKED_ADDON_FIELDS.some((f) => p.changes && f in p.changes)) {
+          business.set(p.rowId, {
+            actorKind: p.actor?.kind ?? null,
+            source: p.source ?? null,
+            impersonatedBy: p.impersonatedBy ?? null,
+          });
+        }
       }
       for (const t of tenants) {
         const v = resolvePlanVersionId(t.subscription, t) ?? "";
@@ -307,6 +360,7 @@ export class AddonInvariantJob {
         tenants,
         rowsOf: (id) => byTenant.get(id) ?? [],
         latestActorKind: (rowId) => (latest.has(rowId) ? latest.get(rowId) : undefined),
+        lastBusinessChange: (rowId) => business.get(rowId),
         skusOf: (t) => skuCache.get(resolvePlanVersionId(t.subscription, t) ?? "") ?? null,
         planKeyOf: (t) =>
           normalizePlanKey(t.subscription?.planKey) ?? (t.plan ? planKeyFromEnum(t.plan) : null),
