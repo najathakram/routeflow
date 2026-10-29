@@ -38,7 +38,7 @@ function useTypedNumber(value: number | null | undefined, commit: (n: number) =>
 }
 
 const DEFAULT_INPUT =
-  "w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500";
+  "w-12 max-lg:h-11 max-lg:w-14 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500";
 
 export interface CasesPiecesInputProps {
   /** Whole cases; null/undefined reads as 0. */
