@@ -15,7 +15,7 @@ describe("CounterLinePriceEdit: footer tap targets", () => {
         onReset={jest.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Edit price for Cola" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change price for Cola" }));
     expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("min-h-[44px]");
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("min-h-[44px]");
   });

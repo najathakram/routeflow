@@ -1,3 +1,4 @@
+import type { ToCollectState } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ExpenseCategory } from "@routeflow/types";
@@ -42,6 +43,8 @@ export interface ArAgingBucket {
   depositAmount?: number | null;
   depositDueDate?: string | null;
   depositOverdue?: boolean;
+  /** SA-1026: staff aging only; derived by the server. */
+  toCollect?: ToCollectState;
 }
 
 export interface ExpenseLineItem {
@@ -130,6 +133,13 @@ export function useArAgingInvoices(intervalDays?: number) {
     };
     /** #1529: overdue deposits, never a totals key (the buckets already hold those balances). */
     depositOverdue?: { count: number; outstanding: number };
+    /** SA-1026 A-G11: per customer, how many invoices read To collect and their summed balance (absent from an older server). */
+    toCollectByCustomer?: {
+      customerId: string;
+      businessName: string;
+      count: number;
+      balance: number;
+    }[];
   }>({
     queryKey: ["reports", "ar-aging-invoices", intervalDays],
     queryFn: () =>
