@@ -60,6 +60,8 @@ const invoice = (id: string, items: any[], over: Record<string, unknown> = {}) =
   invoiceNumber: id.toUpperCase(),
   status: "SENT",
   total: items.reduce((t, i) => t + i.subtotal, 0),
+  taxAmount: 0,
+  discount: 0,
   createdAt: new Date("2026-01-01"),
   items,
   ...over,
@@ -132,7 +134,7 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     expect(prisma.return.updateMany).not.toHaveBeenCalled();
   });
 
-  it("2+ creditable invoices: the same refusal, before the pool is even read", async () => {
+  it("2+ creditable invoices: the same refusal, before any claim or mint (the pool is a read, taken first: SA-840 A-2)", async () => {
     withReturn(
       [
         invoice("inv-1", [invItem("i1", {})]),
@@ -146,7 +148,6 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     await expect(service.processRefund("ret-1")).rejects.toMatchObject({
       response: { code: "RETURN_MIXED_UNIT_PRODUCT" },
     });
-    expect(prisma.invoice.findMany).not.toHaveBeenCalled();
     expect(prisma.return.updateMany).not.toHaveBeenCalled();
   });
 

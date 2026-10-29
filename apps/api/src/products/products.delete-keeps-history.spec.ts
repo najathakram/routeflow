@@ -189,7 +189,7 @@ describe("ProductsService delete: history is never written", () => {
   it("bulkDelete: a reference-free product is removed without any order, invoice or stock row being written", async () => {
     const result = await service.bulkDelete(["p1"]);
 
-    expect(result).toEqual({ deleted: 1, softDeleted: 0, skipped: [] });
+    expect(result).toEqual({ deleted: 1, softDeleted: 0, softDeletedIds: [], skipped: [] });
     for (const history of [
       prisma.orderItem,
       prisma.invoiceItem,

@@ -39,7 +39,14 @@ export type InvoiceRow = {
     trackedCategory?: { id?: string | null; name?: string | null; taxType?: string | null } | null;
     categoryTaxType?: string | null;
   }>;
-  payments?: Array<{ id: string; amount: unknown; method?: string; status?: string }>;
+  payments?: Array<{
+    id: string;
+    amount: unknown;
+    method?: string;
+    status?: string;
+    /** the check number / card reference typed at the till (`Payment.reference`) */
+    reference?: string | null;
+  }>;
 };
 
 type ScanOrdered = {
@@ -115,6 +122,14 @@ export function servedChange(
   return storedChange(tendered, payments);
 }
 
+/** W-713: the number on the sale's first CHECK tender (trimmed); undefined when there is no check tender or it has no number. */
+export function checkReferenceOf(
+  payments: ReadonlyArray<{ method?: string; status?: string; reference?: string | null }>,
+): string | undefined {
+  const check = payments.find((p) => isTender(p) && p.method === "CHECK");
+  return check?.reference?.trim() || undefined;
+}
+
 /** The counter method of a stored tender (Prisma CREDIT_CARD reads back as CARD); undefined for any other. */
 export function counterMethodOf(
   prismaMethod: string | undefined,
@@ -187,6 +202,7 @@ export function buildCounterSaleResponse(input: {
   // Change is handed back ONLY for a CASH sale whose STORED balance is fully covered (a replay must never read
   // an unpaid sibling's share as change); the same gate the Today's-sales row uses.
   const change = servedChange(order.counterCashTendered, payments, balanceDue);
+  const checkReference = checkReferenceOf(payments);
 
   return {
     orderId: order.id,
@@ -199,6 +215,8 @@ export function buildCounterSaleResponse(input: {
     balanceDue,
     ...(change != null ? { change } : {}),
     ...(firstTender ? { paymentId: firstTender.id } : {}),
+    // W-713: the check number rides back so the receipt reads "Check #1042" (a check tender with a number only)
+    ...(checkReference ? { checkReference } : {}),
     ...(method ? { method } : {}),
     paymentRecorded: settled,
     // SA-1026: read back from the stored rows (never echoed from the request), staff only
