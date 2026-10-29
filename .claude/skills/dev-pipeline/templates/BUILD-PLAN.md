@@ -1,6 +1,6 @@
 # Build plan: <task title>
 
-> **Stage S5 — "how".** Authored by Fable 5 on `<YYYY-MM-DD>`.
+> **Stage S5 — "how".** Authored by Opus on `<YYYY-MM-DD>`.
 > Status: `DRAFT | APPROVED | IMPLEMENTED | CLOSED`
 > Supersedes the legacy `PLAN-TEMPLATE.md`. Written AFTER
 > [test-plan.md](./test-plan.md) — the tests decide the shape of the work, not the
@@ -301,7 +301,7 @@ test/implementation id space; a task authors its own tests and its own implement
       brief: '<what to do — satisfies R3; provenBy T2>',
       dependsOn: ['WP1'],                  // the ONLY ordering mechanism; disjoint tasks share a wave
       risk: 'HIGH',                        // this task touches money/tenancy/auth; omit elsewhere (Baseline classifies it, unknown = HIGH)
-      model: '<optional per-task upgrade — normally omitted; a HIGH-risk task already routes to Fable>'
+      model: '<optional per-task upgrade — normally omitted; a HIGH-risk task already gets a higher-effort Sonnet implementer and an Opus @ high review>'
     },
     // A `ui-verify` task carries its own driver config on the task record — no separate top-level switch.
     {

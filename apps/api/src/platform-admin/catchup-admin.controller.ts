@@ -18,6 +18,7 @@ import { CatchupCheckoutService, catchupReportJson } from "../billing/catchup-ch
 import { CatchupCheckoutDto } from "./dto/catchup-checkout.dto";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { PlatformAdminService } from "./platform-admin.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * SA-733 D7: the October catch-up of a manually invoiced tenant. Its own controller (platform-admin.controller.ts
@@ -27,6 +28,7 @@ import { PlatformAdminService } from "./platform-admin.service";
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class CatchupAdminController {
   constructor(

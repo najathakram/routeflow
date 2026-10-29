@@ -2506,12 +2506,12 @@ describe("digital receipt on the live receipt (SA-751r)", () => {
     api.post.mockResolvedValue({ data: { channel: "email", to: "x" } });
   });
 
-  it("the receipt's row reads Print · Email receipt · New sale, and the email row is closed", async () => {
+  it("the receipt's row reads Print · Print invoice · Email receipt · New sale, and the email row is closed", async () => {
     renderTill(<CounterSaleScreen />);
     await finishCashSale();
     const root = screen.getByTestId("counter-sale-receipt");
     const names = Array.from(root.querySelectorAll("button")).map((b) => b.textContent);
-    expect(names).toEqual(["Print", "Email receipt", "New sale"]);
+    expect(names).toEqual(["Print", "Print invoice", "Email receipt", "New sale"]); // SA-1026 B: Print invoice follows the receipt's Print
     expect(screen.queryByRole("textbox", { name: "Email address" })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
   });

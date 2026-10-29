@@ -3,6 +3,8 @@ import {
   STOCK_COUNT_RECOUNT_COPY,
   STOCK_COUNT_ENTER_AS_YOU_GO_COPY,
   stockCountCommitFailure,
+  stockCountPreparingCopy,
+  stockCountPreparingLine,
   stockCountProductInOpenCount,
   stockCountSavingCopy,
 } from "@routeflow/types";
@@ -37,6 +39,13 @@ describe("stockCountCommitFailure", () => {
   it("409 STOCK_COUNT_COMMITTING: the being-saved sentence", () => {
     expect(stockCountCommitFailure(err(409, { code: "STOCK_COUNT_COMMITTING" }))).toEqual({
       copy: "This count is being saved. Try again in a moment.",
+      permanent: false,
+    });
+  });
+
+  it("409 STOCK_COUNT_SEEDING: the still-being-prepared sentence (SA-999)", () => {
+    expect(stockCountCommitFailure(err(409, { code: "STOCK_COUNT_SEEDING" }))).toEqual({
+      copy: "This count is still being prepared. Try again in a moment.",
       permanent: false,
     });
   });
@@ -121,5 +130,34 @@ describe("one open count per product copy", () => {
     expect(STOCK_COUNT_ENTER_AS_YOU_GO_COPY).toBe(
       "Enter counts as you go, right after you count each product.",
     );
+  });
+});
+
+/** SA-999: "Preparing count… N of M" while a seeded count is still being filled; it also disables Commit. */
+describe("stockCountPreparingLine", () => {
+  it("says how far the seed got while it is running", () => {
+    expect(stockCountPreparingLine({ seedPlannedLines: 450, seedCompletedAt: null }, 200)).toBe(
+      "Preparing count… 200 of 450",
+    );
+    expect(stockCountPreparingCopy(0, 3)).toBe("Preparing count… 0 of 3");
+  });
+
+  it.each([
+    ["a finished seed", { seedPlannedLines: 450, seedCompletedAt: "2026-10-26T10:00:00.000Z" }],
+    [
+      "a 0-line seed, completed in the create",
+      { seedPlannedLines: 0, seedCompletedAt: "2026-10-26T10:00:00.000Z" },
+    ],
+    ["a legacy count (both NULL)", { seedPlannedLines: null, seedCompletedAt: null }],
+    ["a response without the columns", {}],
+  ])("%s shows no preparing line", (_n, seed) => {
+    expect(stockCountPreparingLine(seed, 450)).toBeNull();
+  });
+
+  it("a row the table's CHECKs forbid shows no preparing line (the api surfaces it)", () => {
+    expect(
+      stockCountPreparingLine({ seedPlannedLines: null, seedCompletedAt: "2026-10-26" }, 1),
+    ).toBeNull();
+    expect(stockCountPreparingLine({ seedPlannedLines: -1, seedCompletedAt: null }, 1)).toBeNull();
   });
 });

@@ -1,12 +1,18 @@
 import type { EffectiveFeature, FeaturePreviewResponse } from "./types";
 
 /** Only `label` is required — the drawer accepts either the full `FeatureRegistryRow` or the lighter
- *  option shape the overrides form fetches. */
-export type RegistryLabelLookup = Record<string, { label: string }>;
+ *  option shape the overrides form fetches. `config.modes` (the full row has it) names a mode change in
+ *  the registry's own words. */
+export type RegistryLabelLookup = Record<
+  string,
+  { label: string; config?: { modes: Array<{ key: string; label: string }> } }
+>;
 
 export interface PreviewRow {
   key: string;
   label: string;
+  /** The registry's mode options for this key, when the lookup carries them. */
+  modes?: Array<{ key: string; label: string }>;
   before?: EffectiveFeature;
   after?: EffectiveFeature;
 }
@@ -52,7 +58,13 @@ export function groupPreview(
   for (const key of changedKeys) {
     const before = beforeByKey.get(key);
     const after = afterByKey.get(key);
-    const row: PreviewRow = { key, label: registryByKey[key]?.label ?? key, before, after };
+    const row: PreviewRow = {
+      key,
+      label: registryByKey[key]?.label ?? key,
+      modes: registryByKey[key]?.config?.modes,
+      before,
+      after,
+    };
     const wasOn = before?.serving ?? false;
     const isOn = after?.serving ?? false;
     if (!wasOn && isOn) groups.gained.push(row);

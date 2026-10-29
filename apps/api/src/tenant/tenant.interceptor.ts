@@ -1,5 +1,6 @@
 import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from "@nestjs/common";
 import { TenantContextService } from "./tenant-context.service";
+import { runWithImpersonation } from "./impersonation-context";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 
 /**
@@ -16,6 +17,9 @@ export class TenantInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const user = req.user as JwtPayload | undefined;
     const tenantId = user?.tenantId ?? null;
-    return this.tenantContext.run(tenantId, () => next.handle());
+    // SA-970 §2.3: the add-on writer reads the impersonating admin from this context.
+    return runWithImpersonation(user?.impersonatedBy, () =>
+      this.tenantContext.run(tenantId, () => next.handle()),
+    );
   }
 }
