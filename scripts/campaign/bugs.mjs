@@ -94,6 +94,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 import {
@@ -104,7 +105,19 @@ import {
   sleepSync,
   withLock,
 } from "../lib/mkdir-lock.mjs";
-import { registryMissingMessage, registryRoot, registrySource } from "../lib/registry-root.mjs";
+import {
+  FIRST_RUN_WINDOW,
+  REGISTRY_GIT_TIMEOUT_MS,
+  REGISTRY_PREFIX,
+  registryMissingMessage,
+  registryMode,
+  registryRoot,
+  registrySource,
+  syncRepoOverride,
+  syncStatePath,
+} from "../lib/registry-root.mjs";
+import { commitRecord, discardRegistry } from "../lib/registry-records.mjs";
+import { RegistryError, withRegistryWrite } from "../lib/registry-write.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -204,7 +217,12 @@ function readState() {
   return state;
 }
 
+// Inside a register write transaction a refusal must unwind (so the clone is handled by the
+// transaction), not exit.
+let inRegistryTxn = false;
+class BugsFail extends Error {}
 const fail = (m) => {
+  if (inRegistryTxn) throw new BugsFail(m);
   console.error(`bugs: ${m}`);
   process.exit(1);
 };
@@ -366,7 +384,48 @@ cmds.import = () => {
   });
 };
 
+// Clone mode only: run a writer inside the register's one write transaction. Its output is held
+// back and printed after the push lands, so an id is never shown for a row that was not recorded.
+function throughRegistry(label, body) {
+  const realLog = console.log;
+  try {
+    const out = withRegistryWrite(
+      ({ dirty }) => {
+        const lines = [];
+        console.log = (...a) => lines.push(a.join(" "));
+        inRegistryTxn = true;
+        try {
+          body();
+        } finally {
+          console.log = realLog;
+          inRegistryTxn = false;
+        }
+        return { paths: dirty(), result: lines };
+      },
+      { label },
+    );
+    for (const line of out.result) console.log(line);
+  } catch (e) {
+    if (!(e instanceof RegistryError || e instanceof BugsFail)) throw e;
+    console.error(`bugs: ${e.message}`);
+    process.exit(e.exitCode ?? 1);
+  }
+}
+// What makes two `file` calls the same filing: the normalised title and location, filed within
+// IDEM_WINDOW_MS. A re-run after a crash comes within minutes; the same title filed later is a new bug
+// (a regression), never folded into the old row. BUGS_IDEM_WINDOW_MS is honoured only in the self-test.
+const IDEM_WINDOW_MS =
+  process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_IDEM_WINDOW_MS !== undefined
+    ? Number(process.env.BUGS_IDEM_WINDOW_MS)
+    : 60 * 60 * 1000;
+const idemKeyOf = (title, location) =>
+  createHash("sha256")
+    .update([title.trim().replace(/\s+/g, " ").toLowerCase(), location.trim()].join("\n"))
+    .digest("hex");
+
 cmds.file = (args) => {
+  if (registryMode() === "clone" && !inRegistryTxn)
+    return throughRegistry("file", () => cmds.file(args));
   const title = args[0];
   if (!title || title.startsWith("--"))
     fail(
@@ -401,6 +460,12 @@ cmds.file = (args) => {
   // record) is gone with nothing to detect it.
   withCatalogueLock(() => {
     const rows = readCatalogue();
+    // Clone mode: a re-run after a crash between the push and the print finds its own row.
+    const idemKey = registryMode() === "clone" ? idemKeyOf(title, location) : undefined;
+    const age = (r) => Date.now() - Date.parse(r.filedAt); // NaN (no filedAt) never matches
+    const recent = (r) => age(r) >= 0 && age(r) < IDEM_WINDOW_MS; // a future stamp is clock skew
+    const prior = idemKey && rows.find((r) => r.idemKey === idemKey && recent(r));
+    if (prior) return console.log(`filed ${prior.id} — ${title} (already filed)`);
     // Never infer a free id from a gap — reserved is not abandoned. Always
     // max+1, over the UNION of the catalogue's ids AND every ledger shard's:
     // two sessions filing against the same catalogue snapshot used to allocate
@@ -448,6 +513,7 @@ cmds.file = (args) => {
       // `undefined`-valued property on its own, so this needs no separate
       // "if (tags.length)" branch the way `batch` does.
       tags: tags.length ? tags : undefined,
+      idemKey,
     };
     const c = classify(bug);
     bug.sensitive = c.sensitive;
@@ -560,6 +626,46 @@ cmds.file = (args) => {
         `file: ${bug.id} failed after the catalogue write (${e.message}) — catalogue and ledger restored to their pre-write state`,
       );
     }
+  });
+};
+
+const refuseTracked = (cmd) => {
+  console.error(`bugs: ${cmd}: the register is tracked in git here; commit with git`);
+  process.exit(2);
+};
+const registryCommand = (body) => {
+  try {
+    body();
+  } catch (e) {
+    if (!(e instanceof RegistryError)) throw e;
+    console.error(`bugs: ${e.message}`);
+    process.exit(e.exitCode);
+  }
+};
+
+// Clone mode: make hand edits to B###.md in the register clone durable (3-way merge onto origin).
+cmds["commit-record"] = (args) => {
+  if (registryMode() !== "clone") return refuseTracked("commit-record");
+  const ids = args.map((a) => (normId(a) ? resolveId(a) : null));
+  if (!ids.length || ids.includes(null)) fail("usage: commit-record B### [B###…]");
+  registryCommand(() => {
+    const r = commitRecord(ids.map((id) => `${REGISTRY_PREFIX}/bugs/${id}.md`));
+    console.log(`recorded ${ids.join(", ")}${r.pushed ? "" : " (already identical on origin)"}`);
+  });
+};
+
+// Clone mode: print, save, then clear a dirty clone's edits (nothing is pushed).
+cmds["registry-discard"] = () => {
+  if (registryMode() !== "clone") return refuseTracked("registry-discard");
+  registryCommand(() => {
+    const { dir, patch, loose } = discardRegistry();
+    if (!dir)
+      return console.log("registry-discard: the register clone is clean, nothing to discard");
+    if (patch) console.log(patch.trimEnd());
+    for (const p of loose) console.log(`untracked: ${p}`);
+    console.log(
+      `registry-discard: cleared ${loose.length} untracked file(s) and the diff above; saved in ${dir}`,
+    );
   });
 };
 
@@ -1543,12 +1649,27 @@ cmds.expand = () => {
 // It is anchored on REPO_ROOT, never on the register or the cwd: the register may live outside
 // this tree (B1-c) and BUGS_ROOT is only a fixture seam, so neither may decide where machine-local
 // state is written. A fixture that runs `sync` sets BUGS_SYNC_STATE itself.
-const SYNC_STATE = () =>
-  process.env.BUGS_SYNC_STATE || join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
-const FIRST_RUN_WINDOW = 400;
+const SYNC_STATE = syncStatePath;
 
-const git = (cmd) =>
-  execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: scrubbedGitEnv() });
+const git = (cmd, extra = {}) =>
+  execSync(cmd, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: scrubbedGitEnv(),
+    ...extra,
+  });
+// The sync scan only (claimId and resolveCloseSha keep the process cwd). Clone mode scans routeflow's
+// origin/master in REPO_ROOT, capped like every register git call; tracked mode scans HEAD with no
+// timeout. No sync git call ever prompts (GCM_INTERACTIVE: a credential-manager GUI ignores
+// GIT_TERMINAL_PROMPT).
+const syncRef = () => (registryMode() === "clone" ? "refs/remotes/origin/master" : "HEAD");
+const syncGit = (cmd, extra = {}) =>
+  git(cmd, {
+    cwd: syncRepoOverride() || (registryMode() === "clone" ? REPO_ROOT : undefined),
+    env: { ...scrubbedGitEnv(), GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" },
+    ...(registryMode() === "clone" ? { timeout: REGISTRY_GIT_TIMEOUT_MS } : {}),
+    ...extra,
+  });
 
 function readSyncState() {
   const p = SYNC_STATE();
@@ -1576,7 +1697,13 @@ function commitMentions(state, args) {
   const rescan = args.includes("--rescan");
   let head;
   try {
-    head = git("git rev-parse HEAD").trim();
+    if (registryMode() === "clone")
+      try {
+        syncGit("git fetch origin master");
+      } catch (e) {
+        console.error(`sync: fetch failed, scanning the local origin/master — ${firstLine(e)}`);
+      }
+    head = syncGit(`git rev-parse ${syncRef()}`).trim();
   } catch (e) {
     // No git (a tarball, a broken PATH) is not a reason to lose the ledger half
     // of the sync — say so and carry on. Nothing to anchor either.
@@ -1586,7 +1713,7 @@ function commitMentions(state, args) {
   const prev = readSyncState().lastSha;
   // A sha that git no longer knows (rebased away, a different clone) must not
   // abort the scan — fall back to the bounded window.
-  const anchored = prev && !rescan && isCommit(prev) ? prev : null;
+  const anchored = prev && !rescan && isCommit(prev, syncGit) ? prev : null;
   if (!anchored && !rescan) {
     // Nothing is scanned in THIS branch — there is no per-record loop for the
     // anchor to race against, so it is safe (and necessary: a first run must
@@ -1605,11 +1732,13 @@ function commitMentions(state, args) {
         : `first run — anchored at ${head.slice(0, 8)}; commit history is not re-derived (use --rescan to force)`,
     };
   }
-  const spec = anchored ? `${anchored}..HEAD` : `--max-count=${FIRST_RUN_WINDOW} HEAD`;
+  const spec = anchored
+    ? `${anchored}..${syncRef()}`
+    : `--max-count=${FIRST_RUN_WINDOW} ${syncRef()}`;
 
   let log;
   try {
-    log = git(`git log --format=%H%x09%s ${spec}`);
+    log = syncGit(`git log --format=%H%x09%s ${spec}`);
   } catch (e) {
     // The scan itself failed — nothing was derived for this range, so the
     // anchor must not move either, or the range is silently skipped forever.
@@ -1675,9 +1804,9 @@ function parseMentions(log, state) {
 }
 
 const firstLine = (e) => String(e.message ?? e).split("\n")[0];
-const isCommit = (sha) => {
+const isCommit = (sha, run = git) => {
   try {
-    return git(`git cat-file -t ${sha}`).trim() === "commit";
+    return run(`git cat-file -t ${sha}`).trim() === "commit";
   } catch {
     return false;
   }

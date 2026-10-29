@@ -7,6 +7,9 @@
  *     success, give-up, and the lock-wait >= worst-case pin (derived from the same constants);
  *   - the review musts: a hand edit made during the push window survives (retry and give-up), the
  *     lock is scripts/lib/mkdir-lock.mjs, a lock timeout names the lock to remove.
+ *   - the register records (B1-b1c) through the real bugs.mjs in clone mode: idemKey on `file`,
+ *     `commit-record`, `registry-discard` (sync on origin/master lands in B1-b2), and the two
+ *     review SHOULDs on withRegistryWrite (fn throws before writing; empty paths over a dirty tree).
  * The clone, the origin check and RF_REGISTRY_MODE_TEST are pinned in registry-clone.self-test.mjs.
  *
  * Run directly: `node scripts/registry-write.self-test.mjs` (wired into `npm run verify`).
@@ -16,6 +19,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -26,9 +30,11 @@ import { bootStamp } from "./lib/mkdir-lock.mjs";
 import { PFX, append, fixture, git, rowsOf, spawned } from "./lib/registry-fixture.mjs";
 import * as rr from "./lib/registry-root.mjs";
 import * as rw from "./lib/registry-write.mjs";
+import * as rrec from "./lib/registry-records.mjs";
 
 const ME = fileURLToPath(import.meta.url);
 const ROOT = resolve(dirname(ME), "..");
+const BUGS = join(ROOT, "scripts", "campaign", "bugs.mjs");
 // ── worker mode: one writer process on a shared clone (two of them race for the lock) ──
 if (process.argv[2] === "--worker") {
   const [, , , cloneDir, line, mode] = process.argv;
@@ -42,7 +48,11 @@ if (process.argv[2] === "--worker") {
             JSON.stringify({ pid: process.pid, token: "usurper", at: Date.now() }),
           );
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
-        appendFileSync(join(root, "rows.txt"), `${line}\n`);
+        // idempotent, like a real writer (idemKey / dedupe): a retry after a push that landed but
+        // was reported failed must not add the row twice
+        const rows = join(root, "rows.txt");
+        if (!readFileSync(rows, "utf8").split("\n").includes(line))
+          appendFileSync(rows, `${line}\n`);
         return { paths: [`${PFX}/rows.txt`], result: line };
       },
       { cloneDir, lockWaitMs: 60000 },
@@ -56,6 +66,18 @@ if (process.argv[2] === "--worker") {
 
 const fx = fixture("rf-regwrite-");
 const { tmp, bare, check, section, env, showOrigin, clean, other } = fx;
+// The real bugs.mjs in clone mode (RF_REGISTRY_MODE_TEST is honoured only under BUGS_SELF_TEST=1).
+const cloneEnv = (dir, extra = {}) =>
+  env({
+    RF_REGISTRY_DIR: dir,
+    RF_REGISTRY_MODE_TEST: "clone",
+    BUGS_SELF_TEST: "1",
+    BUGS_SYNC_STATE: join(tmp, "s.json"),
+    ...extra,
+  });
+const cli = (args, e, cwd) => spawnSync("node", [BUGS, ...args], { encoding: "utf8", env: e, cwd });
+const file = (dir, title) =>
+  cli(["file", title, "--location", "apps/api/x.ts", "--severity", "low"], cloneEnv(dir));
 
 async function main() {
   fx.world();
@@ -310,6 +332,432 @@ async function main() {
       "lock timeout: exit 1, names the lock to remove, honours lockWaitMs (not the helper's 10s)",
       [err?.exitCode, String(err?.message).includes(lockDir), took < 8000],
       [1, true, true],
+    );
+  });
+  await section("fn that throws or under-reports (SHOULDs)", async () => {
+    const boom = new Error("boom");
+    let err;
+    try {
+      rw.withRegistryWrite(() => {
+        throw boom;
+      }, base);
+    } catch (e) {
+      err = e;
+    }
+    check("fn throws before writing: the original error comes back unchanged", err === boom);
+    err = undefined;
+    try {
+      rw.withRegistryWrite(({ root }) => {
+        appendFileSync(join(root, "rows.txt"), "stray\n");
+        return { paths: [], result: "x" };
+      }, base);
+    } catch (e) {
+      err = e;
+    }
+    check(
+      "empty paths over a dirty tree: exit 2, names the dirty path, the write is kept",
+      [
+        err?.exitCode,
+        /rows\.txt/.test(err?.message),
+        readFileSync(join(A, PFX, "rows.txt"), "utf8").endsWith("stray\n"),
+      ],
+      [2, true, true],
+    );
+    git(A, "checkout", "--", PFX);
+    const idle = rw.withRegistryWrite(() => ({ paths: [], result: "idle" }), base);
+    check(
+      "empty paths over a clean tree: success, nothing pushed",
+      [idle.result, idle.pushed],
+      ["idle", false],
+    );
+  });
+  await section("bugs.mjs file / idemKey (clone mode)", async () => {
+    const rows = () => rowsOf(showOrigin("bugs.jsonl")).length;
+    const f1 = file(A, "Acme widget breaks");
+    const id1 = /filed (B\d+)/.exec(f1.stdout)?.[1];
+    check("file prints the id after the push", [f1.status, !!id1, rows()], [0, true, 1]);
+    check("the row carries an idemKey", /"idemKey":"[0-9a-f]{64}"/.test(showOrigin("bugs.jsonl")));
+    const f2 = file(A, "Acme  widget breaks ");
+    check(
+      "re-run returns the same id, one row",
+      [new RegExp(`${id1}.*already filed`).test(f2.stdout), rows()],
+      [true, 1],
+    );
+    const late = cli(
+      ["file", "Acme widget breaks", "--location", "apps/api/x.ts", "--severity", "low"],
+      cloneEnv(A, { BUGS_IDEM_WINDOW_MS: "0" }),
+    );
+    const id3 = /filed (B\d+)/.exec(late.stdout)?.[1];
+    check(
+      "outside the idem window the same title is a new bug: a fresh id, a second row",
+      [late.status, !!id3 && id3 !== id1, /already filed/.test(late.stdout), rows()],
+      [0, true, false, 2],
+    );
+    check(
+      "a stale clone resolves to the existing id too",
+      new RegExp(id1).test(file(B, "Acme widget breaks").stdout),
+    );
+    const pair = await Promise.all(
+      [A, B].map((d, i) =>
+        spawned(
+          [BUGS, "file", `Concurrent ${i}`, "--location", "x.ts", "--severity", "low"],
+          cloneEnv(d),
+        ),
+      ),
+    );
+    const ids = pair.map((p) => /filed (B\d+)/.exec(p.out)?.[1]);
+    check(
+      "two concurrent files: two distinct ids, both pushed",
+      [pair.map((p) => p.code), new Set(ids).size, rows()],
+      [[0, 0], 2, 4],
+    );
+    // Round 3 MUST 2: a filedAt in the future is clock skew, not a recent duplicate.
+    const sk1 = /filed (B\d+)/.exec(file(A, "Skewed clock bug").stdout)?.[1];
+    other(B, (root) => {
+      const f = join(root, "bugs.jsonl");
+      const future = (l) =>
+        l.includes("Skewed clock bug")
+          ? l.replace(/"filedAt":"[^"]*"/, '"filedAt":"2999-01-01"')
+          : l;
+      writeFileSync(f, readFileSync(f, "utf8").split("\n").map(future).join("\n"));
+    });
+    const skewed = /"filedAt":"2999/.test(showOrigin("bugs.jsonl"));
+    const sk2 = file(A, "Skewed clock bug");
+    const sk2id = /filed (B\d+)/.exec(sk2.stdout)?.[1];
+    check(
+      "a row stamped in the future is not a recent duplicate: a second file makes a new row",
+      [skewed, sk2.status, !!sk1 && !!sk2id && sk2id !== sk1, /already filed/.test(sk2.stdout)],
+      [true, 0, true, false],
+    );
+  });
+  await section("commit-record / registry-discard", async () => {
+    const rec = join(A, PFX, "bugs", "B12.md");
+    git(A, "fetch", "origin", "main");
+    git(A, "reset", "--hard", "origin/main");
+    writeFileSync(rec, readFileSync(rec, "utf8").replace("Summary: one", "Summary: ONE"));
+    other(B, append("bugs/B12.md", "- b\n"));
+    const cr = cli(["commit-record", "B12"], cloneEnv(A));
+    const merged = showOrigin("bugs/B12.md");
+    check(
+      "commit-record keeps my edit AND the rival's History line",
+      [cr.status, /Summary: ONE/.test(merged), /- b/.test(merged)],
+      [0, true, true],
+    );
+    check(
+      "capture folder deleted after the push, clone clean",
+      [existsSync(join(A, ".campaign", "commit-record-B12")), clean(A)],
+      [false, true],
+    );
+    const idle = cli(["commit-record", "B12"], cloneEnv(A));
+    check(
+      "nothing to record: exit 2, names the file",
+      [idle.status, /B12/.test(idle.stderr)],
+      [2, true],
+    );
+
+    writeFileSync(rec, readFileSync(rec, "utf8").replace("l3", "mine"));
+    other(B, (root) =>
+      writeFileSync(
+        join(root, "bugs", "B12.md"),
+        readFileSync(join(root, "bugs", "B12.md"), "utf8").replace("l3", "theirs"),
+      ),
+    );
+    const cf = cli(["commit-record", "B12"], cloneEnv(A));
+    check(
+      "same-line conflict: exit 2, capture kept, clone clean, origin untouched",
+      [
+        cf.status,
+        existsSync(join(A, ".campaign", "commit-record-B12", "ours")),
+        clean(A),
+        /theirs/.test(showOrigin("bugs/B12.md")),
+      ],
+      [2, true, true, true],
+    );
+    check("the conflict message says how to finish or drop it", /delete/.test(cf.stderr), true);
+    const cap = join(A, ".campaign", "commit-record-B12", "ours");
+    const marked = readFileSync(cap, "utf8");
+    const stillMarked = cli(["commit-record", "B12"], cloneEnv(A));
+    check(
+      "the conflict is marked in ours; a re-run with the markers left refuses (exit 2), origin untouched",
+      [
+        /^<<<<<<< /m.test(marked),
+        stillMarked.status,
+        /marker/.test(stillMarked.stderr),
+        /mine/.test(showOrigin("bugs/B12.md")),
+      ],
+      [true, 2, true, false],
+    );
+    writeFileSync(
+      cap,
+      marked.replace(/^<<<<<<< [^\n]*\n[\s\S]*?^>>>>>>> [^\n]*\n/m, "theirs and mine\n"),
+    );
+    const resolved = cli(["commit-record", "B12"], cloneEnv(A));
+    check(
+      "a resolved ours re-run lands it (base is origin's side, so no second conflict)",
+      [
+        resolved.status,
+        /theirs and mine/.test(showOrigin("bugs/B12.md")),
+        existsSync(cap),
+        clean(A),
+      ],
+      [0, true, false, true],
+    );
+
+    writeFileSync(rec, readFileSync(rec, "utf8").replace("Summary: ONE", "Summary: TWO"));
+    appendFileSync(join(A, PFX, "rows.txt"), "leftover\n");
+    writeFileSync(join(A, PFX, "bugs", "B77.md"), "orphan\n");
+    const blocked = cli(["commit-record", "B12"], cloneEnv(A));
+    check(
+      "commit-record bypasses the guard for the named file only; a refusal leaves no capture",
+      [
+        blocked.status,
+        /registry-discard/.test(blocked.stderr),
+        existsSync(join(A, ".campaign", "commit-record-B12")),
+      ],
+      [2, true, false],
+    );
+    const stuck = file(A, "Blocked write");
+    check(
+      "a dirty clone blocks file and names registry-discard",
+      [stuck.status, /registry-discard/.test(stuck.stderr)],
+      [2, true],
+    );
+    const dis = cli(["registry-discard"], cloneEnv(A));
+    const saved = readdirSync(join(A, ".git")).filter((n) => n.startsWith("registry-discard-"));
+    const folder = join(A, ".git", saved[0] ?? "none");
+    check(
+      "registry-discard prints the diff and the orphan, saves them under .git/, then cleans",
+      [
+        dis.status,
+        /leftover/.test(dis.stdout) && /B77\.md/.test(dis.stdout),
+        /leftover/.test(readFileSync(join(folder, "changes.patch"), "utf8")),
+        readFileSync(join(folder, "untracked", PFX, "bugs", "B77.md"), "utf8"),
+        clean(A),
+      ],
+      [0, true, true, "orphan\n", true],
+    );
+    check("the next file succeeds", file(A, "After discard").status, 0);
+
+    const recPath = `${PFX}/bugs/B12.md`;
+    const capDir = join(A, ".campaign", "commit-record-B12");
+    const ours = () => readFileSync(join(capDir, "ours"), "utf8");
+    let j = 0;
+    const record = (hooks, retries = 1) => {
+      try {
+        rrec.commitRecord([recPath], { cloneDir: A, lockWaitMs: 30000, retries, hooks });
+      } catch (err) {
+        return err;
+      }
+    };
+    const edit = (text) =>
+      writeFileSync(rec, readFileSync(rec, "utf8").replace(/Summary: \w+/, `Summary: ${text}`));
+    // MUST 3: the step-0 exemption covers the first guard only; a re-edit in the push window is kept.
+    edit("WINDOW");
+    const mark = "\nre-edited in the push window\n";
+    const w = record(
+      {
+        beforePush: (i) => {
+          other(B, append("rows.txt", `w${j++}\n`));
+          if (i === 0) appendFileSync(rec, mark);
+        },
+      },
+      2,
+    );
+    check(
+      "a re-edit of the recorded file in the push window: exit 2, the re-edit kept, nothing pushed",
+      [
+        w?.exitCode,
+        readFileSync(rec, "utf8").endsWith(mark),
+        /WINDOW/.test(showOrigin("bugs/B12.md")),
+      ],
+      [2, true, false],
+    );
+    git(A, "fetch", "origin", "main");
+    git(A, "reset", "--hard", "origin/main"); // the refused write left its commit unpushed
+    rmSync(capDir, { recursive: true, force: true });
+    // MUST 1: a give-up keeps the edit in the capture and names it; a re-run resumes it.
+    edit("RESUMED");
+    const rival = (root) => {
+      const f = join(root, "bugs", "B12.md");
+      writeFileSync(f, readFileSync(f, "utf8").replace("l4", "l4 rival"));
+    };
+    const gave = record({
+      beforePush: (i) => other(B, i === 0 ? rival : append("rows.txt", `g${j++}\n`)),
+    });
+    check(
+      "every push rejected: the error names the capture, which holds the edit",
+      [!!gave, gave?.message.includes("commit-record-B12"), /RESUMED/.test(ours())],
+      [true, true, true],
+    );
+    edit("OTHER");
+    const clash = cli(["commit-record", "B12"], cloneEnv(A));
+    check(
+      "a different new edit never overwrites a kept capture: exit 2, capture and edit kept",
+      [
+        clash.status,
+        /commit-record-B12/.test(clash.stderr),
+        /RESUMED/.test(ours()),
+        /OTHER/.test(readFileSync(rec, "utf8")),
+      ],
+      [2, true, true, true],
+    );
+    git(A, "checkout", "--", PFX);
+    writeFileSync(rec, ours()); // an open editor saving the same edit again
+    const again = cli(["commit-record", "B12"], cloneEnv(A));
+    const landed = showOrigin("bugs/B12.md");
+    check(
+      "an identical re-save resumes with the ORIGINAL base: my edit lands and the rival's change stays",
+      [again.status, /RESUMED/.test(landed), /l4 rival/.test(landed), existsSync(capDir), clean(A)],
+      [0, true, true, false, true],
+    );
+    // SHOULDs: every path is checked before any capture; allowDirty needs a capture.
+    edit("MULTI");
+    let multi;
+    try {
+      rrec.commitRecord([recPath, `${PFX}/rows.txt`], { cloneDir: A, lockWaitMs: 30000 });
+    } catch (err) {
+      multi = err;
+    }
+    check(
+      "a multi-path record refused on its second path leaves no capture for the first",
+      [multi?.exitCode, /rows\.txt/.test(multi?.message ?? ""), existsSync(capDir)],
+      [2, true, false],
+    );
+    git(A, "checkout", "--", PFX);
+    // Round 3 MUST 1: merge every path in memory first; a later conflict leaves the tree untouched.
+    const rowsPath = `${PFX}/rows.txt`;
+    git(A, "fetch", "origin", "main");
+    git(A, "reset", "--hard", "origin/main");
+    edit("TWO-PATH");
+    appendFileSync(join(A, rowsPath), "conflict mine\n");
+    other(B, append("rows.txt", "conflict theirs\n"));
+    const both = () => {
+      try {
+        rrec.commitRecord([recPath, rowsPath], { cloneDir: A, lockWaitMs: 30000 });
+      } catch (err) {
+        return err;
+      }
+    };
+    const two = both();
+    check(
+      "a conflict on the second path: exit 2, nothing merged into the tree (clean), origin unchanged",
+      [two?.exitCode, clean(A), /TWO-PATH/.test(showOrigin("bugs/B12.md"))],
+      [2, true, false],
+    );
+    const oursRows = join(A, ".campaign", "commit-record-rows.txt", "ours");
+    const markedRows = readFileSync(oursRows, "utf8");
+    const markers = /^<<<<<<< [^\n]*\n[\s\S]*?^>>>>>>> [^\n]*\n/m;
+    writeFileSync(oursRows, markedRows.replace(markers, "conflict resolved\n"));
+    const again2 = both();
+    check(
+      "after resolving the marked path a re-run lands both",
+      [
+        again2,
+        /TWO-PATH/.test(showOrigin("bugs/B12.md")),
+        /conflict resolved/.test(showOrigin("rows.txt")),
+        clean(A),
+      ],
+      [undefined, true, true, true],
+    );
+    let bare;
+    try {
+      rw.withRegistryWrite(() => ({}), { cloneDir: A, allowDirty: [recPath] });
+    } catch (err) {
+      bare = err.message;
+    }
+    check("allowDirty without a capture is refused", /needs a capture/.test(bare ?? ""), true);
+    // Fold 4 MUST: only merge-file statuses 1-127 are conflicts; 255, null (timeout) and -1 are errors
+    // that leave `ours` and `base` untouched. Capture writes base before ours.
+    const oursF = join(capDir, "ours");
+    const baseF = join(capDir, "base");
+    const mergeAs = (status) => ({
+      gitResult: (a) => (a[0] === "merge-file" ? { status, stdout: "", stderr: "" } : undefined),
+    });
+    git(A, "fetch", "origin", "main");
+    git(A, "reset", "--hard", "origin/main");
+    rmSync(capDir, { recursive: true, force: true });
+    const head = git(A, "show", `HEAD:${recPath}`);
+    let edited;
+    for (const [name, status] of [
+      ["255", 255],
+      ["null (timeout kill)", null],
+      ["-1 (spawn error)", -1],
+    ]) {
+      rmSync(capDir, { recursive: true, force: true });
+      git(A, "checkout", "--", PFX);
+      edit("MERGE-ERR");
+      edited = readFileSync(rec, "utf8");
+      const e = record(mergeAs(status));
+      check(
+        `merge-file status ${name}: exit 2, ours and base byte-identical, nothing pushed`,
+        [
+          e?.exitCode,
+          existsSync(oursF) && readFileSync(oursF, "utf8") === edited,
+          existsSync(baseF) && readFileSync(baseF, "utf8").trim() === head.trim(),
+          /MERGE-ERR/.test(showOrigin("bugs/B12.md")),
+        ],
+        [2, true, true, false],
+      );
+    }
+    // a capture folder with ours but no base (a kill between the two writes) is refused on resume
+    const keptOurs = readFileSync(oursF, "utf8");
+    rmSync(baseF);
+    git(A, "checkout", "--", PFX);
+    const noBase = record();
+    check(
+      "a kept capture with ours but no base: refused with exit 2, ours intact, origin unchanged",
+      [
+        noBase?.exitCode,
+        readFileSync(oursF, "utf8") === keptOurs,
+        existsSync(baseF),
+        /MERGE-ERR/.test(showOrigin("bugs/B12.md")),
+      ],
+      [2, true, false, false],
+    );
+    rmSync(capDir, { recursive: true, force: true });
+    // capture order: if the base cannot be read, ours must not be left behind without it
+    edit("ORDER");
+    const showDies = {
+      onGit: (a) => {
+        if (a[0] === "show") throw new Error("killed at show");
+      },
+    };
+    record(showDies);
+    check(
+      "capture order: ours never exists without base",
+      !existsSync(oursF) || existsSync(baseF),
+      true,
+    );
+    rmSync(capDir, { recursive: true, force: true });
+    // SHOULD: a failed or timed-out `git show HEAD:path` at capture refuses, never writes base as ""
+    const noShow = record({
+      gitResult: (a) => (a[0] === "show" ? { status: null, stdout: "", stderr: "" } : undefined),
+    });
+    check(
+      "a failed git show at capture: exit 2, no capture written",
+      [noShow?.exitCode, existsSync(oursF), existsSync(baseF)],
+      [2, false, false],
+    );
+    git(A, "checkout", "--", PFX);
+    rmSync(capDir, { recursive: true, force: true });
+  });
+  await section("tracked mode unchanged", async () => {
+    const reg = join(tmp, "fixture-reg");
+    mkdirSync(join(reg, "status"), { recursive: true });
+    writeFileSync(join(reg, "bugs.jsonl"), "");
+    const tracked = { ...env(), BUGS_ROOT: reg };
+    const t1 = cli(["file", "Tracked one", "--location", "x.ts", "--severity", "low"], tracked);
+    cli(["file", "Tracked one", "--location", "x.ts", "--severity", "low"], tracked);
+    const trows = rowsOf(readFileSync(join(reg, "bugs.jsonl"), "utf8"));
+    check(
+      "tracked file: two rows (no dedupe), no idemKey, no git",
+      [t1.status, trows.length, trows.some((l) => l.includes("idemKey"))],
+      [0, 2, false],
+    );
+    check(
+      "tracked commit-record and registry-discard refuse with exit 2",
+      [cli(["commit-record", "B1"], tracked).status, cli(["registry-discard"], tracked).status],
+      [2, 2],
     );
   });
 }
