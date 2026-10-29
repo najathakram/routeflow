@@ -7,7 +7,7 @@ import type { Prisma } from "@prisma/client";
  * never drift from what the crons actually select (L-167). Read-only: builders return `where` objects only.
  */
 
-/** Days past a subscription's `periodEnd` before `suspendOverdueTenants` asks Stripe whether it was cancelled. */
+/** Days past a subscription's `periodEnd` before `reconcileCanceledSubscriptions` asks Stripe whether it was cancelled. */
 export const PAYMENT_GRACE_DAYS = 3;
 
 /** `Tenant` filter the preview adds on top of a cron's own scan. */
@@ -39,7 +39,7 @@ export const overdueGraceDeadline = (now: Date): Date =>
   new Date(now.getTime() - PAYMENT_GRACE_DAYS * 24 * 60 * 60 * 1000);
 
 /**
- * `billing.suspendOverdueTenants`: an ACTIVE tenant whose Stripe subscription ended its period + grace ago.
+ * `billing.reconcileCanceledSubscriptions`: an ACTIVE tenant whose Stripe subscription ended its period + grace ago.
  * The job still asks Stripe and writes only for `canceled`, so these are candidates, not certainties.
  */
 export const overdueSubscriptionWhere = (

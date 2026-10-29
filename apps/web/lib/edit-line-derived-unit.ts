@@ -1,3 +1,4 @@
+import { derivedPackSplit } from "@routeflow/pricing";
 import type { UnitOption } from "@/lib/unit-options";
 
 /** The order-edit row fields a derived-Piece pick reads and writes (structurally satisfied by `EditItemState`). */
@@ -29,13 +30,14 @@ export function derivedUnitPatch(
       qty: Number(current.unitsPerBox ?? 1),
     };
   }
-  if (!option.derived) return null;
+  const split = derivedPackSplit(option, 1); // the shared derived shape (row 513): the pack size this pick sells against
+  if (!option.derived || !split) return null;
   const packPrice = option.derived.packPrice;
   return {
     unitLabel: undefined,
     derivedBase: option.value,
     startOnDefaultUnit: false,
-    unitsPerBox: option.derived.n,
+    unitsPerBox: split.unitsPerBox,
     boxSplit: true,
     qty: refresh && current.derivedBase === option.value ? current.qty : 1,
     unitPrice: packPrice,

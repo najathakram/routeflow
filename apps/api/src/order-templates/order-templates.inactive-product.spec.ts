@@ -37,6 +37,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: class extends Error {},
 }));
 
+const TARGET_DAY = new Date("2026-10-27T00:00:00.000Z"); // B326: createOrderFromTemplate takes the day it is for
 describe("OrderTemplatesService — deactivated product on a standing order (REG-B1025)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -247,7 +248,7 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     ]);
     const template = await prisma.orderTemplate.findUnique();
 
-    await (service as any).createOrderFromTemplate(template, true, true, { ban: null });
+    await (service as any).createOrderFromTemplate(template, TARGET_DAY, true, true, { ban: null });
 
     expect(orderedProductIds()).toEqual(["p-active"]);
   });
@@ -256,9 +257,15 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     setup([{ id: "p-gone", isActive: false }]);
     const template = await prisma.orderTemplate.findUnique();
 
-    const result = await (service as any).createOrderFromTemplate(template, true, true, {
-      ban: null,
-    });
+    const result = await (service as any).createOrderFromTemplate(
+      template,
+      TARGET_DAY,
+      true,
+      true,
+      {
+        ban: null,
+      },
+    );
 
     expect(result).toBeNull();
     expect(prisma.order.create).not.toHaveBeenCalled();
@@ -333,7 +340,7 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     const template = await prisma.orderTemplate.findUnique();
     const ctx = { ban: null };
 
-    await (service as any).createOrderFromTemplate(template, true, true, ctx);
+    await (service as any).createOrderFromTemplate(template, TARGET_DAY, true, true, ctx);
 
     expect(tpl.isActive).toBe(false);
     expect(tpl.items[0].suspendedReason).toBe("PRODUCT_INACTIVE");
@@ -370,7 +377,7 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     const template = await prisma.orderTemplate.findUnique();
     const ctx: { ban: { count: number; names: string } | null } = { ban: null };
 
-    await (service as any).createOrderFromTemplate(template, true, true, ctx);
+    await (service as any).createOrderFromTemplate(template, TARGET_DAY, true, true, ctx);
 
     expect(tpl.isActive).toBe(false);
     expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
@@ -386,7 +393,7 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     setup([{ id: "p-gone", isActive: false }]);
     const template = await prisma.orderTemplate.findUnique();
 
-    await (service as any).createOrderFromTemplate(template, true, true, { ban: null });
+    await (service as any).createOrderFromTemplate(template, TARGET_DAY, true, true, { ban: null });
 
     const body = notifications.sendToUser.mock.calls[0][1].body;
     expect(body).toMatch(/deactivated/i);
@@ -402,11 +409,11 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     // both the 06:00 cron and a manual Reorder read the template BEFORE either suspended the line
     const stale = await prisma.orderTemplate.findUnique();
 
-    await (service as any).createOrderFromTemplate(stale, true, true, { ban: null });
+    await (service as any).createOrderFromTemplate(stale, TARGET_DAY, true, true, { ban: null });
     notifications.sendToCustomer.mockClear();
     notifications.sendToUser.mockClear();
     prisma.auditLog.create.mockClear();
-    await (service as any).createOrderFromTemplate(stale, true, true, { ban: null });
+    await (service as any).createOrderFromTemplate(stale, TARGET_DAY, true, true, { ban: null });
 
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
     expect(notifications.sendToUser).not.toHaveBeenCalled();

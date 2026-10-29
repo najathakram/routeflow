@@ -457,6 +457,8 @@ function pushFixture(hookText: string, auditSource?: string) {
   // The hook runs the #2865 size ratchet before the SKIP_VERIFY block; the fixture has no apps/api or
   // jest, so a pass-through stub stands in (the gate has its own self-test).
   fs.writeFileSync(path.join(fx.dir, "scripts", "size-ratchet-gate.mjs"), "process.exit(0);\n");
+  // Likewise the dark R4 test-tamper scan (report-only, its own self-test).
+  fs.writeFileSync(path.join(fx.dir, "scripts", "test-tamper-check.mjs"), "process.exit(0);\n");
   const audit = path.join(fx.dir, "scripts", "skip-verify-audit.mjs");
   if (auditSource === undefined) fs.copyFileSync(SCRIPT, audit);
   else fs.writeFileSync(audit, auditSource);

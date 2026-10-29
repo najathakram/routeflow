@@ -125,18 +125,18 @@ export async function overdueInvoiceCount(
 
 /**
  * The overdue sweep's write: flip the tenant's `statuses` invoices to OVERDUE once their due day has
- * ended AND they still owe, in ONE statement. Returns the number of rows flipped. `updatedAt` is stamped
- * here because a raw UPDATE bypasses Prisma's `@updatedAt`.
+ * ended AND they still owe. Returns the number of rows flipped. `updatedAt` is stamped here because a raw
+ * UPDATE bypasses Prisma's `@updatedAt`.
  *
- * RACE, stated exactly. Under READ COMMITTED, when this UPDATE waits on a row lock and the holder
- * commits, Postgres re-checks the WHERE against the NEW version of that Invoice row only; the correlated
- * InvoicePayment subquery keeps the statement's snapshot, so the balance test is NOT re-evaluated. What
- * keeps a just-paid invoice from being flipped today is the STATUS re-check: the payment path takes
- * `lockInvoicesForPayment` (FOR UPDATE) and moves the invoice to PAID or PARTIAL, so the re-check on
- * `status IN (SENT, VIEWED)` fails. That protection ends once P-3 holds an OVERPAID invoice at SENT:
- * an overpayment would then leave the status unchanged and the stale balance could flip it.
- * TODO (tied to P-3): make it lock-first, in one transaction: `SELECT id ... FOR UPDATE` the candidate
- * ids, then `UPDATE ... WHERE id = ANY(ids) AND <balanceDueSql>`, so the balance is read after the lock.
+ * LOCK-FIRST (CM2a). `db` MUST be a transaction client (the caller wraps this in a transaction): the row
+ * locks live only as long as that transaction. Step 1 `SELECT id ... ORDER BY id FOR UPDATE` locks the
+ * candidate invoices (the same predicate as the readers; id order is the house lock order, so it cannot
+ * deadlock with `lockInvoicesForPayment`). Step 2 is a SEPARATE statement, so it takes a fresh snapshot
+ * AFTER every lock is held: `UPDATE ... WHERE id = ANY(ids) AND <balanceDueSql>` reads the balance of an
+ * invoice whose payment path has already committed. A single UPDATE would not: under READ COMMITTED, when
+ * it waits on a row lock Postgres re-checks the WHERE on the new Invoice row only, and the correlated
+ * InvoicePayment subquery keeps the old snapshot, so a just-paid invoice (held at SENT by P-3) could be
+ * flipped on a stale balance. The overdue predicate itself is unchanged (SA-770: a balance is owed).
  */
 export async function markInvoicesOverdue(
   db: RawSqlDb,
@@ -146,10 +146,20 @@ export async function markInvoicesOverdue(
 ): Promise<number> {
   requireTenant(tenantId);
   if (statuses.length === 0) return 0;
+  const locked = (await db.$queryRaw(
+    Prisma.sql`SELECT "i"."id" FROM "Invoice" "i"
+      WHERE ${overdueWhere(tenantId, cutoff, statuses)}
+      ORDER BY "i"."id"
+      FOR UPDATE OF "i"`,
+  )) as { id: string }[];
+  if (!Array.isArray(locked) || locked.length === 0) return 0;
   return db.$executeRaw(
     Prisma.sql`UPDATE "Invoice" AS "i"
       SET "status" = ${InvoiceStatus.OVERDUE}::"InvoiceStatus", "updatedAt" = NOW()
-      WHERE ${overdueWhere(tenantId, cutoff, statuses)}`,
+      WHERE "i"."id" = ANY(${locked.map((r) => r.id)}::text[])
+        AND "i"."tenantId" = ${tenantId}
+        AND "i"."status" IN (${statusIn(statuses)})
+        AND ${balanceDueSql("i")}`,
   );
 }
 

@@ -95,7 +95,7 @@ export class AutoLockAdminService {
     for (const s of overdue) {
       out.push({
         tenantId: s.tenantId,
-        kind: "overdue_suspended",
+        kind: "stripe_cancelled",
         key: s.stripeSubId as string,
         via: "stripe_check_pending",
       });

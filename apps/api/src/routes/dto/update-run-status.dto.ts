@@ -29,11 +29,28 @@ export class UpdateRunStatusDto {
  * dispatching a fresh one. Restricting WHO may un-cancel is
  * `updateRunStatus`'s job (drivers may not); the matrix stays role-agnostic.
  *
+ * SA-842b: IN_PROGRESS → SCHEDULED is refused once any stop of the run has COMPLETED
+ * (`ctx.hasCompletedStop`, read by updateRunStatus only for that edge). A run walked back to
+ * SCHEDULED with a delivered stop looked "recorded nothing" to every status-keyed guard (B209) and
+ * could be deleted with its proof of delivery; cancel it instead. Before any stop completes the edge
+ * stays legal. The matrix is otherwise edge-wise and unchanged.
+ *
  * Same-status writes stay allowed so offline retries remain idempotent.
  * Returns the rejection reason, or null when the transition may proceed.
  */
-export function forbiddenRunTransition(from: RouteRunStatus, to: RouteRunStatus): string | null {
+export function forbiddenRunTransition(
+  from: RouteRunStatus,
+  to: RouteRunStatus,
+  ctx: { hasCompletedStop?: boolean } = {},
+): string | null {
   if (from === to) return null;
+  if (
+    from === RouteRunStatus.IN_PROGRESS &&
+    to === RouteRunStatus.SCHEDULED &&
+    ctx.hasCompletedStop
+  ) {
+    return "This run already has a completed stop — it cannot go back to scheduled. Cancel it instead.";
+  }
   if (from === RouteRunStatus.CANCELLED && to === RouteRunStatus.COMPLETED) {
     return "This run is cancelled — restart it before marking it completed.";
   }

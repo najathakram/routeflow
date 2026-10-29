@@ -29,7 +29,7 @@ export interface StaffBreachRule {
   states: string[];
   /** surface ALL = a legal ban that binds every channel. */
   legal: boolean;
-  /** The admin-entered rule reason (shown only for a malformed rule, whose states cannot be named). */
+  /** The admin-entered rule reason: the text of every warning line (restriction-warning.ts words it, never as a legal claim). */
   reason: string;
 }
 
