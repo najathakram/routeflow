@@ -1,4 +1,6 @@
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { roundMoney, withinStaffOverrideTolerance } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   assertReplayItems,
   type InlineReturnReplayLines,
@@ -45,6 +47,50 @@ export async function prepareInlineReturn(
   if (!svc) throw new ServiceUnavailableException("Inline returns are not available");
   await svc.assertInlineReturnAllowed(user);
   return { svc, lines, role: user.role };
+}
+
+/**
+ * W-863 (SA-945 MUST 6): the SERVER-priced credit this create's return will give, for the B585 credit gate to net (the
+ * credit pays the order down before the tender, so it is not "on account"). A dry-run read only: it writes and reserves
+ * nothing. 0 when there is no return, for a DRIVER (an over-cap return is HELD and issues no credit), and on ANY refusal:
+ * the same preflight runs again in `reserveInlineReturnNumber` and throws there, so the gate never loosens on a guess.
+ */
+export async function previewInlineReturnCredit(
+  p: PreparedInlineReturn | null,
+  customerId: string,
+  user: JwtPayload | undefined,
+): Promise<number> {
+  if (!p || p.role === "DRIVER") return 0;
+  try {
+    const total = await p.svc.preflightNewOrderReturn(p.lines, customerId, user as JwtPayload);
+    return Number.isFinite(total) && total > 0 ? total : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * W-863 (SA-945 MUST 6, G5): the credit gate netted a PRE-transaction preview. Inside the transaction, after the capture,
+ * the credit actually issued must still cover it (both capped at the sale total, ½¢ tolerance): a concurrent return of
+ * the same sold line between the preview and the capture would otherwise loosen the limit. 409 and the transaction rolls
+ * back: no order, no Return, no credit note. No preview (0) = nothing was netted = nothing to hold it to.
+ */
+export function assertIssuedCreditCoversPreview(
+  minted: { amount?: unknown } | null,
+  previewed: number,
+  saleTotal: number,
+): void {
+  if (!(previewed > 0)) return;
+  const want = roundMoney(Math.min(previewed, saleTotal));
+  const got = roundMoney(Math.min(Number(minted?.amount ?? 0), saleTotal));
+  if (got >= want || withinStaffOverrideTolerance(got, want)) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.RETURN_CREDIT_CHANGED,
+    message:
+      "The return's credit changed while the sale was being rung. Nothing was saved: check the return and try again.",
+    previewed: want,
+    issued: got,
+  });
 }
 
 /**

@@ -21,10 +21,9 @@ step 4; writes only in steps 5-6.
    "knob candidate" or "candidate knob" (case-insensitive) **verbatim** — unquotable lines don't count.
    Group quotes by mechanism.
 
-4. **Judgment**, over steps 2-3's gathered text ONLY — no other reads. Session is Fable ⇒ rule
-   inline, prefixed "Fable ruling:". Otherwise hand the gathered text (≤10 KB, zero file access) to one
-   `agent({model:'claude-fable-5-1', effort:'high'})` — never Opus; a declined Fable retries once on
-   Opus, logged as a fallback.
+4. **Judgment**, over steps 2-3's gathered text ONLY — no other reads. Session is Opus ⇒ rule
+   inline, prefixed "Opus ruling:". Otherwise hand the gathered text (≤10 KB, zero file access) to one
+   `agent({model:'opus', effort:'high'})`.
 
 5. **Write** `.claude/pipeline/retro-<date>.md`: each evaluable ledger rule ⇒ the CFG flag + the
    summary line justifying it, marked `_proposed_` (never edit CFG/skill files yourself);
