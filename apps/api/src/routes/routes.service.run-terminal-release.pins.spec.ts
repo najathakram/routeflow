@@ -69,6 +69,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
+    loadUnitCatalog: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -82,6 +83,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
+      loadUnitCatalog: jest.fn().mockResolvedValue(null), // SA-967
     };
 
     gateway = {
@@ -187,6 +189,7 @@ describe("RoutesService — F11 run cancel/skip pins (no REG- token; excluded fr
       expect.any(Array),
       50,
       "CASH",
+      null, // SA-967: the catalog loaded before the tx (null in this fixture)
       expect.objectContaining({ runId: "run-1", stopId: "stop-1" }),
     );
   });

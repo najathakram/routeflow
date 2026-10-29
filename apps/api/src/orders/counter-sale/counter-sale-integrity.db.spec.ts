@@ -51,6 +51,8 @@ import { SellingRestrictionsService } from "../../selling-restrictions/selling-r
 import { EstimatesService } from "../../estimates/estimates.service";
 import { NumberingService } from "../../import/numbering.service";
 import { entitlementAuthorityFromEntitlements } from "../../testing/entitlement-authority-provider";
+import { OPEN_INVOICE_STATUSES } from "../../invoices/invoice-status-sets";
+import { markToCollect, toCollectState } from "../../invoices/to-collect";
 import { OrdersService } from "../orders.service";
 import type { AuditService } from "../../audit/audit.service";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
@@ -870,6 +872,127 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const own = await ring(A, k, { items: [{ productId: A.cola, qty: 1 }] });
       expect(own.replayed).toBeFalsy();
       expect(own.orderId).not.toBe(bSale.orderId);
+    });
+  });
+
+  // ── (h) SA-1026 Part A: "To collect" (a named customer, a check not received yet) ──────────────────────────────────
+  describe("(h) SA-1026 To collect: ON_ACCOUNT + expectedMethod CHECK", () => {
+    const expectCheck = { method: "ON_ACCOUNT", expectedMethod: "CHECK" } as unknown as Pay;
+    const invoiceOf = async (s: Shop, k: string) => {
+      const order = await raw.order.findFirstOrThrow({
+        where: { tenantId: s.tenantId, idempotencyKey: k },
+        select: { id: true },
+      });
+      return raw.invoice.findFirstOrThrow({
+        where: { tenantId: s.tenantId, orderId: order.id },
+        select: { id: true, status: true, expectedPaymentMethod: true },
+      });
+    };
+    const pay = (s: Shop, id: string, amount: number, reference: string) =>
+      tenantCtx.run(s.tenantId, () =>
+        invoices.recordPayment(id, { amount, method: "CHECK", reference } as never, {} as never),
+      );
+
+    it("A-G1 / A-S1: no payment row, the invoice is marked CHECK and OPEN (not DRAFT), the response reads To collect", async () => {
+      const k = key();
+      const res = await ring(A, k, {
+        items: [{ productId: A.cola, qty: 1 }],
+        payment: expectCheck,
+      });
+      const f = await footprint(A, k);
+      expect(f.payments).toHaveLength(0);
+      const inv = await invoiceOf(A, k);
+      expect(OPEN_INVOICE_STATUSES as readonly string[]).toContain(inv.status); // A-S1: not DRAFT
+      expect(inv.expectedPaymentMethod).toBe("CHECK");
+      expect(res.paymentRecorded).toBe(true);
+      expect(res.balanceDue).toBe(10.83);
+      expect((res as { toCollect?: string }).toCollect).toBe("TO_COLLECT");
+    });
+
+    it("an ordinary On account sale stays unmarked and reads NONE (today's behaviour)", async () => {
+      const k = key();
+      const res = await ring(A, k, {
+        items: [{ productId: A.cola, qty: 1 }],
+        payment: { method: "ON_ACCOUNT" } as Pay,
+      });
+      expect((await invoiceOf(A, k)).expectedPaymentMethod).toBeNull();
+      expect((res as { toCollect?: string }).toCollect).toBe("NONE");
+    });
+
+    it("A-G4: a same-key replay writes nothing new and the first intent stays, with or without the field", async () => {
+      const k = key();
+      await ring(A, k, { items: [{ productId: A.cola, qty: 1 }], payment: expectCheck });
+      const again = await ring(A, k, {
+        items: [{ productId: A.cola, qty: 1 }],
+        payment: { method: "ON_ACCOUNT" } as Pay,
+      });
+      expect(again.replayed).toBe(true);
+      const f = await footprint(A, k);
+      expect(f.invoices).toHaveLength(1);
+      expect(f.payments).toHaveLength(0);
+      expect((await invoiceOf(A, k)).expectedPaymentMethod).toBe("CHECK");
+      expect((again as { toCollect?: string }).toCollect).toBe("TO_COLLECT");
+    });
+
+    it("A-G5: a part payment keeps To collect (PARTIAL); the full payment clears it (PAID); a void clears it", async () => {
+      const k = key();
+      await ring(A, k, { items: [{ productId: A.cola, qty: 1 }], payment: expectCheck });
+      const inv = await invoiceOf(A, k);
+      await pay(A, inv.id, 5, `chk-${RUN}-1`);
+      const part = await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } });
+      expect(part.status).toBe("PARTIAL");
+      expect(toCollectState(part)).toBe("TO_COLLECT");
+      await pay(A, inv.id, 5.83, `chk-${RUN}-2`);
+      const paid = await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } });
+      expect(paid.status).toBe("PAID");
+      expect(toCollectState(paid)).toBe("NONE");
+
+      const k2 = key();
+      await ring(A, k2, { items: [{ productId: A.cola, qty: 1 }], payment: expectCheck });
+      const inv2 = await invoiceOf(A, k2);
+      await tenantCtx.run(A.tenantId, () => invoices.voidInvoice(inv2.id));
+      const voided = await raw.invoice.findUniqueOrThrow({ where: { id: inv2.id } });
+      expect(voided.status).toBe("VOID");
+      expect(toCollectState(voided)).toBe("NONE");
+    });
+
+    it("the invoice list filter toCollect=true lists exactly the To collect invoices; rows and the detail carry the state", async () => {
+      const k1 = key();
+      const k2 = key();
+      await ring(A, k1, { items: [{ productId: A.cola, qty: 1 }], payment: expectCheck });
+      await ring(A, k2, {
+        items: [{ productId: A.cola, qty: 1 }],
+        payment: { method: "ON_ACCOUNT" } as Pay,
+      });
+      const marked = await invoiceOf(A, k1);
+      const plain = await invoiceOf(A, k2);
+      const list: any = await tenantCtx.run(A.tenantId, () =>
+        invoices.findAll({ toCollect: true, limit: 100 } as never, staff(A)),
+      );
+      const ids = list.data.map((r: any) => r.id);
+      expect(ids).toContain(marked.id);
+      expect(ids).not.toContain(plain.id);
+      expect(list.data.every((r: any) => r.toCollect === "TO_COLLECT")).toBe(true);
+      const all: any = await tenantCtx.run(A.tenantId, () =>
+        invoices.findAll({ limit: 100 } as never, staff(A)),
+      );
+      const byId = Object.fromEntries(all.data.map((r: any) => [r.id, r.toCollect]));
+      expect(byId[marked.id]).toBe("TO_COLLECT");
+      expect(byId[plain.id]).toBe("NONE");
+      const detail: any = await tenantCtx.run(A.tenantId, () =>
+        invoices.findOne(marked.id, staff(A)),
+      );
+      expect(detail.toCollect).toBe("TO_COLLECT");
+    });
+
+    it("markToCollect is tenant-scoped: another tenant's id marks nothing", async () => {
+      const k = key();
+      await ring(A, k, { items: [{ productId: A.cola, qty: 1 }] });
+      const inv = await invoiceOf(A, k);
+      expect(
+        await markToCollect(raw, { tenantId: B.tenantId, invoiceIds: [inv.id], method: "CHECK" }),
+      ).toBe(0);
+      expect((await invoiceOf(A, k)).expectedPaymentMethod).toBeNull();
     });
   });
 });
