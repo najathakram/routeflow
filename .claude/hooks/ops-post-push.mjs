@@ -535,7 +535,31 @@ export function confirmMerge(job, deps = { view: ghView, append: null, record: n
   const args = ["event", "pr", "--number", String(m.number), "--action", action];
   if (branch) args.push("--branch", branch);
   deps.record?.([...args, "--quiet"]);
+  // R1-b: a confirmed merge gets its landing row (route, review rounds, rework, cost) while the facts are fresh.
+  if (!ready) {
+    try {
+      deps.land?.(m.number);
+    } catch {
+      // best effort: `landing-telemetry.mjs --since` back-fills a missed row
+    }
+  }
   return { number: m.number, branch };
+}
+
+function spawnLanding(number, env) {
+  try {
+    const script = join(ROOT, "scripts", "landing-telemetry.mjs");
+    const child = spawn(process.execPath, [script, "--pr", String(number)], {
+      cwd: ROOT,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env,
+    });
+    child.unref();
+  } catch {
+    // best effort
+  }
 }
 
 function spawnRecorder(args, env) {
@@ -580,6 +604,7 @@ async function runConfirm(raw) {
     owns: (j) => ownsPending(j.file, j.ts),
     append: (file, entry) => appendAction(file, entry),
     record: (args) => spawnRecorder(args, env),
+    land: (number) => spawnLanding(number, env),
   });
 }
 

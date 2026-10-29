@@ -404,7 +404,8 @@ function cacheHitRatio(b) {
 // call's usage is repeated on every streamed content-block line sharing the
 // same message.id (verified: 112 usage-bearing lines / 54 unique ids in one
 // real session transcript), so counting every line would inflate sums ~2x.
-export function* readUsageRecords(filePath, warnings) {
+// `filter(obj)` (optional) keeps only matching transcript lines, e.g. one git branch (landing-telemetry, R1-b).
+export function* readUsageRecords(filePath, warnings, filter = null) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -423,6 +424,7 @@ export function* readUsageRecords(filePath, warnings) {
       warnings.push(`${path.basename(filePath)}:${idx + 1}: skipped malformed JSON line`);
       continue;
     }
+    if (filter && !filter(obj)) continue;
     const usage = obj?.message?.usage ?? obj?.usage;
     const model = obj?.message?.model ?? obj?.model;
     if (!usage || !model) continue;
