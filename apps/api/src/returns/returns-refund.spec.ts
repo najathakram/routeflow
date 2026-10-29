@@ -11,8 +11,8 @@
  *
  * F08 (2026-09-06, REG-B53/B68/B69/B75): the refund basis moves from the ORDER LINE to
  * what was actually BILLED — the order's non-VOID/non-WRITTEN_OFF ("creditable")
- * invoice(s). A single creditable invoice sources the credit; 2+ mint against the LATEST
- * one, capped by a headroom check; none creditable (but invoices exist) refuses; zero
+ * invoice(s). A single creditable invoice sources the credit; 2+ mint against the invoice the fill touched last (SA-1051; it was the LATEST)
+ * invoice, capped by a headroom check; none creditable (but invoices exist) refuses; zero
  * invoices at all keeps the legacy order-line fallback. Refund qty is capped at the
  * BILLED qty (`min(returned, billed)`); narrowing it further by what was already
  * DELIVERED needs a `ReturnItem.deliveredQty` column and is filed separately. B68: a failed
