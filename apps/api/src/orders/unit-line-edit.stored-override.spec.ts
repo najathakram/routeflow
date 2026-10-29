@@ -64,6 +64,7 @@ function makeCtx(held: Array<Record<string, unknown>> = [storedOverride]) {
     overriddenBy: "u-now",
     held: new Map(held.map((h) => [h.id as string, h])),
     categoryMap: new Map(),
+    priceEditAllowed: true,
   };
   return ctx as unknown as UnitWriteContext & typeof ctx;
 }

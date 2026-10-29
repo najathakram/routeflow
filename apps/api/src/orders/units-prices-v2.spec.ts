@@ -371,6 +371,7 @@ describe("buildUnitLine: a unit in the customer layer wins over the ladder's tie
   });
   const build = (label: string, extra: Record<string, unknown> = {}) =>
     buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: [piece, case288],
       resolved: { unitLabel: label, unitsPerBox: label === "Piece" ? 1 : 288 },

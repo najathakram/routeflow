@@ -333,6 +333,17 @@ describe("refund flow", () => {
     });
   });
 
+  it("the Return recorded screen's links are 44 px rows below lg (return number, credit note, View order)", async () => {
+    await toQuote(quote());
+    fireEvent.click(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk({ ...RECORD, creditNoteId: "cn-1" });
+    await screen.findByText(/return recorded/i);
+    for (const name of [/^#R-1$/, "View store credit", "View order"]) {
+      expect(screen.getByRole("link", { name })).toHaveClass("max-lg:min-h-11");
+    }
+  });
+
   it("hidden block: capture request carries no resolution field (today's payload)", async () => {
     const { onRecorded } = await toQuote(quote({ canRefund: false }));
     fireEvent.click(confirmBtn(/^take back items and give \$[\d.]+ store credit$/i));
@@ -986,6 +997,36 @@ describe("refund flow", () => {
   });
 });
 
+describe("RecordInlineReturnDialog — phone tap targets on the money path (W-890)", () => {
+  it("after a failed refund, 'Give store credit instead' and 'Retry refund' are 44 px boxes below lg", async () => {
+    refundReturn.mockRejectedValue(apiErr(500));
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await findLine("Return recorded. Refund didn't go through. Try again.");
+    expect(screen.getByRole("button", { name: "Give store credit instead" })).toHaveClass(
+      "max-lg:min-h-11",
+    );
+    expect(screen.getByRole("button", { name: "Retry refund" })).toHaveClass("max-lg:min-h-11");
+  });
+
+  it("on the refusal screen, 'Back' is a 44 px box below lg", async () => {
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    act(() => lastCall(captureMutate)[1].onError(apiErr(500)));
+    expect(await screen.findByRole("button", { name: /^back$/i })).toHaveClass("max-lg:min-h-11");
+  });
+
+  it("the Store credit and Refund choices are 44 px rows below lg", async () => {
+    await refundFlow();
+    for (const name of ["Store credit", /^Refund /]) {
+      expect(screen.getByRole("radio", { name }).closest("label")).toHaveClass("max-lg:min-h-11");
+    }
+  });
+});
+
 describe("W-712 credit words per host (SA-929)", () => {
   it("Returns page / order detail: neutral store-credit line, no 'next order' next to the apply-to choice", async () => {
     await toQuote(quote());
@@ -1238,7 +1279,7 @@ describe("mm-ux retake: error states say one thing, once", () => {
     expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
   });
 
-  it("at 390 the confirm, Retry, Close and Back are 44 px (min-h-11 below sm)", async () => {
+  it("at 390 the confirm, Retry, Close and Back are 44 px (max-lg:min-h-11, below lg)", async () => {
     refundReturn.mockRejectedValueOnce(apiErr(500));
     await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
     expect(confirmBtn(/^take back items and refund/i).className).toMatch(/min-h-11/);
