@@ -23,10 +23,6 @@ const PINNED: Record<string, [number, string]> = {
     1,
     "imported CSV line fallback: no case pack, the file's Item Total wins, plain qty x price only when absent (scan-ok: money-rederive)",
   ],
-  "sales-agents/commission-engine.service.ts": [
-    1,
-    "commission BASE estimate over order items (a reporting figure, never written to a line or an invoice)",
-  ],
   "billing/catchup-plan.ts": [
     1,
     "subscription add-on catch-up: unit price x seat quantity of an add-on SKU (not a product line), cents-rounded",

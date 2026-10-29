@@ -17,6 +17,7 @@ import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { BuyerAdminService } from "./buyer-admin.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * SUPER_ADMIN endpoints for platform-level buyer account management.
@@ -26,6 +27,7 @@ import { BuyerAdminService } from "./buyer-admin.service";
 @ApiBearerAuth()
 @Controller("platform-admin/buyer-accounts")
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 export class BuyerAdminController {
   constructor(private readonly buyerAdminService: BuyerAdminService) {}
 
@@ -97,6 +99,7 @@ export class BuyerAdminController {
 @ApiBearerAuth()
 @Controller("platform-admin/customer-links")
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 export class CustomerLinksAdminController {
   constructor(private readonly buyerAdminService: BuyerAdminService) {}
 

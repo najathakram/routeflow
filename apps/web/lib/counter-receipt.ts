@@ -34,6 +34,8 @@ export interface ReceiptLineInput {
   unitsPerBox?: number;
   boxes?: number;
   pieces?: number;
+  /** SA-1040 B4a: the line's selling unit ("Case"); absent or null on a pack line. A unit line's count is `boxes`, else `qty`. */
+  unitLabel?: string | null;
   /** Row 298: the product's own selling unit ("each", "lb"); printed after the price of a plain line. Absent: no word. */
   unit?: string | null;
   /** POS-3: the cashier's optional per-line note, printed under the line. */
@@ -94,7 +96,8 @@ const METHOD_LABEL: Record<CounterSalePaymentMethod, string> = {
 };
 
 /** "3 × $2.50 each" or "1 box + 3 pcs × $12.00 per box": the ONE text (pricing's `receiptLineDetail`), the same the email prints. */
-const lineDetail = (l: ReceiptLineInput): string => receiptLineDetail(l);
+const lineDetail = (l: ReceiptLineInput): string =>
+  receiptLineDetail({ ...l, unitLabel: l.unitLabel ?? null });
 
 /** GET /orders/:id serialises Prisma Decimals as strings ("3.30"): coerce, and treat anything non-numeric as 0. */
 const num = (v: unknown): number => Number(v ?? 0) || 0;
@@ -265,7 +268,12 @@ export function buildCounterReceipt(input: {
     paymentNotRecorded,
     showPaid: hasTender,
     showBalance: paymentNotRecorded || onAccount || receipt.balanceDue > 0,
-    methodLabel: hasTender && method ? METHOD_LABEL[method] : null,
+    methodLabel:
+      hasTender && method
+        ? method === "CHECK" && clean(receipt.checkReference)
+          ? `${METHOD_LABEL[method]} #${clean(receipt.checkReference)}`
+          : METHOD_LABEL[method]
+        : null,
     tendered,
     tenderedAsEntered,
     change,
@@ -301,6 +309,8 @@ export interface ReprintOrderLike {
     unitsPerBox?: number | null;
     boxes?: number | null;
     pieces?: number | null;
+    /** SA-1040 B4a: the stored selling unit of a unit line (`OrderItem.unitLabel`). */
+    unitLabel?: string | null;
     /** The line note the cashier typed (OrderItem.notes). */
     notes?: string | null;
     status?: string;
@@ -322,6 +332,8 @@ export interface ReprintSaleFacts {
   change?: number | null;
   /** the sale's single stored tax rate in percent (the row's `taxRatePercent`); null/absent: no rate known */
   taxRatePercent?: number | null;
+  /** W-713: the check number of the sale's CHECK tender (the row's `checkReference`); null/absent: "Check" alone */
+  checkReference?: string | null;
   /** the regulated levies the invoices billed, each a named charge (the row's `charges`); absent: none */
   charges?: ReadonlyArray<{ key: string; label: string; amount: number }>;
   /** the row's customer name; null/absent for a walk-in (the row's `isWalkIn`): no customer line prints */
@@ -421,6 +433,7 @@ export function receiptModelFromOrder(input: {
         unitsPerBox: l.unitsPerBox == null ? undefined : num(l.unitsPerBox),
         boxes: l.boxes == null ? undefined : num(l.boxes),
         pieces: l.pieces == null ? undefined : num(l.pieces),
+        unitLabel: l.unitLabel ?? null,
         unit: l.product?.unit ?? null,
       };
       // the SAME rule as the live receipt: the stored list price is struck and the difference is a Discounts row, but only
@@ -472,6 +485,8 @@ export function receiptModelFromOrder(input: {
     ratePercent: sale.taxRatePercent,
   });
   const tendered = sale.cashTendered ?? null;
+  // W-713: the check number the row carries (older servers omit it); it prints only beside a CHECK tender
+  const checkRef = clean(sale.checkReference);
   return {
     header: receiptHeader(profile),
     orderNumber: order.orderNumber,
@@ -495,8 +510,14 @@ export function receiptModelFromOrder(input: {
     // the split path prints pricing's ONE Payment method line (the emailed receipt's too); an older server keeps master's labels
     methodLabel: hasTender
       ? split
-        ? counterMethodLine(tenders)
-        : tenders.map((m) => REPRINT_METHOD_LABEL[m.method]).join(" + ")
+        ? counterMethodLine(tenders, { checkReference: checkRef })
+        : tenders
+            .map((m) =>
+              m.method === "CHECK" && checkRef
+                ? `${REPRINT_METHOD_LABEL[m.method]} #${checkRef}`
+                : REPRINT_METHOD_LABEL[m.method],
+            )
+            .join(" + ")
       : null,
     ...(lines
       ? {

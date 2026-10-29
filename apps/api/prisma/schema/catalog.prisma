@@ -799,6 +799,15 @@ model StockCountSession {
   /// one. Corrections never rewrite history: amending opens a NEW pre-filled
   /// session whose commit writes fresh adjustments referencing both.
   amendsSessionId   String?
+  /// SA-999: how many lines the batched seed (stock-count-seed.ts) will write into this session. NULL = a session
+  /// nothing seeded in batches (a person's own count, and every session from before this column). Set in the SAME
+  /// create that makes the session OPEN. CHECK (>= 0): raw SQL in the migration (Prisma does not model it).
+  seedPlannedLines  Int?
+  /// SA-999: stamped by the ONE helper `seedCompletionStamp` (inside the final seed batch's transaction, or in the
+  /// create of a 0-line seed). NULL beside a planned count = still seeding (a crashed seed stays so, and the commit
+  /// refuses it with 409 STOCK_COUNT_SEEDING). CHECK: set only together with `seedPlannedLines`. Read it through
+  /// `stockCountSeedState` (packages/types/api/stock-count.ts), never by hand.
+  seedCompletedAt   DateTime?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 

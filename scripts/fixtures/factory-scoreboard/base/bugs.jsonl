@@ -1,0 +1,2 @@
+{"id":"B01","title":"SECRET TITLE ZERO","location":"Sign-in · mobile","severity":"low","register":"Open","source":"register-import","filedAt":null,"sensitive":false,"sensitiveFor":[]}
+{"id":"B02","title":"SECRET TITLE ONE","location":"apps/api/src/billing/plan.service.ts","severity":"high","register":"Open","source":"bug-hunt","filedAt":"2026-10-21T10:00:00Z","sensitive":false,"sensitiveFor":[]}

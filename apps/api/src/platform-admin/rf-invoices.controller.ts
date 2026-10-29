@@ -24,6 +24,7 @@ import {
   SendRfInvoicesDto,
 } from "./dto/rf-invoice.dto";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /** 20 sends a minute per IP on both send routes. */
 const SEND_THROTTLE = { default: { limit: 20, ttl: 60_000 } };
@@ -35,6 +36,7 @@ const SEND_THROTTLE = { default: { limit: 20, ttl: 60_000 } };
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class RfInvoicesController {
   constructor(

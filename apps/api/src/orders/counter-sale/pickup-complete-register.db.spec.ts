@@ -2,7 +2,7 @@
  * SA-750r3 (Train 4 meets day close) - a POS-mode (non-counter) PICKUP hand-over counts on a till register, on real Postgres:
  *   - an order with no `registerKey` is STAMPED with the request's register under the shared close lock, before its payment;
  *   - a stamped order is NEVER overwritten: the tender counts toward the stamped register whatever the request says;
- *   - a hand-over whose register has a close in force over the database-clock instant is a 409 COUNTER_SALE_DAY_CLOSED against a
+ *   - a hand-over whose register has a close in force over the database-clock instant is a 409 COUNTER_COMPLETE_DAY_CLOSED (the pre-check: nothing written; W-776) against a
  *     REAL CounterDayClose row, with the order left unstamped and no payment row; another register's tender is unaffected.
  *
  * Collaborators other than Prisma/the advisory lock are stand-ins: `changeStatus` / `send` / `recordPayment` write the same rows
@@ -214,11 +214,11 @@ describeDb("a POS-mode pickup hand-over counts on a register, real Postgres", ()
     expect(await raw.invoicePayment.count({ where: { invoiceId: o.invoiceId } })).toBe(1);
   });
 
-  it("a stamped register with a close in force is 409 COUNTER_SALE_DAY_CLOSED; request keys cannot dodge it", async () => {
+  it("a stamped register with a close in force is 409 COUNTER_COMPLETE_DAY_CLOSED; request keys cannot dodge it", async () => {
     const o = await pickupOrder(CLOSED);
     const err: any = await handOver(o.orderId, OPEN).catch((e) => e);
     expect(err.getStatus?.()).toBe(409);
-    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
     expect(await raw.invoicePayment.count({ where: { invoiceId: o.invoiceId } })).toBe(0);
     expect((await raw.order.findUniqueOrThrow({ where: { id: o.orderId } })).registerKey).toBe(
       CLOSED,
@@ -229,7 +229,7 @@ describeDb("a POS-mode pickup hand-over counts on a register, real Postgres", ()
     const o = await pickupOrder(null);
     const err: any = await handOver(o.orderId, CLOSED).catch((e) => e);
     expect(err.getStatus?.()).toBe(409);
-    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
     expect(await raw.invoicePayment.count({ where: { invoiceId: o.invoiceId } })).toBe(0);
     expect(
       (await raw.order.findUniqueOrThrow({ where: { id: o.orderId } })).registerKey,

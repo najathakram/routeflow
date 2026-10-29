@@ -13,7 +13,12 @@ import {
 } from "@routeflow/pricing";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { decideTierOverride, specialPriceReasonRequired } from "../orders/staff-override";
+import { staffMay } from "../auth/permissions/staff-capabilities";
+import {
+  assertPriceEditAllowed,
+  decideTierOverride,
+  specialPriceReasonRequired,
+} from "../orders/staff-override";
 import { norm } from "../orders/unit-label-norm";
 import { customerPricing } from "../orders/units-prices-v2";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
@@ -51,6 +56,8 @@ export interface LinePriceStamp {
 export interface LineOverrideCtx {
   /** The acting staff user, written as `overriddenBy` on a real override. */
   actorId: string;
+  /** SA-1034: the acting user's price-edit capability (`staffMay(role, "EDIT_LINE_PRICE", deniedGroups)`). */
+  priceEditAllowed: boolean;
   /** The customer's tier for a product: its CustomerPrice tier, else the customer's default tier. */
   tierOf: (productId: string) => number;
   /** The server ladder (ProductUnit rows) of the products a line sells by a unit. */
@@ -120,9 +127,10 @@ export async function loadOverride(
     items,
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   ladders: ReadonlyMap<string, readonly LadderUnit[]>,
-  actorId: string | undefined,
+  actor: { sub?: string; role?: string | null } | undefined,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
 ): Promise<LineOverrideCtx | undefined> {
+  const actorId = actor?.sub;
   if (!actorId) return undefined;
   const db = prisma.forTenant();
   const ids = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
@@ -141,6 +149,8 @@ export async function loadOverride(
   const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
   return {
     actorId,
+    // SA-1034: the operator's denied groups arrive with the permissions rollout.
+    priceEditAllowed: staffMay(actor?.role, "EDIT_LINE_PRICE", []),
     ladders,
     tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
     layerOf: pc.layer,
@@ -198,6 +208,7 @@ export function priceInvoiceLine(args: {
     "overridden" in decision
       ? decision.overridden
       : decision.priceType === "DISCOUNTED" || decision.priceType === "MANUAL";
+  if (overridden) assertPriceEditAllowed(ctx.priceEditAllowed); // SA-1034: pack and unit line alike
   return {
     unitPrice: decision.unitPrice,
     stamp: {
