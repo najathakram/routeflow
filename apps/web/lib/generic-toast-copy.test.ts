@@ -155,6 +155,18 @@ describe("genericToastCopy: codes users rely on", () => {
     ).not.toMatch(/part-way/);
   });
 
+  it("SA-774: the card-first plan refusals show fixed copy, never the server message", () => {
+    for (const code of [
+      API_ERROR_CODES.USE_PLAN_CHANGE,
+      API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING,
+      API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT,
+    ]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+  });
+
   it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
     for (const code of [API_ERROR_CODES.PAYMENT_OVERDUE, API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]) {
       const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
