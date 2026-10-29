@@ -48,11 +48,10 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   OVERPAID_EPSILON,
-  isPaidAtSale,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
 import { deriveInvoiceDetailFields, revisedAtByInvoice } from "./invoice-detail-read";
-import { withComponentViews } from "../orders/component-view";
+import * as du from "./invoice-display-unit"; // SA-827 display units
 import {
   HANDOVER_SOLD_BY_SELECT,
   seesHandOverStamp,
@@ -82,7 +81,7 @@ import { regulatedContentChanged } from "./regulated-content-change";
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { resolveRecipientEmail, sendReminder as sendReminderEmail } from "./invoice-reminder-email";
 import { stampMsrpSnapshots } from "./msrp-snapshots";
-import { configuredTaxRateFraction, effectiveTaxRateFromTotals } from "../common/tax-rate";
+import { configuredTaxRateFraction } from "../common/tax-rate";
 import {
   checkOrderCoverage,
   bumpRevisionIfSaleMoved,
@@ -140,6 +139,7 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import type { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { listRowFlags } from "./invoice-row-flags";
 import {
   applyInvoiceSearchAndDateFilters,
   applyInvoiceStatusFilters,
@@ -236,8 +236,10 @@ import { buildManualInvoiceLines, lineGuardCtx, type LineGuardSite } from "./man
 import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   allocateOrderRegularTax,
+  applyOrderDerivedTaxRate,
   foldCategoryTax,
   loadManualLineContext,
+  orderDerivedTaxRate,
   regularTaxShare,
   zeroExemptCategoryTax,
 } from "./manual-invoice-context";
@@ -793,43 +795,6 @@ export class InvoicesService {
     return created;
   }
 
-  /** RF-4: see foldCategoryTax in manual-invoice-context.ts (shared with estimate conversion, B659). */
-  private foldCategoryTax(
-    itemsData: Array<{ categoryTaxAmount?: number }>,
-    isTaxExempt: boolean,
-  ): number {
-    return foldCategoryTax(itemsData, isTaxExempt);
-  }
-
-  /**
-   * B294: the REGULAR (non-category) tax rate to stamp on order-derived invoice
-   * lines. The order never carries a per-line/category rate for regular tax — it
-   * applies one tenant-wide flat rate (orders.service.getTaxRate(), sourced from
-   * `settings.taxRate`) to its whole subtotal (`order.tax = subtotal * rate`), so
-   * `order.tax / order.subtotal` recovers that same rate exactly (0 for an
-   * exempt customer, mirroring foldCategoryTax's contract). Every order-derived
-   * InvoiceItem.taxRate must carry this value: `applyPriceAdjustment` recomputes
-   * an invoice's regular tax as `Σ li.subtotal * li.taxRate`, and a line built
-   * with `taxRate: 0` silently zeroes the tax on the very next adjustment even
-   * though the invoice was issued with the correct total.
-   */
-  private orderDerivedTaxRate(
-    order: { tax?: unknown; subtotal?: unknown },
-    isTaxExempt: boolean,
-  ): number {
-    return effectiveTaxRateFromTotals(order?.tax, order?.subtotal, isTaxExempt);
-  }
-
-  /** Stamps `orderDerivedTaxRate` onto every built line in place (mirrors foldCategoryTax's shape). */
-  private applyOrderDerivedTaxRate(
-    itemsData: Array<{ taxRate?: number }>,
-    order: { tax?: unknown; subtotal?: unknown },
-    isTaxExempt: boolean,
-  ): void {
-    const rate = this.orderDerivedTaxRate(order, isTaxExempt);
-    for (const it of itemsData) it.taxRate = rate;
-  }
-
   /**
    * BUY_N_GET_M free units for a CLIENT-SUBMITTED invoice line (create + the
    * DRAFT edit, which delete-and-recreates every line). The snapshot travels on
@@ -1174,11 +1139,11 @@ export class InvoicesService {
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute (Σ li.subtotal * li.taxRate) reproduces
       // this group's regular tax instead of the previous hardcoded 0.
-      this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+      applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       // RF-4: Σ the per-line category tax for this group (0 when the customer is
       // tax-exempt — foldCategoryTax also zeroes the per-line snapshots then).
-      const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+      const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
       return {
         g,
         itemsData,
@@ -1474,7 +1439,7 @@ export class InvoicesService {
   private followDeps(): FollowDeps {
     return {
       buildItem: (li, qty, tenantId, o) => this.buildInvoiceItemData(li, qty, tenantId, o),
-      taxRateOf: (order, exempt) => this.orderDerivedTaxRate(order, exempt),
+      taxRateOf: (order, exempt) => orderDerivedTaxRate(order, exempt),
       applyMsrp: (db, customerId, items) => this.applyMsrpSnapshots(db, customerId, items),
       tenantId: this.prisma.getTenantId(),
     };
@@ -1646,9 +1611,9 @@ export class InvoicesService {
     const regularTax = regularTaxShare(order, subtotal, isTaxExempt);
     // B294: stamp the order's effective regular-tax rate onto every line so a
     // later applyPriceAdjustment recompute reproduces `regularTax` instead of 0.
-    this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+    applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
     // RF-4: fold the per-line category tax into the draft's tax (exempt → 0 for both).
-    const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+    const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
     // Order-driven reconcile: the ORDER owns the fee. Subtract fee dollars already
     // carried by OTHER non-void invoices of this order (split/partial siblings) so
@@ -2041,10 +2006,10 @@ export class InvoicesService {
       );
       // B294: stamp the order's effective regular-tax rate onto every line so a
       // later applyPriceAdjustment recompute reproduces this draft's regular tax.
-      this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+      applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       // RF-4: per-draft category tax (0 + zeroed snapshots when the customer is exempt).
-      const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+      const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
       return {
         draft,
         lines,
@@ -2635,6 +2600,8 @@ export class InvoicesService {
             payments: true,
           },
         });
+        // SA-827: no tx on the inline flip: resolve and write on one client (errors swallowed, line reads legacy).
+        await du.freezeDraftIssueUnits(this.prisma, this.prisma, issued, this.entitlements);
         return [issued];
       }
     }
@@ -2730,9 +2697,9 @@ export class InvoicesService {
     const regularTax = regularTaxShare(order, subtotal, isTaxExempt);
     // B294: stamp the order's effective regular-tax rate onto every line so a
     // later applyPriceAdjustment recompute reproduces this partial's regular tax.
-    this.applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
+    applyOrderDerivedTaxRate(itemsData, order, isTaxExempt);
     // RF-4: fold each partial's share of the per-line category tax (exempt → 0 both).
-    const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+    const categoryTax = foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
     // First partial carries the whole remaining order fee; later partials get 0.
     const orderFee = roundMoney(Number((order as any).shippingFee ?? 0));
@@ -2902,7 +2869,7 @@ export class InvoicesService {
     // SA-488 / row 308: the tenant's zone, read ONCE per request: the isOverdue filter and every row's
     // isOverdue flag end the due day in it (one cutoff, so the list and its filter always agree).
     const tz = (await this.resolveTenantInvoiceDefaults()).timezone;
-    applyInvoiceStatusFilters(where, query, tz);
+    applyInvoiceStatusFilters(where, query, tz, user?.role);
     if (user?.role === UserRole.CUSTOMER) {
       const customer = await this.prisma
         .forTenant()
@@ -2990,7 +2957,7 @@ export class InvoicesService {
         isOverdue,
         depositAmount,
         depositOverdue,
-        paidAtSale: isPaidAtSale(inv),
+        ...listRowFlags(inv),
       };
     });
 
@@ -3092,10 +3059,10 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
+      items: await du.itemsWithDisplayUnits(this.prisma.forTenant(), inv, this.entitlements), // #2717 M3 + SA-827
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
-      paidAtSale: isPaidAtSale(inv), // row 401: a counter sale paid at the till shows no due date / terms
+      ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
       pendingMirror: await resolvePendingMirror(this.featureConfig, inv.tenantId, inv, inv.order),
       // F3: the server's default PDF stage (a shipment invoice is FINAL); clients read it, never re-derive.
       pdfVariant: await resolveInvoiceVariant(this.featureConfig, inv.tenantId, inv, inv.order),
@@ -3550,6 +3517,7 @@ export class InvoicesService {
    */
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
+    const units = await du.resolveDraftIssueUnits(this.prisma.forTenant(), id, this.entitlements); // SA-827: resolved off-tx (no catalog read in the snapshot); written below only at DRAFT -> issued
     return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3568,6 +3536,7 @@ export class InvoicesService {
             where: { id },
             data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
+          await du.writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
           const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
@@ -3987,6 +3956,7 @@ export class InvoicesService {
         where: { id },
         data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
       });
+      await du.clearIssueDisplayUnits(tx, id); // SA-827: a DRAFT renders live; a re-issue freezes afresh
       await this.commissionEngine.syncInvoiceCommissionSafe(id, tx);
       return reverted;
     });
@@ -4464,6 +4434,11 @@ export class InvoicesService {
     );
   }
 
+  /** SA-827 / SA-967: the pre-tx half of the delivery freeze; routes loads it once before its tx (see recordDeliveryPaymentInTx). */
+  loadUnitCatalog(stop: { customerId: string | null; orders: { id: string }[] }) {
+    return du.loadStopDisplayUnitCatalog(this.prisma, stop, this.entitlements);
+  }
+
   /**
    * Record a driver-collected payment at stop completion, resolving the target
    * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
@@ -4497,6 +4472,7 @@ export class InvoicesService {
     orderIds: string[],
     amount: number,
     method: string,
+    catalog: du.DisplayUnitCatalog | null, // SA-967: REQUIRED, loaded BEFORE the tx (loadUnitCatalog); null = legacy
     context?: { runId?: string; stopId?: string },
   ): Promise<{
     applied: number;
@@ -4530,6 +4506,7 @@ export class InvoicesService {
         dueDate: true,
         invoiceNumber: true,
         customerId: true,
+        tenantId: true,
       },
     });
     // NOTE: no early return when `invoices` is empty — the loop below is then a
@@ -4603,6 +4580,7 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
+      if (wasDraft) await du.freezeIssueUnitsFromCatalog(tx, inv, catalog); // SA-827
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,

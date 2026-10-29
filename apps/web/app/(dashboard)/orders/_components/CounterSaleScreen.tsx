@@ -31,6 +31,7 @@ import { useCustomers } from "@/lib/api/customers";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useCreateDraft } from "@/lib/api/drafts";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
+import { CounterLiveMatches, useCounterLiveMatches } from "./CounterLiveMatches";
 import {
   COUNTER_SHIP_FAILED_COPY,
   COUNTER_SHIP_WALK_IN_CAPTION,
@@ -71,6 +72,7 @@ import {
   quickTenderOptions,
   readAutoPrint,
   readHeldAttempt,
+  resolveTender,
   validatePayment,
   writeAutoPrint,
   writeHeldAttempt,
@@ -99,6 +101,7 @@ import {
   type LastSaleNote,
 } from "./CounterLastSale";
 import { useCounterLineUndo } from "./useCounterLineUndo";
+import { CounterReturnsMount, useCounterInlineReturn } from "./useCounterInlineReturn";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
@@ -258,6 +261,8 @@ export function CounterSaleScreen() {
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
+  // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
+  const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState("");
   const [receipt, setReceipt] = React.useState<CounterSaleResponse | null>(null);
   // Set only when the receipt came from "Check sale status": the cash the clerk ENTERED on the attempt (the server stores
@@ -483,6 +488,16 @@ export function CounterSaleScreen() {
   const isWalkIn = customer === null;
   // SA-933 S4: the tenant's walk-in customer RECORD is a walk-in to the server too (it holds the sale to the full total).
   const walkInBuyer = isWalkIn || customer?.isWalkIn === true;
+  // SA-1026: the choice belongs to Check with a named customer; any other tender, or no account, drops it
+  const noAccount = !customer || !!customer.isWalkIn;
+  React.useEffect(() => {
+    if (method !== "CHECK" || noAccount) setCheckNotReceived(false);
+  }, [method, noAccount]);
+  // SA-1026 A-R2: ticking drops a number typed before it, so no park, held or refresh snapshot resumes as a Check in hand
+  const onNotReceivedChange = (on: boolean) => {
+    setCheckNotReceived(on);
+    if (on) setReference("");
+  };
   const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
     queryKey: ["settings"],
@@ -519,14 +534,18 @@ export function CounterSaleScreen() {
   const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
   const tenderedNum = Number(tendered) || 0;
+  // W-863: a named customer's inline return nets against the sale; `payTotal` is what the till asks for.
+  const namedCustomer = customer !== null && !customer.isWalkIn;
+  const ret = useCounterInlineReturn(totals.total, namedCustomer, setError);
+  const payTotal = ret.payTotal;
   // the server owns what credit it applies: the same shared statement read the customer panel uses
   const { view: creditView, retryCredit } = useCounterCustomerCredit(
     customer && !customer.isWalkIn ? customer.id : null,
   );
   const partSplit = partPaySplit({
-    method,
+    method: resolveTender(method, checkNotReceived).method,
     isWalkIn: walkInBuyer,
-    total: totals.total,
+    total: payTotal,
     tendered: tenderedNum,
   }); // S4: "Pay $X now · $Y goes on account" while an identified customer's tender is short
 
@@ -772,6 +791,15 @@ export function CounterSaleScreen() {
 
   // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
   const lastScanActivityRef = React.useRef(Number.NEGATIVE_INFINITY);
+  // W-852: the live match list under the scan field; a row (click, or Enter on the highlighted one) lands through scan.pick.
+  const pickLive = (product: any) => {
+    lastScanActivityRef.current = performance.now();
+    if (lineLocked || saleInFlight()) return;
+    setScanText("");
+    scan.pick(product);
+    refocus();
+  };
+  const live = useCounterLiveMatches({ text: scanText, enabled: !lineLocked, onPick: pickLive });
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     lastScanActivityRef.current = performance.now();
@@ -838,6 +866,7 @@ export function CounterSaleScreen() {
 
   function resetSale() {
     dropUndo();
+    ret.discard();
     setLastSale(null);
     setCustomer(null);
     buyerChoice.reset();
@@ -905,6 +934,7 @@ export function CounterSaleScreen() {
       offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
       setOutcomeUnknown(false);
+      if (attempt.dto.inlineReturn) ret.settled();
       return res;
     } catch (err) {
       const finalCopy = finalCounterSaleCopy(err);
@@ -917,6 +947,7 @@ export function CounterSaleScreen() {
         liveCart.endSend();
       } else if (finalCopy) {
         // FINAL (even for an unknown attempt): voided or changed after it was rung. Drop the key, unlock, never retry.
+        if (attempt.dto.inlineReturn) ret.refused(err);
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
@@ -931,6 +962,7 @@ export function CounterSaleScreen() {
         setError(COUNTER_OFFLINE_COPY);
         liveCart.endSend();
       } else if (!attempt.unknown && isDefinitiveCounterSaleRefusal(err)) {
+        if (attempt.dto.inlineReturn) ret.refused(err);
         attemptRef.current = null;
         clearHeldAttempt(heldKey);
         setOutcomeUnknown(false);
@@ -988,11 +1020,15 @@ export function CounterSaleScreen() {
       );
       return null;
     }
+    // W-863: the return is quoted BEFORE Complete (a blocked one says why); the key pair is minted here, once per attempt.
+    const inlineReturn = customer ? ret.prepare(customer.id) : undefined;
+    if (inlineReturn === null) return null;
+    const tender = resolveTender(method, checkNotReceived);
     const partPayProblem = partPayAmountProblem({
-      method,
+      method: tender.method,
       isWalkIn: walkInBuyer,
       tendered,
-      total: totals.total,
+      total: payTotal,
       autoApplyCredit:
         creditView.autoApplyCredit.state === "ready"
           ? creditView.autoApplyCredit.value
@@ -1006,8 +1042,8 @@ export function CounterSaleScreen() {
       return null;
     }
     const problem = validatePayment({
-      method,
-      total: totals.total,
+      method: tender.method,
+      total: payTotal,
       tendered: tenderedNum,
       reference,
       isWalkIn: walkInBuyer,
@@ -1016,12 +1052,13 @@ export function CounterSaleScreen() {
       // B1181: On account is refused for a walk-in, so it can no longer be the checked tender (its radio is disabled): fall
       // back to Cash with a clean amount and reference. The cart and the refusal copy stay.
       if (problem === "WALK_IN_ON_ACCOUNT") {
+        setCheckNotReceived(false);
         setMethod("CASH");
         setTendered("");
         setReference("");
         setCheckDate("");
       }
-      setError(paymentProblemCopy(problem, totals.total));
+      setError(paymentProblemCopy(problem, payTotal));
       if (problem === "TENDER_SHORT") setTenderFix((n) => n + 1);
       return null;
     }
@@ -1030,7 +1067,7 @@ export function CounterSaleScreen() {
     const submitToday = businessToday();
     const submitCheckDate = checkDate || submitToday;
     if (
-      method === "CHECK" &&
+      tender.method === "CHECK" &&
       (zoneStatus !== "ready" || isPostdatedCheck(submitCheckDate, submitToday))
     ) {
       setError(
@@ -1048,16 +1085,18 @@ export function CounterSaleScreen() {
       ...(customer ? { customerId: customer.id } : { walkIn: true }),
       items: lines.map(toSaleItem),
       payment: {
-        method,
+        ...tender,
         ...counterPaymentAmount({
-          method,
+          method: tender.method,
           isWalkIn: walkInBuyer,
-          total: totals.total,
+          total: payTotal,
           tendered: tenderedNum,
         }),
-        ...(reference.trim() ? { reference: reference.trim() } : {}),
-        ...(method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
+        // SA-1026: "Check not received yet" sends no number: a typed one is dropped, never deduped
+        ...(reference.trim() && !tender.expectedMethod ? { reference: reference.trim() } : {}),
+        ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
+      ...(inlineReturn ? { inlineReturn } : {}),
     } as CounterSaleRequest);
     dropUndo(); // the sale is going out: a removed line can no longer come back
     attemptRef.current = {
@@ -1068,7 +1107,7 @@ export function CounterSaleScreen() {
     };
     estimateRef.current = {
       total: totals.total,
-      change: method === "CASH" ? changeDue(totals.total, tenderAmount) : 0,
+      change: tender.method === "CASH" ? changeDue(payTotal, tenderAmount) : 0,
     };
     return send(attemptRef.current);
   };
@@ -1254,6 +1293,7 @@ export function CounterSaleScreen() {
         <CounterCreditOverLimit receipt={receipt} customerName={customer?.businessName} />
         <CounterReceiptActions
           orderId={receipt.orderId}
+          invoiceIds={receipt.invoiceIds?.length ? receipt.invoiceIds : [receipt.invoiceId]}
           customer={customer}
           onNewSale={resetSale}
         />
@@ -1412,6 +1452,7 @@ export function CounterSaleScreen() {
               className="min-h-[44px] w-full text-ellipsis rounded border px-3 py-2 text-base"
               placeholder="Scan or type an item"
               aria-describedby="counter-scan-hint"
+              {...live.nav.inputProps}
               value={scanText}
               disabled={lineLocked}
               onChange={(e) => {
@@ -1426,6 +1467,7 @@ export function CounterSaleScreen() {
                   e.preventDefault();
                   undoRemove();
                 }
+                if (live.nav.onKeyDown(e)) return; // W-852: Arrow keys move the highlight; Enter adds the highlighted row
                 if (e.key === "Enter" && !scanText.trim()) {
                   e.preventDefault(); // an empty Enter is never a scan
                   if (
@@ -1452,6 +1494,8 @@ export function CounterSaleScreen() {
               </span>
             ) : null}
           </form>
+          {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
+          <CounterLiveMatches live={live} onPick={pickLive} />
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
@@ -1587,6 +1631,12 @@ export function CounterSaleScreen() {
               </>
             ) : null}
           </div>
+
+          <CounterReturnsMount
+            customerId={namedCustomer ? customer.id : null}
+            walkIn={buyerChoice.kind === "walk-in"}
+            ret={ret}
+          />
         </div>
 
         <div
@@ -1634,7 +1684,7 @@ export function CounterSaleScreen() {
             {method === "CASH" ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
-                  {quickTenderOptions(totals.total).map((q) => (
+                  {quickTenderOptions(payTotal).map((q) => (
                     <button
                       key={q.label}
                       type="button"
@@ -1685,8 +1735,10 @@ export function CounterSaleScreen() {
                 today={today}
                 zoneStatus={zoneStatus}
                 onRetryZone={zoneRead.retry}
-                walkIn={!customer || !!customer.isWalkIn}
+                walkIn={noAccount}
                 disabled={locked}
+                notReceived={checkNotReceived}
+                onNotReceivedChange={onNotReceivedChange}
                 onPutOnAccount={() => {
                   chooseMethod("ON_ACCOUNT");
                   setError("");
@@ -1887,7 +1939,7 @@ export function CounterSaleScreen() {
                 the cent (a tender in progress, a card sale or a differing figure shows it as before). The figure stays in
                 the DOM, visually hidden, for assistive tech and for the tests that read it. */}
             {method === "CASH" &&
-            roundMoney(totals.total) === roundMoney(amountDue(totals.total, tenderedNum)) ? (
+            roundMoney(totals.total) === roundMoney(amountDue(payTotal, tenderedNum)) ? (
               <span className="sr-only" data-testid="running-total">
                 Total {money(totals.total)}
               </span>
@@ -1905,9 +1957,14 @@ export function CounterSaleScreen() {
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">
-                {changeDue(totals.total, tenderedNum) > 0
-                  ? `Change ${money(changeDue(totals.total, tenderedNum))}`
-                  : `Amount due ${money(amountDue(totals.total, tenderedNum))}`}
+                {changeDue(payTotal, tenderedNum) > 0
+                  ? `Change ${money(changeDue(payTotal, tenderedNum))}`
+                  : `Amount due ${money(amountDue(payTotal, tenderedNum))}`}
+              </p>
+            ) : null}
+            {ret.storeCredit > 0 ? (
+              <p className="text-sm font-semibold text-navy" data-testid="return-store-credit">
+                Store credit {money(ret.storeCredit)}
               </p>
             ) : null}
 
@@ -1918,9 +1975,9 @@ export function CounterSaleScreen() {
               />
             ) : null}
             {partPayEqualsTotal({
-              method,
+              method: resolveTender(method, checkNotReceived).method,
               isWalkIn: walkInBuyer,
-              total: totals.total,
+              total: payTotal,
               tendered: tenderedNum,
             }) ? (
               <p className="text-sm text-muted-foreground" data-testid="counter-part-pay-full">

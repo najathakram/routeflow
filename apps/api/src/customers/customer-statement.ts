@@ -16,6 +16,7 @@ import {
 } from "../invoices/invoice-balance-classify";
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
+import { toCollectSummary } from "../invoices/to-collect";
 
 /**
  * The customer statement builds, moved verbatim out of `CustomersService` (size-ratchet headroom, no
@@ -242,6 +243,7 @@ export async function buildOperatorStatement(
     status: true,
     dueDate: true,
     createdAt: true,
+    expectedPaymentMethod: true, // SA-1026: feeds the staff-only toCollect tile; never returned per row
     payments: { select: { amount: true, status: true } },
   } as const;
   const CREDIT_NOTE_SELECT = {
@@ -491,5 +493,7 @@ export async function buildOperatorStatement(
           ),
         }
       : {}),
+    // SA-1026 (staff only, same flag as the exposure): the buyer's read of this builder never gets the key
+    ...(opts?.includeExposure ? { toCollect: toCollectSummary(openInvoicesWithPaid) } : {}),
   };
 }

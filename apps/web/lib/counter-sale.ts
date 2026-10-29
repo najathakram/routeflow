@@ -18,6 +18,7 @@ import {
   COMPLETE_MODE_ERROR_COPY,
   counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
+  type ToCollectMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
 import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
@@ -245,6 +246,24 @@ export function paymentMethodOptions(
   return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
 }
 
+/** SA-1026 A: the one choice inside the Check tender for a named customer whose check is not in hand. */
+export const CHECK_NOT_RECEIVED_LABEL = "Check not received yet";
+
+/**
+ * What the screen's tender state sends. "Check not received yet" is not a fifth method: it is On account plus one typed
+ * intent (`expectedMethod: "CHECK"`), so the till and the hand-over share ONE mapping, and `validatePayment` judges it as
+ * On account (a walk-in is refused by the same rule, with no check number to enter). The flag belongs to Check only: a stale
+ * flag under any other method never rides along.
+ */
+export function resolveTender(
+  method: CounterSalePaymentMethod,
+  checkNotReceived: boolean,
+): { method: CounterSalePaymentMethod; expectedMethod?: ToCollectMethod } {
+  return method === "CHECK" && checkNotReceived
+    ? { method: "ON_ACCOUNT", expectedMethod: "CHECK" }
+    : { method };
+}
+
 export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
 
 export function validatePayment(input: {
@@ -305,12 +324,26 @@ export function isPostdatedCheck(checkDate: string, today: string): boolean {
   return isCalendarDay(checkDate) && isCalendarDay(today) && checkDate > today;
 }
 
-/** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
+/**
+ * "2*code" / "2x code" / "2 x code": a 1-3 digit quantity, a star or an x, then the code. A star needs no space; an x needs one
+ * after it (or the x is part of the code: "2xCOLA", "12x100"). The code after the prefix has NO spaces (a barcode never does), so a typed name search ("2 x 4 stud", "6 x 330ml can") stays one whole search.
+ * Four digits are not a quantity, so "1000*A" stays one code.
+ */
+const QTY_PREFIX = /^(\d{1,3})\s*(?:\*|[x\u00d7](?=\s))\s*(\S+)$/i;
+
+/**
+ * The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; "2*code" / "2x code" is that quantity AND the code
+ * in one entry (F01); anything else is a code.
+ */
 export function parseScanField(
   raw: string,
-): { kind: "qty"; qty: number } | { kind: "code"; code: string } {
+): { kind: "qty"; qty: number } | { kind: "code"; code: string; qty?: number } {
   const text = raw.trim();
   if (/^\d{1,3}$/.test(text) && Number(text) > 0) return { kind: "qty", qty: Number(text) };
+  const prefixed = QTY_PREFIX.exec(text);
+  if (prefixed && Number(prefixed[1]) > 0) {
+    return { kind: "code", code: prefixed[2].trim(), qty: Number(prefixed[1]) };
+  }
   return { kind: "code", code: text };
 }
 

@@ -4,17 +4,28 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
+import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkGitHooks, hooksDirFor, isCi, scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import {
+  checkGitHooks,
+  ensureGitHooks,
+  hooksDirFor,
+  isCi,
+  scrubbedGitEnv,
+} from "./lib/check-git-hooks.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 let failed = 0;
@@ -57,7 +68,10 @@ try {
   let r = run(a);
   ok(
     "T1 hooksPath -> missing dir FAILS (1)",
-    r.status === 1 && /NOT INSTALLED/.test(r.message) && /npx husky/.test(r.message),
+    r.status === 1 &&
+      /NOT INSTALLED/.test(r.message) &&
+      /ensure-git-hooks.mjs/.test(r.message) &&
+      !/npx husky/.test(r.message),
     JSON.stringify(r),
   );
 
@@ -281,6 +295,293 @@ try {
     }
   }
 
+  // T14 — a new worktree of a repo whose main checkout has hooks: ensureGitHooks copies them in,
+  // never touches git config, leaves a tree that already has hooks alone, and fails when main has none.
+  const ENSURE_CLI = path.join(ROOT, "scripts", "ensure-git-hooks.mjs");
+  const cliEnv = { ...scrubbedGitEnv(), CI: "" };
+  const mainWithHook = repo("t13-main");
+  sh(mainWithHook, "config", "core.hooksPath", ".husky/_");
+  withHook(mainWithHook, ".husky/_");
+  writeFileSync(path.join(mainWithHook, ".husky/_/husky.sh"), "# helper\n");
+  writeFileSync(path.join(mainWithHook, ".husky/_/commit-msg"), "# main commit-msg\n");
+  const linked = path.join(tmp, "t13-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t13", linked);
+  ok("T14a the new tree has no hooks: checkGitHooks FAILS", check(linked).status === 1);
+  const before = sh(linked, "config", "core.hooksPath").trim();
+  let en = ensureGitHooks({ cwd: linked, env: {} });
+  ok(
+    "T14b ensureGitHooks copies and reports it",
+    en.ok === true && en.copied === true,
+    JSON.stringify(en),
+  );
+  ok("T14c checkGitHooks now PASSES in the new tree", check(linked).status === 0);
+  ok(
+    "T14d pre-push and helper files exist in the new tree",
+    existsSync(path.join(linked, ".husky/_/pre-push")) &&
+      existsSync(path.join(linked, ".husky/_/husky.sh")),
+  );
+  ok(
+    "T14e git config core.hooksPath is unchanged",
+    sh(linked, "config", "core.hooksPath").trim() === before &&
+      sh(mainWithHook, "config", "core.hooksPath").trim() === before,
+  );
+  ok(
+    "T14f the copied pre-push is executable (POSIX)",
+    process.platform === "win32" ||
+      (statSync(path.join(linked, ".husky/_/pre-push")).mode & 0o111) !== 0,
+  );
+  const prePush = path.join(linked, ".husky/_/pre-push");
+  mkdirSync(path.dirname(prePush), { recursive: true });
+  writeFileSync(prePush, "#!/bin/sh\n# local edit\nexit 0\n");
+  chmodSync(prePush, 0o755);
+  const stamp = statSync(prePush).mtimeMs;
+  en = ensureGitHooks({ cwd: linked, env: {} });
+  ok(
+    "T14g a tree that already has hooks: copied false, files untouched",
+    en.ok === true &&
+      en.copied === false &&
+      statSync(prePush).mtimeMs === stamp &&
+      /local edit/.test(readFileSync(prePush, "utf8")),
+    JSON.stringify(en),
+  );
+
+  const mainBare = repo("t13-main-nohook");
+  sh(mainBare, "config", "core.hooksPath", ".husky/_");
+  const linkedBare = path.join(tmp, "t13-linked-nohook");
+  sh(mainBare, "worktree", "add", "-q", "-b", "t13b", linkedBare);
+  en = ensureGitHooks({ cwd: linkedBare, env: {} });
+  ok(
+    "T14h main checkout without pre-push: ok false, nothing copied",
+    en.ok === false && en.copied === false && !existsSync(path.join(linkedBare, ".husky/_")),
+    JSON.stringify(en),
+  );
+  const ensureCli = (cwd) =>
+    spawnSync(process.execPath, [ENSURE_CLI], { cwd, env: cliEnv, encoding: "utf8" });
+  ok("T14i the CLI exits 1 when main has no pre-push", ensureCli(linkedBare).status === 1);
+  ok("T14j the CLI exits 0 on a tree that has hooks", ensureCli(linked).status === 0);
+  const linked2 = path.join(tmp, "t13-linked-2");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t13c", linked2);
+  ok(
+    "T14k the CLI copies the hooks into a hookless tree (exit 0)",
+    ensureCli(linked2).status === 0 && check(linked2).status === 0,
+  );
+  const linked3 = path.join(tmp, "t13-linked-3");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t13d", linked3);
+  en = ensureGitHooks({ cwd: linked3, env: { CI: "true" } });
+  ok(
+    "T14l CI on a HOOKLESS tree: ok with a note, nothing copied",
+    en.ok === true && en.copied === false && !existsSync(path.join(linked3, ".husky/_/pre-push")),
+    JSON.stringify(en),
+  );
+  en = ensureGitHooks({ cwd: tmp, env: {} });
+  ok(
+    "T14m a non-checkout: ok with a note",
+    en.ok === true && en.copied === false,
+    JSON.stringify(en),
+  );
+
+  // T14n-q — review folds: non-executable pre-push, custom hooks kept, the .git basename guard.
+  const nonExec = path.join(tmp, "t14n-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14n", nonExec);
+  withHook(nonExec, ".husky/_");
+  const pp = path.join(nonExec, ".husky/_/pre-push");
+  const chmods = [];
+  let mode = 0o644;
+  const fakeFs = {
+    ...nodeFs,
+    statSync: (p) => (p === pp ? { mode } : nodeFs.statSync(p)),
+    chmodSync: (p, m) => (chmods.push(p), (mode = m)),
+  };
+  en = ensureGitHooks({ cwd: nonExec, env: {}, fs: fakeFs, platform: "linux" });
+  ok(
+    "T14n a present but non-executable pre-push (POSIX) is chmod-ed, not reported as already fine",
+    en.ok === true && chmods.length === 1 && chmods[0] === pp && mode === 0o755,
+    JSON.stringify([en, chmods, mode]),
+  );
+  mode = 0o644;
+  chmods.length = 0;
+  en = ensureGitHooks({ cwd: nonExec, env: {}, fs: fakeFs, platform: "win32" });
+  ok("T14n2 on win32 there is no exec bit to fix", en.ok === true && chmods.length === 0);
+  const posixTree = path.join(tmp, "t14o-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14o", posixTree);
+  withHook(posixTree, ".husky/_");
+  if (process.platform !== "win32") chmodSync(path.join(posixTree, ".husky/_/pre-push"), 0o644);
+  ensureGitHooks({ cwd: posixTree, env: {} });
+  ok(
+    "T14o (POSIX only; passes trivially on win32) ensure leaves a runnable pre-push",
+    process.platform === "win32" || check(posixTree).status === 0,
+  );
+  const custom = path.join(tmp, "t14p-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14p", custom);
+  mkdirSync(path.join(custom, ".husky/_"), { recursive: true });
+  writeFileSync(path.join(custom, ".husky/_/commit-msg"), "# custom commit-msg\n");
+  en = ensureGitHooks({ cwd: custom, env: {} });
+  ok(
+    "T14p a custom commit-msg survives ensure; the missing pre-push is copied in",
+    en.ok === true &&
+      /custom commit-msg/.test(readFileSync(path.join(custom, ".husky/_/commit-msg"), "utf8")) &&
+      existsSync(path.join(custom, ".husky/_/pre-push")),
+    JSON.stringify(en),
+  );
+  const bare = path.join(tmp, "t14q-main.git");
+  sh(tmp, "clone", "-q", "--bare", mainWithHook, bare);
+  const bareLinked = path.join(tmp, "t14q-linked");
+  sh(bare, "worktree", "add", "-q", "-b", "t14q", bareLinked);
+  en = ensureGitHooks({ cwd: bareLinked, env: {} });
+  ok(
+    "T14q a common dir that is not named .git (a bare main): refused, nothing copied",
+    en.ok === false && en.copied === false && /cannot locate the main checkout/.test(en.message),
+    JSON.stringify(en),
+  );
+
+  // T14r-s — review folds: chmod only this tree's own hooks dir; helpers refreshed, hooks never overwritten.
+  const shared = repo("t14r-main");
+  withHook(shared, "shared/_");
+  sh(shared, "config", "core.hooksPath", path.join(shared, "shared/_").replaceAll("\\", "/"));
+  const sharedLinked = path.join(tmp, "t14r-linked");
+  sh(shared, "worktree", "add", "-q", "-b", "t14r", sharedLinked);
+  const sharedPp = path.resolve(shared, "shared/_/pre-push");
+  const sharedChmods = [];
+  let sharedMode = 0o644;
+  const sharedFs = {
+    ...nodeFs,
+    statSync: (p) => (path.resolve(p) === sharedPp ? { mode: sharedMode } : nodeFs.statSync(p)),
+    chmodSync: (p, m) => (sharedChmods.push(p), (sharedMode = m)),
+  };
+  en = ensureGitHooks({ cwd: sharedLinked, env: {}, fs: sharedFs, platform: "linux" });
+  ok(
+    "T14r a linked tree on the main checkout's shared hooks dir is refused, nothing chmod-ed",
+    en.ok === false && sharedChmods.length === 0 && /main checkout's own hooks/.test(en.message),
+    JSON.stringify([en, sharedChmods]),
+  );
+  sharedMode = 0o644;
+  sharedChmods.length = 0;
+  en = ensureGitHooks({ cwd: shared, env: {}, fs: sharedFs, platform: "linux" });
+  ok(
+    "T14r2 the main checkout may chmod its own hooks dir",
+    en.ok === true && sharedChmods.length === 1,
+  );
+  writeFileSync(path.join(mainWithHook, ".husky/_/h"), "# fresh h\n");
+  const stale = path.join(tmp, "t14s-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14s", stale);
+  mkdirSync(path.join(stale, ".husky/_"), { recursive: true });
+  writeFileSync(path.join(stale, ".husky/_/h"), "# stale h\n");
+  writeFileSync(path.join(stale, ".husky/_/commit-msg"), "# custom commit-msg\n");
+  en = ensureGitHooks({ cwd: stale, env: {} });
+  const staleRead = (f) => readFileSync(path.join(stale, ".husky/_", f), "utf8");
+  ok(
+    "T14s a stale husky helper is replaced; a custom commit-msg is kept",
+    en.ok === true &&
+      staleRead("h") === "# fresh h\n" &&
+      /custom commit-msg/.test(staleRead("commit-msg")),
+  );
+
+  // T14t-v — review fold 2: ownership compares REAL paths; helpers refresh whenever the dir is ours.
+  // Injected fs (platform linux) so the chmod recorder runs on win32 too; the mode lives per real path.
+  const realFsFor = (ppPath, chmodLog) => {
+    const target = realpathSync(ppPath);
+    let m = 0o644;
+    return {
+      ...nodeFs,
+      statSync: (p) => {
+        try {
+          return realpathSync(p) === target ? { mode: m } : nodeFs.statSync(p);
+        } catch {
+          return nodeFs.statSync(p);
+        }
+      },
+      chmodSync: (p, mm) => (chmodLog.push(p), (m = mm)),
+    };
+  };
+  const linkMain = repo("t14t-main");
+  sh(linkMain, "config", "core.hooksPath", ".husky/_");
+  withHook(linkMain, ".husky/_");
+  const linkTree = path.join(tmp, "t14t-linked");
+  sh(linkMain, "worktree", "add", "-q", "-b", "t14t", linkTree);
+  mkdirSync(path.join(linkTree, ".husky"), { recursive: true });
+  symlinkSync(path.join(linkMain, ".husky/_"), path.join(linkTree, ".husky/_"), "junction");
+  const linkChmods = [];
+  const linkFs = realFsFor(path.join(linkMain, ".husky/_/pre-push"), linkChmods);
+  en = ensureGitHooks({ cwd: linkTree, env: {}, fs: linkFs, platform: "linux" });
+  ok(
+    "T14t a linked tree whose .husky/_ is a link to main's is refused, nothing chmod-ed",
+    en.ok === false && linkChmods.length === 0,
+    JSON.stringify([en, linkChmods]),
+  );
+  const wtMain = repo("t14u-main");
+  sh(wtMain, "config", "extensions.worktreeConfig", "true");
+  const outside = path.join(tmp, "t14u-outside");
+  withHook(outside, "_");
+  const wtTree = path.join(tmp, "t14u-linked");
+  sh(wtMain, "worktree", "add", "-q", "-b", "t14u", wtTree);
+  sh(
+    wtTree,
+    "config",
+    "--worktree",
+    "core.hooksPath",
+    path.join(outside, "_").replaceAll("\\", "/"),
+  );
+  const wtChmods = [];
+  const wtFs = realFsFor(path.join(outside, "_/pre-push"), wtChmods);
+  en = ensureGitHooks({ cwd: wtTree, env: {}, fs: wtFs, platform: "linux" });
+  ok(
+    "T14u a per-worktree hooksPath outside this tree is refused, nothing chmod-ed",
+    en.ok === false && wtChmods.length === 0,
+    JSON.stringify([en, wtChmods]),
+  );
+  const fresh = path.join(tmp, "t14v-linked");
+  sh(mainWithHook, "worktree", "add", "-q", "-b", "t14v", fresh);
+  withHook(fresh, ".husky/_");
+  writeFileSync(path.join(fresh, ".husky/_/h"), "# stale h\n");
+  en = ensureGitHooks({ cwd: fresh, env: {} });
+  ok(
+    "T14v a tree that already has pre-push still gets its stale helper refreshed",
+    en.ok === true && readFileSync(path.join(fresh, ".husky/_/h"), "utf8") === "# fresh h\n",
+    JSON.stringify(en),
+  );
+
+  // T14w — a per-worktree hooksPath at a SHARED dir that has pre-push and a stale helper: the refresh
+  // guard (`owns &&`) must leave it byte-identical. Mutant `!owner.fail &&` overwrote it with main's.
+  const guardMain = repo("t14w-main");
+  sh(guardMain, "config", "core.hooksPath", ".husky/_");
+  sh(guardMain, "config", "extensions.worktreeConfig", "true");
+  withHook(guardMain, ".husky/_");
+  writeFileSync(path.join(guardMain, ".husky/_/h"), "# main fresh h\n");
+  const guardShared = path.join(tmp, "t14w-shared");
+  withHook(tmp, "t14w-shared");
+  writeFileSync(path.join(guardShared, "h"), "# shared stale h\n");
+  const guardTree = path.join(tmp, "t14w-linked");
+  sh(guardMain, "worktree", "add", "-q", "-b", "t14w", guardTree);
+  sh(guardTree, "config", "--worktree", "core.hooksPath", guardShared.replaceAll("\\", "/"));
+  const guardList = () => readdirSync(guardShared).sort().join(",");
+  const guardBefore = guardList();
+  en = ensureGitHooks({ cwd: guardTree, env: {} });
+  ok(
+    "T14w a shared hooks dir with pre-push keeps its own helper byte-identical; nothing written",
+    readFileSync(path.join(guardShared, "h"), "utf8") === "# shared stale h\n" &&
+      guardList() === guardBefore &&
+      !existsSync(path.join(guardShared, "husky.sh")),
+    JSON.stringify(en),
+  );
+
+  // T14x — a dangling link at the hooks dir (target removed): refused with a message, never copied into.
+  const dangMain = repo("t14x-main");
+  sh(dangMain, "config", "core.hooksPath", ".husky/_");
+  withHook(dangMain, ".husky/_");
+  const dangTree = path.join(tmp, "t14x-linked");
+  sh(dangMain, "worktree", "add", "-q", "-b", "t14x", dangTree);
+  const dangTarget = path.join(tmp, "t14x-gone");
+  mkdirSync(dangTarget, { recursive: true });
+  mkdirSync(path.join(dangTree, ".husky"), { recursive: true });
+  symlinkSync(dangTarget, path.join(dangTree, ".husky/_"), "junction");
+  rmSync(dangTarget, { recursive: true, force: true });
+  en = ensureGitHooks({ cwd: dangTree, env: {} });
+  ok(
+    "T14x a dangling link at the hooks dir is refused with a clear message",
+    en.ok === false && en.copied === false && /dangling/.test(en.message),
+    JSON.stringify(en),
+  );
+
   // T12 — structural: the guard is actually wired where it must be.
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
   const FRESHNESS = "node scripts/campaign-check.mjs --freshness-only && ";
@@ -300,8 +601,10 @@ try {
   );
   const dispatch = readFileSync(path.join(ROOT, ".claude/commands/dispatch.md"), "utf8");
   ok(
-    "T12d the worktree-setup instructions run the check",
-    /check-git-hooks\.mjs/.test(dispatch) && /ignore-scripts/.test(dispatch),
+    "T12d the worktree-setup instructions: npm ci --ignore-scripts, then ensure, then the check",
+    /npm ci --ignore-scripts[\s\S]*ensure-git-hooks\.mjs[\s\S]*check-git-hooks\.mjs/.test(
+      dispatch,
+    ) && !/never\s+`--ignore-scripts`/.test(dispatch),
   );
   const settings = JSON.parse(readFileSync(path.join(ROOT, ".claude/settings.json"), "utf8"));
   const sessionStart = JSON.stringify(settings.hooks.SessionStart);

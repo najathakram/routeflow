@@ -137,7 +137,7 @@ const pickAcme = async () => {
 };
 const completeBtn = () => screen.getByRole("button", { name: "Complete & show receipt" });
 const nextBtn = () => screen.getByRole("button", { name: "Complete & next sale" });
-const editBtn = (name: string) => screen.getByRole("button", { name: `Edit price for ${name}` });
+const editBtn = (name: string) => screen.getByRole("button", { name: `Change price for ${name}` });
 const lineOf = (name: string) =>
   screen.getByRole("button", { name: `Remove ${name}` }).closest("li") as HTMLElement;
 
@@ -147,7 +147,7 @@ async function editPrice(
   o: { mode?: "Percent off" | "Amount off"; label: string; value: string; reason?: string },
 ) {
   fireEvent.click(editBtn(name));
-  await screen.findByRole("dialog", { name: `Change price for ${name}` });
+  await screen.findByRole("dialog", { name: `Change the price for ${name}` });
   if (o.mode) fireEvent.click(screen.getByRole("radio", { name: o.mode }));
   fireEvent.change(screen.getByRole("textbox", { name: o.label }), { target: { value: o.value } });
   if (o.reason !== undefined) {
@@ -177,9 +177,9 @@ describe("POS-5 price edit: hidden without the grant (the ONE gate)", () => {
       const { container } = renderTill(<CounterSaleScreen />);
       await scan("COLA");
       await waitFor(() => expect(total()).toHaveTextContent("$10.00"));
-      expect(screen.queryByRole("button", { name: /Edit price/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Change price/ })).toBeNull();
       expect(screen.queryByRole("button", { name: /Reset price/ })).toBeNull();
-      expect(container.innerHTML).not.toMatch(/Edit price|Reset price/);
+      expect(container.innerHTML).not.toMatch(/Change price|Reset price/);
       expect(lineOf("Cola").querySelectorAll("button, input").length).toBe(
         // remove, 2 steppers, the typed qty field, Add note: nothing new
         5,
@@ -287,7 +287,7 @@ describe("POS-5 price edit: the cart and totals", () => {
     }
     await waitFor(() => expect(total()).toHaveTextContent("$30.00")); // 24 + 3 x (24/12)
     fireEvent.click(editBtn("Water"));
-    await screen.findByRole("dialog", { name: "Change price for Water" });
+    await screen.findByRole("dialog", { name: "Change the price for Water" });
     fireEvent.click(screen.getByRole("radio", { name: "Percent off" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Percent off" }), {
       target: { value: "10" },
@@ -306,7 +306,7 @@ describe("POS-5 price edit: the dialog on the screen", () => {
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
     fireEvent.click(editBtn("Cola"));
-    const dialog = await screen.findByRole("dialog", { name: "Change price for Cola" });
+    const dialog = await screen.findByRole("dialog", { name: "Change the price for Cola" });
     await waitFor(() =>
       expect(within(dialog).getByRole("textbox", { name: "Price per item" })).toHaveFocus(),
     );

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { SelectablePaymentMethod } from "../payment-methods";
-import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+import type { CustomerComment, CustomerDocument, InvoiceUnitDefault } from "@routeflow/types";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
 import { sendWithPaymentKey, type PaymentKeyHolder } from "../payment-submit-key";
 export type { CustomerComment, CustomerDocument } from "@routeflow/types";
@@ -48,6 +48,8 @@ export interface Customer {
    * Decimal serializes as a string on the wire.
    */
   defaultDepositPercent?: number | string | null;
+  /** SA-827: how this customer's invoices list mixed boxes; LEGACY = follow product/business setting. */
+  invoiceUnitDefault?: InvoiceUnitDefault;
   createdAt: string;
   updatedAt: string;
 }
@@ -265,6 +267,9 @@ export interface CustomerStatement {
    *  delivered order behind them (standalone, cancelled/draft order, quote) —
    *  shown beside, never inside, `creditExposure`. */
   pendingExposure?: number;
+  /** SA-1026, operator statement only (absent on the buyer portal): how many of the customer's invoices read To collect and
+   *  their summed balance due. The server derives both; never computed here. */
+  toCollect?: { count: number; balance: number };
   /** Lifetime billed total, summed by the DATABASE over the whole history —
    *  never a reduce over the capped `transactions` ledger below. */
   lifetimeInvoiced: number;
