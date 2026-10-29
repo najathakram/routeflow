@@ -1,0 +1,79 @@
+[
+  {
+    "number": 1,
+    "title": "pr 1",
+    "mergedAt": "2026-10-01T10:00:00Z",
+    "files": [
+      {
+        "path": "apps/api/src/a.ts",
+        "additions": 100,
+        "deletions": 20
+      }
+    ]
+  },
+  {
+    "number": 2,
+    "title": "pr 2",
+    "mergedAt": "2026-10-02T10:00:00Z",
+    "files": [
+      {
+        "path": "apps/api/src/b.ts",
+        "additions": 300,
+        "deletions": 80
+      }
+    ]
+  },
+  {
+    "number": 3,
+    "title": "pr 3",
+    "mergedAt": "2026-10-03T10:00:00Z",
+    "files": [
+      {
+        "path": "apps/api/src/c.ts",
+        "additions": 400,
+        "deletions": 50
+      }
+    ]
+  },
+  {
+    "number": 4,
+    "title": "pr 4",
+    "mergedAt": "2026-10-04T10:00:00Z",
+    "files": [
+      {
+        "path": "apps/web/app/d.tsx",
+        "additions": 500,
+        "deletions": 20
+      }
+    ]
+  },
+  {
+    "number": 5,
+    "title": "pr 5",
+    "mergedAt": "2026-10-05T10:00:00Z",
+    "files": [
+      {
+        "path": "apps/api/src/e.ts",
+        "additions": 600,
+        "deletions": 100
+      }
+    ]
+  },
+  {
+    "number": 6,
+    "title": "pr 6",
+    "mergedAt": "2026-10-06T10:00:00Z",
+    "files": [
+      {
+        "path": "apps/api/src/f.ts",
+        "additions": 300,
+        "deletions": 0
+      },
+      {
+        "path": "package-lock.json",
+        "additions": 800,
+        "deletions": 100
+      }
+    ]
+  }
+]

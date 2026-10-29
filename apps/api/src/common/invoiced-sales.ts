@@ -3,6 +3,14 @@ import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { attributeCreditNote, attributeExternalRefund } from "../sales-facts/sales-facts.rules";
 import { localInstantWindow, startOfLocalDay, tenantTodayDay } from "./calendar-date";
+import {
+  externalSplitWhere,
+  groupSplitTax,
+  noteReturnWhere,
+  refundNet,
+  splitTax,
+  sumSplitTax,
+} from "./refund-net-terms";
 
 /**
  * Invoiced-sales sourcing for the analytics / forecasting / COGS readers.
@@ -249,7 +257,7 @@ export async function fetchAccrualNetSales(
 ): Promise<AccrualNetSales> {
   const customerFilter = opts?.customerId ? { customerId: opts.customerId } : {};
 
-  const [invoiceAgg, creditNoteAgg, returnAgg] = await Promise.all([
+  const [invoiceAgg, creditNoteAgg, returnAgg, externalTax, noteReturnTax] = await Promise.all([
     db.invoice.aggregate({
       where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window, ...customerFilter },
       _sum: { total: true, taxAmount: true },
@@ -271,21 +279,30 @@ export async function fetchAccrualNetSales(
       },
       _sum: { amount: true },
     }),
-    // Already pre-tax (`priceReturn` prices from `subtotal` only) — no
-    // exclusion term needed here. `refundMethod` is load-bearing: a
-    // CN-method return is already netted via the CreditNote read above.
+    // `refundMethod` is load-bearing: a CN-method return is already netted via the CreditNote read above. SA-840: a
+    // refund returns the tax too; the two reads after this one take that tax back out (see refund-net-terms.ts).
     db.return.aggregate({
       where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window, ...customerFilter },
       _sum: { refundAmount: true },
     }),
+    sumSplitTax(
+      db,
+      externalSplitWhere({
+        tenantId,
+        ...EXTERNAL_REFUND_FILTER,
+        refundedAt: window,
+        ...customerFilter,
+      }),
+    ),
+    sumSplitTax(db, noteReturnWhere({ tenantId, refundedAt: window, ...customerFilter })),
   ]);
 
   const sumTotal = Number(invoiceAgg._sum.total ?? 0);
   const sumTaxAmount = Number(invoiceAgg._sum.taxAmount ?? 0);
   return netOf({
     gross: sumTotal - sumTaxAmount,
-    creditNotes: Number(creditNoteAgg._sum.amount ?? 0),
-    externalRefunds: Number(returnAgg._sum.refundAmount ?? 0),
+    creditNotes: Number(creditNoteAgg._sum.amount ?? 0) - noteReturnTax,
+    externalRefunds: Number(returnAgg._sum.refundAmount ?? 0) - externalTax,
   });
 }
 
@@ -296,7 +313,7 @@ export async function fetchAccrualNetSalesByCustomer(
   tenantId: string,
   window: AccrualWindow,
 ): Promise<Map<string, AccrualNetSales>> {
-  const [invoiceRows, creditNoteRows, returnRows] = await Promise.all([
+  const [invoiceRows, creditNoteRows, returnRows, externalTax, noteReturnTax] = await Promise.all([
     db.invoice.groupBy({
       by: ["customerId"],
       where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
@@ -312,6 +329,11 @@ export async function fetchAccrualNetSalesByCustomer(
       where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window },
       _sum: { refundAmount: true },
     }),
+    groupSplitTax(
+      db,
+      externalSplitWhere({ tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window }),
+    ),
+    groupSplitTax(db, noteReturnWhere({ tenantId, refundedAt: window })),
   ]);
 
   const gross = new Map<string, number>();
@@ -326,6 +348,11 @@ export async function fetchAccrualNetSalesByCustomer(
   for (const row of returnRows) {
     externalRefunds.set(row.customerId, Number(row._sum.refundAmount ?? 0));
   }
+
+  // SA-840: the tax a refund returned comes off the credit terms (a customer may appear here by that tax alone)
+  for (const [id, tax] of noteReturnTax) creditNotes.set(id, (creditNotes.get(id) ?? 0) - tax);
+  for (const [id, tax] of externalTax)
+    externalRefunds.set(id, (externalRefunds.get(id) ?? 0) - tax);
 
   const customerIds = new Set([...gross.keys(), ...creditNotes.keys(), ...externalRefunds.keys()]);
   const result = new Map<string, AccrualNetSales>();
@@ -395,7 +422,7 @@ async function fetchAccrualNetRows(
     }
     return localInstantWindow(fromDay, window.lte.toISOString().slice(0, 10), opts.timeZone);
   })();
-  const [invoices, creditNotes, returns] = await Promise.all([
+  const [invoices, creditNotes, returns, noteReturns] = await Promise.all([
     db.invoice.findMany({
       where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
       select: {
@@ -434,8 +461,14 @@ async function fetchAccrualNetRows(
         customerId: true,
         refundedAt: true,
         refundAmount: true,
+        creditSubtotal: true,
         ...(tobacco ? { kind: true, items: { select: { productId: true, subtotal: true } } } : {}),
       },
+    }),
+    // SA-840: the frozen tax of the store-credit refunds minted in the window (their notes net it in, gross)
+    db.return.findMany({
+      where: noteReturnWhere({ tenantId, refundedAt: eventWindow }),
+      select: { customerId: true, refundedAt: true, creditTax: true, creditCategoryTax: true },
     }),
   ]);
 
@@ -509,11 +542,11 @@ async function fetchAccrualNetRows(
     const a = at(
       keyOf({ customerId: rt.customerId, day: dayOf(new Date(rt.refundedAt)), kind: "refund" }),
     );
-    let amount = Number(rt.refundAmount ?? 0);
+    let amount = refundNet(rt);
     if (tobacco) {
       const split = attributeExternalRefund({
         kind: rt.kind,
-        refundAmount: Number(rt.refundAmount ?? 0),
+        refundAmount: refundNet(rt),
         items: (rt.items ?? []).map((i: any) => ({
           productId: i.productId,
           subtotal: i.subtotal == null ? null : Number(i.subtotal),
@@ -523,6 +556,13 @@ async function fetchAccrualNetRows(
         if (tobaccoProducts.has(productId)) amount -= share;
     }
     a.externalRefunds += amount;
+  }
+  for (const rt of noteReturns) {
+    const tax = splitTax(rt);
+    if (!tax || !rt.refundedAt) continue;
+    at(
+      keyOf({ customerId: rt.customerId, day: dayOf(new Date(rt.refundedAt)), kind: "credit" }),
+    ).creditNotes -= tax;
   }
 
   const out = new Map<string, AccrualNetBucket>();
