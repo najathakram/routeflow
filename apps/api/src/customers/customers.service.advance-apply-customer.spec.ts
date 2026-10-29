@@ -159,12 +159,12 @@ describe("CustomersService.applyAdvancePaymentToInvoice — customer match (B808
       status,
       dueDate: new Date("2026-10-25T00:00:00Z"),
     });
-    const partialApply = async (now: string, status = "SENT") => {
+    const partialApply = async (now: string, status = "SENT", zone = "America/Chicago") => {
       jest.useFakeTimers({
         now: new Date(now),
         doNotFake: ["setTimeout", "setInterval", "setImmediate", "nextTick", "queueMicrotask"],
       });
-      (tenantTimeZone as jest.Mock).mockResolvedValue("America/Chicago");
+      (tenantTimeZone as jest.Mock).mockResolvedValue(zone);
       prisma.advancePayment.findUnique.mockResolvedValue(advanceOf("cust-a", 30));
       prisma.advancePayment.update.mockResolvedValue({ id: "ap-1", balance: 0 });
       prisma.invoice.findUnique.mockResolvedValue(dueOn25(status));
@@ -175,6 +175,22 @@ describe("CustomersService.applyAdvancePaymentToInvoice — customer match (B808
     it("GUARD (green on master, SA-968): a $30 advance on a $100 invoice due today (22:00 CDT) leaves it PARTIAL: money was paid", async () => {
       expect(await partialApply("2026-10-26T03:00:00Z")).toBe("PARTIAL");
     });
+
+    // W-1004: east of UTC the due day ends EARLIER than UTC midnight. A partial apply is PARTIAL on
+    // both sides of that instant (money paid wins over overdue), so the zone cannot flip it; this pins
+    // that no east-of-UTC zone, half-hour offsets included, turns a part-paid invoice OVERDUE.
+    it.each([
+      ["Asia/Tokyo", "2026-10-25T14:59:59Z", "2026-10-25T15:00:00Z"],
+      ["Asia/Kolkata", "2026-10-25T18:29:59Z", "2026-10-25T18:30:00Z"],
+      ["Pacific/Auckland", "2026-10-25T10:59:59Z", "2026-10-25T11:00:00Z"],
+    ])(
+      "W-1004 %s: a $30 apply stays PARTIAL on both sides of the instant the due day ends",
+      async (zone, before, at) => {
+        expect(await partialApply(before, "SENT", zone)).toBe("PARTIAL");
+        prisma.invoice.update.mockClear();
+        expect(await partialApply(at, "SENT", zone)).toBe("PARTIAL");
+      },
+    );
 
     it("the zone is read BEFORE the transaction opens, never after FOR UPDATE (SA-968)", async () => {
       await partialApply("2026-10-26T03:00:00Z");

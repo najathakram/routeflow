@@ -50,7 +50,7 @@ const en = {
   "menu.signOut": "Sign out",
   "menu.switchToBuyerPortal": "Switch to buyer portal",
   "menu.buyerPortalSignIn": "Buyer portal sign-in",
-  "menu.exitImpersonation": "Exit impersonation",
+  "menu.exitImpersonation": "Exit support session",
   "menu.returnToAdmin": "Return to admin",
 
   // Command palette (unified/overlays.html)
