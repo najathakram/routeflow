@@ -14,8 +14,11 @@ describe("buyer order lines table: Unit Price column hides as one at 390 px (B12
   });
 
   it("hides every Unit Price cell, edit rows included", () => {
-    const cells = [...src.matchAll(/<td([^>]*)>\s*\{(?:item\.unitPrice \? )?fmt\((?:Number\()?(?:item|li)\.unitPrice/g,
-    )];
+    const cells = [
+      ...src.matchAll(
+        /<td([^>]*)>\s*\{(?:item\.unitPrice \? )?fmt\((?:Number\()?(?:item|li)\.unitPrice/g,
+      ),
+    ];
     expect(cells.length).toBeGreaterThanOrEqual(2);
     for (const c of cells) expect(c[1]).toContain("max-sm:hidden");
   });

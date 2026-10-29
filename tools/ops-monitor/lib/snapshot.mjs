@@ -138,7 +138,7 @@ const sameSha = (a, b) =>
  * time is the cut); a deploy of master's head covers everything; otherwise the deploy's own
  * creation time. No successful deploy -> -Infinity (nothing is deployed).
  */
-function deployCut(deploys, mergedRaw, master) {
+export function deployCut(deploys, mergedRaw, master) {
   const ok = (deploys ?? []).filter(
     (d) =>
       String(d.status ?? "").toUpperCase() === "SUCCESS" &&

@@ -61,6 +61,8 @@ const OTHER_READERS: Record<string, string> = {
   "invoices/invoice-balance-sql.ts": "the predicate itself",
   "customers/customers.service.ts":
     "advance-apply status write: OVERDUE only when newPaid == 0 (already balance-aware); the statements moved to customer-statement.ts",
+  "authorizations/licence-validity.ts":
+    "licence expiry day-grace: applies the same date rule to a licence's expiry date, not to an invoice (no balance involved)",
 };
 
 /**
@@ -275,7 +277,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     const src = stripComments(
       fs.readFileSync(path.join(SRC_ROOT, "invoices/invoices.service.ts"), "utf8"),
     );
-    const status = src.indexOf("applyInvoiceStatusFilters(where, query, tz)");
+    const status = src.indexOf("applyInvoiceStatusFilters(where, query, tz, user?.role)");
     const balance = src.indexOf("applyOverdueBalanceFilter(where, query");
     expect(status).toBeGreaterThan(-1);
     expect(balance).toBeGreaterThan(status);

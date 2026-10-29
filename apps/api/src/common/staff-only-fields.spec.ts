@@ -182,8 +182,10 @@ describe("pickCustomerInvoiceFields", () => {
     expect(out.regularTaxAmount).toBe(2.6);
     // the key is opaque (the buyer never receives a category id: trackedCategoryId is off the projected line on purpose)
     expect(out.chargeLines).toEqual([{ key: "0", label: "CRV deposit", amount: 2.8 }]);
-    // the raw category row and the snapshot columns are still not on the buyer's line
-    expect(out.items[0]).not.toHaveProperty("trackedCategory");
+    // SA-827 I5: the buyer's line carries the category NAME only (the "{category} tax" row), never its id or tax type;
+    // the snapshot columns are still not on the buyer's line
+    expect(out.items[0].trackedCategory).toEqual({ name: "CRV" });
+    expect(out.items[1]).not.toHaveProperty("trackedCategory");
     expect(out.items[0]).not.toHaveProperty("categoryTaxType");
     expect(out.items[0]).not.toHaveProperty("staffOnlyCost");
   });
