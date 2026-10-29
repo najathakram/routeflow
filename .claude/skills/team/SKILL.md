@@ -120,7 +120,7 @@ without anyone remembering to ask for it:
 
 | Role                          | Model    | Effort | Why                                                                     |
 | ----------------------------- | -------- | ------ | ----------------------------------------------------------------------- |
-| `@tech-lead`                  | `fable`  | high   | One run per requirement; shapes every downstream token                  |
+| `@tech-lead`                  | `opus`   | high   | One run per requirement; shapes every downstream token                  |
 | `@builder`                    | `sonnet` | medium | Highest volume, longest turns — executes a spec that is already decided |
 | `@qa-engineer`                | `sonnet` | high   | Cheap tier + high effort is the best value point in the team            |
 | `@feature-reviewer`           | `opus`   | high   | Lowest volume, last gate, highest cost of a miss                        |

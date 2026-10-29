@@ -161,10 +161,12 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
+import { CustomerToCollectChip } from "./_components/CustomerToCollectChip";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
 import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-order-action";
 import { CustomerOversellOverride } from "./customer-oversell-override";
+import { CustomerInvoiceUnitControl } from "./CustomerInvoiceUnitControl";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -1100,6 +1102,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </p>
           )}
         </div>
+        <CustomerInvoiceUnitControl
+          customerId={customerId}
+          value={customer?.invoiceUnitDefault}
+          canEdit={isOperator}
+        />
 
         {/* Deposit — auto-applies to every invoice GENERATED for this customer
             (order flows); computeDepositFields derives the amount at read time,
@@ -2328,6 +2335,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 variant="neutral"
                 label={customer.customerType === "individual" ? "Individual" : "Business"}
               />
+              <CustomerToCollectChip customerId={id} summary={statement?.toCollect} />
             </div>
             <p className="mt-1 text-sm text-navy/70">
               {[

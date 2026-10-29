@@ -1,7 +1,7 @@
 # Spec — what <feature / fix name> must do
 
 **Status:** `DRAFT` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
-**Stage:** S2 — Spec (what) · **Author:** Fable 5 · **Date:** <YYYY-MM-DD>
+**Stage:** S2 — Spec (what) · **Author:** Opus · **Date:** <YYYY-MM-DD>
 **Lives at:** `.claude/pipeline/<YYYY-MM-DD>-<slug>/spec.md`
 **Prev:** [discovery.md](./discovery.md) · **Next:** [ux-spec.md](./ux-spec.md) (UI work) then
 [test-plan.md](./test-plan.md)
