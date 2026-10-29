@@ -138,7 +138,8 @@ describe("POS order page: one primary per state", () => {
   it("DELIVERED, paid invoice: Print invoice instead of Record payment", async () => {
     await open("DELIVERED", { invoices: INV("PAID") });
     expect(hasLink(/^Record payment$/)).toBe(false);
-    expect(screen.getByRole("link", { name: /^Print invoice$/ })).toBeInTheDocument();
+    // SA-1026 B: Print invoice is a one-tap print now (it used to link to the invoice page)
+    expect(screen.getByRole("button", { name: /^Print invoice$/ })).toBeInTheDocument();
   });
 });
 
@@ -224,10 +225,7 @@ describe("POS order page: Ready for pickup, VOID invoices, a11y, hand-over label
       ],
     });
     expect(hasLink(/^Record payment$/)).toBe(false);
-    expect(screen.getByRole("link", { name: /^Print invoice$/ })).toHaveAttribute(
-      "href",
-      "/invoices/i1",
-    );
+    expect(screen.getByRole("button", { name: /^Print invoice$/ })).toBeInTheDocument();
   });
 
   it("completed steps carry screen-reader text", async () => {

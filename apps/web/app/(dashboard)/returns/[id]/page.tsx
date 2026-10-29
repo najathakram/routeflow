@@ -270,6 +270,20 @@ function ConfirmActionModal({
 
 const STATUS_ORDER: ReturnStatus[] = ["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED", "REFUNDED"];
 
+// Where each status sits on the timeline: an index into STATUS_ORDER, or "closed" (the banner, no steps).
+// PROCESSED is the same terminal step as REFUNDED (a return settled without a refund). Every status has an
+// entry, so a new server status is a compile error here, not a timeline of pending steps (SA-1049 R2).
+const TIMELINE_STEP: Record<ReturnStatus, number | "closed"> = {
+  PENDING: 0,
+  APPROVED: 1,
+  IN_TRANSIT: 2,
+  RECEIVED: 3,
+  REFUNDED: 4,
+  PROCESSED: 4,
+  REJECTED: "closed",
+  CANCELLED: "closed",
+};
+
 function StatusTimeline({
   currentStatus,
   logs,
@@ -277,7 +291,8 @@ function StatusTimeline({
   currentStatus: ReturnStatus;
   logs?: Return["logs"];
 }) {
-  if (currentStatus === "REJECTED" || currentStatus === "CANCELLED") {
+  const currentIdx = TIMELINE_STEP[currentStatus];
+  if (currentIdx === "closed") {
     return (
       <div className="flex items-center gap-3 rounded-lg bg-red-50 px-4 py-3">
         <XCircle className="h-5 w-5 shrink-0 text-red-500" />
@@ -293,11 +308,11 @@ function StatusTimeline({
     );
   }
 
-  const currentIdx = STATUS_ORDER.indexOf(currentStatus);
-
   return (
     <div className="space-y-3">
-      {STATUS_ORDER.map((s, idx) => {
+      {STATUS_ORDER.map((step, idx) => {
+        // the terminal step reads "Processed" (with its own log date) when that is how the return ended
+        const s = idx === currentIdx ? currentStatus : step;
         const done = idx < currentIdx;
         const active = idx === currentIdx;
         const pending = idx > currentIdx;
