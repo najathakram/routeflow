@@ -173,6 +173,8 @@ handoff card** (`.claude/handoffs/<date>-lead-*.md`: bridge addresses, gates, in
 rulings, lessons), and the **board** (#3686, successor of #2554 and #938 — roll at ~2,300 comments, L-240) where verdicts and shas live. Update the tracker
 artifact only from master's registers. Write the memory entry for the lead rules at day's end.
 
+A feature with more than one slice gets a `docs/plans/<slug>.plan.json` (`node scripts/plan.mjs --waves` gives the landing order); the lane brief cites slice ids, not prose.
+
 ## 10. Checklist per window
 
 1. `date -u`; owner decisions since last window relayed verbatim; nothing held on the owner.
