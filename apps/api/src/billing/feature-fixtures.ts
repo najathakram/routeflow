@@ -11,6 +11,9 @@
  * working resolver/authority without hand-wiring each provider themselves.
  */
 
+import { FeatureConfigStore } from "./feature-config.store";
+import { FeatureConfigService } from "./feature-config.service";
+
 export interface PlanDefFixture {
   planKey: string;
   featureFlags: string[];
@@ -208,4 +211,39 @@ export function mockCollaborators(fixture: FeatureFixture, flagsOverride?: strin
   };
 
   return { entitlements, featureOverrides, catalog, prisma };
+}
+
+/**
+ * A REAL `FeatureConfigService` over the REAL `FeatureConfigStore` and an in-memory
+ * `TenantFeatureConfig`, for specs that need the tenant's stored mode (`FeaturePreviewService` reads it
+ * through `getState`, the same read as the Feature Console row). `stored` maps a feature key to the mode
+ * its row holds; a key without a row reads the registry default, as in production. `reads` lists the
+ * rows read, and the fake Prisma has no write method, so a spec can pin that the preview only reads.
+ */
+export function featureConfigOver(stored: Record<string, string> = {}) {
+  const reads: string[] = [];
+  const prisma = {
+    tenantFeatureConfig: {
+      findUnique: jest.fn(async ({ where }: any) => {
+        const key: string = where.tenantId_featureKey.featureKey;
+        reads.push(key);
+        return stored[key] !== undefined ? { mode: stored[key] } : null;
+      }),
+    },
+  };
+  const service = new FeatureConfigService(
+    {} as any, // prisma: getState never touches it
+    new FeatureConfigStore(prisma as any),
+    {} as any, // audit
+    {
+      hasAddon: jest.fn().mockResolvedValue(true), // every required module is held
+      getActiveAddons: jest.fn().mockResolvedValue(["recurring_routes", "order_delivery"]),
+    } as any, // addons
+    { hasFlag: jest.fn().mockResolvedValue(true) } as any, // entitlements
+    {
+      get: jest.fn().mockResolvedValue(null),
+      allActive: jest.fn().mockResolvedValue(new Map()),
+    } as any, // featureOverrides: no override
+  );
+  return { service, prisma, reads };
 }

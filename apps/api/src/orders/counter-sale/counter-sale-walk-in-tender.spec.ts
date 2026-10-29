@@ -190,7 +190,10 @@ describe("B1209: one code, one status; the hook never fires on a replay", () => 
 
   it("create() runs both replay exits' onReplay path BEFORE it prices (the only caller of beforeWrite)", () => {
     const src = fs.readFileSync(path.join(__dirname, "..", "orders.service.ts"), "utf8");
-    const preCheck = src.indexOf("options.onReplay?.(existing)");
+    // both replay exits are one call, whose shared helper runs onReplay (SA-1047)
+    const helper = fs.readFileSync(path.join(__dirname, "..", "replay-cart-normalize.ts"), "utf8");
+    expect(helper).toContain("options?.onReplay?.(");
+    const preCheck = src.indexOf("assertReplayOfCart(this.prisma");
     const hook = src.indexOf("options.beforeWrite?.(");
     expect(preCheck).toBeGreaterThan(0);
     expect(hook).toBeGreaterThan(preCheck);

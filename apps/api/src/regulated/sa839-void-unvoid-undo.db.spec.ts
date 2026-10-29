@@ -45,6 +45,7 @@ import { NumberingService } from "../import/numbering.service";
 import { AddonService } from "../billing/addon.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -528,7 +529,7 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     (await c.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
   /**
    * The pid of the ONE backend (other than `exclude`) that Postgres reports blocked by `blocker`
-   * (`pg_blocking_pids`), or null after ~4 s (Prisma's interactive tx budget is 5 s). Keyed on the
+   * (blocked-wait helper), or null after ~4 s (Prisma's interactive tx budget is 5 s). Keyed on the
    * pids under test, never a database-wide count, so an unrelated waiter can neither satisfy nor mask it.
    */
   async function waitForBlockedBy(
@@ -536,15 +537,12 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     blocker: number,
     exclude: number[] = [],
   ): Promise<number | null> {
-    for (let i = 0; i < 160; i++) {
-      const r = await c.query(
-        `SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND NOT (pid = ANY($2::int[]))`,
-        [blocker, exclude],
-      );
-      if (r.rows.length > 0) return r.rows[0].pid;
-      await new Promise((x) => setTimeout(x, 25));
-    }
-    return null;
+    const [first] = await waitUntilBlocked(c, {
+      holderPid: blocker,
+      excludePids: exclude,
+      timeoutMs: 4_000,
+    });
+    return first ? first.pid : null;
   }
 
   it("R15 (a): void first, the cancel waiting on the Return lock commits SECOND: the VOID line ends at 0", async () => {

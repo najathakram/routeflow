@@ -10,6 +10,8 @@ const selectCls =
 
 interface SectionEditCellProps {
   productId: string;
+  /** Names the control for a screen reader ("Regulated type for Cola"); the id is never spoken. */
+  productName?: string;
   trackedCategoryId: string | null;
   trackedSubcategoryId: string | null;
   activeSections: TrackedCategory[];
@@ -35,7 +37,7 @@ interface SectionEditCellProps {
  * independently validates category-parent === type either way.
  */
 export function SectionEditCell({
-  productId,
+  productName,
   trackedCategoryId,
   trackedSubcategoryId,
   activeSections,
@@ -54,7 +56,9 @@ export function SectionEditCell({
   return (
     <div className="flex flex-col gap-1">
       <select
-        aria-label={`Regulated type for product ${productId}`}
+        aria-label={
+          productName?.trim() ? `Regulated type for ${productName.trim()}` : "Regulated type"
+        }
         value={trackedCategoryId ?? ""}
         disabled={disabled}
         onChange={(e) =>

@@ -127,6 +127,12 @@ export class InventoryController {
     return this.inventoryService.getStockCountSession(id);
   }
 
+  /** Row 562 S1: a few hundred bytes, polled while a long seed or commit runs. A pure read. */
+  @Get("stock-counts/:id/progress")
+  getStockCountProgress(@Param("id") id: string) {
+    return this.inventoryService.getStockCountProgress(id);
+  }
+
   /** Autosave one counted line. Idempotent per (session, product). */
   @Put("stock-counts/:id/lines")
   upsertStockCountLine(

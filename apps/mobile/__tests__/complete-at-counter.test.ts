@@ -155,6 +155,15 @@ describe("pickupCompleteErrorCopy: Complete at counter refusals (I-120, mobile)"
 describe("pickupCompleteErrorCopy: R8/R9 refusals (mobile)", () => {
   const { pickupCompleteErrorCopy } = require("../lib/pos-mode");
   const refusal = (data: Record<string, unknown>) => ({ response: { status: 409, data } });
+  // W-776 (SA-925): the pre-check's closed day says nothing changed; the post-claim code never claims that
+  it("a closed day refused before any write says nothing changed", () => {
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_DAY_CLOSED" }))).toBe(
+      "Nothing changed. This register's day is closed. A manager or owner can reopen it.",
+    );
+    expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_SALE_DAY_CLOSED" }))).not.toMatch(
+      /Nothing changed/,
+    );
+  });
   it("the three refusals", () => {
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_SHIPPED" }))).toBe(
       "Nothing changed. This order has shipped with the carrier.",

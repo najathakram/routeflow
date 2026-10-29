@@ -830,6 +830,7 @@ export class InlineReturnsService {
         where: { invoiceId },
         select: {
           id: true,
+          orderItemId: true,
           productId: true,
           subtotal: true,
           qty: true,
