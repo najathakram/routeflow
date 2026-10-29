@@ -8,7 +8,7 @@
  * Deterministic interleave (no sleeps): `jest.spyOn(service, "getTaxRate")` runs the racing write and
  * COMMITS it on its own pg connection BEFORE returning, i.e. after the merge's eligibility read and
  * before its transaction. The holder probes keep a writer's lock UNCOMMITTED, start the merge, and poll
- * `pg_blocking_pids` (<= 4000 ms, always under Prisma's 5 s tx timeout, counting ALL blocked backends);
+ * the blocked backends (<= 4000 ms, always under Prisma's 5 s tx timeout, counting ALL blocked backends);
  * every assertion is on the OUTCOME, never a timing.
  *
  * Fixtures use the REAL writers where one is cheap (OrdersService.create for the orders and their stock
@@ -44,6 +44,7 @@ import { isMergeContention } from "./merge-contention";
 import { mergeEligibleWhere } from "./merge-lock-recheck";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -166,25 +167,9 @@ describeDb("B1053 pending-order merge vs a racing writer — real Postgres", () 
       (error) => ({ value: undefined, error }),
     );
 
-  /** Backends currently blocked by a lock holder, ALL of them (never just "a" blocked one). */
-  const blockedBackends = async (probe: Client) =>
-    (
-      await probe.query(
-        `SELECT pid, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
-          WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`,
-      )
-    ).rows;
-  /** Poll (<= 4000 ms, always < Prisma's 5 s tx timeout) until `done()` or the merge is blocked. */
-  const pollUntil = async (probe: Client, done: () => boolean) => {
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline) {
-      if (done()) return [];
-      const blocked = await blockedBackends(probe);
-      if (blocked.length > 0) return blocked;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    return [];
-  };
+  /** Poll (<= 4000 ms, always < Prisma's 5 s tx timeout) until `done()` or the merge is blocked; ALL blocked backends. */
+  const pollUntil = (probe: Client, done: () => boolean) =>
+    waitUntilBlocked(probe, { until: done });
 
   async function wipe() {
     const ids = (await raw.order.findMany({ where: { tenantId }, select: { id: true } })).map(
