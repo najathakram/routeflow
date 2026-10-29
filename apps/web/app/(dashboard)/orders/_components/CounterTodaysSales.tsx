@@ -290,6 +290,7 @@ function Reprint({
             returnLines: row.returnLines,
             cashTendered: row.cashTendered,
             change: row.change,
+            checkReference: row.checkReference, // W-713: "Check #1042" on the reprint (absent on an older server)
             customerName: receiptCustomerName({
               businessName: row.customerName,
               isWalkIn: row.isWalkIn,

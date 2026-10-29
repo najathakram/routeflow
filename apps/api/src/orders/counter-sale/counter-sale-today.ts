@@ -33,7 +33,7 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { checkReferenceOf, counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
@@ -432,6 +432,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
               method: true,
               amount: true,
               status: true,
+              // W-713: the check number the receipt prints beside "Check"
+              reference: true,
               creditNoteId: true,
               creditNote: { select: { invoiceId: true } },
             },
@@ -627,6 +629,8 @@ export interface TodayOrderRecord {
       method: string;
       amount: unknown;
       status: string;
+      /** W-713: the check number / card reference typed at the till */
+      reference?: string | null;
       /** B1262 / SA-838: the credit note this payment applied, and the invoice that note was issued against */
       creditNoteId?: string | null;
       creditNote?: { invoiceId: string | null } | null;
@@ -909,6 +913,7 @@ export function toTodaysSaleRow(
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
+  const checkReference = checkReferenceOf(payments);
   const total = roundMoney(num(o.total));
   const paid = roundMoney(
     sumConfirmed(payments.map((p) => ({ amount: p.amount, status: p.status }))),
@@ -977,6 +982,7 @@ export function toTodaysSaleRow(
     returnCredit,
     tenderMethods,
     returnLines,
+    ...(checkReference ? { checkReference } : {}),
     paymentState,
     // SA-1026: "To collect" from the LIVE invoices' intent + status (one rule, invoices/to-collect.ts); staff only
     toCollect: rollupToCollect(live.map((i) => toCollectState(i))),
