@@ -2218,7 +2218,6 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await assertStopDoneForOfficeDelivered(this.prisma, order, dto.status); // row 590 (SA-978a)
-
     const noteAppend = dto.reason
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
       : undefined;
