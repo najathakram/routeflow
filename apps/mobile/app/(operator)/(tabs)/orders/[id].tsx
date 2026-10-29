@@ -1106,8 +1106,8 @@ export default function OrderDetailScreen() {
                   })}
                 </View>
               ) : null}
-              {posSwitchToDeliveryHint(order.status) ? (
-                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order.status)}</Text>
+              {posSwitchToDeliveryHint(order) ? (
+                <Text style={styles.shipHint}>{posSwitchToDeliveryHint(order)}</Text>
               ) : null}
               {posCutNote(order, order.status) ? (
                 <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>

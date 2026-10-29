@@ -49,6 +49,7 @@ import { MrrService } from "./mrr.service";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import {
   buildCheckoutHarness,
   CATCHUP_PREPAID_METADATA,
@@ -383,7 +384,7 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     const stripe: any = {
       isConfigured: true,
       client: {
-        products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) },
+        products: fakeStripeProducts().products, // W-810: the owned-product path retrieves first
         subscriptionItems: {
           list: jest.fn(async () => ({ data: items.map((i) => ({ ...i })) })),
           create: jest.fn(async (args: any) => {

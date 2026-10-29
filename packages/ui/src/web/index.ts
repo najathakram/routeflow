@@ -1,7 +1,7 @@
 export { Button } from "./Button";
 export type { ButtonProps } from "./Button";
 
-export { Badge } from "./Badge";
+export { Badge, badgeStatusLabel } from "./Badge";
 export type { BadgeProps, BadgeVariant, BadgeStatus } from "./Badge";
 
 export { Card } from "./Card";
@@ -38,7 +38,7 @@ export type { StatCardProps } from "./StatCard";
 export { Avatar } from "./Avatar";
 export type { AvatarProps, AvatarSize } from "./Avatar";
 
-export { ToastProvider, useToast } from "./Toast";
+export { ToastProvider, useOptionalToast, useToast } from "./Toast";
 export type { ToastData, ToastVariant, ToastAction } from "./Toast";
 
 export { ScrollShadow } from "./ScrollShadow";

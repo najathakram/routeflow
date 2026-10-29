@@ -130,8 +130,18 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
       .filter((f: string) => !f.endsWith(".spec.ts"));
     expect(hits.sort()).toEqual([
       "orders/counter-sale/pickup-complete.service.ts",
+      "orders/fulfil-path-lock.ts", // row 673: the shared predicate only READS the option
       "orders/order-lifecycle.ts",
     ]);
+    // ...and only the counter engine SETS it.
+    const setters: string[] = execSync(`git grep -l "fromOutForDelivery: true" -- "*.ts"`, {
+      cwd: root,
+    })
+      .toString()
+      .trim()
+      .split(/\r?\n/)
+      .filter((f: string) => !f.endsWith(".spec.ts"));
+    expect(setters).toEqual(["orders/counter-sale/pickup-complete.service.ts"]);
   });
 
   it("a role without USE_POS_MODE (driver, customer, no principal) is refused before anything is read", async () => {

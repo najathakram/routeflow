@@ -28,6 +28,7 @@ import { exportReportCSV, printReport } from "@/lib/report-export";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
   type SelectablePaymentMethod,
 } from "@/lib/payment-methods";
 import {
@@ -55,7 +56,9 @@ import {
   Printer,
 } from "lucide-react";
 import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
-import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
+import type { ToCollectState } from "@routeflow/types";
+import { depositOverdueLine, groupArAgingByCustomer, toCollectLookup } from "@/lib/ar-aging-rows";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
@@ -99,7 +102,7 @@ const REPORT_GROUPS = [
     reports: [
       {
         id: "sales-by-customer",
-        label: "Sales by Customer",
+        label: "Sales by customer",
         description: "Total sales grouped by customer for a period",
       },
       {
@@ -122,7 +125,7 @@ const REPORT_GROUPS = [
     reports: [
       {
         id: "ar-aging",
-        label: "AR Aging Summary",
+        label: "AR aging summary",
         description: "Outstanding invoices categorized by how long they've been due",
       },
       {
@@ -138,11 +141,11 @@ const REPORT_GROUPS = [
       {
         id: "bad-debts",
         label: "Bad Debts",
-        description: "Invoices that have been written off as uncollectable",
+        description: "Invoices written off as uncollectible",
       },
       {
         id: "customer-balance",
-        label: "Customer Balance Summary",
+        label: "Customer balance summary",
         description: "Outstanding balance per customer",
       },
       {
@@ -170,7 +173,7 @@ const REPORT_GROUPS = [
       },
       {
         id: "time-to-get-paid",
-        label: "Time to Get Paid",
+        label: "Time to get paid",
         description: "Average days from invoice date to payment",
       },
       {
@@ -193,7 +196,7 @@ const REPORT_GROUPS = [
       },
       {
         id: "expenses-by-category",
-        label: "Expenses by Category",
+        label: "Expenses by category",
         description: "Total expenses grouped by category",
       },
       {
@@ -205,13 +208,13 @@ const REPORT_GROUPS = [
   },
   {
     id: "pnl",
-    label: "Profit & Loss",
+    label: "Profit & loss",
     icon: TrendingDown,
     color: "text-purple-500 bg-purple-50",
     reports: [
       {
         id: "profit-loss",
-        label: "Profit & Loss",
+        label: "Profit & loss",
         description: "Revenue, COGS, and expenses for a period",
       },
       { id: "cashflow", label: "Cash Flow", description: "Cash inflows and outflows for a period" },
@@ -219,13 +222,13 @@ const REPORT_GROUPS = [
   },
   {
     id: "ledger",
-    label: "Transaction Ledger",
+    label: "Transaction ledger",
     icon: BookOpen,
     color: "text-navy bg-navy/10",
     reports: [
       {
         id: "ledger",
-        label: "Transactions Ledger",
+        label: "Transaction ledger",
         description: "View and manage all financial transactions with payment recording",
       },
     ],
@@ -257,6 +260,7 @@ function ArAgingReport({
   // #1529 (SA-517 PR-B): the same per-customer sums, plus a marker when any invoice carries an
   // overdue deposit; the buckets and totals are unchanged.
   const customerMap = groupArAgingByCustomer(buckets);
+  const toCollect = toCollectLookup(data?.toCollectByCustomer); // SA-1026: the server's sums, never re-derived here
   const depositLine = depositOverdueLine(data?.depositOverdue, fmt);
 
   return (
@@ -294,14 +298,15 @@ function ArAgingReport({
               </th>
             ))}
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Total</th>
+            <th className="px-4 py-3 text-right text-xs font-semibold uppercase">To collect</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">
           {isLoading || isFetching ? (
-            <SkeletonRows cols={7} />
+            <SkeletonRows cols={8} />
           ) : Object.keys(customerMap).length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-4 py-10 text-center text-sm text-navy/70">
+              <td colSpan={8} className="px-4 py-10 text-center text-sm text-navy/70">
                 No outstanding invoices
               </td>
             </tr>
@@ -332,6 +337,9 @@ function ArAgingReport({
                   <td className="px-4 py-2.5 text-right font-semibold text-navy">
                     {fmt(rowTotal)}
                   </td>
+                  <td className="px-4 py-2.5 text-right text-navy" data-testid="ar-to-collect">
+                    {toCollect[customerId] ? fmt(toCollect[customerId].balance) : "\u2014"}
+                  </td>
                 </tr>
               );
             })
@@ -346,6 +354,7 @@ function ArAgingReport({
               </td>
             ))}
             <td className="px-4 py-2.5 text-right font-bold text-navy">{fmt(totals.total)}</td>
+            <td />
           </tr>
         </tfoot>
       </table>
@@ -802,7 +811,10 @@ function BadDebtsReport() {
               </td>
               <td className="px-4 py-2.5 text-navy">{r.customer?.businessName}</td>
               <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.writtenOffAt)}</td>
-              <td className="px-4 py-2.5 text-navy/70 max-w-xs truncate">
+              <td
+                className="px-4 py-2.5 text-navy/70 max-w-xs truncate"
+                title={r.writeOffReason ?? undefined}
+              >
                 {r.writeOffReason ?? "\u2014"}
               </td>
               <td className="px-4 py-2.5 text-right font-semibold text-danger">{fmt(r.balance)}</td>
@@ -980,6 +992,7 @@ function ArAgingDetailsReport({
     ageDays: number;
     amount: number;
     balance: number;
+    toCollect?: ToCollectState;
   }> = data?.data ?? [];
   return (
     <table className="w-full text-sm">
@@ -1018,7 +1031,10 @@ function ArAgingDetailsReport({
                 </Link>
               </td>
               <td className="px-4 py-2.5">
-                <StatusBadge status={r.status} />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={r.status} />
+                  <ToCollectChip state={r.toCollect} />
+                </div>
               </td>
               <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
               <td className="px-4 py-2.5 text-right text-navy">{r.ageDays}</td>
@@ -1190,7 +1206,7 @@ function RefundHistoryReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
                 <td className="px-4 py-2.5 font-medium text-navy">{r.reference}</td>
                 <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
-                <td className="px-4 py-2.5 text-navy/70">{r.method}</td>
+                <td className="px-4 py-2.5 text-navy/70">{paymentMethodLabel(r.method)}</td>
                 <td className="px-4 py-2.5 text-right font-semibold text-danger">
                   {fmt(r.amount)}
                 </td>
@@ -1339,7 +1355,7 @@ function PaymentsReceivedReport({ from, to }: { from?: string; to?: string }) {
                   </Link>
                 </td>
                 <td className="px-4 py-2.5 text-navy">{r.customer?.businessName}</td>
-                <td className="px-4 py-2.5 text-navy/70">{r.method}</td>
+                <td className="px-4 py-2.5 text-navy/70">{paymentMethodLabel(r.method)}</td>
                 <td className="px-4 py-2.5 text-navy/70">{r.reference ?? "\u2014"}</td>
                 <td className="px-4 py-2.5 text-right font-semibold text-success">
                   {fmt(r.amount)}
@@ -1533,7 +1549,10 @@ function ExpenseDetailsReport({
                 <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
                 <td className="px-4 py-2.5 font-medium text-navy">{r.category?.name}</td>
                 <td className="px-4 py-2.5 text-navy/70">{r.supplier?.name ?? "\u2014"}</td>
-                <td className="px-4 py-2.5 text-navy/70 max-w-xs truncate">
+                <td
+                  className="px-4 py-2.5 text-navy/70 max-w-xs truncate"
+                  title={r.description ?? undefined}
+                >
                   {r.description ?? "\u2014"}
                 </td>
                 <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.amount)}</td>
@@ -2117,7 +2136,7 @@ function LedgerReport() {
                   <td className="px-4 py-2.5">
                     {tx.status !== "PAID" && (
                       <WriteButton size="sm" variant="secondary" onClick={() => openPayment(tx)}>
-                        Record Payment
+                        Record payment
                       </WriteButton>
                     )}
                   </td>
@@ -2157,7 +2176,7 @@ function LedgerReport() {
       {paymentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-base font-semibold text-navy mb-1">Record Payment</h3>
+            <h3 className="text-base font-semibold text-navy mb-1">Record payment</h3>
             <p className="text-sm text-navy/70 mb-4">
               {paymentModal.customer?.businessName} &middot; Balance:{" "}
               {fmt(Math.max(0, paymentModal.totalOwed - paymentModal.totalPaid))}
@@ -2213,7 +2232,7 @@ function LedgerReport() {
                   disabled={recordPayment.isPending}
                   className="flex-1 rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 transition-colors"
                 >
-                  {recordPayment.isPending ? "Saving..." : "Record"}
+                  {recordPayment.isPending ? "Saving…" : "Record"}
                 </button>
               </div>
             </form>
@@ -2411,7 +2430,7 @@ function FinanceReportsContent() {
         {/* Left: Report catalog */}
         <div className="w-72 shrink-0 overflow-y-auto border-r border-surface-border bg-white">
           <div className="border-b border-surface-border px-4 py-4">
-            <h2 className="text-sm font-semibold text-navy">All Reports</h2>
+            <h2 className="text-sm font-semibold text-navy">All reports</h2>
           </div>
           <div className="py-2">
             {reportGroups.map((group) => {

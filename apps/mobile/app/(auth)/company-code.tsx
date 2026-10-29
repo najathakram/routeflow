@@ -10,6 +10,8 @@ import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
 import { BrandGlyph } from "@routeflow/ui/mobile/ios";
 import { ios } from "@routeflow/ui/tokens";
 import { useTenantStore } from "../../lib/tenant-store";
+import { SHELL_ON } from "../../lib/web-shell/shell-env";
+import { buyerEntryRoute } from "../../lib/web-shell/shell-routing";
 
 const API_BASE =
   (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "") + "/api/v1";
@@ -120,7 +122,7 @@ export default function CompanyCodeScreen() {
 
         <View style={styles.portalRow}>
           <Text style={styles.portalHint}>Are you a customer? </Text>
-          <Pressable onPress={() => router.push("/(auth)/customer-login")} hitSlop={8}>
+          <Pressable onPress={() => router.push(buyerEntryRoute(SHELL_ON) as any)} hitSlop={8}>
             <Text style={styles.portalLink}>Customer Portal</Text>
           </Pressable>
         </View>

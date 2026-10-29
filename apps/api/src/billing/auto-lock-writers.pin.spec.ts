@@ -32,7 +32,6 @@ const WRITERS: Record<string, Entry> = {
   // ─── AUTOMATIC: must ask autoLockAllowed first ───────────────────────────────
   "billing/billing-cron.service.ts::expireTrials": { cls: "AUTOMATIC" },
   "billing/billing-cron.service.ts::applyScheduledCancellations": { cls: "AUTOMATIC" },
-  "billing/billing.service.ts::suspendOverdueTenants": { cls: "AUTOMATIC" },
   "billing/billing.service.ts::cancelFromStripe": { cls: "AUTOMATIC" },
   "billing/dunning-pause.ts::pauseTenantTx": { cls: "AUTOMATIC" },
   // ─── TENANT ACTION: gated the same way ───────────────────────────────────────
@@ -44,7 +43,7 @@ const WRITERS: Record<string, Entry> = {
   "billing/billing.service.ts::transitionAndEmit": {
     cls: "NOT_A_NEW_LOCK",
     reason:
-      "the generic compare-and-swap primitive: it writes whatever target its caller names, and every lock caller (suspendOverdueTenants, cancelFromStripe, pauseTenantTx) is classed and gated above",
+      "the generic compare-and-swap primitive: it writes whatever target its caller names, and every lock caller (cancelFromStripe, pauseTenantTx; the canceled-subscription cron delegates to cancelFromStripe) is classed and gated above",
   },
   "billing/transition-to-active.ts::transitionToActiveTx": {
     cls: "NOT_A_NEW_LOCK",

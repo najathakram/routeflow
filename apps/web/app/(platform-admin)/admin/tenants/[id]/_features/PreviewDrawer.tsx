@@ -107,7 +107,7 @@ export function PreviewDrawer({
             }
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {confirming ? "Applying..." : "Confirm"}
+            {confirming ? "Applying…" : "Confirm"}
           </button>
         </>
       }
@@ -177,6 +177,11 @@ export function PreviewDrawer({
   );
 }
 
+/** A mode in the registry's own words ("Not configured"), else the key as the server sent it. */
+function modeName(row: PreviewRow, key: string): string {
+  return row.modes?.find((m) => m.key === key)?.label ?? key;
+}
+
 function DiffRow({ row }: { row: PreviewRow }) {
   const { before, after } = row;
   return (
@@ -195,7 +200,7 @@ function DiffRow({ row }: { row: PreviewRow }) {
         )}
         {after?.mode && before?.mode && after.mode.effective !== before.mode.effective && (
           <span className="text-slate-400">
-            mode: {before.mode.effective} → {after.mode.effective}
+            mode: {modeName(row, before.mode.effective)} → {modeName(row, after.mode.effective)}
           </span>
         )}
       </p>

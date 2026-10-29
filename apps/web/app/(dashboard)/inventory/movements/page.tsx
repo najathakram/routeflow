@@ -6,27 +6,45 @@ import { MovementsExportButton } from "./_components/MovementsExportButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
+import type { MovementType } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useStockMovements } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
+/** W-785: order flows write a system marker in a movement's notes ("CREATE", "EDIT"…); show words, keep free text as is. */
+const MOVEMENT_NOTE_LABELS: Record<string, string> = {
+  CREATE: "Order placed",
+  EDIT: "Order edited",
+  CANCEL: "Order cancelled",
+  UNCANCEL: "Order reopened",
+  DELETE: "Order deleted",
+  PROMOTE: "Draft placed",
+  DEMOTE: "Returned to draft",
+  RETURN_CANCELLED: "Return cancelled",
+};
+const movementNoteLabel = (notes: string | null | undefined) =>
+  notes ? (MOVEMENT_NOTE_LABELS[notes] ?? notes) : "—";
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+// Every `MovementType` has a label and a variant, so a new server value is a compile error here (SA-1049 R6).
+const MOVEMENT_TYPE_LABELS: Record<MovementType, string> = {
   PURCHASE: "Purchase",
   SALE: "Sale",
   ADJUSTMENT: "Adjustment",
   RETURN: "Return",
-  WRITE_OFF: "Write-Off",
+  WRITE_OFF: "Write-off",
+  COST_BASIS: "Cost update",
 };
 
-const MOVEMENT_TYPE_VARIANTS: Record<string, "success" | "danger" | "neutral" | "warning"> = {
+const MOVEMENT_TYPE_VARIANTS: Record<MovementType, "success" | "danger" | "neutral" | "warning"> = {
   PURCHASE: "success",
   SALE: "danger",
   ADJUSTMENT: "neutral",
   RETURN: "warning",
   WRITE_OFF: "neutral",
+  COST_BASIS: "neutral",
 };
 
 /** Reference prefixes that group a batch of movements written by one operation. */
@@ -255,8 +273,8 @@ export default function MovementsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Badge
-                        variant={MOVEMENT_TYPE_VARIANTS[m.type] ?? "secondary"}
-                        label={MOVEMENT_TYPE_LABELS[m.type] ?? m.type}
+                        variant={MOVEMENT_TYPE_VARIANTS[m.type as MovementType]}
+                        label={MOVEMENT_TYPE_LABELS[m.type as MovementType]}
                       />
                     </td>
                     <td
@@ -284,7 +302,7 @@ export default function MovementsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 font-mono text-navy/70">{m.reference ?? "—"}</td>
-                    <td className="px-4 py-3 text-navy/70">{m.notes ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy/70">{movementNoteLabel(m.notes)}</td>
                     <td className="px-4 py-3 text-navy/70">{m.performedBy?.username ?? "—"}</td>
                   </tr>
                 );

@@ -45,6 +45,8 @@ export function useListboxNav<T>({
   /** Returns true when the key was consumed (the caller then skips its own handling). */
   const onKeyDown = (e: React.KeyboardEvent): boolean => {
     if (e.defaultPrevented || !open) return false;
+    // IME composition (isComposing / legacy keyCode 229): the keys belong to the IME, not the list.
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return false;
     if (e.key === "ArrowDown" && items.length > 0) {
       e.preventDefault();
       setHighlight((h) => Math.min(h + 1, items.length - 1));

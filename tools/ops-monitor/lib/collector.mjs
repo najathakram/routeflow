@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileToArea, areaDomain, buildAreaTree, guessDomainFromText } from "./areas.mjs";
 import { GITHUB_REPO } from "./config.mjs";
+import { registryDir } from "./registry.mjs";
 import { parseRegisterReport } from "./backfill.mjs";
 import { cloudSyncSpecs, readOnlyExec, redact } from "./cloud.mjs";
 
@@ -27,8 +28,8 @@ export const CLOUD_INTERVALS = {
 };
 export const BRANCH_DIFF_CAP = 30;
 export const FETCH_EVERY = 5;
-const BUGS_DIR = ".claude/campaign/bugs";
-const LEDGER_DIR = ".claude/campaign/status";
+const BUGS_DIR = `${registryDir()}/bugs`;
+const LEDGER_DIR = `${registryDir()}/status`;
 // A registry state in this set means the bug is no longer open. The ledger (status/F##.jsonl)
 // carries `proven` / `proven-pending-deploy`; reconcile.mjs treats the same words as closed.
 const CLOSED_STATES = new Set([
@@ -47,7 +48,9 @@ const CLOSED_STATES = new Set([
 const DAY = 86400_000;
 export const BODY_CAP = 4000;
 export const PENDING_BUG_CAP = 50;
-export const BUG_FILE_RE = /^\.claude\/campaign\/bugs\/B\d+[^/]*\.md$/;
+export const BUG_FILE_RE = new RegExp(
+  `^${BUGS_DIR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/B\\d+[^/]*\\.md$`,
+);
 /** CI gate check names (regex sources, case-insensitive); config.ciGates replaces them. */
 export const DEFAULT_CI_GATES = ["verify", "e2e"];
 

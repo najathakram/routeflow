@@ -247,14 +247,15 @@ function isScopedWhere(args: unknown): boolean {
 // TENANT_ADMIN]))` also passes for @Roles(TENANT_ADMIN, OPERATOR), which re-admits the exact
 // role R3 forbids — RolesGuard grants on `requiredRoles.some(...)` and ROLE_SATISFIES[OPERATOR]
 // is [OPERATOR]. Only running the guard makes that mutation visible.
-function guardAdmits(role: UserRole): boolean {
+// The guard answers synchronously for most callers and with a Promise for an operator on a permission-grouped handler.
+async function guardAdmits(role: UserRole): Promise<boolean> {
   const guard = new RolesGuard(new Reflector());
   const context = {
     getHandler: () => SettingsController.prototype.clearFinancialData,
     getClass: () => SettingsController,
     switchToHttp: () => ({ getRequest: () => ({ user: { role } }) }),
   } as unknown as ExecutionContext;
-  return guard.canActivate(context);
+  return await guard.canActivate(context);
 }
 
 describe("SettingsController#clearFinancialData — DELETE /settings/financial-data", () => {
@@ -299,8 +300,8 @@ describe("SettingsController#clearFinancialData — DELETE /settings/financial-d
   // tenant-scoping filter, never an absent/empty where. T1-T6b above are the detailed
   // proof; this is the one test a revert of either half must break.
   it("REG-B126 DELETE /settings/financial-data is tenant-scoped and refuses a plain OPERATOR", async () => {
-    expect(guardAdmits(UserRole.OPERATOR)).toBe(false);
-    expect(guardAdmits(UserRole.TENANT_ADMIN)).toBe(true);
+    expect(await guardAdmits(UserRole.OPERATOR)).toBe(false);
+    expect(await guardAdmits(UserRole.TENANT_ADMIN)).toBe(true);
 
     const prisma = createMockPrisma();
     prisma.getTenantId.mockReturnValue("tenant-a");
@@ -417,9 +418,9 @@ describe("SettingsController#clearFinancialData — DELETE /settings/financial-d
   // sibling @Patch("margin") (also TENANT_ADMIN-gated), so it may not be left on the laxer
   // class-level @Roles(OPERATOR) — and must not quietly re-admit OPERATOR alongside
   // TENANT_ADMIN either, which a containment check cannot see.
-  it("T4: the RolesGuard refuses a plain OPERATOR and admits TENANT_ADMIN", () => {
-    expect(guardAdmits(UserRole.OPERATOR)).toBe(false);
-    expect(guardAdmits(UserRole.TENANT_ADMIN)).toBe(true);
+  it("T4: the RolesGuard refuses a plain OPERATOR and admits TENANT_ADMIN", async () => {
+    expect(await guardAdmits(UserRole.OPERATOR)).toBe(false);
+    expect(await guardAdmits(UserRole.TENANT_ADMIN)).toBe(true);
   });
 
   // T5 (R4) — the typed confirmation is a precondition; failing it must be side-effect free.

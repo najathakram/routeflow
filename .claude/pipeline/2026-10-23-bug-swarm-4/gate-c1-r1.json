@@ -1,0 +1,91 @@
+{
+  "ok": true,
+  "head": "7bc34d2cd2b1f71471b5128b61024e932641c0c8",
+  "base": "1e162686ae8f2229119104cd4cfe1eb722537ba3",
+  "steps": [
+    {
+      "name": "clean-tree",
+      "ok": true,
+      "exit": 0,
+      "ms": 90,
+      "tail": ""
+    },
+    {
+      "name": "packages-build",
+      "ok": true,
+      "exit": 0,
+      "ms": 339,
+      "tail": "@routeflow/returns:build: cache hit, replaying logs f39fffcc30fe9f9d\n@routeflow/returns:build: \n@routeflow/returns:build: > @routeflow/returns@0.0.1 build\n@routeflow/returns:build: > tsc -p tsconfig.build.json\n@routeflow/returns:build: \n@routeflow/pricing:build: cache hit, replaying logs d4c37b9c87ca0ef6\n@routeflow/pricing:build: \n@routeflow/pricing:build: > @routeflow/pricing@0.0.1 build\n@routeflow/pricing:build: > tsc -p tsconfig.build.json\n@routeflow/pricing:build: \n@routeflow/scanning:build: cache hit, replaying logs 1ffdb171c8f6361d\n@routeflow/scanning:build: \n@routeflow/scanning:build: > @routeflow/scanning@0.0.1 build\n@routeflow/scanning:build: > tsc -p tsconfig.build.json\n@routeflow/scanning:build: \n\n Tasks:    3 successful, 3 total\nCached:    3 cached, 3 total\n  Time:    81ms >>> FULL TURBO\n"
+    },
+    {
+      "name": "signature-scan",
+      "ok": true,
+      "exit": 0,
+      "ms": 5506,
+      "tail": "  register: B03 | severity: medium | MEDIUM | 3 hit(s) | 1 suppressed\n    apps/mobile/app/(auth)/login.tsx:18  username: z.string().min(1, \"Username is required\"),  [client .min(1) vs server @MinLength(3) at apps/api/src/platform-admin/dto/create-tenant-admin.dto.ts:26]\n    apps/web/app/(auth)/login/page.tsx:34  username: z.string().min(1, \"Username is required\"),  [client .min(1) vs server @MinLength(3) at apps/api/src/platform-admin/dto/create-tenant-admin.dto.ts:26]\n    apps/web/app/buyer/register/page.tsx:19  name: z.string().min(2, \"Name must be at least 2 characters\"),  [client .min(2) vs server @MinLength(1) at apps/api/src/promotions/dto/create-promotion.dto.ts:26]\n\n■ dead-model-guard — Safety check reading a model nothing writes\n  The guard always passes/fails the same way — protection that protects nothing (B54).\n  register: B54 | severity: medium | MEDIUM | 9 hit(s) | 37 suppressed\n    apps/api/src/drafts/drafts.service.ts:150  const other = await this.prisma.forTenant().saleDraft.findFirst({  [model \"saleDraft\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:260  const items = await this.prisma.forTenant().importQueueItem.findMany({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:423  const clean = await this.prisma.forTenant().importQueueItem.findMany({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/import/batch-import.service.ts:527  const counts = await this.prisma.forTenant().importQueueItem.groupBy({  [model \"importQueueItem\" is read here but never written anywhere in apps/api]\n    apps/api/src/inventory/low-stock-digest.service.ts:190  const optOuts = await this.prisma.userPreference.findMany({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n    apps/api/src/invoices/payment-idempotency.ts:268  deps.forTenant().paymentIdempotencyKey.findFirst({  [model \"paymentIdempotencyKey\" is read here but never written anywhere in apps/api]\n    apps/api/src/invoices/payment-key-status.service.ts:72  return this.prisma.forTenant().paymentIdempotencyKey.findFirst({  [model \"paymentIdempotencyKey\" is read here but never written anywhere in apps/api]\n    apps/api/src/messaging/staff-order-email.ts:197  const prefs = await this.prisma.forTenant().userPreference.findMany({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n    apps/api/src/notifications/notifications.service.ts:65  const pref = await this.prisma.forTenant().userPreference.findUnique({  [model \"userPreference\" is read here but never written anywhere in apps/api]\n\n24 hit(s) across 6 signature(s); scanned 7115 files.\nEXIT 0 — no high-signal hits."
+    },
+    {
+      "name": "commitlint",
+      "ok": true,
+      "exit": 0,
+      "ms": 322,
+      "tail": ""
+    },
+    {
+      "name": "avoid-files",
+      "ok": true,
+      "exit": 0,
+      "ms": 49,
+      "tail": ""
+    },
+    {
+      "name": "prettier",
+      "ok": true,
+      "exit": 0,
+      "ms": 505,
+      "tail": "Checking formatting...\nAll matched files use Prettier code style!"
+    },
+    {
+      "name": "tsc:apps/api",
+      "ok": true,
+      "exit": 0,
+      "ms": 139677,
+      "tail": "\n> @routeflow/api@0.0.1 check-types\n> node scripts/check-types-ratchet.mjs\n\ncheck-types (api, src + specs): 3370 files, 583 diagnostic(s) · wall 137.6s · peak RSS 4952 MB (heap cap 8192 MB)\ncheck-types (api): ok. 0 source errors; spec errors 583 (baseline allows 583)."
+    },
+    {
+      "name": "lint:apps/api",
+      "ok": true,
+      "exit": 0,
+      "ms": 34864,
+      "tail": "  3564:22  warning  Unsafe call of an `any` typed value                                                                                                                                                                                    @typescript-eslint/no-unsafe-call\n  3564:39  warning  Unsafe member access .map on an `any` value                                                                                                                                                                            @typescript-eslint/no-unsafe-member-access\n  3564:55  warning  Unsafe return of a value of type `any`                                                                                                                                                                                 @typescript-eslint/no-unsafe-return\n  3564:57  warning  Unsafe member access .supplierCreditId on an `any` value                                                                                                                                                               @typescript-eslint/no-unsafe-member-access\n  3569:53  warning  Unsafe argument of type `any` assigned to a parameter of type `string`                                                                                                                                                 @typescript-eslint/no-unsafe-argument\n  3571:15  warning  Unsafe call of an `any` typed value                                                                                                                                                                                    @typescript-eslint/no-unsafe-call\n  3571:18  warning  Unsafe member access .billPayment on an `any` value                                                                                                                                                                    @typescript-eslint/no-unsafe-member-access\n  3571:68  warning  Unsafe assignment of an `any` value                                                                                                                                                                                    @typescript-eslint/no-unsafe-assignment\n  3573:17  warning  Unsafe call of an `any` typed value                                                                                                                                                                                    @typescript-eslint/no-unsafe-call\n  3573:20  warning  Unsafe member access .vendorBill on an `any` value                                                                                                                                                                     @typescript-eslint/no-unsafe-member-access\n  3574:22  warning  Unsafe assignment of an `any` value                                                                                                                                                                                    @typescript-eslint/no-unsafe-assignment\n  3578:15  warning  Unsafe call of an `any` typed value                                                                                                                                                                                    @typescript-eslint/no-unsafe-call\n  3578:18  warning  Unsafe member access .vendorBill on an `any` value                                                                                                                                                                     @typescript-eslint/no-unsafe-member-access\n  3578:57  warning  Unsafe assignment of an `any` value                                                                                                                                                                                    @typescript-eslint/no-unsafe-assignment\n  3581:9   warning  Unsafe assignment of an `any` value                                                                                                                                                                                    @typescript-eslint/no-unsafe-assignment\n  3581:28  warning  Unsafe member access .length on an `any` value                                                                                                                                                                         @typescript-eslint/no-unsafe-member-access\n\n✖ 15810 problems (0 errors, 15810 warnings)\n  0 errors and 294 warnings potentially fixable with the `--fix` option.\n"
+    },
+    {
+      "name": "jest:apps/api",
+      "ok": true,
+      "exit": 0,
+      "ms": 347133,
+      "tail": "PASS src/common/seed-product-ids.spec.ts\nPASS src/products/products.controller.pack-precondition.spec.ts\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"stripe@claude-plugins-official\" />\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"stripe@claude-plugins-official\" />\nPASS src/common/throttlers.spec.ts\nPASS src/products/products-authority-injection.spec.ts\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"stripe@claude-plugins-official\" />\nPASS src/uploads/uploads-throttle.security.spec.ts\nPASS src/orders/orders.controller.batch-ship.spec.ts\nPASS src/customers/customers.controller.credit-limit.spec.ts\nPASS src/customers/customers.controller.statement-exposure.spec.ts\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"stripe@claude-plugins-official\" />\nPASS src/onboarding/onboarding-lifecycle.spec.ts (16.572 s)\nA worker process has failed to exit gracefully and has been force exited. This is likely caused by tests leaking due to improper teardown. Try running with --detectOpenHandles to find leaks. Active timers can also cause this, ensure that .unref() was called on them.\n\nTest Suites: 715 passed, 715 total\nTests:       1 todo, 13215 passed, 13216 total\nSnapshots:   0 total\nTime:        346.068 s\nRan all test suites related to files matching prisma/seed.ts|src/common/seed-product-ids.spec.ts|src/common/throttlers.spec.ts|src/common/throttlers.ts|src/config/configuration.ts."
+    },
+    {
+      "name": "self-test:ops-monitor",
+      "ok": true,
+      "exit": 0,
+      "ms": 67546,
+      "tail": "✔ writeViews writes no view file while unpushed commits exist (views never sit under events) (0.191916ms)\n✔ writeViews commits through the identity fallback and cleans the tree when the commit fails (0.932ms)\n✔ renderRegister shows register-cited PRs (refPrs) after the item's own PRs (0.163792ms)\n✔ renderGeneratedRegister: a pure function of the fold, equal to the snapshot render (2.330791ms)\n✔ writeViews in generated register mode leaves the register to the event-driven writer (0.2795ms)\n✔ writeViews never writes the register in human (default) or generated mode (0.271167ms)\n✔ writeViews masks client names in the dashboard, the register and the board JSON (0.596334ms)\n✔ renderGeneratedRegister masks client names (the event-driven register writer) (0.168042ms)\n✔ verifyGithubSignature: valid, invalid, missing, malformed (0.8275ms)\n✔ routeWebhook table (0.454ms)\n✔ dispatcher debounces per source (2 s) and ignores unknown sources (6.014583ms)\n✔ dispatcher swallows runOnce failures (12.498416ms)\nℹ tests 603\nℹ suites 0\nℹ pass 603\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 67383.293042"
+    },
+    {
+      "name": "size-ratchet",
+      "ok": true,
+      "exit": 0,
+      "ms": 1034,
+      "tail": "    ✓ apps/api/src/invoices/invoices.service.ts stays within 5857 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/orders/orders.service.spec.ts stays within 9439 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/customers/customers.service.ts stays within 3276 + HEADROOM lines\n    ✓ apps/api/src/invoices/invoices.service.spec.ts stays within 9351 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/customers/[id]/page.tsx stays within 4378 + HEADROOM lines (2 ms)\n    ✓ apps/web/app/(dashboard)/orders/[id]/page.tsx stays within 3705 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/customers/customers.service.spec.ts stays within 3138 + HEADROOM lines (1 ms)\n    ✓ apps/api/src/routes/routes.service.ts stays within 3119 + HEADROOM lines\n    ✓ apps/web/app/(dashboard)/products/[id]/page.tsx stays within 2942 + HEADROOM lines (1 ms)\n    ✓ apps/mobile/app/(operator)/(tabs)/orders/[id]/edit-items.tsx stays within 1405 + HEADROOM lines (1 ms)\n    ✓ apps/mobile/components/NewOrderScreen.tsx stays within 2560 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(dashboard)/inventory/page.tsx stays within 3303 + HEADROOM lines (1 ms)\n    ✓ apps/web/app/(marketing)/marketing.css stays within 9941 + HEADROOM lines (1 ms)\n    ✓ apps/web/components/ScanInvoiceModal.tsx stays within 3134 + HEADROOM lines (1 ms)\n\nTest Suites: 1 passed, 1 total\nTests:       16 passed, 16 total\nSnapshots:   0 total\nTime:        0.286 s\nRan all test suites matching size-ratchet."
+    },
+    {
+      "name": "db-lane",
+      "ok": true,
+      "exit": 0,
+      "ms": 745457,
+      "tail": "PASS src/common/cron-lock.db.spec.ts\nPASS src/common/pg-session-utc.db.spec.ts\nPASS src/customers/seed-address-state.db.spec.ts (13.093 s)\n\u001b[31m[Nest] 25159  - \u001b[39m10/23/2026, 4:55:42 AM \u001b[31m  ERROR\u001b[39m \u001b[38;5;3m[ConfigSnapshotFlagService] \u001b[39m\u001b[31mentitlements.configSnapshot has an unrecognised value \"yes please\" — treating as OFF (only \"on\" enables it)\u001b[39m\nPASS src/billing/config-snapshot-flag.db.spec.ts\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"stripe@claude-plugins-official\" />\n\u001b[33m[Nest] 25159  - \u001b[39m10/23/2026, 4:55:43 AM \u001b[33m   WARN\u001b[39m \u001b[38;5;3m[TenantZone] \u001b[39m\u001b[33mtenant 079497dd-92b7-488a-b0b6-cc0b91656642 has no valid time zone configured; using UTC\u001b[39m\nPASS src/orders/order-stock-o6-delete-live.db.spec.ts\nPASS src/common/db-spec-timezone.db.spec.ts\nPASS src/common/testing/db-lane.db.spec.ts\n\nTest Suites: 344 passed, 344 total\nTests:       1 skipped, 1 todo, 2581 passed, 2583 total\nSnapshots:   0 total\nTime:        729.715 s\nRan all test suites.\nJest did not exit one second after the test run has completed.\n\n'This usually means that there are asynchronous operations that weren't stopped in your tests. Consider running Jest with `--detectOpenHandles` to troubleshoot this issue.\nlocal-db-specs: dropped rf_dbspec_mvks8fk5_25098"
+    }
+  ]
+}

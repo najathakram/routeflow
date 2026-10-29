@@ -71,12 +71,12 @@ const NAV_ITEMS = [
   { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { label: "Tenants", href: "/admin/tenants", icon: Building2 },
   { label: "Buyers", href: "/admin/buyers", icon: Users },
-  { label: "Merge Requests", href: "/admin/buyers/merge-requests", icon: GitMerge },
-  { label: "Plans & Features", href: "/admin/plans", icon: Layers },
+  { label: "Merge requests", href: "/admin/buyers/merge-requests", icon: GitMerge },
+  { label: "Plans & pricing", href: "/admin/plans", icon: Layers },
   { label: "Billing", href: "/admin/billing", icon: CreditCard },
-  { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
-  { label: "AI Settings", href: "/admin/settings", icon: Bot },
-  { label: "My Account", href: "/admin/profile", icon: UserCircle },
+  { label: "Audit logs", href: "/admin/audit-logs", icon: ScrollText },
+  { label: "AI settings", href: "/admin/settings", icon: Bot },
+  { label: "My account", href: "/admin/profile", icon: UserCircle },
 ];
 
 /** Rendered for the desktop rail (collapsed reflects the persisted preference) and the mobile
@@ -238,7 +238,7 @@ function Sidebar() {
 export default function PlatformAdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <SuperAdminGuard>
-      <div className="surface-admin flex h-screen flex-col overflow-hidden bg-slate-950 lg:flex-row">
+      <div className="surface-admin flex h-screen supports-[height:100dvh]:h-dvh flex-col overflow-hidden bg-slate-950 lg:flex-row">
         <Sidebar />
         {/* BO-01: `relative` makes main the containing block of its sr-only (absolute) spans, so they
             no longer stretch the document past the page into a blank band. */}

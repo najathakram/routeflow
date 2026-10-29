@@ -1,8 +1,12 @@
 import {
   buildLadderOptions,
   defaultLadderOptionValue,
+  derivedPackSplit,
+  ladderOptionDetail,
   ladderOptionLineTotal,
   ladderOptionPriceText,
+  ladderOptionText,
+  packPiecesSplit,
   type LadderProduct,
   type LadderUnit,
 } from "./index";
@@ -130,5 +134,80 @@ describe("S19b nit 8: a derived base option uses the customer-layer pack price (
     const piece = buildLadderOptions(box24, [caseRow], 1).find((o) => o.kind === "piece")!;
     expect(piece.derived).toMatchObject({ n: 24, packPrice: 48 });
     expect(piece.price).toBe(2);
+  });
+});
+
+describe("ladderOptionText / ladderOptionDetail: the ONE option text web and mobile both render (row 513)", () => {
+  // Stand-in formatters (the package cannot import an app). The strings each app really renders, through its own
+  // formatters, are pinned in apps/web/lib/unit-options.test.ts and apps/mobile/__tests__/unit-options.test.ts.
+  const qty = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
+  const text = (o: Parameters<typeof ladderOptionText>[0]) => ladderOptionText(o, money, qty);
+  const detail = (o: Parameters<typeof ladderOptionDetail>[0]) => ladderOptionDetail(o, money, qty);
+  const options = buildLadderOptions(box24, [row("Case", 288, "480.00"), row("Pallet", 5760)], 1);
+
+  it("a level or the pack reads label, pieces, price: 'Case · 288 pcs · $480.00'", () => {
+    expect(text(options.find((o) => o.value === "Case")!)).toBe("Case · 288 pcs · $480.00");
+    expect(detail(options.find((o) => o.value === "Case")!)).toBe("288 pcs · $480.00");
+    expect(text(options.find((o) => o.kind === "pack")!)).toBe("Box · 24 pcs · $48.00");
+  });
+
+  it("a factor-1 unit omits the piece count: 'Piece · $2.00'", () => {
+    const piece = options.find((o) => o.factorToBase === 1)!;
+    expect(text(piece)).toBe("Piece · $2.00");
+    expect(detail(piece)).toBe("$2.00");
+  });
+
+  it("a derived Piece that is not exact to the cent reads '≈$3.33 (1/3 of $10.00)'", () => {
+    const piece = buildLadderOptions(pack3, [CASE72], 1).find((o) => o.factorToBase === 1)!;
+    expect(text(piece)).toBe("Piece · ≈$3.33 (1/3 of $10.00)");
+  });
+
+  it("a fractional factor keeps up to 2 dp", () => {
+    const o = { ...options[0], factorToBase: 2.5 };
+    expect(detail(o)).toBe(`2.5 pcs · ${money(o.price)}`);
+  });
+});
+
+describe("derivedPackSplit: the pack-pieces shape of N pieces of a DERIVED base option (row 513)", () => {
+  const derived = buildLadderOptions(pack3, [CASE72], 1).find((o) => o.factorToBase === 1)!;
+  it("splits on the pack size and rolls over at a full pack", () => {
+    expect(derivedPackSplit(derived, 2)).toEqual({ qty: 2, boxes: 0, pieces: 2, unitsPerBox: 3 });
+    expect(derivedPackSplit(derived, 3)).toEqual({ qty: 3, boxes: 1, pieces: 0, unitsPerBox: 3 });
+    expect(derivedPackSplit(derived, 7)).toEqual({ qty: 7, boxes: 2, pieces: 1, unitsPerBox: 3 });
+  });
+  it("is null for an option that is not a derived base (the pack, a level, an own-priced Piece)", () => {
+    const own = buildLadderOptions(box24, [CASE72, row("Piece", 1, "2.50")], 1);
+    for (const o of own) expect(derivedPackSplit(o, 2)).toBeNull();
+  });
+});
+
+describe("packPiecesSplit: the one pieces-to-pack shape derivedPackSplit and the server share (row 513)", () => {
+  it("rolls whole packs into boxes and keeps the remainder as pieces", () => {
+    expect(packPiecesSplit(3, 7)).toEqual({ qty: 7, boxes: 2, pieces: 1, unitsPerBox: 3 });
+    expect(packPiecesSplit(12, 12)).toEqual({ qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 });
+    expect(packPiecesSplit(12, 5)).toEqual({ qty: 5, boxes: 0, pieces: 5, unitsPerBox: 12 });
+  });
+  it("keeps several whole packs as boxes with no remainder, and one piece short of a pack as pieces", () => {
+    expect(packPiecesSplit(12, 24)).toEqual({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+    expect(packPiecesSplit(12, 25)).toEqual({ qty: 25, boxes: 2, pieces: 1, unitsPerBox: 12 });
+    expect(packPiecesSplit(12, 11)).toEqual({ qty: 11, boxes: 0, pieces: 11, unitsPerBox: 12 });
+  });
+  it("is an all-zero split for a zero or negative count, never a negative line", () => {
+    const zero = { qty: 0, boxes: 0, pieces: 0, unitsPerBox: 12 };
+    expect(packPiecesSplit(12, 0)).toEqual(zero);
+    expect(packPiecesSplit(12, -3)).toEqual(zero);
+  });
+  it("truncates a fractional count to whole pieces", () => {
+    expect(packPiecesSplit(12, 2.7)).toEqual({ qty: 2, boxes: 0, pieces: 2, unitsPerBox: 12 });
+  });
+  it("is an all-zero split when the pack is not a real pack (1 or less)", () => {
+    expect(packPiecesSplit(1, 5)).toEqual({ qty: 0, boxes: 0, pieces: 0, unitsPerBox: 1 });
+    expect(packPiecesSplit(0, 5)).toEqual({ qty: 0, boxes: 0, pieces: 0, unitsPerBox: 0 });
+  });
+  it("derivedPackSplit and packPiecesSplit agree for every count of a derived base", () => {
+    const base = buildLadderOptions(pack3, [CASE72], 1).find((o) => o.factorToBase === 1)!;
+    for (const c of [1, 2, 3, 4, 6, 7, 30]) {
+      expect(derivedPackSplit(base, c)).toEqual(packPiecesSplit(base.derived!.n, c));
+    }
   });
 });

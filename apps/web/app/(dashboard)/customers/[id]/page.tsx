@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { renderInvoiceStatus } from "./invoice-status-badge";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import { AccountStatusControls, type CustomerStatus } from "../_components/walk-in-protection";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
@@ -159,10 +161,12 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
+import { CustomerToCollectChip } from "./_components/CustomerToCollectChip";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
 import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-order-action";
 import { CustomerOversellOverride } from "./customer-oversell-override";
+import { CustomerInvoiceUnitControl } from "./CustomerInvoiceUnitControl";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -215,9 +219,7 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "createdAt",
     header: "Date",
     enableSorting: false,
-    cell: ({ row }) => (
-      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
-    ),
+    cell: ({ row }) => <span className="text-navy/70">{fmtDate(row.original.createdAt)}</span>,
   },
 ];
 
@@ -235,67 +237,6 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
     >
       {children}
     </Tabs.Trigger>
-  );
-}
-
-// ── Invoice status badge ──────────────────────────────────────────────────────
-
-function renderInvoiceStatus(status: string, dueDate?: string | null): React.ReactNode {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  if (status === "PAID") return <span className="text-xs font-semibold text-green-600">Paid</span>;
-  if (status === "VOID") return <span className="text-xs font-semibold text-gray-400">Void</span>;
-  if (status === "WRITTEN_OFF")
-    return <span className="text-xs font-semibold text-stone-500">Written Off</span>;
-  if (status === "DRAFT") return <span className="text-xs font-semibold text-gray-500">Draft</span>;
-
-  if (dueDate) {
-    const due = new Date(dueDate);
-    due.setHours(0, 0, 0, 0);
-    const diffDays = Math.round((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (status === "OVERDUE" || diffDays < 0) {
-      const days = Math.abs(diffDays);
-      if (status === "PARTIAL")
-        return (
-          <span className="text-xs font-semibold text-orange-500">
-            Partial · Overdue{days > 0 ? ` by ${days}d` : ""}
-          </span>
-        );
-      return (
-        <span className="text-xs font-semibold text-red-600">
-          Overdue{days > 0 ? ` by ${days}d` : ""}
-        </span>
-      );
-    }
-    if (diffDays === 0) {
-      if (status === "PARTIAL")
-        return <span className="text-xs font-semibold text-yellow-600">Partial · Due Today</span>;
-      return <span className="text-xs font-semibold text-orange-500">Due Today</span>;
-    }
-    if (status === "PARTIAL")
-      return (
-        <span className="text-xs font-semibold text-yellow-600">Partial · Due in {diffDays}d</span>
-      );
-  }
-
-  const colors: Record<string, string> = {
-    SENT: "text-blue-600",
-    VIEWED: "text-purple-600",
-    PARTIAL: "text-yellow-600",
-    OVERDUE: "text-red-600",
-  };
-  const labels: Record<string, string> = {
-    SENT: "Sent",
-    VIEWED: "Viewed",
-    PARTIAL: "Partial",
-    OVERDUE: "Overdue",
-  };
-  return (
-    <span className={cn("text-xs font-semibold", colors[status] ?? "text-gray-500")}>
-      {labels[status] ?? status}
-    </span>
   );
 }
 
@@ -716,7 +657,7 @@ function AssignAgentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Assign Sales Agent"
+      title="Assign sales agent"
       description="Choose the agent to attribute for this customer going forward."
       footer={
         <>
@@ -1098,7 +1039,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card className="mb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
+            <h3 className="text-base font-semibold text-navy">Default pricing tier</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               Applies to every product for this customer. Tier overrides below take precedence.
             </p>
@@ -1135,7 +1076,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card className="mb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold text-navy">Default Payment Terms</h3>
+            <h3 className="text-base font-semibold text-navy">Default payment terms</h3>
             <p className="mt-0.5 text-xs text-navy/70">
               Seeds the terms and due date on this customer&apos;s new invoices. Wins over the
               tenant default in Settings &rarr; Invoicing.
@@ -1161,6 +1102,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </p>
           )}
         </div>
+        <CustomerInvoiceUnitControl
+          customerId={customerId}
+          value={customer?.invoiceUnitDefault}
+          canEdit={isOperator}
+        />
 
         {/* Deposit — auto-applies to every invoice GENERATED for this customer
             (order flows); computeDepositFields derives the amount at read time,
@@ -1549,7 +1495,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
               disabled={!newComment.trim()}
               leftIcon={<MessageSquare className="h-4 w-4" />}
             >
-              Add Comment
+              Add comment
             </Button>
           </div>
         </form>
@@ -1818,7 +1764,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
             leftIcon={<Upload className="h-4 w-4" />}
             onClick={() => setUploadOpen(true)}
           >
-            Upload Document
+            Upload document
           </Button>
         </div>
 
@@ -1873,7 +1819,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
           setUploadOpen(false);
           setFiles([]);
         }}
-        title="Upload Document"
+        title="Upload document"
         footer={
           <>
             <Button
@@ -1943,6 +1889,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 // `status` as a single enum value (a comma-list 400s) — so it is filtered client-side.
 
 function CustomerDetailPageInner({ id }: { id: string }) {
+  const tenantDay = useTenantToday(); // row 325: the business's own day (undefined until the zone is known)
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
@@ -2220,7 +2167,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   };
 
   if (isLoading) {
-    return <div className="p-12 text-center text-navy/70">Loading...</div>;
+    return <div className="p-12 text-center text-navy/70">Loading…</div>;
   }
 
   if (!customer) {
@@ -2388,6 +2335,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 variant="neutral"
                 label={customer.customerType === "individual" ? "Individual" : "Business"}
               />
+              <CustomerToCollectChip customerId={id} summary={statement?.toCollect} />
             </div>
             <p className="mt-1 text-sm text-navy/70">
               {[
@@ -2434,7 +2382,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           <TabTrigger value="orders">Orders{orderCount > 0 ? ` (${orderCount})` : ""}</TabTrigger>
           <TabTrigger value="addresses">Addresses ({addresses.length})</TabTrigger>
           <TabTrigger value="standing-orders">
-            Standing Orders
+            Standing orders
             {templates.length > 0 ? ` (${templates.length})` : ""}
           </TabTrigger>
           <TabTrigger value="invoices">
@@ -2442,7 +2390,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             {customerInvoices.length > 0 ? ` (${customerInvoices.length})` : ""}
           </TabTrigger>
           <TabTrigger value="billing">Billing</TabTrigger>
-          <TabTrigger value="special-prices">Special Prices</TabTrigger>
+          <TabTrigger value="special-prices">Special prices</TabTrigger>
           <UnitPricesTabTrigger />
           <TabTrigger value="comments">
             <span className="flex items-center gap-1.5">
@@ -2490,7 +2438,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             {/* New fields & tags row */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
               <div className="lg:col-span-2">
-                <Card title="Customer Details">
+                <Card title="Customer details">
                   <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                     {customer.displayName && (
                       <InfoRow icon={User} label="Display Name" value={customer.displayName} />
@@ -2782,7 +2730,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             <Card>
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-semibold text-navy">Contact Persons</h3>
+                  <h3 className="text-base font-semibold text-navy">Contact persons</h3>
                   <p className="mt-0.5 text-xs text-navy/70">
                     People associated with this customer account.
                   </p>
@@ -3106,7 +3054,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       {/* Invited: show expiry */}
                       {portalStatus?.status === "INVITED" && portalStatus.inviteExpiresAt && (
                         <p className="text-xs text-navy/70">
-                          Expires {new Date(portalStatus.inviteExpiresAt).toLocaleDateString()}
+                          Expires {fmtDate(portalStatus.inviteExpiresAt)}
                         </p>
                       )}
 
@@ -3159,13 +3107,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                                 },
                                 {
                                   onSuccess: (d: { message?: string }) =>
-                                    setPortalMsg(d?.message ?? "Invite sent!"),
+                                    setPortalMsg(d?.message ?? "Invite sent."),
                                   onError: () => setPortalMsg(null),
                                 },
                               );
                             }}
                           >
-                            Send Portal Invite
+                            Send portal invite
                           </Button>
                         )}
 
@@ -3178,7 +3126,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                               setPortalMsg(null);
                               resendInvite.mutate(id, {
                                 onSuccess: (d: { message?: string }) =>
-                                  setPortalMsg(d?.message ?? "Invite resent!"),
+                                  setPortalMsg(d?.message ?? "Invite resent."),
                                 onError: () => setPortalMsg(null),
                               });
                             }}
@@ -3195,7 +3143,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                               onClick={() => {
                                 setPortalMsg(null);
                                 approvePortal.mutate(id, {
-                                  onSuccess: () => setPortalMsg("Buyer connection approved!"),
+                                  onSuccess: () => setPortalMsg("Buyer connection approved."),
                                   onError: () => setPortalMsg(null),
                                 });
                               }}
@@ -3246,7 +3194,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
         <Tabs.Content value="orders" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-base font-semibold text-navy">Order History</h3>
+              <h3 className="text-base font-semibold text-navy">Order history</h3>
               <div className="w-48">
                 <Select
                   options={[
@@ -3255,7 +3203,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "CONFIRMED", label: "Confirmed" },
                     {
                       value: "OUT_FOR_DELIVERY",
-                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for delivery"),
                     },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },
@@ -3449,7 +3397,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           <Card>
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-semibold text-navy">Standing Orders</h3>
+                <h3 className="text-base font-semibold text-navy">Standing orders</h3>
                 <p className="mt-0.5 text-xs text-navy/70">
                   Auto-generated orders based on recurring schedules.
                 </p>
@@ -3733,7 +3681,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {fmt(balanceDue)}
                           </td>
                           <td className="px-6 py-3">
-                            {renderInvoiceStatus(inv.status, inv.dueDate)}
+                            {renderInvoiceStatus(inv.status, inv.dueDate, {
+                              isOverdue: inv.isOverdue,
+                              tenantDay,
+                            })}
                           </td>
                         </tr>
                       );
@@ -3769,7 +3720,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     leftIcon={<Wallet className="h-4 w-4" />}
                     onClick={() => setIsRecordPaymentOpen(true)}
                   >
-                    Record Payment
+                    Record payment
                   </WriteButton>
                   <ReadOnlyHint />
                 </div>
@@ -3801,13 +3752,13 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       setIsAdvanceOpen(true);
                     }}
                   >
-                    Record Advance Payment
+                    Record advance payment
                   </Button>
                 </div>
               </Card>
 
               {(advancePayments ?? []).length > 0 && (
-                <Card title="Advance Payments">
+                <Card title="Advance payments">
                   <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                     {(advancePayments ?? []).map((ap: AdvancePayment) => (
                       <li key={ap.id} className="px-6 py-3">
@@ -3824,7 +3775,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         <p className="mt-0.5 text-xs text-navy/70">
                           {paymentMethodLabel(ap.method)}
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
-                          {new Date(ap.createdAt).toLocaleDateString()}
+                          {fmtDate(ap.createdAt)}
                         </p>
                         <ReviewFlagNotice notes={ap.notes} role={user?.role} compact />
                       </li>
@@ -3858,7 +3809,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           <Modal
             open={isAdvanceOpen}
             onClose={() => setIsAdvanceOpen(false)}
-            title="Record Advance Payment"
+            title="Record advance payment"
             description="Record a pre-payment that can be applied to future invoices."
             footer={
               <>

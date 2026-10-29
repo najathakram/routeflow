@@ -148,6 +148,8 @@ export interface AdminOrder {
   counterSale?: boolean | null;
   /** `GET /orders/:id` only: why the server will not cancel the order (the parcel is with the carrier). */
   cancelBlockedReason?: OrderCancelBlockedReason | null;
+  /** Row 673: `GET /orders/:id`'s fulfil-path lock (the PATCH's own predicate); read, never derived from the status. */
+  fulfillPathLocked?: boolean | null;
   createdAt: string;
   customer?: {
     id: string;

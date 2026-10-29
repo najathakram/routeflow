@@ -5,7 +5,7 @@ import OrdersPage from "./page";
 
 /**
  * Row 331: a store-only business (capabilities.fulfilment: PICKUP only, counter always) gets an "Invoice order"
- * entry beside New Order and the counter. New Order still opens the counter; the entry opens the builder, which
+ * entry beside New order and the counter. New order still opens the counter; the entry opens the builder, which
  * runs in POS mode for such a tenant. `?action=new&builder=1` (also the target of /orders/new) opens the builder
  * even when the counter is the default, with no ship option involved.
  */
@@ -67,11 +67,11 @@ beforeEach(() => {
 });
 
 describe("Orders page — Invoice order entry (row 331)", () => {
-  it("a store-only tenant: Counter sale is the filled primary, Invoice a customer is secondary, no New Order", () => {
+  it("a store-only tenant: Counter sale is the filled primary, Invoice a customer is secondary, no New order", () => {
     gate = STORE_ONLY;
     renderWithProviders(<OrdersPage />);
-    // New Order went to the same place as Counter sale, so it is gone (UX G7).
-    expect(screen.queryByRole("button", { name: "New Order" })).toBeNull();
+    // New order went to the same place as Counter sale, so it is gone (UX G7).
+    expect(screen.queryByRole("button", { name: "New order" })).toBeNull();
     const counter = screen.getByRole("button", { name: "Counter sale" });
     const invoice = screen.getByRole("button", { name: "Invoice a customer" });
     expect(counter).toHaveClass("bg-accent-strong");
@@ -117,7 +117,7 @@ describe("Orders page — Invoice order entry (row 331)", () => {
     // From sm up the More menu is hidden, which leaves [Export][Select][Invoice a customer][Counter sale].
   });
 
-  it("a delivery tenant is unchanged: New Order is the primary, Export and Select stay inline, no More menu", () => {
+  it("a delivery tenant is unchanged: New order is the primary, Export and Select stay inline, no More menu", () => {
     gate = {
       showButton: true,
       opensAsCounter: false,
@@ -125,7 +125,7 @@ describe("Orders page — Invoice order entry (row 331)", () => {
       offerInvoiceOrder: false,
     };
     renderWithProviders(<OrdersPage />);
-    expect(screen.getByRole("button", { name: "New Order" })).toHaveClass("bg-accent-strong");
+    expect(screen.getByRole("button", { name: "New order" })).toHaveClass("bg-accent-strong");
     expect(screen.getByRole("button", { name: "Counter sale" })).toHaveClass("bg-paper");
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
     for (const name of ["Export", "Select"]) {

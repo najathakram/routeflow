@@ -78,7 +78,7 @@ describe("finance/payments/[id]: a closed-day void raises exactly one toast (row
     renderWithProviders(<PaymentDetailPage />, {
       queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
     });
-    fireEvent.click(screen.getByRole("button", { name: "Void Payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Void payment" }));
 
     await expectOnlyThePageToasted(mockToast, mockGlobalToast, {
       title: "Failed to void payment",

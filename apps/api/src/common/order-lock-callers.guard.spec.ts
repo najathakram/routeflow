@@ -361,8 +361,12 @@ describe("order-lock callers: every order<->invoice billing-state writer takes t
  */
 describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNote in that order", () => {
   type Table = (typeof ROW_LOCK_ORDER)[number];
-  /** A function whose locks a CALLER inherits: a lock helper (`lock*`, `with*Lock*`) or a `release*InTx` row-lock step. */
-  const HELPER_NAME = /^(?:lock[A-Z]\w*|with\w*Lock\w*|release\w*InTx)$/;
+  /**
+   * A function whose locks a CALLER inherits: a lock helper (`lock*`, `with*Lock*`), a `release*InTx` row-lock step, or
+   * `deleteOrderInvoice` (its `invoice.delete` row-locks the Invoice; without it `deleteOrder` and the customer merge
+   * drop below two tables and stop being classified at all).
+   */
+  const HELPER_NAME = /^(?:lock[A-Z]\w*|with\w*Lock\w*|release\w*InTx|deleteOrderInvoice)$/;
   const MODEL: Record<string, Table> = {
     return: "Return",
     order: "Order",

@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Modal, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { formatMoney } from "@/lib/format";
 import { markSentErrorText, sendEmailErrorText } from "@/lib/order-error-text";
@@ -47,6 +47,7 @@ export function SendInvoiceModal({
   onClose: () => void;
 }) {
   const { toast } = useToast();
+  const printInvoice = usePrintInvoice();
   const sendInvoice = useSendInvoice({ localErrorToast: true });
   const sendInvoiceEmail = useSendInvoiceEmail({ localErrorToast: true });
   const [pdfLoading, setPdfLoading] = React.useState(false);
@@ -130,16 +131,8 @@ export function SendInvoiceModal({
   async function handlePrint() {
     setPrintLoading(true);
     try {
-      // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
-      // still requires a JWT; fetchPdfBlob, not bare apiClient — review
-      // finding F3), then hands the bytes to the shared print helper
-      // instead of triggering a download.
-      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
-      if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const blob = await fetchPdfBlob(meta.data.url, apiClient);
-      printPdfBlob(blob);
-    } catch {
-      toast({ title: "Could not generate PDF", variant: "error" });
+      // The one shared print path (it says so itself when it could not).
+      await printInvoice.print(data.invoiceId);
     } finally {
       setPrintLoading(false);
     }
@@ -239,7 +232,7 @@ export function SendInvoiceModal({
                   )}
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-navy">Send via Email</p>
+                  <p className="text-sm font-medium text-navy">Send via email</p>
                   <p className="text-xs text-navy/70">{data.customerEmail}</p>
                 </div>
               </button>

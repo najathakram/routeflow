@@ -77,7 +77,7 @@ describe("EstimatesPage — REG-B79 issueDate write path", () => {
     const user = userEvent.setup();
     renderWithProviders(<EstimatesPage />);
 
-    await user.click(screen.getByRole("button", { name: "New Estimate" }));
+    await user.click(screen.getAllByRole("button", { name: "New estimate" })[0]);
 
     const dialog = await screen.findByRole("dialog");
 
@@ -90,7 +90,7 @@ describe("EstimatesPage — REG-B79 issueDate write path", () => {
     await user.click(await within(dialog).findByText("Widget"));
 
     // Set issue date — the label has no htmlFor/id association, so select the
-    // first of the two `type="date"` inputs (Issue Date, then Expiry Date).
+    // first of the two `type="date"` inputs (Issue date, then Expiry date).
     // fireEvent.change (not user.clear/user.type) sets the value directly:
     // userEvent's keystroke-by-keystroke typing into a native `type="date"`
     // input is locale/OS-dependent across jsdom environments and is flaky

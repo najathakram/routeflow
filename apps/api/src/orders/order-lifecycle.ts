@@ -32,6 +32,7 @@ import { judgeFulfilSwitch } from "./fulfil-path-restrictions";
 import * as rGate from "./order-restriction-gate";
 import { resolveShipmentText } from "./shipment-text";
 import { assertFulfilPathOffered } from "./fulfil-path-resolver";
+import { fulfillPathLocked } from "./fulfil-path-lock";
 import { mayUseTill } from "./counter-sale/till-permission.guard";
 
 const switchLogger = new Logger("OrderFulfilPathSwitch");
@@ -185,11 +186,8 @@ export async function updateFulfillPathImpl(
   });
   if (!order) throw new NotFoundException("Order not found");
   const linked = order.routeRunId != null || order.routeRunStopId != null;
-  if (
-    (order.status === OrderStatus.OUT_FOR_DELIVERY && !(opts?.fromOutForDelivery && !linked)) ||
-    order.status === OrderStatus.DELIVERED ||
-    order.status === OrderStatus.CANCELLED
-  ) {
+  // Row 673: the same predicate the order read sends as `fulfillPathLocked`.
+  if (fulfillPathLocked(order, { fromOutForDelivery: opts?.fromOutForDelivery, linked })) {
     throw new BadRequestException("Fulfillment path can only be changed while the order is open");
   }
   // Status alone isn't enough: the dispatch sweep attaches orders to a run

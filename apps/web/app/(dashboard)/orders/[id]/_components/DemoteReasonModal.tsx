@@ -60,7 +60,7 @@ export function DemoteReasonModal({
             className="w-full resize-none rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
             rows={3}
             autoFocus // W-778 (F14): the cursor lands where the reason is typed
-            placeholder="e.g. Customer called to request a change..."
+            placeholder="e.g. Customer called to request a change…"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />

@@ -8,7 +8,7 @@ import {
   searchSettings,
   splitHighlight,
 } from "./settings-index";
-import { GROUP_META } from "./settings-groups";
+import { GROUP_META, entryCrumb } from "./settings-groups";
 
 /** Settings PR1 (hub + search + rail): groups, new entries, gates, resolving hrefs, search, active row. */
 
@@ -42,17 +42,19 @@ const ROUTES = [
 /** Every gate open: the superset an admin of a fleet + counter + self-serve tenant can reach. */
 const ALL = { isAdmin: true, fleet: true, selfServe: true, counter: true };
 const full = buildIndex(ALL);
-const ids = (o: Partial<typeof ALL>) => buildIndex({ ...ALL, ...o }).map((e) => e.id);
+const ids = (o: Partial<Parameters<typeof buildIndex>[0]>) =>
+  buildIndex({ ...ALL, ...o }).map((e) => e.id);
 
 describe("PR1 groups (direction 2b)", () => {
-  it("has the 7 groups, in order, with the approved titles", () => {
+  it("has the 8 groups, in order, with the approved titles (row 376, owner-approved mockup)", () => {
     expect(GROUP_META.map((g) => [g.key, g.title])).toEqual([
-      ["fulfilment", "How you sell"],
       ["business", "Business & team"],
+      ["fulfilment", "Orders & delivery"],
+      ["counter", "Counter"],
+      ["selling", "Pricing & products"],
       ["payments", "Invoicing & payments"],
-      ["selling", "Selling & pricing"],
-      ["notifications", "Notifications"],
-      ["compliance", "Compliance"],
+      ["notifications", "Notifications & email"],
+      ["compliance", "Compliance & restrictions"],
       ["integrations", "Integrations & import"],
     ]);
   });
@@ -63,19 +65,16 @@ describe("PR1 groups (direction 2b)", () => {
   it("places each row exactly where direction 2b says (nothing dropped)", () => {
     expect(rows("business")).toEqual(["business-profile", "user-management"]);
     expect(rows("payments")).toEqual(["invoicing", "how-to-pay", "card-payments"]);
-    expect(rows("selling")).toEqual([
-      "tier-names",
-      "costing",
-      "restrictions-selling",
-      "restriction-rules",
-      "product-labels",
-    ]);
+    // Units is flag-gated (flag.units_settings_v1): its place, third, is pinned in the Units block below.
+    expect(rows("selling")).toEqual(["tier-names", "costing", "product-labels"]);
     expect(rows("notifications")).toEqual(["notifications", "email-smtp"]);
+    // Row 376: every rule that limits a sale sits together; Portal limits & rules is one row, not two.
     expect(rows("compliance")).toEqual([
       "regulated-sections",
-      "restrictions-compliance",
-      "restriction-rules-compliance",
+      "restrictions-selling",
+      "restriction-rules",
     ]);
+    expect(full.filter((e) => e.label === "Portal limits & rules")).toHaveLength(1);
     expect(rows("integrations")).toEqual([
       "claude-scanner",
       "gohighlevel",
@@ -93,35 +92,54 @@ describe("PR1 groups (direction 2b)", () => {
     for (const g of GROUP_META) expect(rows(g.key)).not.toContain("plan-billing");
   });
 
-  it("How you sell: table order; Route defaults leads for fleet tenants; Counter leads for counter-only", () => {
+  it("Orders & delivery: Route defaults leads for fleet tenants; the Counter has its own group", () => {
     expect(rows("fulfilment", { fleet: true, counter: true })).toEqual([
       "route-defaults",
       "fulfillment",
-      "counter-sales",
       "out-of-stock-ordering",
+    ]);
+    expect(rows("counter", { fleet: true, counter: true })).toEqual([
+      "counter-sales",
       "counter-quick-keys",
       "day-close",
     ]);
-    const counterOnly = buildIndex({ ...ALL, fleet: false });
+    const noFleet = buildIndex({ ...ALL, fleet: false });
     expect(
-      listGroup(counterOnly, "fulfilment", { fleet: false, counter: true }).map((e) => e.id),
-    ).toEqual([
-      "counter-sales",
-      "counter-quick-keys",
-      "day-close",
-      "fulfillment",
-      "out-of-stock-ordering",
-    ]);
+      listGroup(noFleet, "fulfilment", { fleet: false, counter: true }).map((e) => e.id),
+    ).toEqual(["fulfillment", "out-of-stock-ordering"]);
     const plain = buildIndex({ ...ALL, fleet: false, counter: false });
-    expect(
-      listGroup(plain, "fulfilment", { fleet: false, counter: false }).map((e) => e.id),
-    ).toEqual(["fulfillment", "counter-sales", "out-of-stock-ordering"]);
+    expect(listGroup(plain, "counter", { fleet: false, counter: false }).map((e) => e.id)).toEqual([
+      "counter-sales",
+    ]);
   });
 
-  it("Selling restrictions stays listed in BOTH Selling & pricing and Compliance", () => {
+  it("Counter sales is one search answer; the info row stays as the self-serve-off fallback", () => {
+    expect(
+      searchSettings("counter sales", full).filter((e) => e.label === "Counter sales"),
+    ).toHaveLength(1);
+    const off = buildIndex({ ...ALL, selfServe: false, counter: false });
+    expect(searchSettings("counter sales", off)[0]).toMatchObject({
+      id: "info-counter-sales",
+      kind: "info",
+    });
+  });
+
+  it("old labels still find their rows (search synonyms)", () => {
+    const idx = full;
+    const top = (q: string) => searchSettings(q, idx)[0]?.id;
+    expect(top("how you sell")).toBeDefined();
+    expect(searchSettings("selling & pricing", idx).map((e) => e.id)).toEqual(
+      expect.arrayContaining(["costing", "tier-names"]),
+    );
+    expect(searchSettings("how you sell", idx).map((e) => e.id)).toEqual(
+      expect.arrayContaining(["fulfillment", "counter-sales"]),
+    );
+  });
+
+  it("OK-2: Selling restrictions is listed once (Compliance & restrictions)", () => {
     expect(
       full.filter((e) => e.href === "/settings/restrictions" && e.kind === "item"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 });
 
@@ -145,12 +163,22 @@ describe("PR1 gates", () => {
     );
   });
 
-  it("fleet off still hides Route defaults; operators never see regulated / product labels / digest", () => {
+  it("fleet off still hides Route defaults; operators never see regulated / product labels", () => {
     expect(ids({ fleet: false })).not.toContain("route-defaults");
     const op = ids({ isAdmin: false });
-    for (const id of ["regulated-sections", "product-labels", "low-stock-digest"])
-      expect(op).not.toContain(id);
-    expect(op).toEqual(expect.arrayContaining(["restrictions-selling", "restrictions-compliance"]));
+    for (const id of ["regulated-sections", "product-labels"]) expect(op).not.toContain(id);
+    expect(op).toEqual(expect.arrayContaining(["restrictions-selling"]));
+    // Owner 10-07 OK-6: operators receive the low-stock digest, so its row (the opt-out) is theirs too.
+    expect(ids({ isAdmin: false, role: "OPERATOR" })).toContain("low-stock-digest");
+  });
+
+  it("OK-2: Selling restrictions is one link, under Compliance, for every viewer", () => {
+    for (const isAdmin of [true, false]) {
+      const hits = buildIndex({ isAdmin, fleet: true, counter: true }).filter(
+        (e) => e.label === "Selling restrictions",
+      );
+      expect(hits.map((e) => [e.id, e.groupKey])).toEqual([["restrictions-selling", "compliance"]]);
+    }
   });
 
   it("defaults are dark: no self-serve / counter flag means no Fulfillment or Counter rows", () => {
@@ -226,8 +254,7 @@ describe("PR1 search", () => {
   });
 
   it("a group title alone matches nothing", () => {
-    for (const t of ["how you sell", "integrations import", "business team"])
-      expect(q(t)).toEqual([]);
+    for (const t of ["integrations import", "business team"]) expect(q(t)).toEqual([]);
   });
 
   it("each intent opens the most specific target first", () => {
@@ -335,11 +362,11 @@ describe("U-1 Units entry (specs/u1-hub-index-entry-note.md; SA: gated on flag.u
     }
   });
 
-  it("flag on: Units is listed once, last in Selling, and operators see it", () => {
+  it("flag on: Units is listed once, third in Pricing & products, and operators see it", () => {
     const idx = buildIndex(on);
     expect(idx.filter((e) => e.href === "/settings/units")).toHaveLength(1);
     const selling = listGroup(idx, "selling", { fleet: true, counter: true }).map((e) => e.id);
-    expect(selling[selling.length - 1]).toBe("units");
+    expect(selling.indexOf("units")).toBe(2);
   });
 
   it.each(["unit", "case", "bottle", "pieces per box", "pack"])(
@@ -348,4 +375,62 @@ describe("U-1 Units entry (specs/u1-hub-index-entry-note.md; SA: gated on flag.u
       expect(searchSettings(q, buildIndex(on)).some((e) => e.id === "units")).toBe(true);
     },
   );
+});
+
+describe("row 376 apple-ux fixes: the mockup's labels, placement and copy", () => {
+  const label = (id: string) => full.find((e) => e.id === id)?.label;
+
+  it("the rows carry the mockup's labels; the old labels still find them", () => {
+    expect(label("counter-quick-keys")).toBe("Quick keys");
+    expect(label("email-smtp")).toBe("Email sending (SMTP)");
+    expect(searchSettings("counter quick keys", full)[0]?.id).toBe("counter-quick-keys");
+    expect(searchSettings("email (smtp)", full)[0]?.id).toBe("email-smtp");
+  });
+
+  it("Store pickup is an Orders & delivery answer, not a Counter one", () => {
+    const e = full.find((x) => x.id === "info-pos-mode");
+    expect(e?.groupKey).toBe("fulfilment");
+    expect(entryCrumb(e!)).toBe("Orders & delivery › Store pickup");
+  });
+
+  it("the Counter sales answer follows the counter state; the support line shows only when it is off", () => {
+    const answer = (counter: boolean) =>
+      buildIndex({ ...ALL, counter }).find((e) => e.id === "info-counter-sales")?.answer;
+    expect(answer(true)).toMatch(/Counter sales are on/);
+    expect(answer(true)).not.toMatch(/support/i);
+    expect(answer(false)).toMatch(/Ask RouteFlow support/);
+  });
+
+  it("a crumb never repeats its group: Open the Counter reads just Counter", () => {
+    expect(entryCrumb(full.find((e) => e.id === "open-counter")!)).toBe("Counter");
+    expect(entryCrumb(full.find((e) => e.id === "counter-quick-keys")!)).toBe(
+      "Counter › Quick keys",
+    );
+  });
+
+  it("no entry's crumb still says the old SMTP label", () => {
+    expect(full.filter((e) => e.page === "Email (SMTP)")).toEqual([]);
+    expect(full.filter((e) => e.page === "Email sending (SMTP)").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("an answer-only row can point somewhere: Store pickup goes to Orders", () => {
+    expect(full.find((e) => e.id === "info-pos-mode")?.go).toEqual({
+      label: "Go to Orders",
+      href: "/orders",
+    });
+  });
+
+  it("'&' and 'and' are one word: 'selling and pricing' finds what 'selling & pricing' does", () => {
+    const ids = (q: string) => searchSettings(q, full).map((e) => e.id);
+    expect(ids("selling and pricing")).toEqual(ids("selling & pricing"));
+    expect(ids("selling and pricing").length).toBeGreaterThan(0);
+    expect(ids("portal limits and rules")).toEqual(ids("portal limits & rules"));
+    expect(ids("portal limits and rules")).toContain("restriction-rules");
+    expect(ids("invoicing and payments")).toEqual(ids("invoicing & payments"));
+  });
+
+  it("a query that is only 'and' / '&' finds nothing", () => {
+    expect(searchSettings("and", full)).toEqual([]);
+    expect(searchSettings("&", full)).toEqual([]);
+  });
 });

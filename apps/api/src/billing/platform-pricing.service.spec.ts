@@ -3,6 +3,8 @@ import { BadRequestException } from "@nestjs/common";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { StripeService } from "./stripe.service";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 /**
  * Unit tests for PlatformPricingService (Platform billing — catalog-driven Stripe
@@ -53,16 +55,19 @@ describe("PlatformPricingService", () => {
   let service: PlatformPricingService;
   let prisma: { tenant: { findUnique: jest.Mock } };
   let catalog: { getVersionForTenant: jest.Mock };
+  let products: ReturnType<typeof fakeStripeProducts>;
 
   beforeEach(async () => {
     prisma = { tenant: { findUnique: jest.fn() } };
     catalog = { getVersionForTenant: jest.fn() };
+    products = fakeStripeProducts();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlatformPricingService,
         { provide: PrismaService, useValue: prisma },
         { provide: PlanCatalogService, useValue: catalog },
+        { provide: StripeService, useValue: { client: { products: products.products } } },
       ],
     }).compile();
 
@@ -383,7 +388,8 @@ describe("PlatformPricingService", () => {
         unit_amount: 9900,
         recurring: { interval: "month" },
       });
-      expect(priceData.product_data?.name).toContain("Starter");
+      expect(priceData.product).toBe("rf_plan_starter");
+      expect(products.table.get("rf_plan_starter")?.name).toContain("Starter");
     });
 
     it("builds an annual price_data object using the 10x-monthly fallback in integer cents (249 → 249000)", async () => {
@@ -462,11 +468,12 @@ describe("PlatformPricingService", () => {
 
       const monthly = await service.checkoutPriceData("tenant-1", "month");
       expect(monthly.unit_amount).toBe(9900);
-      expect(monthly.product_data.name).toBe("RouteFlow Lite");
+      expect(monthly.product).toBe("rf_plan_lite");
+      expect(products.table.get("rf_plan_lite")?.name).toBe("RouteFlow Lite");
 
       const annual = await service.checkoutPriceData("tenant-1", "year");
       expect(annual.unit_amount).toBe(99000); // 99 * 10 * 100 — the 10x-monthly fallback
-      expect(annual.product_data.name).toBe("RouteFlow Lite");
+      expect(annual.product).toBe(monthly.product); // one product for both intervals
     });
   });
 });

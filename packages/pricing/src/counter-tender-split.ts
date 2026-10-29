@@ -21,13 +21,22 @@ export const COUNTER_METHOD_LABEL: Record<TodaysSaleMethod, string> = {
  * The Payment method row of a receipt, ONE formatter for the emailed receipt and the reprint (SA-751r: a figure is never on one
  * and not the other). SA-838a: EVERY tender carries its amount ("Advance $12.50", "Cash $5.00 + Card $7.50"), joined with " + ",
  * so a sale that was partly returned still reads what each method took. The no-split (older server) reprint keeps the labels
- * joined as ever.
+ * joined as ever. `checkReference` (W-713) decorates the CHECK leg only: "Check #1042 $25.00".
  */
 export function counterMethodLine(
   tenders: ReadonlyArray<{ method: TodaysSaleMethod; amount: number }>,
+  opts?: { checkReference?: string | null },
 ): string {
+  // W-713: the check's number sits right after the word "Check", on the CHECK leg only (the web reprint and the emailed receipt)
+  const checkRef = opts?.checkReference?.trim();
   return tenders
-    .map((t) => `${COUNTER_METHOD_LABEL[t.method]} ${formatReceiptMoney(t.amount)}`)
+    .map((t) => {
+      const label =
+        t.method === "CHECK" && checkRef
+          ? `${COUNTER_METHOD_LABEL[t.method]} #${checkRef}`
+          : COUNTER_METHOD_LABEL[t.method];
+      return `${label} ${formatReceiptMoney(t.amount)}`;
+    })
     .join(" + ");
 }
 

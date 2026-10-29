@@ -17,12 +17,15 @@ export type IndexEntry = {
   href?: string;
   /** Info rows only: the sentence shown instead of desc. */
   answer?: string;
-  /** fulfilment | business | payments | selling | notifications | compliance | integrations | footer */
+  /** Info rows only: where the answer's action lives, so a result is never a dead end (row 376). */
+  go?: { label: string; href: string };
+  /** business | fulfilment | counter | selling | payments | notifications | compliance | integrations | footer */
   groupKey: string;
   /** Breadcrumb tail, e.g. "Invoicing" (defaults to the label). */
   page?: string;
   keywords: string[];
-  show?: "admin";
+  /** admin = account admins only; staff = admins and operators (never a driver), e.g. the low-stock digest (OK-6). */
+  show?: "admin" | "staff";
   /**
    * fleet = routes/drivers on the plan; selfServe = Settings > Fulfillment is open to this tenant; counter = counter
    * sales on; unitsSettings = flag.units_settings_v1; driverAccess = the Driver access card renders (an admin on a
@@ -65,7 +68,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Counter sales",
     desc: "Walk-in sales, taken and paid on one screen",
     href: "/settings?tab=fulfilment#counter-sales",
-    groupKey: "fulfilment",
+    groupKey: "counter",
     needs: "selfServe",
     keywords: [
       "counter",
@@ -82,12 +85,13 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "counter-quick-keys",
     kind: "item",
-    label: "Counter quick keys",
+    label: "Quick keys",
     desc: "Pin the products you ring up most",
     href: "/orders/counter-sale",
-    groupKey: "fulfilment",
+    groupKey: "counter",
     needs: "counter",
-    keywords: ["quick keys", "pins", "shortcuts", "buttons"],
+    // "counter quick keys" was the label before the row-376 regroup (the group now says Counter)
+    keywords: ["quick keys", "counter quick keys", "pins", "shortcuts", "buttons"],
   },
   {
     id: "day-close",
@@ -95,7 +99,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Day close & Z report",
     desc: "Count the drawer and close the day",
     href: "/orders/counter-sale",
-    groupKey: "fulfilment",
+    groupKey: "counter",
     needs: "counter",
     keywords: ["z report", "end of day", "close day", "drawer", "cash drawer", "till", "register"],
   },
@@ -126,8 +130,8 @@ const ENTRIES: IndexEntry[] = [
     label: "Open the Counter",
     desc: "Ring up a walk-in sale",
     href: "/orders/counter-sale",
-    groupKey: "fulfilment",
-    page: "Counter sales",
+    groupKey: "counter",
+    page: "Counter",
     needs: "counter",
     keywords: ["register", "till", "walk-in", "sale"],
   },
@@ -149,6 +153,7 @@ const ENTRIES: IndexEntry[] = [
     answer:
       "Turn on Store pickup in the New order window on the Orders screen. It books a named customer and invoices right away.",
     groupKey: "fulfilment",
+    go: { label: "Go to Orders", href: "/orders" },
     // "pos" / "pos mode" stay: the switch was called POS mode until I-120 (SA-861 rule 10)
     keywords: ["store pickup", "pos", "pos mode", "point of sale", "invoice now", "named customer"],
   },
@@ -224,7 +229,7 @@ const ENTRIES: IndexEntry[] = [
     label: "Selling restrictions",
     desc: "Block restricted products by the customer's state",
     href: R,
-    groupKey: "selling",
+    groupKey: "compliance",
     keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
   },
   {
@@ -233,8 +238,8 @@ const ENTRIES: IndexEntry[] = [
     label: "Portal limits & rules",
     desc: "What portal customers can't see, and the rules behind it",
     href: "/settings/restrictions/rules",
-    groupKey: "selling",
-    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance"],
+    groupKey: "compliance",
+    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance", "portal", "limit"],
   },
   {
     id: "import-data",
@@ -306,12 +311,13 @@ const ENTRIES: IndexEntry[] = [
   {
     id: "email-smtp",
     kind: "item",
-    label: "Email (SMTP)",
+    label: "Email sending (SMTP)",
     desc: "Sender identity & delivery settings",
     href: "/settings?tab=email",
     groupKey: "notifications",
     show: "admin",
     keywords: [
+      "email smtp",
       "smtp",
       "sender",
       "from address",
@@ -343,24 +349,6 @@ const ENTRIES: IndexEntry[] = [
       "banned",
       "age",
     ],
-  },
-  {
-    id: "restrictions-compliance",
-    kind: "item",
-    label: "Selling restrictions",
-    desc: "Block restricted products by the customer's state",
-    href: R,
-    groupKey: "compliance",
-    keywords: ["restriction", "state", "blocked", "banned", "age", "tobacco", "vape", "compliance"],
-  },
-  {
-    id: "restriction-rules-compliance",
-    kind: "item",
-    label: "Portal limits & rules",
-    desc: "What portal customers can't see, and the rules behind it",
-    href: "/settings/restrictions/rules",
-    groupKey: "compliance",
-    keywords: ["rules", "banned", "lift", "state", "restriction", "compliance", "portal", "limit"],
   },
   {
     id: "product-labels",
@@ -641,7 +629,8 @@ const ENTRIES: IndexEntry[] = [
     "notifications",
     "Notifications",
     ["low stock", "reorder", "digest", "stock alert", "inventory email"],
-    { show: "admin", anchor: "low-stock-digest" },
+    // Owner 10-07 OK-6: operators receive the digest too, so its opt-out row is theirs; a driver gets none.
+    { show: "staff", anchor: "low-stock-digest" },
   ),
   ...card(
     "push",
@@ -667,7 +656,7 @@ const ENTRIES: IndexEntry[] = [
     "Send email through your own mail server",
     "email",
     "notifications",
-    "Email (SMTP)",
+    "Email sending (SMTP)",
     ["smtp", "server", "host"],
     { show: "admin" },
   ),
@@ -677,7 +666,7 @@ const ENTRIES: IndexEntry[] = [
     "Verify the domain invoices are sent from",
     "email",
     "notifications",
-    "Email (SMTP)",
+    "Email sending (SMTP)",
     ["domain", "from address", "dns", "deliverability"],
     { show: "admin" },
   ),
@@ -687,7 +676,7 @@ const ENTRIES: IndexEntry[] = [
     "Connect Gmail or Outlook to send as you",
     "email",
     "notifications",
-    "Email (SMTP)",
+    "Email sending (SMTP)",
     ["gmail", "outlook", "mailbox", "sender"],
     { show: "admin" },
   ),
@@ -783,7 +772,7 @@ const ENTRIES: IndexEntry[] = [
     desc: "Sell to walk-in customers",
     answer:
       "Ring up walk-in customers from the Orders screen. Not there? Ask RouteFlow support to turn it on.",
-    groupKey: "fulfilment",
+    groupKey: "counter",
     keywords: [
       "counter",
       "walk-in",
@@ -814,12 +803,47 @@ function card(
   return [{ id, kind: "card", label, desc, href, groupKey, page, keywords, ...extra }];
 }
 
+/** The Counter sales answer when counter sales are on: the support line ("Not there? Ask ...") is only true while they are off. */
+const COUNTER_SALES_ON_ANSWER = "Counter sales are on. Open the Counter from the Orders screen.";
+
 /** Carrier-only (fleet-off) accounts have no drivers: user management must not promise them. */
 const USERS_DESC_NO_FLEET = "Team members, roles, passwords";
 
 /** Invoice numbering is admin-only (SA #3412): an operator's Invoicing row must not promise it or match it. */
 const INVOICING_DESC_NO_NUMBERING = "Terms & default notes";
 const NUMBERING_WORDS = new Set(["prefix", "invoice number"]);
+
+/**
+ * Row 376 regroup: the two retired group titles stay findable. A person who remembers "How you sell" or
+ * "Selling & pricing" types it and lands on the row they always opened (the group title itself is not searched).
+ */
+const LEGACY_GROUP_WORDS: Record<string, string[]> = {
+  "how you sell": [
+    "fulfillment",
+    "counter-sales",
+    "counter-quick-keys",
+    "day-close",
+    "route-defaults",
+    "out-of-stock-ordering",
+  ],
+  "selling & pricing": [
+    "tier-names",
+    "costing",
+    "units",
+    "product-labels",
+    "restrictions-selling",
+    "restriction-rules",
+  ],
+};
+
+function withLegacyGroupWords(entries: IndexEntry[]): IndexEntry[] {
+  return entries.map((e) => {
+    const words = Object.entries(LEGACY_GROUP_WORDS)
+      .filter(([, ids]) => ids.includes(e.id))
+      .map(([title]) => title);
+    return words.length ? { ...e, keywords: [...e.keywords, ...words] } : e;
+  });
+}
 
 /** The entries a viewer can see: admin-only, fleet-only and flag-gated rows are dropped, never greyed out. */
 export function buildIndex(o: {
@@ -833,6 +857,8 @@ export function buildIndex(o: {
   unitsSettings?: boolean;
   /** The viewer can act as a driver (their Driver access card shows even off-fleet and for an operator). */
   canActAsDriver?: boolean;
+  /** The viewer's role: `show: "staff"` rows need an admin or an OPERATOR (never a driver). */
+  role?: string | null;
 }): IndexEntry[] {
   const open = {
     fleet: o.fleet,
@@ -841,29 +867,36 @@ export function buildIndex(o: {
     unitsSettings: !!o.unitsSettings,
     driverAccess: !!o.canActAsDriver || (o.isAdmin && o.fleet),
   };
-  return ENTRIES.filter((e) => (e.show === "admin" ? o.isAdmin : true))
+  const staff = o.isAdmin || o.role === "OPERATOR";
+  return withLegacyGroupWords(ENTRIES)
+    .filter((e) => (e.show === "admin" ? o.isAdmin : e.show === "staff" ? staff : true))
     .filter((e) => (e.needs ? open[e.needs] : true))
     .map((e) =>
-      e.id === "user-management" && !o.fleet
-        ? { ...e, desc: USERS_DESC_NO_FLEET, keywords: e.keywords.filter((k) => k !== "driver") }
-        : e.id === "invoicing" && !o.isAdmin
-          ? {
-              ...e,
-              desc: INVOICING_DESC_NO_NUMBERING,
-              keywords: e.keywords.filter((k) => !NUMBERING_WORDS.has(k)),
-            }
-          : e,
+      e.id === "info-counter-sales" && o.counter
+        ? { ...e, answer: COUNTER_SALES_ON_ANSWER }
+        : e.id === "user-management" && !o.fleet
+          ? { ...e, desc: USERS_DESC_NO_FLEET, keywords: e.keywords.filter((k) => k !== "driver") }
+          : e.id === "invoicing" && !o.isAdmin
+            ? {
+                ...e,
+                desc: INVOICING_DESC_NO_NUMBERING,
+                keywords: e.keywords.filter((k) => !NUMBERING_WORDS.has(k)),
+              }
+            : e,
     );
 }
 
-/** Lowercase, punctuation -> space, one trailing "s" dropped from words longer than 3. */
+/**
+ * Lowercase, punctuation -> space, one trailing "s" dropped from words longer than 3. "&" is punctuation and "and" is
+ * dropped, so "selling and pricing" and "selling & pricing" are the same words on both sides of a match.
+ */
 export function normalize(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .split(" ")
-    .filter(Boolean)
+    .filter((w) => w !== "" && w !== "and")
     .map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w))
     .join(" ");
 }
@@ -895,19 +928,13 @@ export function searchIndex(q: string, entries: IndexEntry[]): IndexEntry[] {
 
 /** Row order inside each hub/rail group (direction 2b); ids not listed sort last. */
 export const GROUP_ROWS: Record<string, string[]> = {
-  fulfilment: [
-    "fulfillment",
-    "counter-sales",
-    "out-of-stock-ordering",
-    "route-defaults",
-    "counter-quick-keys",
-    "day-close",
-  ],
   business: ["business-profile", "user-management"],
+  fulfilment: ["fulfillment", "out-of-stock-ordering", "route-defaults"],
+  counter: ["counter-sales", "counter-quick-keys", "day-close"],
+  selling: ["tier-names", "costing", "units", "product-labels"],
   payments: ["invoicing", "how-to-pay", "card-payments"],
-  selling: ["tier-names", "costing", "restrictions-selling", "restriction-rules", "product-labels"],
   notifications: ["notifications", "email-smtp"],
-  compliance: ["regulated-sections", "restrictions-compliance"],
+  compliance: ["regulated-sections", "restrictions-selling", "restriction-rules"],
   integrations: [
     "claude-scanner",
     "gohighlevel",
@@ -916,9 +943,8 @@ export const GROUP_ROWS: Record<string, string[]> = {
     "batch-invoice-import",
   ],
 };
-/** Counter-first (Sam) and fleet-first (Dana): the order changes, the membership never does. */
+/** Fleet tenants see Route defaults first in Orders & delivery: the order changes, the membership never does. */
 const FLEET_FIRST = ["route-defaults"];
-const COUNTER_FIRST = ["counter-sales", "counter-quick-keys", "day-close"];
 
 /** The list rows of one group, in order. */
 export function listGroup(
@@ -927,7 +953,7 @@ export function listGroup(
   o: { fleet: boolean; counter: boolean },
 ): IndexEntry[] {
   const base = GROUP_ROWS[key] ?? [];
-  const lead = key === "fulfilment" ? (o.fleet ? FLEET_FIRST : o.counter ? COUNTER_FIRST : []) : [];
+  const lead = key === "fulfilment" && o.fleet ? FLEET_FIRST : [];
   const order = [...lead, ...base.filter((id) => !lead.includes(id))];
   const rank = (id: string) => (order.includes(id) ? order.indexOf(id) : order.length);
   return entries
@@ -947,8 +973,7 @@ export function searchSettings(q: string, entries: IndexEntry[]): IndexEntry[] {
   const linked = hits.filter((e) => e.kind !== "info");
   const seen = new Set<string>();
   const out = linked.filter((e) => {
-    // one result per destination: a row listed in two groups (Selling restrictions in Selling and Compliance) is
-    // one answer to a search, the first group's
+    // one result per destination: a row listed in two groups is one answer to a search, the first group's
     const k = `${e.href}|${e.label}`;
     return seen.has(k) ? false : (seen.add(k), true);
   });
@@ -989,7 +1014,7 @@ export function activeEntryIds(
     .filter((e) => e.kind === "item" && e.href)
     .map((e) => ({ id: e.id, ...parseHref(e.href!) }));
   if (loc.pathname !== "/settings") {
-    // Selling restrictions is listed in two groups; only the first is the open row.
+    // A destination listed in two groups opens only its first row.
     const hit = rows.find((r) => r.path === loc.pathname);
     return hit ? [hit.id] : [];
   }

@@ -72,7 +72,7 @@ describe("invoice edit page — the price-change reason (H3b)", () => {
 
   it("moving the price shows the Reason field; the trimmed reason rides that line", async () => {
     renderWithProviders(<EditInvoicePage />);
-    const price = screen.getByLabelText("Unit Price");
+    const price = screen.getByLabelText("Unit price");
     await userEvent.clear(price);
     await userEvent.type(price, "24");
     await userEvent.type(screen.getByLabelText("Reason for the price change"), "  agreed at list ");
@@ -86,7 +86,7 @@ describe("invoice edit page — the price-change reason (H3b)", () => {
 
   it("a moved price with no reason typed sends none (the server answers with its own 400)", async () => {
     renderWithProviders(<EditInvoicePage />);
-    const price = screen.getByLabelText("Unit Price");
+    const price = screen.getByLabelText("Unit price");
     await userEvent.clear(price);
     await userEvent.type(price, "24");
     await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
@@ -96,7 +96,7 @@ describe("invoice edit page — the price-change reason (H3b)", () => {
 
   it("moving the price back hides the field and drops the stale reason", async () => {
     renderWithProviders(<EditInvoicePage />);
-    const price = screen.getByLabelText("Unit Price");
+    const price = screen.getByLabelText("Unit price");
     await userEvent.clear(price);
     await userEvent.type(price, "24");
     await userEvent.type(screen.getByLabelText("Reason for the price change"), "stale");

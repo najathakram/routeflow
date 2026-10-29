@@ -27,7 +27,7 @@ async function loginAsSessionsOp(page: import("@playwright/test").Page) {
   await page.waitForURL("**/dashboard", { timeout: 30_000 });
 }
 
-test.describe("Active Sessions identity (F14 / B155)", () => {
+test.describe("Active sessions identity (F14 / B155)", () => {
   test.beforeEach(async ({ context, baseURL }) => {
     await setTenantCookie(context, baseURL ?? "", TENANT_SLUG);
   });

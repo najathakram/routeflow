@@ -269,7 +269,7 @@ export function CreditNotePicker({
                     {cn.reason}
                   </span>
                   <span className="shrink-0 font-medium text-navy">
-                    ${remaining.toFixed(2)} available
+                    {formatMoney(remaining)} available
                   </span>
                 </label>
                 {isExpired ? (
@@ -331,13 +331,13 @@ export function CreditNotePicker({
         <div className="space-y-0.5 rounded-lg bg-surface-raised px-3 py-2 text-xs">
           <div className="flex justify-between text-navy/70">
             <span>Credits to apply at invoicing</span>
-            <span className="font-medium text-navy">−${totalApplied.toFixed(2)}</span>
+            <span className="font-medium text-navy">−{formatMoney(totalApplied)}</span>
           </div>
           {estimatedOrderTotal != null && (
             <div className="flex justify-between text-navy/70">
               <span>Estimated balance due</span>
               <span className="font-medium text-navy">
-                ${Math.max(0, estimatedOrderTotal - totalApplied).toFixed(2)}
+                {formatMoney(Math.max(0, estimatedOrderTotal - totalApplied))}
               </span>
             </div>
           )}
