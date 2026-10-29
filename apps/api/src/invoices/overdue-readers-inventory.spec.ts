@@ -61,6 +61,8 @@ const OTHER_READERS: Record<string, string> = {
   "invoices/invoice-balance-sql.ts": "the predicate itself",
   "customers/customers.service.ts":
     "advance-apply status write: OVERDUE only when newPaid == 0 (already balance-aware); the statements moved to customer-statement.ts",
+  "authorizations/licence-validity.ts":
+    "licence expiry day-grace: applies the same date rule to a licence's expiry date, not to an invoice (no balance involved)",
 };
 
 /**
