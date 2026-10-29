@@ -1,6 +1,6 @@
 # Bug test plan — <bug id(s)> <slug>
 
-> Fable @ high writes this from the fix ruling; Sonnet types the tests inside the engine. The red bar is
+> Opus @ high writes this from the fix ruling; Sonnet types the tests inside the engine. The red bar is
 > BEHAVIORAL: each REG test must fail today on its own exact wrong value — reproduction is the point.
 
 ## Red set (REG-tagged; in the red gate)

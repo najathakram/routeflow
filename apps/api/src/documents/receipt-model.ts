@@ -13,7 +13,7 @@ import {
   sumConfirmed,
 } from "@routeflow/pricing";
 import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
-import { servedChange } from "../orders/counter-sale/counter-sale-readback";
+import { checkReferenceOf, servedChange } from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import {
   counterReturnSplit,
@@ -97,6 +97,8 @@ export interface ReceiptPaymentInput {
   method: string;
   amount: unknown;
   status: string;
+  /** W-713: the check number on a CHECK tender (`Payment.reference`); the emailed receipt prints it as the reprint does */
+  reference?: string | null;
   /** SA-838: the credit note this payment applied, and the invoice that note was issued against (counter sales only) */
   creditNoteId?: string | null;
   creditNote?: { invoiceId: string | null } | null;
@@ -345,7 +347,7 @@ export function buildReceiptModel(
     methodLabel: !hasTender
       ? null
       : split
-        ? counterMethodLine(tenders)
+        ? counterMethodLine(tenders, { checkReference: checkReferenceOf(livePayments) })
         : deliveryMethodLine(tenders),
     tendered,
     tenderedAsEntered: false,

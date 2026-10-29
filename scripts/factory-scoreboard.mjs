@@ -32,6 +32,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { LANDINGS_FILE, latestByPr } from "./landing-telemetry.mjs";
 import { registryRoot } from "./lib/registry-root.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -489,6 +490,55 @@ const round1 = (n) => Math.round(n * 10) / 10;
 
 // The usage % is this week's spend, so it is divided by the cohort old enough to be verified (merged
 // in the window that ended 14 days ago); the current window's merges are all still pending.
+const median = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/**
+ * Metric 7 (R1-b): what the landing rows say about merges in the window. Read-only: the rows are written at landing by
+ * landing-telemetry.mjs (ops-post-push spawns it), never here. Coverage compares rows with the window's merged PRs,
+ * so a gap in the ledger shows as a number instead of a silently smaller sample.
+ */
+function landings({ fixture, sinceMs, nowMs, root }, mergedInWindow) {
+  const text = readOptional(fixture, "landings.jsonl", path.join(root, LANDINGS_FILE));
+  if (text === null) return null;
+  const rows = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      /* a torn line is skipped; coverage shows the gap */
+    }
+  }
+  const inWindow = latestByPr(rows).filter((r) => {
+    const t = Date.parse(r.mergedAt);
+    return Number.isFinite(t) && t >= sinceMs && t <= nowMs;
+  });
+  const routes = {};
+  for (const r of inWindow) routes[r.route ?? "unknown"] = (routes[r.route ?? "unknown"] ?? 0) + 1;
+  const reviewed = inWindow.filter((r) => r.reviewRounds != null);
+  const lines = inWindow.map((r) => r.lines).filter(Number.isFinite);
+  const costs = inWindow.map((r) => r.costUsd).filter(Number.isFinite);
+  return {
+    rows: inWindow.length,
+    mergedInWindow,
+    routes,
+    reviewed: reviewed.length,
+    medianReviewRounds: median(reviewed.map((r) => r.reviewRounds)),
+    firstPass: reviewed.filter((r) => r.firstPass === true).length,
+    medianLines: median(lines),
+    over400: lines.filter((n) => n > 400).length,
+    over600: lines.filter((n) => n > 600).length,
+    rework: inWindow.filter((r) => r.reworkOf != null).length,
+    costed: costs.length,
+    medianCostUsd: costs.length ? Math.round(median(costs) * 100) / 100 : null,
+  };
+}
+
 function allowance(usagePct, cohort) {
   if (usagePct === null) return { supplied: false };
   return {
@@ -501,7 +551,7 @@ function allowance(usagePct, cohort) {
   };
 }
 
-function buildReport({ sinceMs, nowMs, usagePct, merges, esc, expo }) {
+function buildReport({ sinceMs, nowMs, usagePct, merges, esc, expo, land }) {
   const w = merges.window;
   return {
     window: { since: new Date(sinceMs).toISOString(), until: new Date(nowMs).toISOString() },
@@ -511,6 +561,7 @@ function buildReport({ sinceMs, nowMs, usagePct, merges, esc, expo }) {
     ownerBlockedHours: "not instrumented",
     releaseEtaHitRate: "not instrumented",
     exposure: expo,
+    landings: land,
   };
 }
 
@@ -572,6 +623,29 @@ function toMarkdown(r) {
       : `dead-man: ${d.flippedPrivate} flipped private, ${d.flipUnconfirmed} flip unconfirmed${d.otherIncidents ? `, ${d.otherIncidents} other incidents` : ""}${d.undated ? ` (+${d.undated} undated)` : ""}${d.notAdminPolls ? `; WARNING: ${d.notAdminPolls} not-admin polls (the dead-man token cannot flip)` : ""}`,
   );
   rows.push(["6", "Exposure", parts.join("; ")]);
+  const g = r.landings;
+  let landText;
+  if (g === null) landText = `landing ledger missing (${LANDINGS_FILE})`;
+  else {
+    const routes = Object.entries(g.routes)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `${k} ${n}`)
+      .join(", ");
+    landText = [
+      `${g.rows} of ${g.mergedInWindow} merged PRs have a landing row${routes ? ` (${routes})` : ""}`,
+      g.reviewed
+        ? `review: median ${g.medianReviewRounds} rounds, ${g.firstPass} of ${g.reviewed} first-pass`
+        : "review: no verdicts found",
+      g.medianLines === null
+        ? "size: n/a"
+        : `size: median ${g.medianLines} lines, ${g.over400} over 400, ${g.over600} over 600`,
+      `rework: ${g.rework}`,
+      g.costed
+        ? `cost: median $${g.medianCostUsd} (${g.costed} of ${g.rows} costed)`
+        : "cost: none costed",
+    ].join("; ");
+  }
+  rows.push(["7", "Landings", landText]);
   const lines = [
     `# Factory scoreboard: ${r.window.since.slice(0, 10)} to ${r.window.until.slice(0, 10)}`,
     "",
@@ -599,7 +673,8 @@ async function main(opts) {
   const merges = verifiedMerges(ctx);
   const esc = await escapes(ctx);
   const expo = exposure(ctx);
-  const report = buildReport({ sinceMs, nowMs, usagePct: opts.usagePct, merges, esc, expo });
+  const land = landings(ctx, merges.window.total + merges.window.trains);
+  const report = buildReport({ sinceMs, nowMs, usagePct: opts.usagePct, merges, esc, expo, land });
   const md = toMarkdown(report);
   console.log(opts.json ? JSON.stringify(report, null, 2) : md.trimEnd());
 
