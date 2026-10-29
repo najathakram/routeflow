@@ -21,7 +21,7 @@ import { retryCreditTx, retryOnTxConflict, txConflictState } from "../common/tx-
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
-import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
+import { creditAutoApplyOnSend, sweepableCredits } from "./auto-apply-candidates";
 import { assertCreditCustomerNotWalkIn } from "./walk-in-credit-guard";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
@@ -475,43 +475,7 @@ export class CreditNotesService {
     return { ...row, customer };
   }
 
-  /**
-   * §6.3: an INLINE return's credit is "met" against its OWN carrying order once that
-   * order has no open balance left on its non-VOID invoices (every dollar owed was covered
-   * some other way — cash, an earlier credit — so this return's credit is no longer needed
-   * there), or the order is CANCELLED (nothing is owed on it at all any more). Read on
-   * whatever client the caller passes (a bare tx has no `forTenant()` — every query here is
-   * already orderId-scoped, so no cross-tenant leak is possible either way).
-   */
-  private async isOrderMetInTx(tx: any, orderId: string): Promise<boolean> {
-    const order = await tx.order.findFirst({ where: { id: orderId }, select: { status: true } });
-    if (!order) return true; // no such order — nothing left for the credit to wait on
-    if (order.status === "CANCELLED") return true;
-    const invoices = await tx.invoice.findMany({
-      where: { orderId, status: { not: "VOID" } },
-      include: { payments: true },
-    });
-    // Opus review (PR-1c BLOCK, MED-6): the pre-fix fallthrough (`return true` after a
-    // no-op loop) treated "not invoiced yet" as "met" — exactly the common case at order-
-    // entry time, when an inline return is captured before the carrying order has any
-    // invoice at all. That made the §6.3 exclusion a no-op for every fresh capture: the
-    // credit was immediately available to the general oldest-first sweep on some OTHER
-    // invoice, before its own carrying order ever got a chance to consume it. Not met until
-    // there is at least one non-VOID invoice AND every one of them is fully paid.
-    if (invoices.length === 0) return false;
-    // PR-2 review (payment-status-filter scan): this is a CONFIRMATION question —
-    // "is this invoice actually paid off" — so paid must be the CONFIRMED-basis
-    // sum (sumConfirmed), never a bare not-VOID filter. A DRAFT bank-import row
-    // or a PENDING post-dated check must not count: crediting this return's
-    // credit back to the general sweep before the money has actually cleared
-    // would let it get consumed on some OTHER invoice while this order still
-    // owes on paper.
-    for (const inv of invoices) {
-      const paid = roundMoney(sumConfirmed(inv.payments));
-      if (roundMoney(Number(inv.total) - paid) > 0.001) return false;
-    }
-    return true; // every non-VOID invoice is fully paid (CONFIRMED basis)
-  }
+  // SA-998: "is an inline return's carrying order met" lives in auto-apply-candidates (isCarryingOrderMet), read by sweepableCredits.
 
   /**
    * §6.3: true when `creditNoteId` is the ONE standalone credit note an INLINE return
@@ -1033,37 +997,18 @@ export class CreditNotesService {
     let running = remainingCapacity(Number(first.total), first.payments);
     if (!(running > 0.001)) return nothing;
 
-    const now = new Date();
-    const candidates = await tx.creditNote.findMany({
-      // The ONE candidate predicate (shared with the counter sale's walk-in open-credit guard).
-      where: autoApplyCandidateWhere({
-        customerId,
-        now,
-        excludeCreditNoteIds: opts?.excludeCreditNoteIds,
-      }),
-      orderBy: { createdAt: "asc" },
-    });
-    // SA-436: a pair an operator removed (unapply / untick / void-reversal) is never re-applied.
+    // SA-998: the ONE selection (flag, candidate predicate, open balance, reserved inline-return notes), shared with the
+    // operator statement. The per-invoice blocked pairs stay here: a pair an operator removed
+    // (unapply / untick / void-reversal) is never re-applied (SA-436).
     const blocked = await blockedPairs(tx, [invoiceId]);
-    const openWithBalance = (candidates ?? []).filter(
-      (c: any) =>
-        roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001 &&
-        !blocked.has(pairKey(c.id, invoiceId)),
-    );
-    // §6.3: an INLINE return's own credit note is reserved for ITS OWN carrying order
-    // until that order is "met" — skip it here so this general oldest-first sweep (any
-    // invoice for this customer) never sweeps it onto an UNRELATED invoice first. Once its
-    // carrying order is met, the remainder is ordinary wallet credit and this filter passes
-    // it through like any other note. A non-inline (ordinary) credit is never filtered.
-    const open: any[] = [];
-    for (const cn of openWithBalance) {
-      const ret = await tx.return.findFirst({
-        where: { creditNoteId: cn.id, kind: "INLINE" },
-        select: { orderId: true },
-      });
-      if (ret && !(await this.isOrderMetInTx(tx, ret.orderId))) continue;
-      open.push(cn);
-    }
+    const open = (
+      await sweepableCredits(tx, {
+        tenantId,
+        customerId,
+        now: new Date(),
+        excludeCreditNoteIds: opts?.excludeCreditNoteIds,
+      })
+    ).filter((c: any) => !blocked.has(pairKey(c.id, invoiceId)));
     if (open.length === 0) return nothing;
 
     let totalApplied = 0;
