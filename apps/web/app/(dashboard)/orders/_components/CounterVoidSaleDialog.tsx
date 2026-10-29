@@ -92,6 +92,7 @@ export function CounterVoidSaleDialog({
       onClose={close}
       title={`Void sale ${orderNumber} · ${formatReceiptMoney(total)}`}
       className="max-w-md"
+      closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
       footer={
         done ? (
           <Button className="min-h-11" onClick={close}>
