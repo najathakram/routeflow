@@ -79,6 +79,7 @@ describeDb("H3 qty-only unit edit keeps the stored price — real Postgres", () 
       held,
       repriceTierOnQtyOnly: buyer, // the buyer's count diff (SA-507b)
       categoryMap: new Map(),
+      priceEditAllowed: true,
     } as unknown as UnitWriteContext;
     await updateUnitLine(
       ctx,

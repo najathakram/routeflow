@@ -165,7 +165,7 @@ describe("counter sale: nothing changes while the sale request is in flight", ()
     expect(btn("Add one Cola")).toBeDisabled();
     expect(screen.getByLabelText("Set quantity of Cola")).toBeDisabled();
     expect(btn("Add a note to Cola")).toBeDisabled();
-    expect(btn("Edit price for Cola")).toBeDisabled(); // the admin's price control
+    expect(btn("Change price for Cola")).toBeDisabled(); // the admin's price control
     expect(screen.getByLabelText("Find a customer")).toBeDisabled();
     expect(screen.getByLabelText("Scan or search items")).toBeDisabled();
     expect(btn("Complete & show receipt")).toBeDisabled();

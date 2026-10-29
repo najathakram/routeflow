@@ -51,6 +51,8 @@ describe("mergeCustomers — Order rows before Invoice rows (SA-218 (1), #2116)"
         }),
         tenantTransaction: jest.fn((fn: (t: any) => unknown) => fn(tx)),
         getTenantId: () => tenant,
+        // B330: merge resolves the business zone before it ranks licences.
+        tenantConfig: { findUnique: async () => ({ timezone: "UTC" }) },
       };
       const module = await Test.createTestingModule({
         providers: [

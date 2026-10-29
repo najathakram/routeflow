@@ -203,6 +203,7 @@ export function LineItemRowReadOnly({
         {backorderPieces != null && backorderPieces > 0 && (
           <BackorderTag
             pieces={backorderPieces}
+            soldPieces={qty}
             unit={{ boxes, unitsPerBox, unitLabel: boxLabel }}
           />
         )}
