@@ -1228,7 +1228,13 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    const orderDate = parseOrderDate(dto.orderDate, user.role);
+    // Row 751: a staff-supplied order date is judged on the tenant's calendar day (the zone is read only when one is sent).
+    const orderDate = parseOrderDate(dto.orderDate, user.role, {
+      zone:
+        dto.orderDate != null
+          ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
+          : null,
+    });
     // Sales agents & commissions: staff-gated per-order rate override.
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
@@ -2074,7 +2080,7 @@ export class OrdersService implements OnApplicationBootstrap {
     dueStamp(dto.dueDate, "dueDate");
     // Row 735b: the picker's "today" is the tenant's day. The zone is read only when the picker sent a day.
     const saleZone =
-      dto.deliveredOn != null
+      dto.deliveredOn != null || dto.orderDate != null
         ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
         : null;
     const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(
