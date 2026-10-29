@@ -12,7 +12,7 @@ function keysFor(
   items: Array<{ id?: string | null; productId?: string | null }>,
 ) {
   const params = iGate.edit("t1", "c1", netted, items, [], undefined, undefined, sale);
-  return params.lines.map((l: { lineKey: string }) => l.lineKey);
+  return params.lines.map((l) => l.lineKey);
 }
 
 describe("iGate.edit line keys (W-748 Q2, SA-1017)", () => {
