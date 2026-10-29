@@ -14,6 +14,7 @@ import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BillingService } from "./billing.service";
 import { MrrService } from "./mrr.service";
 import { CreateCheckoutDto } from "./dto/create-checkout.dto";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * Billing endpoints used by platform admins to manage tenant subscriptions.
@@ -23,6 +24,7 @@ import { CreateCheckoutDto } from "./dto/create-checkout.dto";
 @ApiTags("billing")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("billing")
 export class BillingController {
   constructor(
