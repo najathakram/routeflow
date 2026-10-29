@@ -1,17 +1,23 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, Optional } from "@nestjs/common";
 import {
   DEFAULT_TIER_RULES,
   buildLadderView,
+  authorityLevelOfRef,
   canonicalUnitRef,
+  priceAuthority,
   priceGrid,
   unitCodeOf,
   type LadderView,
   type LadderViewUnit,
+  type PriceAuthorityLevel,
+  type PriceAuthorityMode,
   type ProductCodes,
   type TierRules,
 } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { readFamilyPriceMode, recipeFamilyIdOf } from "./family-price";
 import { computePriceState } from "./price-state";
 
 /** Only what the ladder and the unit codes read; no cost, stock or tenant columns. */
@@ -31,6 +37,7 @@ export const PRODUCT_SELECT = {
   orderUnitRef: true,
   parentProductId: true,
   kind: true,
+  familyPriceOverride: true,
   sku: true,
   barcode: true,
   unitSku: true,
@@ -58,16 +65,23 @@ export function baseBackingUnit<U extends LadderViewUnit>(
 }
 
 /**
- * Why the price write refuses this product, or null when it is a standalone product. One source for the grid's
- * `notEditableReason` and the write's refusal, so the UI never offers an edit the server would turn down.
+ * Why the price write refuses this product at this level, or null when the product owns the price. One source for
+ * the grid's `notEditableReason` and the write's refusal, so the UI never offers an edit the server would turn down.
+ * The answer is `priceAuthority`'s; the text only names which side holds the price.
  */
-export function governedReason(p: {
-  parentProductId?: string | null;
-  kind?: string | null;
-}): string | null {
-  if (p.parentProductId) return "Priced by the family.";
-  if (p.kind === "FAMILY") return "Family prices are edited on the family page.";
-  if (p.kind === "RECIPE") return "Priced by its recipe.";
+export function governedReason(
+  p: {
+    parentProductId?: string | null;
+    kind?: string | null;
+    familyPriceOverride?: boolean | null;
+    recipeFamilyId?: string | null;
+  },
+  mode: PriceAuthorityMode,
+  level: PriceAuthorityLevel,
+): string | null {
+  const authority = priceAuthority({ ...p, kind: p.kind }, mode, level);
+  if (authority === "family") return "Priced by the family.";
+  if (authority === "family-page") return "Family prices are edited on the family page.";
   return null;
 }
 
@@ -112,7 +126,10 @@ export interface PriceModel {
  */
 @Injectable()
 export class ProductPriceGridService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly featureConfig?: FeatureConfigService,
+  ) {}
 
   get(productId: string): Promise<ProductPriceGridDto> {
     return this.read(this.prisma.forTenant(), productId).then((m) => m.grid);
@@ -171,13 +188,20 @@ export class ProductPriceGridService {
     const revision = Number(product.priceRevision) || 0;
     const priceState = computePriceState(product, units, tierUnits);
     const baseUnit = baseBackingUnit(units, view);
+    const tenantId = this.prisma.getTenantId();
+    const mode = await readFamilyPriceMode(this.featureConfig, tenantId);
+    const recipeFamilyId =
+      mode === "on" && tenantId && product.kind === "RECIPE" && !product.familyPriceOverride
+        ? await recipeFamilyIdOf(db, tenantId, productId)
+        : null;
+    const authorityOf = { ...product, recipeFamilyId };
     const grid: ProductPriceGridDto = {
       productId,
       anchor: view.anchor,
       rows: priceGrid(view, rules).map((row) => {
         // A piece level no ProductUnit backs (the implicit row) cannot be priced: the write never mints a unit.
         const reason =
-          governedReason(product) ??
+          governedReason(authorityOf, mode, authorityLevelOfRef(units, row.ref)) ??
           (row.ref === "base" && !baseUnit ? addUnitFirst(row.label) : null);
         return {
           ...row,
