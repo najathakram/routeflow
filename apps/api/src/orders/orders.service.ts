@@ -19,6 +19,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
+import { attachOrderToCollect } from "./order-to-collect";
 import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
@@ -516,6 +517,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
+    await attachOrderToCollect(this.prisma.forTenant(), order, user); // SA-1026 (staff only)
 
     stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
@@ -1819,6 +1821,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // structured 409 BEFORE the stock transaction, so nothing is half-committed.
     // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
     let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the create tx
+    let returnCredit = 0; // W-863: the credit the B585 gate netted (a counter sale's server-priced preview)
     if (!isDraft) {
       await this.authGuard.assertAuthorizedOrThrow({
         customerId,
@@ -1830,7 +1833,13 @@ export class OrdersService implements OnApplicationBootstrap {
         ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
-      const projectedTotal = creditProjectedTotal(total, options); // S1: net of the till tender
+      // S1: net of the till tender. W-863 (SA-945 MUST 6): the COUNTER sale also nets its SERVER-priced return credit
+      // (never a client figure); Create Order keeps SA-194 (an unapplied credit never loosens the gate), pinned in
+      // orders-inline-return-create.db.spec.ts.
+      returnCredit = options.counterSale
+        ? await inlineReturn.previewInlineReturnCredit(inlineRet, customerId, user)
+        : 0;
+      const projectedTotal = creditProjectedTotal(total, options, returnCredit);
       await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
     }
 
@@ -1953,6 +1962,8 @@ export class OrdersService implements OnApplicationBootstrap {
               user,
               orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
             });
+            // W-863 (SA-945 MUST 6, G5): the gate netted a preview; refuse (rolling back) when less was really issued
+            inlineReturn.assertIssuedCreditCoversPreview(inlineMinted, returnCredit, Number(total));
             return created;
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
@@ -2093,6 +2104,8 @@ export class OrdersService implements OnApplicationBootstrap {
         ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
         restrictionOverrides: dto.restrictionOverrides, // row 510: the staff's acknowledgement rides the sale
         warningHash: dto.warningHash,
+        // W-863: the counter's return, captured and credited inside create()'s own transaction (one return writer)
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       },
       user,
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
@@ -5025,6 +5038,10 @@ export class OrdersService implements OnApplicationBootstrap {
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
     return updateShipmentImpl(this, orderId, dto, _user);
+  }
+
+  async staffSellable(p: rGate.Args) {
+    return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */

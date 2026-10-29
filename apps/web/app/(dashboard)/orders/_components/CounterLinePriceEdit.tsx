@@ -85,7 +85,7 @@ function refusalCopy(
 }
 
 /**
- * POS-5: the counter line's price control. A small `Edit price` button that opens a dialog with three ways to
+ * POS-5: the counter line's price control. A small `Change price` button that opens a dialog with three ways to
  * change ONE line's price (set it, a percent off, an amount off per selling unit), each resolved to a single net
  * unit price by `resolveCounterPriceEdit` (@routeflow/pricing underneath; a boxed line is priced by its BOX).
  * It owns no sale, payment or request state: Apply hands the result to `onApply`, Cancel and Escape change
@@ -156,11 +156,11 @@ export function CounterLinePriceEdit({
           variant="secondary"
           size="sm"
           className="min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0"
-          aria-label={`Edit price for ${name}`}
+          aria-label={`Change price for ${name}`}
           disabled={locked}
           onClick={openDialog}
         >
-          Edit price
+          Change price
         </Button>
         {edited && onReset && (
           <Button
@@ -178,7 +178,7 @@ export function CounterLinePriceEdit({
       <Modal
         open={open}
         onClose={close}
-        title={`Change price for ${name}`}
+        title={`Change the price for ${name}`}
         className="max-w-md"
         // Focus goes to the number field, not the first radio.
         onOpenAutoFocus={(e) => {

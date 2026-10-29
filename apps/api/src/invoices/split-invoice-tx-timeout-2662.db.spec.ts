@@ -46,6 +46,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { blockedPids } from "../common/testing/blocked-wait";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AfterCommit } from "../common/after-commit";
 
@@ -227,6 +228,8 @@ describeDb("split-invoice creation that outlives the tx timeout is a clean 503 (
   /** The creation's blocked session(s) on T2, read structurally (pg_locks), from a separate
    *  autocommit connection (a fresh stats snapshot per statement). */
   async function waiters(probe: Client, t2pid: number) {
+    const pids = await blockedPids(probe, { holderPid: t2pid });
+    if (pids.length === 0) return [];
     const q = await probe.query(
       `SELECT a.pid, a.query,
            EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted) AS waiting,
@@ -235,8 +238,8 @@ describeDb("split-invoice creation that outlives the tx timeout is a clean 503 (
            (SELECT json_agg(json_build_object('locktype', l.locktype,
                      'relation', l.relation::regclass::text, 'mode', l.mode, 'granted', l.granted))
               FROM pg_locks l WHERE l.pid = a.pid) AS locks
-         FROM pg_stat_activity a WHERE $1 = ANY(pg_blocking_pids(a.pid))`,
-      [t2pid],
+         FROM pg_stat_activity a WHERE a.pid = ANY($1::int[])`,
+      [pids],
     );
     return q.rows as Array<{
       waiting: boolean;

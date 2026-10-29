@@ -1,5 +1,6 @@
 import { IsString, IsOptional, IsNumber, IsDateString, Max, Min, NotEquals } from "class-validator";
 import { Type } from "class-transformer";
+import { IsNotReservedStockReference } from "../reserved-reference";
 
 export class RecordAdjustmentDto {
   @IsString()
@@ -18,6 +19,7 @@ export class RecordAdjustmentDto {
 
   @IsOptional()
   @IsString()
+  @IsNotReservedStockReference()
   reference?: string;
 
   @IsOptional()

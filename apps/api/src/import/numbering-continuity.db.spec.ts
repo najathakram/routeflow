@@ -71,6 +71,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { NumberingService } from "./numbering.service";
 import { UpdateNumberingDto } from "./dto/update-numbering.dto";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { prismaQueryable, waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -465,7 +466,7 @@ describeDb(
 
       // SA-306: a deterministic barrier, not a sleep. The save's connection records its backend
       // pid and holds the row; the mint is released only after Postgres itself reports a backend
-      // blocked BY that pid (pg_blocking_pids). If the mint never blocks, the test fails loudly
+      // blocked BY that pid (blocked-wait helper). If the mint never blocks, the test fails loudly
       // instead of letting the save commit first (which would make the pre-fix code pass too).
       let releaseSave!: () => void;
       const saveMayCommit = new Promise<void>((r) => (releaseSave = r));
@@ -490,15 +491,10 @@ describeDb(
         const savePid = await rowHeld;
         mint = reserveInvoiceNext(tenant.id);
         mint.catch(() => undefined); // surfaced below; never an unhandled rejection meanwhile
-        let blocked = false;
-        for (let i = 0; i < 100 && !blocked; i++) {
-          const [{ n }] = await prisma.$queryRaw<Array<{ n: number }>>`
-            SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE ${savePid}::int = ANY(pg_blocking_pids(pid))
-          `;
-          blocked = n > 0;
-          if (!blocked) await new Promise((r) => setTimeout(r, 100));
-        }
+        const blocked = await waitUntilBlockedBy(prismaQueryable(prisma), savePid, {
+          timeoutMs: 10_000,
+          intervalMs: 100,
+        });
         if (!blocked) {
           throw new Error(
             "the mint never blocked on the save's row lock — the race was not reproduced",

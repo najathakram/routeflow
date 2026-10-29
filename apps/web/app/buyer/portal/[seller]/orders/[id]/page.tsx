@@ -1050,7 +1050,7 @@ export default function BuyerOrderDetailPage() {
                           </button>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right text-sm text-navy/70">
+                      <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
                         {item.unitPrice ? fmt(item.unitPrice) : "—"}
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-medium text-navy">
