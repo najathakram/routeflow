@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Button } from "@routeflow/ui/web";
+import { CheckNotReceivedChoice } from "./CheckNotReceivedChoice";
 import {
   COUNTER_CHECK_POSTDATED_COPY,
   COUNTER_CHECK_ZONE_FAILED_COPY,
@@ -29,6 +30,9 @@ export interface CounterCheckDetailsProps {
   disabled: boolean;
   /** Switch the sale's method to On account. */
   onPutOnAccount: () => void;
+  /** SA-1026: "Check not received yet" is on: the number and date are not asked. Offered only with a handler and a named customer. */
+  notReceived?: boolean;
+  onNotReceivedChange?: (value: boolean) => void;
 }
 
 /**
@@ -48,8 +52,18 @@ export function CounterCheckDetails({
   walkIn,
   disabled,
   onPutOnAccount,
+  notReceived = false,
+  onNotReceivedChange,
 }: CounterCheckDetailsProps) {
   const postdated = zoneStatus === "ready" && isPostdatedCheck(checkDate, today);
+  const offerNotReceived = !walkIn && onNotReceivedChange !== undefined;
+  if (offerNotReceived && notReceived) {
+    return (
+      <div className="space-y-3" data-testid="counter-check-details">
+        <CheckNotReceivedChoice checked onChange={onNotReceivedChange} disabled={disabled} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-3" data-testid="counter-check-details">
       <label className="block text-sm">
@@ -108,6 +122,13 @@ export function CounterCheckDetails({
           </Button>
           {walkIn ? <p>{COUNTER_CHECK_WALK_IN_COPY}</p> : null}
         </div>
+      ) : null}
+      {offerNotReceived ? (
+        <CheckNotReceivedChoice
+          checked={false}
+          onChange={onNotReceivedChange}
+          disabled={disabled}
+        />
       ) : null}
     </div>
   );

@@ -98,6 +98,12 @@ export const API_ERROR_CODES = {
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  /** SA-1042 B9b, POST /returns 400: the item names an order line that is not on this order, is CANCELLED, or is another product. */
+  RETURN_LINE_NOT_ON_ORDER: "RETURN_LINE_NOT_ON_ORDER",
+  /** SA-1042 B9b, POST /returns 400: a line item mixes `qty` with `boxes`/`pieces`, or splits a line that is not split. */
+  RETURN_LINE_COUNT_SHAPE: "RETURN_LINE_COUNT_SHAPE",
+  /** SA-1042 B9b, POST /returns 400: one product has both line items and pooled items in one payload. */
+  RETURN_LINE_MIXED_WITH_POOLED: "RETURN_LINE_MIXED_WITH_POOLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
   LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
@@ -156,9 +162,18 @@ export const API_ERROR_CODES = {
   // SA-767 L-2.2: a durable stock count is being committed (batch by batch); a second commit, a line edit or a
   // discard is refused until the last batch lands. 409, nothing was changed, retry is safe.
   STOCK_COUNT_COMMITTING: "STOCK_COUNT_COMMITTING",
+  // SA-999 (row 562 S1): a stock count whose batched seed has not stamped its completion (still running, or the
+  // process died mid-seed) cannot be committed. 409, nothing was written; retry is safe once the seed finishes.
+  STOCK_COUNT_SEEDING: "STOCK_COUNT_SEEDING",
   // SA-767 r-note 5 SA-3: one OPEN count per product. Adding a product to a count (or committing one) is refused
   // while another OPEN / REVIEW count already has a line for it. 409, nothing was changed.
   PRODUCT_IN_OPEN_COUNT: "PRODUCT_IN_OPEN_COUNT",
+  // B640 (row 562): a free-text stock reference may not start with a head the stock-count commits key their
+  // idempotency on (STOCK_COUNT-). 400, nothing was written.
+  STOCK_REFERENCE_RESERVED: "STOCK_REFERENCE_RESERVED",
+  // SA-990 (row 562): the legacy one-shot count was sent a sessionId that already names a saved stock count.
+  // 409, nothing was written.
+  STOCK_COUNT_ID_TAKEN: "STOCK_COUNT_ID_TAKEN",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
@@ -359,6 +374,8 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
+  /** 400 from POST /orders/counter-sale and the pickup hand-over (SA-1026): `expectedMethod` ("the check is not in hand yet") is valid only with `method: "ON_ACCOUNT"`. Nothing is written. */
+  COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT: "COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**
@@ -563,6 +580,8 @@ export const API_ERROR_CODES = {
    * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
    */
   RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** W-863 (SA-945 MUST 6, G5): the return's credit actually issued in the sale's transaction is below what the credit gate netted (a concurrent return of the same sold line landed between the preview and the capture). 409; nothing is committed; carries `previewed` and `issued`. */
+  RETURN_CREDIT_CHANGED: "RETURN_CREDIT_CHANGED",
   /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
@@ -721,6 +740,8 @@ export const API_ERROR_CODES = {
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
+  /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
+  ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

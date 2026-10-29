@@ -77,6 +77,13 @@
           { "type": "command", "command": "node .claude/hooks/ops-status.mjs", "timeout": 5 }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/agent-log.mjs", "timeout": 15 }
+        ]
+      }
     ]
   }
 }
