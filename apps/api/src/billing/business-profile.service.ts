@@ -27,6 +27,7 @@ import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
 import { FLEET_KEYS, heldAddonKeys, readFulfilmentInputs } from "./fulfilment-capability";
 import {
+  assertCapabilitiesRequested,
   capabilitiesFromInputs,
   capabilityAvailability,
   isOpensAsChoosable,
@@ -200,12 +201,22 @@ export class BusinessProfileService {
     tenantId: string,
     request: BusinessCapabilitiesRequest,
   ): Promise<BusinessProfileResolution> {
-    // An omitted doorPayments keeps the tenant's current value (read only when it can matter: Delivery ticked).
-    const current =
-      request.delivery === true && request.doorPayments === undefined
-        ? { doorPayments: await this.heldDoorPayments(tenantId) }
-        : undefined;
-    const { def, normalised, preset } = ticksToProfileDef(request, current);
+    assertCapabilitiesRequested(request); // 400 before any read
+    // SA-1028: the tenant's current ticks come from the SAME read the card's GET shows (`capabilities`), once. An
+    // omitted doorPayments keeps the held value, and a tenant nobody set up keeps its model unset when Delivery,
+    // Shipping and Opens-as are unchanged (see `ticksToProfileDef`).
+    const now = await this.capabilities(tenantId);
+    const { def, normalised, preset } = ticksToProfileDef(request, {
+      doorPayments: now.doorPayments,
+      configured: now.configured,
+      ticks: {
+        delivery: now.delivery,
+        doorPayments: now.doorPayments,
+        shipping: now.shipping,
+        counter: now.counter,
+        opensAs: now.opensAs,
+      },
+    });
     return this.planDef(tenantId, def, { capabilities: normalised, preset });
   }
 

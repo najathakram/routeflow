@@ -226,7 +226,14 @@ describeDb("driver cash vs the day close totals, real Postgres (row 342)", () =>
     const route = await mkOrder({ counterSale: false, fulfillPath: "ROUTE" });
     const taken = await tenantCtx.run(tenantId, () =>
       prisma.tenantTransaction((tx: any) =>
-        invoices.recordDeliveryPaymentInTx(tx, new AfterCommit(), [route.orderId], 60, "CASH"),
+        invoices.recordDeliveryPaymentInTx(
+          tx,
+          new AfterCommit(),
+          [route.orderId],
+          60,
+          "CASH",
+          null,
+        ),
       ),
     );
     expect(taken.applied).toBe(60);

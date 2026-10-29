@@ -94,7 +94,7 @@ import {
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
-import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
+import { OrderStaffFlags } from "./_components/OrderStaffFlags";
 import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
@@ -1012,7 +1012,7 @@ export default function OrderDetailPage() {
               status={localStatus as BadgeStatus}
               fulfillPath={order?.fulfillPath}
             />
-            <InvoicesNeedReviewBadge review={order.invoicesNeedReview} />
+            <OrderStaffFlags order={order} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
             <span>

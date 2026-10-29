@@ -210,6 +210,9 @@ describe("PickupCompleteService.complete", () => {
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             changeStatus,
             decrementStockForSale,
             updateFulfillPath,
@@ -343,6 +346,19 @@ describe("PickupCompleteService.complete", () => {
         ["inv-2", 10],
       ]);
       expect(res).toMatchObject({ invoiceId: "inv-1", total: 40, paid: 40, balanceDue: 0 });
+    });
+    // SA-1026 B-R4: the response lists every invoice the figures total, so "Print invoice" prints exactly what the screen shows.
+    it("B-R4: a two-invoice hand-over answers invoiceIds in issue order, and invoiceId stays the first", async () => {
+      invoices = [inv("inv-1", 30, "DRAFT", [], 1), inv("inv-2", 10, "DRAFT", [], 2)];
+      const res = (await run()) as { invoiceId: string; invoiceIds?: string[] };
+      expect(res.invoiceIds).toEqual(["inv-1", "inv-2"]);
+      expect(res.invoiceId).toBe(res.invoiceIds?.[0]);
+    });
+    it("B-G3: an order invoiced before pickup (nothing to send now) still lists its invoice", async () => {
+      invoices = [inv("inv-1", 37.25, "SENT")];
+      const res = (await run()) as { invoiceIds?: string[] };
+      expect(send).not.toHaveBeenCalled();
+      expect(res.invoiceIds).toEqual(["inv-1"]);
     });
     it("a walk-in's invoice is sent without the INVOICE_SENT message", async () => {
       order = orderRow("CONFIRMED", { customer: { isWalkIn: true } });
