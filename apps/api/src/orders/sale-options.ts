@@ -46,7 +46,7 @@ export function resolveSaleDelivery(
   now: Date = new Date(),
 ) {
   let deliveredNow = dto.deliveredNow;
-  let deliveredAt = parseOrderDate(dto.orderDate, user.role);
+  let deliveredAt = parseOrderDate(dto.orderDate, user.role, { zone, now }); // row 751: the tenant's day
   let requestedDeliveryDate = dto.requestedDeliveryDate;
   if (dto.deliveredOn != null) {
     const parsed = new Date(dto.deliveredOn);
