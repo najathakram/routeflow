@@ -182,10 +182,11 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(result.creditNoteId).toBe("cn-1");
   });
 
-  it("REG-B53 2+ creditable invoices mint against the LATEST one (not a standalone credit)", async () => {
+  it("R-M3 (SA-1051, was REG-B53 'the LATEST one'): 2+ creditable invoices mint against the invoice the fill took the qty from (not a standalone credit)", async () => {
     // Pre-fix, 2+ invoices always meant `invoiceId: undefined` (a standalone credit) —
-    // that skipped create()'s per-invoice cap entirely. The fix instead mints against the
-    // LATEST creditable invoice (by createdAt) so the cap applies, gated by headroom.
+    // that skipped create()'s per-invoice cap entirely. REG-B53 then minted against the
+    // LATEST creditable invoice; SA-1051 (owner ruling 19:33Z, "Put it on the right invoice") mints against the
+    // invoice the fill touched last, so the cap applies, gated by headroom. 1 pc fills the OLDER 5-pc invoice.
     prisma.return.findUnique.mockResolvedValue({
       id: "ret-2",
       returnNumber: "RET-2026-002",
@@ -225,7 +226,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     await service.processRefund("ret-2");
 
     const dto = creditNotesCreate.mock.calls[0][0];
-    expect(dto.invoiceId).toBe("inv-2"); // the LATER of the two invoices, not undefined
+    expect(dto.invoiceId).toBe("inv-1"); // the invoice the 1 pc was filled on, not the later one and not undefined
   });
 
   it("F09 A2 (re-pointed by F08): an order with NO invoice rows mints an unsourced credit note", async () => {
@@ -646,16 +647,13 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     });
   });
 
-  it("REG-B53 a refund larger than the SOURCE invoice's own room refuses BEFORE the claim", async () => {
-    // Order-wide headroom is not the ceiling create() enforces: the credit is minted
-    // against the LATEST invoice, and credit-notes.create() caps on THAT invoice alone.
-    // Invoice A (older) $900 and invoice B (latest) $100 give $1000 of order-wide
-    // headroom, so a $500 refund clears it — but B's own room is $100, so create() would
-    // throw AFTER the RECEIVED→REFUNDED claim had committed, bouncing the row back
-    // forever with an error naming an invoice the operator never chose.
-    // Projected through processRefund's own select, like the single-invoice pin below:
-    // the 2+ branch composes the SAME refusal, so it must name the same human number.
-    (prisma.return.findUnique as unknown as jest.Mock).mockImplementation(async (args: any) => ({
+  it("R-M2 (SA-1051, was REG-B53 'the LATEST invoice's own room'): a refund the fill takes from the OLDER, larger invoice is minted there, not refused for the newer invoice's room", async () => {
+    // Invoice A (older) $900 and invoice B (newer) $100. 5 of the 10 pieces fill A (the older line absorbs them first), so the
+    // credit note is minted on A, whose own room ($900) takes the $500. Before SA-1051 the note named the newest invoice B and
+    // create()'s cap there ($100) refused it: BEFORE the claim, with an error naming an invoice the goods were not billed on.
+    // Projected through processRefund's own select, like the single-invoice pin below.
+    // success path: the claim re-reads the basis under its locks with another select, so the rows are plain (not projected)
+    prisma.return.findUnique.mockResolvedValue({
       id: "ret-53f",
       returnNumber: "RET-2026-059",
       status: "RECEIVED",
@@ -664,7 +662,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       order: {
         id: "ord-53f",
         orderNumber: "ORD-059",
-        invoices: invoicesAsSelected(args, [
+        invoices: [
           {
             id: "inv-a",
             invoiceNumber: "INV-059A",
@@ -685,19 +683,73 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
             createdAt: new Date("2026-02-01"),
             items: [{ productId: "p1", qty: 1, subtotal: 100 }],
           },
-        ]),
+        ],
         lineItems: [{ productId: "p1", qty: 10, unitPrice: 100, subtotal: 1000 }],
       },
-    }));
+    });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    prisma.return.update.mockResolvedValue({ id: "ret-53f", status: "REFUNDED" });
     prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
     creditNotesCreate.mockResolvedValue({ id: "cn-53f", creditNoteNumber: "CN-2026-0059" });
 
-    const err = await service.processRefund("ret-53f").catch((e: any) => e);
+    await service.processRefund("ret-53f");
+
+    expect(creditNotesCreate).toHaveBeenCalledTimes(1);
+    const dto = creditNotesCreate.mock.calls[0][0];
+    expect(dto.invoiceId).toBe("inv-a");
+    expect(dto.amount).toBe(500);
+    expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("G-M4 (SA-1051): a refund larger than the SOURCE invoice's own room refuses BEFORE the claim, naming that invoice", async () => {
+    // Order-wide headroom is not the ceiling create() enforces: the credit is minted against the SOURCE invoice (the one the
+    // fill touched last), and credit-notes.create() caps on THAT invoice alone. Invoice A (older) $900 already carries $600 of
+    // notes (room $300); invoice B $600. The $500 refund fills A, clears the order-wide headroom ($1500 - $600), but not A's own
+    // room, so create() would throw AFTER the RECEIVED→REFUNDED claim had committed. Refused here, naming A by its number.
+    (prisma.return.findUnique as unknown as jest.Mock).mockImplementation(async (args: any) => ({
+      id: "ret-53h",
+      returnNumber: "RET-2026-059",
+      status: "RECEIVED",
+      customerId: "cust-1",
+      items: [{ productId: "p1", qty: 5 }],
+      order: {
+        id: "ord-53h",
+        orderNumber: "ORD-059",
+        invoices: invoicesAsSelected(args, [
+          {
+            id: "inv-a",
+            invoiceNumber: "INV-059A",
+            status: "SENT",
+            total: 900,
+            taxAmount: 0,
+            discount: 0,
+            createdAt: new Date("2026-01-01"),
+            items: [{ productId: "p1", qty: 9, subtotal: 900 }],
+          },
+          {
+            id: "inv-b",
+            invoiceNumber: "INV-059B",
+            status: "SENT",
+            total: 600,
+            taxAmount: 0,
+            discount: 0,
+            createdAt: new Date("2026-02-01"),
+            items: [{ productId: "p1", qty: 6, subtotal: 600 }],
+          },
+        ]),
+        lineItems: [{ productId: "p1", qty: 15, unitPrice: 100, subtotal: 1500 }],
+      },
+    }));
+    prisma.return.updateMany.mockResolvedValue({ count: 1 });
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 600 } });
+    creditNotesCreate.mockResolvedValue({ id: "cn-53h", creditNoteNumber: "CN-2026-0059" });
+
+    const err = await service.processRefund("ret-53h").catch((e: any) => e);
     expect(err).toBeInstanceOf(BadRequestException);
-    // Names the LATEST invoice — by its human number, not the row id.
-    expect(err.message).toContain("INV-059B");
-    expect(err.message).not.toContain("inv-b");
+    // Names the SOURCE invoice — by its human number, not the row id.
+    expect(err.message).toContain("INV-059A");
+    expect(err.message).not.toContain("INV-059B");
+    expect(err.message).not.toContain("inv-a");
     // Refused BEFORE the claim: no status write, no mint, no compensation churn.
     expect(prisma.return.updateMany).not.toHaveBeenCalled();
     expect(creditNotesCreate).not.toHaveBeenCalled();

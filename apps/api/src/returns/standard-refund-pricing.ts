@@ -71,6 +71,7 @@ export type CreditableInvoice = Omit<StoredInvoice, "items"> & {
 export function billedLinesOf(creditable: readonly CreditableInvoice[], productId: string) {
   const lines: HeadroomLine[] = [];
   const invoiceOfLine = new Map<string, RefundableInvoice>();
+  const invoiceIdOfLine = new Map<string, string>();
   const ordered = [...creditable].sort(compareInvoiceFillOrder);
   ordered.forEach((inv, n) => {
     const items = inv.items ?? [];
@@ -80,9 +81,15 @@ export function billedLinesOf(creditable: readonly CreditableInvoice[], productI
       if (it.productId !== productId) return;
       lines.push({ ...toHeadroomLine(it), id: ids[i] });
       invoiceOfLine.set(ids[i], refundable);
+      if (inv.id) invoiceIdOfLine.set(ids[i], inv.id);
     });
   });
-  return { lines, invoiceOf: (id: string) => invoiceOfLine.get(id) as RefundableInvoice };
+  return {
+    lines,
+    invoiceOf: (id: string) => invoiceOfLine.get(id) as RefundableInvoice,
+    /** SA-1051: the id of the invoice a line sits on (what `refundSourceInvoice` takes as `touched`). */
+    invoiceIdOf: (id: string) => invoiceIdOfLine.get(id),
+  };
 }
 
 /**
