@@ -1168,6 +1168,18 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // I-101: a Pallet of the 10/200/4800 ladder sold in the UI, order + invoice truth (spec 79). It CREATES a product, its
+          // units and a $19,200 invoice with no cleanup, so it is local lane only like 71-76 (never on prod's e2e-routeflow);
+          // observe-only; not on the local:e2e allow-list.
+          {
+            name: "units-pallet-ladder-sale",
+            testMatch: /79-units-pallet-ladder-sale\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
         ]
       : []),
   ],
