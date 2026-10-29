@@ -98,6 +98,12 @@ export const API_ERROR_CODES = {
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  /** SA-1042 B9b, POST /returns 400: the item names an order line that is not on this order, is CANCELLED, or is another product. */
+  RETURN_LINE_NOT_ON_ORDER: "RETURN_LINE_NOT_ON_ORDER",
+  /** SA-1042 B9b, POST /returns 400: a line item mixes `qty` with `boxes`/`pieces`, or splits a line that is not split. */
+  RETURN_LINE_COUNT_SHAPE: "RETURN_LINE_COUNT_SHAPE",
+  /** SA-1042 B9b, POST /returns 400: one product has both line items and pooled items in one payload. */
+  RETURN_LINE_MIXED_WITH_POOLED: "RETURN_LINE_MIXED_WITH_POOLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
   LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
@@ -368,6 +374,8 @@ export const API_ERROR_CODES = {
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
+  /** 400 from POST /orders/counter-sale and the pickup hand-over (SA-1026): `expectedMethod` ("the check is not in hand yet") is valid only with `method: "ON_ACCOUNT"`. Nothing is written. */
+  COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT: "COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**
@@ -572,6 +580,8 @@ export const API_ERROR_CODES = {
    * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
    */
   RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** W-863 (SA-945 MUST 6, G5): the return's credit actually issued in the sale's transaction is below what the credit gate netted (a concurrent return of the same sold line landed between the preview and the capture). 409; nothing is committed; carries `previewed` and `issued`. */
+  RETURN_CREDIT_CHANGED: "RETURN_CREDIT_CHANGED",
   /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
