@@ -365,3 +365,42 @@ export async function returnedPiecesByProduct(
   }
   return result;
 }
+
+/**
+ * SA-1042 B9b rule 5: prior-returned PIECES per ORDER LINE, in ONE grouped query. STANDARD items that name the line
+ * (`sourceOrderItemId`, qty in the line's own unit, so times the product's factor) plus INLINE items sourced from it (already
+ * pieces), excluding REJECTED/CANCELLED returns. A pooled STANDARD item carries no line key and is not here: it counts in the
+ * product cap only. A product with no classifiable factor adds nothing for its STANDARD items (those never carry a line key
+ * unless their line was a legacy single-unit one, which caps in its own unit).
+ */
+export async function returnedPiecesByLine(
+  tx: ReturnsPiecesTx,
+  lineIds: string[],
+  bases: Map<string, ProductPackBasis>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (lineIds.length === 0) return out;
+  const rows = await tx.returnItem.findMany({
+    where: {
+      sourceOrderItemId: { in: lineIds },
+      return: { status: { notIn: DEAD_RETURN_STATUSES } },
+    },
+    select: {
+      sourceOrderItemId: true,
+      productId: true,
+      qty: true,
+      return: { select: { kind: true } },
+    },
+  });
+  for (const row of rows) {
+    if (!row.sourceOrderItemId) continue;
+    let pieces = Number(row.qty);
+    if (row.return?.kind !== "INLINE") {
+      const f = packFactorOrReason(bases, row.productId);
+      if ("unknown" in f) continue;
+      pieces = Number(row.qty) * f.factor;
+    }
+    out.set(row.sourceOrderItemId, (out.get(row.sourceOrderItemId) ?? 0) + pieces);
+  }
+  return out;
+}

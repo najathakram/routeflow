@@ -22,21 +22,34 @@
  *     fall-back to the FULL plan without a merge-base, campaign-check's deferral only under the
  *     explicit RF_VERIFY_MODE=fast, and the mode-suffixed verified-tree marker.
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path, { dirname, join } from "node:path";
 import {
+  FAST_NOT_PROOF_LINE,
   FAST_VERIFY_BANNER,
+  REPO_WIDE_PINS,
   changedFilesSince,
   computeScope,
   currentBranch,
   decideScope,
+  fastStampLine,
   isFastMode,
   loadWorkspaces,
   mergeBaseSha,
+  repoPinsNeeded,
+  SCRIPT_SPEC_PATTERN,
   shortName,
   staleWorkspaces,
   wantsFastVerify,
@@ -52,11 +65,14 @@ import {
   chooseRunMode,
   chooseVerifyDefaults,
   excludedLine,
+  executePlan,
+  finishRun,
   jestPassthrough,
   jestWorkerBudget,
   LOW_MEM_THRESHOLD_BYTES,
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
+  planPins,
   planTurboCalls,
 } from "./verify-turbo.mjs";
 
@@ -64,7 +80,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = loadWorkspaces(ROOT);
 
 let failures = 0;
+let total = 0;
 const check = (name, got, want) => {
+  total++;
   const ok = JSON.stringify(got) === JSON.stringify(want);
   if (!ok) failures++;
   console.log(
@@ -1668,4 +1686,241 @@ check(
     ["abc123:fast", "abc123", "abc123:affected"],
   );
 }
+// FP: a fast push is not proof (lead ruling 2026-10-28). Every fast run says so, and a diff that can
+// break a repo-wide pin (scripts, hooks, manifests, api common) also runs the pins + `-script` specs.
+{
+  const STAMP =
+    "fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)";
+  check("FP0 the stamp is exactly the ruled line", FAST_NOT_PROOF_LINE, STAMP);
+  check(
+    "FP1a (a) diffs that can break a pin want the pin run; a docs-only diff does not",
+    [
+      ["scripts/x.mjs"],
+      [".husky/pre-push"],
+      [".claude/hooks/stop.mjs"],
+      [".claude/skills/bug-hunt/scripts/scan.mjs"],
+      ["apps/web/package.json"],
+      ["package.json"],
+      ["apps/api/src/common/no-bare-cron.spec.ts"],
+      ["docs/readme.md"],
+      ["apps/api/src/orders/orders.service.ts"],
+      [".claude/skills/bug-hunt/SKILL.md"],
+    ].map((f) => repoPinsNeeded(f)),
+    [true, true, true, true, true, true, true, false, false, false],
+  );
+  const pinned = planTurboCalls({
+    scope: fvScope,
+    excluded: [],
+    splitJest: false,
+    fast: true,
+    pins: true,
+  });
+  const pinCall = pinned.calls.find((c) => c.pins);
+  check(
+    "FP1b (a) fast + pins plans ONE api-cwd jest call: every pin file and the -script pattern",
+    [
+      pinCall?.cwd,
+      pinCall?.argv.slice(0, 4),
+      REPO_WIDE_PINS.every((p) => pinCall?.argv.includes(p.file.replace(/^apps\/api\//, ""))),
+      pinCall?.argv.includes(SCRIPT_SPEC_PATTERN),
+    ],
+    [
+      "apps/api",
+      ["jest", "--testPathIgnorePatterns=/node_modules/", "--runInBand", "--"],
+      true,
+      true,
+    ],
+  );
+  check(
+    "FP1c (a) the pin call is last; the rest is exactly the fast plan without pins",
+    pinned.calls.slice(0, -1),
+    planTurboCalls({ scope: fvScope, excluded: [], splitJest: false, fast: true }).calls,
+  );
+  check(
+    "FP1d (a) a docs-only fast diff plans no pin call",
+    planTurboCalls({
+      scope: fvScope,
+      excluded: [],
+      splitJest: false,
+      fast: true,
+      pins: false,
+    }).calls.some((c) => c.pins),
+    false,
+  );
+  // (b) the run's final line
+  check(
+    "FP2 (b) a fast run prints the stamp; a full / non-fast run prints nothing new",
+    [fastStampLine(true), fastStampLine(false)],
+    [STAMP, null],
+  );
+  const vt = readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8");
+  check(
+    "FP2b (b) main() ends the run through finishRun, after the heavy-slot hold",
+    [
+      /finishRun\(\{ fast: runMode\.fast/.test(vt),
+      vt.indexOf("finishRun({ fast: runMode.fast") > vt.indexOf("await withHeavySlot"),
+    ],
+    [true, true],
+  );
+  // (c) the hook
+  const skipLine =
+    hook.split("\n").find((l) => l.includes("already passed 'npm run verify'")) ?? "";
+  check(
+    "FP3a (c) the hook's skip line and its after-pass line both carry the exact stamp",
+    [
+      hook.includes(`fast_stamp="${STAMP}"`),
+      /not proof|\$fast_stamp|\$\{fast_stamp\}/.test(skipLine),
+      /npm run verify \|\| exit 1[\s\S]*fast_stamp/.test(hook),
+    ],
+    [true, true, true],
+  );
+  // (d) nothing else changes
+  const baseScopes = [fvScope, { mode: "full", reason: "CI" }];
+  check(
+    "FP4a (d) pins:true without fast is ignored: FULL / CI / no-mode plans are byte-identical",
+    baseScopes.flatMap((scope) =>
+      [false, true].map(
+        (splitJest) =>
+          JSON.stringify(planTurboCalls({ scope, excluded: [], splitJest, pins: true })) ===
+          JSON.stringify(planTurboCalls({ scope, excluded: [], splitJest })),
+      ),
+    ),
+    [true, true, true, true],
+  );
+  check(
+    "FP4b (d) FULL_VERIFY=1 / CI / no RF_VERIFY_MODE are never fast, so never stamped or pinned",
+    [{ FULL_VERIFY: "1", RF_VERIFY_MODE: "fast" }, { CI: "1", RF_VERIFY_MODE: "fast" }, {}].map(
+      (env) => fastStampLine(isFastMode(env)),
+    ),
+    [null, null, null],
+  );
+}
+// FR: review fold of the R3-c change (lead ruling 2026-10-28).
+{
+  const STAMP =
+    "fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)";
+  const API = "@routeflow/api";
+  // MUST: apps/api/scripts is walked by specs whose jest rootDir (src) --changedSince never relates.
+  check(
+    "FR1 a change under apps/api/scripts (either slash) wants the pin run",
+    [
+      "apps/api/scripts/x.mjs",
+      "apps\\api\\scripts\\x.mjs",
+      "scripts\\x.mjs",
+      ".husky\\pre-push",
+    ].map((f) => repoPinsNeeded([f])),
+    [true, true, true, true],
+  );
+  check(
+    "FR1b other apps' scripts-free paths still do not",
+    [["apps/api/prisma/x.sql"], ["apps/web/app/page.tsx"], []].map((f) => repoPinsNeeded(f)),
+    [false, false, false],
+  );
+  const pinned = REPO_WIDE_PINS.map((p) => p.file.replace(/^apps\/api\/src\/common\//, ""));
+  check(
+    "FR2 the specs that walk apps/api/scripts are repo-wide pins",
+    [
+      "scripts-unscoped-delete.spec.ts",
+      "owner-report-db-url.spec.ts",
+      "no-ui-package-import.spec.ts",
+      "wipe-order-fk-pin.spec.ts",
+    ].map((f) => pinned.includes(f)),
+    [true, true, true, true],
+  );
+  // SHOULD 1: fail closed
+  check(
+    "FR3 an uncomputable diff (null) RUNS the pins and says why",
+    (({ pins, line }) => [pins, /cannot diff/.test(line ?? "")])(
+      planPins({ fast: true, files: null, excluded: [] }),
+    ),
+    [true, true],
+  );
+  check(
+    "FR3b a pin-worthy diff runs pins with the REPO PINS line; docs-only and non-fast do not",
+    [
+      planPins({ fast: true, files: ["scripts/a.mjs"], excluded: [] }).line?.startsWith(
+        "+ REPO PINS",
+      ),
+      planPins({ fast: true, files: ["docs/a.md"], excluded: [] }).pins,
+      planPins({ fast: false, files: ["scripts/a.mjs"], excluded: [] }).pins,
+      planPins({ fast: false, files: null, excluded: [] }).line,
+    ],
+    [true, null, null, null],
+  );
+  // SHOULD 2: serialized
+  const argv =
+    planTurboCalls({
+      scope: fvScope,
+      excluded: [],
+      splitJest: false,
+      fast: true,
+      pins: true,
+    }).calls.find((c) => c.pins)?.argv ?? [];
+  const dash = argv.indexOf("--");
+  check(
+    "FR4 the pin call is serialized (--runInBand) with every flag BEFORE the -- separator",
+    [
+      argv.includes("--runInBand"),
+      argv.indexOf("--runInBand") < dash,
+      dash > 0,
+      argv.slice(dash + 1).some((a) => a.startsWith("--")),
+    ],
+    [true, true, true, false],
+  );
+  // SHOULD 3: VERIFY_EXCLUDE dropping api
+  const noApi = planPins({ fast: true, files: ["scripts/a.mjs"], excluded: [API] });
+  check(
+    "FR5 api excluded: no pins, no REPO PINS line, no pin call even when forced",
+    [
+      noApi,
+      planPins({ fast: true, files: null, excluded: [API] }).line,
+      planTurboCalls({
+        scope: fvScope,
+        excluded: [API],
+        splitJest: false,
+        fast: true,
+        pins: true,
+      }).calls.some((c) => c.pins),
+    ],
+    [{ pins: null, line: null }, null, false],
+  );
+  // SHOULD 4: mutants
+  const logged = [];
+  const st = finishRun({ fast: true, status: 3, log: (l) => logged.push(l) });
+  const quiet = [];
+  const st2 = finishRun({ fast: false, status: 0, log: (l) => quiet.push(l) });
+  check(
+    "FR6 finishRun logs the exact stamp for a fast run, nothing otherwise, and returns the status",
+    [logged, st, quiet, st2],
+    [[STAMP], 3, [], 0],
+  );
+  const ran = [];
+  const calls = [{ id: "a" }, { id: "pin", pins: true }, { id: "c" }];
+  const run = async (c) => (ran.push(c.id), c.pins ? 1 : 0);
+  check(
+    "FR7 executePlan runs every call in order and a failing pin call fails the run",
+    [await executePlan(calls, run), ran, await executePlan([{ id: "z" }], async () => 0)],
+    [1, ["a", "pin", "c"], 0],
+  );
+  check(
+    "FR7b main() delegates the tail to executePlan and finishRun",
+    (({ vt }) => [/executePlan\(plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
+      vt: readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8"),
+    }),
+    [true, true],
+  );
+}
+// (e) every listed pin exists, with a reason
+check(
+  "FP5 (e) REPO_WIDE_PINS lists at least the two named pins; every file exists and says why",
+  [
+    REPO_WIDE_PINS.length >= 2,
+    ["scripts-live-target-guard", "fixture-git-env-scrub"].every((n) =>
+      REPO_WIDE_PINS.some((p) => p.file.endsWith(`${n}.spec.ts`)),
+    ),
+    REPO_WIDE_PINS.filter((p) => !existsSync(join(ROOT, p.file)) || !p.why).map((p) => p.file),
+  ],
+  [true, true, []],
+);
+console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

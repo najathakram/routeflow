@@ -18,6 +18,7 @@ import { TenantContextService } from "../../tenant/tenant-context.service";
 import { StockAlertService } from "../../stock-alerts/stock-alert.service";
 import { AuditService } from "../../audit/audit.service";
 import { requireLocalDatabaseUrl } from "../../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
@@ -292,20 +293,7 @@ export function useCountDbHarness(spec: string) {
 
   /** True once some backend is genuinely WAITING on a lock held by `holderPid`. */
   async function sawLockWait(holderPid: number, withinMs = 5_000): Promise<boolean> {
-    const deadline = Date.now() + withinMs;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity
-          WHERE datname = current_database() AND pid <> pg_backend_pid()
-            AND pg_blocking_pids(pid) @> ARRAY[$1::int]`,
-        [holderPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await sleep(25);
-    }
-    return false;
+    return waitUntilBlockedBy(pool, holderPid, { timeoutMs: withinMs });
   }
 
   return Object.assign(h, {
