@@ -19,6 +19,7 @@ import type {
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { duplicatePaymentRefMessage, retryCanHelp } from "@/lib/duplicate-payment-ref";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { CheckNotReceivedChoice } from "../../_components/CheckNotReceivedChoice";
 import {
   paymentProblemCopy,
@@ -229,6 +230,8 @@ export function PickupCompleteDialog({
   }
 
   const unrecorded = outcome !== null && !outcome.paymentRecorded;
+  // SA-1026 B: after the hand-over the invoices are issued and numbered, so Print invoice prints the final copies (every non-void invoice of the order, from the response)
+  const printInvoice = usePrintInvoice();
   // SA-837b item 3: the payment was refused as a duplicate reference. The shared sentence names the existing payment, and a
   // staff role may resend THIS hand-over (same key, same body) with the generic `payment.recordAnyway` flag.
   const role = (useOptionalAuth()?.user as { role?: string } | null | undefined)?.role;
@@ -294,6 +297,20 @@ export function PickupCompleteDialog({
                 onClick={recordAnyway}
               >
                 {RECORD_ANYWAY_LABEL}
+              </Button>
+            )}
+            {outcome && !unrecorded && (
+              <Button
+                variant="secondary"
+                type="button"
+                disabled={printInvoice.printing}
+                onClick={() =>
+                  void printInvoice.print(
+                    outcome.invoiceIds?.length ? outcome.invoiceIds : [outcome.invoiceId],
+                  )
+                }
+              >
+                Print invoice
               </Button>
             )}
             <Button type="button" onClick={onClose}>

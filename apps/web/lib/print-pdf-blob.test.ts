@@ -50,13 +50,18 @@ describe("printPdfBlob (T10)", () => {
     const iframes = document.querySelectorAll("iframe");
     expect(iframes.length).toBe(1);
     const iframe = iframes[0] as HTMLIFrameElement;
-    expect(iframe.style.display).toBe("none");
+    // SA-1026 B: invisible but LAID OUT. Chrome's PDF viewer does not start inside a display:none (0x0) frame, so print() found nothing.
+    expect(iframe.style.display).not.toBe("none");
+    expect(iframe.style.visibility).not.toBe("hidden");
+    expect(iframe.style.opacity).toBe("0");
+    expect(iframe.style.width).toBe("1px");
+    expect(iframe.style.height).toBe("1px");
     expect(iframe.src).toBe("blob:rf/1");
 
     const print = jest.fn();
     Object.defineProperty(iframe, "contentWindow", {
       configurable: true,
-      value: { print },
+      value: { print, focus: jest.fn() },
     });
     iframe.onload?.(new Event("load"));
 
@@ -66,5 +71,23 @@ describe("printPdfBlob (T10)", () => {
 
     expect(document.querySelectorAll("iframe").length).toBe(0);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:rf/1");
+  });
+
+  it("when the frame cannot print, the PDF opens in a new tab so staff can print it from the viewer (SA-1026 B)", () => {
+    const { printPdfBlob } = require("./print-pdf-blob");
+    const open = jest.spyOn(window, "open").mockReturnValue(null);
+    printPdfBlob(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
+    const iframe = document.querySelector("iframe") as HTMLIFrameElement;
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      value: {
+        focus: jest.fn(),
+        print: () => {
+          throw new Error("blocked");
+        },
+      },
+    });
+    expect(() => iframe.onload?.(new Event("load"))).not.toThrow();
+    expect(open).toHaveBeenCalledWith("blob:rf/1", "_blank");
   });
 });

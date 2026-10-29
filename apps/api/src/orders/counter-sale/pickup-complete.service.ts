@@ -859,6 +859,7 @@ export class PickupCompleteService {
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
+      invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list tenderFigures totals, so Print invoice matches the screen
       invoiceNumber: first.invoiceNumber ?? "",
       ...tenderFigures(
         invoices,
