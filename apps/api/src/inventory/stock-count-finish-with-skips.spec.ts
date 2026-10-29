@@ -98,7 +98,9 @@ describe("commitStockCountSession - finish with skips (SA-767 L-2.4 C)", () => {
 
     it("a CAS that matches no row (someone else finished) records no audit row", async () => {
       w.prisma.stockCountSession.updateMany.mockResolvedValue({ count: 0 });
+      // pre-check, the seed-state read under the lock (SA-999), the batch re-read, then the read after the failed CAS
       w.prisma.stockCountSession.findUnique
+        .mockResolvedValueOnce(session())
         .mockResolvedValueOnce(session())
         .mockResolvedValueOnce(session())
         .mockResolvedValue({ status: "COMMITTED" });

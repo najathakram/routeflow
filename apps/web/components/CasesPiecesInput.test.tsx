@@ -101,3 +101,15 @@ describe("CasesPiecesInput", () => {
     );
   });
 });
+
+// row 730: Create Order's boxed line: the cases and pieces fields are 44 px below lg (they were ~28 px).
+describe("CasesPiecesInput touch size", () => {
+  it("the default field steps up to 44 px tall below lg, cases and pieces alike", () => {
+    render(<CasesPiecesInput {...base} boxes={2} pieces={3} />);
+    const cases = screen.getByTitle(/number of whole/i);
+    const pieces = screen.getAllByRole("spinbutton").find((el) => el !== cases)!;
+    for (const input of [cases, pieces]) {
+      expect(input).toHaveClass("max-lg:h-11");
+    }
+  });
+});

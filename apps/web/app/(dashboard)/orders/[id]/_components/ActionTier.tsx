@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 import { useOrderUiV2 } from "@/lib/api/addons";
-import { usePhoneWidth } from "./use-phone-width";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 
 export type ActionTierName = "primary" | "secondary" | "danger";
 
@@ -57,7 +57,7 @@ export function ActionTier({
   children: React.ReactNode;
 }) {
   const { enabled } = useOrderUiV2();
-  const phone = usePhoneWidth();
+  const phone = useBelowBreakpoint("sm");
   if (phone) {
     return (
       <div data-tier={tier} className={PHONE_TIER_CLASSES[tier]}>

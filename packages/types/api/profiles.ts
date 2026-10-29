@@ -67,7 +67,8 @@ export type CapabilityAvailability = Partial<Record<"delivery" | "shipping" | "c
 
 /**
  * `GET /platform-admin/tenants/:id/business-capabilities` (BO-03): the checkboxes, read back from the server.
- * `configured: false` (a legacy `unset` tenant) means every tick is false: nothing is shown ticked until confirmed.
+ * `configured: false` (a legacy `unset` tenant): the ticks show what the business does today (Delivery when the fleet is
+ * held, Shipping, Counter when counter sales are on), and its stored `fulfilment_model` stays unset until a box changes.
  */
 export interface BusinessCapabilities extends BusinessCapabilityTicks {
   configured: boolean;

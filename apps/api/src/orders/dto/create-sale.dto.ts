@@ -18,6 +18,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto, OrderItemDto } from "./create-order.dto";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
+import type { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 /**
  * "Sale" = an order plus its invoice created in one step (the operator "bill now" flow).
@@ -109,4 +110,10 @@ export class CreateSaleDto extends RestrictionAckDto {
    * `declare` keeps the type and emits no field, so only a client-sent key is refused.
    */
   declare idempotencyKey?: string;
+
+  /**
+   * INTERNAL (W-863): the counter sale sets this in code (its own validated `inlineReturn`), never from this route's body.
+   * `declare` for the reason above: no emitted field, no validator, so a body-sent value is refused by the whitelist.
+   */
+  declare inlineReturn?: InlineReturnLinesDto;
 }

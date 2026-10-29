@@ -6,11 +6,21 @@
 // the cent. It writes InvoiceItem.taxRate ONLY — never an amount, total or status.
 //
 // DRY-RUN IS THE DEFAULT: a READ ONLY transaction, always rolled back. It classifies every
-// order/estimate-derived, non-VOID invoice created before --before (default: now) and saves a
-// content-hashed plan (local-assets/handoff) that --apply later replays.
-//   APPLY  — inferred and verified, created before the fix (2026-09-13).
-//   REVIEW — inferred but NOT verified, or created on/after 2026-09-13 (#725 should have stamped
-//            it — a match there means something else wrote 0; a human looks, nothing is written).
+// order/estimate-derived, non-VOID invoice and saves a content-hashed plan (local-assets/handoff)
+// that --apply later replays. Selection is by EMPTINESS (every line still at 0 and the rate
+// provable from the stored totals), NEVER by a date: the old writer kept stamping 0 until its fix
+// deployed, so a creation-date cutoff would silently skip lines (SA-829 MUST, T15 owner rule).
+//   APPLY  — every line at 0, the rate inferred AND verified (reproduces the tax to the cent),
+//            created before the stamping fix (2026-09-13).
+//   REVIEW — inferred but NOT verified; the NSF fee line is already taxed; or `post-fix`: verified
+//            but created on/after 2026-09-13 (#725 stamps it, so an all-zero line there means a
+//            live writer still writes 0; stamping it would hide the writer — SA-960). A human
+//            looks, nothing is written. The dry run counts post-fix lines per tenant id and per
+//            creation source so the writer can be found and fixed first.
+//            Post-fix is judged per LINE (the order line's own createdAt, else the invoice line's).
+//            FIX_DATE (2026-09-13T00:00Z) is earlier than the fix's deploy, which is the safe side
+//            (it holds more, never applies more): the post-fix census therefore shows false
+//            positives for lines created 09-13 to 09-14 02:10Z.
 //   (skipped) — the rule does not apply (a rated line, no tax, zero subtotal).
 //
 //   railway run --service postgres node apps/api/scripts/backfill-b294-order-line-taxrate.mjs
@@ -61,6 +71,37 @@ import { requireLocalPgConfig } from "./lib/local-pg-config.mjs";
 import { redactUrl, resolveDatabaseUrl } from "./lib/railway-db-url.mjs";
 
 const TAG = "backfill-b294";
+/** Not a selector of invoices: a verified all-zero invoice created on/after this is held as REVIEW `post-fix` (SA-960). */
+/**
+ * The apply's one write: stamps a planned invoice's zero-rate lines, never the NSF fee line (#2392).
+ * SA-960 MUST2: the tenant is re-checked in the WHERE through the parent invoice (an undefined bind would widen a many-write).
+ */
+export function stampZeroRateLines(client, a) {
+  if (typeof a.tenantId !== "string" || a.tenantId === "") {
+    throw refuse(`invoice ${a.invoiceId} has no tenant in the plan`);
+  }
+  const notNsf = notNsfSql(3);
+  const tenantParam = `$${3 + notNsf.params.length}`;
+  return client.query(
+    `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}
+       AND "invoiceId" IN (SELECT id FROM "Invoice" WHERE id = $2 AND "tenantId" = ${tenantParam})`,
+    // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
+    [
+      assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
+      a.invoiceId,
+      ...notNsf.params,
+      a.tenantId,
+    ],
+  );
+}
+
+/** Pure: the UPDATE must stamp exactly the planned lines; anything else aborts the apply (exit 1, nothing committed). */
+export function assertStampedCount(rowCount, planned, invoiceId) {
+  if (rowCount !== planned) {
+    throw refuse(`invoice ${invoiceId}: updated ${rowCount} line(s) but planned ${planned}`);
+  }
+}
+
 const FIX_DATE = new Date("2026-09-13T00:00:00Z");
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const SELF = resolve(
@@ -95,7 +136,6 @@ export function notNsfSql(firstParam) {
   };
 }
 
-/** Pure: one invoice → APPLY / REVIEW / null (skipped). */
 /** settings.taxRate (a PERCENT string) -> the tenant's rate as a 6-dp fraction, or null (none / invalid / out of range). */
 export function tenantRateFraction(value) {
   const pct = Number(value);
@@ -103,6 +143,11 @@ export function tenantRateFraction(value) {
   return Math.round((pct / 100) * 1_000_000) / 1_000_000;
 }
 
+/**
+ * Pure: one invoice → APPLY / REVIEW / null (skipped). Selection is by emptiness (every line at 0 and the rate
+ * reproduces the tax to the cent), never by a date cutoff on the query; the only date use is the SA-960 hold: a
+ * verified invoice created on/after the stamping fix is REVIEW `post-fix` (a live writer), never APPLY.
+ */
 export function classifyInvoice(invoice, lines, fixDate = FIX_DATE, tenantRate = null) {
   // #2392 / SA-478: the NSF bounce-fee line is never taxed — excluded from the inference, both its
   // line and its money. #2656: that goods-only rule (rounded) is the ONE shared helper.
@@ -125,11 +170,18 @@ export function classifyInvoice(invoice, lines, fixDate = FIX_DATE, tenantRate =
       reason: "rate does not reproduce the tax to the cent",
     };
   }
-  if (new Date(invoice.createdAt) >= fixDate) {
+  // SA-960 MUST1: post-fix is judged per LINE (the order line's own createdAt, else the invoice line's), so a 0-rate
+  // line added after the fix to an OLDER invoice is held, never stamped over a live writer. A line with no date
+  // (a caller that does not pass one) falls back to the invoice's own.
+  const afterFix = (d) => new Date(d) >= fixDate;
+  if (
+    afterFix(invoice.createdAt) ||
+    lines.some((l) => l.lineCreatedAt != null && afterFix(l.lineCreatedAt))
+  ) {
     return {
       kind: "REVIEW",
       rate: inferred.rate,
-      reason: "created after the #725 fix yet all lines are 0",
+      reason: "post-fix",
     };
   }
   return { kind: "APPLY", rate: inferred.rate };
@@ -233,16 +285,28 @@ export function verifyPlanFile(saved, confirmPlan) {
   return sha256(plan) === confirmPlan && saved.planHash === confirmPlan ? plan : null;
 }
 
+/**
+ * Where an invoice came from, for the post-fix count (SA-960): no orderId = an estimate conversion (the selection needs an
+ * order or an estimate); an orderId whose Order row is gone = ORDER_MISSING (counted under its own label, never folded
+ * into the estimate bucket); otherwise the order's own source. Aliases: `i` = Invoice, `o` = the LEFT JOINed Order.
+ */
+export const CREATION_SOURCE_SQL = `CASE WHEN i."orderId" IS NULL THEN 'ESTIMATE_CONVERSION' WHEN o.id IS NULL THEN 'ORDER_MISSING' ELSE o.source::text END`;
+
 const DERIVED_INVOICES_SQL = `
-  SELECT i.id, i."tenantId", i.subtotal, i."taxAmount", i."createdAt", i."updatedAt"
+  SELECT i.id, i."tenantId", i.subtotal, i."taxAmount", i."createdAt", i."updatedAt",
+         ${CREATION_SOURCE_SQL} AS "creationSource"
   FROM "Invoice" i
-  WHERE i.status <> 'VOID' AND i."createdAt" < $1
+  LEFT JOIN "Order" o ON o.id = i."orderId"
+  WHERE i.status <> 'VOID'
     AND (i."orderId" IS NOT NULL
          OR EXISTS (SELECT 1 FROM "Estimate" e WHERE e."invoiceId" = i.id))
   ORDER BY i.id`;
 const LINES_SQL = `
-  SELECT id, "invoiceId", "taxRate", "categoryTaxAmount", subtotal, "systemKind", description
-  FROM "InvoiceItem" WHERE "invoiceId" = ANY($1::text[]) ORDER BY id`;
+  SELECT ii.id, ii."invoiceId", ii."taxRate", ii."categoryTaxAmount", ii.subtotal, ii."systemKind", ii.description,
+         GREATEST(oi."createdAt", ii."createdAt") AS "lineCreatedAt"
+  FROM "InvoiceItem" ii
+  LEFT JOIN "OrderItem" oi ON oi.id = ii."orderItemId"
+  WHERE ii."invoiceId" = ANY($1::text[]) ORDER BY ii.id`;
 
 async function resolveTarget() {
   const local = process.argv.includes("--local");
@@ -270,9 +334,8 @@ async function fingerprint(client) {
 async function dryRun() {
   const url = await resolveTarget();
   const protectedSlugs = loadProtectedSlugs(process.env, url);
-  const before = argOf("--before") ? new Date(argOf("--before")) : new Date();
   console.log(
-    `${TAG}: target ${redactUrl(url)} DRY-RUN (invoices created before ${before.toISOString()})`,
+    `${TAG}: target ${redactUrl(url)} DRY-RUN (every derived invoice; selected by emptiness, not date)`,
   );
   const client = new pg.Client(dialConfig(url));
   await client.connect();
@@ -280,7 +343,7 @@ async function dryRun() {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await client.query("SET LOCAL statement_timeout = '120s'");
     const fp = await fingerprint(client);
-    const invoices = (await client.query(DERIVED_INVOICES_SQL, [before])).rows;
+    const invoices = (await client.query(DERIVED_INVOICES_SQL)).rows;
     const lines = invoices.length
       ? (await client.query(LINES_SQL, [invoices.map((i) => i.id)])).rows
       : [];
@@ -300,12 +363,18 @@ async function dryRun() {
     for (const l of lines) linesBy.set(l.invoiceId, [...(linesBy.get(l.invoiceId) ?? []), l]);
     const candidates = [];
     const review = [];
+    const postFix = { byTenant: new Map(), bySource: new Map() };
     for (const inv of invoices) {
       const own = linesBy.get(inv.id) ?? [];
       const c = classifyInvoice(inv, own, undefined, tenantRates.get(inv.tenantId) ?? null);
       if (!c) continue;
       if (c.kind === "REVIEW") {
         review.push({ invoiceId: inv.id, rate: c.rate, reason: c.reason });
+        if (c.reason === "post-fix") {
+          const bump = (m, k) => m.set(k, (m.get(k) ?? 0) + 1);
+          bump(postFix.byTenant, inv.tenantId);
+          bump(postFix.bySource, inv.creationSource);
+        }
         continue;
       }
       candidates.push({
@@ -348,6 +417,14 @@ async function dryRun() {
     console.log(
       `  REVIEW: ${review.length} invoice(s) (listed in the plan file; nothing is written for them)`,
     );
+    const postFixTotal = [...postFix.bySource.values()].reduce((a, b) => a + b, 0);
+    console.log(
+      `  REVIEW post-fix: ${postFixTotal} verified all-zero invoice(s) created on/after ${FIX_DATE.toISOString().slice(0, 10)} (a live writer still writes 0; HELD, not applied)`,
+    );
+    for (const [src, n] of [...postFix.bySource].sort())
+      console.log(`    by creation source ${src}: ${n}`);
+    for (const [tid, n] of [...postFix.byTenant].sort())
+      console.log(`    by tenant id ${tid}: ${n}`);
     console.log(
       `  PAYING-HELD: ${held.length} invoice(s) across ${new Set(held.map((h) => h.tenantId)).size} protected tenant(s)` +
         (admittedProtectedTenantIds.length
@@ -486,14 +563,17 @@ async function apply() {
     for (const a of plan.apply) {
       const inv = (
         await client.query(
-          'SELECT subtotal, "taxAmount", "updatedAt" FROM "Invoice" WHERE id = $1',
-          [a.invoiceId],
+          'SELECT subtotal, "taxAmount", "updatedAt" FROM "Invoice" WHERE id = $1 AND "tenantId" = $2',
+          [a.invoiceId, a.tenantId],
         )
       ).rows[0];
       const lines = (
         await client.query(
-          'SELECT id, "taxRate" FROM "InvoiceItem" WHERE "invoiceId" = $1 ORDER BY id',
-          [a.invoiceId],
+          // The tenant is scoped through the PARENT invoice, never the nullable InvoiceItem.tenantId (legacy lines).
+          `SELECT ii.id, ii."taxRate", ii."systemKind", ii.description FROM "InvoiceItem" ii
+             JOIN "Invoice" i ON i.id = ii."invoiceId"
+            WHERE ii."invoiceId" = $1 AND i."tenantId" = $2 ORDER BY ii.id`,
+          [a.invoiceId, a.tenantId],
         )
       ).rows;
       const changed =
@@ -504,17 +584,10 @@ async function apply() {
         JSON.stringify(lines.map((l) => l.id)) !== JSON.stringify(a.expected.lineIds) ||
         lines.some((l) => Number(l.taxRate) !== 0);
       if (changed) throw refuse(`invoice ${a.invoiceId} has changed since the dry run`);
-      // #2392: never stamp a rate onto the NSF fee line.
-      const notNsf = notNsfSql(3);
-      const res = await client.query(
-        `UPDATE "InvoiceItem" SET "taxRate" = $1 WHERE "invoiceId" = $2 AND "taxRate" = 0 AND ${notNsf.sql}`,
-        // SA-816: a non-finite rate must never reach the bind (node-pg sends NaN as 'NaN'; NUMERIC accepts it).
-        [
-          assertFiniteMoney(a.rate, `invoice ${a.invoiceId} taxRate`),
-          a.invoiceId,
-          ...notNsf.params,
-        ],
-      );
+      const res = await stampZeroRateLines(client, a);
+      // Fail closed: every planned (non-NSF, zero-rate) line must be stamped, or the whole apply rolls back.
+      const planned = lines.filter((l) => !isNsfLine(l)).length;
+      assertStampedCount(res.rowCount, planned, a.invoiceId);
       stamped += res.rowCount;
     }
     await client.query("COMMIT");
@@ -543,7 +616,7 @@ function selfTest() {
       0.075,
     ],
     [
-      "REVIEW: the same, created after the fix",
+      "REVIEW post-fix: the same, created after the fix (a live writer; held, never applied)",
       { subtotal: 100, taxAmount: 7.5, createdAt: after },
       zero,
       "REVIEW",
@@ -554,7 +627,7 @@ function selfTest() {
       { subtotal: 100000, taxAmount: 7.33, createdAt: before },
       zero,
       "REVIEW",
-      0.0001,
+      0.000073,
     ],
     [
       "skipped: MIXED — one line at 7.5%, one at 0",
@@ -636,6 +709,9 @@ async function main() {
   if (process.argv.includes("--self-test")) return selfTest();
   try {
     refuseRetiredFlags(process.argv.slice(2));
+    if (process.argv.includes("--before")) {
+      throw new Error("--before is retired: the backfill selects by emptiness, never by date");
+    }
   } catch (e) {
     console.error(`${TAG}: ${e.message}`);
     return 1;

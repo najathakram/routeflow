@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { licenceExpiryCutoff } from "../authorizations/licence-validity";
+import { resolveZone } from "../common/tenant-time-zone";
 import type { AutoCheckKey } from "./onboarding-catalog";
 
 /**
@@ -190,8 +192,13 @@ export const AUTO_CHECKERS: Record<AutoCheckKey, Checker> = {
   },
 
   async "customers.licencesValid"({ db, tenantId, now }) {
+    // B330: a licence is good through the END of its printed day in the business's zone, not to the instant.
+    const { zone } = await resolveZone(db, { tenantId });
     const n = await db.customer.count({
-      where: { ...liveCustomers(tenantId), tobaccoLicenseExpiry: { lt: now } },
+      where: {
+        ...liveCustomers(tenantId),
+        tobaccoLicenseExpiry: { lt: licenceExpiryCutoff(now, zone) },
+      },
     });
     return n === 0
       ? { ok: true, detail: "No expired tobacco licences" }
