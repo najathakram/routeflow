@@ -67,6 +67,8 @@ import {
   unlinkLinksWindows,
   WINDOWS_DEPS,
   applyActions,
+  scopePlan,
+  removeWorktreePlain,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -2213,6 +2215,298 @@ t("allow-list: a failed or colliding salvage skips the worktree and keeps it", (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- --worktrees-only / --paths / detached-HEAD proof / broken index (2026-10-29) ---
+const wtAct = (step, kind, worktreePath, extra = {}) => ({
+  step,
+  kind,
+  target: kind === "node_modules" ? join(worktreePath, "node_modules") : worktreePath,
+  worktree: worktreePath.split(/[\\/]/).pop(),
+  worktreePath,
+  ...extra,
+});
+const fullPlan = () => [
+  wtAct(1, "node_modules", "/w/a"),
+  wtAct(2, "worktree", "/w/a"),
+  wtAct(1, "node_modules", "/w/b"),
+  wtAct(2, "worktree", "/w/b"),
+  { step: 3, kind: "orphan-dir", target: "/w/orphan" },
+  { step: 4, kind: "docker-build-cache" },
+  { step: 5, kind: "npm-cache" },
+  { step: 6, kind: "stale-proof-dir", target: "/m/local-assets/proofs/old" },
+  { step: 7, kind: "jest-cache", target: "/tmp/jest_x", root: "/tmp" },
+];
+t("worktrees-only: keeps steps 1-3 and never plans docker, npm cache, proofs or Jest", () => {
+  const { actions } = scopePlan(fullPlan(), { worktreesOnly: true });
+  assert.deepEqual(
+    actions.map((a) => a.step),
+    [1, 2, 1, 2, 3],
+  );
+  assert.ok(!actions.some((a) => ["docker-build-cache", "npm-cache"].includes(a.kind)));
+});
+t("paths: acts only on listed trees; every other action is report-only", () => {
+  const { actions, reported } = scopePlan(fullPlan(), { paths: ["/w/a"] });
+  assert.deepEqual(
+    actions.map((a) => `${a.kind} ${a.target}`),
+    ["worktree /w/a"],
+  );
+  assert.ok(reported.some((r) => r.worktree === "b" && /report-only/.test(r.reason)));
+  assert.ok(reported.some((r) => /docker/.test(r.reason)));
+  assert.ok(reported.some((r) => /orphan/.test(r.reason)));
+});
+t("paths: a listed tree's removal is PLAIN (never --force); its node_modules step folds in", () => {
+  const { actions } = scopePlan(fullPlan(), { paths: ["/w/a", "/w/b"] });
+  assert.ok(actions.every((a) => a.kind === "worktree" && a.plain === true));
+  assert.equal(actions.length, 2);
+});
+t("paths: a listed tree with only a node_modules clear (unpushed) keeps that clear", () => {
+  const { actions } = scopePlan([wtAct(1, "node_modules", "/w/c")], { paths: ["/w/c"] });
+  assert.deepEqual(
+    actions.map((a) => a.kind),
+    ["node_modules"],
+  );
+});
+t("paths: matching is case-insensitive when asked (Windows paths)", () => {
+  const { actions } = scopePlan([wtAct(2, "worktree", "C:/WT/Lane")], {
+    paths: ["c:/wt/lane"],
+    caseInsensitive: true,
+  });
+  assert.equal(actions.length, 1);
+});
+t("removeWorktreePlain: links first, then a plain `git worktree remove`, never --force", () => {
+  const calls = [];
+  removeWorktreePlain("/w/lane", {
+    git: (...args) => (calls.push(`git ${args.join(" ")}`), { ok: true }),
+    unlinkLinksWithin: (d) => calls.push(`unlink ${d}`),
+    exists: () => false,
+  });
+  assert.deepEqual(calls, ["unlink /w/lane", "git worktree remove /w/lane", "git worktree prune"]);
+  assert.ok(!calls.some((c) => c.includes("--force")));
+});
+t("removeWorktreePlain: a tree git refuses stays and the refusal is thrown, never forced", () => {
+  const calls = [];
+  assert.throws(
+    () =>
+      removeWorktreePlain("/w/lane", {
+        git: (...args) => (calls.push(args.join(" ")), { ok: false, stderr: "index.lock exists" }),
+        unlinkLinksWithin: () => {},
+        exists: () => true,
+      }),
+    /index\.lock exists/,
+  );
+  assert.deepEqual(calls, ["worktree remove /w/lane"]);
+});
+t(
+  "removeWorktreePlain: a junction-nested node_modules is unlinked before git; target survives",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-plain-")));
+    try {
+      const wt = join(root, "wt");
+      const sib = join(root, "sib");
+      mkdirSync(join(wt, "apps", "api", "node_modules"), { recursive: true });
+      mkdirSync(join(sib, "pkg"), { recursive: true });
+      writeFileSync(join(sib, "pkg", "keep.txt"), "x");
+      dirLink(sib, join(wt, "node_modules"));
+      dirLink(join(sib, "pkg"), join(wt, "apps", "api", "node_modules", "pkg"));
+      let linksAtGit = null;
+      removeWorktreePlain(wt, {
+        git: (...args) => {
+          if (args[1] === "remove") {
+            linksAtGit = [
+              join(wt, "node_modules"),
+              join(wt, "apps", "api", "node_modules", "pkg"),
+            ].filter((p) => pathPresent(p));
+            rmSync(wt, { recursive: true, force: true }); // stands in for git, AFTER the unlink
+          }
+          return { ok: true };
+        },
+        unlinkLinksWithin,
+        exists: (p) => existsSync(p),
+      });
+      assert.deepEqual(linksAtGit, []);
+      assert.equal(readFileSync(join(sib, "pkg", "keep.txt"), "utf8"), "x");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("execute: a plain action goes through removeWorktreePlain, never removeWorktree", () => {
+  const calls = [];
+  const out = execute(wtAct(2, "worktree", "/w/a", { plain: true }), {
+    refuseDelete: () => null,
+    isDirty: () => false,
+    removeWorktree: () => calls.push("force"),
+    removeWorktreePlain: (p) => calls.push(`plain ${p}`),
+    log: () => {},
+  });
+  assert.equal(out, "done");
+  assert.deepEqual(calls, ["plain /w/a"]);
+});
+t("execute: a strict-ignored (detached) removal re-checks with the ignored-path-aware test", () => {
+  const calls = [];
+  const out = execute(wtAct(2, "worktree", "/w/a", { plain: true, strictIgnored: true }), {
+    refuseDelete: () => null,
+    isDirty: () => false,
+    isDirtyAllowList: () => true,
+    removeWorktreePlain: () => calls.push("plain"),
+    log: () => {},
+  });
+  assert.equal(out, "refused");
+  assert.deepEqual(calls, []);
+});
+t("execute: a broken-index removal skips the status re-check but refuses if HEAD moved", () => {
+  const a = wtAct(2, "worktree", "/w/a", { plain: true, brokenIndex: "missing", head: "abc" });
+  const calls = [];
+  const deps = (head) => ({
+    refuseDelete: () => null,
+    isDirty: () => true, // an unreadable status reads dirty; a broken index never asks it
+    isDirtyAllowList: () => true,
+    headOf: () => head,
+    removeWorktreePlain: () => calls.push("plain"),
+    log: () => {},
+  });
+  assert.equal(execute(a, deps("def")), "refused");
+  assert.deepEqual(calls, []);
+  assert.equal(execute(a, deps("abc")), "done");
+  assert.deepEqual(calls, ["plain"]);
+});
+
+// Real repos: a detached merged tree, its proofs, and the broken-index rule (all under --paths).
+{
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-detached-")));
+  const main = join(root, "main");
+  const origin = join(root, "origin.git");
+  const wtRoot = join(root, "wt");
+  const git = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
+    }).trim();
+  const id = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const idle = (wt) => {
+    const gd = git(wt, "rev-parse", "--absolute-git-dir");
+    utimesSync(join(gd, "logs", "HEAD"), old, old);
+    return gd;
+  };
+  const plan = (paths, prs = []) => buildPlan(main, main, wtRoot, { paths, prs });
+  const removalFor = (r, wt) =>
+    r.actions.find((a) => a.kind === "worktree" && samePath(a.worktreePath, wt, true));
+  try {
+    execFileSync("git", ["init", "-q", "--bare", origin], { env: fixtureGitEnv() });
+    execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
+    writeFileSync(join(main, ".gitignore"), "node_modules/\n*.local\n");
+    writeFileSync(join(main, "a.txt"), "a");
+    git(main, "add", ".gitignore", "a.txt");
+    git(main, ...id, "commit", "-q", "-m", "base");
+    git(main, "remote", "add", "origin", origin);
+    git(main, "checkout", "-q", "-b", "feat/x");
+    writeFileSync(join(main, "x.txt"), "x");
+    git(main, "add", "x.txt");
+    git(main, ...id, "commit", "-q", "-m", "x work");
+    const xSha = git(main, "rev-parse", "HEAD");
+    git(main, "checkout", "-q", "master");
+    git(main, ...id, "merge", "-q", "--no-ff", "-m", "merge x", "feat/x");
+    git(main, "push", "-q", "origin", "master");
+    git(main, "fetch", "-q", "origin");
+
+    const merged = join(wtRoot, "merged");
+    git(main, "worktree", "add", "-q", "--detach", merged, xSha);
+    mkdirSync(join(merged, "node_modules", "p"), { recursive: true });
+    idle(merged);
+
+    const unmerged = join(wtRoot, "unmerged");
+    git(main, "worktree", "add", "-q", "--detach", unmerged, xSha);
+    writeFileSync(join(unmerged, "u.txt"), "u");
+    git(unmerged, "add", "u.txt");
+    git(unmerged, ...id, "commit", "-q", "-m", "never merged");
+    idle(unmerged);
+
+    t("detached: a merged, clean, idle detached tree is NOT planned without --paths", () => {
+      const r = plan(null);
+      assert.equal(removalFor(r, merged), undefined);
+      assert.ok(r.skipped.some((s) => s.worktree === "merged" && /--paths/.test(s.reason)));
+    });
+    t("detached: listed in --paths, HEAD in origin/master proves it; removal planned", () => {
+      const a = removalFor(plan([merged]), merged);
+      assert.ok(a, "expected a worktree action for the listed detached merged tree");
+      assert.match(a.detachedProof, /origin\/master/);
+      assert.equal(a.strictIgnored, true);
+    });
+    t("detached: a listed tree whose HEAD is not merged anywhere is refused", () => {
+      const r = plan([unmerged]);
+      assert.equal(removalFor(r, unmerged), undefined);
+      assert.ok(r.skipped.some((s) => s.worktree === "unmerged" && /not merged/.test(s.reason)));
+    });
+    t("detached: a tree byte-equal (same tree) to a merged PR head is proven", () => {
+      const tree = git(unmerged, "rev-parse", "HEAD^{tree}");
+      const twin = git(main, ...id, "commit-tree", tree, "-p", xSha, "-m", "pr head twin");
+      const masterSha = git(main, "rev-parse", "origin/master");
+      const prs = [{ number: 7, headRefOid: twin, mergeCommit: { oid: masterSha } }];
+      const a = removalFor(plan([unmerged], prs), unmerged);
+      assert.ok(a, "expected the tree-equal proof to plan the removal");
+      assert.match(a.detachedProof, /#7/);
+    });
+    t("detached: a non-regenerable ignored file blocks it; node_modules does not", () => {
+      writeFileSync(join(merged, "notes.local"), "mine");
+      try {
+        assert.equal(removalFor(plan([merged]), merged), undefined);
+      } finally {
+        rmSync(join(merged, "notes.local"));
+      }
+      assert.ok(removalFor(plan([merged]), merged));
+    });
+    t("detached: a HEAD that moved within RECENT_ACTIVITY_HOURS is refused", () => {
+      const gd = git(merged, "rev-parse", "--absolute-git-dir");
+      const now = new Date();
+      utimesSync(join(gd, "logs", "HEAD"), now, now);
+      try {
+        assert.equal(removalFor(plan([merged]), merged), undefined);
+      } finally {
+        utimesSync(join(gd, "logs", "HEAD"), old, old);
+      }
+    });
+
+    const broken = join(wtRoot, "broken");
+    git(main, "worktree", "add", "-q", "--detach", broken, xSha);
+    const brokenGd = idle(broken);
+    rmSync(join(brokenGd, "index"));
+    t(
+      "broken index: a listed tree with a missing index and HEAD in master is planned, plain",
+      () => {
+        const a = removalFor(plan([broken]), broken);
+        assert.ok(a, "expected a removal for the listed broken-index tree");
+        assert.equal(a.brokenIndex, "missing");
+        assert.equal(a.plain, true);
+        assert.equal(a.head, xSha);
+      },
+    );
+    t("broken index: the same tree NOT listed is never planned", () => {
+      assert.equal(removalFor(plan(null), broken), undefined);
+      assert.equal(removalFor(plan([merged]), broken), undefined);
+    });
+    const locked = join(wtRoot, "lockd");
+    git(main, "worktree", "add", "-q", "--detach", locked, xSha);
+    const lockGd = idle(locked);
+    writeFileSync(join(lockGd, "index.lock"), "");
+    t("broken index: a FRESH index.lock (a live git command) is refused even when listed", () => {
+      assert.equal(removalFor(plan([locked]), locked), undefined);
+    });
+    t("broken index: a STALE index.lock on a listed tree in master is planned", () => {
+      utimesSync(join(lockGd, "index.lock"), old, old);
+      const a = removalFor(plan([locked]), locked);
+      assert.ok(a, "expected a removal for the stale-lock tree");
+      assert.equal(a.brokenIndex, "stale-lock");
+    });
+    t("paths: a listed path that is not a registered worktree is reported", () => {
+      const r = plan([join(root, "nowhere")]);
+      assert.ok(r.skipped.some((s) => /not a registered worktree/.test(s.reason)));
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
 if (failures.length) {

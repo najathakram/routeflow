@@ -55,6 +55,16 @@
 //   node scripts/janitor.mjs --stale-branches   report merged branches still on origin
 //   node scripts/janitor.mjs --allow-list <file>   also plan removal of LISTED detached/unproven
 //                                               worktrees that are clean, on origin/*, idle 24h+
+//   node scripts/janitor.mjs --worktrees-only [--apply]   steps 1-3 only: never docker, npm cache,
+//                                               proofs or Jest; no free-space target unless given
+//   node scripts/janitor.mjs --paths <file> [--apply]     act ONLY on the listed trees (implies
+//                                               --worktrees-only); every other tree is report-only.
+//                                               A listed DETACHED tree may go on the detached-HEAD
+//                                               proof; a listed tree with a missing/damaged index
+//                                               or a stale index.lock may go when its HEAD is on
+//                                               origin or in master. Removal is a PLAIN
+//                                               `git worktree remove` after the junction unlink +
+//                                               rescan-to-0: never --force, never a recursive delete.
 //
 // Preflight threshold guidance (document, not enforced by this tool):
 //   > 10 GB  normal — proceed with anything
@@ -1123,17 +1133,239 @@ function findNodeModulesDirs(worktreePath) {
 // Plan + execute
 // ---------------------------------------------------------------------------
 
-export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot) {
+// ---------------------------------------------------------------------------
+// --paths (2026-10-29): the detached-HEAD proof and the broken-index rule. Both apply ONLY to a
+// tree listed in --paths, and both end in removeWorktreePlain (junction unlink + rescan-to-0, then
+// a plain `git worktree remove`; never --force, never a recursive delete).
+// ---------------------------------------------------------------------------
+
+/** Merged-into-master PRs (`number,headRefOid,mergeCommit`) in ONE gh call; null when gh can't answer. */
+function ghMergedPrs(repoRoot) {
+  const out = trySh(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--state",
+      "merged",
+      "--base",
+      "master",
+      "--limit",
+      "3000",
+      "--json",
+      "number,headRefOid,mergeCommit",
+    ],
+    { cwd: repoRoot, timeout: 120_000, maxBuffer: 64 * 1024 * 1024 },
+  );
+  try {
+    return out ? JSON.parse(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** tree id -> PR, for every merged PR head present locally (ONE `cat-file --batch-check`). */
+export function prHeadTreeMap(repoRoot, prs) {
+  const map = new Map();
+  const heads = (prs ?? []).filter((p) => p?.headRefOid && p?.mergeCommit?.oid);
+  if (heads.length === 0) return map;
+  const out = gitRaw(
+    repoRoot,
+    ["cat-file", "--batch-check=%(objectname)"],
+    Buffer.from(`${heads.map((p) => `${p.headRefOid}^{tree}`).join("\n")}\n`),
+  );
+  if (!out) return map;
+  const lines = out.toString("utf8").split("\n");
+  // One output line per input line; a missing object prints "<input> missing" and never matches.
+  heads.forEach((p, i) => {
+    const l = (lines[i] ?? "").trim();
+    if (/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(l) && !map.has(l)) map.set(l, p);
+  });
+  return map;
+}
+
+/**
+ * The detached-HEAD proof. A detached tree has no branch for mergeEvidence, so its HEAD is merged
+ * when it is in origin/master, is (or is behind) a merged PR head, has the same tree as a merged PR
+ * head (byte-equal), or its combined diff is patch-id-equal to a squash on master. Returns the
+ * proof's name, or null: not proven, fail closed.
+ */
+export function detachedMergeProof(
+  repoRoot,
+  head,
+  { prs = null, prTrees = null, masterRef = "origin/master" } = {},
+) {
+  if (!head) return null;
+  if (isAncestorOrSelf(repoRoot, head, masterRef)) return "HEAD is in origin/master";
+  if (prs && mergedPrCoversTip(repoRoot, head, prs, masterRef)) {
+    return "HEAD is a merged PR head (or behind one)";
+  }
+  const tree = trySh("git", ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `${head}^{tree}`]);
+  const twin = tree ? prTrees?.get(tree) : null;
+  if (twin && isAncestorOrSelf(repoRoot, twin.mergeCommit.oid, masterRef)) {
+    return `tree equals merged PR #${twin.number}'s head`;
+  }
+  if (squashMergedByPatchId(repoRoot, head, { masterRef })) {
+    return "patch-id equals a squash on origin/master";
+  }
+  return null;
+}
+
+/**
+ * The state of a worktree's index: "ok", "missing", "damaged" (git cannot read it), "stale-lock"
+ * (an index.lock untouched for RECENT_ACTIVITY_HOURS), "live-lock" (a git command may be running)
+ * or "unreadable" (no git dir).
+ */
+function indexState(worktreePath, nowMs) {
+  const gitDir = trySh("git", ["-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
+  if (!gitDir) return "unreadable";
+  const lock = join(gitDir, "index.lock");
+  if (existsSync(lock)) {
+    return isRecentlyActive(statSync(lock).mtimeMs, nowMs) ? "live-lock" : "stale-lock";
+  }
+  if (!existsSync(join(gitDir, "index"))) return "missing";
+  // Reads (and checksums) the whole index; prints nothing for a path that cannot exist.
+  const read = trySh("git", ["-C", worktreePath, "ls-files", "-s", "--", ".janitor-no-such-path"]);
+  return read == null ? "damaged" : "ok";
+}
+
+function headAndPlace(repoRoot, worktreePath) {
+  const head = trySh("git", ["-C", worktreePath, "rev-parse", "--verify", "--quiet", "HEAD"]);
+  const inMaster = isAncestorOrSelf(repoRoot, head, "origin/master");
+  const onOrigin =
+    !!head &&
+    !!trySh("git", [
+      "-C",
+      repoRoot,
+      "for-each-ref",
+      "--contains",
+      head,
+      "--count=1",
+      "--format=%(refname)",
+      "refs/remotes/origin",
+    ])?.trim();
+  return { head, inMaster, onOrigin };
+}
+
+function linkReason(linkedFrom) {
+  if (linkedFrom === null) return "link scan of the other trees failed (unreadable)";
+  if (linkedFrom.length > 0)
+    return `other trees link into it (${linkedFrom.length}, e.g. ${linkedFrom[0]})`;
+  return null;
+}
+
+/** A LISTED tree whose index is missing/damaged or has a stale lock: no status can be read, so HEAD decides. */
+function brokenIndexVerdict(repoRoot, wt, idx, { nowMs, linkedFrom }) {
+  if (idx === "live-lock")
+    return {
+      reason: `index.lock touched in the last ${RECENT_ACTIVITY_HOURS}h: a git command may be running`,
+    };
+  if (idx === "unreadable") return { reason: "no readable git dir" };
+  const { head, inMaster, onOrigin } = headAndPlace(repoRoot, wt.path);
+  if (!head) return { reason: `index ${idx} and HEAD unreadable` };
+  if (!inMaster && !onOrigin)
+    return {
+      reason: `index ${idx} and HEAD ${head.slice(0, 9)} is neither on origin nor in master`,
+    };
+  if (isRecentlyActive(lastActivityMs(wt.path), nowMs))
+    return {
+      reason: `index ${idx}, but HEAD moved in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)`,
+    };
+  const lr = linkReason(linkedFrom);
+  if (lr) return { reason: lr };
+  return { action: { brokenIndex: idx, head } };
+}
+
+/** A LISTED detached tree: clean, no non-regenerable ignored files, idle, nothing links in, and proven merged. */
+function detachedVerdict(repoRoot, wt, { nowMs, linkedFrom, prs, prTrees }) {
+  const ign = allowListIgnoredState(wt.path);
+  if (ign.dirty) return { reason: "uncommitted changes (or unreadable status)" };
+  const kept = [...ign.blockers, ...ign.salvage];
+  if (kept.length > 0) {
+    return {
+      reason: `non-regenerable ignored path(s): ${kept.slice(0, 5).join(", ")}${kept.length > 5 ? ` (+${kept.length - 5})` : ""}`,
+    };
+  }
+  if (isRecentlyActive(lastActivityMs(wt.path), nowMs))
+    return { reason: `HEAD moved in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)` };
+  const lr = linkReason(linkedFrom);
+  if (lr) return { reason: lr };
+  const head = trySh("git", ["-C", wt.path, "rev-parse", "--verify", "--quiet", "HEAD"]);
+  const proof = detachedMergeProof(repoRoot, head, { prs, prTrees });
+  if (!proof) {
+    return {
+      reason:
+        "detached HEAD not merged: not in origin/master, not a merged PR head by sha, tree or patch-id",
+    };
+  }
+  return { action: { detachedProof: proof, strictIgnored: true, head } };
+}
+
+export function buildPlan(repoRoot, mainCheckoutPath, worktreesRoot, opts = {}) {
   const worktrees = listWorktrees(repoRoot);
   const actions = [];
   const skipped = [];
   const nowMs = Date.now();
   // Row 719: ONE scan of every tree's node_modules links, reused for each candidate below.
   const linkScan = scanLinkTargets(worktrees.map((w) => w.path));
+  // --paths: only a LISTED tree may use the detached-HEAD proof or the broken-index rule.
+  const paths = opts.paths ?? null;
+  const isListed = (p) => !!paths && paths.some((x) => samePath(p, x, isWindows()));
+  let prs = opts.prs; // merged PRs, fetched once and only when a listed detached tree needs them
+  let prTrees = null;
+  const proofInputs = () => {
+    if (prs === undefined) prs = ghMergedPrs(repoRoot);
+    if (prTrees === null) prTrees = prHeadTreeMap(repoRoot, prs);
+    return { prs, prTrees };
+  };
+  if (paths) {
+    for (const p of paths) {
+      if (!worktrees.some((w) => samePath(w.path, p, isWindows()))) {
+        skipped.push({ worktree: p, branch: null, reason: "--paths: not a registered worktree" });
+      }
+    }
+  }
 
   for (const wt of worktrees) {
     const name = wt.path.split(/[\\/]/).pop();
     const isMainCheckout = resolve(wt.path) === resolve(mainCheckoutPath);
+    const plainCandidate = !isMainCheckout && !wt.locked && !isProtectedWorktreeName(name);
+    if (plainCandidate && isListed(wt.path)) {
+      const linkedFrom = linkedIntoBy(
+        wt.path,
+        worktrees.map((w) => w.path),
+        linkScan,
+      );
+      const idx = indexState(wt.path, nowMs);
+      const v =
+        idx !== "ok"
+          ? brokenIndexVerdict(repoRoot, wt, idx, { nowMs, linkedFrom })
+          : !wt.branch
+            ? detachedVerdict(repoRoot, wt, { nowMs, linkedFrom, ...proofInputs() })
+            : null;
+      if (v) {
+        if (v.action)
+          actions.push({
+            step: 2,
+            kind: "worktree",
+            target: wt.path,
+            worktree: name,
+            worktreePath: wt.path,
+            plain: true,
+            ...v.action,
+          });
+        else skipped.push({ worktree: name, branch: wt.branch, reason: `--paths: ${v.reason}` });
+        continue;
+      }
+    }
+    if (plainCandidate && !wt.branch) {
+      skipped.push({
+        worktree: name,
+        branch: null,
+        reason: "detached HEAD: acted on only when listed in --paths (the detached-HEAD proof)",
+      });
+      continue;
+    }
     // The patch-id scan walks master's first-parent chain, so it is the most expensive question
     // asked here. classifyWorktree already returns "skip" for a locked, protected-name or
     // protected-branch worktree BEFORE it ever consults isMerged — so computing it for one is
@@ -1372,6 +1604,15 @@ function describeAction(a) {
     case "node_modules":
       return `[1] clear node_modules — ${a.target} (worktree ${a.worktree}, merged)`;
     case "worktree":
+      if (a.brokenIndex) {
+        return `[2] remove whole worktree — ${a.target} (--paths: index ${a.brokenIndex}, HEAD ${a.head.slice(0, 9)} on origin or in master, idle; plain remove, never forced)`;
+      }
+      if (a.detachedProof) {
+        return `[2] remove whole worktree — ${a.target} (--paths: detached, ${a.detachedProof}; clean, idle; plain remove, never forced)`;
+      }
+      if (a.plain && !a.allowListed) {
+        return `[2] remove whole worktree — ${a.target} (--paths: merged, clean, idle, pushed; plain remove, never forced)`;
+      }
       return a.allowListed
         ? `[2] remove whole worktree — ${a.target} (allow-listed: clean, on origin, idle 24h+${a.salvage?.length ? `; would first move ${a.salvage.length} local-assets path(s) to ${a.salvageRoot}` : ""})`
         : `[2] remove whole worktree — ${a.target} (merged, clean, idle, pushed)`;
@@ -1414,6 +1655,15 @@ const EXECUTE_DEPS = {
       removeTree: safeRemoveTree,
     });
   },
+  removeWorktreePlain: (t) => {
+    const { repoRoot } = resolveRepoContext();
+    removeWorktreePlain(t, {
+      git: (...args) => gitReport(repoRoot, args),
+      unlinkLinksWithin,
+      exists: pathPresent,
+    });
+  },
+  headOf: (p) => trySh("git", ["-C", p, "rev-parse", "--verify", "--quiet", "HEAD"]),
   run: (cmd, args) => trySh(cmd, args),
   removeFile: (t) => unlinkSync(t),
   log: (m) => console.log(m),
@@ -1444,8 +1694,14 @@ export function execute(a, deps = EXECUTE_DEPS) {
         return "skipped";
       }
     }
-    const dirtyNow = a.allowListed ? deps.isDirtyAllowList : deps.isDirty;
-    if (a.worktreePath && dirtyNow(a.worktreePath)) {
+    const dirtyNow = a.allowListed || a.strictIgnored ? deps.isDirtyAllowList : deps.isDirty;
+    if (a.brokenIndex) {
+      // No status can be read from a broken index; the HEAD the plan proved must still be HEAD.
+      if (deps.headOf(a.worktreePath) !== a.head) {
+        deps.log(`   REFUSED, skipped: ${a.target} (HEAD moved since the plan was built)`);
+        return "refused";
+      }
+    } else if (a.worktreePath && dirtyNow(a.worktreePath)) {
       deps.log(`   REFUSED, skipped: ${a.target} (worktree went dirty since the plan was built)`);
       return "refused";
     }
@@ -1475,7 +1731,8 @@ export function execute(a, deps = EXECUTE_DEPS) {
       }
       return "done";
     case "worktree":
-      deps.removeWorktree(a.target);
+      if (a.plain) deps.removeWorktreePlain(a.target);
+      else deps.removeWorktree(a.target);
       return "done";
     case "docker-build-cache":
       deps.run("docker", ["builder", "prune", "-a", "-f"]);
@@ -1750,6 +2007,79 @@ export function removeWorktreeSafely(
   git("worktree", "prune");
 }
 
+/**
+ * --paths removal: every link inside the tree unlinked and PROVEN gone (unlinkLinksWithin: the
+ * junction unlink + rescan-to-0), then a PLAIN `git worktree remove`. Never --force and no
+ * recursive-delete fallback: a tree git refuses stays where it is, and the refusal is thrown so
+ * applyActions reports it as FAILED.
+ */
+export function removeWorktreePlain(target, { git, unlinkLinksWithin: unlinkLinks, exists }) {
+  unlinkLinks(target);
+  const r = git("worktree", "remove", target);
+  if (exists(target)) {
+    throw new Error(
+      `git worktree remove refused ${target}${r?.stderr ? ` (${r.stderr})` : ""}: left in place, never forced`,
+    );
+  }
+  git("worktree", "prune");
+}
+
+/** A git call whose failure is reported, not swallowed: { ok, stderr }. */
+function gitReport(repoRoot, args) {
+  try {
+    execFileSync("git", ["-C", repoRoot, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      stderr: String(err.stderr ?? err.message)
+        .trim()
+        .split("\n")[0],
+    };
+  }
+}
+
+export const WORKTREE_STEPS = new Set([1, 2, 3]);
+
+/**
+ * Narrow a plan for --worktrees-only / --paths. Both keep steps 1-3 only. --paths also keeps ONLY
+ * actions on listed trees, makes each whole-tree removal plain (never --force), and drops a listed
+ * tree's node_modules clear when the tree itself is being removed (git takes it, after the junction
+ * unlink). Everything dropped comes back in `reported`, so the report still shows it.
+ */
+export function scopePlan(
+  actions,
+  { worktreesOnly = false, paths = null, caseInsensitive = false } = {},
+) {
+  const reported = [];
+  const report = (a, why) =>
+    reported.push({
+      worktree: a.worktree ?? a.target ?? a.kind,
+      branch: null,
+      reason: `${why}, report-only: would ${describeAction(a)}`,
+    });
+  const kept = [];
+  for (const a of actions) {
+    if ((worktreesOnly || paths) && !WORKTREE_STEPS.has(a.step)) {
+      report(a, paths ? "--paths" : "--worktrees-only");
+    } else kept.push(a);
+  }
+  if (!paths) return { actions: kept, reported };
+  const isListed = (p) => !!p && paths.some((x) => samePath(p, x, caseInsensitive));
+  const removedTrees = new Set(
+    kept
+      .filter((a) => a.kind === "worktree" && isListed(a.worktreePath ?? a.target))
+      .map((a) => a.worktreePath ?? a.target),
+  );
+  const out = [];
+  for (const a of kept) {
+    if (!isListed(a.worktreePath ?? a.target)) report(a, "not in --paths");
+    else if (a.kind === "node_modules" && removedTrees.has(a.worktreePath)) continue;
+    else out.push(a.kind === "worktree" ? { ...a, plain: true } : a);
+  }
+  return { actions: out, reported };
+}
+
 /** B817: unlink every symlink/junction inside `dir`, following none. Throws when unsure. */
 export function unlinkLinksWithin(dir) {
   if (isWindows()) {
@@ -1822,12 +2152,24 @@ function main() {
   }
 
   const apply = argv.includes("--apply");
-  const target = Number(flagValue(argv, "--target", String(DEFAULT_TARGET_GB)));
+  const worktreesOnly = argv.includes("--worktrees-only");
+  const pathsFile = flagValue(argv, "--paths", null);
+  if (argv.includes("--paths") && !pathsFile) {
+    console.error("janitor: --paths needs a file (one worktree path per line)");
+    process.exit(2);
+  }
+  const paths = pathsFile ? parseAllowList(readFileSync(pathsFile, "utf8")) : null;
+  const scoped = worktreesOnly || !!paths;
+  // A scoped run is not a free-space run: no target unless one is given, so every eligible tree
+  // is acted on (a 10 GB default would stop it before the first tree on a roomy disk).
+  const target = Number(
+    flagValue(argv, "--target", scoped ? "Infinity" : String(DEFAULT_TARGET_GB)),
+  );
 
   const before = getFreeSpaceGb();
   console.log(`free space before: ${before.toFixed(1)} GB (target ${target} GB)`);
 
-  const { actions, skipped } = buildPlan(repoRoot, mainCheckoutPath, worktreesRoot);
+  let { actions, skipped } = buildPlan(repoRoot, mainCheckoutPath, worktreesRoot, { paths });
   const allowFile = flagValue(argv, "--allow-list", null);
   if (allowFile) {
     const al = buildAllowListActions(
@@ -1838,6 +2180,11 @@ function main() {
     const planned = new Set(actions.map((a) => a.target));
     for (const a of al.actions) if (!planned.has(a.target)) actions.push(a);
     skipped.push(...al.skipped);
+  }
+  if (scoped) {
+    const sp = scopePlan(actions, { worktreesOnly, paths, caseInsensitive: isWindows() });
+    actions = sp.actions;
+    skipped.push(...sp.reported);
   }
 
   console.log(`\nPlan (${actions.length} action(s)):`);
