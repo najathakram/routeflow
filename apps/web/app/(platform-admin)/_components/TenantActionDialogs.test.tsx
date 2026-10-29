@@ -54,12 +54,12 @@ describe("ImpersonateDialog", () => {
   it("names the tenant and slug in the title and the user you will act as in the body", () => {
     setup();
     expect(
-      screen.getByRole("dialog", { name: "Impersonate Acme Wholesale (acme)?" }),
+      screen.getByRole("dialog", { name: "Sign in as admin for Acme Wholesale (acme)?" }),
     ).toBeInTheDocument();
     expect(screen.getByText("acme_admin")).toBeInTheDocument();
     expect(screen.getByText(/full\s+access for up to 15 minutes/)).toBeInTheDocument();
     expect(screen.getByText(/The audit log records that this session started/)).toBeInTheDocument();
-    expect(screen.getByText(/click Exit impersonation in the\s+red bar/)).toBeInTheDocument();
+    expect(screen.getByText(/click Exit support session in the\s+red bar/)).toBeInTheDocument();
   });
 
   it('falls back to "its admin" when the acting user is not known (the list row)', () => {
@@ -70,7 +70,7 @@ describe("ImpersonateDialog", () => {
   it("puts the initial focus on Cancel, not on Impersonate", () => {
     setup();
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Impersonate" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Sign in as admin" })).not.toHaveFocus();
   });
 
   it("the Cancel button and Escape each close without confirming", () => {
@@ -84,7 +84,7 @@ describe("ImpersonateDialog", () => {
 
   it("the Impersonate button confirms exactly once", () => {
     const { onConfirm, onClose } = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Impersonate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in as admin" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
   });

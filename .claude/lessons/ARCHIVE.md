@@ -4418,3 +4418,37 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none automatic; read `Tests: N` from the run and compare the report's spec count to the workspace's.
 - **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
 
+## Archived 2026-10-29 — zero outside citations; headroom for L-351..L-354 (bookkeeping for b1a2fc3d1..75f433f56)
+
+### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
+
+- **Symptom:** a disk-cleanup helper meant to delete only folders older than three days deleted every unreferenced proof and handoff folder regardless of age; the files were gitignored and not recoverable.
+- **Root cause:** the age filter (`find -newermt '-3 days'`) is invalid on this machine's `find`, printed an error and an empty list, and the helper read "nothing is recent" as "everything is old".
+- **Lesson:** **Test any delete-by-filter on a known-recent file first and require it to be KEPT, and make an erroring or empty filter abort the whole run, never default to "old". Run the listing as a dry run and read its count before the delete.**
+- **Guard:** none automated; the cleanup helper's filter check is the proposal (assert the known-recent canary survives, abort on a non-zero filter exit).
+- **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-280: guarded by scripts/janitor.mjs (unknown activity reads as recent, any failure aborts); no citation outside the register.)
+
+### L-287 · 2026-10-09 · process · never put a full local test gate on a train push that GitHub CI tests again; pre-flight takes seconds
+
+- **Symptom:** train and branch pushes sat for many minutes behind a full local verify plus the database lane, on a shared box already at its load cap, and then GitHub CI ran the same suites a second time.
+- **Root cause:** the local pre-push gate was designed when CI minutes were scarce, so it re-proves everything; on a train that CI tests anyway it is duplicate work, and it also queues every other lane behind the one push ([[L-283]]).
+- **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
+- **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-287: superseded by L-323 (the train gate runs FULL_VERIFY=1 on the landing tree); no citation outside the register.)
+
+### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
+
+- **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
+- **Root cause:** the decision was treated as the owner's by default, so a reversible, in-scope call waited on a reply that was not coming; the abandoned approach was "ask, then hold everything until answered".
+- **Lesson:** **Before holding work for the owner, ask whether the call is reversible and inside the authority already delegated. If so, decide, write the reason on the board, and keep moving. Only an irreversible or outward-facing action (prod writes, repo visibility, spend, a bypass of a standing gate) waits, and it waits as ONE queued ask with a default, while every unrelated item keeps flowing.**
+- **Guard:** none automatic; the lead's operating notes and the lane rules. Cf. [[L-253]] (a public window closes on state, never on a reply).
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-289: carried by the lead's operating rules and the fleet-lead skill; no citation outside the register.)
+
+### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
+
+- **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
+- **Root cause:** stdin-fed python (`python3 -` with a heredoc) does not return there; the exact mechanism was not chased, and waiting or retrying never helps.
+- **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
+- **Guard:** none automatic; the lane rules.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-291: no recurrence since 2026-10-10; edits go through the Edit and Write tools; no citation outside the register.)
