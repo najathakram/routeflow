@@ -33,6 +33,8 @@ export function customerUpdateData(dto: UpdateCustomerDto) {
     ...(dto.defaultPaymentTerms !== undefined && {
       defaultPaymentTerms: dto.defaultPaymentTerms || null,
     }),
+    // SA-827: staff-only customer-wide invoice unit; absent leaves it unchanged.
+    ...(dto.invoiceUnitDefault !== undefined && { invoiceUnitDefault: dto.invoiceUnitDefault }),
     // null clears the deposit default; a number sets/replaces it.
     ...(dto.defaultDepositPercent !== undefined && {
       defaultDepositPercent: dto.defaultDepositPercent,
