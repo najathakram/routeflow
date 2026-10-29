@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, RotateCcw } from "lucide-react";
+import { Check, Plus, RotateCcw } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import type {
   OrderSuggestionProduct,
@@ -16,6 +16,8 @@ interface Props {
   suggestions: OrderSuggestionsResponse | undefined;
   /** The order already has lines: "Order again" asks before adding. */
   hasLines: boolean;
+  /** Products already on the order: their chip shows an added state (it still adds one more when tapped). */
+  addedProductIds?: ReadonlySet<string>;
   /** A chip tap: one more of the product, through the order's normal add-line path. */
   onAddProduct: (product: OrderSuggestionProduct) => void;
   /** An "Order again" pick: that order's lines, re-priced today. */
@@ -35,6 +37,7 @@ interface Props {
 export function OrderSuggestionsBar({
   suggestions,
   hasLines,
+  addedProductIds,
   onAddProduct,
   onOrderAgain,
   error,
@@ -79,17 +82,35 @@ export function OrderSuggestionsBar({
         <div className="space-y-1">
           <p className="text-[11px] font-medium text-navy/70">{ORDER_AGAIN_COPY.usuallyBuys}</p>
           <div className="flex flex-wrap gap-1.5">
-            {chips.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onAddProduct(p)}
-                className="inline-flex min-h-[44px] max-w-full items-center gap-1 rounded-full border border-surface-border bg-white px-3 text-sm text-navy transition-colors hover:bg-surface-raised sm:min-h-[36px]"
-              >
-                <Plus className="h-3.5 w-3.5 shrink-0 text-navy/70" aria-hidden />
-                <span className="truncate">{displayProductName(p)}</span>
-              </button>
-            ))}
+            {chips.map((p) => {
+              // r5 N07: on the order already. Still tappable (one more), but it no longer looks untouched.
+              const added = addedProductIds?.has(p.id) ?? false;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  aria-pressed={added}
+                  onClick={() => onAddProduct(p)}
+                  className={cn(
+                    "inline-flex min-h-[44px] max-w-full items-center gap-1 rounded-full border px-3 text-sm text-navy transition-colors sm:min-h-[36px]",
+                    added
+                      ? "border-brand-300 bg-brand-50 font-medium hover:bg-brand-100"
+                      : "border-surface-border bg-white hover:bg-surface-raised",
+                  )}
+                >
+                  {added ? (
+                    <Check
+                      data-testid="chip-added-check"
+                      className="h-3.5 w-3.5 shrink-0 text-brand-700"
+                      aria-hidden
+                    />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5 shrink-0 text-navy/70" aria-hidden />
+                  )}
+                  <span className="truncate">{displayProductName(p)}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
