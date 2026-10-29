@@ -68,6 +68,24 @@ describe("OrderRevisionLog", () => {
     );
   });
 
+  // apple-ux r5 N08: the page's action row (`data-testid=order-actions`) pushes every non-tier child to the end at
+  // phone width with `[&>:not([data-tier])]:order-5`. This component's root is `display: contents`, so that rule
+  // lands on a box that does not exist and the chip (order 0) used to take the FIRST slot, wrapping Edit Items + ⋯.
+  // The chip button (and the opened log) must carry their own order, after every tier (order-1..4).
+  it("orders its chip after the action tiers at phone width (the root is display: contents)", () => {
+    const { container } = render(<OrderRevisionLog revisions={[rev(1)]} />);
+    expect(container.querySelector("#order-revisions")).toHaveClass("contents");
+    expect(screen.getByRole("button", { name: /Edited 1×/ })).toHaveClass("max-sm:order-5");
+  });
+
+  it("keeps the opened log after its chip, on its own full-width line", () => {
+    render(<OrderRevisionLog revisions={[rev(1)]} />);
+    fireEvent.click(screen.getByRole("button", { name: /Edited 1×/ }));
+    const log = screen.getByTestId("order-revision-log");
+    expect(log).toHaveClass("max-sm:order-6");
+    expect(log).toHaveClass("basis-full");
+  });
+
   it("renders nothing for an order with no revisions", () => {
     const { container } = render(<OrderRevisionLog revisions={[]} />);
     expect(container).toBeEmptyDOMElement();

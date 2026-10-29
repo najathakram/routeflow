@@ -8,6 +8,7 @@ import { AutoLockAdminService } from "../billing/auto-lock-admin.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { SetAutoLocksDto } from "./dto/set-auto-locks.dto";
 import { PlatformAdminService } from "./platform-admin.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * SA-775 (row 381): the super-admin side of the rollout pause on AUTOMATIC tenant locks. Its own controller
@@ -17,6 +18,7 @@ import { PlatformAdminService } from "./platform-admin.service";
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class AutoLocksAdminController {
   constructor(
