@@ -35,6 +35,7 @@ import type {
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
 import { counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
+import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { isCounterTenderRow } from "./counter-tender-row";
 
@@ -422,6 +423,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           id: true,
           invoiceNumber: true,
           status: true,
+          expectedPaymentMethod: true, // SA-1026: the "To collect" state is derived from it and the status
           payments: {
             orderBy: { createdAt: "asc" },
             // B1262 / SA-838: the credit note each payment applied and the invoice that NOTE was issued against: the
@@ -619,6 +621,8 @@ export interface TodayOrderRecord {
     id: string;
     invoiceNumber: string | null;
     status: string;
+    /** SA-1026: what staff expect the invoice to be paid by while nothing is in hand (null = no intent) */
+    expectedPaymentMethod?: string | null;
     payments: Array<{
       method: string;
       amount: unknown;
@@ -974,6 +978,8 @@ export function toTodaysSaleRow(
     tenderMethods,
     returnLines,
     paymentState,
+    // SA-1026: "To collect" from the LIVE invoices' intent + status (one rule, invoices/to-collect.ts); staff only
+    toCollect: rollupToCollect(live.map((i) => toCollectState(i))),
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred

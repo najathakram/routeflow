@@ -40,28 +40,28 @@ function mount(over: Partial<CounterLinePriceEditProps> = {}) {
   return { ...utils, onApply, onClosed, onReset };
 }
 
-const open = () => fireEvent.click(screen.getByRole("button", { name: "Edit price for Cola" }));
+const open = () => fireEvent.click(screen.getByRole("button", { name: "Change price for Cola" }));
 const field = (name: RegExp | string) => screen.getByRole("textbox", { name });
 const mode = (name: string) => fireEvent.click(screen.getByRole("radio", { name }));
 
 describe("CounterLinePriceEdit: hidden without the flag", () => {
   it("canEditPrices=false renders NOTHING (no button, no label, no tab stop, no text)", () => {
     const { container } = mount({ canEditPrices: false, edited: true });
-    expect(screen.queryByRole("button", { name: /Edit price/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Change price/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Reset price/ })).toBeNull();
-    expect(container.innerHTML).not.toMatch(/Edit price|Reset price/);
+    expect(container.innerHTML).not.toMatch(/Change price|Reset price/);
     expect(container.querySelectorAll("button, [tabindex]")).toHaveLength(0);
   });
 
   it("canEditPrices=true shows the button with its accessible name", () => {
     mount();
-    expect(screen.getByRole("button", { name: "Edit price for Cola" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Change price for Cola" })).toBeEnabled();
   });
 
   // CQ-32: a 44 px target through the tablet width (768), compact only from a desktop (lg) up.
-  it("Edit price and Reset price stay 44 px targets until a desktop width", () => {
+  it("Change price and Reset price stay 44 px targets until a desktop width", () => {
     mount({ edited: true });
-    for (const name of ["Edit price for Cola", "Reset price"]) {
+    for (const name of ["Change price for Cola", "Reset price"]) {
       const btn = screen.getByRole("button", { name });
       expect(btn).toHaveClass("min-h-[44px]");
       expect(btn).toHaveClass("lg:min-h-0");
@@ -71,7 +71,7 @@ describe("CounterLinePriceEdit: hidden without the flag", () => {
 
   it("locked disables the control (an unknown-outcome sale)", () => {
     mount({ locked: true, edited: true });
-    expect(screen.getByRole("button", { name: "Edit price for Cola" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change price for Cola" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reset price" })).toBeDisabled();
   });
 
@@ -89,7 +89,7 @@ describe("CounterLinePriceEdit: the dialog", () => {
   it("opens titled for the product with focus in the number field; Set price is the default mode", async () => {
     mount();
     open();
-    expect(await screen.findByRole("dialog", { name: "Change price for Cola" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Change the price for Cola" })).toBeTruthy();
     expect(screen.getByRole("radio", { name: "Set price" })).toBeChecked();
     await waitFor(() => expect(field("Price per item")).toHaveFocus());
   });
