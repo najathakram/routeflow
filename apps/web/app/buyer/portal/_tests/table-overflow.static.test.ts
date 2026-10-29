@@ -20,7 +20,7 @@ const ALLOWLIST: Record<string, string> = {
 };
 
 /** Tables that restack into cards below `sm` (display:block rows) cannot clip. */
-const CARD_LAYOUT_TABLE = /<table[^>]*className="[^"]*block[^"]*(sm|md):table/;
+const CARD_LAYOUT_TABLE = /<table[^>]*className="[^"]*\bblock\b[^"]*\b(sm|md):table\b/;
 
 function walk(dir: string, out: string[]): void {
   if (!fs.existsSync(dir)) return;
@@ -69,5 +69,17 @@ describe("B540: wide tables scroll instead of clipping", () => {
     const ok = `<div className="rounded overflow-hidden">\n<div className="overflow-x-auto">\n<table className="min-w-[640px]">`;
     expect(findClippedTables(clipped)).toEqual([2]);
     expect(findClippedTables(ok)).toEqual([]);
+  });
+
+  it("a table that restacks into cards below sm is exempt, a plain table is not", () => {
+    const card = `<div className="rounded overflow-hidden">
+<table className="w-full block sm:table">`;
+    const cardMd = `<div className="rounded overflow-hidden">
+<table className="w-full block md:table">`;
+    const lookalike = `<div className="rounded overflow-hidden">
+<table className="w-full blocked sm:tables">`;
+    expect(findClippedTables(card)).toEqual([]);
+    expect(findClippedTables(cardMd)).toEqual([]);
+    expect(findClippedTables(lookalike)).toEqual([2]);
   });
 });
