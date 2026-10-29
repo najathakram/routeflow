@@ -54,6 +54,7 @@ const EXCLUDES = [":!*.md", ":!.claude/pipeline", ":!.claude/campaign"];
 const CONTRACT = ["scripts/lib/registry-root.mjs"];
 // Tests and fixtures build register paths on purpose.
 const FIXTURES = [
+  ".claude/hooks/stop.gate4.spec.mjs",
   ".claude/hooks/stop.gate5.spec.mjs",
   "apps/api/src/auth/google-oauth.service.spec.ts",
   "apps/api/src/common/campaign-check-freshness.spec.ts",
@@ -75,14 +76,13 @@ const CONFIG = [".gitignore", ".prettierignore"];
 // Left alone on purpose: plane-client.mjs reads legacy state, and verify-scope.mjs
 // classifies changed paths (it must keep recognising the tracked tree until B1-c).
 const LEGACY = ["scripts/campaign/plane-client.mjs", "scripts/lib/verify-scope.mjs"];
+// Isolated services that cannot import scripts/lib: each reads the shared registry-source.json and
+// keeps ONE tracked-mode prefix constant, deleted in B1-c. The rest of their code goes through them.
+const ISOLATED = ["apps/control/src/sources/registers.ts", "tools/ops-monitor/lib/registry.mjs"];
 // Production readers not yet routed through the module. This list may only shrink.
-const PENDING = [
-  "apps/control/src/sources/registers.ts",
-  "tools/ops-monitor/lib/collector.mjs",
-  "tools/ops-monitor/lib/store.mjs",
-];
+const PENDING = [];
 
-const ALLOWED = new Set([...CONTRACT, ...FIXTURES, ...CONFIG, ...LEGACY]);
+const ALLOWED = new Set([...CONTRACT, ...ISOLATED, ...FIXTURES, ...CONFIG, ...LEGACY]);
 
 function gitGrepFiles(pattern) {
   const r = spawnSync("git", ["grep", "-l", "-E", pattern, "--", ".", ...EXCLUDES], {
@@ -125,10 +125,11 @@ if (mod) {
   check("REGISTRY_MODE is tracked in B1-a", mod.REGISTRY_MODE === "tracked");
   check("REGISTRY_PUSH_RETRIES is 5", mod.REGISTRY_PUSH_RETRIES === 5);
   check("REGISTRY_GIT_TIMEOUT_MS is 20000", mod.REGISTRY_GIT_TIMEOUT_MS === 20000);
-  check("REGISTRY_LOCK_WAIT_MS is 240000", mod.REGISTRY_LOCK_WAIT_MS === 240000);
   check(
     "lock wait covers the worst-case transaction",
-    mod.REGISTRY_LOCK_WAIT_MS >= mod.REGISTRY_PUSH_RETRIES * 2 * mod.REGISTRY_GIT_TIMEOUT_MS,
+    mod.REGISTRY_LOCK_WAIT_MS >=
+      (mod.REGISTRY_PUSH_RETRIES + 1) * 2 * mod.REGISTRY_GIT_TIMEOUT_MS +
+        mod.REGISTRY_LOCK_SLACK_MS,
   );
 
   delete process.env.BUGS_ROOT;
@@ -153,6 +154,14 @@ if (mod) {
   const fx = mkdtempSync(join(tmpdir(), "registry-root-"));
   try {
     process.env.BUGS_ROOT = fx;
+    let emptyMsg = null;
+    try {
+      mod.registryRoot();
+    } catch (e) {
+      emptyMsg = String(e.message);
+    }
+    check("an existing EMPTY dir (no bugs.jsonl) is not a register", emptyMsg !== null, "no throw");
+    writeFileSync(join(fx, "bugs.jsonl"), "");
     check("BUGS_ROOT overrides the root", resolve(mod.registryRoot()) === resolve(fx));
     const missing = join(fx, "does-not-exist");
     process.env.BUGS_ROOT = missing;
@@ -233,6 +242,13 @@ try {
     list.err.includes(FIX),
     `stdout=${list.out.trim().slice(-80)} stderr=${list.err.trim().slice(0, 120)}`,
   );
+  const empty = join(tmp, "empty-dir");
+  mkdirSync(empty, { recursive: true });
+  const listEmpty = bugs(["list", "--open"], { env: { BUGS_ROOT: empty } });
+  check("list --open on an empty dir exits 2", listEmpty.code === 2, `exit ${listEmpty.code}`);
+  check("list --open on an empty dir prints no row count", !/\d+ row\(s\)/.test(listEmpty.out));
+  const chkEmpty = bugs(["sync", "--check"], { env: { BUGS_ROOT: empty } });
+  check("sync --check on an empty dir exits 2", chkEmpty.code === 2, `exit ${chkEmpty.code}`);
   check("list --open prints no row count", !/\d+ row\(s\)/.test(list.out), list.out.trim());
 
   const chk = bugs(["sync", "--check"], { env: { BUGS_ROOT: gone } });
@@ -243,6 +259,7 @@ try {
   // The anchor must never be written into a register directory.
   const regDir = join(tmp, "register");
   mkdirSync(regDir, { recursive: true });
+  writeFileSync(join(regDir, "bugs.jsonl"), "");
   const realAnchor = join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
   const hadAnchor = existsSync(realAnchor);
   const savedAnchor = hadAnchor ? readFileSync(realAnchor) : null;

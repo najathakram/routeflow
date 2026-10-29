@@ -5,6 +5,7 @@ import type { SellLevel } from "@routeflow/pricing";
 import {
   archivedMessage,
   resolveProductByCode,
+  SCAN_LOOKUP_TIMEOUT_MS,
   type BarcodeResolveResult,
 } from "@/lib/barcode-resolve";
 import { fetchCategoryPage, findCategoryProducts } from "@/lib/counter-category-search";
@@ -17,8 +18,12 @@ import { ADDED_CONFIRMATION_MS, addedCopy, noProductCopy } from "./counter-scan-
 export const COUNTER_SCAN_FAILED_COPY =
   "Couldn't look up the code. Check the connection and try again.";
 
-/** One entry of the scan queue: a code, or a 1-3 digit entry that is a code only if a product matches it EXACTLY. */
-type ScanItem = { kind: "code"; code: string } | { kind: "short"; n: number; code: string };
+/**
+ * One entry of the scan queue: a code (`qty` set when it came as "2*code" / "2x code", F01), or a 1-3 digit entry that is a
+ * code only if a product matches it EXACTLY.
+ */
+type ScanItem =
+  { kind: "code"; code: string; qty?: number } | { kind: "short"; n: number; code: string };
 
 export interface ScanPicker {
   code: string;
@@ -98,11 +103,14 @@ export function useCounterSaleScan(deps: Deps) {
       while (queueRef.current.length > 0 && !pausedRef.current) {
         const epoch = epochRef.current;
         const item = queueRef.current[0];
+        // F01: the prefix is this code's quantity; it never touches the carry (a dropped item must leave none behind)
+        const qty = item.kind === "code" && item.qty ? item.qty : carryRef.current;
         let result: BarcodeResolveResult | null = null;
         let lookupFailed = false;
         if (!depsRef.current.locked) {
           try {
-            result = await resolveProductByCode(item.code);
+            // Row 541: a lookup that never answers ends at the deadline as a failure (the retry cue), never a stuck till.
+            result = await resolveProductByCode(item.code, { timeoutMs: SCAN_LOOKUP_TIMEOUT_MS });
           } catch {
             lookupFailed = true;
           }
@@ -132,7 +140,7 @@ export function useCounterSaleScan(deps: Deps) {
             pausedRef.current = true;
             setPicker({
               code: item.code,
-              qty: carryRef.current,
+              qty,
               matches: byCategory.products,
               category: {
                 name: byCategory.category,
@@ -152,14 +160,10 @@ export function useCounterSaleScan(deps: Deps) {
           setCarry(1);
         } else if (result.ambiguous && result.matches) {
           pausedRef.current = true;
-          setPicker({ code: item.code, qty: carryRef.current, matches: result.matches });
+          setPicker({ code: item.code, qty, matches: result.matches });
           return; // the item stays at the head until one is chosen
         } else {
-          depsRef.current.add(
-            result.product,
-            scanLevelForHit(item.code, result.product),
-            carryRef.current,
-          );
+          depsRef.current.add(result.product, scanLevelForHit(item.code, result.product), qty);
           confirmAdded(result.product);
           setMessage("");
           setCarry(1);
@@ -186,7 +190,7 @@ export function useCounterSaleScan(deps: Deps) {
       setPendingQty(parsed.qty); // shown at once; confirmed (or turned into a code) when it is processed
     } else {
       if (!parsed.code) return;
-      queueRef.current.push({ kind: "code", code: parsed.code });
+      queueRef.current.push({ kind: "code", code: parsed.code, qty: parsed.qty });
       setPendingQty(1);
     }
     setWaiting(queueRef.current.length);
@@ -202,6 +206,13 @@ export function useCounterSaleScan(deps: Deps) {
     setMessage("");
     shift();
     resume();
+  };
+  /** W-852: a row chosen from the live match list adds like a picker click: a whole selling unit, the typed quantity. */
+  const pick = (product: any) => {
+    depsRef.current.add(product, "BOX", carryRef.current);
+    confirmAdded(product);
+    setCarry(1);
+    setMessage("");
   };
   const [moreBusy, setMoreBusy] = React.useState(false);
   const moreRef = React.useRef(false); // a ref: a double click must not send two requests
@@ -273,6 +284,7 @@ export function useCounterSaleScan(deps: Deps) {
     failed,
     waiting,
     submit,
+    pick,
     choose,
     loadMore,
     moreBusy,

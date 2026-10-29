@@ -18,6 +18,7 @@ import {
   execStep,
   finishJson,
   planGate,
+  judgeRootError,
   runGate,
   STEP_TIMEOUT_MS,
   DB_LANE_TIMEOUT_MS,
@@ -223,6 +224,86 @@ test("avoid-files step fails when the merge-base diff touches an avoided file", 
   assert.equal(bad.status, 1);
   assert.match(bad.stdout + bad.stderr, /b\.txt/);
   assert.equal(step(planGate({ changedFiles: [], ...opts }), "avoid-files"), undefined);
+});
+
+test("risk-class step: argv is fixed, and a red or black path in the merge-base diff fails it, naming path and rule", () => {
+  const steps = planGate({ changedFiles: ["a.ts"], ...opts });
+  // The judge runs from the gate's own checkout (never the judged worktree): absolute script, --repo root.
+  const judgeRoot = path.resolve(here, "../../../..");
+  const rc = step(steps, "risk-class");
+  assert.deepEqual(rc.cmd, [
+    "node",
+    path.join(judgeRoot, "scripts/risk-class.mjs"),
+    "--repo",
+    "/r",
+    "--base",
+    "abc123",
+    "--max",
+    "amber",
+  ]);
+  assert.equal(norm(rc.cwd), norm(judgeRoot));
+  const dir = mkdtempSync(path.join(tmpdir(), "gate-risk-"));
+  const sh = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8", env: scrubbedGitEnv() });
+  sh("init", "-q");
+  sh("config", "user.email", "t@t");
+  sh("config", "user.name", "t");
+  writeFileSync(path.join(dir, "a.txt"), "1");
+  sh("add", ".");
+  sh("commit", "-qm", "base");
+  const base = sh("rev-parse", "HEAD").stdout.trim();
+  const commit = (rel) => {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), "1");
+    sh("add", ".");
+    sh("commit", "-qm", rel);
+  };
+  const run = () => {
+    const st = step(planGate({ changedFiles: ["x"], ...opts, base, root: dir }), "risk-class");
+    return spawnSync(st.cmd[0], st.cmd.slice(1), {
+      cwd: st.cwd,
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
+  };
+  commit("apps/web/app/page.tsx");
+  commit("docs/note.md");
+  assert.equal(run().status, 0);
+  commit("apps/api/src/invoices/inv.service.spec.ts");
+  const red = run();
+  assert.equal(red.status, 1);
+  assert.match(red.stderr, /apps\/api\/src\/invoices\/inv\.service\.spec\.ts/);
+  assert.match(red.stderr, /invoices/);
+  assert.doesNotMatch(red.stderr, /page\.tsx/);
+  commit("apps/api/railway.toml");
+  const black = run();
+  assert.equal(black.status, 1);
+  assert.match(black.stderr, /black apps\/api\/railway\.toml/);
+  // A branch that plants its own exit(0) judge and rules is still judged by the gate's checkout.
+  mkdirSync(path.join(dir, "scripts/lib"), { recursive: true });
+  writeFileSync(path.join(dir, "scripts/risk-class.mjs"), "process.exit(0);\n");
+  writeFileSync(path.join(dir, "scripts/lib/risk-paths.mjs"), "process.exit(0);\n");
+  sh("add", ".");
+  sh("commit", "-qm", "sabotage the judge");
+  const sab = run();
+  assert.equal(sab.status, 1);
+  assert.match(sab.stderr, /red scripts\/risk-class\.mjs/);
+});
+
+test("judgeRootError refuses a gate whose own checkout is the judged worktree", () => {
+  const judgeRoot = path.resolve(here, "../../../..");
+  assert.match(judgeRootError(judgeRoot), /judge/i);
+  assert.match(judgeRootError(judgeRoot + path.sep), /judge/i);
+  assert.equal(judgeRootError(path.join(tmpdir(), "some-other-worktree")), null);
+});
+
+test("CLI refuses (exit 2) when run from the checkout it would judge", () => {
+  const r = spawnSync(process.execPath, [path.join(here, "gate.mjs"), "--needs-db"], {
+    encoding: "utf8",
+    cwd: here,
+    env: scrubbedGitEnv(),
+  });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /judge/i);
 });
 
 test("beginJson deletes a stale file and writes a running marker; finishJson writes head and base", () => {

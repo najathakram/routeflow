@@ -16,45 +16,8 @@ import {
   useUndoMigration,
   type MigrationSource,
   type MigrationJob,
-  type StageRow,
 } from "@/lib/api/migration";
-
-/**
- * Minimal products-CSV parser for the staging step. Expects a header row with
- * name / sku / price / unit / category columns (case-insensitive). Naive comma
- * split — a robust parser (quoted fields) is a follow-up; adequate for v1 catalog.
- */
-function parseProductsCsv(text: string): StageRow[] {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ""));
-  const col = (name: string) => header.indexOf(name);
-  const iName = col("name");
-  const iSku = col("sku");
-  const iPrice = col("price") >= 0 ? col("price") : col("priceperunit");
-  const iUnit = col("unit");
-  const iCat = col("category");
-  const cell = (cols: string[], i: number) =>
-    i >= 0 ? cols[i]?.trim().replace(/^"|"$/g, "") : undefined;
-  return lines
-    .slice(1)
-    .map((line): StageRow => {
-      const cols = line.split(",");
-      const sku = cell(cols, iSku);
-      return {
-        entityType: "PRODUCT",
-        externalId: sku || undefined,
-        payload: {
-          name: cell(cols, iName),
-          sku,
-          pricePerUnit: cell(cols, iPrice),
-          unit: cell(cols, iUnit),
-          category: cell(cols, iCat),
-        },
-      };
-    })
-    .filter((r) => !!r.payload.name);
-}
+import { parseProductsCsv } from "@/lib/parse-products-csv";
 
 const SOURCES: {
   key: MigrationSource;

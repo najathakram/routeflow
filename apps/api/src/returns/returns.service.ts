@@ -32,21 +32,25 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService, type FiledPeriod } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import {
   addCredits,
-  piecesPerQtyOf,
-  planProductRefund,
   toHeadroomLine,
   loadLineCredits,
   loadOrderPool,
   pooledRefundRefusal,
   type HeadroomLine,
+  type LineCredit,
   type OrderPool,
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { isLockUnavailableError } from "../common/db-locks";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import {
+  INLINE_REFUND_AUDIT_ACTION,
+  INLINE_STORE_CREDIT_AUDIT_ACTION,
+} from "./inline-return-refund";
 import {
   EXTERNAL_REFUND_METHOD,
   isRefundPending,
@@ -86,6 +90,7 @@ import { NumberingService } from "../import/numbering.service";
 import {
   PACK_LINE_SELECT,
   capBasis,
+  returnedPiecesByLine,
   returnedPiecesByProduct,
   soldQtyForProduct,
   returnPricingAxis,
@@ -93,13 +98,51 @@ import {
   standardPackBasesForOrders,
   standardReturnPieces,
 } from "./returns-pieces.util";
+import {
+  assertLineCaps,
+  groupInvoiceItems,
+  groupReturnItems,
+  lineOfItem,
+  resolveLineItems,
+  withLines,
+} from "./return-line-items";
 import { restockReturnItems } from "./returns-restock.util";
+import {
+  NO_SPLIT,
+  addSplit,
+  billedLinesOf,
+  priceProductSlice,
+  refundTaxOpts,
+  splitOfItems,
+  splitTotal,
+  toRefundableInvoice,
+  type RefundSplit,
+} from "./standard-refund-pricing";
 import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
 const INLINE_RETURN_USE_INLINE_ENDPOINTS = API_ERROR_CODES.INLINE_RETURN_USE_INLINE_ENDPOINTS;
+
+/**
+ * SA-840 A-2: the ONE pricing that reads no credits. `findAll` prices a whole list page and must never issue a per-row query
+ * (G6), so its estimate is priced as if every line were uncredited: exact for a line with no prior credit, an upper bound
+ * otherwise. Every other `priceReturn` caller passes what `creditsForPricing` read.
+ */
+const NO_CREDITS: ReadonlyMap<string, LineCredit> = new Map();
+
+/**
+ * SA-840: the invoice columns `refundableLineShare` prices from, spread into ALL THREE reads that feed the pricer
+ * (processRefund, findAll, findOne) so a refund, its list estimate and its detail estimate can never disagree.
+ */
+const INVOICE_TAX_SELECT = { taxAmount: true, discount: true } as const;
+const INVOICE_ITEM_TAX_SELECT = {
+  taxRate: true,
+  categoryTaxAmount: true,
+  systemKind: true,
+  description: true,
+} as const;
 
 /** SA-737: the return read (before the locks, and again under them) that the refund basis is priced from. */
 const REFUND_RETURN_INCLUDE = {
@@ -129,13 +172,16 @@ const REFUND_RETURN_INCLUDE = {
           invoiceNumber: true,
           status: true,
           total: true,
+          ...INVOICE_TAX_SELECT,
           createdAt: true,
           items: {
             select: {
               id: true,
+              orderItemId: true,
               productId: true,
               qty: true,
               subtotal: true,
+              ...INVOICE_ITEM_TAX_SELECT,
               boxes: true,
               unitsPerBox: true,
               pieces: true,
@@ -164,9 +210,11 @@ type RefundBasis = {
   amount: number;
   invoiceId?: string;
   items?: RefundItem[];
-  pooledRefund?: Array<{ productId: string; qty: number }>;
+  pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
   unbilledItems?: UnbilledReturnItem[];
   refusal?: string;
+  /** SA-840: net / tax / category tax of the refund, frozen on the Return in the claim; `amount` is their total. */
+  split?: RefundSplit;
 };
 
 /** F08 B166/B75: options object for `findAll`/`findAllForUser` — `search` narrows by
@@ -187,6 +235,14 @@ export interface FindAllReturnsOptions {
   pendingRefund?: boolean;
   page?: number;
   limit?: number;
+}
+
+/** The two reads `refundActorName` makes, typed by what it uses. */
+interface RefundActorDb {
+  auditLog: { findFirst(args: unknown): Promise<{ userId: string | null } | null> };
+  user: {
+    findFirst(args: unknown): Promise<{ username: string | null; deletedAt: Date | null } | null>;
+  };
 }
 
 @Injectable()
@@ -348,8 +404,31 @@ export class ReturnsService {
       const packBases = await standardPackBases(tx, dto.orderId, order.lineItems as any);
       const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId, packBases);
 
+      // SA-1042 B9b: an item may name its order line. Resolve the line and the count (the stored qty is in the line's own
+      // unit, so the pool cap below runs unchanged), then cap each line on its own pieces. Pooled items pass through.
+      const lineItems = resolveLineItems(order as any, dto.items, packBases);
+      const resolvedAt = new Map(lineItems.map((r) => [r.index, r]));
+      if (lineItems.length)
+        assertLineCaps(
+          lineItems,
+          order as any,
+          await returnedPiecesByLine(
+            tx,
+            [...new Set(lineItems.flatMap((r) => (r.orderItemId ? [r.orderItemId] : [])))],
+            packBases,
+          ),
+          packBases,
+        );
+      // SA-1042 A-2: the row's line key is the resolver's, never the DTO's (a legacy single-unit item is pooled: null).
+      const items: any[] = dto.items.map((it: any, i: number) => {
+        const r = resolvedAt.get(i);
+        return r
+          ? { ...it, qty: r.qty, sourceOrderItemId: r.orderItemId }
+          : { ...it, sourceOrderItemId: null };
+      });
+
       // Validate return qty does not exceed ordered qty per item (cumulative)
-      for (const item of dto.items) {
+      for (const item of items) {
         if (!item.qty || item.qty <= 0)
           throw new BadRequestException("Return item quantity must be greater than zero");
         // The ITEM-level reason overrides dto.reason when deciding restock below, and
@@ -425,9 +504,10 @@ export class ReturnsService {
           status: "PENDING",
           kind: "STANDARD",
           items: {
-            create: dto.items.map((i: any) => ({
+            create: items.map((i: any) => ({
               productId: i.productId,
               qty: i.qty,
+              sourceOrderItemId: i.sourceOrderItemId ?? undefined, // SA-1042: a line item records its line (the resolver's)
               reason: i.reason,
               condition: i.condition ?? undefined,
               notes: i.notes ?? undefined,
@@ -567,13 +647,16 @@ export class ReturnsService {
                   id: true,
                   status: true,
                   total: true,
+                  ...INVOICE_TAX_SELECT,
                   createdAt: true,
                   items: {
                     select: {
                       id: true,
+                      orderItemId: true,
                       productId: true,
                       qty: true,
                       subtotal: true,
+                      ...INVOICE_ITEM_TAX_SELECT,
                       boxes: true,
                       unitsPerBox: true,
                       pieces: true,
@@ -618,6 +701,7 @@ export class ReturnsService {
       if (ret.kind === "INLINE") {
         return {
           ...rest,
+          items: withLines(rest.items, order),
           order: strippedOrder,
           refundEstimate: null,
           refundEstimateReason: "INLINE",
@@ -632,9 +716,11 @@ export class ReturnsService {
         ret.items ?? [],
         ret.order ?? undefined,
         packBasesByOrder.get(ret.order?.id) ?? new Map(),
+        NO_CREDITS,
       );
       return {
         ...rest,
+        items: withLines(rest.items, order),
         order: strippedOrder,
         refundEstimate: amount,
         refundEstimateReason: refusal ?? null,
@@ -755,16 +841,22 @@ export class ReturnsService {
     amount: number;
     invoiceId?: string;
     items?: RefundItem[];
-    pooledRefund?: Array<{ productId: string; qty: number }>;
+    pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
     unbilledItems?: UnbilledReturnItem[];
+    /** SA-840: net / tax / category tax of `amount`, frozen on the Return by the claim. */
+    split: RefundSplit;
   }> {
     // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
     // preview (`findOne`/`findAll`) uses, so preview == mint.
     const packBases = await this.packBasesOf(order, db);
-    const { amount, invoiceId, creditable, refusal, unresolvedProductId } = this.priceReturn(
+    // SA-840 A-2: what the lines already carry is read FIRST (under the claim's locks when SA-737 recomputes), so the price, the
+    // itemiser and the pooled refusal below all read the same credits.
+    const { credited, pool } = await this.creditsForPricing(order, db);
+    const { amount, invoiceId, creditable, refusal, unresolvedProductId, split } = this.priceReturn(
       items,
       order,
       packBases,
+      credited,
     );
     if (refusal === "NOTHING_CREDITABLE") {
       throw new BadRequestException(NOTHING_CREDITABLE_MESSAGE);
@@ -791,22 +883,29 @@ export class ReturnsService {
 
     // No invoice rows at all: the amount came from the legacy order-line basis and
     // there is no source invoice for create() to cap against, so nothing to gate.
-    if (creditable.length === 0) return { amount, invoiceId };
+    if (creditable.length === 0) return { amount, invoiceId, split };
 
     // B959: which returned products have NO billed line (qty > 0) on any creditable invoice. A billed $0 (free) line IS billed.
     // Nothing billed at all => refuse (a $0 REFUNDED return with no credit note was a silent under-credit); a MIXED return refunds
     // the billed part and reports the rest as readable "not billed, no refund" lines.
     const billedProducts = new Set<string>();
+    const billedLines = new Set<string>(); // SA-1042: a line item is billed only if ITS line was
     for (const inv of creditable)
-      for (const it of inv.items ?? []) if (Number(it.qty) > 0) billedProducts.add(it.productId);
+      for (const it of inv.items ?? [])
+        if (Number(it.qty) > 0) {
+          billedProducts.add(it.productId);
+          if (it.orderItemId) billedLines.add(it.orderItemId);
+        }
+    const isBilled = (it: any) =>
+      it.sourceOrderItemId
+        ? billedLines.has(it.sourceOrderItemId)
+        : billedProducts.has(it.productId);
+    const returned = items.filter((it: any) => Number(it.qty) > 0);
     const unbilledQty = new Map<string, number>();
-    for (const it of items)
-      if (Number(it.qty) > 0 && !billedProducts.has(it.productId))
+    for (const it of returned)
+      if (!isBilled(it))
         unbilledQty.set(it.productId, (unbilledQty.get(it.productId) ?? 0) + Number(it.qty));
-    const returnedProducts = new Set(
-      items.filter((it: any) => Number(it.qty) > 0).map((it: any) => it.productId),
-    );
-    if (returnedProducts.size > 0 && unbilledQty.size === returnedProducts.size)
+    if (returned.length > 0 && returned.every((it: any) => !isBilled(it)))
       throw new BadRequestException({
         code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
         message:
@@ -881,43 +980,50 @@ export class ReturnsService {
     // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
     // note's items must belong to its one invoice). B947: the refund is still CHECKED against the older invoices' lines too (pooled).
     // Done BEFORE the invoice-room check so that check reads the amount that will actually be minted.
+    // SA-840: the itemised rows carry the NET slice with its tax shares beside it; what is paid out is their total.
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
+    let effectiveSplit = split;
     if (creditable.length === 1 && latest) {
-      const itemised = await this.itemiseRefund(items, latest, packBases, db);
+      const itemised = await this.itemiseRefund(items, latest, packBases, credited);
       if (itemised.length > 0) {
         refundItems = itemised;
-        effectiveAmount = roundMoney(itemised.reduce((n, it) => n + it.amount, 0));
+        effectiveSplit = splitOfItems(itemised);
+        effectiveAmount = splitTotal(effectiveSplit);
       }
     }
 
     // B947: 2+ creditable invoices keep the lump sum minted on the latest invoice, but the refund is checked against the SAME
-    // per-line headroom, POOLED per product across ALL the creditable invoices (a line on an older invoice was invisible to
-    // it). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
-    let pooledRefund: Array<{ productId: string; qty: number }> | undefined;
-    if (creditable.length >= 2 && order?.id) {
-      const pool = await loadOrderPool(db, order.id);
-      // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
-      const returnedPieces = new Map<string, number>();
-      for (const [productId, qty] of returnedByProduct)
-        returnedPieces.set(productId, this.poolPieces(packBases, pool, productId, qty));
-      for (const [productId, qty] of returnedPieces) {
-        const refused = pooledRefundRefusal(pool, productId, qty);
+    // per-line headroom across ALL the creditable invoices (a line on an older invoice was invisible to it). SA-1042 A-2: per
+    // GROUP, on the lines the group was priced on (a line group on its own line's invoice items, a pooled group on the
+    // product's). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
+    let pooledRefund:
+      Array<{ productId: string; orderItemId: string | null; qty: number }> | undefined;
+    if (creditable.length >= 2 && pool) {
+      pooledRefund = [];
+      for (const group of groupReturnItems(items).values()) {
+        // priced only when billed (qty > 0) on the group's own lines: an unbilled line group was priced 0 (B959), nothing to check
+        if (!groupInvoiceItems<HeadroomLine>(group, pool.lines).some((l) => Number(l.qty) > 0))
+          continue;
+        // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
+        const qty = this.poolPieces(packBases, pool, group.productId, group.qty);
+        const refused = pooledRefundRefusal(pool, group, qty);
         if (refused)
           throw new ConflictException({
             code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
             message:
               "This refund would credit more than the order's invoice lines are worth: part of it was already credited " +
               "(by a credit note or an earlier refund). Give store credit for what is still billable, or cancel the return.",
-            productId,
+            productId: group.productId,
+            orderItemId: group.orderItemId,
             requested: refused.requestedAmount,
             remaining: refused.remainingAmount,
             requestedQty: refused.requestedQty,
             remainingQty: refused.remainingQty,
             qtyUnit: refused.qtyUnit,
           });
+        pooledRefund.push({ productId: group.productId, orderItemId: group.orderItemId, qty });
       }
-      pooledRefund = [...returnedPieces].map(([productId, qty]) => ({ productId, qty }));
     }
 
     const latestAgg = await db.creditNote.aggregate({
@@ -938,6 +1044,7 @@ export class ReturnsService {
     return {
       amount: effectiveAmount,
       invoiceId,
+      split: effectiveSplit,
       ...(refundItems ? { items: refundItems } : {}),
       ...(pooledRefund ? { pooledRefund } : {}),
       ...(unbilledItems ? { unbilledItems } : {}),
@@ -989,12 +1096,44 @@ export class ReturnsService {
   }
 
   /**
+   * SA-840 A-2 (F1): what the creditable invoices' lines already carry, read ONE way for the mint, the recorded refund and the
+   * detail estimate. 2+ creditable invoices: the order pool (every earlier refund lump replayed over the lines in fill order,
+   * with the pool itself returned for the pooled refusal); one invoice: that invoice's line credits; none: nothing to read.
+   * `own` leaves a return's own refund out (its detail estimate after it was resolved).
+   */
+  private async creditsForPricing(
+    order: any,
+    db: any,
+    own?: { returnId: string; creditNoteId?: string | null },
+  ): Promise<{ credited: Map<string, LineCredit>; pool?: OrderPool }> {
+    const creditable: any[] = (order?.invoices ?? []).filter(
+      (inv: any) => !CREDIT_SOURCE_EXCLUDED.includes(inv.status as any),
+    );
+    const exclude = {
+      excludeReturnId: own?.returnId,
+      ...(own?.creditNoteId ? { excludeCreditNoteId: own.creditNoteId } : {}),
+    };
+    if (creditable.length >= 2 && order?.id) {
+      const pool = await loadOrderPool(db, order.id, exclude);
+      return { credited: pool.credited, pool };
+    }
+    if (creditable.length === 1) {
+      const lines: HeadroomLine[] = (creditable[0].items ?? []).map(toHeadroomLine);
+      // an item with no id (never the real query) cannot carry a credit: it prices as a lump, uncredited
+      if (lines.length === 0 || lines.some((l) => !l.id)) return { credited: new Map() };
+      return { credited: await loadLineCredits(db, creditable[0].id, lines, exclude) };
+    }
+    return { credited: new Map() }; // nothing creditable: priceReturn reads no credits
+  }
+
+  /**
    * EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the mint-time gates, EXCEPT a return with no
    * single pricing axis (B969): that has no refund amount to record, and a recorded $0 would feed net sales silently. Refused
    * 409 RETURN_MIXED_UNIT_PRODUCT, like the mint.
    */
   private async externalRefundBasis(items: any[], order?: any, db: any = this.prisma.forTenant()) {
-    const priced = this.priceReturn(items, order, await this.packBasesOf(order, db));
+    const { credited } = await this.creditsForPricing(order, db);
+    const priced = this.priceReturn(items, order, await this.packBasesOf(order, db), credited);
     if (priced.refusal === "UNIT_UNRESOLVED" && priced.unresolvedProductId)
       throw this.mixedUnitRefusal(priced.unresolvedProductId);
     return priced;
@@ -1024,48 +1163,31 @@ export class ReturnsService {
     returnItems: any[],
     invoice: any,
     packBases: Map<string, ProductPackBasis>,
-    db: any = this.prisma.forTenant(),
+    // what the invoice's lines already carry (`creditsForPricing`: the same read the price used)
+    creditedBefore: ReadonlyMap<string, LineCredit>,
   ): Promise<RefundItem[]> {
     const lines: HeadroomLine[] = (invoice?.items ?? []).map(toHeadroomLine);
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
-    const returnedByProduct = new Map<string, number>();
-    for (const it of returnItems) {
-      returnedByProduct.set(
-        it.productId,
-        (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
-      );
-    }
-    let credited = await loadLineCredits(db, invoice.id, lines);
+    let credited: ReadonlyMap<string, LineCredit> = creditedBefore;
     const out: RefundItem[] = [];
-    for (const [productId, returnedQty] of returnedByProduct) {
-      const mine = lines.filter((l) => l.productId === productId);
-      const axis = returnPricingAxis(
-        packBases,
-        productId,
-        returnedQty,
-        (invoice.items ?? []).filter((it: any) => it.productId === productId),
-      );
+    const refundable = toRefundableInvoice(invoice);
+    // SA-1042 rule 7: a line group is credited against the invoice items billed from its line, a pooled group against the product's.
+    for (const group of groupReturnItems(returnItems).values()) {
+      const { productId, qty: returnedQty } = group;
+      const billed = groupInvoiceItems<any>(group, invoice.items ?? []);
+      const billedIds = new Set(billed.map((it: any) => it.id));
+      const mine = lines.filter((l) => billedIds.has(l.id));
+      const axis = returnPricingAxis(packBases, productId, returnedQty, billed);
       if ("unresolved" in axis) throw this.mixedUnitRefusal(productId);
-      const factorOf = (l: HeadroomLine): number => (axis.pieces ? (l.piecesPerQty ?? 1) : 1);
-      const inPieces = mine.map((l) => ({ ...l, qty: l.qty * factorOf(l), piecesPerQty: 1 }));
-      const creditedInPieces = new Map(credited);
-      for (const l of mine) {
-        const c = credited.get(l.id);
-        if (c) creditedInPieces.set(l.id, { ...c, qty: c.qty * factorOf(l) });
-      }
-      // EPS (0.001) per line on the line's own axis, scaled by its pieces-per-qty, like `pooledRefundRefusal`
-      const qtyTol = Math.max(
-        0.001,
-        mine.reduce((t, l) => t + 0.001 * factorOf(l), 0),
-      );
-      const { items, refusal } = planProductRefund(
-        inPieces,
-        creditedInPieces,
+      // SA-840: the qty FILL and its refusals are planProductRefund's; every figure paid out is refundableLineShare's
+      const { items, refusal } = priceProductSlice({
+        lines: mine,
+        invoiceOf: () => refundable,
+        credited,
         productId,
-        axis.returned,
-        "refund",
-        qtyTol,
-      );
+        axis,
+        mode: "refund",
+      });
       if (refusal) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
@@ -1080,15 +1202,8 @@ export class ReturnsService {
           qtyUnit: axis.pieces ? "pieces" : refusal.qtyUnit,
         });
       }
-      const lineById = new Map(mine.map((l) => [l.id, l]));
-      const inLineAxis = items.map((it) => ({
-        ...it,
-        qty:
-          Math.round((it.qty / factorOf(lineById.get(it.invoiceItemId) as HeadroomLine)) * 1000) /
-          1000,
-      }));
-      out.push(...inLineAxis);
-      credited = addCredits(credited, inLineAxis);
+      out.push(...items);
+      credited = addCredits(credited, items);
     }
     return out;
   }
@@ -1104,6 +1219,8 @@ export class ReturnsService {
     items: any[],
     order: any,
     packBases: Map<string, ProductPackBasis>,
+    // SA-840 A-2: REQUIRED, so the compiler finds every caller: what the lines already carry (`creditsForPricing`), or NO_CREDITS
+    credited: ReadonlyMap<string, LineCredit>,
   ): {
     amount: number;
     invoiceId?: string;
@@ -1111,6 +1228,8 @@ export class ReturnsService {
     refusal?: "NOTHING_CREDITABLE" | "NOTHING_BILLED" | "UNIT_UNRESOLVED";
     /** B969: the first returned product with no single pricing axis (mixed units); set with `UNIT_UNRESOLVED`. */
     unresolvedProductId?: string;
+    /** SA-840: net / tax / category tax of `amount` (what the claim freezes on the Return). */
+    split: RefundSplit;
   } {
     const allInvoices = order?.invoices ?? [];
 
@@ -1137,7 +1256,15 @@ export class ReturnsService {
         );
       }
       let amount = 0;
-      for (const item of items) {
+      // SA-1042 rule 7: a line item is priced from its own order line's subtotal / qty, never from the pool.
+      for (const g of groupReturnItems(items.filter((i) => i.sourceOrderItemId)).values()) {
+        const line = (order?.lineItems ?? []).find(
+          (l: any) => l.id === g.orderItemId && l.status !== "CANCELLED",
+        );
+        if (!line || Number(line.qty) <= 0) continue;
+        amount += (Math.min(g.qty, Number(line.qty)) * Number(line.subtotal)) / Number(line.qty);
+      }
+      for (const item of items.filter((i) => !i.sourceOrderItemId)) {
         const soldQty = soldQtyByProduct.get(item.productId) ?? 0;
         if (soldQty <= 0) continue;
         const soldSubtotal = soldSubtotalByProduct.get(item.productId) ?? 0;
@@ -1145,7 +1272,13 @@ export class ReturnsService {
         const refundQty = Math.min(Number(item.qty), soldQty);
         amount += refundQty * perUnit;
       }
-      return { amount: roundMoney(amount), invoiceId: undefined, creditable: [] };
+      const net = roundMoney(amount);
+      return {
+        amount: net,
+        invoiceId: undefined,
+        creditable: [],
+        split: { ...NO_SPLIT, net },
+      };
     }
 
     const creditable = allInvoices.filter(
@@ -1154,58 +1287,58 @@ export class ReturnsService {
     if (creditable.length === 0) {
       // Invoices exist but none of them can source a credit (all VOID/WRITTEN_OFF).
       // Pricing reports it; only the mint path (billedBasisFor) turns it into a refusal.
-      return { amount: 0, invoiceId: undefined, creditable, refusal: "NOTHING_CREDITABLE" };
+      return {
+        amount: 0,
+        invoiceId: undefined,
+        creditable,
+        refusal: "NOTHING_CREDITABLE",
+        split: NO_SPLIT,
+      };
     }
 
-    const billedQtyByProduct = new Map<string, number>();
-    const billedItemsByProduct = new Map<string, any[]>();
-    for (const inv of creditable) {
-      for (const invItem of inv.items ?? []) {
-        billedQtyByProduct.set(
-          invItem.productId,
-          (billedQtyByProduct.get(invItem.productId) ?? 0) + Number(invItem.qty),
-        );
-        const list = billedItemsByProduct.get(invItem.productId);
-        if (list) list.push(invItem);
-        else billedItemsByProduct.set(invItem.productId, [invItem]);
-      }
-    }
-
-    // SA-628b: the pooled average per product (master's price), the same `planProductRefund` price the mint uses, rounded
-    // per product so the preview equals what the mint itemises (money-neutral vs master up to a cent across products).
-    // B969 (SA-628p): the average runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
+    // SA-1042 rule 7: price per GROUP (product + line when named): a line group's billed items are the creditable invoice items
+    // billed from that order line, a pooled group's are all of the product's (SA-628b, the pooled average, unchanged).
+    const billedAll: any[] = creditable.flatMap((inv: any) => inv.items ?? []);
+    const groups = groupReturnItems(items);
+    const billedQtyOf = (g: { productId: string; orderItemId: string | null }) =>
+      groupInvoiceItems<any>(g, billedAll).reduce((t: number, it: any) => t + Number(it.qty), 0);
+    // SA-840: each returned group is FILLED over its billed lines by `planProductRefund` (the same fill the mint uses) and every
+    // filled line is priced by `refundableLineShare` on its own invoice: net after its discount share, plus the tax the invoice
+    // charged on it. The old pooled average ignored all of that (B704). The function stays pure and DB-free: its callers read the
+    // credits (`creditsForPricing`) and pass them in, so the preview, the mint and the recorded refund price against the same ones.
+    // B969 (SA-628p): the fill runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
     // `standardReturnPieces`, each billed item through `piecesPerQtyOf`) so 1 box of a 2-box line billed as 24 pieces refunds
     // 12 x (120 / 24), not 1 x (120 / 24).
-    const returned = new Map<string, number>();
-    for (const item of items) {
-      returned.set(item.productId, (returned.get(item.productId) ?? 0) + Number(item.qty));
-    }
-    let amount = 0;
+    let split = NO_SPLIT;
     let unresolvedProductId: string | undefined;
-    for (const [productId, qty] of returned) {
-      const billedItems = billedItemsByProduct.get(productId) ?? [];
-      if ((billedQtyByProduct.get(productId) ?? 0) <= 0) continue;
-      const axis = returnPricingAxis(packBases, productId, qty, billedItems, {
+    for (const g of groups.values()) {
+      const billedItems = groupInvoiceItems<any>(g, billedAll);
+      if (billedQtyOf(g) <= 0) continue;
+      const axis = returnPricingAxis(packBases, g.productId, g.qty, billedItems, {
         pooled: creditable.length >= 2,
       });
       if ("unresolved" in axis) {
-        unresolvedProductId ??= productId;
+        unresolvedProductId ??= g.productId;
         continue;
       }
-      const billed = billedItems.reduce(
-        (t, it) => t + Number(it.qty) * (axis.pieces ? piecesPerQtyOf(it) : 1),
-        0,
-      );
-      const billedSubtotal = billedItems.reduce((t, it) => t + Number(it.subtotal), 0);
-      amount += roundMoney((Math.min(axis.returned, billed) * billedSubtotal) / billed);
+      // SA-840 prices the slice over the group's OWN billed lines (selection first, then pricing): a line group is sliced over
+      // the invoice items billed from its line, a pooled group over the product's.
+      const billed = billedLinesOf(creditable, g.productId);
+      const { items: priced } = priceProductSlice({
+        lines: groupInvoiceItems<HeadroomLine>(g, billed.lines),
+        invoiceOf: billed.invoiceOf,
+        credited,
+        productId: g.productId,
+        axis,
+        mode: "count",
+      });
+      split = addSplit(split, splitOfItems(priced));
     }
-    amount = roundMoney(amount);
+    let amount = splitTotal(split);
 
     // B959: nothing the customer returned was billed on any creditable invoice (a billed $0 line is billed): the preview says
     // so (amount 0 WITH a reason) and billedBasisFor refuses it, instead of a plain $0.
-    const nothingBilled =
-      [...returned].length > 0 &&
-      [...returned.keys()].every((productId) => (billedQtyByProduct.get(productId) ?? 0) <= 0);
+    const nothingBilled = groups.size > 0 && [...groups.values()].every((g) => billedQtyOf(g) <= 0);
     // B969: if ANY returned product has no single pricing axis the WHOLE preview is $0 WITH a reason, because the mint refuses
     // the whole return (409). Never make this a partial sum of the products that did resolve.
     const why = unresolvedProductId
@@ -1213,10 +1346,13 @@ export class ReturnsService {
       : nothingBilled
         ? { refusal: "NOTHING_BILLED" as const }
         : {};
-    if (unresolvedProductId) amount = 0;
+    if (unresolvedProductId) {
+      amount = 0;
+      split = NO_SPLIT;
+    }
 
     if (creditable.length === 1) {
-      return { amount, invoiceId: creditable[0].id, creditable, ...why };
+      return { amount, invoiceId: creditable[0].id, creditable, split, ...why };
     }
 
     // 2+ creditable invoices: the source is the LATEST one (by createdAt) so
@@ -1226,7 +1362,7 @@ export class ReturnsService {
       const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return bt - at;
     })[0];
-    return { amount, invoiceId: latest.id, creditable, ...why };
+    return { amount, invoiceId: latest.id, creditable, split, ...why };
   }
 
   async processRefund(id: string, dto?: ProcessRefundDto, actor?: JwtPayload) {
@@ -1251,6 +1387,9 @@ export class ReturnsService {
     if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
+    // W-913: store credit on the walk-in account is refused before the claim (the credit note writer refuses it too)
+    if (method !== EXTERNAL_REFUND_METHOD)
+      await assertCreditCustomerNotWalkIn(this.prisma.forTenant(), ret.customerId);
 
     // F08 B53: refund value is priced from what was actually BILLED (the order's
     // creditable invoices), not re-derived from the order line — see billedBasisFor.
@@ -1273,6 +1412,7 @@ export class ReturnsService {
       items: refundItems,
       pooledRefund,
       unbilledItems,
+      split: refundSplit,
     } = claim.basis;
     const updated = claim.row;
     // B959: a mixed return says WHICH item got no refund, in the same response (never a silent $0)
@@ -1310,6 +1450,8 @@ export class ReturnsService {
         {
           ledgerReversedByReturn: true,
           ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
+          // SA-840: the rows carry NET; the regular tax and the per-line levy slices make the note total the gross refund
+          ...refundTaxOpts(refundItems, refundSplit),
         },
       );
     } catch (err) {
@@ -1323,7 +1465,15 @@ export class ReturnsService {
       try {
         await this.prisma.forTenant().return.updateMany({
           where: { id, status: "REFUNDED", creditNoteId: null },
-          data: { status: "RECEIVED", refundMethod: null, refundAmount: null, refundedAt: null },
+          data: {
+            status: "RECEIVED",
+            refundMethod: null,
+            refundAmount: null,
+            refundedAt: null,
+            creditSubtotal: null,
+            creditTax: null,
+            creditCategoryTax: null,
+          },
         });
         this.logger.warn(
           `Return ${id} bounced REFUNDED→RECEIVED after the failed mint (amount ${refundAmount}, invoice ${sourceInvoiceId ?? "none"})`,
@@ -1463,6 +1613,14 @@ export class ReturnsService {
               refundMethod: method,
               refundAmount,
               refundedAt,
+              // SA-840: the frozen split of the refund (net / tax / category tax), on both methods
+              ...(basis.split
+                ? {
+                    creditSubtotal: basis.split.net,
+                    creditTax: basis.split.tax,
+                    creditCategoryTax: basis.split.categoryTax,
+                  }
+                : {}),
               ...(external ? refundTenderData(tender) : {}),
             },
           });
@@ -1671,7 +1829,8 @@ export class ReturnsService {
 
   /** RF-081: Fetches a return by ID with ownership enforcement for CUSTOMER role. */
   async findOneForUser(id: string, user: JwtPayload) {
-    const ret = await this.findOne(id);
+    // A buyer's read never carries the refunding staff member (and asks nothing to resolve them).
+    const ret = await this.findOne(id, user);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
@@ -1683,7 +1842,44 @@ export class ReturnsService {
     return ret;
   }
 
-  async findOne(id: string) {
+  /**
+   * Row 257: who made the refund, by name, read from the STORED refund actor: the user on the awaited audit row every refund
+   * path writes in the refund's own transaction. Null while the return is not refunded, and for a refund with no such row, a
+   * system actor, or a user who has since been removed (the client prints nothing rather than a guess).
+   */
+  private async refundActorName(
+    db: RefundActorDb,
+    ret: { id: string; status?: string | null; refundedAt?: Date | null },
+    tenantId: string | null | undefined,
+  ): Promise<string | null> {
+    if (ret.status !== "REFUNDED" && !ret.refundedAt) return null;
+    // Both reads name the tenant themselves (an audit row or a user of another tenant never names the refunder).
+    if (!tenantId) return null;
+    const audit = await db.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: "Return",
+        entityId: ret.id,
+        action: {
+          in: [
+            INLINE_REFUND_AUDIT_ACTION,
+            INLINE_STORE_CREDIT_AUDIT_ACTION,
+            AUDIT_ACTIONS.STANDARD_REFUND_RECORDED,
+          ],
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { userId: true },
+    });
+    if (!audit?.userId) return null;
+    const user = await db.user.findFirst({
+      where: { id: audit.userId, tenantId },
+      select: { username: true, deletedAt: true },
+    });
+    return user && !user.deletedAt ? (user.username ?? null) : null;
+  }
+
+  async findOne(id: string, viewer?: { role?: string | null }) {
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: {
@@ -1700,13 +1896,16 @@ export class ReturnsService {
                 id: true,
                 status: true,
                 total: true,
+                ...INVOICE_TAX_SELECT,
                 createdAt: true,
                 items: {
                   select: {
                     id: true,
+                    orderItemId: true,
                     productId: true,
                     qty: true,
                     subtotal: true,
+                    ...INVOICE_ITEM_TAX_SELECT,
                     boxes: true,
                     unitsPerBox: true,
                     pieces: true,
@@ -1725,7 +1924,8 @@ export class ReturnsService {
             },
           },
         },
-        customer: { select: { id: true, businessName: true } },
+        // isWalkIn: the Resolve dialog offers a walk-in return a refund only (W-913)
+        customer: { select: { id: true, businessName: true, isWalkIn: true } },
         items: { include: { product: { select: { id: true, name: true, unit: true } } } },
       },
     });
@@ -1748,6 +1948,7 @@ export class ReturnsService {
         ...item,
         orderedQty: ret.order ? soldQtyForProduct(ret.order as any, item.productId) : null,
         unitPrice: orderLine ? Number(orderLine.unitPrice) : null,
+        line: lineOfItem(item, ret.order as any), // SA-1042 rule 8: the item's order line, a snapshot (null when pooled)
       };
     });
 
@@ -1774,10 +1975,18 @@ export class ReturnsService {
       refundEstimate = null;
       refusal = "INLINE";
     } else {
+      // SA-840 A-2: detail = mint = recorded refund: it reads the credits the same way, leaving this return's own refund out.
+      // For a RESOLVED return the estimate is therefore priced against every OTHER credit, so its money is `refundAmount` (the
+      // snapshot taken at the refund); a later refund on the same lines moves this estimate, never the recorded amount.
+      const { credited } = await this.creditsForPricing(ret.order, this.prisma.forTenant(), {
+        returnId: ret.id,
+        creditNoteId: ret.creditNoteId,
+      });
       ({ amount: refundEstimate, refusal } = this.priceReturn(
         ret.items,
         ret.order ?? undefined,
         await this.packBasesOf(ret.order),
+        credited,
       ));
     }
 
@@ -1792,6 +2001,15 @@ export class ReturnsService {
       creditNote,
       refundEstimate,
       refundEstimateReason: refusal ?? null,
+      ...(viewer?.role === "CUSTOMER"
+        ? {}
+        : {
+            refundedBy: await this.refundActorName(
+              this.prisma.forTenant(),
+              ret,
+              ret.tenantId ?? this.prisma.getTenantId(),
+            ),
+          }),
     };
   }
 }

@@ -106,6 +106,8 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
                 invoiceNumber: "INV-1",
                 status: over.invoiceStatus ?? "SENT",
                 total: 100,
+                taxAmount: 0,
+                discount: 0,
                 items: [{ productId: "p1", qty: 10, subtotal: 100 }],
               },
             ],
@@ -136,6 +138,9 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 20,
         refundedAt: expect.any(Date),
+        creditSubtotal: 20,
+        creditTax: 0,
+        creditCategoryTax: 0,
         refundTender: null, // no tender sent: unknown (tenderKnown false)
       },
     });
@@ -451,6 +456,67 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         expect.stringMatching(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
         expect.stringMatching(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
       ]);
+    });
+  });
+
+  describe("SA-840 R6 (B704 / #1477): a recorded refund hands back what the invoice charged", () => {
+    it("REG-B704 R6: a cash refund of the taxed R1 line records 64.00 and freezes the split 50 / 4 / 10 on the Return", async () => {
+      // wrong today: refundAmount 50.00 and no split (the customer is short by the 4.00 tax and the 10.00 levy)
+      invoices = [{ id: "inv-1", status: "PAID", total: 64, payments: paidCash(64) }];
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 64, invoice: { orderId: "ord-1" } },
+      ]);
+      prisma.return.findUnique.mockImplementation(async (args: any) =>
+        args?.include?.order
+          ? {
+              id: "ret-1",
+              returnNumber: "RET-1",
+              status: "RECEIVED",
+              kind: "STANDARD",
+              customerId: "cust-1",
+              orderId: "ord-1",
+              items: [{ productId: "p1", qty: 10 }],
+              order: {
+                id: "ord-1",
+                orderNumber: "ORD-1",
+                counterSale: false,
+                registerKey: null,
+                invoices: [
+                  {
+                    id: "inv-1",
+                    invoiceNumber: "INV-1",
+                    status: "PAID",
+                    total: 64,
+                    taxAmount: 14,
+                    discount: 0,
+                    items: [
+                      {
+                        id: "li-1",
+                        productId: "p1",
+                        qty: 10,
+                        subtotal: 50,
+                        taxRate: 0.08,
+                        categoryTaxAmount: 10,
+                        systemKind: null,
+                        description: "Widget",
+                      },
+                    ],
+                  },
+                ],
+                lineItems: [{ productId: "p1", qty: 10, unitPrice: 5, subtotal: 50 }],
+              },
+            }
+          : { id: "ret-1", status: "REFUNDED", refundMethod: "EXTERNAL_REFUND" },
+      );
+      await refund({ tender: "CASH" });
+      expect(prisma.return.updateMany.mock.calls[0][0].data).toMatchObject({
+        refundAmount: 64,
+        creditSubtotal: 50,
+        creditTax: 4,
+        creditCategoryTax: 10,
+        refundTender: "CASH",
+      });
+      expect(creditNotesCreate).not.toHaveBeenCalled();
     });
   });
 });

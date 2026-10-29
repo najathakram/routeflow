@@ -19,6 +19,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
+import { attachOrderToCollect } from "./order-to-collect";
 import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
@@ -133,16 +134,15 @@ import {
 } from "./merge-idempotency";
 import { BUYER_EDIT_CLOSED_STATUSES, computeEditWindow } from "./edit-window";
 import { fulfillPathLocked } from "./fulfil-path-lock";
-import {
-  assertQuantitiesKnown,
-  cancelBlockedMessage,
-  cancelImpact,
-  deliveredUnitsBlockedMessage,
-} from "./order-cancel-impact";
+import { assertCancelImpactAllows, cancelImpact } from "./order-cancel-impact";
 import { cancelOrderInTx, lockDeleteLines, type CancelOrderTxOptions } from "./order-cancel-tx";
 import { claimReopenInTx } from "./order-reopen-claim";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
-import { assertBuyerDiffShape, classifyEditPayload } from "./order-edit-payload";
+import {
+  assertBuyerDiffShape,
+  classifyEditPayload,
+  takesBuyerDriverReplace,
+} from "./order-edit-payload";
 import {
   applyBuyerMergeHeaderImpl,
   bulkDeleteOrdersImpl,
@@ -273,7 +273,9 @@ import { tenantSafeParentView } from "../products/product-parent";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import { clearLoserDraftForDelete } from "./merge-loser-draft";
+import { deleteOrderInvoice } from "./order-invoice-delete";
 import { sumInlineReturnCredit } from "../returns/inline-return-credit.util";
 
 @Injectable()
@@ -515,6 +517,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
+    await attachOrderToCollect(this.prisma.forTenant(), order, user); // SA-1026 (staff only)
 
     stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
@@ -1026,7 +1029,7 @@ export class OrdersService implements OnApplicationBootstrap {
               if (loserDraft) {
                 await clearLoserDraftForDelete(tx, this.ledger, loserDraft);
                 await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
-                await tx.invoice.delete({ where: { id: loserDraft.id } });
+                await deleteOrderInvoice(tx, loserDraft.id, this.prisma.getTenantId());
               }
               // B215: a loser's merge keys follow its cart onto the winner. The FK cascade would
               // otherwise delete them with the loser, and a retry of that merge would fold the
@@ -1818,6 +1821,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // structured 409 BEFORE the stock transaction, so nothing is half-committed.
     // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
     let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the create tx
+    let returnCredit = 0; // W-863: the credit the B585 gate netted (a counter sale's server-priced preview)
     if (!isDraft) {
       await this.authGuard.assertAuthorizedOrThrow({
         customerId,
@@ -1829,7 +1833,13 @@ export class OrdersService implements OnApplicationBootstrap {
         ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
-      const projectedTotal = creditProjectedTotal(total, options); // S1: net of the till tender
+      // S1: net of the till tender. W-863 (SA-945 MUST 6): the COUNTER sale also nets its SERVER-priced return credit
+      // (never a client figure); Create Order keeps SA-194 (an unapplied credit never loosens the gate), pinned in
+      // orders-inline-return-create.db.spec.ts.
+      returnCredit = options.counterSale
+        ? await inlineReturn.previewInlineReturnCredit(inlineRet, customerId, user)
+        : 0;
+      const projectedTotal = creditProjectedTotal(total, options, returnCredit);
       await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
     }
 
@@ -1952,6 +1962,8 @@ export class OrdersService implements OnApplicationBootstrap {
               user,
               orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
             });
+            // W-863 (SA-945 MUST 6, G5): the gate netted a preview; refuse (rolling back) when less was really issued
+            inlineReturn.assertIssuedCreditCoversPreview(inlineMinted, returnCredit, Number(total));
             return created;
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
@@ -2092,6 +2104,8 @@ export class OrdersService implements OnApplicationBootstrap {
         ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
         restrictionOverrides: dto.restrictionOverrides, // row 510: the staff's acknowledgement rides the sale
         warningHash: dto.warningHash,
+        // W-863: the counter's return, captured and credited inside create()'s own transaction (one return writer)
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       },
       user,
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
@@ -2490,15 +2504,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * money, since that's the more urgent problem for an operator to act on.
    */
   private async assertCancellableOrThrow(id: string) {
-    const impact = await this.cancelImpact(id);
-    if (impact.canCancel) return;
-    if (impact.blockingPayments.length > 0)
-      throw new BadRequestException(cancelBlockedMessage(impact.blockingPayments));
-    assertQuantitiesKnown(impact); // B692: legacy delivered row, no quantity recorded
-    // B56 (REG-B56): delivered goods can't be un-delivered by cancelling the
-    // order out from under them — that would erase the revenue for goods the
-    // customer already has. Record a return, or edit the order down instead.
-    throw new BadRequestException(deliveredUnitsBlockedMessage(impact.deliveredUnits));
+    assertCancelImpactAllows(await this.cancelImpact(id)); // see that judgment in order-cancel-impact.ts
   }
 
   async reopenOrder(id: string, user?: JwtPayload, ack?: rGate.Ack) {
@@ -2627,6 +2633,10 @@ export class OrdersService implements OnApplicationBootstrap {
     // Row 372 (MF4 nit e): an editor on an outdated order meets the 409 BEFORE any refusal can mask it and any
     // un-tx'd side effect (the invoice revert, the return number). Advisory; the in-tx check below is the lock.
     await assertRevisionCurrent(this.prisma.forTenant(), orderId, dto.expectedRevisionNumber);
+    await assertOrderEditNotLocked(this.prisma.forTenant(), orderId, dto as any, {
+      tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string, // B297 PR5 (D4a): see that guard
+      role: user?.role,
+    });
     const isDiffPayload = classifyEditPayload(order, dto, user); // A4/B13: see order-edit-payload.ts
     // SA-422: never revive a seller-CANCELLED line (409 before any write; a strike-off of one is a
     // no-op). SA-422b: BEFORE every unit check, so a cancelled line's id gets this answer first.
@@ -2884,10 +2894,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // SA-407: a buyer's per-line diff (a unit line's count / a removal) merges like staff's too.
         // SA-696a (decided, fail closed): this path recreates every line (new ids), so a carrier order with an
         // unlisted line reads as a removal and is refused NO_REDUCE even when nothing changed; nothing written.
-        if (
-          (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) &&
-          !isDiffPayload
-        ) {
+        if (takesBuyerDriverReplace(user?.role, isDiffPayload) && user) {
           if (user.role === UserRole.CUSTOMER) {
             // REG-B131: `deletedAt: null` — the buyer replace-all path is the last door a
             // removed customer's still-valid session could mutate an order through.
@@ -5033,6 +5040,10 @@ export class OrdersService implements OnApplicationBootstrap {
     return updateShipmentImpl(this, orderId, dto, _user);
   }
 
+  async staffSellable(p: rGate.Args) {
+    return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
+  }
+
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateFulfillPath(...[orderId, dto, _user, opts]: UpdateFulfillPathArgs) {
     return updateFulfillPathImpl(
@@ -5171,7 +5182,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // order-cascade delete would strand or silently destroy accruals.
         // Throws when claimedAmount > 0 (same guard deleteInvoice enforces).
         await this.commissionEngine.removeInvoiceCommission(inv.id, tx);
-        await tx.invoice.delete({ where: { id: inv.id } });
+        await deleteOrderInvoice(tx, inv.id, this.prisma.getTenantId());
       }
       if (order.transaction) {
         await tx.transactionItem.deleteMany({ where: { transactionId: order.transaction.id } });
