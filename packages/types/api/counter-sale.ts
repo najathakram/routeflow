@@ -3,6 +3,7 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { InlineReturnLinesRequest } from "./inline-returns";
 import type { ToCollectMethod, ToCollectState } from "./enums";
 import type { DuplicatePaymentRefExisting } from "./payment-ref";
 import type { RestrictionAck } from "./restrictions";
@@ -61,6 +62,8 @@ export interface CounterSaleRequest extends RestrictionAck {
   items: CounterSaleItem[];
   payment: CounterSalePayment;
   notes?: string;
+  /** W-863 (SA-945): Create Order's own inline return, riding the sale. Named customers only: a walk-in's is refused 409. */
+  inlineReturn?: InlineReturnLinesRequest;
 }
 
 /**
@@ -81,6 +84,8 @@ export interface CounterSaleResponse {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
+  /** SA-1026 B: every invoice the sale made, in issue order, the same list `total` adds up (`invoiceId` is the first); a mixed regulated + unregulated sale has siblings. Absent on an older server or a kept sale: read it as `[invoiceId]`. */
+  invoiceIds?: string[];
   invoiceNumber: string;
   total: number;
   paid: number;
@@ -203,6 +208,8 @@ export interface PickupCompleteResponse {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
+  /** SA-1026 B: every non-void invoice of the order after the hand-over, in issue order, the same list the figures total (`invoiceId` is the first). */
+  invoiceIds: string[];
   invoiceNumber: string;
   total: number;
   paid: number;

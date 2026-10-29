@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
 import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
+import { sumInlineReturnCredit } from "../../returns/inline-return-credit.util";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
@@ -18,6 +19,7 @@ import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
+import { walkInStoreCreditRefusal } from "../../credit-notes/walk-in-credit-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -118,6 +120,8 @@ export class CounterSaleService {
       throw new BadRequestException("Choose a customer or mark the sale as a walk-in");
     }
     let walkIn = !!dto.walkIn;
+    // W-863 (SA-932): a walk-in return is refunded at the till, never credited to the shared walk-in account.
+    if (walkIn && dto.inlineReturn) throw walkInStoreCreditRefusal();
     assertPaymentShape(dto.payment, walkIn);
     // Interim till guard: judged on the TENANT's day, before any write.
     await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
@@ -137,6 +141,7 @@ export class CounterSaleService {
       // The kept walk-in RECORD (park/resume) is a walk-in however the request names it: same refusals,
       // same tender rule, before any write.
       if (customer.isWalkIn === true) {
+        if (dto.inlineReturn) throw walkInStoreCreditRefusal();
         walkIn = true;
         assertPaymentShape(dto.payment, true);
       }
@@ -163,6 +168,8 @@ export class CounterSaleService {
         // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
         restrictionOverrides: dto.restrictionOverrides,
         warningHash: dto.warningHash,
+        // W-863: create() captures the return and issues its credit in the sale's own transaction (the one return writer).
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       } as never,
       user,
       {
@@ -330,8 +337,15 @@ export class CounterSaleService {
     planError: string,
     user: JwtPayload | "read-only",
   ) {
-    const sum = Number(total ?? 0);
-    const netted = counterCreditPaidNow(tender, sum, checkToday);
+    const gross = Number(total ?? 0);
+    // W-863 (SA-945 MUST 6): the return credit stored on this sale (the SERVER's figure, read back, never the request's)
+    // pays the order down before the tender, so it is netted, not on account: judge what is left after it.
+    const credit = Math.min(
+      gross,
+      await sumInlineReturnCredit(this.prisma.forTenant(), orderId).catch(() => 0),
+    );
+    const sum = roundMoney(gross - credit);
+    const netted = roundMoney(counterCreditPaidNow(tender, sum, checkToday) + credit);
     const deps = {
       prisma: this.prisma,
       entitlements: this.orders.entitlements,

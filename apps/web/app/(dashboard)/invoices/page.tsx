@@ -28,11 +28,10 @@ import {
   useInvoices,
   useInvoiceKpiSummary,
   useDeleteInvoice,
-  useDownloadInvoicePdf,
   type Invoice,
   type InvoiceStatus,
 } from "@/lib/api/invoices";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { apiClient } from "@/lib/api-client";
 import { invoiceListStatusParams } from "@/lib/invoice-list-filter";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
@@ -398,7 +397,7 @@ export default function InvoicesPage() {
   const { toast } = useToast();
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
-  const downloadPdf = useDownloadInvoicePdf();
+  const printInvoice = usePrintInvoice();
   const [printingIds, setPrintingIds] = React.useState<ReadonlySet<string>>(() => new Set());
 
   const [urlFilters, setFilter, , setFilters] = useUrlFilters({
@@ -945,20 +944,9 @@ export default function InvoicesPage() {
                                 if (printingIds.has(inv.id)) return;
                                 setPrintingIds((prev) => new Set(prev).add(inv.id));
                                 try {
-                                  // mutateAsync (not mutate + per-call options) — TanStack
-                                  // Query v5's useMutation is ONE shared observer, so
-                                  // per-call onSuccess/onError/onSettled on a concurrent
-                                  // .mutate() would be overwritten by whichever row calls
-                                  // it last, silently dropping every other row's print,
-                                  // error toast and spinner clear (review finding F1).
-                                  const { blob } = await downloadPdf.mutateAsync(inv.id);
-                                  printPdfBlob(blob);
-                                } catch {
-                                  toast({
-                                    title: "Failed to generate PDF",
-                                    description: "Please try again.",
-                                    variant: "error",
-                                  });
+                                  // The one shared print path; it never throws and tells the user when it could not. Each row
+                                  // keeps its own spinner, and concurrent rows print independently (review finding F1).
+                                  await printInvoice.print(inv.id);
                                 } finally {
                                   setPrintingIds((prev) => {
                                     const next = new Set(prev);

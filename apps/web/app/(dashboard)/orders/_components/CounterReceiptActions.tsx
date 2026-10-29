@@ -9,6 +9,7 @@ import { useOrder } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useCounterSaleRow } from "@/lib/api/counter-sale-today";
 import { ReadOnlyHint, useReadOnlyGate, WriteButton } from "@/lib/read-only-gate";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
@@ -34,11 +35,14 @@ const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visibl
  */
 export function CounterReceiptActions({
   orderId,
+  invoiceIds,
   customer,
   onNewSale,
   methodsText,
 }: {
   orderId: string;
+  /** SA-1026 B: every invoice the sale made (a mixed sale has siblings); with them, "Print invoice" prints the same Letter PDF the invoice page does, one per invoice. */
+  invoiceIds?: readonly string[];
   customer: { email?: string | null; user?: { email?: string | null } | null } | null;
   onNewSale: () => void;
   methodsText?: string;
@@ -65,6 +69,7 @@ export function CounterReceiptActions({
       : undefined);
   // wait for the row (voided / returned / how it was paid) before offering Void; a failed read falls back to the order alone
   const canVoid = !!order && staffMay(role, "VOID_SALE") && !rowPending;
+  const printInvoice = usePrintInvoice();
   return (
     <>
       {/* W-715 + P-RCPT-1 (lead ruling): ONE row from sm up; at phone width a 2×2 grid with New sale, the one primary, full
@@ -76,6 +81,16 @@ export function CounterReceiptActions({
         <Button className={RECEIPT_BTN} variant="secondary" onClick={() => window.print()}>
           Print
         </Button>
+        {invoiceIds?.length ? (
+          <Button
+            className={RECEIPT_BTN}
+            variant="secondary"
+            disabled={printInvoice.printing}
+            onClick={() => void printInvoice.print(invoiceIds)}
+          >
+            Print invoice
+          </Button>
+        ) : null}
         <EmailReceiptButton email={email} />
         <CounterReturnAction
           orderId={orderId}

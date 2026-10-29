@@ -208,6 +208,7 @@ export function buildCounterSaleResponse(input: {
     orderId: order.id,
     orderNumber: order.orderNumber ?? "",
     invoiceId: first.id,
+    invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list `total` adds up, so the done screen's Print invoice matches it
     invoiceNumber: first.invoiceNumber ?? "",
     total,
     paid,

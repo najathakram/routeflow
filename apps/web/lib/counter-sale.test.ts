@@ -272,6 +272,37 @@ describe("parseScanField: type a quantity, then scan, to multiply", () => {
     expect(parseScanField("SKU-7")).toEqual({ kind: "code", code: "SKU-7" });
     expect(parseScanField("0")).toEqual({ kind: "code", code: "0" });
   });
+  it("F01: a quantity prefix (2*code, 2x code, 2 x code, 2X code) is qty 2 of that code", () => {
+    expect(parseScanField("2*COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField("2x COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField("2 x COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField("2X COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField(" 12 * 012345678905 ")).toEqual({
+      kind: "code",
+      code: "012345678905",
+      qty: 12,
+    });
+    expect(parseScanField("3 \u00d7 COLA")).toEqual({ kind: "code", code: "COLA", qty: 3 });
+  });
+  it("F01: a typed name search with spaces after the prefix stays one whole search", () => {
+    expect(parseScanField("2 x 4 stud")).toEqual({ kind: "code", code: "2 x 4 stud" });
+    expect(parseScanField("6 x 330ml can")).toEqual({ kind: "code", code: "6 x 330ml can" });
+    expect(parseScanField("2*4 stud")).toEqual({ kind: "code", code: "2*4 stud" });
+    expect(parseScanField("2*COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+  });
+  it("F01: the prefix quantity is capped at the 3-digit maximum a bare quantity has", () => {
+    expect(parseScanField("999*COLA")).toEqual({ kind: "code", code: "COLA", qty: 999 });
+    // a 4-digit prefix is not a quantity: the whole text stays one code, as before
+    expect(parseScanField("1000*COLA")).toEqual({ kind: "code", code: "1000*COLA" });
+    expect(parseScanField("0*COLA")).toEqual({ kind: "code", code: "0*COLA" });
+  });
+  it("F01: a code that merely contains an x or a star is never split", () => {
+    for (const code of ["BOX12", "x100", "X100", "12x100", "2xCOLA", "COLA2x", "4X8-PLY", "A*B"]) {
+      expect(parseScanField(code)).toEqual({ kind: "code", code });
+    }
+    expect(parseScanField("2x")).toEqual({ kind: "code", code: "2x" });
+    expect(parseScanField("2*")).toEqual({ kind: "code", code: "2*" });
+  });
 });
 
 describe("counterSaleErrorCopy: FIXED copy, never the server message", () => {
