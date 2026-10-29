@@ -131,21 +131,30 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
     "products/tripwire-scan.ts":
       "the scanner the writers tripwire shares (its docs spell the shapes)",
   };
+  /** Repo-style relative path with forward slashes on every OS (path.relative gives backslashes on Windows). */
+  const relOf = (f: string) => path.relative(SRC, f).split(path.sep).join("/");
   const production = () =>
     walk(SRC).filter((f) => {
-      const rel = path.relative(SRC, f);
-      return !rel.startsWith(`testing${path.sep}`) && !(rel in NOT_PRODUCTION);
+      const rel = relOf(f);
+      return !rel.startsWith("testing/") && !(rel in NOT_PRODUCTION);
     });
   const sitesOf = (f: string) => trackedCategoryWriterSites(fs.readFileSync(f, "utf8"));
   const inventory = () =>
     production()
-      .map((f) => [path.relative(SRC, f), sitesOf(f)] as const)
+      .map((f) => [relOf(f), sitesOf(f)] as const)
       .filter(([, s]) => s.length > 0);
 
-  it("exactly these writer sites, in these two files", () => {
+  it("exactly these writer sites, in these two files (plus the one read-only alias false positive)", () => {
     expect(
       inventory().map(([file, s]) => [file, s.map((x) => `${x.shape}:${x.delegate}`).sort()]),
     ).toEqual([
+      [
+        "common/staff-only-fields.ts",
+        // NOT a writer: the buyer-facing row shaper copies `line.trackedCategory` (a plain object) onto its output, which the
+        // alias pattern cannot tell from a Prisma delegate handed around. Listed, not exempted, so a second hit in this file
+        // (or a real write) still changes this list.
+        ["alias:undefined"],
+      ],
       [
         "products/products.service.ts",
         ["delegate:trackedCategory"], // the first-tobacco auto-seed (audited via: tobacco-autoseed)
@@ -174,7 +183,7 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
       for (const site of trackedCategoryWriterSites(src)) {
         if (site.delegate !== "trackedCategory") continue;
         expect({
-          file: path.relative(SRC, f),
+          file: relOf(f),
           receiver: site.receiver,
           audited: auditFollowsOnSameTx(src, site),
         }).toMatchObject({ audited: true });
@@ -189,8 +198,8 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
       const shared =
         trackedDelegateWrites(src).length +
         (src.match(/\.tracked(Sub)?[Cc]ategory\.deleteMany\(/g) ?? []).length;
-      expect({ file: path.relative(SRC, f), n: mine }).toEqual({
-        file: path.relative(SRC, f),
+      expect({ file: relOf(f), n: mine }).toEqual({
+        file: relOf(f),
         n: shared,
       });
     }
