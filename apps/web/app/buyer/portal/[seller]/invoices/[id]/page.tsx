@@ -14,7 +14,12 @@ import {
   CreditCard,
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
-import { resolveConfirmedAmounts } from "@routeflow/pricing";
+import {
+  invoiceDisplayCategoryTax,
+  invoiceDisplayLines,
+  resolveConfirmedAmounts,
+} from "@routeflow/pricing";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
@@ -26,6 +31,11 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
+import {
+  InvoiceDisplayRows,
+  displayQtyText,
+  formatUnitPrice4,
+} from "@/components/InvoiceDisplayRows";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -347,10 +357,39 @@ export default function BuyerInvoiceDetailPage() {
           <tbody className="block divide-y divide-surface-border sm:table-row-group">
             {(invoice.items ?? []).map((item) => {
               const msrp = itemMsrp(item);
-              return (
+              // SA-827: pieces / components layouts come from pricing; everything else is today's row.
+              const display = invoiceDisplayLines(
+                {
+                  description: item.description,
+                  qty: Number(item.qty),
+                  boxes: item.boxes,
+                  pieces: item.pieces,
+                  unitsPerBox: item.unitsPerBox,
+                  unitLabel: item.unitLabel,
+                  unitPrice: Number(item.unitPrice),
+                  subtotal: Number(item.subtotal),
+                  categoryTax: invoiceDisplayCategoryTax(item),
+                },
+                (item.components ?? []).map((c) => ({
+                  componentProductId: c.componentProductId,
+                  name: c.name,
+                  qty: Number(c.qty),
+                  unitSku: c.unitSku,
+                  unitBarcode: c.unitBarcode,
+                  displayUnitPrice4:
+                    c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
+                  position: c.position,
+                })),
+                item.displayUnit,
+              );
+              const groupRow = (
                 <tr
                   key={item.id}
-                  data-testid={`invoice-line-${item.id}`}
+                  data-testid={
+                    display.layout === "components"
+                      ? `display-group-row-${item.id}`
+                      : `invoice-line-${item.id}`
+                  }
                   className="block space-y-1 px-4 py-3 hover:bg-surface-raised/50 sm:table-row sm:space-y-0 sm:p-0"
                 >
                   <td className="block text-sm font-medium text-navy sm:table-cell sm:px-4 sm:py-3">
@@ -360,6 +399,10 @@ export default function BuyerInvoiceDetailPage() {
                         {item.notes}
                       </p>
                     )}
+                    {/* Today and the pieces fallback (component sums mismatch) keep the "(included)" sub-lines. */}
+                    {display.layout !== "components" && (
+                      <ComponentSubLines components={item.components} />
+                    )}
                   </td>
                   <td
                     data-testid={`invoice-line-qty-${item.id}`}
@@ -367,7 +410,9 @@ export default function BuyerInvoiceDetailPage() {
                     className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy"
                   >
                     <span className="text-right">
-                      {Number(item.qty)}
+                      {display.layout === "pieces"
+                        ? displayQtyText(display.qty, display.unitLabel)
+                        : Number(item.qty)}
                       {/* BUY_N_GET_M: name the free units, or the reduced subtotal
                         reads as a pricing error. */}
                       {Number(item.promoFreeUnits ?? 0) > 0 && (
@@ -383,7 +428,9 @@ export default function BuyerInvoiceDetailPage() {
                     className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
                   >
                     <span className="whitespace-nowrap text-right tabular-nums">
-                      {fmt(Number(item.unitPrice))}
+                      {display.layout === "pieces"
+                        ? formatUnitPrice4(display.unitPrice)
+                        : fmt(Number(item.unitPrice))}
                       {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps
                         rendering it even if the seller later loses the MSRP addon. */}
@@ -403,6 +450,20 @@ export default function BuyerInvoiceDetailPage() {
                   </td>
                 </tr>
               );
+              if (display.layout === "components") {
+                return (
+                  <InvoiceDisplayRows
+                    key={item.id}
+                    lines={display}
+                    itemId={item.id}
+                    fmt={fmt}
+                    variant="buyer"
+                  >
+                    {groupRow}
+                  </InvoiceDisplayRows>
+                );
+              }
+              return groupRow;
             })}
           </tbody>
         </table>

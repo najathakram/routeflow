@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -182,7 +183,7 @@ type InvoiceMoney =
       balanceDue: number;
       lines: Map<
         Record<string, string>,
-        { unitPrice: number; discount: number; itemTotal: number }
+        { unitPrice: number; discount: number; itemTotal: number | null }
       >;
     }
   | { ok: false; reason: string };
@@ -214,13 +215,15 @@ function readInvoiceMoney(invoiceRows: Record<string, string>[]): InvoiceMoney {
   const balanceDue = read(first, ["Balance Due", "Balance", "Outstanding Amount"], NaN);
   const lines: Map<
     Record<string, string>,
-    { unitPrice: number; discount: number; itemTotal: number }
+    { unitPrice: number; discount: number; itemTotal: number | null }
   > = new Map();
   for (const row of invoiceRows) {
+    // W-924: an absent Item Total (null) is not a stated 0.00; only the absent cell falls back to qty x price.
+    const itemTotal = read(row, ["Item Total"], NaN);
     lines.set(row, {
       unitPrice: read(row, ["Item Price"], 0),
       discount: read(row, ["Discount Amount"], 0),
-      itemTotal: read(row, ["Item Total"], 0),
+      itemTotal: Number.isNaN(itemTotal) ? null : itemTotal,
     });
   }
   if (reason) return { ok: false, reason };
@@ -1470,8 +1473,8 @@ export class ImportService {
         const line = money.lines.get(row)!;
         const unitPrice = line.unitPrice;
         const itemDiscount = line.discount;
-        // scan-ok: money-rederive — an imported CSV line has no case pack: the file's Item Total wins; the plain qty x price fallback is what the row states (unchanged by #2190).
-        const sub = roundMoney(line.itemTotal || qty * unitPrice - itemDiscount);
+        // scan-ok: money-rederive — an imported CSV line has no case pack: the file's Item Total wins; the plain qty x price fallback is what the row states (unchanged by #2190); W-924: it applies only when the Item Total cell is absent, a stated 0.00 stays 0.00.
+        const sub = roundMoney(line.itemTotal ?? qty * unitPrice - itemDiscount);
         const sku = (row["SKU"] || "").trim();
 
         let productId: string | undefined;
@@ -1830,6 +1833,7 @@ export class ImportService {
     userId: string,
   ): Promise<{ imported: number; skipped: number; duplicates: number; errors: string[] }> {
     const rows = this.parseCsv(buffer);
+    const zone = await tenantTimeZone(this.prisma); // SA-964 §3: resolved once per run; OVERDUE is judged in it
     let imported = 0,
       skipped = 0,
       duplicates = 0;
@@ -1972,7 +1976,7 @@ export class ImportService {
             include: { payments: true },
           });
           const change = locked
-            ? importPaymentStatus(locked, locked.payments ?? [], new Date())
+            ? importPaymentStatus(locked, locked.payments ?? [], new Date(), zone)
             : null;
           await tx.invoice.update({
             where: { id: invoice.id },
@@ -2001,7 +2005,7 @@ export class ImportService {
       paidAt: Date | null;
     }> = [];
     for (const inv of allInvoices) {
-      const change = importPaymentStatus(inv, inv.payments, now); // #2262: the one shared rule
+      const change = importPaymentStatus(inv, inv.payments, now, zone); // #2262: the one shared rule
       if (change) statusUpdates.push({ id: inv.id, from: inv.status, ...change });
     }
     if (statusUpdates.length > 0) {

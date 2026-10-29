@@ -74,6 +74,39 @@ function build(opts: {
 
 const caseRow: Row = { id: "u-case", label: "Case", factorToBase: 288 };
 
+describe("ProductUnitsService price guard (row 749)", () => {
+  const variantProduct = {
+    unit: "Box",
+    unitsPerBox: 24,
+    trackedCategoryId: null,
+    parentProductId: "fam1",
+    kind: "VARIANT",
+  };
+
+  it("create refuses a price on a variant with a 409 and writes nothing", async () => {
+    const { service, tx } = build({ product: variantProduct });
+    await expect(
+      service.create("p1", { label: "Case", factorToBase: 288, price: 480 }),
+    ).rejects.toThrow(ConflictException);
+    expect(tx.productUnit.create).not.toHaveBeenCalled();
+  });
+
+  it("update refuses a price on a recipe product and writes nothing", async () => {
+    const { service, tx } = build({
+      product: { ...variantProduct, parentProductId: null, kind: "RECIPE" },
+      rows: [caseRow],
+    });
+    await expect(service.update("p1", "u-case", { price: 9 })).rejects.toThrow(ConflictException);
+    expect(tx.productUnit.update).not.toHaveBeenCalled();
+  });
+
+  it("a structure-only create on a variant still succeeds", async () => {
+    const { service, tx } = build({ product: variantProduct });
+    await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(tx.productUnit.create).toHaveBeenCalled();
+  });
+});
+
 describe("ProductUnitsService.create", () => {
   it("creates a level, storing null for every unset price and the trimmed label", async () => {
     const { service, tx } = build({});

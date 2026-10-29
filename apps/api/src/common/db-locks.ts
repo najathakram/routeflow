@@ -698,6 +698,34 @@ export async function advisoryXactLock(
 }
 
 /**
+ * Row 562 S1: take MANY exclusive, transaction-scoped advisory locks of one `family` in ONE statement
+ * (the multi-key form of {@link advisoryXactLock}: a seeding batch of 200 products is one round trip, not
+ * 200). The keys are de-duplicated and locked in sorted order. That order is decided here and in the
+ * statement (`WITH ORDINALITY ... ORDER BY ord` inside a subquery the planner cannot flatten, so the lock
+ * function runs row by row in that order), never by the caller's list, so two callers that name the same
+ * keys in any order cannot deadlock. Postgres releases every lock when `tx` ends. The wait is bounded like
+ * {@link advisoryXactLock}'s (a 55P03 that `retryStockTx` maps to the coded 503).
+ */
+export async function advisoryXactLocks(
+  tx: { $executeRaw: (...args: any[]) => unknown },
+  family: LockFamily,
+  keys: readonly string[],
+): Promise<void> {
+  if (!(LOCK_FAMILIES as readonly string[]).includes(family)) {
+    throw new TypeError(`advisoryXactLocks: unknown lock family "${family}"`);
+  }
+  if (keys.some((k) => typeof k !== "string" || k.length === 0)) {
+    throw new TypeError("advisoryXactLocks: every key must be a non-empty string");
+  }
+  const sorted = [...new Set(keys)].sort();
+  if (sorted.length === 0) return;
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${STOCK_LOCK_TIMEOUT}, true) WHERE current_setting('lock_timeout') = '0'`;
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${family}), hashtext(s.k))
+    FROM (SELECT k FROM unnest(${sorted}::text[]) WITH ORDINALITY AS t(k, ord) ORDER BY ord) AS s`;
+}
+
+/**
  * Take the SHARED, transaction-scoped advisory lock on `(family, key)` inside `tx`, in try mode (never
  * waits). The key pair is derived EXACTLY like {@link withAdvisoryLock}'s - `hashtext(family)`,
  * `hashtext(key)` - so it conflicts with a holder of that lock's exclusive session-level form: the

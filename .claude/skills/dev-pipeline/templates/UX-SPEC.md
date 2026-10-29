@@ -1,6 +1,6 @@
 # UX Spec: <feature/task title>
 
-> Authored by Fable 5 (with the design skills routed via
+> Authored by Opus (with the design skills routed via
 > `references/DESIGN-ROUTING.md` in the dev-pipeline skill folder) on <YYYY-MM-DD>.
 > Status: DRAFT | APPROVED | IMPLEMENTED | CLOSED
 > This file is the ONLY context the implementation, review, and UI-verification agents

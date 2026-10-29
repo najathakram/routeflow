@@ -81,10 +81,10 @@ describe("emailPaidBasis (W-680)", () => {
   });
 
   it("sendReminder derives no paid basis of its own any more (one copy)", () => {
-    const service = readFileSync(join(__dirname, "invoices.service.ts"), "utf8");
-    const a = service.indexOf("async sendReminder(");
-    const b = service.indexOf("\n  async ", a + 10);
-    const body = service.slice(a, b < 0 ? undefined : b);
+    const service = readFileSync(join(__dirname, "invoice-reminder-email.ts"), "utf8");
+    const a = service.indexOf("export async function sendReminder(");
+    expect(a).toBeGreaterThan(-1);
+    const body = service.slice(a);
     expect(body).not.toMatch(/splitConfirmed\(/);
     expect(body).not.toMatch(/confirmedBalance\(/);
     expect(body).not.toMatch(/CREDIT_NOTE_METHOD/);

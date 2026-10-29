@@ -36,6 +36,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import * as capabilities from "./business-capabilities";
 import { businessProfileByKey } from "./business-profiles";
+import { billsAtShipment } from "../orders/order-status-invoicing";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PlatformAdminController } from "../platform-admin/platform-admin.controller";
 
@@ -327,7 +328,8 @@ describeDb("BO-04 - capability ticks and the carrier-in-transit rule (real Postg
   }, 60_000);
 
   it("(d) re-applying the same ticks writes nothing but one more audit row", async () => {
-    const t = await tenant("d");
+    // SA-1028: seeded on `ship`, so these ticks write counter_sales (an unset tenant would keep its model unset)
+    const t = await tenant("d", { mode: "ship" });
     const ticks = { shipping: true, counter: true, opensAs: "order" as const };
 
     await confirm(t, ticks);
@@ -389,5 +391,133 @@ describeDb("BO-04 - capability ticks and the carrier-in-transit rule (real Postg
     expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
     expect(await configRows(t)).toEqual([]);
     expect(appliedRows()).toEqual([]);
+  }, 60_000);
+
+  // ── SA-1028: a "not set up" (fulfilment_model unset) tenant with SHIP orders in transit ─────────────────────
+  // The owner case: the card read an unset tenant as nothing ticked, so adding Counter sent Delivery + Shipping off
+  // and wrote fulfilment_model, which the carrier-in-transit rule (kept) refused. The card now reads today's ticks
+  // and the keep rule leaves the stored model unset, so Counter alone goes through; invoicing stays at delivery.
+  const modeReader = (tenantId: string) => ({
+    getEffectiveMode: async (_t: string, key: string) =>
+      (await configRows(tenantId)).find((r) => r.featureKey === key)?.mode ?? "unset",
+  });
+
+  it("K-R2: unset + fleet held + SHIP in transit: the card plus Counter changes counter_sales only; no model row, no billing, no 409", async () => {
+    const t = await tenant("r2", { paidModules: MODULES, inTransit: 1 });
+    const disable = jest.spyOn(addons, "disableAddon");
+    spies.push(disable);
+
+    const card = await (controller as any).getBusinessCapabilities(t);
+    expect(card).toMatchObject({
+      configured: false,
+      delivery: true,
+      doorPayments: true,
+      shipping: true,
+      counter: false,
+    });
+    const ticks = {
+      delivery: card.delivery,
+      doorPayments: card.doorPayments,
+      shipping: card.shipping,
+      counter: true,
+    };
+
+    const shown = await preview(t, ticks);
+    expect(shown.blocked).toBeNull();
+    expect(shown.plan.modes).toEqual([{ key: "counter_sales", from: "unset", to: "on" }]);
+
+    const done = await confirm(t, ticks);
+    expect(done.preset).toBeNull();
+    expect((await configRows(t)).map((r) => [r.featureKey, r.mode])).toEqual([
+      ["counter_sales", "on"],
+    ]);
+    expect(await overrideCount(t)).toBe(0);
+    const rows = await addonRows(t);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.active && !r.isComp && r.stripeItemId)).toBe(true);
+    expect(disable).not.toHaveBeenCalled();
+    expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+
+    // invoicing stays at delivery: the SHIP order does not bill at shipment (the model is still unset)
+    const order = await prisma.order.findFirstOrThrow({ where: { tenantId: t } });
+    expect(await billsAtShipment(modeReader(t), t, order)).toBe(false);
+    // and the card still says "not set up", now with Counter ticked
+    expect(await (controller as any).getBusinessCapabilities(t)).toMatchObject({
+      configured: false,
+      counter: true,
+      shipping: true,
+      delivery: true,
+    });
+  }, 60_000);
+
+  it("K-R2: the same holds with no fleet (Shipping only): Counter added, still no model row", async () => {
+    const t = await tenant("r2b", { inTransit: 1 });
+    const card = await (controller as any).getBusinessCapabilities(t);
+    expect(card).toMatchObject({ configured: false, delivery: false, shipping: true });
+    const ticks = { shipping: true, counter: true, opensAs: card.opensAs };
+    const shown = await preview(t, ticks);
+    expect(shown.blocked).toBeNull();
+    expect(shown.plan.modes).toEqual([{ key: "counter_sales", from: "unset", to: "on" }]);
+    await confirm(t, ticks);
+    expect((await configRows(t)).map((r) => [r.featureKey, r.mode])).toEqual([
+      ["counter_sales", "on"],
+    ]);
+  }, 60_000);
+
+  it("K-G1: unticking Delivery on that tenant is a real move to ship: still refused 409 with the order in transit, nothing written", async () => {
+    const t = await tenant("g1", { paidModules: MODULES, inTransit: 1 });
+    const disable = jest.spyOn(addons, "disableAddon");
+    spies.push(disable);
+    const ticks = { shipping: true, counter: true };
+
+    const shown = await preview(t, ticks);
+    expect(shown.blocked).toEqual({ code: "FULFILMENT_CARRIER_IN_TRANSIT", count: 1 });
+    expect(shown.plan.modes).toEqual(
+      expect.arrayContaining([{ key: "fulfilment_model", from: "unset", to: "pickup_ship" }]),
+    );
+    const res = await codeOf(
+      (controller as any).applyBusinessCapabilities(
+        t,
+        { ...ticks, planFingerprint: shown.planFingerprint },
+        admin,
+      ),
+    );
+    expect(res).toMatchObject({ code: "FULFILMENT_CARRIER_IN_TRANSIT", status: 409, count: 1 });
+    expect(await configRows(t)).toEqual([]);
+    expect(disable).not.toHaveBeenCalled();
+    expect((await addonRows(t)).every((r) => r.active)).toBe(true);
+  }, 60_000);
+
+  it("K-G2: unticking Shipping carries the model (unset -> delivery); it moves no billing moment, so it is allowed", async () => {
+    const t = await tenant("g2", { paidModules: MODULES, inTransit: 1 });
+    const shown = await preview(t, { delivery: true, doorPayments: true, counter: true });
+    expect(shown.blocked).toBeNull();
+    expect(shown.plan.modes).toEqual(
+      expect.arrayContaining([{ key: "fulfilment_model", from: "unset", to: "delivery" }]),
+    );
+  }, 60_000);
+
+  it("K-G4: the Feature Console PUT counter_sales on with SHIP in transit is allowed (200) on that tenant", async () => {
+    const t = await tenant("g4", { inTransit: 1 });
+    const res = await codeOf(
+      consoleController.setState(t, "counter_sales", { mode: "on", reason: "console" }, admin),
+    );
+    expect(res.code).toBe("ok");
+    expect((await configRows(t)).map((r) => [r.featureKey, r.mode])).toEqual([
+      ["counter_sales", "on"],
+    ]);
+  }, 60_000);
+
+  it("K-G5: a preset apply still moves the model: refused 409 with the order in transit, nothing written", async () => {
+    const t = await tenant("g5", { inTransit: 1 });
+    const res = await codeOf(
+      (controller as any).applyBusinessProfile(
+        t,
+        { profile: "shipping_wholesaler", planFingerprint: "not-checked-before-the-block" },
+        admin,
+      ),
+    );
+    expect(res).toMatchObject({ code: "FULFILMENT_CARRIER_IN_TRANSIT", status: 409 });
+    expect(await configRows(t)).toEqual([]);
   }, 60_000);
 });
