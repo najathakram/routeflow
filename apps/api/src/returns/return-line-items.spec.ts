@@ -148,11 +148,15 @@ describe("resolveLineItems (rule 4)", () => {
     expect(got?.type).toBe(ConflictException);
   });
 
-  it("G-r9: a legacy single-unit product (SA-161) takes qty in the line's unit, no pack, line key as provenance only", () => {
+  it("G-r9: a legacy single-unit product (SA-161) takes qty in the line's unit, no pack, and carries no line key (A-2: pooled)", () => {
     const legacy = { id: "L", productId: P, qty: 4, status: "ACTIVE" };
     const bases = new Map([[P, { unknown: true, reason: "no pack", singleUnit: true }]]) as any;
     const [r] = resolve([{ productId: P, orderItemId: "L", qty: 3 }], order(legacy), bases);
-    expect(r).toMatchObject({ lineUnit: true, qty: 3, pieces: null, orderItemId: "L" });
+    expect(r).toMatchObject({ lineUnit: true, qty: 3, pieces: null, orderItemId: null });
+    // the named line is still validated: a line that is not on the order is a 400, nothing resolved
+    expect(
+      codeOf(() => resolve([{ productId: P, orderItemId: "WRONG", qty: 3 }], order(legacy), bases)),
+    ).toMatchObject({ code: API_ERROR_CODES.RETURN_LINE_NOT_ON_ORDER });
     const split = codeOf(() =>
       resolve([{ productId: P, orderItemId: "L", boxes: 1 }], order(legacy), bases),
     );

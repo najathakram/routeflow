@@ -90,6 +90,8 @@ describe("CustomerInvoiceUnitControl", () => {
     renderWithProviders(<CustomerInvoiceUnitControl customerId="c1" value="LEGACY" />);
     fireEvent.change(select(), { target: { value: "PACK" } });
     mutate.mock.calls[0][1].onError(new Error("boom"));
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringMatching(/\S/) }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringMatching(/\S/) }),
+    );
   });
 });
