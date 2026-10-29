@@ -36,7 +36,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..");
@@ -273,11 +273,8 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Sum session-usage's own accounting over the transcript lines that belong to the PR. */
 export async function costFor(pr, { transcriptDir }) {
-  const su = await import(
-    pathToFileURL(
-      path.join(REPO_ROOT, ".claude", "skills", "model-routing", "scripts", "session-usage.mjs"),
-    ).href
-  );
+  // A literal specifier: scripts-live-target-guard.spec counts a computed import() as a possible DB client.
+  const su = await import("../.claude/skills/model-routing/scripts/session-usage.mjs");
   if (!transcriptDir || !existsSync(transcriptDir)) return null;
   const { table } = su.loadPriceTable({});
   const warnings = [];
