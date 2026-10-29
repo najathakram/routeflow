@@ -73,7 +73,7 @@ export function jestCommand(file, { root, jestBin, db = false }) {
 }
 
 /** Runs one test file under `root`: { status } (null = timeout/spawn error) or { skip: reason }. */
-function defaultRun(file, root) {
+export function defaultRun(file, root) {
   let c;
   if (/\.db\.spec\.ts$/.test(file)) {
     if (!process.env.DATABASE_URL) return { skip: "DATABASE_URL not set" };
@@ -88,10 +88,10 @@ function defaultRun(file, root) {
     encoding: "utf8",
     timeout: TIMEOUT_MS,
   });
-  return { status: r.error ? null : r.status };
+  return { status: r.error ? null : r.status, output: `${r.stdout}${r.stderr}` };
 }
 
-const gitIn = (cwd, args, input) =>
+export const gitIn = (cwd, args, input) =>
   spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", ...args], {
     cwd,
     encoding: "utf8",
@@ -108,7 +108,7 @@ export function restoreFix(wt, mb, paths) {
 }
 
 /** Dirs (relative to root) whose node_modules exist: the root and each workspace. */
-function nodeModulesDirs(root) {
+export function nodeModulesDirs(root) {
   const dirs = ["."];
   for (const g of ["apps", "packages"]) {
     if (existsSync(path.join(root, g)))
@@ -118,7 +118,7 @@ function nodeModulesDirs(root) {
 }
 
 /** Removes a junction/symlink itself (never its target); true when it is gone (only ENOENT counts). */
-function unlink(link) {
+export function unlink(link) {
   const gone = () => {
     try {
       lstatSync(link);
@@ -137,7 +137,8 @@ function unlink(link) {
 }
 
 /** Probes every test file of the branch; returns { branch, base, notFix?, results: [{ file, verdict, reason }] }. */
-const lockWorktree = (root, wt) => gitIn(root, ["worktree", "lock", "--reason", "rf-probe", wt]);
+export const lockWorktree = (root, wt) =>
+  gitIn(root, ["worktree", "lock", "--reason", "rf-probe", wt]);
 
 export async function runProbe({
   cwd,
