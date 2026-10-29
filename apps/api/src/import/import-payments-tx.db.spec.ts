@@ -22,6 +22,7 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -227,14 +228,7 @@ describeDb("#2262 import payments + Invoice row in one transaction (real Postgre
       );
       // ENTRY CONDITION (SA-E17), proven not timed: the import's per-row tx is BLOCKED on T2's
       // Invoice row lock (it pre-read the invoice as SENT, by number, before the lock).
-      for (let i = 0; i < 400 && !sawBlocked; i++) {
-        const { rows } = await t2.query(
-          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-          [pid],
-        );
-        sawBlocked = rows[0].n > 0;
-        if (!sawBlocked) await new Promise((r) => setTimeout(r, 25));
-      }
+      sawBlocked = await waitUntilBlockedBy(t2, pid, { timeoutMs: 10_000 });
       await t2.query(`UPDATE "Invoice" SET status = 'VOID' WHERE id = $1`, [inv.id]);
       await t2.query("COMMIT");
       result = await t1;
