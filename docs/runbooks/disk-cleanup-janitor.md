@@ -25,7 +25,8 @@ node scripts/janitor.mjs --paths drop-safe.txt --apply
 
 - `--worktrees-only` runs steps 1-3 and nothing else. A scoped run has no free-space target
   unless you pass `--target`, so a roomy disk does not stop it before the first tree.
-- `--paths <file>` (one worktree path per line, column 1; `#` comments allowed) acts **only** on the
+- `--paths <file>` (one worktree path per line, column 1; `#` comments allowed; a relative path is
+  read against the repo root, not the current directory) acts **only** on the
   listed trees. Every other tree, and every non-worktree step, is printed as report-only. It implies
   `--worktrees-only`. The file is meant to be the DROP-SAFE list from a review, not a guess.
 - A listed **detached** tree may go when ALL hold: HEAD is in `origin/master`, or is (or is behind)
@@ -34,10 +35,13 @@ node scripts/janitor.mjs --paths drop-safe.txt --apply
   (`node_modules`, build output, `.jest-cache`, `.turbo`, `.next` …); HEAD has not moved in 24 hours;
   no other tree links into it. Unlisted detached trees are never acted on.
 - A listed tree whose **index is missing or damaged, or has a stale `index.lock`** (untouched for 24
-  hours) may go when its HEAD is on origin or in master and has not moved in 24 hours. A fresh
+  hours) may go when its HEAD is on origin or in master and has not moved in 24 hours. With a stale
+  lock `git status` is still readable, so it must also be clean with no ignored files except caches
+  (checked at plan time and again at delete time). A fresh
   `index.lock` (a git command may be running) is always refused. At delete time HEAD must still be
   the HEAD the plan proved.
-- Every `--paths` removal is the junction unlink + rescan-to-0 (B817/B818), then a **plain**
+- A listed orphan dir or stray file is reported, never removed (its removal is a recursive delete).
+- Every `--worktrees-only` or `--paths` removal is the junction unlink + rescan-to-0 (B817/B818), then a **plain**
   `git worktree remove`. Never `--force`, never a recursive delete: a tree git refuses stays, and the
   run reports it as FAILED.
 

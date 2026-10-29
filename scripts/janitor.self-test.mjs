@@ -69,6 +69,7 @@ import {
   applyActions,
   scopePlan,
   removeWorktreePlain,
+  resolveListedPaths,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -2370,6 +2371,57 @@ t("execute: a broken-index removal skips the status re-check but refuses if HEAD
   assert.equal(execute(a, deps("abc")), "done");
   assert.deepEqual(calls, ["plain"]);
 });
+// Review fold (#3974, Opus FAIL): stale lock, plain everywhere, relative paths, orphans.
+t(
+  "execute: a stale-lock removal re-checks clean + ignored state at delete time, not only HEAD",
+  () => {
+    const a = wtAct(2, "worktree", "/w/a", {
+      plain: true,
+      brokenIndex: "stale-lock",
+      head: "abc",
+      strictIgnored: true,
+    });
+    const calls = [];
+    const out = execute(a, {
+      refuseDelete: () => null,
+      isDirty: () => false,
+      isDirtyAllowList: () => true, // an ignored .env appeared
+      headOf: () => "abc",
+      removeWorktreePlain: () => calls.push("plain"),
+      log: () => {},
+    });
+    assert.equal(out, "refused");
+    assert.deepEqual(calls, []);
+  },
+);
+t("worktrees-only: every whole-tree removal is plain, with or without --paths", () => {
+  const wts = scopePlan(fullPlan(), { worktreesOnly: true }).actions.filter(
+    (a) => a.kind === "worktree",
+  );
+  assert.equal(wts.length, 2);
+  assert.ok(wts.every((a) => a.plain === true));
+});
+t("paths: a relative --paths entry resolves against the repo root, not the cwd", () => {
+  const root = resolve("/repo-root");
+  const abs = resolve("/abs/c");
+  assert.deepEqual(resolveListedPaths(["wt/a", "../wt/b", abs], root), [
+    join(root, "wt", "a"),
+    resolve(root, "../wt/b"),
+    abs,
+  ]);
+});
+t("paths: a listed orphan dir or stray file is reported, never removed", () => {
+  const { actions, reported } = scopePlan(
+    [
+      { step: 3, kind: "orphan-dir", target: "/w/orphan" },
+      { step: 3, kind: "stray-file", target: "/w/x.log" },
+    ],
+    { paths: ["/w/orphan", "/w/x.log"] },
+  );
+  assert.deepEqual(actions, []);
+  assert.equal(reported.length, 2);
+  assert.ok(reported.every((r) => /never removes/.test(r.reason)));
+});
 
 // Real repos: a detached merged tree, its proofs, and the broken-index rule (all under --paths).
 {
@@ -2396,7 +2448,7 @@ t("execute: a broken-index removal skips the status re-check but refuses if HEAD
   try {
     execFileSync("git", ["init", "-q", "--bare", origin], { env: fixtureGitEnv() });
     execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
-    writeFileSync(join(main, ".gitignore"), "node_modules/\n*.local\n");
+    writeFileSync(join(main, ".gitignore"), "node_modules/\n*.local\n.env\n");
     writeFileSync(join(main, "a.txt"), "a");
     git(main, "add", ".gitignore", "a.txt");
     git(main, ...id, "commit", "-q", "-m", "base");
@@ -2498,6 +2550,29 @@ t("execute: a broken-index removal skips the status re-check but refuses if HEAD
       const a = removalFor(plan([locked]), locked);
       assert.ok(a, "expected a removal for the stale-lock tree");
       assert.equal(a.brokenIndex, "stale-lock");
+      assert.equal(
+        a.strictIgnored,
+        true,
+        "a stale-lock removal must re-check status at delete time",
+      );
+    });
+    t("broken index: a stale-lock tree holding a non-regenerable ignored file is refused", () => {
+      writeFileSync(join(locked, ".env"), "SECRET=1");
+      try {
+        const r = plan([locked]);
+        assert.equal(removalFor(r, locked), undefined);
+        assert.ok(r.skipped.some((x) => x.worktree === "lockd" && /ignored/.test(x.reason)));
+      } finally {
+        rmSync(join(locked, ".env"));
+      }
+    });
+    t("broken index: a stale-lock tree with an uncommitted change is refused", () => {
+      writeFileSync(join(locked, "a.txt"), "changed");
+      try {
+        assert.equal(removalFor(plan([locked]), locked), undefined);
+      } finally {
+        writeFileSync(join(locked, "a.txt"), "a");
+      }
     });
     t("paths: a listed path that is not a registered worktree is reported", () => {
       const r = plan([join(root, "nowhere")]);

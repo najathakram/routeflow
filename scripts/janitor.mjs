@@ -85,7 +85,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve, sep, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const PROTECTED_WORKTREE_NAMES = new Set(["rf-migrate", "rf-crm-cloud"]);
@@ -1273,19 +1273,28 @@ function brokenIndexVerdict(repoRoot, wt, idx, { nowMs, linkedFrom }) {
     };
   const lr = linkReason(linkedFrom);
   if (lr) return { reason: lr };
+  if (idx === "stale-lock") {
+    // A stale lock leaves `git status` readable, so it gets the same clean + ignored-path checks
+    // as a detached tree (an ignored .env is someone's data), and execute() re-runs them.
+    const bad = ignoredStateReason(allowListIgnoredState(wt.path));
+    if (bad) return { reason: `stale index.lock, ${bad}` };
+    return { action: { brokenIndex: idx, head, strictIgnored: true } };
+  }
   return { action: { brokenIndex: idx, head } };
+}
+
+/** Why an allow-list ignored state blocks removal, or null: unreadable/dirty, blockers or salvage. */
+function ignoredStateReason(ign) {
+  if (ign.dirty) return "uncommitted changes (or unreadable status)";
+  const kept = [...ign.blockers, ...ign.salvage];
+  if (kept.length === 0) return null;
+  return `non-regenerable ignored path(s): ${kept.slice(0, 5).join(", ")}${kept.length > 5 ? ` (+${kept.length - 5})` : ""}`;
 }
 
 /** A LISTED detached tree: clean, no non-regenerable ignored files, idle, nothing links in, and proven merged. */
 function detachedVerdict(repoRoot, wt, { nowMs, linkedFrom, prs, prTrees }) {
-  const ign = allowListIgnoredState(wt.path);
-  if (ign.dirty) return { reason: "uncommitted changes (or unreadable status)" };
-  const kept = [...ign.blockers, ...ign.salvage];
-  if (kept.length > 0) {
-    return {
-      reason: `non-regenerable ignored path(s): ${kept.slice(0, 5).join(", ")}${kept.length > 5 ? ` (+${kept.length - 5})` : ""}`,
-    };
-  }
+  const bad = ignoredStateReason(allowListIgnoredState(wt.path));
+  if (bad) return { reason: bad };
   if (isRecentlyActive(lastActivityMs(wt.path), nowMs))
     return { reason: `HEAD moved in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)` };
   const lr = linkReason(linkedFrom);
@@ -1695,13 +1704,13 @@ export function execute(a, deps = EXECUTE_DEPS) {
       }
     }
     const dirtyNow = a.allowListed || a.strictIgnored ? deps.isDirtyAllowList : deps.isDirty;
-    if (a.brokenIndex) {
-      // No status can be read from a broken index; the HEAD the plan proved must still be HEAD.
-      if (deps.headOf(a.worktreePath) !== a.head) {
-        deps.log(`   REFUSED, skipped: ${a.target} (HEAD moved since the plan was built)`);
-        return "refused";
-      }
-    } else if (a.worktreePath && dirtyNow(a.worktreePath)) {
+    // A broken index: the HEAD the plan proved must still be HEAD. A missing/damaged index has no
+    // status to re-read; a stale lock does (strictIgnored), so it is re-checked like any other tree.
+    if (a.brokenIndex && deps.headOf(a.worktreePath) !== a.head) {
+      deps.log(`   REFUSED, skipped: ${a.target} (HEAD moved since the plan was built)`);
+      return "refused";
+    }
+    if ((!a.brokenIndex || a.strictIgnored) && a.worktreePath && dirtyNow(a.worktreePath)) {
       deps.log(`   REFUSED, skipped: ${a.target} (worktree went dirty since the plan was built)`);
       return "refused";
     }
@@ -2041,6 +2050,11 @@ function gitReport(repoRoot, args) {
 
 export const WORKTREE_STEPS = new Set([1, 2, 3]);
 
+/** --paths entries: an absolute path stands; a relative one is the repo root's, never the cwd's. */
+export function resolveListedPaths(list, root) {
+  return list.map((p) => (isAbsolute(p) ? p : resolve(root, p)));
+}
+
 /**
  * Narrow a plan for --worktrees-only / --paths. Both keep steps 1-3 only. --paths also keeps ONLY
  * actions on listed trees, makes each whole-tree removal plain (never --force), and drops a listed
@@ -2060,9 +2074,10 @@ export function scopePlan(
     });
   const kept = [];
   for (const a of actions) {
-    if ((worktreesOnly || paths) && !WORKTREE_STEPS.has(a.step)) {
-      report(a, paths ? "--paths" : "--worktrees-only");
-    } else kept.push(a);
+    if (!worktreesOnly && !paths) kept.push(a);
+    else if (!WORKTREE_STEPS.has(a.step)) report(a, paths ? "--paths" : "--worktrees-only");
+    // Every scoped whole-tree removal is plain: never --force, never a recursive fallback.
+    else kept.push(a.kind === "worktree" ? { ...a, plain: true } : a);
   }
   if (!paths) return { actions: kept, reported };
   const isListed = (p) => !!p && paths.some((x) => samePath(p, x, caseInsensitive));
@@ -2074,8 +2089,11 @@ export function scopePlan(
   const out = [];
   for (const a of kept) {
     if (!isListed(a.worktreePath ?? a.target)) report(a, "not in --paths");
-    else if (a.kind === "node_modules" && removedTrees.has(a.worktreePath)) continue;
-    else out.push(a.kind === "worktree" ? { ...a, plain: true } : a);
+    else if (a.kind === "orphan-dir" || a.kind === "stray-file") {
+      // Its removal is a recursive delete (rmdir /s); --paths never does one.
+      report(a, "--paths never removes an orphan dir or stray file");
+    } else if (a.kind === "node_modules" && removedTrees.has(a.worktreePath)) continue;
+    else out.push(a);
   }
   return { actions: out, reported };
 }
@@ -2158,7 +2176,9 @@ function main() {
     console.error("janitor: --paths needs a file (one worktree path per line)");
     process.exit(2);
   }
-  const paths = pathsFile ? parseAllowList(readFileSync(pathsFile, "utf8")) : null;
+  const paths = pathsFile
+    ? resolveListedPaths(parseAllowList(readFileSync(pathsFile, "utf8")), repoRoot)
+    : null;
   const scoped = worktreesOnly || !!paths;
   // A scoped run is not a free-space run: no target unless one is given, so every eligible tree
   // is acted on (a 10 GB default would stop it before the first tree on a roomy disk).
