@@ -1,5 +1,7 @@
 # Model cards — Claude lineup for coding work
 
+> **Owner ruling 2026-10-15: the Fable model is not used.** Every Fable role below is held by Opus (generic alias `opus`, always the latest). Rows, prices and measurements of the retired Fable are kept only as history.
+
 Prices are Anthropic first-party API list prices per million tokens, from the `claude-api` skill's
 "Current Models" table (**cached 2026-06-24**). Refresh: invoke `/claude-api`, read that table, update
 here and in `dev-pipeline/pipeline.js → CFG.prices`, and bump both dates. Capability statements come from
@@ -8,17 +10,18 @@ from this owner's own runs.
 
 | Model             | Id                  | Context / max out | $ in / out per MTok | Cache read    |
 | ----------------- | ------------------- | ----------------- | ------------------- | ------------- |
-| Claude Fable 5.1  | `claude-fable-5-1`  | 1M / 128K         | 10 / 50             | 0.25          |
+| Claude Fable 5.1 (retired) | `claude-fable-5-1`  | 1M / 128K         | 10 / 50             | 0.25          |
 | Claude Opus 5     | `claude-opus-5`     | 1M / 128K         | 5 / 25              | ~10% of input |
 | Claude Opus 5.5   | `claude-opus-5-5`   | 1M / 128K         | 4 / 20              | 0.20          |
 | Claude Sonnet 5   | `claude-sonnet-5`   | 1M / 128K         | 2 / 10              | ~10% of input |
+| Claude Sonnet 5.5 | `claude-sonnet-5-5` | 1M / 128K         | 2 / 10              | 0.20          |
 | Claude Sonnet 4.6 | `claude-sonnet-4-6` | 1M                | 3 / 15              | ~10% of input |
 | Claude Haiku 4.5  | `claude-haiku-4-5`  | 200K              | 1 / 5               | ~10% of input |
 
-Ratios that matter: Fable = 2× Opus = 5× Sonnet 5 = 10× Haiku per token. Output (thinking included)
+Ratios that matter: retired Fable = 2× Opus = 5× Sonnet 5 = 10× Haiku per token. Output (thinking included)
 dominates agent cost, so effort — which sets thinking depth — moves the bill more than input hygiene.
 
-## Claude Fable 5.1
+## Claude Fable 5.1 — HISTORICAL (retired 2026-10-15)
 
 **Pros.** Anthropic's most capable widely released model. Largest gains on work _above_ what prior
 models handled: long-horizon autonomous coding (multi-file features, large refactors, debugging and code
@@ -47,11 +50,11 @@ every cheaper stage after it.
 
 ## Claude Opus 5
 
-**Pros.** The default model for agent workloads. On a saturated coding benchmark it matched Fable 5
+**Pros.** The default model for agent workloads. On a saturated coding benchmark it matched retired Fable 5
 (91.7% vs 91.3%) at about 60% of the cost. Thinking on by default (adaptive); all five effort levels;
 mid-conversation `role: "system"` messages (cache-preserving operator instructions); **fast mode** (beta)
-runs the same model at up to 2.5× output tokens per second for $10/$50 — Fable's price for Opus speed,
-main conversation only, not subagents. Half Fable's per-token price.
+runs the same model at up to 2.5× output tokens per second for $10/$50 — retired Fable's price for Opus speed,
+main conversation only, not subagents. Half retired Fable's per-token price.
 
 **Cons and traps.** Less headroom on the hardest tail of a workload. Long-horizon coding is a real
 effort trade: about 2 points lost at `medium` for half the cost, about 8 at `low` for a quarter.
@@ -59,7 +62,7 @@ Disabling thinking causes tool calls to leak into visible text — lower effort 
 own rate limit and toggling it invalidates the cache.
 
 **Use for.** Review lenses, refutation, judgment fixes, UI verification, build repair, red-gate audits,
-security review, and the fallback when Fable declines.
+security review, and the fallback when retired Fable declines.
 
 ## Claude Sonnet 5
 
@@ -104,7 +107,7 @@ tokenizer: token counts differ from the Opus 4.7+ family.
 ## Measured on this owner's runs
 
 - F14 (dev-pipeline, major, 2026-09-02): 91 agents, about 979k tokens; Gate & Review 255k, Fix 173k,
-  Implement 140k, Red gate 98k, Final pass 87k from one Fable agent, Author tests 83k, Verify 65k,
+  Implement 140k, Red gate 98k, Final pass 87k from one retired Fable agent, Author tests 83k, Verify 65k,
   Mutation 56k, Baseline 23k. About $22 of output at list prices.
 - F06: 35 refutation votes → 2 refutations at about 22% of the run's tokens; journal refute rates
   elsewhere 1–12% of votes.

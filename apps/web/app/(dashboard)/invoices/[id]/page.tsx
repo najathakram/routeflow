@@ -68,19 +68,29 @@ import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
 import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { editPaymentCap, resolveConfirmedAmounts } from "@routeflow/pricing";
+import {
+  editPaymentCap,
+  invoiceDisplayLines,
+  invoiceDisplayCategoryTax,
+  resolveConfirmedAmounts,
+} from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import type { LineComponentView } from "@routeflow/types";
+import {
+  InvoiceDisplayRows,
+  displayQtyText,
+  formatUnitPrice4,
+} from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
@@ -109,7 +119,7 @@ import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
@@ -964,21 +974,28 @@ function VoidConfirmModal({
 
 // ─── Write-off modal ──────────────────────────────────────────────────────────
 
+/** SA-1050: the usual reasons, one tap each. "Other" empties the text so the person writes their own. */
+const WRITE_OFF_REASONS = ["Customer closed", "Bankrupt", "Disputed", "Can't reach them"] as const;
+
 function WriteOffModal({
   isOpen,
   onClose,
   onConfirm,
   invoiceNumber,
+  amount,
   isPending,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
   invoiceNumber: string;
+  /** The balance still owed, already formatted: it is what the write-off takes off the books. */
+  amount: string;
   isPending: boolean;
 }) {
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState("");
+  const reasonRef = React.useRef<HTMLTextAreaElement>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -1022,9 +1039,48 @@ function WriteOffModal({
             be undone.
           </p>
         </div>
+        <p className="text-sm text-navy">
+          Amount written off:{" "}
+          <span data-testid="write-off-amount" className="money font-semibold">
+            {amount}
+          </span>
+        </p>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reason *</label>
+          <label
+            htmlFor="write-off-reason"
+            className="mb-1.5 block text-sm font-medium text-navy/80"
+          >
+            Reason *
+          </label>
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[...WRITE_OFF_REASONS, "Other"].map((label) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={reason === label}
+                onClick={() => {
+                  setError("");
+                  if (label === "Other") {
+                    setReason("");
+                    reasonRef.current?.focus();
+                  } else {
+                    setReason(label);
+                  }
+                }}
+                className={cn(
+                  "min-h-11 rounded-full border px-3 text-sm font-medium transition-colors",
+                  reason === label
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <textarea
+            id="write-off-reason"
+            ref={reasonRef}
             rows={3}
             placeholder="e.g. Customer declared bankruptcy, debt too old to collect…"
             value={reason}
@@ -1453,6 +1509,7 @@ export default function InvoiceDetailPage() {
   const uploadPaymentImage = useUploadPaymentImage();
   const getPaymentImageUrl = useGetPaymentImageUrl();
   const downloadPdf = useDownloadInvoicePdf();
+  const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
@@ -1727,20 +1784,7 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handlePrint = () => {
-    downloadPdf.mutate(
-      { id: invoice.id, variant: pdfVariant },
-      {
-        onSuccess: ({ blob }) => printPdfBlob(blob),
-        onError: () =>
-          toast({
-            title: "Failed to generate PDF",
-            description: "Please try again.",
-            variant: "error",
-          }),
-      },
-    );
-  };
+  const handlePrint = () => void printInvoice.print(invoice.id, { variant: pdfVariant });
 
   const handleReminder = () => {
     // Import sentinels count as "no email" — they aren't real inboxes.
@@ -2134,6 +2178,7 @@ export default function InvoiceDetailPage() {
               {invoice.invoiceNumber}
             </h1>
             <Badge status={status} />
+            {user?.role !== "CUSTOMER" && <ToCollectChip state={invoice.toCollect} />}
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
@@ -2234,7 +2279,7 @@ export default function InvoiceDetailPage() {
             variant="secondary"
             leftIcon={<Printer className="h-3.5 w-3.5" />}
             onClick={handlePrint}
-            loading={downloadPdf.isPending}
+            loading={printInvoice.printing}
           >
             Print
           </Button>
@@ -2326,12 +2371,6 @@ export default function InvoiceDetailPage() {
                       },
                     ]
                   : []),
-                {
-                  label: "Write off",
-                  onClick: () => setIsWriteOffOpen(true),
-                  danger: true,
-                  disabled: readOnlyGate.readOnly,
-                },
               ]}
             />
           )}
@@ -2389,6 +2428,19 @@ export default function InvoiceDetailPage() {
                 danger: true,
                 disabled: !canVoid || readOnlyGate.readOnly,
               },
+              // SA-1050: moved here from the Record payment dropdown (a loss is not a way to be paid). Offered on
+              // an open invoice; read-only keeps it in the menu but disabled, like the other writes. The server
+              // still refuses anything that is not an open invoice.
+              ...(canRecordPayment
+                ? [
+                    {
+                      label: "Write off",
+                      onClick: () => setIsWriteOffOpen(true),
+                      danger: true,
+                      disabled: readOnlyGate.readOnly,
+                    },
+                  ]
+                : []),
             ]}
           />
         </div>
@@ -2556,8 +2608,43 @@ export default function InvoiceDetailPage() {
                       );
                     }
                     const item = row.item;
-                    return (
-                      <tr key={item.id} className="hover:bg-surface-raised">
+                    // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
+                    const display = invoiceDisplayLines(
+                      {
+                        description: item.description,
+                        qty: Number(item.qty),
+                        boxes: item.boxes,
+                        pieces: item.pieces,
+                        unitsPerBox: item.unitsPerBox,
+                        unitLabel: item.unitLabel,
+                        unitPrice: Number(item.unitPrice),
+                        subtotal: Number(item.subtotal),
+                        categoryTax: invoiceDisplayCategoryTax(item),
+                      },
+                      (item.components ?? []).map((c) => ({
+                        componentProductId: c.componentProductId,
+                        name: c.name,
+                        qty: Number(c.qty),
+                        unitSku: c.unitSku,
+                        unitBarcode: c.unitBarcode,
+                        displayUnitPrice4:
+                          c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
+                        position: c.position,
+                      })),
+                      item.displayUnit,
+                    );
+                    const groupRow = (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-surface-raised"
+                        data-testid={
+                          display.layout === "components"
+                            ? `display-group-row-${item.id}`
+                            : display.layout === "pieces"
+                              ? `display-pieces-${item.id}`
+                              : undefined
+                        }
+                      >
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
@@ -2565,9 +2652,10 @@ export default function InvoiceDetailPage() {
                               {item.notes}
                             </p>
                           )}
-                          <ComponentSubLines
-                            components={(item as { components?: LineComponentView[] }).components}
-                          />
+                          {/* The component rows replace the "(included)" sub-lines in the components layout. */}
+                          {display.layout !== "components" && (
+                            <ComponentSubLines components={item.components} />
+                          )}
                           <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -2579,7 +2667,9 @@ export default function InvoiceDetailPage() {
                                 : undefined
                             }
                           >
-                            {invoiceLineQtyText(item)}
+                            {display.layout === "pieces"
+                              ? displayQtyText(display.qty, display.unitLabel)
+                              : invoiceLineQtyText(item)}
                           </span>
                           {/* BUY_N_GET_M: name the free units, or the reduced
                               subtotal reads as a pricing error. */}
@@ -2591,7 +2681,16 @@ export default function InvoiceDetailPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
-                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          {display.layout === "pieces" ? (
+                            <InvoiceLinePrice
+                              item={item}
+                              hideOriginal={hideOriginal}
+                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              noStrike
+                            />
+                          ) : (
+                            <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          )}
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later
@@ -2605,6 +2704,20 @@ export default function InvoiceDetailPage() {
                         <InvoiceLineAmount item={item} />
                       </tr>
                     );
+                    if (display.layout === "components") {
+                      return (
+                        <InvoiceDisplayRows
+                          key={item.id}
+                          lines={display}
+                          itemId={item.id}
+                          fmt={fmt}
+                          variant="staff"
+                        >
+                          {groupRow}
+                        </InvoiceDisplayRows>
+                      );
+                    }
+                    return groupRow;
                   })}
                 </tbody>
               </table>
@@ -3038,6 +3151,7 @@ export default function InvoiceDetailPage() {
         onClose={() => setIsWriteOffOpen(false)}
         onConfirm={handleWriteOff}
         invoiceNumber={invoice.invoiceNumber}
+        amount={fmt(balanceDue)}
         isPending={writeOffInvoice.isPending}
       />
 

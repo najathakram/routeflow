@@ -204,6 +204,7 @@ describe("InvoicesService — B763", () => {
         ["ord-1"],
         100,
         "CASH",
+        null,
       );
 
       expect(prisma.advancePayment.create).toHaveBeenCalledWith(

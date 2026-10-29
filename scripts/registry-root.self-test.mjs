@@ -54,6 +54,7 @@ const EXCLUDES = [":!*.md", ":!.claude/pipeline", ":!.claude/campaign"];
 const CONTRACT = ["scripts/lib/registry-root.mjs"];
 // Tests and fixtures build register paths on purpose.
 const FIXTURES = [
+  ".claude/hooks/stop.gate4.spec.mjs",
   ".claude/hooks/stop.gate5.spec.mjs",
   "apps/api/src/auth/google-oauth.service.spec.ts",
   "apps/api/src/common/campaign-check-freshness.spec.ts",
@@ -124,10 +125,11 @@ if (mod) {
   check("REGISTRY_MODE is tracked in B1-a", mod.REGISTRY_MODE === "tracked");
   check("REGISTRY_PUSH_RETRIES is 5", mod.REGISTRY_PUSH_RETRIES === 5);
   check("REGISTRY_GIT_TIMEOUT_MS is 20000", mod.REGISTRY_GIT_TIMEOUT_MS === 20000);
-  check("REGISTRY_LOCK_WAIT_MS is 240000", mod.REGISTRY_LOCK_WAIT_MS === 240000);
   check(
     "lock wait covers the worst-case transaction",
-    mod.REGISTRY_LOCK_WAIT_MS >= mod.REGISTRY_PUSH_RETRIES * 2 * mod.REGISTRY_GIT_TIMEOUT_MS,
+    mod.REGISTRY_LOCK_WAIT_MS >=
+      (mod.REGISTRY_PUSH_RETRIES + 1) * 2 * mod.REGISTRY_GIT_TIMEOUT_MS +
+        mod.REGISTRY_LOCK_SLACK_MS,
   );
 
   delete process.env.BUGS_ROOT;

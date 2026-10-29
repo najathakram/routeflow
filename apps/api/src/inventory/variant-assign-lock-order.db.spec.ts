@@ -7,7 +7,7 @@
  *   1. the EDITOR (a raw `pg` connection) plays the family price edit: it UPDATEs the family tier
  *      price, holding the FAMILY row F until COMMIT;
  *   2. the SERVICE starts assignToVariants [existing V, new W]; a barrier waits until Postgres
- *      reports it BLOCKED by the editor (`pg_blocking_pids`), so the interleaving is real, then
+ *      reports it BLOCKED by the editor (the blocked-wait helper), so the interleaving is real, then
  *      asserts the lock edges: exactly one blocked backend, waiting on F's tuple lock (pg_locks),
  *      while V can still be locked NOWAIT by a third connection (the service holds no V lock);
  *   3. only then does the editor propagate to V (what `propagateFamilyPrice` does next) and commit.
@@ -55,6 +55,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { captureRetriedStates } from "../common/testing/tx-retry-capture";
 import { isFirstWaiterOnEditorRow, pollUntil, LockRow } from "../common/testing/lock-edge";
+import { blockedPids, waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -120,23 +121,6 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
     await prisma?.$disconnect();
     await pool?.end();
   }, 120_000);
-
-  /** Polls until some backend is blocked by `blockerPid`; false if `done()` or the deadline comes first. */
-  async function waitUntilBlockedBy(blockerPid: number, done: () => boolean): Promise<boolean> {
-    // < 5 s: Prisma's interactive tx timeout is 5 s (race-probe harness rule).
-    const deadline = Date.now() + 4_000;
-    while (Date.now() < deadline && !done()) {
-      // eslint-disable-next-line no-await-in-loop
-      const { rows } = await pool.query(
-        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-        [blockerPid],
-      );
-      if (rows[0].n > 0) return true;
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    return false;
-  }
 
   const isDeadlock = (err: unknown) =>
     err !== undefined && (sqlState(err) === "40P01" || /deadlock/i.test(describeErr(err)));
@@ -227,15 +211,10 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
       })();
 
       // 2. lock-edge assert: the service must really be waiting on the editor
-      blocked = await waitUntilBlockedBy(pid, () => settled);
+      blocked = await waitUntilBlockedBy(pool, pid, { until: () => settled });
       if (blocked) {
         // count ALL backends the editor blocks (must be exactly the one assign backend)
-        blockedBackends = (
-          await pool.query(
-            "SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-            [pid],
-          )
-        ).rows[0].n;
+        blockedBackends = (await blockedPids(pool, { holderPid: pid })).length;
         // ... and it waits on the FAMILY row F. The editor has updated ONLY F so far, so a backend
         //     blocked by it is queued on F. Postgres queues a row-lock waiter as: it GRANTS itself
         //     the row's heavyweight tuple lock, then waits (not granted) on the holder's
@@ -243,16 +222,13 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
         //     (bounded, 25 ms) so scheduling jitter cannot flake the read.
         blockedOnFamily =
           (await pollUntil(async () => {
-            const { rows: waiters } = await pool.query(
-              "SELECT pid FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))",
-              [pid],
-            );
+            const waiters = await blockedPids(pool, { holderPid: pid });
             if (waiters.length !== 1) return undefined;
             const { rows } = await pool.query(
               `SELECT locktype, granted, relation::regclass::text AS relation,
                       transactionid::text AS transactionid
                  FROM pg_locks WHERE pid = $1`,
-              [waiters[0].pid],
+              [waiters[0]],
             );
             return isFirstWaiterOnEditorRow(rows as LockRow[], editorXid) ? true : undefined;
           })) === true;

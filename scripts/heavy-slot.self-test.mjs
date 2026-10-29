@@ -19,7 +19,7 @@ import {
 import os, { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-import { main as cliMain } from "./heavy-slot.mjs";
+import { afterRun, main as cliMain } from "./heavy-slot.mjs";
 import {
   DEFAULT_SLOTS,
   bareNpmReason,
@@ -1630,6 +1630,121 @@ check(
   );
   gates[1]();
   await Promise.all([V1, V2, DB, V3]);
+}
+
+{
+  // W-679 follow-up: a SUCCESSFUL `npm ci --ignore-scripts` leaves the tree without .husky/_, so the CLI then asks
+  // ensureGitHooks to copy the main checkout's hooks. Other commands never do; a failure only warns.
+  const calls = [];
+  const out = [];
+  const stub = (result) => (o) => (calls.push(o.cwd), result);
+  const run = (cmd, args, status, result = { ok: true, copied: true, message: "hooks copied" }) => {
+    calls.length = 0;
+    out.length = 0;
+    afterRun(cmd, args, status, {
+      ensure: stub(result),
+      cwd: "/w",
+      log: (m) => out.push(["log", m]),
+      warn: (m) => out.push(["warn", m]),
+    });
+    return [calls.length, out.map((x) => x[0])];
+  };
+  check(
+    "E1 npm ci --ignore-scripts that succeeded calls ensure and prints one line",
+    run("npm", ["ci", "--ignore-scripts"], 0),
+    [1, ["log"]],
+  );
+  check("E2 a non-install command does not call ensure", run("npm", ["run", "build"], 0), [0, []]);
+  check("E3 a failed install does not call ensure", run("npm", ["ci", "--ignore-scripts"], 1), [
+    0,
+    [],
+  ]);
+  check("E4 the shell-string form is recognised", run("npm ci --ignore-scripts", [], 0), [
+    1,
+    ["log"],
+  ]);
+  check(
+    "E5 an ensure failure warns and never throws",
+    run("npm", ["i", "--ignore-scripts"], 0, { ok: false, copied: false, message: "no hooks" }),
+    [1, ["warn"]],
+  );
+  let threw = false;
+  try {
+    afterRun("npm", ["ci"], 0, {
+      ensure: () => {
+        throw new Error("boom");
+      },
+      warn: () => {},
+    });
+  } catch {
+    threw = true;
+  }
+  check("E6 a throwing ensure is swallowed", threw, false);
+  check(
+    "E7 the sh -c 'npm ci --ignore-scripts' form is recognised",
+    run("sh", ["-c", "npm ci --ignore-scripts"], 0),
+    [1, ["log"]],
+  );
+  check(
+    "E8 sh -c with a non-install npm command, or no npm, does not call ensure",
+    [run("sh", ["-c", "npm run build && echo done"], 0), run("bash", ["-c", "echo done"], 0)],
+    [
+      [0, []],
+      [0, []],
+    ],
+  );
+  // E10 — the tree to ensure is the install's own (--prefix / -C), resolved against cwd, not cwd itself.
+  const target = (cmd, args) => (run(cmd, args, 0), calls[0]);
+  const R = (p) => path.resolve("/w", p);
+  check(
+    "E10 npm ci --prefix <other> ensures that tree; -C and --prefix= too; none means cwd",
+    [
+      target("npm", ["ci", "--ignore-scripts", "--prefix", "/other"]),
+      target("npm", ["--prefix=sub", "ci", "--ignore-scripts"]),
+      target("npm", ["ci", "--ignore-scripts", "-C", "up"]),
+      target("sh", ["-c", "npm ci --ignore-scripts --prefix /shell"]),
+      target("npm", ["ci", "--ignore-scripts"]),
+    ],
+    [R("/other"), R("sub"), R("up"), R("/shell"), "/w"],
+  );
+}
+
+{
+  // main() hands the finished job's argv and exit status to afterRun (the seam is its second argument).
+  const dir = mkTmp();
+  const saved = { ...process.env };
+  delete process.env.CI;
+  delete process.env.RF_HEAVY_SLOT;
+  delete process.env.RF_HEAVY_SLOT_TOKEN;
+  Object.assign(process.env, { RF_HEAVY_SLOT_DIR: dir, RF_HEAVY_SLOTS: "1" });
+  const seen = [];
+  const exits = [];
+  try {
+    for (const exit of [0, 3]) {
+      exits.push(
+        await cliMain(
+          ["run", "--label", "wire", "--", process.execPath, "-e", `process.exit(${exit})`],
+          {
+            after: (...a) => seen.push(a),
+          },
+        ),
+      );
+    }
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+  check(
+    "E9 main calls afterRun once per job with the command, its args and its exit status",
+    [exits, seen.map((a) => [a[0] === process.execPath, a[1][0], a[2]])],
+    [
+      [0, 3],
+      [
+        [true, "-e", 0],
+        [true, "-e", 3],
+      ],
+    ],
+  );
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
