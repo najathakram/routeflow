@@ -1,7 +1,7 @@
 # Discovery — why <feature / fix name>
 
 **Status:** `DRAFT` (DRAFT | APPROVED | IMPLEMENTED | CLOSED)
-**Stage:** S1 — Discovery (why) · **Author:** Fable 5 · **Date:** <YYYY-MM-DD>
+**Stage:** S1 — Discovery (why) · **Author:** Opus · **Date:** <YYYY-MM-DD>
 **Lives at:** `.claude/pipeline/<YYYY-MM-DD>-<slug>/discovery.md`
 **Next:** [spec.md](./spec.md) — do not start it until the STOP GATE at the bottom passes.
 

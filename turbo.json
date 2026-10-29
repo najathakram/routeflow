@@ -138,6 +138,11 @@
         // size-ratchet.spec.ts reads the mobile giants (edit-items.tsx, NewOrderScreen.tsx).
         "$TURBO_ROOT$/apps/mobile/app/**",
         "$TURBO_ROOT$/apps/mobile/components/**",
+        // no-hand-typed-open-invoice-statuses and no-hand-typed-enum-mirrors also scan these (SA-1049 F-10)
+        "$TURBO_ROOT$/apps/mobile/lib/**",
+        "$TURBO_ROOT$/apps/mobile/store/**",
+        "$TURBO_ROOT$/apps/mobile/hooks/**",
+        "$TURBO_ROOT$/packages/types/**",
         "$TURBO_ROOT$/apps/mobile/package.json",
         // no-single-schema-path.spec.ts (moved here from apps/api's plain `test` task)
         // walks all of these outside apps/api/src — same reasoning as the docs-truth /
