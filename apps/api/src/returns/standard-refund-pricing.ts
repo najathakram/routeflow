@@ -86,6 +86,22 @@ export function billedLinesOf(creditable: readonly CreditableInvoice[], productI
 }
 
 /**
+ * SA-1051: the invoice a refund's credit note is minted on: the LAST of `creditable` in the one fill order
+ * (`compareInvoiceFillOrder`) among the invoices the priced slices took qty from (`touched`, invoice ids). When nothing was
+ * priced (`touched` is empty or names no creditable invoice) it is the last creditable invoice in fill order, which is today's
+ * "latest" with the id tiebreak. A refund is one note, so a fill that spans invoices still mints on the last one it touched.
+ */
+export function refundSourceInvoice(
+  creditable: readonly Pick<CreditableInvoice, "id" | "createdAt">[],
+  touched: ReadonlySet<string>,
+): string {
+  const ordered = [...creditable].sort(compareInvoiceFillOrder);
+  if (ordered.length === 0) throw new Error("refundSourceInvoice: no creditable invoice");
+  const last = ordered.filter((inv) => inv.id != null && touched.has(inv.id)).pop();
+  return String((last ?? ordered[ordered.length - 1]).id);
+}
+
+/**
  * ONE product's returned qty, filled over its billed `lines` by `planProductRefund` (paid lines first, $0 lines last; it also
  * REFUSES, never clips, a qty the lines cannot absorb) and priced per invoice POOL (SA-970): a return item names only the
  * product, so on each invoice the filled qty is sliced over the product's lines there as one virtual line
