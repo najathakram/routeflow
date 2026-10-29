@@ -15,10 +15,13 @@ import {
  */
 export function BackorderTag({
   pieces,
+  soldPieces,
   unit,
   className,
 }: {
   pieces: number;
+  /** The line's stored base-piece qty: lets the tag say how much of it was in stock when sold (r5 N06). */
+  soldPieces?: number | null;
   unit?: BackorderUnit | null;
   className?: string;
 }) {
@@ -29,7 +32,7 @@ export function BackorderTag({
         title={`${backorderQtyText(pieces, unit)} sold past stock`}
         className="inline-flex shrink-0 whitespace-nowrap rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
       >
-        {backorderTagText(pieces, unit)}
+        {backorderTagText(pieces, unit, soldPieces)}
       </span>
       <span className="text-xs text-navy/70">{BACKORDER_HINT}</span>
     </div>
