@@ -22,11 +22,16 @@ import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
 import {
   FAST_VERIFY_BANNER,
+  REPO_WIDE_PINS,
+  SCRIPT_SPEC_PATTERN,
+  changedFilesSince,
   currentBranch,
   decideScope,
+  fastStampLine,
   isFastMode,
   loadWorkspaces,
   mergeBaseSha,
+  repoPinsNeeded,
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
@@ -148,9 +153,9 @@ export function excludedLine(excluded) {
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({ scope, excluded = [], splitJest, fast = false }) {
+export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, pins = null }) {
   const drop = new Set(excluded);
-  if (fast) return planFastCalls({ scope, drop, excluded });
+  if (fast) return withPins(planFastCalls({ scope, drop, excluded }), pins, drop);
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -231,6 +236,32 @@ function planFastCalls({ scope, drop, excluded }) {
       ? null
       : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
   };
+}
+
+/**
+ * FAST only: a diff that can break a repo-wide pin (`repoPinsNeeded`) appends ONE jest call, run from
+ * apps/api, over `REPO_WIDE_PINS` plus the whole `-script` set (`SCRIPT_SPEC_PATTERN`). `pins` falsy leaves
+ * the plan untouched; a failure here fails the push.
+ */
+function withPins(plan, pins, drop) {
+  if (!pins || drop.has("@routeflow/api")) return plan;
+  const files = [
+    ...REPO_WIDE_PINS.map((p) => p.file.replace(/^apps\/api\//, "")),
+    SCRIPT_SPEC_PATTERN,
+  ];
+  // "--" ends the array option: --testPathIgnorePatterns would otherwise swallow every file as one
+  // more ignore pattern and jest would run the whole api suite.
+  // --runInBand: these specs spawn real children and time out under parallel load (#2146, #2176), so
+  // the pin call is serialized the way jest.scripts.config.js (maxWorkers 1) runs the -script set.
+  // Every flag sits BEFORE "--": anything after it is a path pattern.
+  const argv = [
+    "jest",
+    "--testPathIgnorePatterns=/node_modules/",
+    "--runInBand",
+    "--",
+    ...new Set(files),
+  ];
+  return { ...plan, calls: [...plan.calls, { pins: true, cwd: "apps/api", argv }] };
 }
 
 /**
@@ -351,6 +382,40 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * spawn `npx turbo` and call `process.exit` inside the test process). Same pattern as
  * `scripts/janitor.mjs`.
  */
+/**
+ * FAST only: do the repo pins run, and what does the run print about it? Fails CLOSED: a diff that
+ * cannot be computed (`files` null) runs the pins rather than skipping them. VERIFY_EXCLUDE naming
+ * api drops the pins (they are api specs), with no line. `pins: null` means "plan none".
+ */
+export function planPins({ fast, files, excluded = [] }) {
+  if (!fast || excluded.includes("@routeflow/api")) return { pins: null, line: null };
+  if (files === null) {
+    return {
+      pins: true,
+      line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and the -script set run (fail closed).",
+    };
+  }
+  if (!repoPinsNeeded(files)) return { pins: null, line: null };
+  return {
+    pins: true,
+    line: `+ REPO PINS: this diff can break a repo-wide pin, so ${REPO_WIDE_PINS.length} pin specs and the -script set run too.`,
+  };
+}
+
+/** Runs every planned call in order (never short-circuits); the first non-zero status is the run's. */
+export async function executePlan(calls, runCall) {
+  const statuses = [];
+  for (const c of calls) statuses.push(await runCall(c));
+  return statuses.find((s) => s !== 0) ?? 0;
+}
+
+/** The last line of a fast run is the not-proof stamp; any other run prints nothing new. */
+export function finishRun({ fast, status, log = console.log }) {
+  const stamp = fastStampLine(fast);
+  if (stamp) log(stamp);
+  return status;
+}
+
 export async function main() {
   const defaults = chooseVerifyDefaults({
     totalMemBytes: totalmem(),
@@ -382,6 +447,18 @@ export async function main() {
       buildArgv(args, TURBO_FLAGS, jestPassthrough(JEST_MAX_WORKERS, changedSince)),
       { cwd: ROOT, stdio: "inherit", shell: process.platform === "win32" },
     );
+    return r.status ?? 1;
+  }
+
+  /** The repo-pin call: plain jest from apps/api, the same way the repo runs its specs by hand. */
+  async function pinJest(c) {
+    // No --maxWorkers here: the argv is already serialized (--runInBand), and a flag appended after
+    // the "--" separator would be read as a path pattern.
+    const r = await spawnAsync("npx", c.argv, {
+      cwd: join(ROOT, c.cwd),
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
     return r.status ?? 1;
   }
 
@@ -428,11 +505,18 @@ export async function main() {
   // the jest run and hide its results from one push's report — a single bundled invocation gives the
   // unsplit path that property by itself. With JEST_MAX_WORKERS set the calls are split so the
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
+  let pins = null;
+  if (runMode.fast) {
+    const planned = planPins({ fast: true, files: changedFilesSince(ROOT), excluded });
+    pins = planned.pins;
+    if (planned.line) console.log(planned.line);
+  }
   const plan = planTurboCalls({
     scope,
     excluded,
     splitJest: Boolean(JEST_MAX_WORKERS),
     fast: runMode.fast,
+    pins,
   });
   if (plan.note) console.log(plan.note);
   // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's
@@ -450,17 +534,17 @@ export async function main() {
   }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
-  const status = await withHeavySlot({ label: "verify" }, async () => {
-    const statuses = [];
-    for (const c of plan.calls)
-      statuses.push(
-        await (c.jest
-          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
-          : turbo(c.args)),
-      );
-    return statuses.find((s) => s !== 0) ?? 0;
-  });
-  process.exit(status);
+  const status = await withHeavySlot({ label: "verify" }, () =>
+    executePlan(plan.calls, (c) =>
+      c.jest
+        ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+        : c.pins
+          ? pinJest(c)
+          : turbo(c.args),
+    ),
+  );
+  // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
+  process.exit(finishRun({ fast: runMode.fast, status }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

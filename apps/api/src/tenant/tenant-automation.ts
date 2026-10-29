@@ -167,7 +167,9 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
   "billing-cron.warnTrialsEnding": PLATFORM("billing notification"),
   "billing-invoice.issueDue": PLATFORM("platform invoicing (RF_INVOICING_MODE)"),
   "billing-invoice.remind": PLATFORM("platform invoicing reminders"),
-  "billing.suspendOverdueTenants": PLATFORM("billing lifecycle: sets tenant status itself"),
+  "billing.reconcileCanceledSubscriptions": PLATFORM(
+    "billing lifecycle: sets tenant status itself",
+  ),
   "billing.reconcileParkedCheckouts": PLATFORM("billing reconciliation"),
   "billing.catchupSweep": PLATFORM("billing catch-up claims"),
   "billing.dunningSweep": PLATFORM("dunning"),

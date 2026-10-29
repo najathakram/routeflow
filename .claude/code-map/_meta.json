@@ -1,6 +1,6 @@
 {
-  "mappedSha": "be47146b372671db0cc18b9e042dba90c3ecb436",
-  "generatedAt": "2026-10-25T23:57:38.831Z",
+  "mappedSha": "b1a2fc3d17cbc2f5104f0f3d56dc6c48b4eb7212",
+  "generatedAt": "2026-10-26T05:18:55.034Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-25 — Bookkeeping for train 2 (#3764 `6970f9d73`, #3783 `d25cf5e64`, #3793 `f382e28c7`, #3796 `c30eb4a0f`; merge `be47146b3`, PR #3822; docs-only, Option B follow-up).** New `api/`, `web/` and `packages/landing-2026-10-25-train2.md` (TOC row in api.md and web.md; packages.md keeps a pointer). Covers the neutral coded 409 `PRODUCT_CHANGED_CONCURRENTLY` for product write races (row 519), `useOnTenantToday` and the browser-clock pin (SA-964 §4). No mobile area change (the only mobile file is the jest types mock). #3793 and #3796 are `scripts/lib/heavy-slot.mjs` and its runbook (macOS reclaimable memory, machine-wide slots file), outside the four mapped areas. mappedSha stamped to `be47146b3`. History: CHANGELOG.md."
+  "notes": "**2026-10-26 — Bookkeeping for train 4c (#3833 `be16a6b43`, #3821 `575bbdbb6`, #3813 `305c10bc9`, #3767 `8f154e10c`, #3844 `52245384f`, #3760 `4a96538fb`; merge `b1a2fc3d1`, PR #3852; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-26-train4c.md` (TOC row in api.md and web.md). Covers `order-sweep.ts` lift and size-ratchet baseline 5192, delivered line struck off on DELETE (rows 307, 516), restriction copy names the business reason (W-806), dvh app shells (364), pinned addon-gate review clock (W-958); #3760 (Mac visibility timer) is scripts/tools, outside the mapped areas. #3797 and #3845 were ejected from train 4 and are not landed. mappedSha stamped to `b1a2fc3d1`. History: CHANGELOG.md."
 }

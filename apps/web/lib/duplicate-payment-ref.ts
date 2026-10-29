@@ -1,4 +1,5 @@
 import {
+  API_ERROR_CODES,
   RECORD_ANYWAY_LABEL,
   canRecordAnyway,
   duplicatePaymentRefBody,
@@ -37,6 +38,14 @@ export function duplicatePaymentRefMessage(err: unknown): string | null {
     ? duplicatePaymentRefCopy(body.existingPayment, { date: formatDate, money: formatMoney })
     : null;
 }
+
+/**
+ * SA-1026 D: whether resending the SAME body to a not-recorded hand-over can ever pass. A duplicate reference is a
+ * deterministic refusal (the key is tenant + customer + method + reference + amount, with no time window), so a Retry of the
+ * same body can never record it; every other cause (a lock timeout, a register race) can, as before.
+ */
+export const retryCanHelp = (outcome: { paymentCauseCode?: string | null }): boolean =>
+  outcome.paymentCauseCode !== API_ERROR_CODES.DUPLICATE_PAYMENT_REF;
 
 /**
  * Show the refusal and, for staff, the "Record anyway" action. Returns true when `err` was this refusal (the caller

@@ -19,7 +19,7 @@
 //
 // ONLINE section (skipped with `WARN online: skipped (no PLANE_API_KEY)`
 // when unset): `GET projects/` for the five identifiers, the
-// `runs.jsonl`-vs-`.claude/campaign/status` "landing without sync" check, and
+// `runs.jsonl`-vs-register-`status` "landing without sync" check, and
 // — on master only — a drift check that spawns `plane-sync.mjs --check`
 // (report-only, still never a write). Budget: at most 3 GETs from this
 // script's OWN client (the drift check's spawned child has its own, separate
@@ -37,6 +37,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { registrySource } from "../lib/registry-root.mjs";
 import {
   appendRun,
   createClient,
@@ -349,7 +350,7 @@ function checkMember() {
 }
 
 // Compares the newest `plane-sync` line in runs.jsonl against the newest
-// commit touching `.claude/campaign/status` on the CURRENT branch — a
+// commit touching the register's `status/` on the CURRENT branch — a
 // registry landing with no sync run (or a sync run older than that landing)
 // means Gate 5 never actually reached Plane for it.
 function checkLandingWithoutSync() {
@@ -379,7 +380,7 @@ function checkLandingWithoutSync() {
   try {
     const res = spawnSync(
       "git",
-      ["log", "-1", "--format=%H%x1f%cI", "--", ".claude/campaign/status"],
+      ["log", "-1", "--format=%H%x1f%cI", "--", `${registrySource().prefix}/status`],
       { cwd: repoRoot(), env: gitEnv(), encoding: "utf8", timeout: PROBE_TIMEOUT_MS },
     );
     if (res && !res.error && res.status === 0 && res.stdout && res.stdout.trim()) {

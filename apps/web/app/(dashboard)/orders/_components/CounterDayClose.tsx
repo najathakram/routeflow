@@ -402,7 +402,7 @@ function DayCloseFormBody({
           testId="close-expected"
         />
         <p className="pt-1 text-xs text-navy/70" data-testid="close-not-at-till">
-          Unpaid pickups: {money(shownTotals.notAtTill)}
+          Paid outside the till: {money(shownTotals.notAtTill)}
         </p>
         {refunds.tenderKnown === false ? (
           <p className="text-xs text-navy/70" data-testid="close-tender-note">

@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { renderInvoiceStatus } from "./invoice-status-badge";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import { AccountStatusControls, type CustomerStatus } from "../_components/walk-in-protection";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
@@ -159,10 +161,12 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
+import { CustomerToCollectChip } from "./_components/CustomerToCollectChip";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
 import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-order-action";
 import { CustomerOversellOverride } from "./customer-oversell-override";
+import { CustomerInvoiceUnitControl } from "./CustomerInvoiceUnitControl";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -233,67 +237,6 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
     >
       {children}
     </Tabs.Trigger>
-  );
-}
-
-// ── Invoice status badge ──────────────────────────────────────────────────────
-
-function renderInvoiceStatus(status: string, dueDate?: string | null): React.ReactNode {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  if (status === "PAID") return <span className="text-xs font-semibold text-green-600">Paid</span>;
-  if (status === "VOID") return <span className="text-xs font-semibold text-gray-400">Void</span>;
-  if (status === "WRITTEN_OFF")
-    return <span className="text-xs font-semibold text-stone-500">Written off</span>;
-  if (status === "DRAFT") return <span className="text-xs font-semibold text-gray-500">Draft</span>;
-
-  if (dueDate) {
-    const due = new Date(dueDate);
-    due.setHours(0, 0, 0, 0);
-    const diffDays = Math.round((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (status === "OVERDUE" || diffDays < 0) {
-      const days = Math.abs(diffDays);
-      if (status === "PARTIAL")
-        return (
-          <span className="text-xs font-semibold text-orange-500">
-            Partial · Overdue{days > 0 ? ` by ${days}d` : ""}
-          </span>
-        );
-      return (
-        <span className="text-xs font-semibold text-red-600">
-          Overdue{days > 0 ? ` by ${days}d` : ""}
-        </span>
-      );
-    }
-    if (diffDays === 0) {
-      if (status === "PARTIAL")
-        return <span className="text-xs font-semibold text-yellow-600">Partial · Due today</span>;
-      return <span className="text-xs font-semibold text-orange-500">Due today</span>;
-    }
-    if (status === "PARTIAL")
-      return (
-        <span className="text-xs font-semibold text-yellow-600">Partial · Due in {diffDays}d</span>
-      );
-  }
-
-  const colors: Record<string, string> = {
-    SENT: "text-blue-600",
-    VIEWED: "text-purple-600",
-    PARTIAL: "text-yellow-600",
-    OVERDUE: "text-red-600",
-  };
-  const labels: Record<string, string> = {
-    SENT: "Sent",
-    VIEWED: "Viewed",
-    PARTIAL: "Partial",
-    OVERDUE: "Overdue",
-  };
-  return (
-    <span className={cn("text-xs font-semibold", colors[status] ?? "text-gray-500")}>
-      {labels[status] ?? status}
-    </span>
   );
 }
 
@@ -1159,6 +1102,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </p>
           )}
         </div>
+        <CustomerInvoiceUnitControl
+          customerId={customerId}
+          value={customer?.invoiceUnitDefault}
+          canEdit={isOperator}
+        />
 
         {/* Deposit — auto-applies to every invoice GENERATED for this customer
             (order flows); computeDepositFields derives the amount at read time,
@@ -1941,6 +1889,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 // `status` as a single enum value (a comma-list 400s) — so it is filtered client-side.
 
 function CustomerDetailPageInner({ id }: { id: string }) {
+  const tenantDay = useTenantToday(); // row 325: the business's own day (undefined until the zone is known)
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
@@ -2386,6 +2335,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 variant="neutral"
                 label={customer.customerType === "individual" ? "Individual" : "Business"}
               />
+              <CustomerToCollectChip customerId={id} summary={statement?.toCollect} />
             </div>
             <p className="mt-1 text-sm text-navy/70">
               {[
@@ -3731,7 +3681,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                             {fmt(balanceDue)}
                           </td>
                           <td className="px-6 py-3">
-                            {renderInvoiceStatus(inv.status, inv.dueDate)}
+                            {renderInvoiceStatus(inv.status, inv.dueDate, {
+                              isOverdue: inv.isOverdue,
+                              tenantDay,
+                            })}
                           </td>
                         </tr>
                       );

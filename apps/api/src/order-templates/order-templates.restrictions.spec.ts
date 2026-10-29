@@ -553,6 +553,31 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     });
   });
 
+  describe("Row 478: Order.source follows the author's channel, never a hard-coded APP", () => {
+    const source = () => prisma.order.create.mock.calls[0][0].data.source;
+
+    it("a STAFF manual run records PHONE (staff-authored lines, recorded)", async () => {
+      await service.generateOrder("t1", true);
+      expect(source()).toBe("PHONE");
+      expect(prisma.order.create.mock.calls[0][0].data.sourceRecorded).toBe(true);
+    });
+
+    it("a buyer's manual run (reorder) records APP", async () => {
+      await service.generateOrder("t1", false);
+      expect(source()).toBe("APP");
+    });
+
+    it("the unattended run of a staff-only template records PHONE", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "OPERATOR" }));
+      expect(source()).toBe("PHONE");
+    });
+
+    it("the unattended run records APP once a buyer edited the template, or the author is unknown", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "CUSTOMER" }));
+      expect(source()).toBe("APP");
+    });
+  });
+
   describe("provenance on create", () => {
     it("snapshots the creator's role and id; an internal caller leaves it NULL", async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: "c1" });

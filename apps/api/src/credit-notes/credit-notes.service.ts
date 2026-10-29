@@ -22,6 +22,7 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { autoApplyCandidateWhere, creditAutoApplyOnSend } from "./auto-apply-candidates";
+import { assertCreditCustomerNotWalkIn } from "./walk-in-credit-guard";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import {
   lockCreditNotes,
@@ -103,7 +104,9 @@ export class CreditNotesService {
       ledgerReversedByReturn?: boolean;
       // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
       // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
-      pooledRefund?: Array<{ productId: string; qty: number }>;
+      // SA-1042 A-2: one entry per return GROUP (a product, and its order line when the item names one), re-checked on the
+      // same lines the group was priced on.
+      pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
     } = {},
   ): Promise<
     Array<{
@@ -128,6 +131,7 @@ export class CreditNotesService {
         items: {
           select: {
             id: true,
+            orderItemId: true,
             productId: true,
             subtotal: true,
             qty: true,
@@ -185,7 +189,8 @@ export class CreditNotesService {
     }
     if (pool)
       for (const r of opts.pooledRefund ?? []) {
-        const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
+        const group = { productId: r.productId, orderItemId: r.orderItemId };
+        const refusal = pooledRefundRefusal(pool, group, r.qty);
         if (refusal)
           // `pooled`: the refund path maps ONLY this refusal (not the invoice-total cap) to its own 409 wording
           throw new BadRequestException({
@@ -384,6 +389,7 @@ export class CreditNotesService {
     creditNoteNumber: string,
     tenantId: string | null,
   ): Promise<any> {
+    await assertCreditCustomerNotWalkIn(tx, dto.customerId); // W-913: never credit on the walk-in account
     // REG-B267 / cause-ruling.md §2 D2 parity: refused before any write, same as create().
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
     if (!dto.amount || dto.amount <= 0)
@@ -485,6 +491,7 @@ export class CreditNotesService {
     tenantId: string | null,
     customer: unknown,
   ) {
+    await assertCreditCustomerNotWalkIn(tx, data.customerId); // W-913: create() and the reissue both land here
     const row = await tx.creditNote.create({
       data: {
         creditNoteNumber: data.creditNoteNumber,
@@ -533,7 +540,7 @@ export class CreditNotesService {
     },
     internal: {
       ledgerReversedByReturn?: boolean;
-      pooledRefund?: Array<{ productId: string; qty: number }>;
+      pooledRefund?: Array<{ productId: string; orderItemId: string | null; qty: number }>;
       /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
       returnId?: string;
     } = {},
@@ -575,6 +582,7 @@ export class CreditNotesService {
       select: { id: true, businessName: true },
     });
     if (!customer) throw new NotFoundException("Customer not found");
+    await assertCreditCustomerNotWalkIn(this.prisma.forTenant(), dto.customerId); // W-913: burn no number
 
     // REG-B267 / cause-ruling.md §2 D2: validate BEFORE reserving a number — a
     // standalone (non-tx) read of everything this create can be rejected for, so
