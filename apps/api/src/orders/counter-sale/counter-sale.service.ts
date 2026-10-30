@@ -179,7 +179,7 @@ export class CounterSaleService {
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
         // W-870: over the OPERATOR's denied groups, read live (PRICING switched off = no price change at the till);
-        // the till is live by an owner-ruled slice, so it does not go through the mode-aware office answer (SA-1034 r6).
+        // the till is live by an owner-ruled slice, so it does not go through the mode-aware office answer (SA-1034 r8).
         priceEditAllowed: mayEditPrice(user.role, await operatorDeniedGroups(this.prisma, user)),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn

@@ -123,7 +123,7 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
   });
 
   // The ONE exemption: price-edit-answer.ts's roleMayEditPrice, the role-only (shadow) answer of the office sites; they
-  // stay dark until the owner's perms flip (SA-1034 r6). Everything else reads the caller's groups.
+  // stay dark until the owner's perms flip (SA-1034 r8). Everything else reads the caller's groups.
   const DARK_OFFICE_PRICE_SITES = { "auth/permissions/price-edit-answer.ts": 1 };
   const emptyDenials = (a: string[]) => /^(\[\s*\]|undefined|null)$/.test(a[2] ?? "");
 
