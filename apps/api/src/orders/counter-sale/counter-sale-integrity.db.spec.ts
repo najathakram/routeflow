@@ -60,6 +60,7 @@ import type { CounterSaleDto } from "./counter-sale.dto";
 import { CounterSaleService } from "./counter-sale.service";
 import { CounterSaleVoidService } from "./counter-sale-void.service";
 import type { WalkInCustomerService } from "./walk-in-customer";
+import { TILL_ADMIN } from "../../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
@@ -950,7 +951,7 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
       const k2 = key();
       await ring(A, k2, { items: [{ productId: A.cola, qty: 1 }], payment: expectCheck });
       const inv2 = await invoiceOf(A, k2);
-      await tenantCtx.run(A.tenantId, () => invoices.voidInvoice(inv2.id));
+      await tenantCtx.run(A.tenantId, () => invoices.voidInvoice(inv2.id, TILL_ADMIN));
       const voided = await raw.invoice.findUniqueOrThrow({ where: { id: inv2.id } });
       expect(voided.status).toBe("VOID");
       expect(toCollectState(voided)).toBe("NONE");

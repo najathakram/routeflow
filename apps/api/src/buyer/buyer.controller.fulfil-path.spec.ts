@@ -138,7 +138,7 @@ describe("BuyerController.createOrder — fulfilPath passthrough (SA-655)", () =
     expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
       expect.objectContaining({
-        mergeAs: { audience: "buyer", role: "CUSTOMER", explicit: "SHIP" },
+        mergeAs: { audience: "buyer", role: "CUSTOMER", deniedGroups: [], explicit: "SHIP" },
       }),
     );
   });
@@ -147,7 +147,9 @@ describe("BuyerController.createOrder — fulfilPath passthrough (SA-655)", () =
     await controller.createOrder({ items } as any, MOCK_CTX as any);
     expect(ordersService.findActiveOrder).toHaveBeenCalledWith(
       MOCK_CTX.customerId,
-      expect.objectContaining({ mergeAs: { audience: "buyer", role: "CUSTOMER" } }),
+      expect.objectContaining({
+        mergeAs: { audience: "buyer", role: "CUSTOMER", deniedGroups: [] },
+      }),
     );
   });
 
@@ -155,7 +157,7 @@ describe("BuyerController.createOrder — fulfilPath passthrough (SA-655)", () =
     await controller.getActiveOrder(MOCK_CTX as any, "SHIP");
     expect(ordersService.findActiveOrder).toHaveBeenCalledWith(MOCK_CTX.customerId, {
       forMerge: true,
-      mergeAs: { audience: "buyer", role: "CUSTOMER", explicit: "SHIP" },
+      mergeAs: { audience: "buyer", role: "CUSTOMER", deniedGroups: [], explicit: "SHIP" },
     });
   });
 

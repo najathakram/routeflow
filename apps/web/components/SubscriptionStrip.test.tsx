@@ -99,8 +99,10 @@ describe("BillingShellBanner - the shell strip", () => {
     expect(screen.queryByTestId("subscription-strip")).toBeNull();
   });
 
-  it("day 6: amber, role=alert, NOT dismissible", async () => {
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(6)} userRole="TENANT_ADMIN" />);
+  it("final day (day 13 of the 14-day clock): amber, role=alert, NOT dismissible", async () => {
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={view(13)} userRole="TENANT_ADMIN" />,
+    );
     const strip = await screen.findByTestId("subscription-strip");
     expect(strip).toHaveAttribute("role", "alert");
     expect(strip.className).toMatch(/amber/);
@@ -173,7 +175,7 @@ describe("BillingShellBanner - the shell strip", () => {
   it("never says overdue / failed / suspended or offers a plan purchase (read-only names the reason: SA-776)", async () => {
     for (const [v, role] of [
       [view(2), "TENANT_ADMIN"],
-      [view(6), "OPERATOR"],
+      [view(13), "OPERATOR"],
     ] as const) {
       const { container, unmount } = renderWithProviders(<StripOnly view={v} userRole={role} />);
       await screen.findByTestId("subscription-strip");

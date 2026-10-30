@@ -817,9 +817,9 @@ export function useRecordPaymentStandalone() {
         },
         (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
       ),
-    // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
-    // own toast; the global one stays quiet for it so the failure is shown ONCE. Row 498: and for a duplicate reference.
-    meta: { localErrorToast: isRecordPaymentLocalRefusal },
+    // Rows 348 / 353: every caller (finance Payments, the customer Record Payment modal) renders EVERY failure in its own
+    // toast ("Failed to record payment" + the fixed reason), so the global one stays quiet for all of them: ONCE.
+    meta: { localErrorToast: true },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
