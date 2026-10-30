@@ -53,7 +53,12 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
-import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
+import {
+  loadDraftBaseLabels,
+  resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
+  writeIssueDisplayUnits,
+} from "../invoices/invoice-display-unit";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { counterPay } from "../invoices/counter-payment-guard";
 import {
@@ -234,6 +239,11 @@ export class BookkeepingService implements OnModuleInit {
             this.entitlements,
           )
         : null;
+    // SA-1029: the per-piece base words, read here too (flag-free, off-tx) for the same DRAFT -> issued flip
+    const words =
+      pre?.status === InvoiceStatus.DRAFT && pre.tenantId
+        ? await loadDraftBaseLabels(this.prisma.forTenant(), pre.tenantId, id)
+        : null;
     const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
       await counterPay.lock(tx, till);
@@ -334,6 +344,9 @@ export class BookkeepingService implements OnModuleInit {
 
       // SA-827: the DRAFT -> issued transition freezes the display unit (once; a SENT invoice never rewrites it).
       if (inv.status === InvoiceStatus.DRAFT && units) await writeIssueDisplayUnits(tx, id, units);
+      // SA-1029: the per-piece word freezes on every DRAFT -> issued flip, never gated on a pieces line (D-R2)
+      if (inv.status === InvoiceStatus.DRAFT)
+        await writeIssueBaseLabels(tx, id, inv.tenantId, words);
 
       // Commission hook: this ledger path creates a PAID payment directly —
       // the accrual's payable must move with the cash in the same tx.

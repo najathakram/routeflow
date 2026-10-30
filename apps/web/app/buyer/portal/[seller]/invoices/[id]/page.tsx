@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -15,8 +16,10 @@ import {
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
 import {
-  invoiceDisplayCategoryTax,
-  invoiceDisplayLines,
+  basePriceText,
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
+  invoiceLineQtyText,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -31,11 +34,7 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
-import {
-  InvoiceDisplayRows,
-  displayQtyText,
-  formatUnitPrice4,
-} from "@/components/InvoiceDisplayRows";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -215,6 +214,8 @@ export default function BuyerInvoiceDetailPage() {
       : null;
   const deposit = invoiceDepositFields(invoice);
 
+  const showPerPiece = showPerPieceColumn(invoice?.items);
+
   return (
     <div className="p-6 max-w-4xl">
       <button
@@ -351,6 +352,7 @@ export default function BuyerInvoiceDetailPage() {
               <th className="px-4 py-2.5 text-left">Description</th>
               <th className="px-4 py-2.5 text-right w-20">Qty</th>
               <th className="px-4 py-2.5 text-right w-28">Unit price</th>
+              {showPerPiece && <th className="px-4 py-2.5 text-right w-28">Per piece</th>}
               <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
             </tr>
           </thead>
@@ -358,30 +360,7 @@ export default function BuyerInvoiceDetailPage() {
             {(invoice.items ?? []).map((item) => {
               const msrp = itemMsrp(item);
               // SA-827: pieces / components layouts come from pricing; everything else is today's row.
-              const display = invoiceDisplayLines(
-                {
-                  description: item.description,
-                  qty: Number(item.qty),
-                  boxes: item.boxes,
-                  pieces: item.pieces,
-                  unitsPerBox: item.unitsPerBox,
-                  unitLabel: item.unitLabel,
-                  unitPrice: Number(item.unitPrice),
-                  subtotal: Number(item.subtotal),
-                  categoryTax: invoiceDisplayCategoryTax(item),
-                },
-                (item.components ?? []).map((c) => ({
-                  componentProductId: c.componentProductId,
-                  name: c.name,
-                  qty: Number(c.qty),
-                  unitSku: c.unitSku,
-                  unitBarcode: c.unitBarcode,
-                  displayUnitPrice4:
-                    c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
-                  position: c.position,
-                })),
-                item.displayUnit,
-              );
+              const display = invoiceItemDisplayLines(item);
               const groupRow = (
                 <tr
                   key={item.id}
@@ -412,7 +391,7 @@ export default function BuyerInvoiceDetailPage() {
                     <span className="text-right">
                       {display.layout === "pieces"
                         ? displayQtyText(display.qty, display.unitLabel)
-                        : Number(item.qty)}
+                        : invoiceLineQtyText(item)}
                       {/* BUY_N_GET_M: name the free units, or the reduced subtotal
                         reads as a pricing error. */}
                       {Number(item.promoFreeUnits ?? 0) > 0 && (
@@ -429,16 +408,32 @@ export default function BuyerInvoiceDetailPage() {
                   >
                     <span className="whitespace-nowrap text-right tabular-nums">
                       {display.layout === "pieces"
-                        ? formatUnitPrice4(display.unitPrice)
+                        ? basePriceText(display.unitPrice)
                         : fmt(Number(item.unitPrice))}
                       {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps
                         rendering it even if the seller later loses the MSRP addon. */}
                       {msrp != null && (
-                        <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                        <p className="mt-0.5 text-[10px] text-navy/50">
+                          MSRP {fmt(msrp)}/{baseUnitSuffix(item.perBaseUnit)}
+                        </p>
                       )}
                     </span>
                   </td>
+                  {showPerPiece &&
+                    (item.perBaseUnit && display.layout === "today" ? (
+                      <td
+                        data-testid={`invoice-line-per-piece-${item.id}`}
+                        data-label="Per piece"
+                        className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
+                      >
+                        <span className="whitespace-nowrap text-right tabular-nums">
+                          {formatPerBaseUnitPrice(item.perBaseUnit)}
+                        </span>
+                      </td>
+                    ) : (
+                      <td className="hidden sm:table-cell" />
+                    ))}
                   <td
                     data-testid={`invoice-line-subtotal-${item.id}`}
                     data-label="Subtotal"
@@ -458,6 +453,7 @@ export default function BuyerInvoiceDetailPage() {
                     itemId={item.id}
                     fmt={fmt}
                     variant="buyer"
+                    perPieceCol={showPerPiece}
                   >
                     {groupRow}
                   </InvoiceDisplayRows>

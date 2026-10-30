@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import Link from "next/link";
 import {
@@ -76,9 +77,10 @@ import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  basePriceText,
   editPaymentCap,
-  invoiceDisplayLines,
-  invoiceDisplayCategoryTax,
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
@@ -86,11 +88,7 @@ import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import {
-  InvoiceDisplayRows,
-  displayQtyText,
-  formatUnitPrice4,
-} from "@/components/InvoiceDisplayRows";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
@@ -1597,6 +1595,8 @@ export default function InvoiceDetailPage() {
   );
   // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
   const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
+  // SA-1029: the Per piece column shows only when a today-layout line has a per-piece price.
+  const showPerPiece = showPerPieceColumn(invoice?.items);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -2590,6 +2590,9 @@ export default function InvoiceDetailPage() {
                     <th className="eyebrow-label px-8 py-2.5 text-left">Item</th>
                     <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
                     <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+                    {showPerPiece && (
+                      <th className="eyebrow-label px-4 py-2.5 text-right">Per piece</th>
+                    )}
                     <th className="eyebrow-label px-8 py-2.5 text-right">Amount</th>
                   </tr>
                 </thead>
@@ -2599,7 +2602,7 @@ export default function InvoiceDetailPage() {
                       return (
                         <tr key={`section-${row.label}`} className="bg-amber-50/40">
                           <td
-                            colSpan={4}
+                            colSpan={showPerPiece ? 5 : 4}
                             className="px-8 py-2 text-[11px] font-semibold uppercase tracking-wider text-amber-700"
                           >
                             {row.label} · regulated
@@ -2609,30 +2612,7 @@ export default function InvoiceDetailPage() {
                     }
                     const item = row.item;
                     // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
-                    const display = invoiceDisplayLines(
-                      {
-                        description: item.description,
-                        qty: Number(item.qty),
-                        boxes: item.boxes,
-                        pieces: item.pieces,
-                        unitsPerBox: item.unitsPerBox,
-                        unitLabel: item.unitLabel,
-                        unitPrice: Number(item.unitPrice),
-                        subtotal: Number(item.subtotal),
-                        categoryTax: invoiceDisplayCategoryTax(item),
-                      },
-                      (item.components ?? []).map((c) => ({
-                        componentProductId: c.componentProductId,
-                        name: c.name,
-                        qty: Number(c.qty),
-                        unitSku: c.unitSku,
-                        unitBarcode: c.unitBarcode,
-                        displayUnitPrice4:
-                          c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
-                        position: c.position,
-                      })),
-                      item.displayUnit,
-                    );
+                    const display = invoiceItemDisplayLines(item);
                     const groupRow = (
                       <tr
                         key={item.id}
@@ -2685,7 +2665,7 @@ export default function InvoiceDetailPage() {
                             <InvoiceLinePrice
                               item={item}
                               hideOriginal={hideOriginal}
-                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              chargedText={basePriceText(display.unitPrice)}
                               noStrike
                             />
                           ) : (
@@ -2697,10 +2677,17 @@ export default function InvoiceDetailPage() {
                               loses the MSRP addon. */}
                           {item.msrp != null && (
                             <p className="mt-0.5 text-[10px] text-navy/50">
-                              MSRP {fmt(Number(item.msrp))}/pc
+                              MSRP {fmt(Number(item.msrp))}/{baseUnitSuffix(item.perBaseUnit)}
                             </p>
                           )}
                         </td>
+                        {showPerPiece && (
+                          <td className="mono px-4 py-3 text-right text-navy/70">
+                            {item.perBaseUnit && display.layout === "today"
+                              ? formatPerBaseUnitPrice(item.perBaseUnit)
+                              : null}
+                          </td>
+                        )}
                         <InvoiceLineAmount item={item} />
                       </tr>
                     );
@@ -2712,6 +2699,7 @@ export default function InvoiceDetailPage() {
                           itemId={item.id}
                           fmt={fmt}
                           variant="staff"
+                          perPieceCol={showPerPiece}
                         >
                           {groupRow}
                         </InvoiceDisplayRows>

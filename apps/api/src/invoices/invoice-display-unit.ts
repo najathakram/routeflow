@@ -1,10 +1,13 @@
 import { Logger } from "@nestjs/common";
 import {
+  baseLabelOf,
   buildLadderView,
   customerTierFor,
   displayUnitForItem,
   displayUnitSnapshotOf,
   invoiceDisplayUnitFor,
+  perBaseUnitPrice,
+  type PerBaseUnitPrice,
   INVOICE_UNIT_SETTING_KEY,
   type LadderViewUnit,
 } from "@routeflow/pricing";
@@ -385,7 +388,59 @@ export async function resolveDraftIssueUnits(
     : null;
 }
 
-/** `invoice.items` with `displayUnit`: a DRAFT resolves live, an issued invoice reads its snapshot (no catalog query). */
+/** The pack-line fields the per-piece price reads (SA-1029). */
+type PerPieceLine = {
+  id: string;
+  productId: string | null;
+  baseLabel?: string | null;
+  unitPrice?: unknown;
+  unitsPerBox?: number | null;
+  compositionMode?: string | null;
+  systemKind?: string | null;
+};
+
+/** Live product base labels for the lines that have not frozen one; a failed read gives none (the unit word falls to "pc"). */
+async function liveBaseLabels(readDb: any, tenantId: string | null, items: PerPieceLine[]) {
+  const ids = [
+    ...new Set(items.filter((i) => !i.baseLabel && i.productId).map((i) => i.productId!)),
+  ];
+  const out = new Map<string, string | null>();
+  if (!tenantId || !ids.length || !readDb?.product?.findMany) return out;
+  try {
+    const rows: Array<{ id: string; baseUnitLabel: string | null }> = await readDb.product.findMany(
+      {
+        where: { tenantId, id: { in: ids } },
+        select: { id: true, baseUnitLabel: true },
+      },
+    );
+    for (const r of rows ?? []) out.set(r.id, r.baseUnitLabel ?? null);
+  } catch (err) {
+    log.warn(`base label read skipped: ${(err as Error)?.message}`);
+  }
+  return out;
+}
+
+/**
+ * SA-1029: `perBaseUnit` for each line, `line.baseLabel ?? product.baseUnitLabel` for the unit word. Display only; null for a
+ * line that is not a plain pack line. Only a line with no frozen label costs a (batched) product read.
+ */
+export async function withPerBaseUnit<I extends PerPieceLine>(
+  readDb: any,
+  tenantId: string | null,
+  items: I[],
+): Promise<Array<I & { perBaseUnit: PerBaseUnitPrice | null }>> {
+  const packs = items.filter((i) => (i.unitsPerBox ?? 0) > 1);
+  const live = packs.length ? await liveBaseLabels(readDb, tenantId, packs) : new Map();
+  return items.map((i) => ({
+    ...i,
+    perBaseUnit: perBaseUnitPrice(
+      i as never,
+      i.baseLabel ?? (i.productId ? (live.get(i.productId) ?? null) : null),
+    ),
+  }));
+}
+
+/** `invoice.items` with `displayUnit` (and `perBaseUnit`): a DRAFT resolves live, an issued invoice reads its snapshot. */
 export async function itemsWithDisplayUnits<
   I extends {
     id: string;
@@ -397,20 +452,71 @@ export async function itemsWithDisplayUnits<
   readDb: any,
   invoice: { status: string; tenantId: string | null; customerId: string; items: I[] },
   entitlements?: DisplayUnitEntitlements | null,
-): Promise<Array<I & { displayUnit: InvoiceDisplayUnitView }>> {
+): Promise<
+  Array<I & { displayUnit: InvoiceDisplayUnitView; perBaseUnit: PerBaseUnitPrice | null }>
+> {
   const live =
     invoice.status === "DRAFT"
       ? await resolveLiveDisplayUnits(readDb, invoice.tenantId, invoice, entitlements)
       : null;
-  return withItemDisplayUnits<I, { status: string; items: I[] }>(
+  const withUnits = withItemDisplayUnits<I, { status: string; items: I[] }>(
     { status: invoice.status, items: withComponentViews(invoice.items as any) as unknown as I[] },
     live,
   ).items;
+  return withPerBaseUnit(
+    readDb,
+    invoice.tenantId,
+    withUnits as Array<(typeof withUnits)[number] & PerPieceLine>,
+  );
+}
+
+/**
+ * SA-1029 A-1: each product's base word, read BEFORE the tx (SA-967). A failed read gives null: nothing freezes, the line
+ * reads live, warn. No plan flag gates it, unlike the display-unit catalog (null with the flag off). The stored word is
+ * `baseLabelOf(row)`, so an unlabelled product freezes "Piece".
+ */
+export async function loadIssueBaseLabels(
+  readDb: any,
+  tenantId: string,
+  productIds: ReadonlyArray<string>,
+): Promise<ReadonlyMap<string, string> | null> {
+  const ids = [...new Set(productIds.filter((p) => !!p))];
+  if (!tenantId || !ids.length) return ids.length ? null : new Map();
+  try {
+    const rows: Array<{ id: string; baseUnitLabel: string | null }> = await readDb.product.findMany(
+      { where: { tenantId, id: { in: ids } }, select: { id: true, baseUnitLabel: true } },
+    );
+    return new Map((rows ?? []).map((r) => [r.id, baseLabelOf(r)] as const));
+  } catch (err) {
+    log.warn(`base label read skipped: ${(err as Error)?.message}`);
+    return null;
+  }
+}
+
+/** {@link loadIssueBaseLabels} for an existing draft: the products of its own not-yet-frozen lines, else null. */
+export async function loadDraftBaseLabels(
+  readDb: any,
+  tenantId: string | null | undefined,
+  invoiceId: string,
+): Promise<ReadonlyMap<string, string> | null> {
+  if (!tenantId || typeof invoiceId !== "string" || !invoiceId) return null;
+  try {
+    const rows: Array<{ productId: string | null }> = await readDb.invoiceItem.findMany({
+      where: { invoiceId, baseLabel: null, productId: { not: null }, invoice: { tenantId } },
+      select: { productId: true },
+    });
+    const ids = (rows ?? []).map((r) => r.productId).filter((p): p is string => !!p);
+    return ids.length ? await loadIssueBaseLabels(readDb, tenantId, ids) : null;
+  } catch (err) {
+    log.warn(`base label read skipped for invoice ${invoiceId}: ${(err as Error)?.message}`);
+    return null;
+  }
 }
 
 /**
  * At a DRAFT -> issued transition: resolve (invoice's own rows through `tx`, catalog through `readDb`) and freeze the
- * display units in `tx`. No tenant, nothing to do. For the inline flip `readDb` and `tx` are the same non-tx client.
+ * display units in `tx`, then the base words (read through `readDb`, SA-1029). For the inline flip `readDb` and `tx` are the
+ * same non-tx client. No tenant, nothing to do.
  */
 export async function freezeDraftIssueUnits(
   readDb: any,
@@ -421,6 +527,12 @@ export async function freezeDraftIssueUnits(
   if (!inv.tenantId) return;
   const units = await resolveIssueDisplayUnits(readDb, inv.tenantId, inv.id, entitlements, tx);
   await writeIssueDisplayUnits(tx, inv.id, units);
+  await writeIssueBaseLabels(
+    tx,
+    inv.id,
+    inv.tenantId,
+    await loadDraftBaseLabels(readDb, inv.tenantId, inv.id),
+  );
 }
 
 /**
@@ -439,17 +551,43 @@ export async function loadStopDisplayUnitCatalog(
   if (!tenantId || !stop.customerId || stop.orders.length === 0) return null;
   try {
     const db = prisma.forTenant();
-    const rows: Array<{ productId: string | null }> = await db.orderItem.findMany({
-      where: { orderId: { in: stop.orders.map((o) => o.id) }, order: { tenantId } },
-      select: { productId: true },
-    });
-    const productIds = [
-      ...new Set((rows ?? []).map((r) => r.productId).filter((p): p is string => !!p)),
-    ];
+    const productIds = await stopProductIds(db, tenantId, stop);
     if (productIds.length === 0) return null;
     return await loadDisplayUnitCatalog(db, tenantId, stop.customerId, productIds, entitlements);
   } catch (err) {
     log.warn(`stop display unit catalog load skipped: ${(err as Error)?.message}`);
+    return null;
+  }
+}
+
+/** The product ids on a stop's orders (the one read the catalog and the base-word loads share). */
+async function stopProductIds(
+  db: any,
+  tenantId: string,
+  stop: { orders: ReadonlyArray<{ id: string }> },
+): Promise<string[]> {
+  const rows: Array<{ productId: string | null }> = await db.orderItem.findMany({
+    where: { orderId: { in: stop.orders.map((o) => o.id) }, order: { tenantId } },
+    select: { productId: true },
+  });
+  return [...new Set((rows ?? []).map((r) => r.productId).filter((p): p is string => !!p))];
+}
+
+/**
+ * SA-1029 A-1: the delivery path's base words, loaded on a non-tx client BEFORE the tx (the invoice lines are created inside
+ * it, from these same orders). No plan flag gates it. No tenant or no orders, or a failed read, gives null: nothing freezes.
+ */
+export async function loadStopBaseLabels(
+  prisma: { forTenant(): any; getTenantId(): string | null | undefined },
+  stop: { orders: ReadonlyArray<{ id: string }> },
+): Promise<ReadonlyMap<string, string> | null> {
+  const tenantId = prisma.getTenantId();
+  if (!tenantId || stop.orders.length === 0) return null;
+  try {
+    const db = prisma.forTenant();
+    return await loadIssueBaseLabels(db, tenantId, await stopProductIds(db, tenantId, stop));
+  } catch (err) {
+    log.warn(`stop base label load skipped: ${(err as Error)?.message}`);
     return null;
   }
 }
@@ -553,15 +691,58 @@ export async function writeIssueDisplayUnits(
 }
 
 /**
- * On a revert to DRAFT: clear the snapshot of that invoice's lines (both columns to null). A DRAFT renders live (SA-827
- * rule 5), so a re-issue snapshots afresh. The data holds ONLY the two display columns.
+ * SA-1029: at the DRAFT -> issued transition, freeze the product base word of EVERY line with a productId into
+ * InvoiceItem.baseLabel, one updateMany per distinct label. The words come from `labels`, loaded BEFORE the tx
+ * ({@link loadIssueBaseLabels}); the writer names no product and reads only the invoice's own rows through `tx`. A product
+ * missing from the map is written nothing, with a warn (the line reads live); a null map writes nothing.
+ */
+export async function writeIssueBaseLabels(
+  tx: any,
+  invoiceId: string,
+  tenantId: string | null,
+  labels: ReadonlyMap<string, string> | null,
+): Promise<void> {
+  if (typeof invoiceId !== "string" || !invoiceId || !tenantId || !labels) return;
+  await underSavepoint(tx, invoiceId, async () => {
+    const rows: Array<{ id: string; productId: string | null }> = await tx.invoiceItem.findMany({
+      where: { invoiceId, baseLabel: null, productId: { not: null }, invoice: { tenantId } },
+      select: { id: true, productId: true },
+    });
+    const byLabel = new Map<string, string[]>();
+    let missing = 0;
+    for (const r of rows ?? []) {
+      const label = r.productId ? labels.get(r.productId) : undefined;
+      if (!label) {
+        missing += 1;
+        continue;
+      }
+      byLabel.set(label, [...(byLabel.get(label) ?? []), r.id]);
+    }
+    if (missing > 0) {
+      log.warn(
+        `base label map lacks ${missing} line(s) of invoice ${invoiceId}: those lines read live`,
+      );
+    }
+    for (const [label, ids] of byLabel) {
+      await tx.invoiceItem.updateMany({
+        where: { id: { in: ids }, invoiceId, baseLabel: null },
+        data: { baseLabel: label },
+      });
+    }
+  });
+}
+
+/**
+ * On EVERY revert to DRAFT: clear the issue-time snapshot of that invoice's lines (invoiceUnitLabel, invoiceUnitFactor and
+ * the SA-1029 baseLabel, all to null). A DRAFT renders live (SA-827 rule 5), so a re-issue snapshots afresh. The data holds
+ * ONLY those three display columns.
  */
 export async function clearIssueDisplayUnits(tx: any, invoiceId: string): Promise<void> {
   if (typeof invoiceId !== "string" || !invoiceId) return;
   await underSavepoint(tx, invoiceId, async () => {
     await tx.invoiceItem.updateMany({
       where: { invoiceId },
-      data: { invoiceUnitLabel: null, invoiceUnitFactor: null },
+      data: { invoiceUnitLabel: null, invoiceUnitFactor: null, baseLabel: null },
     });
   });
 }
