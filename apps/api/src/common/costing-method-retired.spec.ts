@@ -73,6 +73,8 @@ const VALIDATED = new Set([
 /** Files with a `costingMethod:` site that does NOT write a product or tenant costing method. */
 const READ_ONLY: Record<string, string> = {
   "common/invoiced-sales.ts": "builds the cost facts object from a product row it just read",
+  "inventory/stock-movements.ts":
+    "reads the locked product row's costing method to pick the average fold; writes only the counter and average",
 };
 
 describe("retired costing methods FIFO / LIFO (SA-804 (1), B1232)", () => {

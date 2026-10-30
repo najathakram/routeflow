@@ -19,7 +19,7 @@ import type {
   RouteRunStatusValue,
 } from "./enums";
 import type { LineComponentView } from "./orders";
-import type { InvoiceDisplayUnitView } from "./invoices";
+import type { InvoiceDisplayUnitView, PerBaseUnit } from "./invoices";
 import type { DecimalWire } from "./decimal";
 
 export interface LockedCategory {
@@ -383,6 +383,8 @@ export interface BuyerOrder extends BuyerOrderListItem {
   invoices: Array<{ id: string; invoiceNumber: string; status: InvoiceStatus; total: DecimalWire }>;
   /** P5-09: post-dispatch change requests, newest first. */
   changeRequests: ChangeRequest[];
+  /** Row 380: the latest edit revision; a buyer edit sends it back as `expectedRevisionNumber`. */
+  revisionNumber?: number;
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
@@ -466,6 +468,8 @@ export interface BuyerInvoiceItem {
   components?: LineComponentView[] | null;
   /** SA-827: how this line reads (pieces view or today's layout). */
   displayUnit?: InvoiceDisplayUnitView | null;
+  /** SA-1029: price per base piece beside a pack line (display only); null = no per-piece cell. */
+  perBaseUnit?: PerBaseUnit | null;
 }
 
 /** A payment row on GET /buyer/invoices/:id (newest first). `creditNote` is set when

@@ -369,8 +369,8 @@ export default function EstimateDetailPage() {
             </div>
 
             {/* Line items */}
-            <div className="-mx-6 overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="-mx-6 overflow-x-auto">
+              <table className="min-w-[480px] w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
                     <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">

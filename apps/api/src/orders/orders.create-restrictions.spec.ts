@@ -48,6 +48,9 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { Prisma } from "@prisma/client";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const customerPayload = {
   sub: "user-cust",
@@ -74,6 +77,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   beforeEach(async () => {
     featureConfig.getEffectiveMode.mockReset().mockResolvedValue("unset");
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -238,7 +242,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
   // The transaction client the service receives carries its own $queryRaw — wire ours into it.
   const withQueryRaw = (qr: jest.Mock) =>
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $queryRaw: qr, $executeRaw: jest.fn().mockResolvedValue(0) }),
+      fn({ ...prisma, $queryRaw: stock.queryRaw(qr), $executeRaw: jest.fn().mockResolvedValue(0) }),
     );
 
   let restrictions: { assertLinesSellable: jest.Mock };
@@ -266,7 +270,7 @@ describe("OrdersService.create — selling restrictions call site (lane R 2a-5)"
       order.push("stock-tx");
       return fn({
         ...prisma,
-        $queryRaw: jest.fn().mockResolvedValue([{ max: null }]),
+        $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([{ max: null }])),
         $executeRaw: jest.fn().mockResolvedValue(0),
       });
     });

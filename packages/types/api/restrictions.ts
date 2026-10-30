@@ -3,7 +3,7 @@
 // MASTER-EXECUTION-PLAN.md §6 contracts 7-8.
 
 import type { RestrictionAddressPrecedence } from "./enums";
-import type { API_ERROR_CODES } from "./error-codes";
+import { API_ERROR_CODES } from "./error-codes";
 
 /**
  * Tenant policy. `addressPrecedence` = which customer address TYPE governs a STATE rule first
@@ -40,7 +40,41 @@ export type RestrictionReason =
   | "UNKNOWN_PRODUCT"
   | "HIDDEN_FROM_PORTAL";
 
-export interface BlockedLine {
+/**
+ * Row 672 (SA-844): what fixes an INDETERMINATE line, i.e. a state rule matched and the governing state can't be
+ * resolved. ADD_CUSTOMER_STATE = the customer's address (with `customerId`); ADD_STORE_STATE = Settings > Business
+ * address (a counter / pickup sale, or the walk-in).
+ */
+export const RESTRICTION_REMEDY_VALUES = ["ADD_CUSTOMER_STATE", "ADD_STORE_STATE"] as const;
+export type RestrictionRemedy = (typeof RESTRICTION_REMEDY_VALUES)[number];
+
+/**
+ * Response-only: set on an unresolved-state INDETERMINATE line, absent otherwise. The staff lines carry it with
+ * `customerId` / `addressId`; the buyer 409 carries only the bare `remedy: "ADD_CUSTOMER_STATE"` marker
+ * ({@link BuyerSellingRestrictedError}, SA-924), never an id or rule detail (B612). Display only: never part of
+ * `warningHash`.
+ */
+export interface RestrictionRemedyFields {
+  remedy?: RestrictionRemedy;
+  /** ADD_CUSTOMER_STATE only: the customer whose address needs a state. */
+  customerId?: string;
+  /**
+   * ADD_CUSTOMER_STATE only (SA-924): the one address the engine reads for this customer, whose state is the fix. Absent
+   * when it reads none (no address yet, or several and no default) or several (defaults that disagree).
+   */
+  addressId?: string;
+}
+
+/** The staff action beside "Sell anyway" on a line with `remedy: "ADD_CUSTOMER_STATE"`. */
+export const noStateOnFileLine = (customerName: string) =>
+  `No state on file for ${customerName}: add one`;
+/** The same action for `remedy: "ADD_STORE_STATE"` (opens Settings > Business address). */
+export const NO_STORE_STATE_LINE = "No state on file for this store: add one";
+/** The buyer's checkout refusal when every refused line is waiting on the buyer's own state. */
+export const PORTAL_NEEDS_STATE_MESSAGE =
+  "We need your delivery state before we can sell this item. Add it in your account.";
+
+export interface BlockedLine extends RestrictionRemedyFields {
   productId: string;
   productName: string;
   categoryName?: string;
@@ -75,6 +109,19 @@ export interface BuyerSellingRestrictedError {
   code: typeof API_ERROR_CODES.SELLING_RESTRICTED;
   message: string;
   blockedLines: BuyerBlockedLine[];
+  /** Row 672 (SA-924): set only when every refused line waits on the buyer's own state; the carts then show {@link PORTAL_NEEDS_STATE_MESSAGE}. */
+  remedy?: "ADD_CUSTOMER_STATE";
+}
+
+/** The buyer cart's copy for a refusal that waits on the buyer's own state, or null for any other error (web; the phone is covered by the web shell). */
+export function buyerNeedsStateCopy(err: unknown): string | null {
+  const res = (err as { response?: { status?: number; data?: { code?: string; remedy?: string } } })
+    ?.response;
+  return res?.status === 409 &&
+    res.data?.code === API_ERROR_CODES.SELLING_RESTRICTED &&
+    res.data.remedy === "ADD_CUSTOMER_STATE"
+    ? PORTAL_NEEDS_STATE_MESSAGE
+    : null;
 }
 
 export type RestrictionJurisdiction = "FEDERAL" | "STATE";
@@ -121,7 +168,7 @@ export interface RestrictionWarningRule {
 }
 
 /** One warned line. `lineKey` = "n:<index>" | "l:<lineId>" | "cr:<changeRequestId>" (stable for the same payload). */
-export interface RestrictionWarningLine {
+export interface RestrictionWarningLine extends RestrictionRemedyFields {
   lineKey: string;
   productId: string;
   displayName: string;
@@ -189,3 +236,62 @@ export const RESTRICTION_OVERRIDE_LABEL = "Sold despite restriction";
  * this fixed reason, the importing user and the rules matched at import, plus an audit row (no new column).
  */
 export const RESTRICTION_OVERRIDE_IMPORTED_REASON = "Imported (historical)";
+
+// ─── Row 672 (SA-844): the remedy beside the override — one source for the web dialog ───
+
+/** One fix the warned lines ask for: give this customer a state, or give the store one. */
+export type RemedyAction =
+  | { kind: "ADD_CUSTOMER_STATE"; customerId: string; addressId?: string }
+  | { kind: "ADD_STORE_STATE" };
+
+/** The distinct remedies of the warned lines, in line order: one per customer, one for the store. */
+export function remedyActions(lines: readonly RestrictionWarningLine[]): RemedyAction[] {
+  const out: RemedyAction[] = [];
+  const seen = new Set<string>();
+  for (const l of lines) {
+    if (l.remedy === "ADD_STORE_STATE" && !seen.has("store")) {
+      seen.add("store");
+      out.push({ kind: "ADD_STORE_STATE" });
+    } else if (l.remedy === "ADD_CUSTOMER_STATE" && l.customerId && !seen.has(l.customerId)) {
+      seen.add(l.customerId);
+      out.push({
+        kind: "ADD_CUSTOMER_STATE",
+        customerId: l.customerId,
+        ...(l.addressId ? { addressId: l.addressId } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * How to give a customer a governing state in place. The server names the address the engine reads (`addressId`, from
+ * the core's `governingAddresses`, SA-924): set the state on it (a state awaiting review is confirmed by the same
+ * write). Without one: no address = create the minimal default address; otherwise the engine reads none or several,
+ * so the full "Customers without a state" fixer chooses the default first.
+ */
+export type CustomerStateFix =
+  { kind: "create" } | { kind: "setState"; addressId: string } | { kind: "chooseDefault" };
+
+export function customerStateFix(
+  addresses: ReadonlyArray<{ id: string }>,
+  governingAddressId?: string,
+): CustomerStateFix {
+  if (governingAddressId) return { kind: "setState", addressId: governingAddressId };
+  return addresses.length === 0 ? { kind: "create" } : { kind: "chooseDefault" };
+}
+
+/** Fixed copy for the remedy action; web and mobile import this one object (Row 672). */
+export const REMEDY_COPY = {
+  thisCustomer: "this customer",
+  stateLabel: "State",
+  save: "Save state",
+  saving: "Saving…",
+  saved: "State saved. Check the sale again to see if it can go ahead.",
+  checkAgain: "Check the sale again",
+  chooseDefault: "This customer has more than one address. Choose which one sets their state.",
+  openFixer: "Open Customers without a state",
+  failed: "Couldn't save. Try again.",
+  /** Mobile has no business-address screen: the store's state is set on the web. */
+  storeOnWeb: "Add it on the web: Settings > Business address.",
+} as const;

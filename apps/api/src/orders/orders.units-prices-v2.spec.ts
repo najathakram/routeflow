@@ -18,6 +18,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const autoMock = () =>
   new Proxy({} as Record<string | symbol, jest.Mock>, {
@@ -77,6 +80,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     typedRows.mockReset().mockResolvedValue([]);
     promos = [];
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const module = await Test.createTestingModule({ providers: [OrdersService] })
       .useMocker((token) => {
         if (token === PrismaService) return prisma;
@@ -113,7 +117,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
       fn({
         ...prisma,
-        $queryRaw: jest.fn().mockResolvedValue([{ max: null }]),
+        $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([{ max: null }])),
         $executeRaw: jest.fn().mockResolvedValue(0),
       }),
     );

@@ -1,4 +1,4 @@
-import { billedLinesOf } from "./standard-refund-pricing";
+import { billedLinesOf, refundSourceInvoice } from "./standard-refund-pricing";
 import { compareInvoiceFillOrder, loadOrderPool } from "../credit-notes/line-credit-headroom";
 
 /**
@@ -64,5 +64,29 @@ describe("SA-840 A-2 (F2): one fill order for the pricer and the pool", () => {
       expect(billed).toEqual(EXPECTED);
       expect(pool.lines.map((l) => l.id)).toEqual(EXPECTED);
     }
+  });
+
+  // SA-1051 (G-M6): the refund's source invoice is the last of the touched invoices in THIS order
+  describe("refundSourceInvoice", () => {
+    it("two invoices tied on createdAt, the fill touching both: the larger id, the last in fill order", () => {
+      expect(refundSourceInvoice(INVOICES, new Set(["inv-a", "inv-b"]))).toBe("inv-b");
+      expect(refundSourceInvoice([...INVOICES].reverse(), new Set(["inv-a", "inv-b"]))).toBe(
+        "inv-b",
+      );
+    });
+
+    it("picks the last TOUCHED invoice, not the newest creditable one", () => {
+      expect(refundSourceInvoice(INVOICES, new Set(["inv-c"]))).toBe("inv-c");
+      expect(refundSourceInvoice(INVOICES, new Set(["inv-c", "inv-a"]))).toBe("inv-a");
+    });
+
+    it("nothing touched (or only an unknown id): the last creditable invoice in fill order", () => {
+      expect(refundSourceInvoice(INVOICES, new Set())).toBe("inv-b");
+      expect(refundSourceInvoice(INVOICES, new Set(["not-an-invoice"]))).toBe("inv-b");
+    });
+
+    it("zero creditable invoices is a programming error: it throws", () => {
+      expect(() => refundSourceInvoice([], new Set())).toThrow(/no creditable invoice/);
+    });
   });
 });

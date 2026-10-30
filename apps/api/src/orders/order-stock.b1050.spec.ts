@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 import { readFileSync } from "fs";
 import * as path from "path";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 import { restoreStockForReopen, settleStockForEdit, type OrderStockDeps } from "./order-stock";
 
 /**
@@ -39,17 +41,21 @@ function fakeTx(products: P[]) {
       })),
       update: jest.fn(async ({ where, data }: any) => {
         const p = byId(where.id);
-        p.currentStock += Number(data.currentStock.increment ?? 0);
-        p.currentStock -= Number(data.currentStock.decrement ?? 0);
+        p.currentStock = Number(data.currentStock); // the stock helper writes the counter absolute
         return { ...p, currentStock: new Prisma.Decimal(p.currentStock) };
       }),
     },
     stockLot: { findMany: jest.fn().mockResolvedValue([]) },
     stockMovement: { create: jest.fn(async () => ({ id: "m" })) },
   };
+  // the stock helper reads the locked counter from the same in-memory products
+  const stock = wireStockHelper(createMockPrisma(), {
+    stateOf: (ids) => products.filter((p) => ids.includes(p.id)),
+  });
+  const wrapped = stock.wrapTx(tx);
   const rows = () =>
     tx.stockMovement.create.mock.calls.map(([{ data }]: any) => Number(data.quantity));
-  return { tx, rows, updates: () => tx.product.update.mock.calls.length };
+  return { tx: wrapped, rows, updates: () => tx.product.update.mock.calls.length };
 }
 
 const prod = (stock: number): P => ({

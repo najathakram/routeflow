@@ -10,6 +10,7 @@ import {
   type RestrictionWarningLine,
 } from "@routeflow/types";
 import { restrictionReasonText } from "@/lib/api/selling-restricted";
+import { RestrictionRemedyActions } from "@/components/RestrictionRemedyActions";
 import {
   RESTRICTION_COPY as COPY,
   buildAck,
@@ -39,6 +40,8 @@ interface Props {
   onConfirm: (ack: RestrictionAck, reason: string) => void;
   /** "Go back" / Esc / X: nothing is sent, and the form and cart stay as they were. */
   onCancel: () => void;
+  /** Row 672: after a missing state was added in place, re-run the save with no ack (the server judges it afresh). */
+  onRecheck?: () => void;
 }
 
 /**
@@ -53,6 +56,7 @@ export function RestrictionWarningDialog({
   listChanged = false,
   onConfirm,
   onCancel,
+  onRecheck,
 }: Props) {
   const [reason, setReason] = React.useState(initialReason);
   const reasonRef = React.useRef<HTMLTextAreaElement | null>(null);
@@ -186,6 +190,7 @@ export function RestrictionWarningDialog({
           </li>
         ))}
       </ul>
+      <RestrictionRemedyActions lines={warning?.lines ?? []} onRecheck={onRecheck} />
       <div className="mt-4">
         <Textarea
           ref={reasonRef}

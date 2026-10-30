@@ -10,7 +10,45 @@ import {
   dbClockNow,
   lockCounterClose,
   registerKeyOfOrder,
+  tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
 } from "./counter-close-lock";
+
+describe("tillRegisterStampedUnderLock: the stamp is re-read after the Order lock (W-829)", () => {
+  const txOf = (row: object | null) => ({ order: { findFirst: jest.fn().mockResolvedValue(row) } });
+
+  it("a refund that took no close lock and finds the pickup now stamped must retry", async () => {
+    const tx = txOf({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" });
+    expect(await tillRegisterStampedUnderLock(tx, "o1", null)).toBe(true);
+    expect(tx.order.findFirst).toHaveBeenCalledWith({
+      where: { id: "o1" },
+      select: { counterSale: true, registerKey: true, fulfillPath: true },
+    });
+  });
+
+  it("a pickup still unstamped, or a route order, is not a till sale: the refund goes on without the lock", async () => {
+    expect(
+      await tillRegisterStampedUnderLock(
+        txOf({ counterSale: false, fulfillPath: "PICKUP", registerKey: null }),
+        "o1",
+        null,
+      ),
+    ).toBe(false);
+    expect(
+      await tillRegisterStampedUnderLock(
+        txOf({ counterSale: false, fulfillPath: "ROUTE", registerKey: "till-2" }),
+        "o1",
+        null,
+      ),
+    ).toBe(false);
+  });
+
+  it("a refund that already locked a register reads nothing: the stamp is write-once", async () => {
+    const tx = txOf({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" });
+    expect(await tillRegisterStampedUnderLock(tx, "o1", "till-2")).toBe(false);
+    expect(tx.order.findFirst).not.toHaveBeenCalled();
+  });
+});
 
 describe("dbClockNow: refundedAt comes from the database clock", () => {
   it("reads clock_timestamp() on the caller's transaction and returns that instant", async () => {
@@ -41,6 +79,34 @@ describe("counter-close lock helpers", () => {
     expect(registerKeyOfOrder({ counterSale: false, registerKey: "b" })).toBeNull();
     expect(registerKeyOfOrder({})).toBeNull();
     expect(registerKeyOfOrder(null)).toBeNull();
+  });
+
+  it("W-829 / SA-932 F: tillRegisterOfSale also covers a Store pickup hand-over with a stamped register", () => {
+    // a counter order: the same answer as registerKeyOfOrder
+    expect(tillRegisterOfSale({ counterSale: true, registerKey: null })).toBe("main");
+    expect(tillRegisterOfSale({ counterSale: true, registerKey: "b", fulfillPath: "ROUTE" })).toBe(
+      "b",
+    );
+    // a non-counter PICKUP order whose hand-over stamped a register is a till sale on that register
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" }),
+    ).toBe("till-2");
+    // a pickup that was never handed over at a till (no stamp) is not a till event
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "PICKUP", registerKey: null }),
+    ).toBeNull();
+    // only PICKUP counts: a stamped key on a route or carrier order is not the till's
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "ROUTE", registerKey: "b" }),
+    ).toBeNull();
+    expect(
+      tillRegisterOfSale({ counterSale: false, fulfillPath: "SHIP", registerKey: "b" }),
+    ).toBeNull();
+    expect(tillRegisterOfSale({ counterSale: false, registerKey: "b" })).toBeNull();
+    expect(tillRegisterOfSale({})).toBeNull();
+    expect(tillRegisterOfSale(null)).toBeNull();
+    // registerKeyOfOrder keeps its counter-only meaning (the void and the tender window read it)
+    expect(registerKeyOfOrder({ counterSale: false, registerKey: "till-2" })).toBeNull();
   });
 
   it("lockCounterClose runs the SHARED transaction-scoped advisory lock on the (counter-close, tenant:register) key", async () => {

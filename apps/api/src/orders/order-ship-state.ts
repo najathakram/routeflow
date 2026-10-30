@@ -31,6 +31,7 @@ import { type buildStatusUpdateData, writeStatusIfUnchanged } from "./order-stat
 import { billsAtShipment } from "./order-status-invoicing";
 import { stampDeliveredInFull } from "./delivered-stamp";
 import { completeOfficeEvidencedLines } from "./office-evidence-completion";
+import { routeHeldLines } from "./route-held-lines";
 import {
   type OfficeDeliveryLine,
   leavePartialDeliveryInTx,
@@ -132,7 +133,15 @@ export async function updateStatusWithShipMarker(
         userId: user?.sub ?? null,
         impersonatedBy: user?.impersonatedBy ?? null,
       });
-      return officeCompletedLines.length ? { ...row, officeCompletedLines } : row;
+      // Row 590 (SA-978 §1): the lines that keep the driver's figure are named too (read only, never completed from here).
+      const routeHeld = await routeHeldLines(tx, order.id);
+      return officeCompletedLines.length || routeHeld.length
+        ? {
+            ...row,
+            ...(officeCompletedLines.length ? { officeCompletedLines } : {}),
+            ...(routeHeld.length ? { routeHeldLines: routeHeld } : {}),
+          }
+        : row;
     });
   }
   return prisma.tenantTransaction(async (tx) => {

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { PORTAL_NEEDS_STATE_MESSAGE } from "@routeflow/types";
 import BuyerCartPage from "./page";
 
 /**
@@ -71,6 +72,20 @@ describe("buyer cart — SELLING_RESTRICTED", () => {
       /can't be ordered right now: Hemp Gummies/,
     );
     expect(screen.queryByText(/federal|internal rule reason/i)).toBeNull();
+    expect(clearCart).not.toHaveBeenCalled();
+  });
+
+  // Row 672 (SA-924): the server's needs-state refusal reaches the buyer as the ONE shared sentence.
+  it("a refusal waiting on the buyer's own state asks for it (the shared copy, not the names)", async () => {
+    reject(409, {
+      code: "SELLING_RESTRICTED",
+      message: "server text",
+      blockedLines: [{ productId: "p1", productName: "Hemp Gummies" }],
+      remedy: "ADD_CUSTOMER_STATE",
+    });
+    await place();
+    expect(await screen.findByRole("alert")).toHaveTextContent(PORTAL_NEEDS_STATE_MESSAGE);
+    expect(screen.queryByText(/server text|can't be ordered right now/)).toBeNull();
     expect(clearCart).not.toHaveBeenCalled();
   });
 
