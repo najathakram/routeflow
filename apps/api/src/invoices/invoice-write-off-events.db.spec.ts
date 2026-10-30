@@ -1,11 +1,11 @@
 /**
- * SA-1050 PR-0, real Postgres: the write-off ledger's table rules, as migration folder 1 leaves them. Nothing in the
- * app writes an event yet; this proves the database alone refuses a bad row. (The BAD_DEBT default is PR-0b's.)
+ * SA-1050 PR-0, real Postgres: the write-off ledger's table rules and the BAD_DEBT default, as the two migration
+ * folders leave them. Nothing in the app writes an event yet; this proves the database alone refuses a bad row.
  *
  * Runs only under `npm run local:test:db` (a fresh database, every migration applied). Throwaway `qa-*` tenants.
  */
 import { randomUUID } from "crypto";
-import { UserRole } from "@prisma/client";
+import { OperatorPermissionGroup, UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
@@ -147,5 +147,17 @@ describeDb("InvoiceWriteOffEvent — real Postgres (SA-1050 PR-0)", () => {
   it("Invoice.writtenOffById exists, nullable and empty on a new invoice", async () => {
     const row = await prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
     expect((row as unknown as { writtenOffById: string | null }).writtenOffById).toBeNull();
+  });
+
+  it("a new operator is denied BAD_DEBT by default", async () => {
+    const op = await prisma.user.create({
+      data: {
+        tenantId,
+        role: UserRole.OPERATOR,
+        username: `wo-op-${RUN_SUFFIX}`,
+        email: `wo-op-${RUN_SUFFIX}@example.test`,
+      },
+    });
+    expect(op.deniedPermissionGroups).toEqual([OperatorPermissionGroup.BAD_DEBT]);
   });
 });
