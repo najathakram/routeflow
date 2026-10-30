@@ -33,8 +33,9 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { counterMethodOf, servedChange } from "./counter-sale-readback";
+import { checkReferenceOf, counterMethodOf, servedChange } from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
+import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
 import { isCounterTenderRow } from "./counter-tender-row";
 
@@ -347,6 +348,10 @@ export function creditNotesInWindowWhere(tenantId: string, w: DayWindow) {
  * credit note was created (`creditNoteIds` = `creditNotesInWindowWhere`'s ids; `Return.creditNoteId` has no Prisma
  * relation, so the service reads the ids first). A legacy store-credit return with no credit note id keeps the day it
  * was captured (`createdAt`), the only date it has. A return that was rejected or cancelled counts nowhere.
+ *
+ * W-829 / SA-932 F: the orders are counter sales AND Store pickup sales handed over at a till (`registerKey` stamped, a
+ * non-counter PICKUP order): their tender is already in the drawer (`handOverCandidatesWhere`), so their refund must leave it.
+ * The refund paths use the same definition (`tillRegisterOfSale`).
  */
 export function windowReturnsWhere(
   tenantId: string,
@@ -356,7 +361,13 @@ export function windowReturnsWhere(
   return {
     tenantId,
     status: { notIn: DEAD_RETURN_STATUSES },
-    order: { tenantId, counterSale: true },
+    order: {
+      tenantId,
+      OR: [
+        { counterSale: true },
+        { counterSale: false, fulfillPath: FulfillPath.PICKUP, registerKey: { not: null } },
+      ],
+    },
     OR: [
       { refundMethod: REFUND_METHOD_EXTERNAL, refundedAt: { gte: w.start, lt: w.end } },
       {
@@ -422,6 +433,7 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
           id: true,
           invoiceNumber: true,
           status: true,
+          expectedPaymentMethod: true, // SA-1026: the "To collect" state is derived from it and the status
           payments: {
             orderBy: { createdAt: "asc" },
             // B1262 / SA-838: the credit note each payment applied and the invoice that NOTE was issued against: the
@@ -430,6 +442,8 @@ export function pageQuery(tenantId: string, w: DayWindow, page: number, limit: n
               method: true,
               amount: true,
               status: true,
+              // W-713: the check number the receipt prints beside "Check"
+              reference: true,
               creditNoteId: true,
               creditNote: { select: { invoiceId: true } },
             },
@@ -619,10 +633,14 @@ export interface TodayOrderRecord {
     id: string;
     invoiceNumber: string | null;
     status: string;
+    /** SA-1026: what staff expect the invoice to be paid by while nothing is in hand (null = no intent) */
+    expectedPaymentMethod?: string | null;
     payments: Array<{
       method: string;
       amount: unknown;
       status: string;
+      /** W-713: the check number / card reference typed at the till */
+      reference?: string | null;
       /** B1262 / SA-838: the credit note this payment applied, and the invoice that note was issued against */
       creditNoteId?: string | null;
       creditNote?: { invoiceId: string | null } | null;
@@ -905,6 +923,7 @@ export function toTodaysSaleRow(
   const live = o.invoices.filter((i) => !isDeadInvoice(i.status));
   const voided = o.status === OrderStatus.CANCELLED || (o.invoices.length > 0 && live.length === 0);
   const payments = live.flatMap((i) => i.payments);
+  const checkReference = checkReferenceOf(payments);
   const total = roundMoney(num(o.total));
   const paid = roundMoney(
     sumConfirmed(payments.map((p) => ({ amount: p.amount, status: p.status }))),
@@ -973,7 +992,10 @@ export function toTodaysSaleRow(
     returnCredit,
     tenderMethods,
     returnLines,
+    ...(checkReference ? { checkReference } : {}),
     paymentState,
+    // SA-1026: "To collect" from the LIVE invoices' intent + status (one rule, invoices/to-collect.ts); staff only
+    toCollect: rollupToCollect(live.map((i) => toCollectState(i))),
     cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred

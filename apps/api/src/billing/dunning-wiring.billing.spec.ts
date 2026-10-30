@@ -404,7 +404,7 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
   });
 
   describe("pause -> resume with the REAL dunning service: the ledger nets to zero (-once, +once)", () => {
-    const since = new Date("2026-11-01T00:00:00Z");
+    const since = new Date("2026-10-25T00:00:00Z");
     const NOW = new Date("2026-11-08T09:00:00Z");
     const clocked = {
       ...LIVE_SUB,
@@ -416,7 +416,8 @@ describe("BillingService x dunning wiring (SA-733r7 PR-B3)", () => {
     };
     const logged = [
       { milestone: "DUNNING_D0", sentAt: since },
-      { milestone: "DUNNING_D3", sentAt: new Date("2026-11-04T00:00:00Z") },
+      { milestone: "DUNNING_D3", sentAt: new Date("2026-10-28T00:00:00Z") },
+      { milestone: "DUNNING_D7", sentAt: new Date("2026-11-01T00:00:00Z") },
       { milestone: "DUNNING_D6", sentAt: new Date("2026-11-07T00:00:00Z") },
       { milestone: "DUNNING_FINAL", sentAt: new Date("2026-11-07T00:00:00Z") },
     ];

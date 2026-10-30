@@ -11,9 +11,9 @@
  *     (`externalPayment = false`), no held catch-up claim. There is no `couponFull` exemption.
  *   - STAMPED: eligible tenants that already carry an overdue clock (`pastDueInvoiceId`), with the hours since
  *     `pastDueSince`, the reminders already sent (`BillingNotificationLog`), and what `enforced` would do:
- *       - "pause after final notice" - past 168 h: the first `enforced` sweep sends the final notice; the pause
+ *       - "pause after final notice" - past 336 h (14 days, SA-1037): the first `enforced` sweep sends the final notice; the pause
  *         follows 24 h later, at the first sweep at or after 03:00 tenant-local. NOBODY is paused in hour one.
- *       - "countdown" - not yet 168 h.
+ *       - "countdown" - not yet 336 h.
  *   - ALREADY PAUSED: tenants in READ_ONLY(`payment_overdue`) or with `pausedAt` set (should be 0 before the flip).
  *   - OUT OF SCOPE (listed so nobody is surprised): ACTIVE tenants with no `stripeSubId`, manual-pay tenants, and
  *     tenants whose catch-up claim is held. The sweep never sees them.
@@ -47,7 +47,21 @@ import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 import { episodeKey, utcTimestampTypes } from "./lib/pause-report-keys.mjs";
 const { Client, types: pgTypes } = createRequire(import.meta.url)("pg");
 
-const PAUSE_HOURS = 168; // DUNNING_PAUSE_HOURS in src/billing/dunning-config.ts
+/**
+ * The pause hours: DUNNING_PAUSE_HOURS in src/billing/dunning-config.ts = DUNNING_CLOCK.pauseHours (SA-1037: day 14).
+ * This plain .mjs cannot import the TS clock, so `dunning-clock-parity.spec.ts` pins this copy to it (L-261).
+ */
+export const PAUSE_HOURS = 336;
+/** Every `BillingNotificationLog.milestone` the dunning service writes (DUNNING_MILESTONES), pinned by the same spec. */
+export const REPORT_MILESTONES = [
+  "DUNNING_D0",
+  "DUNNING_D3",
+  "DUNNING_D7",
+  "DUNNING_D6",
+  "DUNNING_FINAL",
+  "DUNNING_PAUSED",
+  "DUNNING_PAUSED_STILL_OWED",
+];
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
@@ -91,7 +105,7 @@ export function selfTest() {
     if (!cond) throw new Error(`self-test: ${msg}`);
   };
   const now = new Date("2026-11-10T12:00:00Z");
-  const since = new Date("2026-11-01T00:00:00Z");
+  const since = new Date("2026-10-25T00:00:00Z");
   const row = (id, o = {}) => ({
     id,
     status: "ACTIVE",
@@ -118,11 +132,11 @@ export function selfTest() {
   );
   must(rows.length === 3, "only clocked tenants are listed");
   const by = Object.fromEntries(rows.map((r) => [r.tenantId, r]));
-  must(by["t-a"].onFlip.startsWith("pause after"), "t-a is past 168 h");
+  must(by["t-a"].onFlip.startsWith("pause after"), "t-a is past 336 h");
   must(by["t-a"].remindersSent === "d0,d3", "t-a reminders read by the episode key");
   must(by["t-b"].onFlip === "countdown" && by["t-b"].remindersSent === "none", "t-b countdown");
   must(by["t-c"].onFlip === "already paused", "t-c is paused");
-  must(episodeKey("in_1", since) === "in_1:2026-11-01T00:00:00.000Z", "the episode key shape");
+  must(episodeKey("in_1", since) === "in_1:2026-10-25T00:00:00.000Z", "the episode key shape");
   const text = JSON.stringify(rows);
   must(!/slug|email|businessName/i.test(text), "rows carry no slug, name or email");
   return "self-test ok";
@@ -154,8 +168,8 @@ async function run(client, q, json) {
         `SELECT l."tenantId", l.milestone, l.key, l."sentAt"
            FROM "BillingNotificationLog" l
           WHERE l."tenantId" = ANY($1::text[])
-            AND l.milestone IN ('DUNNING_D0','DUNNING_D3','DUNNING_D6','DUNNING_FINAL','DUNNING_PAUSED','DUNNING_PAUSED_STILL_OWED')`,
-        [stampedIds],
+            AND l.milestone = ANY($2::text[])`,
+        [stampedIds, REPORT_MILESTONES],
       )
     : [];
 

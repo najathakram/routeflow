@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { isLicenceLive, licenceZone } from "../authorizations/licence-validity";
 
 export interface RegulatedGate {
   hiddenIds: Set<string>;
@@ -40,12 +41,14 @@ export class RegulatedVisibilityService {
       select: { trackedCategoryId: true, status: true, expiresAt: true },
     });
     const byId = new Map(auths.map((a) => [a.trackedCategoryId, a]));
+    const zone = await licenceZone(this.prisma);
 
     const hiddenIds = new Set<string>();
     const locked: Array<{ id: string; name: string; status: string }> = [];
     for (const c of gated) {
       const a = byId.get(c.id);
-      const verified = a?.status === "VERIFIED" && (!a.expiresAt || new Date(a.expiresAt) > now);
+      // B330: the same day-grace rule as the sale guard (a licence is good through its printed day).
+      const verified = a !== undefined && isLicenceLive(a, now, zone);
       if (!verified) {
         hiddenIds.add(c.id);
         // A VERIFIED row past expiresAt reads as EXPIRED (the cron flips the

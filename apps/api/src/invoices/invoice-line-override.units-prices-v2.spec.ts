@@ -48,7 +48,7 @@ function harness(opts: { flag: boolean; typed: Array<[string, number]>; tier?: n
       prisma,
       { customerId: "c1", items: [{ productId: "p1" }] },
       ladders as never,
-      "actor",
+      { sub: "actor", role: "OPERATOR" },
       { hasFlagStrict: hasFlag },
     );
   return { hasFlag, load };

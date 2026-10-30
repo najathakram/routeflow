@@ -247,6 +247,11 @@ model Invoice {
   // SA-760 R-3 / SA-772 folder 3 (sitting 4): see InvoiceOrderBillingRole. Nullable, no default, no backfill, no
   // index in v1 (read per order; the Invoice(orderId) index serves it). No writer or reader until R-3 merges.
   orderBillingRole       InvoiceOrderBillingRole?
+  // SA-1026 Part A: what the staff EXPECT this invoice to be paid by when nothing is in hand yet (a check not received:
+  // only "CHECK" is written today, through markToCollect in apps/api/src/invoices/to-collect.ts, the one writer). Null = no
+  // intent (every invoice before this column, and an ordinary On account sale). "To collect" is DERIVED from this and the
+  // status on every read (toCollectState); it is never stored, so no payment writer has to clear it.
+  expectedPaymentMethod  PaymentMethod?
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
   tenantId               String?
@@ -284,6 +289,8 @@ model Invoice {
   // #2118: one customer's invoices on the analytics date (buyer-filtered product line pages,
   // customer insights).
   @@index([customerId, issueDate])
+  // SA-1026: the tenant-wide "To collect" list and the AR aging column.
+  @@index([tenantId, expectedPaymentMethod])
 }
 
 /// SA-1050: the kind of a bad-debt ledger row. Mirrored in packages/types/api/enums.ts (INVOICE_WRITE_OFF_KIND_VALUES).

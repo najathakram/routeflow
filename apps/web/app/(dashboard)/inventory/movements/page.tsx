@@ -5,7 +5,7 @@ import Link from "next/link";
 import { MovementsExportButton } from "./_components/MovementsExportButton";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
-import { Badge, Button, cn } from "@routeflow/ui/web";
+import { Badge, Button, cn, badgeStatusLabel } from "@routeflow/ui/web";
 import type { MovementType } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useStockMovements } from "@/lib/api/inventory";
@@ -273,8 +273,10 @@ export default function MovementsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Badge
-                        variant={MOVEMENT_TYPE_VARIANTS[m.type as MovementType]}
-                        label={MOVEMENT_TYPE_LABELS[m.type as MovementType]}
+                        variant={MOVEMENT_TYPE_VARIANTS[m.type as MovementType] ?? "neutral"}
+                        label={
+                          MOVEMENT_TYPE_LABELS[m.type as MovementType] ?? badgeStatusLabel(m.type)
+                        }
                       />
                     </td>
                     <td

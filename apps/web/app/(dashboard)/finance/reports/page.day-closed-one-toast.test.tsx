@@ -10,6 +10,7 @@ import {
   COUNTER_SALE_DAY_CLOSED_COPY,
   DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
 } from "@/lib/day-closed-copy";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import FinanceReportsPage from "./page";
 
 /**
@@ -94,7 +95,7 @@ describe("finance/reports Ledger: a closed-day refusal raises exactly one toast 
     await expectOnlyThePageToasted(mockToast, mockGlobalToast, { title: copy });
   });
 
-  it("any other failure keeps the page's own toast", async () => {
+  it("any other failure keeps the page's own toast, and ONLY it (row 353)", async () => {
     mockPost.mockRejectedValue(refusal(500, { message: "boom" }));
     renderWithProviders(<FinanceReportsPage />, {
       queryClient: queryClientWithGlobalErrorToast(mockGlobalToast),
@@ -104,10 +105,8 @@ describe("finance/reports Ledger: a closed-day refusal raises exactly one toast 
       .parentElement as HTMLElement;
     fireEvent.click(within(modal).getByRole("button", { name: "Record" }));
 
-    await waitFor(() =>
-      expect(mockToast).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Failed to record payment" }),
-      ),
-    );
+    await expectOnlyThePageToasted(mockToast, mockGlobalToast, {
+      title: `Failed to record payment. ${genericToastCopy(refusal(500, { message: "boom" }))}`,
+    });
   });
 });

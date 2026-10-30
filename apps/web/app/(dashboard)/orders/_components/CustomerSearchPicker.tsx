@@ -45,6 +45,8 @@ export function CustomerSearchPicker<C extends PickerCustomer>({
     onPick,
     onClose: () => onListOpenChange(false),
     resetKey: value,
+    // r5 N03: exactly one match is already active, so Enter picks it; with several, Enter never chooses for you.
+    initial: results.length === 1 ? 0 : -1,
     idPrefix: "customer-search",
   });
   return (

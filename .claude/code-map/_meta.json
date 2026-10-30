@@ -1,6 +1,6 @@
 {
-  "mappedSha": "b1a2fc3d17cbc2f5104f0f3d56dc6c48b4eb7212",
-  "generatedAt": "2026-10-26T05:18:55.034Z",
+  "mappedSha": "69f92c761e6305937e568c4d5b8dcb6d29b9b13e",
+  "generatedAt": "2026-10-30T17:18:39.042Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-26 — Bookkeeping for train 4c (#3833 `be16a6b43`, #3821 `575bbdbb6`, #3813 `305c10bc9`, #3767 `8f154e10c`, #3844 `52245384f`, #3760 `4a96538fb`; merge `b1a2fc3d1`, PR #3852; docs-only, Option B follow-up).** New `api/` and `web/landing-2026-10-26-train4c.md` (TOC row in api.md and web.md). Covers `order-sweep.ts` lift and size-ratchet baseline 5192, delivered line struck off on DELETE (rows 307, 516), restriction copy names the business reason (W-806), dvh app shells (364), pinned addon-gate review clock (W-958); #3760 (Mac visibility timer) is scripts/tools, outside the mapped areas. #3797 and #3845 were ejected from train 4 and are not landed. mappedSha stamped to `b1a2fc3d1`. History: CHANGELOG.md."
+  "notes": "2026-10-30 W29c (merge 69f92c761e): api/web/packages landing notes + TOC rows; see CHANGELOG.md."
 }

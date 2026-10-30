@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
 import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
+import { sumInlineReturnCredit } from "../../returns/inline-return-credit.util";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
@@ -18,6 +19,7 @@ import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
+import { walkInStoreCreditRefusal } from "../../credit-notes/walk-in-credit-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -29,6 +31,7 @@ import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
 import { staffMay } from "../../auth/permissions/staff-capabilities";
+import { operatorDeniedGroups } from "./till-permission.guard";
 import {
   buildCounterSaleResponse,
   isCounterTenderCashRow,
@@ -53,6 +56,7 @@ import {
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
+import { markOpenInvoicesToCollect } from "../../invoices/to-collect";
 import { WalkInCustomerService } from "./walk-in-customer";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
@@ -117,6 +121,8 @@ export class CounterSaleService {
       throw new BadRequestException("Choose a customer or mark the sale as a walk-in");
     }
     let walkIn = !!dto.walkIn;
+    // W-863 (SA-932): a walk-in return is refunded at the till, never credited to the shared walk-in account.
+    if (walkIn && dto.inlineReturn) throw walkInStoreCreditRefusal();
     assertPaymentShape(dto.payment, walkIn);
     // Interim till guard: judged on the TENANT's day, before any write.
     await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
@@ -136,6 +142,7 @@ export class CounterSaleService {
       // The kept walk-in RECORD (park/resume) is a walk-in however the request names it: same refusals,
       // same tender rule, before any write.
       if (customer.isWalkIn === true) {
+        if (dto.inlineReturn) throw walkInStoreCreditRefusal();
         walkIn = true;
         assertPaymentShape(dto.payment, true);
       }
@@ -162,6 +169,8 @@ export class CounterSaleService {
         // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
         restrictionOverrides: dto.restrictionOverrides,
         warningHash: dto.warningHash,
+        // W-863: create() captures the return and issues its credit in the sale's own transaction (the one return writer).
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       } as never,
       user,
       {
@@ -169,7 +178,12 @@ export class CounterSaleService {
         counterSale: true,
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        priceEditAllowed: staffMay(user.role, "EDIT_LINE_PRICE"),
+        // W-870: over the OPERATOR's denied groups, read live (PRICING switched off = no price change at the till).
+        priceEditAllowed: staffMay(
+          user.role,
+          "EDIT_LINE_PRICE",
+          await operatorDeniedGroups(this.prisma, user),
+        ),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
@@ -179,7 +193,7 @@ export class CounterSaleService {
         creditPaidNow: (total) => counterCreditPaidNow(tender, total, checkToday),
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
-        onReplay: (existing) => {
+        onReplay: (existing, cart) => {
           // The replay lookup does not filter on counterSale (keys are client UUIDs per tenant), so a
           // key that belongs to an ordinary staff/buyer order lands here. Refuse BEFORE any write.
           if (existing.counterSale !== true) {
@@ -190,7 +204,7 @@ export class CounterSaleService {
             });
           }
           // POS-5: a price that differs from the stored sale's is a changed cart, like any other.
-          assertReplaySamePrices(existing, dto.items);
+          assertReplaySamePrices(existing, cart ?? dto.items);
           replayed = true;
         },
       },
@@ -229,6 +243,13 @@ export class CounterSaleService {
     let duplicate: DuplicatePaymentRefExisting | undefined;
     if (method === "ON_ACCOUNT") {
       invoices = await this.readInvoices(orderId);
+      // SA-1026: "the check is not in hand yet": the invoice(s) of this sale are marked To collect right after the sale
+      // committed (createSale is several steps, so there is no one transaction to ride). Replay-safe: the first intent stays,
+      // and a retry of a half-finished first attempt completes the mark. The response reads the column back.
+      if (dto.payment.expectedMethod) {
+        await markOpenInvoicesToCollect(this.prisma, invoices as never, dto.payment.expectedMethod);
+        invoices = await this.readInvoices(orderId);
+      }
     } else {
       try {
         // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close
@@ -322,8 +343,15 @@ export class CounterSaleService {
     planError: string,
     user: JwtPayload | "read-only",
   ) {
-    const sum = Number(total ?? 0);
-    const netted = counterCreditPaidNow(tender, sum, checkToday);
+    const gross = Number(total ?? 0);
+    // W-863 (SA-945 MUST 6): the return credit stored on this sale (the SERVER's figure, read back, never the request's)
+    // pays the order down before the tender, so it is netted, not on account: judge what is left after it.
+    const credit = Math.min(
+      gross,
+      await sumInlineReturnCredit(this.prisma.forTenant(), orderId).catch(() => 0),
+    );
+    const sum = roundMoney(gross - credit);
+    const netted = roundMoney(counterCreditPaidNow(tender, sum, checkToday) + credit);
     const deps = {
       prisma: this.prisma,
       entitlements: this.orders.entitlements,

@@ -196,6 +196,7 @@ const MODEL_DOMAIN = {
   CommissionStatementLine: "sales",
   CommissionPayout: "sales",
   CounterDayClose: "sales",
+  CounterDrawerEvent: "sales",
   CounterParkedCart: "sales",
 
   // ─── finance ───────────────────────────────────────────────────────────────

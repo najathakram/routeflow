@@ -1,7 +1,8 @@
 import type { InvoiceFacts } from "./catchup-claim";
 import {
   DUNNING_D3_HOURS,
-  DUNNING_D6_HOURS,
+  DUNNING_D7_HOURS,
+  DUNNING_LAST_DAY_HOURS,
   DUNNING_MILESTONES,
   dunningEmailsFor,
   HOUR_MS,
@@ -60,7 +61,7 @@ export async function runMilestones(
     where: {
       tenantId,
       key,
-      milestone: { in: [M.D0, M.D3, M.D6, M.FINAL, M.PAUSED, M.PAUSED_STILL_OWED] },
+      milestone: { in: [M.D0, M.D3, M.D7, M.D6, M.FINAL, M.PAUSED, M.PAUSED_STILL_OWED] },
     },
     select: { milestone: true, sentAt: true },
   });
@@ -169,9 +170,15 @@ export async function runMilestones(
   const dueAll = [
     [M.D0, 0],
     [M.D3, DUNNING_D3_HOURS],
-    [M.D6, DUNNING_D6_HOURS],
+    [M.D7, DUNNING_D7_HOURS],
+    [M.D6, DUNNING_LAST_DAY_HOURS],
   ] as const;
-  const unsent = dueAll.filter(([m, h]) => elapsed >= h && !sent.has(m)).map(([m]) => m);
+  // A milestone EARLIER than one already sent never sends (an episode whose last-day notice went out under the 7-day
+  // clock must not get a d7 reminder after it, SA-1037 PR-6).
+  const lastSentIdx = dueAll.reduce((acc, [m], i) => (sent.has(m) ? i : acc), -1);
+  const unsent = dueAll
+    .filter(([m, h], i) => i > lastSentIdx && elapsed >= h && !sent.has(m))
+    .map(([m]) => m);
   const top = unsent[unsent.length - 1];
   for (const skipped of unsent.slice(0, -1)) {
     await deps.notifications.recordDunningMilestone(tenantId, skipped, key);
@@ -193,6 +200,8 @@ export async function runMilestones(
     warnUndeliverable(await send(M.D0, "d0"));
   } else if (top === M.D3) {
     warnUndeliverable(await send(M.D3, "d3"));
+  } else if (top === M.D7) {
+    warnUndeliverable(await send(M.D7, "d3"));
   } else if (top === M.D6) {
     const held = await pauseHoldsLock();
     if (held) {
@@ -209,7 +218,7 @@ export async function runMilestones(
         finalSentAt = now;
       }
     }
-  } else if (elapsed >= DUNNING_D6_HOURS && !finalSentAt && !(await pauseHoldsLock())) {
+  } else if (elapsed >= DUNNING_LAST_DAY_HOURS && !finalSentAt && !(await pauseHoldsLock())) {
     // d6 already logged without a final notice (it went out by another route, or as the neutral held notice): a
     // separate final notice, then the 24 h lead starts. While the lock is held nothing is sent here (no hourly resend).
     const res = warnUndeliverable(

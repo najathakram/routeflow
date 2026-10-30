@@ -501,6 +501,20 @@ export const PAYMENT_METHOD_VALUES = [
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHOD_VALUES)[number];
 
+/**
+ * SA-1026: the methods staff may say they EXPECT to be paid by, with nothing in hand yet ("To collect"). A subset of
+ * `PAYMENT_METHOD_VALUES`; cash or card later is one value here plus UI. Not a Prisma enum: the column reuses `PaymentMethod`.
+ */
+export const TO_COLLECT_METHOD_VALUES = ["CHECK"] as const;
+export type ToCollectMethod = (typeof TO_COLLECT_METHOD_VALUES)[number];
+
+/**
+ * SA-1026: the derived "To collect" state of an invoice, an order or a sale, read from the wire (clients never compute it).
+ * UNKNOWN is a status the rule has no answer for (a DRAFT or a new status): it is SHOWN as To collect, never hidden.
+ */
+export const TO_COLLECT_STATE_VALUES = ["TO_COLLECT", "NONE", "UNKNOWN"] as const;
+export type ToCollectState = (typeof TO_COLLECT_STATE_VALUES)[number];
+
 export const ROUTE_RUN_STATUS_VALUES = [
   "SCHEDULED",
   "IN_PROGRESS",
@@ -640,6 +654,10 @@ export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
   "ADVANCE_PAYMENT",
 ] as const;
 export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];
+
+/** W-819 / SA-930 section 4: what a counter drawer event records. OPENING_FLOAT today; cash drops and paid-outs are the seam. */
+export const COUNTER_DRAWER_EVENT_KIND_VALUES = ["OPENING_FLOAT"] as const;
+export type CounterDrawerEventKind = (typeof COUNTER_DRAWER_EVENT_KIND_VALUES)[number];
 
 // SA-1049 R5: the status/plan enums the platform-admin badge renders (Prisma `TenantStatus`, `TenantPlan`,
 // `UserStatus`, `BuyerAccountStatus`, `CustomerLinkStatus`). The derived types are `…Value`: `../index.ts` still

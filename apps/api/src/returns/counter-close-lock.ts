@@ -1,3 +1,4 @@
+import { FulfillPath } from "@prisma/client";
 import { COUNTER_DEFAULT_REGISTER } from "@routeflow/pricing";
 
 /**
@@ -26,6 +27,55 @@ export function registerKeyOfOrder(
 ): string | null {
   if (!order || order.counterSale !== true) return null;
   return order.registerKey ?? COUNTER_DEFAULT_REGISTER;
+}
+
+/**
+ * W-829 / SA-932 F: the register a REFUND of this sale is counted on. A counter order (`registerKeyOfOrder`), and also a Store
+ * pickup sale whose hand-over stamped a register: its tender is already till cash of that register (SA-750r3), so its cash
+ * refund must leave the same drawer, take the same close lock and be refused in a closed window. The stamp is write-once
+ * (pickup-complete.service.ts sets it only while null and refuses a different key), so an unlocked read of it is safe. A pickup never
+ * handed over at a till has no stamp, and any other path (route, ship) is not a till event.
+ */
+export function tillRegisterOfSale(
+  order:
+    | { counterSale?: boolean | null; registerKey?: string | null; fulfillPath?: string | null }
+    | null
+    | undefined,
+): string | null {
+  const counter = registerKeyOfOrder(order);
+  if (counter) return counter;
+  return order?.fulfillPath === FulfillPath.PICKUP && order.registerKey ? order.registerKey : null;
+}
+
+/**
+ * W-829: a refund that took NO close lock because the sale read as unstamped (an unlocked read) re-reads the stamp here, on its
+ * own transaction, after the Order row lock. A hand-over stamps the register on that same row, so once this transaction holds the
+ * lock the answer cannot change until it ends. True means the sale was stamped while the refund waited: the caller must stop
+ * (retryable 409, nothing written) and retry, which then takes the close lock as its first statement. A counter order or an
+ * already stamped pickup is write-once, so a refund that locked already has the right key (false).
+ */
+export async function tillRegisterStampedUnderLock(
+  tx: {
+    order: {
+      findFirst: (args: {
+        where: { id: string };
+        select: { counterSale: true; registerKey: true; fulfillPath: true };
+      }) => Promise<{
+        counterSale?: boolean | null;
+        registerKey?: string | null;
+        fulfillPath?: string | null;
+      } | null>;
+    };
+  },
+  orderId: string,
+  lockedRegister: string | null,
+): Promise<boolean> {
+  if (lockedRegister) return false;
+  const now = await tx.order.findFirst({
+    where: { id: orderId },
+    select: { counterSale: true, registerKey: true, fulfillPath: true },
+  });
+  return tillRegisterOfSale(now) !== null;
 }
 
 /**

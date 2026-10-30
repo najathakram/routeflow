@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import { isRecordPaymentLocalRefusal } from "@/lib/duplicate-payment-ref";
 
 // ─── Types (mirror apps/api/src/payment-requests return shapes) ─────────────────
 
@@ -61,7 +60,7 @@ export function usePaymentRequests(status?: string) {
  *  whatever balances they can move: invoices and customer account summaries. */
 function useDecisionMutation<TVars, TResult>(
   fn: (vars: TVars) => Promise<TResult>,
-  localErrorToast?: (error: unknown) => boolean,
+  localErrorToast?: boolean | ((error: unknown) => boolean),
 ) {
   const qc = useQueryClient();
   return useMutation<TResult, Error, TVars>({
@@ -88,9 +87,9 @@ export function useApprovePaymentRequest() {
         .post(`/payment-requests/${id}/approve`, recordAnyway ? { recordAnyway: true } : undefined)
         .then((r) => r.data);
     },
-    // Row 348: approving writes a payment, so a closed day can refuse it; the page toasts that itself, once.
-    // Row 498: and so can a duplicate payment reference ("Record anyway").
-    isRecordPaymentLocalRefusal,
+    // Rows 348 / 353: the page renders every approve failure itself (a closed day, a duplicate reference's "Record
+    // anyway", anything else), so the global toast stays quiet for all of them.
+    true,
   );
 }
 
@@ -98,5 +97,6 @@ export function useRejectPaymentRequest() {
   return useDecisionMutation<{ id: string; reason?: string }, { rejected: boolean }>(
     ({ id, reason }) =>
       apiClient.post(`/payment-requests/${id}/reject`, { reason }).then((r) => r.data),
+    true, // row 353: the page toasts a failed reject itself
   );
 }

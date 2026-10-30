@@ -275,8 +275,8 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
               {result.parentRemaining} remain unassigned.
             </p>
 
-            <div className="overflow-hidden rounded-lg border border-surface-border">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto rounded-lg border border-surface-border">
+              <table className="min-w-[420px] w-full text-sm">
                 <thead>
                   <tr className="border-b border-surface-border bg-surface-raised text-left">
                     <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-navy/70">
@@ -381,8 +381,8 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
             />
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-surface-border">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-surface-border">
+            <table className="min-w-[420px] w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border bg-surface-raised text-left">
                   <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-navy/70">
