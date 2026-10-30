@@ -323,7 +323,7 @@ describe("B1: unmark vs reopen (ship-state markers)", () => {
     expect(src).toMatch(/this\.cancelOrderInTx\(tx, order, \{[^}]*\bcarrier,/s);
     // D2: the edit's guard is computed once, BEFORE the un-tx'd invoice revert
     const editAt = src.indexOf("async updateOrderItems(");
-    const guardAt = src.indexOf("carrierGuard.carrierEditGuard(this, order)", editAt);
+    const guardAt = src.indexOf("editGuards(this, order, user, dto, isDiffPayload)", editAt);
     expect(guardAt).toBeGreaterThan(editAt);
     expect(guardAt).toBeLessThan(
       src.indexOf("revertLinkedInvoicesForOrderEdit(orderId, undefined, {", editAt),

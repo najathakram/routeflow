@@ -12,6 +12,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
  * W6b follow-up: the standing-order (reorder) path used to write orders via a
@@ -23,6 +24,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 describe("OrderTemplatesService — regulated license guard on reorder", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   let authGuard: { checkAuthorized: jest.Mock };
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
   // REG-B48 widened createOrderFromTemplate's collaborator surface: it now prices every
@@ -54,6 +56,7 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     authGuard = { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) };
     notifications = {
       sendToCustomer: jest.fn().mockResolvedValue(1),
@@ -245,6 +248,7 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
 describe("OrderTemplatesService — template ownership (F2-003)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
 
   const template = {
     id: "t1",
@@ -259,6 +263,7 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const mod = await Test.createTestingModule({
       providers: [
         oversellReaderOffProvider,
@@ -419,6 +424,7 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
 describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   let ordersService: {
     mergeAllPendingForCustomer: jest.Mock;
     loadActivePromotions: jest.Mock;
@@ -430,6 +436,7 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     ordersService = {
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       loadActivePromotions: jest.fn().mockResolvedValue([]),
@@ -499,9 +506,11 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
 describe("OrderTemplatesService — update() with no items key (T27)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const mod = await Test.createTestingModule({
       providers: [
         oversellReaderOffProvider,

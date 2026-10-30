@@ -210,35 +210,51 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
     await pool?.end();
   }, 120_000);
 
-  it("a replace-all edit of a DELIVERED order with no evidence carries the delivered sum (12 from 10)", async () => {
-    const { orderId } = await seed({ status: "DELIVERED", lines: [{ qty: 10, d: 10 }] });
-    await edit(orderId, { items: [{ productId, qty: 12 }], replaceAll: true });
+  // W-871 (SA-948 MUST 1, SA-956 Q3): a replace on a post-delivery order is refused before any write, so the carry, the
+  // cut and the evidence refusal below it are no longer reachable through updateOrderItems on a DELIVERED order. The
+  // unit sibling (orders.delivered-edit-stamp.spec.ts) was updated the same way: nothing written, deliveredQty unchanged.
+  const REPLACE_REFUSED = { status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } };
+  const expectReplaceRefused = async (
+    orderId: string,
+    items: Array<Record<string, unknown>>,
+    before: Array<{ id: string; qty: number; d: number }>,
+  ) => {
+    await expect(edit(orderId, { items, replaceAll: true })).rejects.toMatchObject(REPLACE_REFUSED);
     const rows = await lines(orderId);
-    expect(rows).toHaveLength(1);
-    expect(Number(rows[0].qty)).toBe(12);
-    expect(Number(rows[0].deliveredQty)).toBe(12); // red on base: 0 (the recreated row reset it)
+    const key = (a: unknown[], b: unknown[]) => String(a[0]).localeCompare(String(b[0]));
+    expect(rows.map((r) => [r.id, Number(r.qty), Number(r.deliveredQty)]).sort(key)).toEqual(
+      before.map((b) => [b.id, b.qty, b.d]).sort(key),
+    );
+  };
+
+  it("a replace-all edit of a DELIVERED order is REFUSED 409 and nothing is written (was: the carry, 12 from 10)", async () => {
+    const { orderId, lineIds } = await seed({ status: "DELIVERED", lines: [{ qty: 10, d: 10 }] });
+    await expectReplaceRefused(
+      orderId,
+      [{ productId, qty: 12 }],
+      [{ id: lineIds[0], qty: 10, d: 10 }],
+    );
   });
 
-  it("a replace-all cut keeps the carried 10; the stable-id edit then raises to the new qty", async () => {
-    const { orderId } = await seed({ status: "DELIVERED", lines: [{ qty: 10, d: 10 }] });
-    await edit(orderId, { items: [{ productId, qty: 6 }], replaceAll: true });
-    const [cut] = await lines(orderId);
-    expect(Number(cut.deliveredQty)).toBe(10);
-    await edit(orderId, { items: [{ id: cut.id, productId, qty: 14 }], replaceAll: false });
-    expect(await dq(cut.id)).toBe(14);
+  it("a replace-all cut is REFUSED 409; the stable-id edit of the same order still raises to the new qty", async () => {
+    const { orderId, lineIds } = await seed({ status: "DELIVERED", lines: [{ qty: 10, d: 10 }] });
+    await expectReplaceRefused(
+      orderId,
+      [{ productId, qty: 6 }],
+      [{ id: lineIds[0], qty: 10, d: 10 }],
+    );
+    await edit(orderId, { items: [{ id: lineIds[0], productId, qty: 14 }], replaceAll: false });
+    expect(await dq(lineIds[0])).toBe(14);
   });
 
-  it("a replace-all of an order with a route evidence row is REFUSED 409 and nothing is written", async () => {
+  it("a replace-all of an order with a route evidence row is REFUSED 409 (LINES_REPLACE_AFTER_DELIVERY) and nothing is written", async () => {
     const { orderId, lineIds } = await seed({
       status: "DELIVERED",
       lines: [{ qty: 10, d: 8, evidence: 8 }],
     });
     await expect(
       edit(orderId, { items: [{ productId, qty: 12 }], replaceAll: true }),
-    ).rejects.toMatchObject({
-      status: 409,
-      response: expect.objectContaining({ code: "ORDER_EDIT_NEEDS_LINE_IDS" }),
-    });
+    ).rejects.toMatchObject(REPLACE_REFUSED); // was ORDER_EDIT_NEEDS_LINE_IDS: the replace rule answers first now
     const rows = await lines(orderId);
     expect(rows.map((r) => r.id)).toEqual(lineIds);
     expect(Number(rows[0].deliveredQty)).toBe(8);
@@ -337,18 +353,21 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
     expect(await stock()).toBe(100); // red on base: 102 (14 restocked for 12 sold)
   });
 
-  it("the same legacy line cut through a replace-all keeps the books: no restock, d 12, void back to the start", async () => {
-    const { orderId } = await seed({ status: "DELIVERED", lines: [{ qty: 12, d: 0 }] });
+  it("the same legacy line cut through a replace-all is REFUSED 409 and the books stay: no restock, d 0, void back to the start", async () => {
+    const { orderId, lineIds } = await seed({ status: "DELIVERED", lines: [{ qty: 12, d: 0 }] });
     await raw.product.update({ where: { id: productId }, data: { currentStock: 88 } });
-    await edit(orderId, { items: [{ productId, qty: 10 }], replaceAll: true });
-    const [row] = await lines(orderId);
-    expect(Number(row.deliveredQty)).toBe(12);
+    await expectReplaceRefused(
+      orderId,
+      [{ productId, qty: 10 }],
+      [{ id: lineIds[0], qty: 12, d: 0 }],
+    );
     expect(await stock()).toBe(88);
     await voidLike(orderId);
     expect(await stock()).toBe(100);
   });
-  it("a legacy CANCELLED row with qty > 0 does not inflate a replace-all carry, and the void does not over-restock", async () => {
-    const { orderId } = await seed({
+
+  it("a legacy CANCELLED row with qty > 0: the replace-all is REFUSED 409, and the void does not over-restock", async () => {
+    const { orderId, lineIds } = await seed({
       status: "DELIVERED",
       lines: [
         { qty: 12, d: 0 },
@@ -356,11 +375,13 @@ describeDb("SA-763r — the delivered stamp through the real writers, real Postg
       ],
     });
     await raw.product.update({ where: { id: productId }, data: { currentStock: 88 } });
-    await edit(orderId, { items: [{ productId, qty: 10 }], replaceAll: true });
-    const live = (await lines(orderId)).filter((r) => r.status !== "CANCELLED");
-    expect(live.map((r) => Number(r.deliveredQty))).toEqual([12]); // red before the guard: 17
+    await expectReplaceRefused(
+      orderId,
+      [{ productId, qty: 10 }],
+      lineIds.map((id, k) => ({ id, qty: k === 0 ? 12 : 5, d: 0 })),
+    );
     expect(await stock()).toBe(88);
     await voidLike(orderId);
-    expect(await stock()).toBe(100); // red before the guard: the extra 5 would be credited again
+    expect(await stock()).toBe(100); // the cancelled row's 5 is not credited again
   });
 });

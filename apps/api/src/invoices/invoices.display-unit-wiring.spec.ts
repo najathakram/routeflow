@@ -19,9 +19,12 @@ jest.mock("./invoice-display-unit", () => {
     itemsWithDisplayUnits: jest.fn(),
     resolveIssueDisplayUnits: jest.fn(),
     writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+    writeIssueBaseLabels: jest.fn().mockResolvedValue(undefined),
     freezeDraftIssueUnits: jest.fn().mockResolvedValue(undefined),
     freezeIssueUnitsFromCatalog: jest.fn().mockResolvedValue(undefined),
     loadStopDisplayUnitCatalog: jest.fn().mockResolvedValue(null),
+    loadStopBaseLabels: jest.fn().mockResolvedValue(null),
+    loadDraftBaseLabels: jest.fn(),
     clearIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
   };
 });
@@ -52,9 +55,12 @@ import {
   freezeDraftIssueUnits,
   freezeIssueUnitsFromCatalog,
   itemsWithDisplayUnits,
+  loadDraftBaseLabels,
+  loadStopBaseLabels,
   loadStopDisplayUnitCatalog,
   resolveDraftIssueUnits,
   resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 import { AfterCommit } from "../common/after-commit";
@@ -64,6 +70,7 @@ const INVOICE_ID = "inv-acme-1";
 const CUSTOMER_ID = "cust-acme-1";
 const TENANT_ID = "tenant-acme-1";
 const UNITS = new Map([["it-1", { kind: "pieces" as const, label: "Piece" }]]);
+const WORDS = new Map([["p-1", "Bag"]]); // SA-1029 A-1: the pre-tx base words
 
 const fixture = (status: InvoiceStatus) => ({
   id: INVOICE_ID,
@@ -104,6 +111,8 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     jest.clearAllMocks();
     (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(UNITS);
     (resolveDraftIssueUnits as jest.Mock).mockResolvedValue(UNITS);
+    (loadDraftBaseLabels as jest.Mock).mockResolvedValue(WORDS);
+    (loadStopBaseLabels as jest.Mock).mockResolvedValue(WORDS);
     prisma = createMockPrisma();
     const creditNotes = {
       settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
@@ -208,13 +217,35 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
     expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBeNull();
   });
 
-  it("markSent: a DRAFT whose resolve returned null writes nothing", async () => {
+  it("markSent: a DRAFT whose resolve returned null writes no unit snapshot, but D-R2 still freezes the base labels", async () => {
     (resolveDraftIssueUnits as jest.Mock).mockResolvedValue(null);
     const draft = fixture(InvoiceStatus.DRAFT);
     prisma.invoice.findUnique.mockResolvedValue(draft);
     prisma.invoice.update.mockResolvedValue({ ...draft, status: InvoiceStatus.SENT });
     await service.send(INVOICE_ID);
     expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBeNull();
+    expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+    expect((writeIssueBaseLabels as jest.Mock).mock.calls[0][1]).toBe(INVOICE_ID);
+    // SA-1029 A-1: the words were read off-tx (the tenant client, before the tx opened) and handed to the writer
+    expect((writeIssueBaseLabels as jest.Mock).mock.calls[0][3]).toBe(WORDS);
+    const [readDb, , loadedFor] = [
+      (loadDraftBaseLabels as jest.Mock).mock.calls[0][0],
+      0,
+      (loadDraftBaseLabels as jest.Mock).mock.calls[0][2],
+    ];
+    expect(readDb).toBe(prisma.forTenant());
+    expect(loadedFor).toBe(INVOICE_ID);
+    expect((loadDraftBaseLabels as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.tenantTransaction.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("markSent: a re-send of an issued (SENT) invoice freezes no base labels", async () => {
+    const sent = fixture(InvoiceStatus.SENT);
+    prisma.invoice.findUnique.mockResolvedValue(sent);
+    prisma.invoice.update.mockResolvedValue(sent);
+    await service.send(INVOICE_ID);
+    expect(writeIssueBaseLabels).not.toHaveBeenCalled();
   });
 
   describe("recordDeliveryPaymentInTx (wasDraft)", () => {
@@ -238,7 +269,15 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
       prisma.invoice.update.mockResolvedValue({});
     };
     const run = () =>
-      (service as any).recordDeliveryPaymentInTx(prisma, new AfterCommit(), ["ord-1"], 100, "CASH");
+      (service as any).recordDeliveryPaymentInTx(
+        prisma,
+        new AfterCommit(),
+        ["ord-1"],
+        100,
+        "CASH",
+        null,
+        null,
+      );
 
     const CATALOG = { customerId: CUSTOMER_ID } as any;
     const runWith = () =>
@@ -249,6 +288,7 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
         100,
         "CASH",
         CATALOG,
+        WORDS,
       );
 
     it("a finalized DRAFT freezes from the catalog loaded BEFORE the tx: nothing but the caller's tx is used (no second pooled connection)", async () => {
@@ -260,6 +300,16 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
       expect(tx).toBe(prisma); // the caller's tx
       expect(inv).toMatchObject({ id: INVOICE_ID, tenantId: TENANT_ID });
       expect(catalog).toBe(CATALOG);
+      // SA-1029 A-1: the word is its own call, handed the pre-tx map, after the catalog freeze
+      expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+      const [wtx, winv, wtenant, words] = (writeIssueBaseLabels as jest.Mock).mock.calls[0];
+      expect(wtx).toBe(prisma);
+      expect(winv).toBe(INVOICE_ID);
+      expect(wtenant).toBe(TENANT_ID);
+      expect(words).toBe(WORDS);
+      expect((freezeIssueUnitsFromCatalog as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        (writeIssueBaseLabels as jest.Mock).mock.invocationCallOrder[0],
+      );
       expect(freezeDraftIssueUnits).not.toHaveBeenCalled(); // the old call took a readDb off the pool, inside the tx
       expect(forTenant).not.toHaveBeenCalled();
     });
@@ -275,6 +325,15 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
       expect(entitlements).toBe((service as any).entitlements);
     });
 
+    it("loadBaseLabels (the other pre-tx half the route calls) reads through the tenant client", async () => {
+      (loadStopBaseLabels as jest.Mock).mockClear();
+      const stop = { orders: [{ id: "ord-1" }] };
+      await service.loadBaseLabels(stop);
+      const [db, passedStop] = (loadStopBaseLabels as jest.Mock).mock.calls[0];
+      expect(db).toBe(prisma);
+      expect(passedStop).toBe(stop);
+    });
+
     it("a null catalog (flag off, a failed load, a multi-customer stop) is handed on as null: the line reads legacy and the payment still lands", async () => {
       arm(InvoiceStatus.DRAFT);
       await (service as any).recordDeliveryPaymentInTx(
@@ -284,8 +343,10 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
         100,
         "CASH",
         null,
+        null,
       );
       expect(freezeIssueUnitsFromCatalog).toHaveBeenCalledWith(prisma, expect.anything(), null);
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0][3]).toBeNull(); // nothing freezes; the payment still lands
       expect(prisma.invoicePayment.create).toHaveBeenCalled();
     });
 
