@@ -28,6 +28,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { Logger } from "@nestjs/common";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { prismaQueryable, waitUntilBlocked } from "../common/testing/blocked-wait";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -106,8 +107,9 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     return p.id;
   }
 
-  /** A DELIVERED sale of 2 x 1.00, billed by a PAID invoice paid 2.00 in CASH. */
-  async function paidSale(customerId: string) {
+  /** A DELIVERED sale of 2 x 1.00, billed by a PAID invoice paid 2.00 in CASH (`paid: false`: a SENT invoice, no payment). */
+  async function paidSale(customerId: string, opts: { paid?: boolean } = {}) {
+    const paid = opts.paid !== false;
     const productId = await product();
     const o = await raw.order.create({
       data: {
@@ -139,7 +141,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
         customerId,
         orderId: o.id,
         invoiceNumber: `INV-${randomUUID().slice(0, 8)}`,
-        status: "PAID",
+        status: paid ? "PAID" : "SENT",
         subtotal: "2.00",
         total: "2.00",
         items: {
@@ -158,10 +160,44 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
       },
     });
     invoiceIds.push(inv.id);
-    const pay = await raw.invoicePayment.create({
-      data: { tenantId, invoiceId: inv.id, amount: "2.00", method: "CASH", status: "PAID" } as any,
-    });
+    const pay = paid
+      ? await raw.invoicePayment.create({
+          data: {
+            tenantId,
+            invoiceId: inv.id,
+            amount: "2.00",
+            method: "CASH",
+            status: "PAID",
+          } as any,
+        })
+      : (undefined as never);
     return { o, inv, pay, productId };
+  }
+
+  /**
+   * What `InvoicesService.writeInvoicePayment` holds while it records a payment: the INVOICE row FOR UPDATE (never the
+   * Order row), the payment insert, the invoice status write, all uncommitted until `release()`.
+   */
+  async function openPayment(invoiceId: string, amount: string) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held!: () => void;
+    const ready = new Promise<void>((r) => (held = r));
+    const done = raw.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
+        await tx.invoicePayment.create({
+          data: { tenantId, invoiceId, amount, method: "CASH", status: "PAID" } as never,
+        });
+        await tx.invoice.update({ where: { id: invoiceId }, data: { status: "PAID" } });
+        held();
+        await gate;
+      },
+      { timeout: 30_000 },
+    );
+    done.catch(() => held()); // a failed open must not hang the test on `ready`
+    await ready;
+    return { release, done };
   }
 
   const snapshot = async (orderId: string) => ({
@@ -332,6 +368,32 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_WOULD_OVERPAY" } });
     expect(await snapshot(o.id)).toEqual(before);
   });
+
+  it("review-a read 1: a payment recording while the edit locks the Order cannot slip past the paid walk-in recheck", async () => {
+    // An UNPAID walk-in sale: `editGuards` (no tx, no lock) sees nothing paid, so the edit tx opens. The office's
+    // Record payment is mid-flight: it holds the INVOICE row and an uncommitted PAID payment, and takes no Order lock.
+    const { o, inv, productId: pid } = await paidSale(await customer(true), { paid: false });
+    const payment = await openPayment(inv.id, "2.00");
+    const editing = edit(o.id, {
+      items: [{ id: o.lineItems[0].id, productId: pid, qty: 3 }],
+      replaceAll: false,
+    }).then(
+      () => "edited",
+      (e: any) => e,
+    );
+    let settled = false;
+    void editing.then(() => (settled = true));
+    const blocked = await waitUntilBlocked(prismaQueryable(raw), { until: () => settled });
+    payment.release();
+    await payment.done;
+    const outcome = await editing;
+    const after = await snapshot(o.id);
+    // The wrong value the unfixed recheck leaves behind: order total 3.00 over a walk-in sale already paid 2.00.
+    expect(Number(after.header.total)).toBe(2);
+    expect(after.lines.map((l) => Number(l.qty))).toEqual([2]);
+    expect(outcome).toMatchObject({ status: 409, response: { code: "WALK_IN_SALE_PAID" } });
+    expect(blocked.length).toBeGreaterThan(0); // the edit WAITED behind the payment, it did not race past it
+  }, 60_000);
 
   it("the judge fails closed on a real tx: 2.00 paid over a 1.50 order total the re-sync cannot project is 409", async () => {
     const { o, inv } = await paidSale(await customer(false));

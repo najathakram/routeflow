@@ -171,15 +171,15 @@ describe("updateOrderItems: revision guard, vanished line, B720 (row 372)", () =
       require("path").resolve(__dirname, "orders.service.ts"),
       "utf8",
     );
-    // the Order lock is taken by lockEditedOrder (replace-after-delivery.ts: FOR UPDATE, then the paid-walk-in recheck)
-    const lock = src.indexOf("await lockEditedOrder(tx, orderId)");
+    // the Order lock is taken by lockEditedOrder (replace-after-delivery.ts: the billing lock, then the paid-walk-in recheck)
+    const lock = src.indexOf("await lockEditedOrder(tx, orderId");
     expect(lock).toBeGreaterThan(0);
     const helper: string = require("fs").readFileSync(
       require("path").resolve(__dirname, "replace-after-delivery.ts"),
       "utf8",
     );
-    expect(helper.indexOf("FOR UPDATE`;")).toBeGreaterThan(0);
-    expect(helper.indexOf("FOR UPDATE`;")).toBeLessThan(
+    expect(helper.indexOf("withOrderBillingLock(tx")).toBeGreaterThan(0);
+    expect(helper.indexOf("withOrderBillingLock(tx")).toBeLessThan(
       helper.indexOf("assertWalkInSaleEditable(tx"),
     );
     expect(src.indexOf("await assertRevisionCurrent(tx, orderId")).toBeGreaterThan(lock);

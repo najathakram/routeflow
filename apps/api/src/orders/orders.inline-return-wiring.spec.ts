@@ -148,7 +148,7 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
 
   it("the customer advisory lock is the tx's FIRST statement: before the Order FOR UPDATE and every write", () => {
     const lock = at("lockInlineReturnCustomer(");
-    expect(lock).toBeLessThan(at("lockEditedOrder(tx, orderId)")); // the Order FOR UPDATE (replace-after-delivery.ts)
+    expect(lock).toBeLessThan(at("lockEditedOrder(tx, orderId")); // the Order FOR UPDATE (replace-after-delivery.ts)
     expect(lock).toBeLessThan(at("tx.orderItem.findMany("));
   });
 
