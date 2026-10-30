@@ -58,7 +58,11 @@ const unitRow = (over: Partial<UnitRow> & Pick<UnitRow, "id" | "label" | "factor
   ...over,
 });
 
-function build(product: Record<string, unknown> | null, rows: UnitRow[]) {
+function build(
+  product: Record<string, unknown> | null,
+  rows: UnitRow[],
+  opts: { mode?: "on" | "off" } = {},
+) {
   const db = {
     product: {
       findFirst: jest.fn().mockResolvedValue(
@@ -74,8 +78,9 @@ function build(product: Record<string, unknown> | null, rows: UnitRow[]) {
     productUnit: { findMany: jest.fn().mockResolvedValue(rows) },
     productTierUnit: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  const prisma = { forTenant: () => db };
-  const service = new ProductPriceGridService(prisma as never);
+  const prisma = { forTenant: () => db, getTenantId: () => "t1" };
+  const featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(opts.mode ?? "off") };
+  const service = new ProductPriceGridService(prisma as never, featureConfig as never);
   return { service, db };
 }
 
@@ -235,25 +240,42 @@ describe("ProductPriceGridService (units v2)", () => {
     expect(cell(dto, "Box", 1)?.source).toBe("auto");
   });
 
-  it("rows the write would refuse say so: a variant, a family, a recipe, and the implicit base row", async () => {
-    const reasons = async (over: Record<string, unknown>) => {
-      const dto = await build(baseProduct(over), []).service.get(PRODUCT_ID);
+  it("rows the write would refuse say so, by mode and level (SA-1041)", async () => {
+    const reasons = async (over: Record<string, unknown>, mode: "on" | "off") => {
+      const dto = await build(baseProduct(over), [], { mode }).service.get(PRODUCT_ID);
       return dto.rows.map((r) => [r.label, r.editable, r.notEditableReason]);
     };
-    expect(await reasons({ parentProductId: "fam-1" })).toEqual([
-      ["Box", false, "Priced by the family."],
-      ["Piece", false, "Priced by the family."],
-    ]);
-    expect((await reasons({ kind: "FAMILY" }))[0]).toEqual([
-      "Box",
-      false,
-      "Family prices are edited on the family page.",
-    ]);
-    expect((await reasons({ kind: "RECIPE" }))[0]).toEqual(["Box", false, "Priced by its recipe."]);
-    expect(await reasons({})).toEqual([
-      ["Box", true, undefined],
-      ["Piece", false, "Add the Piece unit first."],
-    ]);
+    const FAMILY_REASON = "Family prices are edited on the family page.";
+    // mode off: a variant and a recipe are their own; only the implicit base row waits on a unit
+    for (const over of [{ parentProductId: "fam-1" }, { kind: "RECIPE" }, {}]) {
+      expect(await reasons(over, "off")).toEqual([
+        ["Box", true, undefined],
+        ["Piece", false, "Add the Piece unit first."],
+      ]);
+    }
+    // mode on: a variant's base level is the family's, its other levels are its own
+    const unitRows = [
+      unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.00" }),
+      unitRow({ id: "u-case", label: "Case", factorToBase: 12, price: "10.00" }),
+    ];
+    const dto = await build(baseProduct({ parentProductId: "fam-1" }), unitRows, {
+      mode: "on",
+    }).service.get(PRODUCT_ID);
+    const byLabel = Object.fromEntries(dto.rows.map((r) => [r.label, r]));
+    expect(byLabel.Piece).toMatchObject({
+      editable: false,
+      notEditableReason: "Priced by the family.",
+    });
+    expect(byLabel.Case.editable).toBe(true);
+    // the product's own five-column row is the base level too
+    expect(byLabel.Box).toMatchObject({
+      editable: false,
+      notEditableReason: "Priced by the family.",
+    });
+    // a FAMILY is never editable here, in either mode
+    for (const mode of ["on", "off"] as const) {
+      expect((await reasons({ kind: "FAMILY" }, mode))[0]).toEqual(["Box", false, FAMILY_REASON]);
+    }
   });
 
   it("a product the tenant does not have is a 404", async () => {

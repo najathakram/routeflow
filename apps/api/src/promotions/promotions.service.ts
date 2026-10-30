@@ -12,6 +12,8 @@ import { UpdatePromotionDto } from "./dto/update-promotion.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertNoFamilyProducts } from "../products/sellable-lines";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { assertPromotionsOn, promotionsOn } from "./promotions-mode";
 
 /**
  * The stored promotion fields the zero-price guard reads back. `value` is a Prisma
@@ -42,7 +44,10 @@ interface StoredPromotion {
  */
 @Injectable()
 export class PromotionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly featureConfig: FeatureConfigService,
+  ) {}
 
   private validateRule(dto: Partial<CreatePromotionDto>) {
     if (dto.type === "QTY_BREAK" && !(dto.minQty && dto.minQty > 0)) {
@@ -158,6 +163,7 @@ export class PromotionsService {
   }
 
   async create(dto: CreatePromotionDto) {
+    await assertPromotionsOn(this.featureConfig, this.prisma.getTenantId());
     this.validateRule(dto);
     if (dto.scope === PromotionScope.PRODUCTS) {
       // 681 site 7: proof (existence + tenant) first, then the family policy, before the write tx.
@@ -207,6 +213,7 @@ export class PromotionsService {
   }
 
   async update(id: string, dto: UpdatePromotionDto) {
+    await assertPromotionsOn(this.featureConfig, this.prisma.getTenantId());
     const existing: StoredPromotion = await this.findOne(id); // tenant-scoped existence + 404
     this.validateRule(dto);
     await assertRefsInTenant(this.prisma, { productIds: dto.productIds }); // 681 site 7: proof before policy
@@ -244,12 +251,14 @@ export class PromotionsService {
 
   /** Enable/disable without editing the rule. */
   async setActive(id: string, isActive: boolean) {
+    await assertPromotionsOn(this.featureConfig, this.prisma.getTenantId());
     await this.findOne(id);
     await this.prisma.forTenant().promotion.update({ where: { id }, data: { isActive } });
     return this.findOne(id);
   }
 
   async remove(id: string) {
+    await assertPromotionsOn(this.featureConfig, this.prisma.getTenantId());
     await this.findOne(id);
     await this.prisma.forTenant().promotion.delete({ where: { id } });
     return { deleted: true };
@@ -258,8 +267,12 @@ export class PromotionsService {
   /**
    * Promotions that are ACTIVE and in-window right now — the buyer-facing read. Cascades
    * of PromotionProduct come back as `productIds` so the client (and pricing) can match.
+   * SA-1032: nothing when the business has promotions off, or outside any tenant context.
    */
   async activeForCatalog(now: Date = new Date()) {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return [];
+    if (!promotionsOn(await this.featureConfig.getEffectiveMode(tenantId, "promotions"))) return [];
     const promos = await this.prisma.forTenant().promotion.findMany({
       where: { isActive: true, startsAt: { lte: now }, endsAt: { gte: now } },
       include: { products: { select: { productId: true } } },

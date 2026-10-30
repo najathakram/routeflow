@@ -12,7 +12,9 @@ import {
 } from "@/lib/api/finance";
 import { useSuppliers } from "@/lib/api/suppliers";
 import { useCustomers } from "@/lib/api/customers";
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import { useToast } from "@routeflow/ui/web";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -54,7 +56,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
   const { data: categories } = useExpenseCategories();
   const { data: suppliersData } = useSuppliers();
   const { data: customersData } = useCustomers({ limit: 200 });
-  const createExpense = useCreateExpense();
+  const createExpense = useCreateExpense({ localErrorToast: true });
 
   const [isItemized, setIsItemized] = React.useState(false);
   const [form, setForm] = React.useState({
@@ -62,7 +64,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
     supplierId: "",
     customerId: "",
     amount: "",
-    date: new Date().toISOString().split("T")[0],
+    date: "", // SA-964 §4: seeded with the tenant's day when the zone resolves
     description: "",
     paymentMethod: "CASH",
     referenceNumber: "",
@@ -70,6 +72,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
     isBillable: false,
     employeeName: "",
   });
+  useOnTenantToday((day) => setForm((f) => ({ ...f, date: f.date || day })));
   const [lineItems, setLineItems] = React.useState<LineItem[]>([
     { id: crypto.randomUUID(), account: "", notes: "", amount: "" },
   ]);
@@ -100,6 +103,10 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!form.date) {
+      toast({ title: "Pick a date for the expense", variant: "error" }); // empty until the tenant's day is known
+      return;
+    }
 
     const dto: Partial<CreateExpenseDto> = {
       date: form.date,
@@ -144,9 +151,12 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
       toast({ title: "Expense recorded", variant: "success" });
       onSaved();
     } catch (err: unknown) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      toast({ title: apiMessage ?? "Failed to record expense", variant: "error" });
+      // Rows 348 / 353: the global toast is quiet for this save (localErrorToast), so this is the only one; fixed copy, never raw.
+      toast({
+        title: "Failed to record expense",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -441,11 +451,11 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
   const { toast } = useToast();
   const { data: rates } = useMileageRates();
   const { data: customersData } = useCustomers({ limit: 200 });
-  const createExpense = useCreateExpense();
+  const createExpense = useCreateExpense({ localErrorToast: true });
 
   const [calcMode, setCalcMode] = React.useState<"distance" | "odometer">("distance");
   const [form, setForm] = React.useState({
-    date: new Date().toISOString().split("T")[0],
+    date: "", // SA-964 §4: seeded with the tenant's day when the zone resolves
     employeeName: "",
     distance: "",
     odometerStart: "",
@@ -455,6 +465,8 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
     customerId: "",
     unit: "MILE",
   });
+
+  useOnTenantToday((day) => setForm((f) => ({ ...f, date: f.date || day })));
 
   const customers = customersData?.data ?? [];
 
@@ -483,6 +495,10 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
       toast({ title: "Distance must be greater than 0", variant: "error" });
       return;
     }
+    if (!form.date) {
+      toast({ title: "Pick a date for the trip", variant: "error" });
+      return;
+    }
     if (!applicableRate) {
       toast({
         title: "No mileage rate found for this date. Add a rate in Settings.",
@@ -507,9 +523,12 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
       toast({ title: "Mileage expense recorded", variant: "success" });
       onSaved();
     } catch (err: unknown) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      toast({ title: apiMessage ?? "Failed to record mileage", variant: "error" });
+      // Rows 348 / 353: the global toast is quiet for this save (localErrorToast), so this is the only one; fixed copy, never raw.
+      toast({
+        title: "Failed to record mileage",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -705,12 +724,12 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
   const { toast } = useToast();
   const { data: categories } = useExpenseCategories();
   const { data: customersData } = useCustomers({ limit: 200 });
-  const bulkCreate = useBulkCreateExpenses();
+  const bulkCreate = useBulkCreateExpenses({ localErrorToast: true });
 
-  const today = new Date().toISOString().split("T")[0];
+  // SA-964 §4: rows start with no date and take the tenant's day when the zone resolves (never the browser's).
   const emptyRow = (): BulkRow => ({
     id: crypto.randomUUID(),
-    date: today,
+    date: "",
     categoryId: "",
     amount: "",
     customerId: "",
@@ -718,6 +737,9 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
   });
 
   const [rows, setRows] = React.useState<BulkRow[]>(() => Array.from({ length: 5 }, emptyRow));
+  const today = useOnTenantToday((day) =>
+    setRows((prev) => prev.map((r) => (r.date ? r : { ...r, date: day }))),
+  );
 
   const customers = customersData?.data ?? [];
 
@@ -758,9 +780,12 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
         onSaved();
       }
     } catch (err: unknown) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      toast({ title: apiMessage ?? "Failed to save expenses", variant: "error" });
+      // Rows 348 / 353: the global toast is quiet for this save (localErrorToast), so this is the only one; fixed copy, never raw.
+      toast({
+        title: "Failed to save expenses",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -865,7 +890,7 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
       <div className="border-t border-surface-border px-4 py-3">
         <button
           type="button"
-          onClick={() => setRows((prev) => [...prev, emptyRow()])}
+          onClick={() => setRows((prev) => [...prev, { ...emptyRow(), date: today ?? "" }])}
           className="text-sm text-brand-500 hover:underline"
         >
           + Add More Expenses

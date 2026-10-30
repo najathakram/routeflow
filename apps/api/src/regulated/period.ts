@@ -1,3 +1,5 @@
+import { tenantTodayDay } from "../common/calendar-date";
+
 /**
  * Phase 4 (W5): the "YYYY-MM" period bucket a regulated sale/reversal books into.
  * UTC-based so it never drifts with the server's local timezone. Single source of
@@ -58,4 +60,18 @@ export function filingPeriod(
   const bucket = bucketOf(index);
   const { from, to } = monthRange(bucket);
   return { periodKey: bucket, buckets: [bucket], from, to };
+}
+
+/**
+ * SA-995 §3: has a period ended on the TENANT's clock? True once the tenant's calendar day is on or past the
+ * period's exclusive end day. The one reader of "the tenant's today" (`tenantTodayDay`), so a US tenant's
+ * 31st is still the 31st when UTC has turned the 1st, with no grace window. `periodEnd` is a UTC-midnight stamp
+ * of the first day of the next period (symbolic calendar date, as every period here is).
+ */
+export function periodEndedForTenant(
+  periodEnd: Date,
+  zone: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  return tenantTodayDay(zone, now) >= periodEnd.toISOString().slice(0, 10);
 }

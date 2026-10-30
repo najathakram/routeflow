@@ -1,0 +1,29 @@
+{
+  "slug": "example-acme",
+  "spec": "docs/plans/README.md",
+  "owner": "lane-example",
+  "criteria": [
+    {
+      "id": "AC1",
+      "ears": "When a buyer saves a list, the api shall store it.",
+      "testIds": ["T-api"]
+    },
+    { "id": "AC2", "ears": "While a list is empty, the page shall say so.", "testIds": ["T-web"] }
+  ],
+  "slices": [
+    { "id": "S1", "title": "api: lists", "files": ["apps/api/src/acme.ts"], "testIds": ["T-api"] },
+    {
+      "id": "S2",
+      "title": "web: page",
+      "files": ["apps/web/app/acme.tsx"],
+      "testIds": ["T-web"],
+      "dependsOn": ["S1"]
+    },
+    {
+      "id": "S3",
+      "title": "mobile: screen",
+      "files": ["apps/mobile/app/acme.tsx"],
+      "dependsOn": ["S1"]
+    }
+  ]
+}

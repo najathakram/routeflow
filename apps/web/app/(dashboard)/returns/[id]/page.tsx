@@ -112,8 +112,11 @@ function ResolveReturnModal({
   refundEstimate,
   refundEstimateReason,
   tenderRequired = false,
+  walkIn = false,
 }: {
   isOpen: boolean;
+  /** W-913: a walk-in return is refunded at the till; store credit is not offered (the server refuses it). */
+  walkIn?: boolean;
   /** SA-740r2: a COUNTER order's recorded refund must say how it was paid (the cash cap treats none as cash). */
   tenderRequired?: boolean;
   onClose: () => void;
@@ -122,16 +125,17 @@ function ResolveReturnModal({
   refundEstimate?: number | null;
   refundEstimateReason?: string | null;
 }) {
-  const [method, setMethod] = React.useState<RefundMethod>("CREDIT_NOTE");
+  const defaultMethod: RefundMethod = walkIn ? "EXTERNAL_REFUND" : "CREDIT_NOTE";
+  const [method, setMethod] = React.useState<RefundMethod>(defaultMethod);
   // SA-740r2: optional ("" = not recorded). Only meaningful for the refund option; reset whenever the modal opens.
   const [tender, setTender] = React.useState<InlineRefundTender | "">("");
 
   React.useEffect(() => {
     if (isOpen) {
-      setMethod("CREDIT_NOTE");
+      setMethod(defaultMethod);
       setTender("");
     }
-  }, [isOpen]);
+  }, [isOpen, defaultMethod]);
 
   const amountLabel = fmtMoney(refundEstimate);
   // The server reports 0 WITH a reason when the basis is not creditable (nothing
@@ -165,23 +169,25 @@ function ResolveReturnModal({
     >
       <div className="space-y-3">
         {estimateReasonLabel && <p className="text-xs text-navy/70">{estimateReasonLabel}</p>}
-        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
-          <input
-            type="radio"
-            name="resolve-method"
-            checked={method === "CREDIT_NOTE"}
-            onChange={() => setMethod("CREDIT_NOTE")}
-            className="mt-0.5 accent-brand-500"
-          />
-          <span>
-            <span className="block text-sm font-medium text-navy">
-              Issue store credit (credit note)
+        {!walkIn && (
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
+            <input
+              type="radio"
+              name="resolve-method"
+              checked={method === "CREDIT_NOTE"}
+              onChange={() => setMethod("CREDIT_NOTE")}
+              className="mt-0.5 accent-brand-500"
+            />
+            <span>
+              <span className="block text-sm font-medium text-navy">
+                Issue store credit (credit note)
+              </span>
+              <span className="block text-xs text-navy/70">
+                Mints a {amountLabel} credit note for the customer, linked to this return.
+              </span>
             </span>
-            <span className="block text-xs text-navy/70">
-              Mints a {amountLabel} credit note for the customer, linked to this return.
-            </span>
-          </span>
-        </label>
+          </label>
+        )}
         <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
           <input
             type="radio"
@@ -264,6 +270,20 @@ function ConfirmActionModal({
 
 const STATUS_ORDER: ReturnStatus[] = ["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED", "REFUNDED"];
 
+// Where each status sits on the timeline: an index into STATUS_ORDER, or "closed" (the banner, no steps).
+// PROCESSED is the same terminal step as REFUNDED (a return settled without a refund). Every status has an
+// entry, so a new server status is a compile error here, not a timeline of pending steps (SA-1049 R2).
+const TIMELINE_STEP: Record<ReturnStatus, number | "closed"> = {
+  PENDING: 0,
+  APPROVED: 1,
+  IN_TRANSIT: 2,
+  RECEIVED: 3,
+  REFUNDED: 4,
+  PROCESSED: 4,
+  REJECTED: "closed",
+  CANCELLED: "closed",
+};
+
 function StatusTimeline({
   currentStatus,
   logs,
@@ -271,7 +291,8 @@ function StatusTimeline({
   currentStatus: ReturnStatus;
   logs?: Return["logs"];
 }) {
-  if (currentStatus === "REJECTED" || currentStatus === "CANCELLED") {
+  const currentIdx = TIMELINE_STEP[currentStatus];
+  if (currentIdx === "closed") {
     return (
       <div className="flex items-center gap-3 rounded-lg bg-red-50 px-4 py-3">
         <XCircle className="h-5 w-5 shrink-0 text-red-500" />
@@ -287,11 +308,11 @@ function StatusTimeline({
     );
   }
 
-  const currentIdx = STATUS_ORDER.indexOf(currentStatus);
-
   return (
     <div className="space-y-3">
-      {STATUS_ORDER.map((s, idx) => {
+      {STATUS_ORDER.map((step, idx) => {
+        // the terminal step reads "Processed" (with its own log date) when that is how the return ended
+        const s = idx === currentIdx ? currentStatus : step;
         const done = idx < currentIdx;
         const active = idx === currentIdx;
         const pending = idx > currentIdx;
@@ -841,6 +862,7 @@ export default function ReturnDetailPage() {
         refundEstimate={ret.refundEstimate}
         refundEstimateReason={ret.refundEstimateReason}
         tenderRequired={ret.order?.counterSale === true}
+        walkIn={ret.customer?.isWalkIn === true}
       />
 
       <ConfirmActionModal

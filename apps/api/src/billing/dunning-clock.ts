@@ -3,7 +3,7 @@ import type { DunningDeps } from "./dunning-core";
 /**
  * SA-733r7 r-note 3 (supersedes r-note 2's keep-original clause): `pastDueSince` is the time of the STAMP, always -
  * the webhook stamp, a discovery stamp and a clock moved onto a sibling alike. Every invoice therefore gets one full
- * 7-day runway from its first notice, and an `enforced` flip cannot mass-pause the old backlog.
+ * 14-day runway from its first notice, and an `enforced` flip cannot mass-pause the old backlog.
  *
  * A dunning EPISODE runs from one stamp to the next exit (resume, admin activation, `extendTrial`, a discovery clear).
  * Each episode notifies afresh: every `BillingNotificationLog.key` of a dunning milestone (d0 / d3 / d6 / final /

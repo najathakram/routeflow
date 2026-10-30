@@ -227,6 +227,14 @@ function copyScrubHelper(clientDir) {
     join(dest, "scrubbed-git-env.cjs"),
     readFileSync(fileURLToPath(new URL("../lib/scrubbed-git-env.cjs", import.meta.url))),
   );
+  // Planted copies of plane-doctor / plane-retro / plane-sync import the register contract module
+  // (and its sibling registry-source.json) from the same relative path.
+  for (const name of ["registry-root.mjs", "registry-source.json"]) {
+    writeFileSync(
+      join(dest, name),
+      readFileSync(fileURLToPath(new URL("../lib/" + name, import.meta.url))),
+    );
+  }
 }
 
 function baseEnv() {

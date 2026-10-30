@@ -72,6 +72,20 @@ printf '%s\n' "$refs" | node scripts/push-guard.mjs || exit 1
 # no override: a red here means extract the new code into its own module, never raise the baseline.
 node scripts/size-ratchet-gate.mjs || exit 1
 
+# DARK: report-only risk class of this branch (green < amber < red < black; scripts/risk-class.mjs).
+# Never blocks: output only, any failure is ignored.
+node scripts/risk-class.mjs 2>/dev/null || true
+
+# DARK: report-only PR size (counted lines, scripts/pr-size.mjs; thresholds in scripts/lib/pr-size.mjs).
+# Never blocks: output only, any failure is ignored.
+node scripts/pr-size.mjs 2>/dev/null || true
+# DARK (R4): report-only test-tamper scan of this branch (scripts/test-tamper-check.mjs), then the
+# fix-revert probe, which RUNS tests, so only when PROBE=1 on a fix/* or bug/* branch. Never blocks.
+node scripts/test-tamper-check.mjs || true
+if [ "$PROBE" = "1" ]; then
+  case "$branch" in fix/* | bug/*) node scripts/fix-revert-probe.mjs || true ;; esac
+fi
+
 if [ "$SKIP_VERIFY" = "1" ]; then
   upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/master)"
   changed="$(git diff --name-only "$upstream"...HEAD 2>/dev/null || git diff --name-only origin/master...HEAD)"
@@ -119,9 +133,13 @@ if [ "$verify_mode" = "fast" ] && [ "$tree" != "none" ]; then
   tree_key="$tree:fast"
 elif [ "$FULL_VERIFY" != "1" ] && [ "$tree" != "none" ]; then tree_key="$tree:affected"; else tree_key="$tree"; fi
 dirty="$(git status --porcelain 2>/dev/null | head -1)"
+# A fast pass is not proof (lead 2026-10-28): the same line scripts/verify-turbo.mjs ends a fast run
+# with, repeated on the skip path and after a pass (pinned to FAST_NOT_PROOF_LINE by the self-test).
+fast_stamp=""
+if [ "$verify_mode" = "fast" ]; then fast_stamp="fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)"; fi
 
 if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
-  echo "✓ tree $tree already passed 'npm run verify' locally — skipping (clean tree, unchanged content)."
+  echo "✓ tree $tree already passed 'npm run verify' locally — skipping (clean tree, unchanged content).${fast_stamp:+ $fast_stamp}"
   exit 0
 fi
 
@@ -132,6 +150,7 @@ fi
 # FULL_VERIFY=1 (the coordinator's landing run) is the ONLY override and runs the whole chain, as
 # does CI. No other environment variable narrows the run (RF_VERIFY_MODE is set here, from the policy).
 npm run verify || exit 1
+if [ -n "$fast_stamp" ]; then echo "$fast_stamp"; fi
 
 if [ -z "$dirty" ] && [ "$tree" != "none" ]; then
   printf '%s' "$tree_key" > "$marker"

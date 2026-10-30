@@ -126,6 +126,29 @@ describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscriptio
     expect(sent(h).automatic_tax?.enabled).not.toBe(true);
   });
 
+  describe("R1 (SA-1037 r3 PR-1): BILLING_CHECKOUT_PAYMENT_METHODS", () => {
+    const KEY = "BILLING_CHECKOUT_PAYMENT_METHODS";
+    const prior = process.env[KEY];
+    afterEach(() => {
+      if (prior === undefined) delete process.env[KEY];
+      else process.env[KEY] = prior;
+    });
+
+    it("card_and_bank: a trial tenant session offers card and us_bank_account", async () => {
+      process.env[KEY] = "card_and_bank";
+      const h = make();
+      await h.billing.createCheckoutSession("t1", "month");
+      expect(sent(h).payment_method_types).toEqual(["card", "us_bank_account"]);
+    });
+
+    it("unset: the field is absent (the Dashboard decides, as today)", async () => {
+      delete process.env[KEY];
+      const h = make();
+      await h.billing.createCheckoutSession("t1", "month");
+      expect(sent(h)).not.toHaveProperty("payment_method_types");
+    });
+  });
+
   it("Oct 15: the session lives the plain 23 h", async () => {
     jest.useFakeTimers({ now: new Date("2026-10-15T09:00:00Z"), doNotFake: ONLY_DATE });
     const h = make();

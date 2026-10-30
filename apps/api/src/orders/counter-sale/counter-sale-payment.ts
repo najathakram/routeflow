@@ -3,6 +3,7 @@ import { clearedTenderNow, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { parseCalendarDay, tenantTodayDay } from "../../common/calendar-date";
 import { resolveZone } from "../../common/tenant-time-zone";
+import type { ToCollectMethod } from "../../invoices/to-collect";
 
 /**
  * Counter sale payment rules. Two stages, because the sale's total is computed by create() (tax,
@@ -21,6 +22,11 @@ export interface CounterPaymentInput {
   recordAnyway?: boolean;
   /** CHECK only: the date written on the check, YYYY-MM-DD (the DTO pins the shape). */
   checkDate?: string;
+  /**
+   * SA-1026: "the check is not in hand yet". Only with ON_ACCOUNT (a named customer): no payment row, the invoice is marked
+   * To collect. Judged in `assertPaymentShape`, the one shape guard the till and the hand-over share.
+   */
+  expectedMethod?: ToCollectMethod;
 }
 
 const refuse = (code: string, message: string) => new BadRequestException({ code, message });
@@ -33,6 +39,13 @@ export function assertPaymentShape(payment: CounterPaymentInput, walkIn: boolean
     throw refuse(
       API_ERROR_CODES.WALK_IN_NO_ACCOUNT,
       "A walk-in customer has no account — take a payment or pick a customer",
+    );
+  }
+  // SA-1026: the intent rides only beside On account (a check IN hand is a CHECK tender with its number).
+  if (payment.expectedMethod != null && payment.method !== "ON_ACCOUNT") {
+    throw refuse(
+      API_ERROR_CODES.COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT,
+      "Choose On account to save the sale until the check arrives",
     );
   }
   if (payment.method === "CHECK" && !payment.reference?.trim()) {

@@ -55,6 +55,7 @@ const CASE: LadderUnit = {
 
 const ctxFor = (tier: number): LineOverrideCtx => ({
   actorId: "user-1",
+  priceEditAllowed: true,
   tierOf: () => tier,
   ladders: new Map([["bx", [CASE]]]),
 });

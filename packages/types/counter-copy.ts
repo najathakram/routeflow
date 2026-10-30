@@ -48,6 +48,9 @@ export function counterCompleteRefusalCopy(
     // SA-913 R8: the take-off lost a race (a dispatch or the run finishing moved the link); the removal rolled back
     case API_ERROR_CODES.ORDER_RUN_LINK_CHANGED:
       return "Nothing changed. This order's delivery run just changed. Reload and try again.";
+    // W-776 (SA-925): the pre-check refused a closed day before any write. The words are W-778's; no button is named until web has one.
+    case API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED:
+      return "Nothing changed. This register's day is closed. A manager or owner can reopen it.";
     case API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE:
       return "Nothing changed. This business doesn't hand orders over at the store.";
     case API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED: {

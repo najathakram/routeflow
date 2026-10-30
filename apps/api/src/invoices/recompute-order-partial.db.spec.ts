@@ -1311,7 +1311,13 @@ describeDb(
         data: { orderItemId: null },
       });
 
-      await tenantCtx.run(tenant.id, () => invoicesService.voidInvoice((invoice as any).id));
+      await tenantCtx.run(tenant.id, () =>
+        invoicesService.voidInvoice((invoice as any).id, {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
+      );
 
       const refreshedActive = await prisma.orderItem.findUniqueOrThrow({
         where: { id: activeLine.id },

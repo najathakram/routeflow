@@ -84,6 +84,7 @@ describe("the staff payment routes pass the staff flag to the service", () => {
     const dto = { amount: 10, method: "CHECK", reference: "R-1", recordAnyway: true } as never;
     await c.updatePayment("inv-1", "pay-1", dto, user);
     expect(service.updatePayment).toHaveBeenCalledWith("inv-1", "pay-1", dto, {
+      user,
       refDedupe: { actor: "user-1", role: "OPERATOR", recordAnyway: true },
     });
   });

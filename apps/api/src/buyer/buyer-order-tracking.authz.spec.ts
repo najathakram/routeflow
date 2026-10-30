@@ -32,6 +32,7 @@ import { StatementPdfService } from "./statement-pdf.service";
 import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -276,6 +277,7 @@ beforeEach(async () => {
           getOrderTracking: (id: string, user: any) => getOrderTracking({ prisma }, id, user),
         },
       },
+      { provide: FeatureConfigService, useValue: { getEffectiveMode: async () => "on" } },
       ...[
         BuyerService,
         BuyerCatalogService,

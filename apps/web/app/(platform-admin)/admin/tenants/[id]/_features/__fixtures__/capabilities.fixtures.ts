@@ -110,6 +110,18 @@ export const NOT_CONFIGURED_FIXTURE: BusinessCapabilities = {
   matchedPreset: null,
 };
 
+/**
+ * SA-1028: `GET .../business-capabilities` for a tenant nobody set up (fulfilment_model unset) that works today as
+ * Delivery (fleet held) + Shipping. The server reads the ticks of what the business does; `configured` stays false.
+ */
+export const UNSET_TODAY_FIXTURE: BusinessCapabilities = {
+  ...NOT_CONFIGURED_FIXTURE,
+  delivery: true,
+  doorPayments: true,
+  shipping: true,
+  fleetHeld: true,
+};
+
 export function capabilitiesFixture(
   over: Partial<BusinessCapabilities> = {},
 ): BusinessCapabilities {

@@ -2,6 +2,7 @@ import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { API_ERROR_CODES, allPermissionGroups, type MyPermissions } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import { useOptionalAuth } from "../auth-context";
 
 /**
  * `GET /users/me/permissions`: the groups the signed-in user holds. Only an OPERATOR's answer can differ from "all
@@ -25,6 +26,16 @@ export function deniedGroupsOf(perms: Pick<MyPermissions, "groups"> | null | und
   if (!perms) return [];
   const held = new Set<string>(perms.groups);
   return allPermissionGroups().filter((g) => !held.has(g));
+}
+
+/**
+ * The signed-in OPERATOR's denied groups, for a control that depends on one (the void button). Everyone else, and an
+ * operator whose read is pending or failed, gets [] (the server is the authority and refuses what the screen offered).
+ */
+export function useDeniedGroups(): string[] {
+  const user = useOptionalAuth()?.user;
+  const perms = useMyPermissions(user?.id, { enabled: user?.role === "OPERATOR" });
+  return user?.role === "OPERATOR" ? deniedGroupsOf(perms.data) : [];
 }
 
 /** A till call the server refused because the account's admin has not turned selling on (403 PERMISSION_DENIED). */

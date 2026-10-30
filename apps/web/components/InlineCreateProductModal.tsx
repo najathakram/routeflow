@@ -54,6 +54,7 @@ export function InlineCreateProductModal({
   const { toast } = useToast();
   const w = unitWords();
   const createProduct = useCreateProduct();
+  const submittingRef = React.useRef(false);
   const skuInputRef = React.useRef<HTMLInputElement>(null);
 
   const [form, setForm] = React.useState({
@@ -137,6 +138,10 @@ export function InlineCreateProductModal({
     } else if (!productName) {
       return;
     }
+    // I-79: one create per attempt. `loading` disables the button only after a re-render, so a second click in the
+    // same frame would POST again and come back 409; the ref drops it until this attempt settles.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
 
     createProduct.mutate(
       {
@@ -177,6 +182,9 @@ export function InlineCreateProductModal({
             description: "Check the details and try again.",
             variant: "error",
           });
+        },
+        onSettled: () => {
+          submittingRef.current = false;
         },
       },
     );

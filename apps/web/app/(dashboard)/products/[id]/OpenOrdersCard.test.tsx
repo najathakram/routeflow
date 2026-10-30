@@ -150,6 +150,20 @@ describe("OpenOrdersCard", () => {
     expect(chip("Total qty")).toHaveTextContent("4 boxes + 6 pcs");
   });
 
+  it("totals in plain pieces when the lines were taken on different packs", () => {
+    query.data = data(
+      [line(), line({ orderId: "o2", customerId: "c2", unitsPerBox: 6, boxes: 5, pieces: 0 })],
+      { summary: { orders: 2, customers: 2, totalQty: 60 } },
+    );
+    render(<OpenOrdersCard productId="p1" unitsPerBox={12} />);
+    const chip = screen
+      .getAllByText("Total qty")
+      .find((el) => el.tagName === "P")!
+      .closest("div")!;
+    expect(chip).toHaveTextContent("60");
+    expect(chip).not.toHaveTextContent("boxes");
+  });
+
   it("says when only the newest lines are shown", () => {
     query.data = data(
       Array.from({ length: 200 }, (_, i) => line({ orderId: `o${i}` })),
