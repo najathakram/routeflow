@@ -126,6 +126,8 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
   const NOT_PRODUCTION: Record<string, string> = {
     "inventory/testing/count-db-harness.ts":
       "DB-spec fixture cleanup (deleteMany of the throwaway tenant's rows)",
+    "orders/testing/units-fold-db-harness.ts":
+      "DB-spec fixture setup and cleanup of the throwaway fold tenant's rows",
     "tracked-categories/tracked-category-writers.ts":
       "the scanner itself (its docs and patterns spell the shapes)",
     "products/tripwire-scan.ts":

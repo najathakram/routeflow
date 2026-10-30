@@ -52,7 +52,11 @@ describe("judgeEditTail: the scope the edit hands the judge", () => {
   const { judgeEditTail } = require("./edit-overpay-judge");
   const run = async (edit: any) => {
     const projectEditedInvoiceTotals = jest.fn().mockResolvedValue([]);
-    const tx = { $executeRaw: jest.fn(), invoicePayment: { findMany: jest.fn() } };
+    const tx = {
+      $executeRaw: jest.fn(),
+      invoice: { findMany: jest.fn().mockResolvedValue([]) }, // W-871: the fail-closed read (no live invoice)
+      invoicePayment: { findMany: jest.fn() },
+    };
     const skip = await judgeEditTail(
       { invoices: { projectEditedInvoiceTotals }, tenantId: "t" },
       tx,

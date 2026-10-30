@@ -43,7 +43,8 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   },
   "inventory/inventory.service.ts": {
     calls: 11,
-    sites: 16,
+    // SA-927: the counter and movement writes moved to inventory/stock-movements.ts; the guards stay here.
+    sites: 8,
     why: "PO draft/create/update, recordPurchase (StockLot), recordAdjustment, commitStockCount (+ applyStockCountItemsInTx), commitStockCountSession (+ its batch re-check of kind under the product lock, SA-767 n2), upsertStockCountLine, setCostBasis, bulkSetCostBasis; the other writer sites (assignToVariants, PO receive/reverse, cost replay) move stock only out of / into a product that HAS stock: a FAMILY is created with zero stock and never receives any (every entry point above refuses it), so their pool checks reject it",
   },
   "order-templates/order-templates.service.ts": {
@@ -58,8 +59,8 @@ const GUARDED: Record<string, { calls: number; sites: number; why: string }> = {
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
-    sites: 5,
-    why: "receiving a bill line writes a StockLot + PURCHASE movement: a FAMILY is refused there (the 4th site is the ONE reversal row revertToDraft and voidBill share (appendBillReversals): it mirrors a receipt row found by the receive() note, so it assumes that row was written by receive() under this guard — a receipt that predates the guard could name a FAMILY, and the reversal then just undoes it; the 5th is voidBill's shortfall ADJUSTMENT (SA-808b): stock with no receipt record is taken out of the product the BILL LINE names, which the receive guard already kept off FAMILY)",
+    sites: 2,
+    why: "receiving a bill line writes a StockLot and (through the one stock writer, inventory/stock-movements.ts) the PURCHASE movement: a FAMILY is refused there. The reversal row revertToDraft and voidBill share (appendBillReversals) and voidBill's shortfall ADJUSTMENT (SA-808b) also go through that writer; they mirror a receipt row found by the receive() note and act on the product the BILL LINE names, which the receive guard already kept off FAMILY",
   },
 };
 
@@ -77,24 +78,16 @@ const ALLOWED: Record<string, { sites: number; why: string }> = {
     sites: 9,
     why: "every line it writes comes from an order line, an estimate line (guarded at their writers) or from manual-invoice-context / invoice-edit-plan (both GUARDED above)",
   },
-  "products/products.service.ts": {
+  "inventory/stock-movements.ts": {
     sites: 1,
-    why: "opening-stock PURCHASE movement on the product THIS call just created; CreateProductDto has no `kind`, so it is always STANDARD",
-  },
-  "inventory/sale-movement.ts": {
-    sites: 1,
-    why: "recordSaleMovement is a leaf called by the order / template writers after they passed the guard; it never loads a product itself",
-  },
-  "returns/returns-restock.util.ts": {
-    sites: 1,
-    why: "restocks the product of a RETURN line, which is copied from an order line that was already guarded",
+    why: "SA-927: the ONE StockMovement writer. It moves stock for the product its caller names and checks nothing about kind; every caller is a guarded or allow-listed site in this table (opening-stock PURCHASE rows go to a product the same call just created, STANDARD only; sale, return and restock rows come from lines that were guarded at their writers)",
   },
   "returns/inline-returns.service.ts": {
-    sites: 2,
+    sites: 1,
     why: "return lines are chosen from the customer's own order/invoice lines (guarded at their writers); no free product id",
   },
   "returns/returns.service.ts": {
-    sites: 2,
+    sites: 1,
     why: "return lines/restock derive from the order lines being returned (guarded at their writers)",
   },
   "orders/unit-line-edit.ts": {
@@ -102,7 +95,7 @@ const ALLOWED: Record<string, { sites: number; why: string }> = {
     why: "a leaf called from orders.service paths that already ran assertSellableLines on the product it passes in",
   },
   "import/import.service.ts": {
-    sites: 3,
+    sites: 1,
     why: "invoice import links by sku/unitSku/NAME: the invoice-line NAME fallback excludes kind FAMILY (folded into #2877, which owns that lookup and pins it); the Zoho stock-sync movement only touches products matched by sku",
   },
 };
@@ -229,13 +222,15 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
     expect(methodBody(ps, "unlinkFromParent")).toMatch(/this\.update\(/);
   });
 
-  it("T13 (PR-2): createFamilyContainer is called only by createFamily and the import's ensureFamily; the import family branch writes no productUnit and no Product row itself", () => {
+  it("T13 (PR-2): createFamilyContainer is called only by createFamily, the import's ensureFamily and the SA-1027 catalog copy; the import family branch writes no productUnit and no Product row itself", () => {
     const CALL = /createFamilyContainer\(/g;
     const callers = files
       .filter((f) => count(CALL, f.src) > 0)
       .map((f) => [f.rel, count(CALL, f.src)])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     expect(callers).toEqual([
+      // SA-1027: the catalog-copy script creates a FAMILY container through the app's own writer, after reserveFamilyName
+      ["catalog-copy/catalog-copy.service.ts", 1],
       ["import/product-family-import.service.ts", 1],
       ["products/product-families.service.ts", 2], // its definition and the createFamily call
     ]);

@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
 import { parseScanField } from "@/lib/counter-sale";
+import { formatMoney } from "@/lib/format";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { useListboxNav } from "@/lib/use-listbox-nav";
@@ -126,7 +127,7 @@ export function CounterLiveMatches({
               {p.sku ? <span className="block truncate text-xs text-navy/70">{p.sku}</span> : null}
             </span>
             <span className="shrink-0 text-xs font-medium text-navy/70">
-              ${Number(p.pricePerUnit ?? 0).toFixed(2)}
+              {formatMoney(p.pricePerUnit)}
             </span>
           </button>
         </li>

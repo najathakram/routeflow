@@ -488,6 +488,8 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "orders/orders.service.ts#approveChangeRequestAtStop": "Order > Invoice",
     "orders/orders.service.ts#deleteOrder": "Order > Invoice",
     "orders/orders.service.ts#forceConsolidateCustomer": "Order > Invoice",
+    "orders/orders.service.ts#updateOrderItems": "Order > Invoice",
+    "orders/replace-after-delivery.ts#lockEditedOrder": "Order > Invoice",
     "regulated/ledger-locks.ts#lockLedgerDocumentRows": "Order > Invoice",
     "regulated/parked-reversal-resolution.service.ts#resolve": "Return > Order",
     "returns/inline-returns.service.ts#approve": "Return > Order",

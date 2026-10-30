@@ -558,7 +558,7 @@ export default function BuyerOrderDetailPage() {
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const orderId = params.id as string;
 
-  const { data: order, isLoading, isError } = useBuyerOrder(orderId);
+  const { data: order, isLoading, isError, refetch: refetchOrder } = useBuyerOrder(orderId);
   const capabilities = useBuyerSellerCapabilities();
   // Business profiles 1B: unset seller or unreadable capability = today's route view.
   const travel = orderTravelView(order?.fulfillPath, capabilities.data, capabilities.isLoading);
@@ -567,6 +567,9 @@ export default function BuyerOrderDetailPage() {
   const updateItems = useBuyerUpdateOrderItems();
 
   const [editMode, setEditMode] = React.useState(false);
+  // Row 380: the revision the editor LOADED when edit mode opened; a background refetch never moves it.
+  const openedRevision = React.useRef<number | undefined>(undefined);
+  const [stale, setStale] = React.useState(false);
   const [editItems, setEditItems] = React.useState<
     Array<
       BuyerEditLine & {
@@ -638,6 +641,8 @@ export default function BuyerOrderDetailPage() {
       (li) => li.status !== "CANCELLED" && li.productId && li.product,
     );
     setActionError(null);
+    setStale(false);
+    openedRevision.current = order.revisionNumber;
     setEditItems(
       active.map((li) => ({
         orderItemId: li.id,
@@ -666,6 +671,7 @@ export default function BuyerOrderDetailPage() {
       await updateItems.mutateAsync({
         orderId: order.id,
         items: buyerEditPayloadItems(editItems),
+        expectedRevisionNumber: openedRevision.current,
       });
       setEditMode(false);
     } catch (err: any) {
@@ -676,6 +682,14 @@ export default function BuyerOrderDetailPage() {
           .join(", ");
         setActionError(
           `This order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
+        );
+        return;
+      }
+      if (err?.response?.status === 409 && data?.code === API_ERROR_CODES.ORDER_REVISION_STALE) {
+        // Row 380: fixed copy, never the server's sentence; Reload re-reads the order.
+        setStale(true);
+        setActionError(
+          "Someone changed this order while you were editing, so your changes weren't saved. Reload to see the latest version, then make your changes again.",
         );
         return;
       }
@@ -855,9 +869,31 @@ export default function BuyerOrderDetailPage() {
 
       {/* Action error */}
       {actionError && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger">
+        <div
+          role="alert"
+          className={
+            stale
+              ? "mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-warning-bg px-4 py-2.5 text-sm text-amber-900"
+              : "mb-4 flex items-center gap-2 rounded-lg bg-danger-bg px-4 py-2.5 text-sm text-danger"
+          }
+        >
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           {actionError}
+          {stale && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="min-h-[44px] w-full sm:w-auto"
+              onClick={() => {
+                setStale(false);
+                setActionError(null);
+                setEditMode(false);
+                void refetchOrder();
+              }}
+            >
+              Reload order
+            </Button>
+          )}
         </div>
       )}
 
@@ -887,7 +923,7 @@ export default function BuyerOrderDetailPage() {
               <MessageSquarePlus className="mr-1.5 h-3.5 w-3.5" /> Request a change
             </Button>
           )}
-          {editMode && (
+          {editMode && !stale && (
             <div className="flex items-center gap-2">
               <Button
                 variant="secondary"
@@ -951,8 +987,10 @@ export default function BuyerOrderDetailPage() {
                                 prev.filter((i) => editRowKey(i) !== editRowKey(item)),
                               )
                             }
-                            className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                            className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors disabled:opacity-40"
                             title="Remove item"
+                            aria-label={`Remove ${item.name}`}
+                            disabled={stale}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -977,7 +1015,8 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
+                            disabled={stale}
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
                           >
                             <Minus className="h-3.5 w-3.5" />
                           </button>
@@ -993,7 +1032,8 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               );
                             }}
-                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11"
+                            disabled={stale}
+                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11 disabled:opacity-40"
                           />
                           <button
                             onClick={() =>
@@ -1003,7 +1043,8 @@ export default function BuyerOrderDetailPage() {
                                 ),
                               )
                             }
-                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
+                            disabled={stale}
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
@@ -1109,8 +1150,9 @@ export default function BuyerOrderDetailPage() {
                 type="text"
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
+                disabled={stale}
                 placeholder="Search products to add by name, SKU or barcode…"
-                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
+                className="w-full disabled:opacity-40 rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
               />
             </div>
             {showProductSearch && searchResults?.data && searchResults.data.length > 0 && (

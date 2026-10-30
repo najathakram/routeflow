@@ -81,11 +81,15 @@ async function splitThenReplaceAll(orderStatus: string) {
   h.prisma.product.findMany.mockResolvedValue([
     { id: "p-1", name: "Widget", unitsPerBox: 12, pricePerUnit: 2.35, trackedCategoryId: null },
   ]);
+  // W-871 (SA-948): a replace on a post-delivery order is now refused (409 LINES_REPLACE_AFTER_DELIVERY), so the
+  // replace lands while the order is PENDING (the auto-merge's own target) and the order then moves on to
+  // `orderStatus`, the state the settle below is judged in.
+  let liveStatus = "PENDING";
   h.prisma.order.findUnique.mockImplementation(async () => ({
     id: "ord-1",
     tenantId: "t1",
     customerId: "cust-1",
-    status: orderStatus,
+    status: liveStatus,
     routeRun: null,
     subtotal: 282,
     tax: 23.27,
@@ -115,6 +119,7 @@ async function splitThenReplaceAll(orderStatus: string) {
     } as never,
     operatorPayload as never,
   );
+  liveStatus = orderStatus;
   // the real path really did it: new line id, invoicedQty 0, the partials' lines orphaned
   expect(db.orderItems.map((l) => [l.id !== "oi-1", l.invoicedQty])).toEqual([[true, 0]]);
   expect(db.invoiceItems.every((it) => it.orderItemId === null)).toBe(true);
@@ -225,7 +230,7 @@ describe("SA-687 M1: a replace-all edit of an order with partial invoices, then 
       delivered,
       50,
       "CASH",
-      { runId: "run-1", stopId: "stop-1" },
+      null,
     );
 
     expect(recorded).toMatchObject({ applied: 0, excess: 50, advancePaymentId: "adv-1" });

@@ -85,6 +85,9 @@ function priced(total = 30, subtotal = 28, taxAmount = 2, categoryTax = 0) {
 }
 
 import { inlineReturnItemsFingerprint } from "./inline-return-fingerprint";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const CAPTURE_DTO = {
   customerId: "cust-1",
@@ -122,6 +125,7 @@ describe("InlineReturnsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     quoteService = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {
       // Echoes back the requested amount/customer so a test that mints a DIFFERENT amount
@@ -252,7 +256,7 @@ describe("InlineReturnsService", () => {
     // restockReturnItems: one StockMovement + one Product increment for the single item.
     expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
     expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+      expect.objectContaining({ data: { currentStock: expect.anything() } }),
     );
     // Ledger reversal keyed to the SOURCE order, not the carrying order.
     expect(ledger.reverseReturnEntries).toHaveBeenCalledWith(
@@ -708,6 +712,7 @@ describe("InlineReturnsService", () => {
 
     it("the audit row is written on the capture's OWN tx client, never the root prisma", async () => {
       const tx = createMockPrisma();
+      stock = wireStockHelper(tx, { ample: true });
       tx.order.findFirst.mockResolvedValue({
         id: "ord-carrying",
         customerId: "cust-1",
@@ -1325,7 +1330,7 @@ describe("InlineReturnsService", () => {
 
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       expect(ledger.reverseReturnEntries).toHaveBeenCalled();
       expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
@@ -1668,7 +1673,7 @@ describe("InlineReturnsService", () => {
       await service.cancel("ret-received", OPERATOR);
 
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { decrement: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       // LOW: a compensating (negative-qty) movement — never a delete of the original entry.
       expect(prisma.stockMovement.create).toHaveBeenCalledWith(

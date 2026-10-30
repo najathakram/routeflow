@@ -105,6 +105,7 @@ import { CounterReturnsMount, useCounterInlineReturn } from "./useCounterInlineR
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
 import { repriceLines } from "./counter-sale-reprice";
+import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { scrollPageToTop } from "@/lib/scroll-top";
@@ -194,7 +195,7 @@ export function CounterSaleScreen() {
   const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
   // POS-5 / SA-762r: the ONE price-edit gate (operator + admin). False = no price control exists on the screen.
-  const mayEditPrices = staffMay(authUser?.role, "EDIT_LINE_PRICE");
+  const mayEditPrices = staffMay(authUser?.role, "EDIT_LINE_PRICE", gate.deniedGroups ?? []);
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
   const liveKey = liveCartKey(authUser?.tenantSlug, authUser?.id);
@@ -583,18 +584,34 @@ export function CounterSaleScreen() {
   const repriceBlockedRef = React.useRef(false);
   repriceBlockedRef.current = reprice.blocked;
 
-  // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
-  const addProduct = (product: any, level: SellLevel, n: number) =>
-    setLines((prev) =>
-      addScannedProduct(
-        prev,
-        product,
-        level,
-        n,
-        reprice.tierFor(product.id),
-        reprice.layerOf(product.id),
-      ),
+  // The latest cart, kept current between renders so an add can be judged at once (a scan queue lands several in a row).
+  const linesRef = React.useRef(lines);
+  linesRef.current = lines;
+  // An add past the per-line cap leaves the cart as it was (addScannedProduct returns the same array), says why once, and
+  // returns false so the scan confirmation does not claim "Added".
+  const addCapped = (product: any, level: SellLevel, n: number): boolean => {
+    const prev = linesRef.current;
+    const next = addScannedProduct(
+      prev,
+      product,
+      level,
+      n,
+      reprice.tierFor(product.id),
+      reprice.layerOf(product.id),
     );
+    if (next === prev) {
+      setError(QTY_TOO_LARGE_COPY);
+      return false;
+    }
+    linesRef.current = next;
+    setLines(next);
+    return true;
+  };
+
+  // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
+  const addProduct = (product: any, level: SellLevel, n: number) => {
+    addCapped(product, level, n);
+  };
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
   const scan = useCounterSaleScan({
@@ -602,16 +619,7 @@ export function CounterSaleScreen() {
     refocus,
     add: (product, level, n) => {
       scanCueArmedRef.current = true;
-      setLines((prev) =>
-        addScannedProduct(
-          prev,
-          product,
-          level,
-          n,
-          reprice.tierFor(product.id),
-          reprice.layerOf(product.id),
-        ),
-      );
+      return addCapped(product, level, n);
     },
   });
 
@@ -811,6 +819,7 @@ export function CounterSaleScreen() {
 
   const stepItem = (tempId: string, unit: StepUnit, dir: 1 | -1) => {
     if (lineLocked || saleInFlight()) return;
+    setError((e) => (e === QTY_TOO_LARGE_COPY ? "" : e));
     setLines((prev) => prev.map((l) => (l.tempId === tempId ? stepLine(l, unit, dir) : l)));
     refocus();
   };
@@ -841,6 +850,8 @@ export function CounterSaleScreen() {
   // A TYPED quantity (steppers stay): the same normalized split a stepper makes; a refused value changes nothing.
   const typeQty = (tempId: string, typed: TypedQty): boolean => {
     if (lineLocked || saleInFlight()) return false;
+    // the row words its own refusal; the till-level cap line would be a second copy of it
+    setError((e) => (e === QTY_TOO_LARGE_COPY ? "" : e));
     const cur = lines.find((l) => l.tempId === tempId);
     if (!cur || !setLineQty(cur, typed)) return false;
     setLines((prev) => prev.map((l) => (l.tempId === tempId ? (setLineQty(l, typed) ?? l) : l)));
@@ -1092,8 +1103,9 @@ export function CounterSaleScreen() {
           total: payTotal,
           tendered: tenderedNum,
         }),
-        // SA-1026: "Check not received yet" sends no number: a typed one is dropped, never deduped
-        ...(reference.trim() && !tender.expectedMethod ? { reference: reference.trim() } : {}),
+        // SA-1026: "Check not received yet" is On account (no number); W-889: only a Check in hand carries its number,
+        // so one typed and then abandoned never rides along with another tender
+        ...(tender.method === "CHECK" && reference.trim() ? { reference: reference.trim() } : {}),
         ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
       },
       ...(inlineReturn ? { inlineReturn } : {}),

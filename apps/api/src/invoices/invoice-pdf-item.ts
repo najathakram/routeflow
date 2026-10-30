@@ -12,7 +12,12 @@
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
 
-import { componentPriceText, invoiceLineQtyText, roundMoney } from "@routeflow/pricing";
+import {
+  basePriceText,
+  componentPriceText,
+  invoiceLineQtyText,
+  roundMoney,
+} from "@routeflow/pricing";
 import type { InvoiceDisplayLines } from "@routeflow/pricing";
 import type { LineComponentView } from "@routeflow/types";
 
@@ -121,11 +126,6 @@ export function pdfSubLine(view: LineComponentView, barcodeDataUri: string | nul
   };
 }
 
-/** SA-827: a piece price at 4 dp ("$2.0005"). The ONE formatter for the PDF's display units; money is never computed here. */
-export function pieceUnitPriceText(n: number): string {
-  return `$${n.toFixed(4)}`;
-}
-
 const amountText = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
 
 /** One component row of a components-layout line. */
@@ -163,7 +163,7 @@ export function pdfItemDisplay(
     return {
       layout: "pieces",
       qtyText: `${lines.qty} ${lines.unitLabel}`,
-      priceText: pieceUnitPriceText(lines.unitPrice),
+      priceText: basePriceText(lines.unitPrice),
       hideOriginalPrice: true,
     };
   }
@@ -175,7 +175,7 @@ export function pdfItemDisplay(
       barcodeText: r.unitBarcode,
       barcodeDataUri: barcodes?.get(r.componentProductId) ?? null,
       qtyText: `${r.qty} ${r.unitLabel}`,
-      priceText: pieceUnitPriceText(r.unitPrice),
+      priceText: basePriceText(r.unitPrice),
       amountText: amountText(r.amount),
     })),
     group: {

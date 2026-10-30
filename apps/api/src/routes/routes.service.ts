@@ -2386,6 +2386,7 @@ export class RoutesService {
     // (after the idempotency check so a cached replay never re-uploads).
     await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
     const catalog = await this.invoicesService.loadUnitCatalog(stop); // SA-967: once, before the tx
+    const baseLabels = await this.invoicesService.loadBaseLabels(stop); // SA-1029: once, before the tx
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
@@ -2505,6 +2506,7 @@ export class RoutesService {
             dto.payment.amount,
             dto.payment.method,
             catalog,
+            baseLabels,
             { runId, stopId },
           );
           paymentIds = recorded.paymentIds;
