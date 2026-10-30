@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { PromotionsService } from "./promotions.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -34,7 +35,11 @@ describe("PromotionsService — tenant refs (681 site 7)", () => {
     );
     prisma.promotion.findUnique.mockResolvedValue({ id: "promo-1", ...base, products: [] });
     const mod = await Test.createTestingModule({
-      providers: [PromotionsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        PromotionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: FeatureConfigService, useValue: { getEffectiveMode: async () => "on" } },
+      ],
     }).compile();
     service = mod.get(PromotionsService);
   });

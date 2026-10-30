@@ -11,6 +11,9 @@ import type {
   RestrictionsPolicy,
   SellingRestrictedError,
 } from "@routeflow/types";
+import { UserRole } from "@prisma/client";
+import { operatorDeniedGroups } from "../orders/counter-sale/till-permission.guard";
+import { ALL_PERMISSION_GROUPS } from "../auth/permissions/operator-permissions.service";
 import { assertAmbientTenant } from "../common/ambient-tenant";
 import { normalizeUsState } from "../common/us-states";
 import { excludeWalkIn } from "../customers/walk-in-protected";
@@ -813,7 +816,7 @@ export class SellingRestrictionsService {
           { productId: l.productId, qtyDelta: l.qtyDelta, lineKey: l.lineKey ?? `n:${i}` },
         ]),
         held: params.held,
-        principal: params.principal,
+        principal: await this.withDeniedGroups(params, judgement.breaches.length > 0),
         ack: params.ack,
         customerId: params.customerId,
         blocked: staffRestrictedError,
@@ -835,6 +838,20 @@ export class SellingRestrictionsService {
       blockedLines,
     };
     throw new ConflictException(body);
+  }
+
+  /**
+   * W-870: the principal `decideStaffWrite` judges the override with. An OPERATOR's denied groups are read live, once,
+   * and only when a breach makes the override matter. An OPERATOR the read cannot identify (no `sub`) holds nothing:
+   * every group is denied (fail closed). Every other role (and no principal) judges as `[]`.
+   */
+  private async withDeniedGroups(params: SellableLinesParams, breached: boolean) {
+    const principal = params.principal;
+    if (!principal) return null;
+    if (!breached || principal.role !== "OPERATOR") return { ...principal, deniedGroups: [] };
+    if (!principal.sub) return { ...principal, deniedGroups: ALL_PERMISSION_GROUPS };
+    const user = { sub: principal.sub, role: UserRole.OPERATOR, tenantId: params.tenantId };
+    return { ...principal, deniedGroups: await operatorDeniedGroups(this.prisma, user) };
   }
 }
 

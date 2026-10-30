@@ -125,7 +125,7 @@ import { computeInvoiceKpiSummary } from "./invoice-kpi-summary";
 import { CHECK_TRANSITIONS } from "../common/check-transitions";
 import { invoicePaymentKey, keyedPayment, standalonePaymentKey } from "./payment-idempotency";
 import { completionEmailParts } from "./invoice-completion-email";
-import { withPaymentEditRef, type RefOpts } from "./payment-edit-ref";
+import { withPaymentEditRef, type RefCtx } from "./payment-edit-ref";
 import {
   RecordInvoicePaymentDto,
   type RecordPaymentOpts,
@@ -222,7 +222,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
-import { counterPay, type CounterPayOpts } from "./counter-payment-guard";
+import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
 import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-billing-refusal";
@@ -3846,7 +3846,8 @@ export class InvoicesService {
     return tx.invoice.findUnique({ where: { id } });
   }
 
-  async voidInvoice(id: string) {
+  async voidInvoice(id: string, user: TillUser) {
+    await counterPay.voidScope(this.prisma, id, user); // W-870: VOID_SALE on a till invoice
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: { payments: true },
@@ -3855,7 +3856,6 @@ export class InvoicesService {
     // #2255 / SA-404: fast pre-tx refusal; the tx re-checks it on the locked row.
     const refusal = voidRefusal(externalPaidOn(inv.payments ?? []));
     if (refusal) throw new BadRequestException(refusal);
-
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
     // We need to free up the qty on the source order so the operator can
     // re-split into multiple invoices after void — the user's "after delivering
@@ -4734,14 +4734,14 @@ export class InvoicesService {
     return { tenantShort, start: counter.next - count };
   }
 
-  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto, opts?: RefOpts) {
+  async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto, opts: RefCtx) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(
         "Cannot edit a payment to method CREDIT_NOTE or ADVANCE. Void this payment and apply the credit note / advance via the dedicated action.",
       );
     }
-    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
+    const till = await counterPay.voidScope(this.prisma, invoiceId, opts.user); // SA-750r3 + W-870
     const ids = { invoiceId, paymentId }; // row 752 (SA-843): the payment-ref lock on the NEW key, then the tx
     return withPaymentEditRef(this.prisma, ids, dto, opts, async (tx, after, edit) => {
       // PR-2 (B1, m3): row-lock the invoice before reading its payments, like recordPayment, so two
@@ -4859,10 +4859,10 @@ export class InvoicesService {
     });
   }
 
-  async deletePayment(invoiceId: string, paymentId: string) {
+  async deletePayment(invoiceId: string, paymentId: string, user: TillUser) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     let imageKey: string | null = null;
-    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
+    const till = await counterPay.voidScope(this.prisma, invoiceId, user); // SA-750r3 + W-870
     const updated = await withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as
       // updatePayment/recordPayment. SA-750r3: a counter sale's shared close lock comes first.
@@ -5256,9 +5256,9 @@ export class InvoicesService {
 
   // ─── Void a single payment ────────────────────────────────────────────────
 
-  async voidPayment(invoiceId: string, paymentId: string) {
+  async voidPayment(invoiceId: string, paymentId: string, user: TillUser) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    const till = await counterPay.scope(this.prisma, invoiceId); // SA-750r3: counter sales only
+    const till = await counterPay.voidScope(this.prisma, invoiceId, user); // SA-750r3 + W-870 (VOID_SALE)
     return withAfterCommit(this.prisma, async (tx, after) => {
       // SA-750r3: the shared close lock FIRST, then the window check on the payment's date, then the void (payment-void-tx.ts).
       await counterPay.lock(tx, till);
@@ -5305,9 +5305,9 @@ export class InvoicesService {
    * Invoice.subtotal/total are bumped by roundMoney(fee) in the same
    * transaction (all balance readers use the stored total).
    */
-  async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
+  async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto, by: TillUser) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
-    const till = await counterPay.scope(this.prisma, invoiceId, dto.status === "BOUNCED"); // SA-750r3
+    const till = await counterPay.voidScope(this.prisma, invoiceId, by, dto.status === "BOUNCED"); // SA-750r3 + W-870
     return withAfterCommit(this.prisma, async (tx, after) => {
       // PR-2: same Invoice FOR UPDATE lock, taken BEFORE touching the payment row and in the same order as the
       // other payment writers. SA-750r3: a BOUNCED counter payment takes the shared close lock first.
