@@ -176,6 +176,7 @@ import {
   tenantPreferredRate,
 } from "./stored-tax-state";
 import { buildInvoiceEmailPayload } from "./invoice-email-payload";
+import { sortInvoiceLines } from "./invoice-line-order";
 import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -3051,6 +3052,7 @@ export class InvoicesService {
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
+    const db = this.prisma.forTenant();
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(
@@ -3059,7 +3061,7 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: await du.itemsWithDisplayUnits(this.prisma.forTenant(), inv, this.entitlements), // #2717 M3 + SA-827
+      items: sortInvoiceLines(await du.itemsWithDisplayUnits(db, inv, this.entitlements)), // SA-1058; #2717 M3 + SA-827
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
