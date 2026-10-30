@@ -254,6 +254,7 @@ import type { OrderReadGateFields } from "@routeflow/types";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
+import { assertStopDoneForOfficeDelivered } from "./office-delivered-route-stop";
 import {
   heldAtBookedFloor,
   markLinesRecreated,
@@ -2209,9 +2210,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // Paid walk-in sale / route-delivered stop refusals: delivered-demotion.guard.ts.
     if (isDeliveredDemotion) await assertDeliveredDemotionAllowed(this.prisma.forTenant(), order);
 
-    const noteAppend = dto.reason
-      ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
-      : undefined;
+    await assertStopDoneForOfficeDelivered(this.prisma, order, dto.status); // row 590 (SA-978a)
 
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
@@ -2253,7 +2252,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const statusUpdateData = buildStatusUpdateData(order, dto.status, {
       isDeliveredDemotion,
-      noteAppend,
+      reason: dto.reason,
     });
 
     const isDraftToPendingPromotion =

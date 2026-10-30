@@ -34,6 +34,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
+import { givenPaidInstant, paidInstantOf, settledInstantOf } from "../common/paid-instant";
+import { resolveEditedPaymentDates } from "./payment-edit-dates";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -3519,6 +3521,11 @@ export class InvoicesService {
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const units = await du.resolveDraftIssueUnits(this.prisma.forTenant(), id, this.entitlements); // SA-827: resolved off-tx (no catalog read in the snapshot); written below only at DRAFT -> issued
+    const words = await du.loadDraftBaseLabels(
+      this.prisma.forTenant(),
+      this.prisma.getTenantId(),
+      id,
+    ); // SA-1029: the base words, read off-tx and flag-free (SA-967)
     return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3538,6 +3545,7 @@ export class InvoicesService {
             data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
           await du.writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
+          if (issuing) await du.writeIssueBaseLabels(tx, id, this.prisma.getTenantId(), words); // SA-1029: never gated on a pieces line (D-R2)
           const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
@@ -4033,6 +4041,7 @@ export class InvoicesService {
           internalNotes: inv.internalNotes ? `${inv.internalNotes}\n${auditLine}` : auditLine,
         },
       });
+      await du.clearIssueDisplayUnits(db, inv.id); // SA-827 rule 5 / B1275: a DRAFT renders live
       reverted.push(inv.id);
     }
     return reverted;
@@ -4064,6 +4073,7 @@ export class InvoicesService {
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
+      await du.clearIssueDisplayUnits(tx, id); // SA-827 rule 5 / B1275: a DRAFT renders live
       // SA-839 F2 (B706): re-book from the items read in this tx, in the UNVOID's period (§3); the void's
       // rows stay. `amendedPeriod` (never a refusal): the void sat in a FILED month (SA-182 shape).
       const items = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
@@ -4081,6 +4091,7 @@ export class InvoicesService {
     // if commission was already claimed, sync emits the negative adjustment
     // atomically with the status flip.
     return this.prisma.tenantTransaction(async (tx) => {
+      await du.clearIssueDisplayUnits(tx, id); // SA-827 rule 5 / B1275: BEFORE the update, whose items must not carry the old word
       const reopened = await tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT, paidAt: null },
@@ -4338,7 +4349,7 @@ export class InvoicesService {
         tx,
         till,
         inv.orderId,
-        dto,
+        { ...dto, paidAt: givenPaidInstant(dto.paidAt, tz) },
         paymentStatus,
         opts?.paymentGroupId,
       );
@@ -4364,7 +4375,7 @@ export class InvoicesService {
           notes: dto.notes,
           paidAt,
           // Never clamped: a post-dated check settles in the future.
-          settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
+          settledAt: settledInstantOf(dto.settledAt, tz),
           bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
@@ -4437,6 +4448,11 @@ export class InvoicesService {
     return du.loadStopDisplayUnitCatalog(this.prisma, stop, this.entitlements);
   }
 
+  /** SA-1029 A-1: the other pre-tx half of the delivery freeze, the products' base words (no plan flag gates it). */
+  loadBaseLabels(stop: { orders: { id: string }[] }) {
+    return du.loadStopBaseLabels(this.prisma, stop);
+  }
+
   /**
    * Record a driver-collected payment at stop completion, resolving the target
    * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
@@ -4471,6 +4487,7 @@ export class InvoicesService {
     amount: number,
     method: string,
     catalog: du.DisplayUnitCatalog | null, // SA-967: REQUIRED, loaded BEFORE the tx (loadUnitCatalog); null = legacy
+    baseLabels: ReadonlyMap<string, string> | null, // SA-1029: REQUIRED, loaded BEFORE the tx (loadBaseLabels); null = nothing freezes
     context?: { runId?: string; stopId?: string },
   ): Promise<{
     applied: number;
@@ -4578,7 +4595,10 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
-      if (wasDraft) await du.freezeIssueUnitsFromCatalog(tx, inv, catalog); // SA-827
+      if (wasDraft) {
+        await du.freezeIssueUnitsFromCatalog(tx, inv, catalog); // SA-827
+        await du.writeIssueBaseLabels(tx, inv.id, inv.tenantId, baseLabels); // SA-1029: its own call, so no early return gates the word
+      }
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
@@ -4738,7 +4758,8 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
-      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // per-row closed window, then till-CASH before the close
+      const dated = await resolveEditedPaymentDates(tx, dto, payment, tz);
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dated.datedDto); // per-row closed window, then till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -4797,11 +4818,8 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
-          ...(dto.paidAt && { paidAt: new Date(dto.paidAt) }),
-          // Key present = set or (null) clear; key absent = keep what is stored.
-          ...(dto.settledAt !== undefined && {
-            settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
-          }),
+          ...(dated.movedPaidAt && { paidAt: dated.movedPaidAt }),
+          ...(dated.keptSettledAt !== undefined && { settledAt: dated.keptSettledAt }),
           ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
@@ -5062,9 +5080,9 @@ export class InvoicesService {
   private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paidAt = paidInstantOf(dto.paidAt, tz); // SA-943: tenant-local day, today = now
     // One bank date for the whole allocation group — the money landed once.
-    const settledAt = dto.settledAt ? new Date(dto.settledAt) : null;
+    const settledAt = settledInstantOf(dto.settledAt, tz);
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
@@ -5316,7 +5334,7 @@ export class InvoicesService {
       // historical payment into the current period and restate a closed one. Absent
       // an explicit date the column stays as it is (NULL rows keep falling back to
       // paidAt); an explicit date is authoritative and drives both fields.
-      const explicitSettledAt = dto.settledAt ? new Date(dto.settledAt) : null;
+      const explicitSettledAt = settledInstantOf(dto.settledAt, tz); // SA-943: tenant-local day
 
       // SA ruling C: RECORDED -> DEPOSITED / CLEARED takes no close lock (accepted): it changes the CHECK grouping of a fresh
       // fold, never cash and never a stored close.

@@ -7,6 +7,7 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * SA-767 L-1 (B908): receivePurchaseOrder runs its whole tx inside retryStockTx. A 40P01 /
@@ -40,9 +41,11 @@ describe("receivePurchaseOrder retry (SA-767 L-1)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let alerts: jest.SpyInstance;
   let poReads = 0;
+  let stock: StockHelperMock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma); // SA-927: the real stock helper over the mock
     // Per attempt: the first PO read is the fresh PO, the re-read after the loop sees it received.
     poReads = 0;
     prisma.purchaseOrder.findUnique.mockImplementation(async () =>
@@ -72,7 +75,7 @@ describe("receivePurchaseOrder retry (SA-767 L-1)", () => {
   });
 
   const writes = () => ({
-    movement: prisma.stockMovement.create.mock.calls.length,
+    movement: stock.written().length,
     lot: prisma.stockLot.create.mock.calls.length,
     product: prisma.product.update.mock.calls.length,
   });

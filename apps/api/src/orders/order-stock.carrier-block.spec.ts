@@ -1,5 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { settleStockForEdit, type OrderStockDeps } from "./order-stock";
+import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
  * B1082 (B2): can staff edit or remove lines of a carrier order that is WITH the carrier, and does the edit
@@ -24,17 +26,6 @@ function fakeTx(products: P[]) {
   const byId = (id: string) => products.find((p) => p.id === id)!;
   const tx: any = {
     $executeRaw: jest.fn().mockResolvedValue(0), // the FOR UPDATE lock
-    // decrementStockForSale's aggregated `UPDATE … FROM (VALUES (id, qty)…) RETURNING`.
-    $queryRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: any[]) => {
-      const bound = flat(values).filter((v) => v !== "t-1");
-      const rows: { id: string; currentStock: Prisma.Decimal }[] = [];
-      for (let i = 0; i < bound.length; i += 2) {
-        const p = byId(bound[i]);
-        p.currentStock -= Number(bound[i + 1]);
-        rows.push({ id: p.id, currentStock: D(p.currentStock) });
-      }
-      return rows;
-    }),
     product: {
       findMany: jest.fn(async ({ where }: any) =>
         products.filter((p) => where.id.in.includes(p.id)),
@@ -46,21 +37,25 @@ function fakeTx(products: P[]) {
       })),
       update: jest.fn(async ({ where, data }: any) => {
         const p = byId(where.id);
-        p.currentStock += Number(data.currentStock.increment ?? 0);
-        p.currentStock -= Number(data.currentStock.decrement ?? 0);
+        p.currentStock = Number(data.currentStock); // the stock helper writes the counter absolute
         return { ...p, currentStock: D(p.currentStock) };
       }),
     },
     stockLot: { findMany: jest.fn().mockResolvedValue([]) },
     stockMovement: { create: jest.fn(async () => ({ id: "m" })) },
   };
+  // the stock helper reads the locked counter from the same in-memory products
+  const stock = wireStockHelper(createMockPrisma(), {
+    stateOf: (ids) => products.filter((p) => ids.includes(p.id)),
+  });
+  const wrapped = stock.wrapTx(tx);
   const rows = () =>
     tx.stockMovement.create.mock.calls.map(([{ data }]: any) => ({
       productId: data.productId,
       quantity: Number(data.quantity),
       stockAfter: Number(data.stockAfter),
     }));
-  return { tx, rows };
+  return { tx: wrapped, rows };
 }
 
 const pack12 = (): P => ({ id: "p12", name: "Water 12pk", currentStock: 100, unitsPerBox: 12 });

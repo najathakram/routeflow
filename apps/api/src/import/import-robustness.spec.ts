@@ -66,6 +66,9 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 describe("ImportService — import robustness (F17)", () => {
   let service: ImportService;
@@ -76,6 +79,7 @@ describe("ImportService — import robustness (F17)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     numbering = { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") };
     externalRefs = {
       findLocalId: jest.fn().mockResolvedValue(null),
@@ -223,6 +227,7 @@ describe("ImportService — import robustness (F17)", () => {
     it("REG-B98 (T-B98): importInventory reads a comma-thousands Closing Stock exactly and skips a non-numeric one instead of zeroing stock", async () => {
       const csv = "Item Name,Closing Stock\n" + 'Widget A,"2,100.00"\n' + "Widget B,N/A\n";
 
+      stock.setState((ids) => ids.map((id) => ({ id, currentStock: 0 }))); // the new product opens at 0
       const result = await service.importInventory(Buffer.from(csv), "user-1");
 
       // The NaN-vs-0 contract is load-bearing: an unparseable cell must skip the
@@ -232,7 +237,13 @@ describe("ImportService — import robustness (F17)", () => {
       expect(prisma.product.create).toHaveBeenCalledTimes(1);
       const data = (prisma.product.create.mock.calls[0][0] as any).data;
       expect(data.name).toBe("Widget A");
-      expect(data.currentStock).toBe(2100);
+      // SA-927: the product is created at 0 and the opening balance goes in as one PURCHASE row
+      // through the stock writer (stockAfter 2100), so the counter and the ledger agree from the start
+      // the create leaves currentStock to its schema default 0
+      expect(data).not.toHaveProperty("currentStock");
+      const opening = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(Number(opening.quantity)).toBe(2100);
+      expect(Number(opening.stockAfter)).toBe(2100);
     });
 
     // B562 follow-up: a new product's opening balance used to land straight
@@ -245,6 +256,7 @@ describe("ImportService — import robustness (F17)", () => {
     it("B562 follow-up: a NEW product's opening stock is modelled as a PURCHASE movement, not a silent ledger gap", async () => {
       prisma.product.findFirst.mockResolvedValue(null); // no existing match — creates new
       prisma.product.create.mockResolvedValue({ id: "new-prod-1" });
+      stock.setState((ids) => ids.map((id) => ({ id, currentStock: 0 }))); // the new product opens at 0
 
       const result = await service.importInventory(
         Buffer.from("Item Name,Closing Stock\nWidget C,25\n"),
@@ -256,7 +268,8 @@ describe("ImportService — import robustness (F17)", () => {
       const data = prisma.stockMovement.create.mock.calls[0][0].data;
       expect(data.productId).toBe("new-prod-1");
       expect(data.type).toBe("PURCHASE");
-      expect(data.quantity).toBe(25);
+      expect(Number(data.quantity)).toBe(25);
+      expect(Number(data.stockAfter)).toBe(25); // SA-927a: the row now records the balance it opened
       expect(data.performedById).toBe("user-1");
       // Pre-merge review gate Q1: this CSV import carries no cost column at
       // all, so the movement must carry no unitCost (undefined) — never a

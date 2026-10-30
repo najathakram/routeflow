@@ -825,6 +825,11 @@ export const API_ERROR_CODES = {
   /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
   COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
   /**
+   * Row 590 (SA-978a): PATCH /orders/:id/status to DELIVERED, 409: the order rides a run stop that is not COMPLETED. The stop is the
+   * one writer of a run order's delivery; complete it on the route, or take the order off the run first. Nothing written.
+   */
+  ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
+  /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.
    */

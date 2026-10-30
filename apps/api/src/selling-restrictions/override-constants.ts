@@ -25,6 +25,13 @@ export const RESTRICTION_OVERRIDE_LABEL = "Sold despite restriction";
  */
 export const RESTRICTION_OVERRIDE_IMPORTED_REASON = "Imported (historical)";
 
+/** Row 672 (SA-844): the remedies an unresolved-state INDETERMINATE line can name (`RestrictionRemedy`). */
+export const RESTRICTION_REMEDIES = ["ADD_CUSTOMER_STATE", "ADD_STORE_STATE"] as const;
+
+/** Row 672: a buyer's checkout refusal when every refused line waits on the buyer's own delivery state. */
+export const PORTAL_NEEDS_STATE_MESSAGE =
+  "We need your delivery state before we can sell this item. Add it in your account.";
+
 /**
  * The two codes the override protocol sends, named once for its throw sites (restriction-warning.ts, brief 2): a staff
  * write that needs an acknowledged reason (409) and a reason outside the bounds (400).

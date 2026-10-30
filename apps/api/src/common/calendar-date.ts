@@ -44,18 +44,8 @@ function addUtcCalendarDays(
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
-/**
- * The true UTC instant of 00:00:00 local wall-clock time, on the given
- * calendar day, in `timeZone`. DST-safe: reads the zone's actual UTC offset
- * AT the midnight instant itself (one Intl pass), never assumes a fixed
- * offset. Midnight is never the literal DST-transition moment in any IANA
- * zone this codebase targets (US transitions land at 2am local), so this
- * single-correction approach never lands on the transition's own
- * ambiguous/skipped hour.
- */
-function localMidnightUtc(year: number, month: number, day: number, timeZone: string): Date {
-  const guess = Date.UTC(year, month - 1, day, 0, 0, 0);
-  let offsetMs = 0;
+/** The zone's UTC offset (ms) at `instantMs`; 0 for an unknown zone, never throws. */
+function zoneOffsetMs(instantMs: number, timeZone: string): number {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -66,7 +56,7 @@ function localMidnightUtc(year: number, month: number, day: number, timeZone: st
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-    }).formatToParts(new Date(guess));
+    }).formatToParts(new Date(instantMs));
     const at = (t: string) => Number(parts.find((p) => p.type === t)?.value);
     const shownAsUtc = Date.UTC(
       at("year"),
@@ -76,11 +66,31 @@ function localMidnightUtc(year: number, month: number, day: number, timeZone: st
       at("minute"),
       at("second"),
     );
-    offsetMs = shownAsUtc - guess;
+    return shownAsUtc - instantMs;
   } catch {
-    offsetMs = 0; // unknown zone — fall back to UTC, never throw
+    return 0; // unknown zone — fall back to UTC, never throw
   }
-  return new Date(guess - offsetMs);
+}
+
+/**
+ * The true UTC instant at which the given calendar day STARTS in `timeZone` (SA-985): two candidates, the offset
+ * taken at 00:00Z and the offset re-taken at that first candidate; of those, the ones whose local date IS the named
+ * day, the earliest. A single pass stores the previous day on an east-of-UTC DST-change day (the 00:00Z offset is
+ * the other side of the change); a plain second pass loses the days whose local midnight does not exist (a zone
+ * that springs forward AT 00:00 starts the day at 01:00). When neither candidate lands on the day it returns the
+ * first (the pre-SA-985 answer).
+ */
+function localMidnightUtc(year: number, month: number, day: number, timeZone: string): Date {
+  const guess = Date.UTC(year, month - 1, day, 0, 0, 0);
+  const first = guess - zoneOffsetMs(guess, timeZone);
+  const second = guess - zoneOffsetMs(first, timeZone);
+  const onDay = [first, second]
+    .filter((t) => {
+      const c = readCalendarParts(new Date(t), timeZone);
+      return c.year === year && c.month === month && c.day === day;
+    })
+    .sort((x, y) => x - y);
+  return new Date(onDay[0] ?? first);
 }
 
 const CALENDAR_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;

@@ -356,6 +356,19 @@ describe("CounterSaleScreen: post-dated check", () => {
     });
   });
 
+  describe("a check number typed and then abandoned (W-889)", () => {
+    it("is not sent with a card payment", async () => {
+      renderTill(<CounterSaleScreen />);
+      await scan("COLA");
+      fireEvent.click(screen.getByRole("radio", { name: "Check" }));
+      fireEvent.change(await screen.findByLabelText("Check number"), { target: { value: "1042" } });
+      fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await screen.findByTestId("counter-sale-receipt");
+      expect(mutateAsync.mock.calls[0][0].dto.payment).toEqual({ method: "CARD" });
+    });
+  });
+
   describe("a retry of an unknown-outcome sale refused with the till's own code (#3615 review B, NIT 2)", () => {
     it.each([
       ["COUNTER_TENDER_SHORT", "A walk-in customer must pay the full balance."],

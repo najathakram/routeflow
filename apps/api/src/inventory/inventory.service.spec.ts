@@ -16,6 +16,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { AuditService } from "../audit/audit.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, type StockHelperMock } from "./testing/stock-helper-mock";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
@@ -35,9 +36,11 @@ describe("InventoryService", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let stockAlerts: { fireForProducts: jest.Mock };
   let audit: { log: jest.Mock };
+  let stockHelper: StockHelperMock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stockHelper = wireStockHelper(prisma); // SA-927: the real applyStockMovements runs over the mock tx
     stockAlerts = { fireForProducts: jest.fn().mockResolvedValue({ notified: 0 }) };
     audit = { log: jest.fn().mockResolvedValue(undefined) };
 
@@ -71,7 +74,7 @@ describe("InventoryService", () => {
       );
 
       // Movement carries unitCost and post-movement snapshots
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.type).toBe("PURCHASE");
       expect(movementArgs.unitCost.toString()).toBe("3.5");
       // (10×2 + 5×3.5) / 15 = 2.5
@@ -90,20 +93,19 @@ describe("InventoryService", () => {
     });
 
     it("B562 PR-3: stockAfter is the counter the update returned, never the pre-transaction read", async () => {
-      // The pre-read says 10, but a concurrent write left 94 before this +5 landed.
+      // SA-927: the pre-read says 10, but a concurrent write left 94 before this +5 landed - the helper
+      // stamps stockAfter from the counter it reads UNDER THE LOCK (94 + 5 = 99), never the pre-read.
       prisma.product.findUnique.mockResolvedValue(product());
       prisma.stockMovement.count.mockResolvedValue(0);
-      counterAfterUpdate(99);
+      stockHelper.setState(() => [{ id: "prod-1", currentStock: D(94), averageCost: D(2) }]);
 
       await service.recordPurchase(
         { productId: "prod-1", quantity: 5, unitCost: 3.5 } as any,
         "user-1",
       );
 
-      expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("99");
-      expect(prisma.product.update.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.stockMovement.create.mock.invocationCallOrder[0],
-      );
+      expect(stockHelper.written()[0].stockAfter.toString()).toBe("99");
+      expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("99");
     });
 
     it("B562 PR-3: refuses a future effectiveDate (it would sort after every real row to come)", async () => {
@@ -117,6 +119,7 @@ describe("InventoryService", () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
     });
 
     it("SA-372: the future-date bound is 5 minutes of clock skew — 6 min ahead refused, 4 min accepted", () => {
@@ -155,7 +158,7 @@ describe("InventoryService", () => {
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
       // Snapshot carries the UNCHANGED average forward
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.avgCostAfter.toString()).toBe("2");
     });
 
@@ -201,7 +204,7 @@ describe("InventoryService", () => {
       );
 
       // 5 boxes × 24 units/box = 120 pieces
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(Number(movementArgs.quantity)).toBe(120);
       expect(movementArgs.stockAfter.toString()).toBe("120");
       // $48/box ÷ 24 = $2/piece; stock was 0 so the average resets to it.
@@ -213,7 +216,7 @@ describe("InventoryService", () => {
       expect(lotArgs.unitCost.toString()).toBe("2");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock.increment.toString()).toBe("120");
+      expect(productArgs.currentStock.toString()).toBe("120");
       expect(productArgs.averageCost.toString()).toBe("2");
     });
 
@@ -231,14 +234,14 @@ describe("InventoryService", () => {
 
       // No boxes/pieces sent: 120 is pieces, NOT boxes (which would resolve to
       // 120 × 24 = 2880 if this ever regressed to reinterpreting it).
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(Number(movementArgs.quantity)).toBe(120);
       expect(movementArgs.stockAfter.toString()).toBe("130"); // 10 + 120
       // unitCost also stays per-piece — no ÷unitsPerBox conversion applied.
       expect(movementArgs.unitCost.toString()).toBe("3.5");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock.increment.toString()).toBe("120");
+      expect(productArgs.currentStock.toString()).toBe("130"); // absolute: the locked 10 + 120
     });
 
     it("rejects a purchase that resolves to zero quantity (neither quantity nor boxes/pieces yields a positive total)", async () => {
@@ -248,6 +251,7 @@ describe("InventoryService", () => {
         service.recordPurchase({ productId: "prod-1", unitCost: 3.5 } as any, "user-1"),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
     });
   });
 
@@ -478,13 +482,12 @@ describe("InventoryService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
-      // Guard (d): the stock write is an atomic increment by exactly the received
-      // quantity (10 on hand + 5 = 15 in the movement snapshot below), never an
-      // absolute value derived from the earlier read.
-      expect(productArgs.currentStock.increment.toString()).toBe("5");
+      // SA-927: the helper writes the counter as an absolute value folded from the LOCKED stock
+      // (10 on hand + 5 received = 15), the same figure the movement snapshot below carries.
+      expect(productArgs.currentStock.toString()).toBe("15");
       // Movement snapshot carries the UNCHANGED average forward, not the
       // would-be weighted average.
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.avgCostAfter.toString()).toBe("2");
     });
 
@@ -503,7 +506,7 @@ describe("InventoryService", () => {
       // (10×2 + 5×3.5) / 15 = 2.5
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost.toString()).toBe("2.5");
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.avgCostAfter.toString()).toBe("2.5");
     });
 
@@ -536,7 +539,7 @@ describe("InventoryService", () => {
       );
 
       // 5 boxes × 24 units/box = 120 pieces
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(Number(movementArgs.quantity)).toBe(120);
       expect(movementArgs.stockAfter.toString()).toBe("120");
       // The stored per-piece cost is used as-is — NOT divided again by
@@ -545,7 +548,7 @@ describe("InventoryService", () => {
       expect(movementArgs.avgCostAfter.toString()).toBe("2");
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
-      expect(productArgs.currentStock.increment.toString()).toBe("120");
+      expect(productArgs.currentStock.toString()).toBe("120");
       expect(productArgs.averageCost.toString()).toBe("2");
 
       const poItemArgs = prisma.purchaseOrderItem.update.mock.calls[0][0].data;
@@ -579,7 +582,7 @@ describe("InventoryService", () => {
       );
 
       // 5 boxes x stored pack 12 = 60 pieces (the live pack 6 would give 30)
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(Number(movementArgs.quantity)).toBe(60);
     });
 
@@ -596,7 +599,7 @@ describe("InventoryService", () => {
       );
 
       // No boxes/pieces sent: 5 is pieces, NOT boxes.
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(Number(movementArgs.quantity)).toBe(5);
       expect(movementArgs.stockAfter.toString()).toBe("15"); // 10 + 5
       // unitCost also stays per-piece — no ÷unitsPerBox conversion applied.
@@ -622,6 +625,8 @@ describe("InventoryService", () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+
+      expect(stockHelper.written()).toHaveLength(0);
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.purchaseOrderItem.update).not.toHaveBeenCalled();
     });
@@ -652,7 +657,7 @@ describe("InventoryService", () => {
         "user-1",
       );
 
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.quantity.toString()).toBe("0.8");
       expect(movementArgs.stockAfter.toString()).toBe("0.8");
     });
@@ -673,7 +678,7 @@ describe("InventoryService", () => {
 
       const result = await service.recordSale("prod-1", D(4), "ORD-1", "user-1", tx());
 
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.type).toBe("SALE");
       expect(movementArgs.quantity.toString()).toBe("-4");
       expect(movementArgs.unitCost.toString()).toBe("2");
@@ -699,7 +704,7 @@ describe("InventoryService", () => {
         const result = await service.recordSale("prod-1", D(8), null, null, tx());
 
         expect(result.unitCost.toString()).toBe("2");
-        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        const movementArgs = stockHelper.written()[0];
         expect(movementArgs.unitCost.toString()).toBe("2");
         expect(movementArgs.avgCostAfter.toString()).toBe("2");
         expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
@@ -777,25 +782,22 @@ describe("InventoryService", () => {
       expect(result.stockAfter.toString()).toBe("-4");
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { decrement: D(5) } },
-        select: { currentStock: true },
+        data: { currentStock: D(-4) },
       });
     });
 
-    it("SA-136b: writes the row AFTER the counter update, stockAfter from its returned row", async () => {
-      // A pre-read says 10, but a concurrent writer left the counter at 3 when this decrement of
-      // 4 landed: the row must carry the -1 the update returned, never 10 - 4 = 6.
+    it("SA-136b / SA-927: stockAfter is the counter read under the lock, never a pre-read", async () => {
+      // A pre-read says 10, but a concurrent writer left the counter at 3 when this sale of 4 took the
+      // lock: the row must carry the -1 the locked counter gives, never 10 - 4 = 6.
       prisma.product.findFirst.mockResolvedValue(product({ currentStock: D(10) }));
-      counterAfter(-1);
+      stockHelper.setState(() => [{ id: "prod-1", currentStock: D(3), averageCost: D(2) }]);
 
       const result = await service.recordSale("prod-1", D(4), "ORD-1", null, tx());
 
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.stockAfter.toString()).toBe("-1");
       expect(result.stockAfter.toString()).toBe("-1");
-      expect(prisma.product.update.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.stockMovement.create.mock.invocationCallOrder[0],
-      );
+      expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("-1");
     });
   });
 
@@ -803,17 +805,20 @@ describe("InventoryService", () => {
 
   describe("setCostBasis", () => {
     it("creates a COST_BASIS movement (qty 0) and updates the product average", async () => {
-      prisma.product.findUnique.mockResolvedValue(product({ averageCost: null }));
-      // SA-767 L-2: the movement is stamped from the counter the update returned (the locked row).
-      prisma.product.findMany.mockResolvedValue([product({ averageCost: null })]);
-      // Deliberately NOT the fixture's 10: the movement must carry the counter the UPDATE returned.
-      prisma.product.update.mockResolvedValue({ currentStock: D(7) } as any);
+      // Deliberately NOT the fixture's 10: the movement carries the counter read under the lock (7).
+      prisma.product.findUnique.mockResolvedValue(
+        product({ averageCost: null, currentStock: D(7) }),
+      );
+      // SA-767 L-2: the locked row.
+      prisma.product.findMany.mockResolvedValue([
+        product({ averageCost: null, currentStock: D(7) }),
+      ]);
 
       await service.setCostBasis("prod-1", { unitCost: 3.15, notes: "opening basis" }, "user-1");
 
-      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      const movementArgs = stockHelper.written()[0];
       expect(movementArgs.type).toBe("COST_BASIS");
-      expect(movementArgs.quantity).toBe(0);
+      expect(movementArgs.quantity.toString()).toBe("0");
       expect(movementArgs.unitCost.toString()).toBe("3.15");
       expect(movementArgs.avgCostAfter.toString()).toBe("3.15");
       expect(movementArgs.stockAfter.toString()).toBe("7");
@@ -821,8 +826,7 @@ describe("InventoryService", () => {
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { averageCost: D(3.15) },
-        select: { currentStock: true },
+        data: { currentStock: D(7), averageCost: D(3.15) },
       });
       // Lots untouched unless explicitly requested
       expect(prisma.stockLot.updateMany).not.toHaveBeenCalled();
@@ -855,9 +859,6 @@ describe("InventoryService", () => {
         product(),
         product({ id: "prod-2", name: "Sugar" }),
       ]);
-      prisma.stockMovement.create
-        .mockResolvedValueOnce({ id: "mv-1" })
-        .mockResolvedValueOnce({ id: "mv-2" });
 
       const result = await service.bulkSetCostBasis(
         {
@@ -869,7 +870,11 @@ describe("InventoryService", () => {
         "user-1",
       );
 
-      expect(result).toEqual({ updated: 2, movementIds: ["mv-1", "mv-2"] });
+      expect(result).toEqual({
+        updated: 2,
+        movementIds: stockHelper.written().map((w) => w.id),
+      });
+      expect(result.movementIds).toHaveLength(2);
       expect(prisma.product.update).toHaveBeenCalledTimes(2);
     });
 
@@ -888,6 +893,7 @@ describe("InventoryService", () => {
         ),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
     });
   });
 
@@ -938,6 +944,7 @@ describe("InventoryService", () => {
         correctionId: null,
       });
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
       expect(prisma.stockMovement.update).not.toHaveBeenCalled();
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(audit.log).not.toHaveBeenCalled();
@@ -963,7 +970,7 @@ describe("InventoryService", () => {
         data: { averageCost: D("2.6667") },
         select: { currentStock: true },
       });
-      const row = prisma.stockMovement.create.mock.calls[0][0].data;
+      const row = prisma.stockMovement.create.mock.calls[0][0].data; // replayProduct's own writer (named exception)
       expect(row).toMatchObject({
         productId: "prod-1",
         type: "COST_BASIS",
@@ -1001,6 +1008,7 @@ describe("InventoryService", () => {
       expect(result.updated).toBe(0);
       expect(result.results[0].correctionId).toBeNull();
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
@@ -1281,6 +1289,7 @@ describe("InventoryService", () => {
 
       expect(result).toMatchObject({ applied: 2, skipped: 0, alreadyCommitted: true });
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
   });
@@ -1314,11 +1323,13 @@ describe("InventoryService", () => {
       prisma.stockCountSession.updateMany.mockResolvedValue({ count: 1 });
       // The edits probe the shared stock-count lock; it fails closed, so grant it explicitly.
       prisma.tenantTransaction.mockImplementation((fn: any) =>
-        fn({
-          ...prisma,
-          $executeRaw: jest.fn().mockResolvedValue(0),
-          $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
-        }),
+        fn(
+          stockHelper.wrapTx({
+            ...prisma,
+            $executeRaw: jest.fn().mockResolvedValue(0),
+            $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
+          }),
+        ),
       );
     });
 
@@ -1331,6 +1342,7 @@ describe("InventoryService", () => {
 
       expect(res).toMatchObject({ alreadyCommitted: true, applied: 0 });
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
 
@@ -1347,6 +1359,7 @@ describe("InventoryService", () => {
       expect(res).toMatchObject({ applied: 1, movementIds: ["m-existing"] });
       expect(res).not.toHaveProperty("alreadyCommitted");
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
       expect(prisma.product.update).not.toHaveBeenCalled();
       expect(prisma.stockCountSession.updateMany).toHaveBeenCalledTimes(1);
     });
@@ -1360,8 +1373,8 @@ describe("InventoryService", () => {
       await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
 
       // Counted 7 against on-hand 10 ⇒ a −3 ADJUSTMENT, not an absolute write.
-      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
-      const mv = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(stockHelper.written()).toHaveLength(1);
+      const mv = stockHelper.written()[0];
       expect(mv.type).toBe("ADJUSTMENT");
       expect(Number(mv.quantity)).toBe(-3);
       expect(mv.reference).toBe("STOCK_COUNT-sess-1");
@@ -1382,6 +1395,7 @@ describe("InventoryService", () => {
       expect(res.applied).toBe(0);
       expect(res.skipped).toBe(1);
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
     });
 
     it("a unitCostOverride writes COST_BASIS BEFORE the adjustment, so the lot is valued at the corrected cost", async () => {
@@ -1393,13 +1407,10 @@ describe("InventoryService", () => {
       prisma.stockMovement.findMany.mockResolvedValue([]);
       // After the COST_BASIS write the product re-reads at the corrected cost.
       prisma.product.findUnique.mockResolvedValue(product({ averageCost: D(3.5) }));
-      prisma.stockMovement.create.mockImplementation((args: any) =>
-        Promise.resolve({ id: `mv-${args.data.type}` }),
-      );
 
       const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
 
-      const types = prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data.type);
+      const types = stockHelper.written().map((w) => w.type);
       expect(types).toEqual(["COST_BASIS", "ADJUSTMENT"]); // order is load-bearing
       expect(res.costMovementIds).toHaveLength(1);
       // The lot opened for the +5 must use the CORRECTED 3.5, not the stale 2.
@@ -1696,7 +1707,7 @@ describe("InventoryService", () => {
         "user-1",
       );
 
-      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      const data = stockHelper.written()[0];
       expect(data.effectiveAt).toEqual(new Date(at));
       expect(data).not.toHaveProperty("createdAt");
       expect(prisma.stockMovement.count).toHaveBeenCalledWith({
@@ -1713,7 +1724,7 @@ describe("InventoryService", () => {
         "user-1",
       );
 
-      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      const data = stockHelper.written()[0];
       expect(data.effectiveAt).toEqual(new Date(at));
       expect(data).not.toHaveProperty("createdAt");
       expect(prisma.stockMovement.count).toHaveBeenCalledWith({

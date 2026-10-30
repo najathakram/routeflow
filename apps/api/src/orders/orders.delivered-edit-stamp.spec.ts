@@ -15,6 +15,9 @@ jest.mock("../common/db-locks", () => ({
 
 import { buildOrdersService, operatorPayload } from "./testing/orders-service-harness";
 
+/** Absolute counter write (SA-927: the helper writes currentStock = stockAfter, never an increment). */
+const stockIs = (n: number) => ({ asymmetricMatch: (v: unknown) => Number(v) === n });
+
 const staff = { ...operatorPayload, tenantId: "t-1" } as never;
 const REPLACE_LOCKED = { status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } };
 const PRODUCT = {
@@ -157,7 +160,7 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     await edit([{ id: "li-A", productId: "prod-A", qty: 10 }]);
     expect(h.prisma.product.update).toHaveBeenCalledWith({
       where: { id: "prod-A" },
-      data: { currentStock: { increment: 2 } },
+      data: { currentStock: stockIs(102) },
     });
   });
 
@@ -171,7 +174,7 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(d("li-A")).toBe(14);
     expect(h.prisma.product.update).toHaveBeenCalledWith({
       where: { id: "prod-A" },
-      data: { currentStock: { decrement: 2 } },
+      data: { currentStock: stockIs(98) },
     });
   });
 

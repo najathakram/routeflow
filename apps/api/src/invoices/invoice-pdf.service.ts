@@ -17,7 +17,11 @@ import { bcidFor } from "../common/barcode-bcid";
 import { toLineComponentViews } from "../orders/component-view";
 import { readFamilyPriceMode } from "../products/family-price";
 import { pdfItemDisplay, pdfSubLine } from "./invoice-pdf-item";
-import { resolveLiveDisplayUnits, withItemDisplayUnits } from "./invoice-display-unit";
+import {
+  resolveLiveDisplayUnits,
+  withItemDisplayUnits,
+  withPerBaseUnit,
+} from "./invoice-display-unit";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { orderQrUrl } from "./invoice-qr";
 import { withoutOverrideStamp } from "../common/restriction-override-columns";
@@ -280,10 +284,17 @@ export class InvoicePdfService {
           live,
         ).items.map((i) => [i.id as string, i.displayUnit] as const),
       );
+      // SA-1029: the per-piece price of a today-layout pack line (display only; null for any other line).
+      const perById = new Map(
+        (await withPerBaseUnit(this.prisma.forTenant(), tenantId, items as any[])).map(
+          (i) => [i.id as string, i.perBaseUnit] as const,
+        ),
+      );
       return await Promise.all(
         items.map(async (item: any) => {
           const displayUnit = unitById.get(item.id);
-          if (!displayUnit || displayUnit.kind !== "pieces") return item;
+          if (!displayUnit || displayUnit.kind !== "pieces")
+            return perById.get(item.id) ? { ...item, perBaseUnit: perById.get(item.id) } : item;
           const views = item.components?.length
             ? toLineComponentViews(item.components as never)
             : [];
@@ -302,12 +313,18 @@ export class InvoicePdfService {
             views,
             displayUnit,
           );
-          if (lines.layout === "today") return item;
+          if (lines.layout === "today")
+            return perById.get(item.id) ? { ...item, perBaseUnit: perById.get(item.id) } : item;
           const barcodes = new Map<string, string | null>();
           if (lines.layout === "components") {
             for (const v of views) barcodes.set(v.componentProductId, await this.subLineBarcode(v));
           }
-          return { ...item, display: pdfItemDisplay(lines, barcodes) };
+          // the MSRP note names the line's word on this layout too; the template's `!item.display` guard keeps the cell empty
+          return {
+            ...item,
+            display: pdfItemDisplay(lines, barcodes),
+            ...(perById.get(item.id) ? { perBaseUnit: perById.get(item.id) } : {}),
+          };
         }),
       );
     } catch (err) {

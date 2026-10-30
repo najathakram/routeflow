@@ -101,6 +101,7 @@ import { assertProductIdNotFamily } from "../products/sellable-lines";
 import { AuditService } from "../audit/audit.service";
 import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
 import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
+import { advancePaymentData } from "./advance-payment-data";
 import { isLicenceExpired, licenceZone } from "../authorizations/licence-validity";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -949,15 +950,7 @@ export class CustomersService {
   ) {
     await this.findCustomerOrThrow(customerId);
     if (roundMoney(dto.amount) <= 0) throw new BadRequestException("Amount must be greater than 0");
-    const data = {
-      customerId,
-      amount: roundMoney(dto.amount),
-      balance: roundMoney(dto.amount), // initial balance equals amount
-      method: dto.method,
-      reference: dto.reference,
-      notes: dto.notes,
-      receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
-    };
+    const data = await advancePaymentData(this.prisma, customerId, dto);
     // SA-824: a key claims as the FIRST statement of one transaction with the create and its settle, or replays the
     // stored advance. SA-837b item 2 / G4: with or without a key the create runs behind the ONE payment-reference
     // predicate and lock (keyedPayment), so an advance repeats neither an advance nor an invoice payment.

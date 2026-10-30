@@ -72,6 +72,12 @@ import {
   RouteRunStopStatus,
   NotificationEvent,
 } from "@prisma/client";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+/** Absolute counter write (SA-927: the helper writes currentStock = stockAfter, never an increment). */
+const stockIs = (n: number) => ({ asymmetricMatch: (v: unknown) => Number(v) === n });
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -164,6 +170,7 @@ describe("OrdersService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
     tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
@@ -1999,45 +2006,12 @@ describe("OrdersService", () => {
         (service as any).systemConfig.get.mockResolvedValue("0");
       });
 
-      // B116/B562: the one aggregated `$queryRaw` UPDATE's `[productId, qty]` bindings (pieces).
+      // SA-927: the sale goes through the stock helper; the oracle reads the SALE row it inserted:
+      // [productId, pieces out, tenantId].
       function captureStockDecrement() {
-        const txExecuteRaw: jest.Mock = jest.fn().mockResolvedValue([]);
-        prisma.tenantTransaction.mockImplementation((fn: any) =>
-          fn({
-            ...(prisma as unknown as Record<string, any>),
-            $executeRaw: txExecuteRaw,
-            $queryRaw: txExecuteRaw,
-          }),
-        );
-        const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
-        const sqlText = (v: any): string =>
-          v == null
-            ? ""
-            : typeof v === "string"
-              ? v
-              : isSql(v)
-                ? v.sql
-                : Array.isArray(v)
-                  ? v.map(sqlText).join(" ")
-                  : "";
-        const flatValues = (v: any): any[] =>
-          v == null
-            ? []
-            : isSql(v)
-              ? flatValues(v.values)
-              : Array.isArray(v)
-                ? v.flatMap(flatValues)
-                : [v];
         return () => {
-          // The lock statement is a separate `SELECT … FOR UPDATE`; only the
-          // decrement names currentStock.
-          const call = txExecuteRaw.mock.calls.find((c: any[]) =>
-            (sqlText(c[0]) + " " + sqlText(c.slice(1))).includes("currentStock"),
-          );
-          if (!call) return [];
-          // Tagged-template form binds after the strings; function form
-          // (`$executeRaw(Prisma.sql…)`) carries both inside call[0].
-          return isSql(call[0]) ? flatValues(call[0]) : flatValues(call.slice(1));
+          const row = stock.written()[0];
+          return row ? [row.productId, -Number(row.quantity), row.tenantId] : [];
         };
       }
 
@@ -2050,7 +2024,7 @@ describe("OrdersService", () => {
           customerPayload,
         );
 
-        expect(prisma.product.update).not.toHaveBeenCalled();
+        expect(prisma.product.update).toHaveBeenCalledTimes(1); // one absolute write per product
         // The money basis is the leading (productId, qty) pair. The trailing
         // bound value is the tenantId the raw UPDATE re-states for itself —
         // raw SQL bypasses the tenant proxy that scoped the ORM call it
@@ -2069,7 +2043,7 @@ describe("OrdersService", () => {
           customerPayload,
         );
 
-        expect(prisma.product.update).not.toHaveBeenCalled();
+        expect(prisma.product.update).toHaveBeenCalledTimes(1);
         expect(readDecrement().slice(0, 2)).toEqual(["prod-box12", 24]);
         expect(readDecrement()).toContain("test-tenant");
       });
@@ -3150,34 +3124,10 @@ describe("OrdersService", () => {
   describe("REG-B283 — DRAFT→PENDING reserves stock symmetrically with cancel", () => {
     const DRAFT_ORDER = { ...MOCK_ORDER, status: "DRAFT" as const };
 
-    /** Same extraction shape as the WP1 create() decrement pin above — reads the
-     * `[productId, qty]` pairs bound into the aggregated
-     * `UPDATE … FROM (VALUES …)` raw-SQL decrement. */
-    function readAggregatedDecrementValues(txExecuteRaw: jest.Mock): any[] {
-      const isSql = (v: any) => typeof v?.sql === "string" && Array.isArray(v?.values);
-      const sqlText = (v: any): string =>
-        v == null
-          ? ""
-          : typeof v === "string"
-            ? v
-            : isSql(v)
-              ? v.sql
-              : Array.isArray(v)
-                ? v.map(sqlText).join(" ")
-                : "";
-      const flatValues = (v: any): any[] =>
-        v == null
-          ? []
-          : isSql(v)
-            ? flatValues(v.values)
-            : Array.isArray(v)
-              ? v.flatMap(flatValues)
-              : [v];
-      const call = txExecuteRaw.mock.calls.find((c: any[]) =>
-        (sqlText(c[0]) + " " + sqlText(c.slice(1))).includes("currentStock"),
-      );
-      if (!call) return [];
-      return isSql(call[0]) ? flatValues(call[0]) : flatValues(call.slice(1));
+    /** SA-927: the sale goes through the stock helper; read the [productId, pieces out] of the SALE row it inserted. */
+    function readAggregatedDecrementValues(_txExecuteRaw: jest.Mock): any[] {
+      const row = stock.written()[0];
+      return row ? [row.productId, -Number(row.quantity)] : [];
     }
 
     function mockTenantTransactionWithRawSpy(): jest.Mock {
@@ -3186,7 +3136,7 @@ describe("OrdersService", () => {
         fn({
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: txExecuteRaw,
+          $queryRaw: stock.queryRaw(txExecuteRaw),
         }),
       );
       return txExecuteRaw;
@@ -3250,7 +3200,7 @@ describe("OrdersService", () => {
       // Same 10 units, credited back — net delta across the pair is zero.
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { increment: 10 } },
+        data: { currentStock: stockIs(110) },
       });
     });
 
@@ -3285,7 +3235,7 @@ describe("OrdersService", () => {
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { increment: 10 } },
+        data: { currentStock: stockIs(1_000_000_010) },
       });
     });
 
@@ -3684,7 +3634,7 @@ describe("OrdersService", () => {
       const seenTx: any = {
         ...prisma.forTenant(),
         $executeRaw: jest.fn().mockResolvedValue(0),
-        $queryRaw: jest.fn().mockResolvedValue([]),
+        $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
       };
       prisma.tenantTransaction.mockImplementationOnce(async (fn: any) => fn(seenTx));
       return seenTx;
@@ -8195,7 +8145,7 @@ describe("OrdersService", () => {
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { decrement: 3 } },
+        data: { currentStock: stockIs(97) },
       });
     });
   });
@@ -8209,6 +8159,7 @@ describe("OrdersService", () => {
   // to unrelated changes elsewhere in the edit path. A fake `db` with just
   // $executeRaw + product.findMany/update isolates the settle contract itself.
   describe("WP1 settleStockForEdit — applies deltas over the union (validate THEN write)", () => {
+    let settleStock: ReturnType<typeof wireStockHelper>;
     let fakeDb: {
       $executeRaw: jest.Mock;
       product: { findMany: jest.Mock; update: jest.Mock };
@@ -8219,7 +8170,7 @@ describe("OrdersService", () => {
     // lock) instead of reusing the pre-transaction order.lineItems.
     const settle = (order: any, finalActiveItems: any[], user?: any) =>
       (service as any).settleStockForEdit(
-        fakeDb,
+        settleStock.wrapTx(fakeDb),
         order,
         order.lineItems ?? [],
         finalActiveItems,
@@ -8242,6 +8193,13 @@ describe("OrdersService", () => {
         },
         stockMovement: { create: jest.fn().mockResolvedValue({ id: "mv" }), findFirst: jest.fn() },
       } as any;
+      // SA-927: the helper's locked read sees what the case stubbed on findMany (500 when it stubbed none).
+      settleStock = wireStockHelper(createMockPrisma(), {
+        stateOf: async (ids: string[]) => {
+          const rows: any[] = (await fakeDb.product.findMany()) ?? [];
+          return ids.map((id) => rows.find((r) => r.id === id) ?? { id, currentStock: 500 });
+        },
+      });
     });
 
     it("(a) increase 1→3 boxes (qty 12→36) decrements 24", async () => {
@@ -8254,7 +8212,7 @@ describe("OrdersService", () => {
 
       expect(fakeDb.product.update).toHaveBeenCalledWith({
         where: { id: "prod-box" },
-        data: { currentStock: { decrement: 24 } },
+        data: { currentStock: stockIs(476) },
       });
     });
 
@@ -8268,7 +8226,7 @@ describe("OrdersService", () => {
 
       expect(fakeDb.product.update).toHaveBeenCalledWith({
         where: { id: "prod-box" },
-        data: { currentStock: { increment: 24 } },
+        data: { currentStock: stockIs(524) },
       });
     });
 
@@ -8280,7 +8238,7 @@ describe("OrdersService", () => {
 
       expect(fakeDb.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { increment: 10 } },
+        data: { currentStock: stockIs(510) },
       });
     });
 
@@ -8294,7 +8252,7 @@ describe("OrdersService", () => {
 
       expect(fakeDb.product.update).toHaveBeenCalledWith({
         where: { id: "prod-2" },
-        data: { currentStock: { decrement: 7 } },
+        data: { currentStock: stockIs(493) },
       });
     });
 
@@ -8334,7 +8292,7 @@ describe("OrdersService", () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("below stock"));
       expect(fakeDb.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { decrement: 5 } },
+        data: { currentStock: stockIs(-3) },
       });
       warnSpy.mockRestore();
     });
@@ -8372,7 +8330,7 @@ describe("OrdersService", () => {
       expect(fakeDb.product.update).toHaveBeenCalledTimes(1);
       expect(fakeDb.product.update).toHaveBeenCalledWith({
         where: { id: "prod-box" },
-        data: { currentStock: { increment: 14 } },
+        data: { currentStock: stockIs(514) },
       });
     });
   });
@@ -8771,7 +8729,7 @@ describe("OrdersService", () => {
 
       expect(prisma.product.update).toHaveBeenCalledWith({
         where: { id: "prod-1" },
-        data: { currentStock: { decrement: 24 } },
+        data: { currentStock: stockIs(476) },
       });
     });
 
@@ -8973,7 +8931,7 @@ describe("OrdersService", () => {
         const seenTx: any = {
           ...prisma.forTenant(),
           $executeRaw: jest.fn().mockResolvedValue(0),
-          $queryRaw: jest.fn().mockResolvedValue([]),
+          $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
         };
         prisma.tenantTransaction.mockImplementationOnce(async (fn: any) => {
           try {

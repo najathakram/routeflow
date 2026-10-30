@@ -22,6 +22,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { billCashPaid, billCashPaidRefusal, isCashBillPayment } from "./bill-cash-guard";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn(() => ({})) }));
 jest.mock("sharp", () => ({ __esModule: true, default: jest.fn(() => ({})) }));
@@ -117,6 +118,7 @@ describe("B288 — a bill with cash payments", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     // The bill read is repeated inside the tx (B285 row lock + state fingerprint).
     prisma.vendorBill.findUnique.mockImplementation(
       () =>

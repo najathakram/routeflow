@@ -5,7 +5,8 @@ import { Modal, Button, Select, Input, Textarea, useToast } from "@routeflow/ui/
 import { MoneyInput } from "@/components/MoneyInput";
 import { SELECTABLE_PAYMENT_METHODS, paymentMethodLabel } from "@/lib/payment-methods";
 import { useRecordCommissionPayout, type CommissionStatementDetail } from "@/lib/api/sales-agents";
-import { fmt, todayIso } from "@/lib/formatting";
+import { fmt } from "@/lib/formatting";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 
 /**
  * PR-D WP6 — record a payout against an APPROVED statement. Amount defaults to
@@ -30,7 +31,9 @@ export function RecordPayoutModal({
   const [method, setMethod] = React.useState<string>(SELECTABLE_PAYMENT_METHODS[0]);
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [paidAt, setPaidAt] = React.useState(todayIso());
+  const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
+  const [paidAt, setPaidAt] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, paidAt, setPaidAt);
 
   React.useEffect(() => {
     if (open) {
@@ -38,7 +41,7 @@ export function RecordPayoutModal({
       setMethod(SELECTABLE_PAYMENT_METHODS[0]);
       setReference("");
       setNotes("");
-      setPaidAt(todayIso());
+      setPaidAt(tenantTodayIso(zone));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);

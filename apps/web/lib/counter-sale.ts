@@ -246,6 +246,10 @@ export function paymentMethodOptions(
   return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
 }
 
+/** Mirrors the API DTO: a payment amount is at most 1,000,000 and a reference at most 100 characters. */
+export const COUNTER_MAX_TENDER = 1_000_000;
+export const COUNTER_MAX_REFERENCE_LENGTH = 100;
+
 /** SA-1026 A: the one choice inside the Check tender for a named customer whose check is not in hand. */
 export const CHECK_NOT_RECEIVED_LABEL = "Check not received yet";
 
@@ -264,7 +268,12 @@ export function resolveTender(
     : { method };
 }
 
-export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
+export type PaymentProblem =
+  | "TENDER_SHORT"
+  | "TENDER_TOO_LARGE"
+  | "CHECK_NUMBER_REQUIRED"
+  | "CHECK_NUMBER_TOO_LONG"
+  | "WALK_IN_ON_ACCOUNT";
 
 export function validatePayment(input: {
   method: CounterSalePaymentMethod;
@@ -282,7 +291,14 @@ export function validatePayment(input: {
     if (input.isWalkIn || input.fullTenderOnly || !(roundMoney(Number(input.tendered ?? 0)) > 0))
       return "TENDER_SHORT";
   }
+  if (input.method === "CASH" && Number(input.tendered) > COUNTER_MAX_TENDER)
+    return "TENDER_TOO_LARGE";
   if (input.method === "CHECK" && !(input.reference ?? "").trim()) return "CHECK_NUMBER_REQUIRED";
+  if (
+    input.method === "CHECK" &&
+    (input.reference ?? "").trim().length > COUNTER_MAX_REFERENCE_LENGTH
+  )
+    return "CHECK_NUMBER_TOO_LONG";
   return null;
 }
 
@@ -296,7 +312,9 @@ export const isTenderShortCopy = (text: string): boolean => text.startsWith(TEND
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
   /** the amount-less fallback; callers that know the total use `paymentProblemCopy` */
   TENDER_SHORT: `${TENDER_SHORT_PREFIX} the full total.`,
+  TENDER_TOO_LARGE: "The most you can take in one payment is $1,000,000. Enter a smaller amount.",
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
+  CHECK_NUMBER_TOO_LONG: "A check number can be at most 100 characters. Shorten it.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };

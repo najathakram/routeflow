@@ -35,7 +35,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, UserRole } from "@prisma/client";
+import { MovementType, Prisma, UserRole } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
 import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -1886,35 +1887,27 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
       let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
-        for (const item of fresh.items as any[]) {
-          if (!item.restock) continue;
-          const product = await tx.product.findFirst({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          const qty = new Prisma.Decimal(item.qty);
-          const currentStock = product?.currentStock ?? new Prisma.Decimal(0);
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { currentStock: { decrement: qty } },
-          });
-          // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
-          // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
-          // audit trail (a delete erased history; the prefix match also risks colliding
-          // across two returns whose ids happen to share their first 8 characters).
-          await tx.stockMovement.create({
-            data: {
-              productId: item.productId,
-              type: "RETURN",
-              quantity: qty.neg(),
-              unitCost: product?.averageCost ?? null,
-              avgCostAfter: product?.averageCost ?? null,
-              stockAfter: currentStock.sub(qty),
+        // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
+        // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
+        // audit trail (a delete erased history; the prefix match also risks colliding
+        // across two returns whose ids happen to share their first 8 characters).
+        // SA-927: through the one writer (lock, tenant-scoped counter read, stockAfter, one insert).
+        const restocked = (fresh.items as any[]).filter((item) => item.restock);
+        await applyStockMovements(
+          tx,
+          this.prisma.getTenantId() as string,
+          (locked) =>
+            restocked.map((item) => ({
+              productId: item.productId as string,
+              type: MovementType.RETURN,
+              quantity: new Prisma.Decimal(item.qty).neg(),
+              unitCost: locked.get(item.productId)?.averageCost ?? null,
+              average: "keep" as const,
               performedById: user.sub,
               reference: `RET-CANCEL-${fresh.id.slice(0, 8)}`,
-            },
-          });
-        }
+            })),
+          { productIds: restocked.map((item) => item.productId as string) },
+        );
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.
         const settled = await this.ledger.settleRegulatedLedger(tx, {

@@ -9,6 +9,9 @@ import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { ProductAliasService } from "../import/product-alias.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 /**
  * PR-5 (WP6) — server-side equivalence spec for the boxes/pieces toggle.
@@ -82,6 +85,7 @@ async function makeService(): Promise<{
   prisma: ReturnType<typeof createMockPrisma>;
 }> {
   const prisma = createMockPrisma();
+  stock = wireStockHelper(prisma, { ample: true });
   // receive() re-reads the bill inside its transaction (B285 row lock): repeat the last bill read
   prisma.vendorBill.findUnique.mockImplementation(
     () =>
@@ -135,6 +139,7 @@ async function receiveLine(
   const { service, prisma } = await makeService();
   prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [linkedItem(item)] }));
   prisma.product.findFirst.mockResolvedValue({ ...startingProduct, costingMethod: "AVCO" });
+  stock.setState((ids) => ids.map((id) => ({ id, ...startingProduct })));
 
   await service.receive("bill-1", undefined, "user-1");
 
@@ -150,7 +155,7 @@ async function receiveLine(
     lotQty: lot.qty.toString(),
     lotRemainingQty: lot.remainingQty.toString(),
     lotUnitCost: lot.unitCost.toString(),
-    productStockIncrement: product.currentStock.increment.toString(),
+    productStockAfter: product.currentStock.toString(),
     productAverageCost:
       product.averageCost === undefined ? undefined : product.averageCost.toString(),
   };
@@ -171,6 +176,7 @@ async function revertLine(
     }),
   );
   prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
+  stock.setState((ids) => ids.map((id) => ({ id, ...postReceiveProduct })));
   prisma.stockLot.findMany.mockResolvedValue([]);
   // B846: revert reads back the receipt row(s) receive() wrote — 24 pieces @ $1.25 either way.
   prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
@@ -195,7 +201,7 @@ async function revertLine(
     reversalType: reversal.type as string,
     reversalQty: reversal.quantity.toString(),
     reversalUnitCost: reversal.unitCost.toString(),
-    productStockDecrement: product.currentStock.decrement.toString(),
+    productStockAfter: product.currentStock.toString(),
     productAverageCost:
       product.averageCost === undefined ? undefined : product.averageCost.toString(),
   };
@@ -216,6 +222,7 @@ async function voidLine(
     }),
   );
   prisma.product.findFirst.mockResolvedValue(postReceiveProduct);
+  stock.setState((ids) => ids.map((id) => ({ id, ...postReceiveProduct })));
   prisma.stockLot.findMany.mockResolvedValue([]);
   // B846 sibling: void reads back the receipt row(s) receive() wrote — 24 pieces @ $1.25 either way.
   prisma.stockMovement.findMany.mockImplementation(async ({ where }: any) =>
@@ -234,7 +241,7 @@ async function voidLine(
     movementUnitCost: movement.unitCost.toString(),
     movementAvgCostAfter: movement.avgCostAfter.toString(),
     movementStockAfter: movement.stockAfter.toString(),
-    productStockDecrement: product.currentStock.decrement.toString(),
+    productStockAfter: product.currentStock.toString(),
     productAverageCost:
       product.averageCost === undefined ? undefined : product.averageCost.toString(),
   };
@@ -259,7 +266,7 @@ describe("VendorBillsService — receive-path denomination equivalence (WP6)", (
       expect(boxed.movementStockAfter).toBe("24");
       expect(boxed.lotQty).toBe("24");
       expect(boxed.lotUnitCost).toBe("1.25");
-      expect(boxed.productStockIncrement).toBe("24");
+      expect(boxed.productStockAfter).toBe("24");
       expect(boxed.productAverageCost).toBe("1.25");
     });
 
@@ -274,7 +281,7 @@ describe("VendorBillsService — receive-path denomination equivalence (WP6)", (
       expect(boxed.movementAvgCostAfter).toBe("1.4706");
       expect(boxed.movementStockAfter).toBe("34");
       expect(boxed.productAverageCost).toBe("1.4706");
-      expect(boxed.productStockIncrement).toBe("24");
+      expect(boxed.productStockAfter).toBe("34");
     });
   });
 
@@ -291,7 +298,7 @@ describe("VendorBillsService — receive-path denomination equivalence (WP6)", (
       expect(boxed.reversalType).toBe("PURCHASE");
       expect(boxed.reversalQty).toBe("-24");
       expect(boxed.reversalUnitCost).toBe("1.25");
-      expect(boxed.productStockDecrement).toBe("24");
+      expect(boxed.productStockAfter).toBe("0");
       // Reversal empties stock (24 - 24 = 0) — average is KEPT, not zeroed.
       expect(boxed.productAverageCost).toBeUndefined();
     });
@@ -310,7 +317,7 @@ describe("VendorBillsService — receive-path denomination equivalence (WP6)", (
       // Reversal empties stock → average carried forward, not zeroed.
       expect(boxed.movementAvgCostAfter).toBe("1.25");
       expect(boxed.movementStockAfter).toBe("0");
-      expect(boxed.productStockDecrement).toBe("24");
+      expect(boxed.productStockAfter).toBe("0");
       expect(boxed.productAverageCost).toBeUndefined();
     });
   });
