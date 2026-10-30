@@ -148,6 +148,20 @@ describe("SA-1050 PR-0 migration folders", () => {
     it("drops, truncates and deletes nothing", () => {
       expect(executable(DATA_FOLDER)).not.toMatch(/\bDROP\b|\bTRUNCATE\b|^\s*DELETE\b/im);
     });
+
+    // SA-1050 A-3: the order is part of the file. A header that loses it lets the next reader run this before the code.
+    it("its DEPLOY ORDER header says LAST, after both deployments, and bars a rollback behind the deploy", () => {
+      const header = squash(
+        sqlOf(DATA_FOLDER)
+          .split("\n")
+          .filter((l) => l.trim().startsWith("--"))
+          .join(" "),
+      );
+      expect(header).toContain("goes to prod LAST");
+      expect(header).toContain("BOTH deployments have reached SUCCESS");
+      expect(header).toContain("P2023");
+      expect(header).toContain("must never be rolled back");
+    });
   });
 
   describe("the Prisma schema folder", () => {

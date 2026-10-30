@@ -160,4 +160,44 @@ describeDb("InvoiceWriteOffEvent — real Postgres (SA-1050 PR-0)", () => {
     });
     expect(op.deniedPermissionGroups).toEqual([OperatorPermissionGroup.BAD_DEBT]);
   });
+
+  // SA-1050 A-3 row 4: on a database that has folder 1 only (folder 2 not yet run, so the column's own default is still
+  // '{}'), the new client sends its schema default, so a user.create with no deny list still stores {BAD_DEBT}. Folder 2's
+  // DDL is undone inside one rolled-back transaction, so the shared lane database is untouched afterwards.
+  it("on a folder-1-only database, user.create with no deny list stores {BAD_DEBT} (the client's default)", async () => {
+    class Rollback extends Error {}
+    let stored: OperatorPermissionGroup[] | undefined;
+    let columnDefault: string | undefined;
+    await prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `ALTER TABLE "User" ALTER COLUMN "deniedPermissionGroups" SET DEFAULT '{}'`,
+        );
+        const rows = await tx.$queryRaw<Array<{ d: string }>>`
+          SELECT column_default AS d FROM information_schema.columns
+           WHERE table_name = 'User' AND column_name = 'deniedPermissionGroups'`;
+        columnDefault = rows[0]?.d;
+        const op = await tx.user.create({
+          data: {
+            tenantId,
+            role: UserRole.OPERATOR,
+            username: `wo-op1-${RUN_SUFFIX}`,
+            email: `wo-op1-${RUN_SUFFIX}@example.test`,
+          },
+        });
+        stored = op.deniedPermissionGroups;
+        throw new Rollback();
+      })
+      .catch((e: unknown) => {
+        if (!(e instanceof Rollback)) throw e;
+      });
+    // the database default really was the folder-1 one ('{}'), so the value came from the client
+    expect(columnDefault).toMatch(/^'\{\}'/);
+    expect(stored).toEqual([OperatorPermissionGroup.BAD_DEBT]);
+    // and the rollback restored folder 2's column default
+    const after = await prisma.$queryRaw<Array<{ d: string }>>`
+      SELECT column_default AS d FROM information_schema.columns
+       WHERE table_name = 'User' AND column_name = 'deniedPermissionGroups'`;
+    expect(after[0]?.d).toContain("BAD_DEBT");
+  });
 });
