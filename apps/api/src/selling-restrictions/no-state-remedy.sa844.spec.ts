@@ -119,6 +119,7 @@ describe("row 672 / SA-844: a sale whose state can't be resolved names its remed
   beforeEach(async () => {
     mock = createMockPrisma();
     mock.getTenantId.mockReturnValue(null);
+    mock.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator's live row
     prisma = mock.forTenant();
     prisma.sellingRestriction = { findMany: jest.fn().mockResolvedValue([LEGAL_BAN]) };
     prisma.productCategory = {
