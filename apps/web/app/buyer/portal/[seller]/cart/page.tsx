@@ -343,7 +343,7 @@ export default function BuyerCartPage() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success/10">
             <ShoppingCart className="h-8 w-8 text-success" />
           </div>
-          <h2 className="text-xl font-bold text-navy mb-2">Order Placed!</h2>
+          <h2 className="text-xl font-bold text-navy mb-2">Order placed</h2>
           <p className="text-sm text-navy/70 mb-6">
             Your order <strong>{orderPlaced.orderNumber}</strong> has been submitted.
           </p>
@@ -352,7 +352,7 @@ export default function BuyerCartPage() {
               variant="secondary"
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders/${orderPlaced.id}`)}
             >
-              View Order
+              View order
             </Button>
             <Button
               className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
@@ -618,10 +618,10 @@ export default function BuyerCartPage() {
         <div className="min-w-0 space-y-4">
           {/* Options */}
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-4">
-            <h3 className="text-sm font-semibold text-navy">Order Options</h3>
+            <h3 className="text-sm font-semibold text-navy">Order options</h3>
 
             <div>
-              <label className="block text-xs text-navy/70 mb-1">Requested Delivery Date</label>
+              <label className="block text-xs text-navy/70 mb-1">Requested delivery date</label>
               <input
                 type="date"
                 value={deliveryDate}
@@ -655,11 +655,11 @@ export default function BuyerCartPage() {
             )}
 
             <div>
-              <label className="block text-xs text-navy/70 mb-1">Order Notes</label>
+              <label className="block text-xs text-navy/70 mb-1">Order notes</label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Special instructions..."
+                placeholder="Special instructions…"
                 rows={3}
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
               />
@@ -681,7 +681,7 @@ export default function BuyerCartPage() {
 
           {/* Summary */}
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-navy">Order Summary</h3>
+            <h3 className="text-sm font-semibold text-navy">Order summary</h3>
             {savings > 0 && (
               <div className="flex justify-between text-sm">
                 <span className="text-navy/70">Items</span>

@@ -113,7 +113,10 @@ describe("plan() is a read-only dry-run", () => {
     expect(h.db.audits).toHaveLength(0);
     expect(h.db.locks).toHaveLength(0);
     expect(h.stripe.calls).toEqual([]);
-    expect(h.mutations.checkoutAddonLines).toHaveBeenCalledWith("t1", "month", { quiet: true });
+    expect(h.mutations.checkoutAddonLines).toHaveBeenCalledWith("t1", "month", {
+      quiet: true,
+      readOnly: true,
+    });
     expect(h.sub().catchupState).toBeNull();
   });
 
@@ -337,6 +340,24 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
     expect(params.managed_payments).toEqual({ enabled: false });
     expect(params.automatic_tax?.enabled).not.toBe(true);
+  });
+
+  it("R1 (SA-1037 r3 PR-1): the catch-up session offers card and us_bank_account when the env says card_and_bank", async () => {
+    const KEY = "BILLING_CHECKOUT_PAYMENT_METHODS";
+    const prior = process.env[KEY];
+    process.env[KEY] = "card_and_bank";
+    try {
+      const h = make({ invoices: [OCT_OPEN], sub: sub() });
+      activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
+      const r = await h.svc.plan("t1", NOW);
+      if (!r.plan.ok) throw new Error("plan not ok");
+      await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+      const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+      expect(params.payment_method_types).toEqual(["card", "us_bank_account"]);
+    } finally {
+      if (prior === undefined) delete process.env[KEY];
+      else process.env[KEY] = prior;
+    }
   });
 
   describe("F6: the return paths are joined to the one FRONTEND_URL base inside open()", () => {
@@ -670,6 +691,21 @@ describe("Opus review: planning under the claim, the plan key, billing start", (
       response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
     });
     expect(h.sub().catchupState).toBeNull(); // the claim was dropped
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("W-810: the price is re-read for the session; a change since the re-plan aborts and creates nothing", async () => {
+    const h = make({ invoices: [OCT_OPEN] });
+    const real = h.pricing.checkoutPriceData.getMockImplementation()!;
+    // call 1 = dry-run plan, call 2 = re-plan under the claim, call 3 = the session read
+    h.pricing.checkoutPriceData
+      .mockImplementationOnce(real)
+      .mockImplementationOnce(real)
+      .mockImplementationOnce(async () => ({ ...(await real()), unit_amount: 32000 }));
+    await expect(h.svc.open("t1", { now: NOW, expectedStubCents: 31000 })).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.CATCHUP_AMOUNT_CHANGED },
+    });
+    expect(h.sub().catchupState).toBeNull();
     expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
   });
 

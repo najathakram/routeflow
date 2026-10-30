@@ -10,6 +10,9 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { countNoun } from "@/lib/plural";
+import { formatMoney } from "@/lib/format";
+import { orderBuilderTotals } from "@/lib/order-builder-totals";
+import { PENDING, TotalsSummary } from "@/components/money/TotalsSummary";
 import { useProducts } from "@/lib/api/products";
 import {
   attachParent,
@@ -127,6 +130,8 @@ import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal"
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { CustomerAccountStrip } from "@/components/CustomerAccountStrip";
+import { CreditRefusalRecordPayment } from "@/components/CreditRefusalRecordPayment";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
@@ -146,6 +151,7 @@ import {
   isUnknownOutcome,
   useCreateOrderSubmitKey,
 } from "./use-create-order-submit-key";
+import { CREATE_CHORD_KEYS, createChordLabel, createOrderChord } from "./use-create-order-chord";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import { useOrderSuggestions } from "@/lib/api/order-suggestions";
 import { mergeOrderedIntoLine, type OrderedAdd } from "./order-again";
@@ -221,6 +227,9 @@ interface LineItem extends DerivedBaseMarker {
   unitLabel?: string;
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
+  /** B755: the customer whose last-given history pre-filled this line's price. A different customer chosen later
+   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it. */
+  prefillCustomerId?: string;
   /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
   priceChangedFrom?: number;
   /** S19b: set while the customer layer prices this line; the pre-layer values to restore if its row goes away. */
@@ -256,7 +265,7 @@ export interface CreateOrderModalProps {
   initialScanCode?: string | null;
   /** B1210: open a FRESH order on "Ship via carrier" (?preselect=SHIP). Ignored when resuming a draft: that keeps its own path. */
   initialFulfillPath?: "SHIP" | null;
-  /** Wired by the orders page to `router.push` — powers the "View Order" toast action. */
+  /** Wired by the orders page to `router.push` — powers the "View order" toast action. */
   onViewOrder?: (orderId: string) => void;
 }
 
@@ -352,7 +361,6 @@ export function CreateOrderModal({
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
     staleTime: 60_000,
   });
-  const taxRate = (settings?.taxRate ?? 0) / 100;
 
   // Customer search state
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -771,23 +779,51 @@ export function CreateOrderModal({
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
-  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched.
+  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
+  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
       lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
     : "";
   React.useEffect(() => {
-    if (!scanV2) return;
     setLineItems((prev) => {
       let changed = false;
-      const next = prev.map((li) => {
+      const next = prev.map((line) => {
+        let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
+        // classic modal (scan_v2 off): only a price pre-filled from another customer moves (B755 below)
+        if (
+          !scanV2 &&
+          !(
+            li.prefillCustomerId != null &&
+            selectedCustomer != null &&
+            li.prefillCustomerId !== selectedCustomer.id
+          )
+        ) {
+          return li;
+        }
+        // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
+        // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
+        // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
+        const fromOtherCustomer =
+          li.prefillCustomerId != null &&
+          selectedCustomer != null &&
+          li.prefillCustomerId !== selectedCustomer.id;
+        if (fromOtherCustomer) {
+          li = {
+            ...li,
+            discountedPrice: undefined,
+            systemPrefill: undefined,
+            prefillCustomerId: undefined,
+            overrideReason: undefined,
+          };
+        }
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
-        if (li.priceType === "DISCOUNTED") return li;
-        if (li.discountedPrice != null) return li;
+        if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
+        if (!fromOtherCustomer && li.discountedPrice != null) return li;
         const tier = cpMap.get(li.productId) ?? selectedCustomer?.pricingTier ?? 1;
         const lp = customerLinePrice({
           product: li.tierPrices as unknown as Record<string, unknown>,
@@ -798,6 +834,7 @@ export function CreateOrderModal({
         const priceType = lp.priceType;
         const specialPrice = customerLineSpecial(lp);
         if (
+          !fromOtherCustomer &&
           li.unitPrice === tierPrice &&
           li.priceType === priceType &&
           li.specialPrice === specialPrice
@@ -809,29 +846,28 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.pricingTier, cpMap, layerSig]);
+  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
-  // Use the shared helper so the live "Line total" matches what the server
-  // will compute. For boxed products (unitsPerBox > 1), unitPrice is the BOX
-  // price; loose pieces are prorated.
-  const subtotal = lineItems.reduce(
-    (sum, li) =>
-      sum +
-      computeLineSubtotal({
-        unitPrice: li.unitPrice,
-        qty: li.qty,
-        boxes: li.boxes ?? null,
-        pieces: li.pieces ?? null,
-        unitsPerBox: li.unitsPerBox ?? null,
-      }),
-    0,
-  );
-  const tax = subtotal * taxRate;
+  // W-882: the footer, the panel and the saved order read ONE figure, `saleTotals` (@routeflow/pricing) through
+  // `orderBuilderTotals`: boxed lines prorate, the levy is its own charge, an exempt customer owes neither tax nor levy.
   const discountAmt = parseFloat(orderDiscount) || 0;
   const shippingAmt = Math.max(0, parseFloat(shippingFeeInput) || 0);
-  const total = subtotal + tax - discountAmt + shippingAmt;
+  const { data: customerRecord } = useCustomer(selectedCustomer?.id ?? "");
+  // A chosen customer whose record has not loaded may be tax exempt: until it has, the tax, the levy and the total read
+  // "—" (never a figure that may be wrong). No customer chosen, or a loaded record, is a known answer.
+  const taxPending = !!selectedCustomer?.id && customerRecord === undefined;
+  const isTaxExempt =
+    (customerRecord as { isTaxExempt?: boolean } | undefined)?.isTaxExempt === true;
+  const totals = orderBuilderTotals(lineItems, {
+    taxRatePct: settings?.taxRate,
+    categoryById,
+    isTaxExempt,
+    discount: discountAmt,
+    shipping: shippingAmt,
+  });
+  const { subtotal, total } = totals;
 
   // Live preview of the eventual invoice split (mirrors the API's
   // groupOrderLinesForInvoicing): each SEPARATE_INVOICE regulated category becomes
@@ -971,6 +1007,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
+      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1328,6 +1365,11 @@ export function CreateOrderModal({
     selectedCustomer?.id,
   );
   const [suggestionsMenuOpen, setSuggestionsMenuOpen] = React.useState(false);
+  // r5 N07: which suggestion chips already have a line on the order.
+  const addedProductIds = React.useMemo(
+    () => new Set(lineItems.filter((l) => l.productId).map((l) => l.productId)),
+    [lineItems],
+  );
   const suggestionActions = useOrderSuggestionActions({
     suggestions: orderSuggestions,
     addLine: addLineItem,
@@ -1378,6 +1420,7 @@ export function CreateOrderModal({
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
+            prefillCustomerId: undefined,
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
@@ -1388,7 +1431,12 @@ export function CreateOrderModal({
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        const consumed = { ...next, startOnDefaultUnit: false, systemPrefill: undefined };
+        const consumed = {
+          ...next,
+          startOnDefaultUnit: false,
+          systemPrefill: undefined,
+          prefillCustomerId: undefined,
+        };
         return consumed.discountedPrice == null
           ? { ...consumed, overrideReason: undefined }
           : consumed;
@@ -1399,7 +1447,14 @@ export function CreateOrderModal({
   const setOverrideReason = (tempId: string, reason: string) =>
     setLineItems((prev) =>
       prev.map((li) =>
-        li.tempId === tempId ? { ...li, overrideReason: reason, systemPrefill: undefined } : li,
+        li.tempId === tempId
+          ? {
+              ...li,
+              overrideReason: reason,
+              systemPrefill: undefined,
+              prefillCustomerId: undefined,
+            }
+          : li,
       ),
     );
 
@@ -1829,7 +1884,7 @@ export function CreateOrderModal({
     merged?: { fromStatus?: string | null },
   ) => {
     const action = viewOrder
-      ? { label: "View Order", onClick: () => viewOrder(created.id) }
+      ? { label: "View order", onClick: () => viewOrder(created.id) }
       : undefined;
     posFinish
       .mutateAsync({
@@ -1842,7 +1897,7 @@ export function CreateOrderModal({
           title: finish === "invoice" ? POS_COPY.confirmedInvoiced : POS_COPY.confirmedOnly,
           variant: "success",
           action,
-          // F17: a toast that carries View Order stays until used (the 4 s default is gone before a click lands).
+          // F17: a toast that carries View order stays until used (the 4 s default is gone before a click lands).
           ...(action ? { duration: ACTION_TOAST_MS } : {}),
         });
       })
@@ -2347,7 +2402,7 @@ export function CreateOrderModal({
       }
       className="max-w-2xl"
       // Q08: the X is the one Close (the footer used to repeat it); Minimize sits beside it. Both are 44 px targets below lg.
-      closeClassName="max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+      closeClassName="max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
       headerActions={
         <Button
           variant="ghost"
@@ -2380,7 +2435,9 @@ export function CreateOrderModal({
               className="mr-auto flex min-w-0 items-baseline gap-2 tabular-nums text-navy"
             >
               <span className="text-sm text-navy/70">Total</span>
-              <span className="min-w-0 break-all text-base font-semibold">${total.toFixed(2)}</span>
+              <span className="min-w-0 break-all text-base font-semibold">
+                {taxPending ? PENDING : formatMoney(total)}
+              </span>
             </div>
           )}
           {/* Two-tier hierarchy: secondary (alt save) <
@@ -2455,8 +2512,17 @@ export function CreateOrderModal({
                 lineItems.some(isPendingDefaultUnit)
               }
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
+              aria-keyshortcuts={CREATE_CHORD_KEYS}
             >
               {posMode ? POS_COPY.confirmAndInvoice : "Create Order"}
+              {/* r5 N04: the chord hint; desktop only (a phone has no keyboard), hidden from the accessible name (aria-keyshortcuts says it). */}
+              <kbd
+                data-testid="create-order-chord-hint"
+                aria-hidden="true"
+                className="ml-2 hidden rounded border border-current/30 px-1 font-sans text-[10px] font-medium opacity-80 md:inline"
+              >
+                {createChordLabel()}
+              </kbd>
             </WriteButton>
           </div>
         </div>
@@ -2472,6 +2538,8 @@ export function CreateOrderModal({
         }}
         noValidate
         onKeyDown={(e) => {
+          // r5 N04: Ctrl/Cmd+Enter presses Create Order (same chord as Edit Items); bare Enter below still never submits.
+          if (createOrderChord(e)) return;
           // A <textarea> (the per-line note) owns Enter for itself — a newline, never a submit.
           // Every other control keeps the no-Enter-submit behavior this form has always had.
           // A result row (button[role=option]) keeps its native Enter-to-pick (PKG-4 F09c).
@@ -2548,8 +2616,19 @@ export function CreateOrderModal({
 
           {/* API error */}
           {apiError && (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {apiError}
+            <div
+              data-testid="order-api-error"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              <span>{apiError}</span>
+              {selectedCustomer && (
+                <CreditRefusalRecordPayment
+                  error={createOrder.error}
+                  customerId={selectedCustomer.id}
+                  customerName={selectedCustomer.businessName}
+                  onPaid={() => createOrder.reset()}
+                />
+              )}
             </div>
           )}
 
@@ -2650,9 +2729,17 @@ export function CreateOrderModal({
             )}
 
             {selectedCustomer && (
+              <CustomerAccountStrip
+                customerId={selectedCustomer.id}
+                customerName={selectedCustomer.businessName}
+              />
+            )}
+
+            {selectedCustomer && (
               <OrderSuggestionsBar
                 suggestions={orderSuggestions}
                 hasLines={lineItems.length > 0}
+                addedProductIds={addedProductIds}
                 onAddProduct={suggestionActions.addProduct}
                 onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
                 error={orderSuggestionsError}
@@ -2686,7 +2773,8 @@ export function CreateOrderModal({
                   // once via the detector (correct, +1) and once here, which (mis)treats it as a
                   // manually-typed SKU and applies whatever is in the Qty field.
                   if (productNav.onKeyDown(e)) return;
-                  if (e.key === "Enter" && !e.defaultPrevented) {
+                  // r5 N04: Ctrl/Cmd+Enter is the Create Order chord (the form handles it), never a search/scan Enter.
+                  if (e.key === "Enter" && !e.defaultPrevented && !e.ctrlKey && !e.metaKey) {
                     e.preventDefault();
                     e.stopPropagation();
                     handleProductSearchEnter();
@@ -2780,7 +2868,7 @@ export function CreateOrderModal({
                               </div>
                               {!hasVariants && (
                                 <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                  ${Number(p.pricePerUnit ?? 0).toFixed(2)}
+                                  {formatMoney(p.pricePerUnit)}
                                 </span>
                               )}
                             </button>
@@ -2820,7 +2908,7 @@ export function CreateOrderModal({
                                       </span>
                                     </div>
                                     <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
-                                      ${Number(v.pricePerUnit ?? 0).toFixed(2)}
+                                      {formatMoney(v.pricePerUnit)}
                                     </span>
                                   </button>
                                 </li>
@@ -2912,7 +3000,7 @@ export function CreateOrderModal({
                       placeholder="e.g. Pallet delivery surcharge"
                       className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                           e.preventDefault();
                           addUnlistedItem();
                         }
@@ -2930,7 +3018,7 @@ export function CreateOrderModal({
                       placeholder="0.00"
                       className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                           e.preventDefault();
                           addUnlistedItem();
                         }
@@ -2947,7 +3035,7 @@ export function CreateOrderModal({
                       onChange={(e) => setCustomQty(e.target.value)}
                       className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
+                        if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
                           e.preventDefault();
                           addUnlistedItem();
                         }
@@ -3004,7 +3092,7 @@ export function CreateOrderModal({
                       ({g.count} {g.count === 1 ? "item" : "items"})
                     </span>
                   </span>
-                  <span>${g.subtotal.toFixed(2)}</span>
+                  <span>{formatMoney(g.subtotal)}</span>
                 </div>
               ))}
               <p className="pt-0.5 text-[10px] text-navy/50">
@@ -3016,50 +3104,29 @@ export function CreateOrderModal({
 
           {/* ── Order totals ── */}
           {lineItems.length > 0 && (
-            <div className="space-y-1.5 rounded-lg border border-surface-border bg-surface-raised px-4 py-3 text-sm">
-              <div className="flex justify-between text-navy/70">
-                <span>Subtotal</span>
-                <span>${subtotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-navy/70">
-                <span>Tax ({settings?.taxRate ?? 10}%)</span>
-                <span>${tax.toFixed(2)}</span>
-              </div>
-              {/* Order-level discount */}
-              <div className="flex items-center justify-between text-navy/70">
-                <label className="flex items-center gap-2 text-sm">
-                  Order discount
-                  <MoneyInput
-                    min={0}
-                    placeholder="0.00"
-                    value={orderDiscount === "" ? null : parseFloat(orderDiscount)}
-                    onChange={(v) => setOrderDiscount(v == null ? "" : String(v))}
-                    className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                </label>
-                {discountAmt > 0 && (
-                  <span className="text-amber-600">−${discountAmt.toFixed(2)}</span>
-                )}
-              </div>
-              {/* Shipping fee (optional, never taxed) */}
-              <div className="flex items-center justify-between text-navy/70">
-                <label className="flex items-center gap-2 text-sm">
-                  Shipping fee
-                  <MoneyInput
-                    min={0}
-                    placeholder="0.00 (optional)"
-                    value={shippingFeeInput === "" ? null : parseFloat(shippingFeeInput)}
-                    onChange={(v) => setShippingFeeInput(v == null ? "" : String(v))}
-                    className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                </label>
-                {shippingAmt > 0 && <span className="text-navy">+${shippingAmt.toFixed(2)}</span>}
-              </div>
-              <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold text-navy">
-                <span>Total</span>
-                <span>${total.toFixed(2)}</span>
-              </div>
-            </div>
+            <TotalsSummary
+              totals={totals}
+              taxRatePct={settings?.taxRate}
+              taxPending={taxPending}
+              discountInput={
+                <MoneyInput
+                  min={0}
+                  placeholder="0.00"
+                  value={orderDiscount === "" ? null : parseFloat(orderDiscount)}
+                  onChange={(v) => setOrderDiscount(v == null ? "" : String(v))}
+                  className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              }
+              shippingInput={
+                <MoneyInput
+                  min={0}
+                  placeholder="0.00 (optional)"
+                  value={shippingFeeInput === "" ? null : parseFloat(shippingFeeInput)}
+                  onChange={(v) => setShippingFeeInput(v == null ? "" : String(v))}
+                  className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              }
+            />
           )}
 
           {/* ── Apply customer credit notes (customer-scoped, auto-populated) ── */}
@@ -3068,7 +3135,7 @@ export function CreateOrderModal({
               customerId={selectedCustomer.id}
               value={appliedCredits}
               onChange={setAppliedCredits}
-              estimatedOrderTotal={total}
+              estimatedOrderTotal={taxPending ? undefined : total}
             />
           )}
 
@@ -3203,7 +3270,7 @@ export function CreateOrderModal({
                   className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
                 />
                 <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
-                  Mark as Urgent
+                  Mark as urgent
                 </span>
               </label>
             )}
@@ -3220,7 +3287,7 @@ export function CreateOrderModal({
       />
 
       {/* Merge-or-separate prompt: shown when the selected customer already has an
-          unconfirmed order. Operator must choose explicitly — no default. */}
+          unconfirmed order. Enter takes the primary action (N02); Escape cancels. */}
       <Modal
         open={!!mergePrompt}
         onClose={() => {
@@ -3318,8 +3385,8 @@ export function CreateOrderModal({
               {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
             </div>
             <div className="text-navy/70">
-              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} · $
-              {mergePrompt.total.toFixed(2)}
+              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
+              {formatMoney(mergePrompt.total)}
             </div>
           </div>
         )}
@@ -3339,12 +3406,18 @@ export function CreateOrderModal({
             if (retry) submitOrder(retry.data, retry.options);
           }}
           onRemoveLines={(categoryIds) => {
+            const removedCount = lineItems.filter(
+              (li) => li.trackedCategoryId && categoryIds.includes(li.trackedCategoryId),
+            ).length;
             setLineItems((prev) =>
               prev.filter(
                 (li) => !li.trackedCategoryId || !categoryIds.includes(li.trackedCategoryId),
               ),
             );
-            toast({ title: "Removed regulated line(s)", variant: "success" });
+            toast({
+              title: `Removed ${removedCount} regulated ${removedCount === 1 ? "line" : "lines"}`,
+              variant: "success",
+            });
           }}
           onClose={() => setLicenseBlock(null)}
         />

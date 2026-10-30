@@ -21,7 +21,7 @@ describe("/inventory overflow (B919)", () => {
   });
 
   it("the stock toolbar buttons wrap instead of overflowing", () => {
-    expect(src).toMatch(/<div className="flex flex-wrap gap-2">[\s\S]{0,2500}?Adjust Stock/);
+    expect(src).toMatch(/<div className="flex flex-wrap gap-2">[\s\S]{0,2500}?Adjust stock/);
   });
 
   it("the stock table shell is a ScrollShadow (scrolls + edge fade), never overflow-hidden", () => {

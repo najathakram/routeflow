@@ -138,7 +138,7 @@ describe("SettingsPage — Fulfillment tab", () => {
       mockRole = role;
       mockTab = "fulfilment";
       renderWithProviders(<SettingsPage />);
-      expect(await screen.findByText("Google Sign-In")).toBeInTheDocument();
+      expect(await screen.findByText("Google sign-in")).toBeInTheDocument();
       expect(asked()).toHaveLength(0);
       expect(screen.queryByRole("heading", { name: "Fulfillment" })).not.toBeInTheDocument();
     },

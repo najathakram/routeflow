@@ -31,10 +31,10 @@ const mixedAccount = {
 
 describe("orderStatusText", () => {
   it("SHIP / PICKUP / ROUTE words, and the fallback for anything unlisted", () => {
-    expect(orderStatusText("OUT_FOR_DELIVERY", "SHIP", "Out for Delivery")).toBe("Shipped");
+    expect(orderStatusText("OUT_FOR_DELIVERY", "SHIP", "Out for delivery")).toBe("Shipped");
     expect(orderStatusText("OUT_FOR_DELIVERY", "PICKUP", "x")).toBe("Ready for pickup");
     expect(orderStatusText("DELIVERED", "PICKUP", "Delivered")).toBe("Picked up");
-    expect(orderStatusText("OUT_FOR_DELIVERY", "ROUTE", "x")).toBe("Out for Delivery");
+    expect(orderStatusText("OUT_FOR_DELIVERY", "ROUTE", "x")).toBe("Out for delivery");
     expect(orderStatusText("PENDING", "SHIP", "Pending")).toBe("Pending");
   });
 });
@@ -43,7 +43,7 @@ describe("OrderStatusBadge", () => {
   it("unset account (no capabilities): today's wording, even for a SHIP order", () => {
     fulfilment = undefined;
     render(<OrderStatusBadge status="OUT_FOR_DELIVERY" fulfillPath="SHIP" />);
-    expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Out for delivery")).toBeInTheDocument();
   });
 
   it("shipping account: Shipped, other statuses untouched", () => {
@@ -55,7 +55,7 @@ describe("OrderStatusBadge", () => {
       </>,
     );
     expect(screen.getByText("Shipped")).toBeInTheDocument();
-    expect(screen.queryByText("Out for Delivery")).not.toBeInTheDocument();
+    expect(screen.queryByText("Out for delivery")).not.toBeInTheDocument();
     expect(screen.getByText("Confirmed")).toBeInTheDocument();
   });
 
@@ -69,7 +69,7 @@ describe("OrderStatusBadge", () => {
       </>,
     );
     expect(screen.getByText("Shipped")).toBeInTheDocument();
-    expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Out for delivery")).toBeInTheDocument();
     expect(screen.getByText("Ready for pickup")).toBeInTheDocument();
   });
 });

@@ -3,6 +3,8 @@ import { BadRequestException } from "@nestjs/common";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { StripeService } from "./stripe.service";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 
 /**
  * Unit tests for PlatformPricingService (Platform billing — catalog-driven Stripe
@@ -53,16 +55,19 @@ describe("PlatformPricingService", () => {
   let service: PlatformPricingService;
   let prisma: { tenant: { findUnique: jest.Mock } };
   let catalog: { getVersionForTenant: jest.Mock };
+  let products: ReturnType<typeof fakeStripeProducts>;
 
   beforeEach(async () => {
     prisma = { tenant: { findUnique: jest.fn() } };
     catalog = { getVersionForTenant: jest.fn() };
+    products = fakeStripeProducts();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlatformPricingService,
         { provide: PrismaService, useValue: prisma },
         { provide: PlanCatalogService, useValue: catalog },
+        { provide: StripeService, useValue: { client: { products: products.products } } },
       ],
     }).compile();
 
@@ -98,6 +103,25 @@ describe("PlatformPricingService", () => {
       // The tenant's PINNED version, not just "the latest" — proves grandfathered
       // tenants aren't silently upgraded to a newer version's numbers.
       expect(catalog.getVersionForTenant).toHaveBeenCalledWith("ver-latest");
+    });
+
+    it("an unparseable price is refused as 400 PLAN_PRICE_INVALID, never a 'set a custom fee' error (review-b N1)", async () => {
+      prisma.tenant.findUnique.mockResolvedValue(
+        makeTenant({
+          subscription: {
+            planKey: "STARTER",
+            priceOverrideMonthly: "abc",
+            priceOverrideAnnual: null,
+          },
+        }),
+      );
+      catalog.getVersionForTenant.mockResolvedValue(
+        makeVersion([makeDefinition({ planKey: "STARTER", name: "Starter", monthlyPrice: 99 })]),
+      );
+      const err: any = await service.resolveTenantPricing("tenant-1").catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse().code).toBe("PLAN_PRICE_INVALID");
+      expect(String(err.getResponse().message)).toMatch(/not a valid number/i);
     });
 
     it("uses the catalog's explicit annualPrice instead of the 10x fallback when set", async () => {
@@ -383,7 +407,8 @@ describe("PlatformPricingService", () => {
         unit_amount: 9900,
         recurring: { interval: "month" },
       });
-      expect(priceData.product_data?.name).toContain("Starter");
+      expect(priceData.product).toBe("rf_plan_starter");
+      expect(products.table.get("rf_plan_starter")?.name).toContain("Starter");
     });
 
     it("builds an annual price_data object using the 10x-monthly fallback in integer cents (249 → 249000)", async () => {
@@ -462,11 +487,12 @@ describe("PlatformPricingService", () => {
 
       const monthly = await service.checkoutPriceData("tenant-1", "month");
       expect(monthly.unit_amount).toBe(9900);
-      expect(monthly.product_data.name).toBe("RouteFlow Lite");
+      expect(monthly.product).toBe("rf_plan_lite");
+      expect(products.table.get("rf_plan_lite")?.name).toBe("RouteFlow Lite");
 
       const annual = await service.checkoutPriceData("tenant-1", "year");
       expect(annual.unit_amount).toBe(99000); // 99 * 10 * 100 — the 10x-monthly fallback
-      expect(annual.product_data.name).toBe("RouteFlow Lite");
+      expect(annual.product).toBe(monthly.product); // one product for both intervals
     });
   });
 });

@@ -12,6 +12,7 @@ import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_TASKS, type AiTask } from "../platform-admin/ai-models";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
@@ -1030,7 +1031,8 @@ describe("VendorBillsService", () => {
     });
 
     it("B1236: refuses with missingProductIds when the catalog read returns fewer ids than the lines name, and writes nothing", async () => {
-      prisma.product.findMany.mockResolvedValue([{ id: "prod-1" }]);
+      // mockImplementation, not mockResolvedValue: the mock default echoes id-only reads (681); this test needs the read itself short
+      prisma.product.findMany.mockImplementation(async () => [{ id: "prod-1" }]);
       const items = [
         { productId: "prod-1", description: "ok", qty: 1, unitCost: 1 },
         { productId: "prod-2", description: "missing", qty: 1, unitCost: 1 },
@@ -1833,8 +1835,11 @@ describe("VendorBillsService", () => {
     const jpegPage = { buffer: Buffer.from("img"), mimeType: "image/jpeg" };
     let recordAiUsage: jest.Mock;
 
+    let resolveModelFor: jest.Mock;
     beforeEach(async () => {
       recordAiUsage = jest.fn();
+      // SA-1035: no stored scan model by default, so the task's fallback answers (as the real resolver does).
+      resolveModelFor = jest.fn(async (task: AiTask) => AI_TASKS[task].fallback);
       // Provide an API key so the scan reaches the Anthropic call.
       const module: TestingModule = await Test.createTestingModule({
         providers: [
@@ -1845,6 +1850,7 @@ describe("VendorBillsService", () => {
             useValue: {
               resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
               recordAiUsage,
+              resolveModelFor,
             },
           },
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -1921,10 +1927,99 @@ describe("VendorBillsService", () => {
       expect(recordAiUsage).toHaveBeenCalledWith({
         tenantId: "test-tenant",
         feature: "ocr.vendor_bill",
-        model: "claude-haiku-4-5",
+        model: "claude-haiku-5-5",
         inputTokens: 1111,
         outputTokens: 222,
       });
+    });
+
+    it("reads the text block when the response starts with a thinking block (Haiku 5.5 adaptive thinking)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          { type: "thinking", thinking: "" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme",
+              items: [{ extractedName: "Widget", qty: 1, unitCost: 2 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 9, output_tokens: 3 },
+      });
+      const result = await service.scanInvoice([jpegPage]);
+      expect(result.items).toHaveLength(1);
+    });
+
+    it("a response with a thinking block and no text block is AI_PARSE_FAILED 422", async () => {
+      mockAnthropicCreate.mockResolvedValue({ content: [{ type: "thinking", thinking: "" }] });
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: UnprocessableEntityException,
+        response: expect.objectContaining({ code: "AI_PARSE_FAILED" }),
+      });
+    });
+
+    it("the scan call asks for low effort and leaves headroom for thinking in max_tokens", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await service.scanInvoice([jpegPage]);
+      const req = mockAnthropicCreate.mock.calls[0][0];
+      expect(req.output_config).toEqual({ effort: "low" });
+      expect(req.max_tokens).toBe(8192);
+    });
+
+    it("M-R2: with no scan setting the call, both usage records and the stored row use claude-haiku-5-5", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+        usage: { input_tokens: 10, output_tokens: 2 },
+      });
+      await service.scanInvoice([jpegPage]);
+      expect(resolveModelFor).toHaveBeenCalledTimes(1);
+      expect(resolveModelFor).toHaveBeenCalledWith("bill_scan");
+      expect(mockAnthropicCreate.mock.calls[0][0].model).toBe("claude-haiku-5-5");
+      expect(recordAiUsage.mock.calls.map((c) => c[0].model)).toEqual(["claude-haiku-5-5"]);
+      expect((prisma.forTenant() as any).invoiceScan.create.mock.calls[0][0].data.model).toBe(
+        "claude-haiku-5-5",
+      );
+    });
+
+    it("M-R3: a scan setting is the model of the call, the failed usage record and the stored row alike", async () => {
+      resolveModelFor.mockResolvedValue("claude-sonnet-5-5");
+      mockAnthropicCreate.mockRejectedValueOnce({ status: 529 });
+      await expect(service.scanInvoice([jpegPage])).rejects.toBeDefined();
+      expect(mockAnthropicCreate.mock.calls[0][0].model).toBe("claude-sonnet-5-5");
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "claude-sonnet-5-5", success: false }),
+      );
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Beta", items: [] }) }],
+        usage: { input_tokens: 5, output_tokens: 1 },
+      });
+      await service.scanInvoice([Object.assign({}, jpegPage, { buffer: Buffer.from("other") })]);
+      expect(mockAnthropicCreate.mock.calls[1][0].model).toBe("claude-sonnet-5-5");
+      expect(recordAiUsage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ model: "claude-sonnet-5-5", inputTokens: 5 }),
+      );
+      expect((prisma.forTenant() as any).invoiceScan.create.mock.calls.at(-1)[0].data.model).toBe(
+        "claude-sonnet-5-5",
+      );
+    });
+
+    it("the stored row says what was CALLED, even if the setting changes mid-scan", async () => {
+      resolveModelFor
+        .mockResolvedValueOnce("claude-haiku-5-5")
+        .mockResolvedValue("claude-opus-5-5");
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await service.scanInvoice([jpegPage]);
+      expect(mockAnthropicCreate.mock.calls[0][0].model).toBe("claude-haiku-5-5");
+      expect((prisma.forTenant() as any).invoiceScan.create.mock.calls[0][0].data.model).toBe(
+        "claude-haiku-5-5",
+      );
     });
 
     it("records a failed AiUsageEvent when the Anthropic call itself errors", async () => {
@@ -2302,7 +2397,7 @@ describe("VendorBillsService", () => {
           supplierInvoiceNumber: "INV08841",
           lineCount: 2,
           pageCount: 1,
-          model: "claude-haiku-4-5",
+          model: "claude-haiku-5-5",
           scannedById: "user-7",
         });
         expect(data.invoiceDate).toEqual(new Date("2026-08-01"));

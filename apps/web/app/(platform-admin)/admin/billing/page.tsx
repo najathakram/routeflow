@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminStatCard } from "../../_components/AdminStatCard";
-import { AdminBadge } from "../../_components/AdminBadge";
+import { AdminBadge, planLabel, statusLabel } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
 import { DisabledHint } from "../../_components/DisabledHint";
 import { AutoLocksCard } from "../../_components/AutoLocksCard";
@@ -94,7 +94,7 @@ export default function BillingPage() {
   }, []);
 
   if (loading)
-    return <div className="p-6 py-12 text-center text-slate-400">Loading billing data...</div>;
+    return <div className="p-6 py-12 text-center text-slate-400">Loading billing data…</div>;
   if (error)
     return (
       <div className="p-6">
@@ -172,7 +172,7 @@ export default function BillingPage() {
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Billing Overview</h1>
+          <h1 className="text-2xl font-bold text-white">Billing overview</h1>
           <p className="mt-1 text-sm text-slate-400">Subscription and revenue management</p>
         </div>
         <button
@@ -264,7 +264,7 @@ export default function BillingPage() {
 
       {/* Subscription Table */}
       <AdminCard
-        title="All Subscriptions"
+        title="All subscriptions"
         noPadding
         actions={
           <>
@@ -287,7 +287,7 @@ export default function BillingPage() {
               <option value="all">All plans</option>
               {planOptions.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {planLabel(p)}
                 </option>
               ))}
             </select>
@@ -300,7 +300,7 @@ export default function BillingPage() {
               <option value="all">All statuses</option>
               {statusOptions.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {statusLabel(s)}
                 </option>
               ))}
             </select>
@@ -318,7 +318,7 @@ export default function BillingPage() {
             {pastDueCount > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/60 px-2 py-0.5 font-medium text-amber-400">
                 <AlertTriangle className="h-3 w-3" />
-                {pastDueCount} past due
+                {pastDueCount} period ended
               </span>
             )}
           </div>
@@ -366,7 +366,7 @@ export default function BillingPage() {
                       </span>
                       {pastDue && (
                         <span className="ml-2 rounded bg-amber-950/60 px-1.5 py-0.5 text-xs font-medium text-amber-400">
-                          Past due
+                          Period ended
                         </span>
                       )}
                     </td>

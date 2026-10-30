@@ -24,7 +24,7 @@ import {
 import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
-import { fmtCalendarDate } from "@/lib/formatting";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
@@ -43,7 +43,8 @@ import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusB
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { quickCreateRule } from "@/lib/counter-sale";
-import { staffMay } from "@routeflow/types";
+import { ORDER_STATUS_VALUES, staffMay } from "@routeflow/types";
+import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
@@ -153,9 +154,7 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "createdAt",
     header: "Date",
     enableSorting: false,
-    cell: ({ row }) => (
-      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
-    ),
+    cell: ({ row }) => <span className="text-navy/70">{fmtDate(row.original.createdAt)}</span>,
   },
 ];
 
@@ -266,7 +265,7 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
       )}
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
-        <h3 className="text-base font-semibold text-navy">AR Aging</h3>
+        <h3 className="text-base font-semibold text-navy">AR aging</h3>
         <Link
           href="/finance/reports?report=ar-aging"
           className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
@@ -316,6 +315,35 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 
 /** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
 const UNKNOWN_KPI = "—";
+
+/** A placed order's lifecycle status (DRAFT is not an order yet, so it has no tile and no count). */
+type PipelineStatus = Exclude<OrderStatusValue, "DRAFT">;
+
+// One tile per placed-order status, rendered in ORDER_STATUS_VALUES order. The Record is exhaustive, so a new
+// server status is a compile error here, not a silently missing tile (SA-1049 R1). `tenantLabel` tiles take the
+// workspace's own wording (useOrderStatusLabel).
+const PIPELINE_TILES: Record<
+  PipelineStatus,
+  { label: string; color: string; bg: string; tenantLabel?: boolean }
+> = {
+  PENDING: { label: "Pending", color: "text-warning", bg: "bg-warning-bg" },
+  CONFIRMED: { label: "Confirmed", color: "text-brand-600", bg: "bg-brand-50" },
+  OUT_FOR_DELIVERY: {
+    label: "Out for delivery",
+    color: "text-blue-600",
+    bg: "bg-blue-50",
+    tenantLabel: true,
+  },
+  PARTIALLY_DELIVERED: {
+    label: "Partly delivered",
+    color: "text-warning",
+    bg: "bg-warning-bg",
+    tenantLabel: true,
+  },
+  DELIVERED: { label: "Delivered", color: "text-success", bg: "bg-success-bg" },
+  CANCELLED: { label: "Cancelled", color: "text-navy/70", bg: "" },
+};
+const PIPELINE_STATUSES = ORDER_STATUS_VALUES.filter((st): st is PipelineStatus => st !== "DRAFT");
 
 /**
  * Layout for a KPI tile (CSS only; the shared StatCard is untouched): the label wraps instead of
@@ -391,7 +419,7 @@ function OverdueInvoicesPanel({
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-semibold text-navy">Overdue Invoices</h3>
+          <h3 className="text-base font-semibold text-navy">Overdue invoices</h3>
           {totalCount > 0 && <Badge variant="danger" label={`${totalCount}`} />}
         </div>
         <Link
@@ -506,7 +534,7 @@ function LowStockPanel({
     >
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-semibold text-navy">Low Stock</h3>
+          <h3 className="text-base font-semibold text-navy">Low stock</h3>
           {total > 0 && <Badge variant="warning" label={fmt(total)} />}
         </div>
         <Link
@@ -731,6 +759,11 @@ export default function DashboardPage() {
     { page: 1, limit: 1, status: "OUT_FOR_DELIVERY" },
     { ...POLL, enabled: readsBusinessData },
   );
+  // Partly delivered is not terminal (a remainder is still owed), so it is polled like Out for delivery.
+  const partlyDeliveredQ = useOrders(
+    { page: 1, limit: 1, status: "PARTIALLY_DELIVERED" },
+    { ...POLL, enabled: readsBusinessData },
+  );
   // All-time terminal totals barely move: fetched once, not polled (every poll was 7 GET /orders).
   const deliveredQ = useOrders(
     { page: 1, limit: 1, status: "DELIVERED" },
@@ -740,7 +773,11 @@ export default function DashboardPage() {
     { page: 1, limit: 1, status: "CANCELLED" },
     { enabled: readsBusinessData && isOperator },
   );
-  const ordersLoading = pendingQ.isLoading || confirmedQ.isLoading || outForDeliveryQ.isLoading;
+  const ordersLoading =
+    pendingQ.isLoading ||
+    confirmedQ.isLoading ||
+    outForDeliveryQ.isLoading ||
+    partlyDeliveredQ.isLoading;
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
     { urgent: true, limit: 5 },
     { ...POLL, enabled: readsBusinessData },
@@ -809,10 +846,11 @@ export default function DashboardPage() {
   // An UNKNOWN figure (request failed or unanswered) is null and renders "—", never a zero.
   const sumKnown = (parts: Array<number | null>): number | null =>
     parts.some((n) => n === null) ? null : parts.reduce<number>((a, n) => a + (n as number), 0);
-  const orderPipeline = {
+  const orderPipeline: Record<PipelineStatus, number | null> = {
     PENDING: shipCount(pendingQ),
     CONFIRMED: shipCount(confirmedQ),
     OUT_FOR_DELIVERY: shipCount(outForDeliveryQ),
+    PARTIALLY_DELIVERED: shipCount(partlyDeliveredQ),
     DELIVERED: shipCount(deliveredQ),
     CANCELLED: shipCount(cancelledQ),
   };
@@ -820,6 +858,7 @@ export default function DashboardPage() {
     orderPipeline.PENDING,
     orderPipeline.CONFIRMED,
     orderPipeline.OUT_FOR_DELIVERY,
+    orderPipeline.PARTIALLY_DELIVERED,
   ]);
 
   const routesToday = shipCount({ data: routeRunsData });
@@ -915,12 +954,12 @@ export default function DashboardPage() {
               className={cn(quickCreate.storeOnly && "max-sm:h-11")}
             >
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
-              New Invoice
+              New invoice
             </WriteButton>
             {routesAccess && (
               <Button href="/routes/create" size="sm" variant="secondary">
                 <Truck className="mr-1.5 h-3.5 w-3.5" />
-                New Route
+                New route
               </Button>
             )}
             {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
@@ -929,7 +968,7 @@ export default function DashboardPage() {
             {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
             {quickCreate.storeOnly &&
             counterGate.permsKnown &&
-            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups ?? []) ? (
               <WriteButton
                 href="/orders?action=new&builder=1"
                 size="sm"
@@ -953,7 +992,7 @@ export default function DashboardPage() {
             {quickCreate.showNewOrder ? (
               <WriteButton href="/orders?action=new" size="sm" variant="primary">
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New Order
+                New order
               </WriteButton>
             ) : null}
           </div>
@@ -972,7 +1011,7 @@ export default function DashboardPage() {
           ) : null}
           <WriteButton href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
-            New Order
+            New order
           </WriteButton>
           <ReadOnlyHint className="basis-full text-xs text-slate-600" />
         </div>
@@ -989,7 +1028,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/finance" className="block">
               <StatCard
-                label="Today's Revenue"
+                label="Today's revenue"
                 value={
                   todayRevenue === null
                     ? UNKNOWN_KPI
@@ -1010,7 +1049,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/invoices?status=OVERDUE" className="block">
               <StatCard
-                label="Overdue Invoices"
+                label="Overdue invoices"
                 value={overdueCount ?? UNKNOWN_KPI}
                 icon={
                   <FileMinus
@@ -1031,7 +1070,7 @@ export default function DashboardPage() {
         ) : (
           <Link href="/orders" className="block">
             <StatCard
-              label="Active Orders"
+              label="Active orders"
               value={activeOrders ?? UNKNOWN_KPI}
               icon={<ShoppingCart className="h-5 w-5" />}
               className={cn(
@@ -1087,7 +1126,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/routes" className="block">
               <StatCard
-                label="Scheduled Routes"
+                label="Scheduled routes"
                 value={routesToday ?? UNKNOWN_KPI}
                 icon={<MapPin className="h-5 w-5" />}
                 className={cn(
@@ -1105,7 +1144,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/drivers" className="block">
               <StatCard
-                label="Active Drivers"
+                label="Active drivers"
                 value={driversOnRoad ?? UNKNOWN_KPI}
                 icon={
                   <Truck className={cn("h-5 w-5", (driversOnRoad ?? 0) > 0 && "text-success")} />
@@ -1125,7 +1164,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/products?lowStock=true" className="block">
               <StatCard
-                label="Low Stock Items"
+                label="Low stock items"
                 value={lowStockTotal ?? UNKNOWN_KPI}
                 icon={
                   <AlertTriangle
@@ -1151,61 +1190,42 @@ export default function DashboardPage() {
           aria-busy={ordersLoading}
           aria-hidden={ordersLoading ? true : undefined}
           className={cn(
-            "overflow-x-auto rounded-lg border border-surface-border bg-white shadow-card",
+            "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
             ordersLoading && "animate-pulse [&_span]:invisible",
           )}
         >
-          <div className="grid min-w-[520px] grid-cols-5 divide-x divide-surface-border">
-            {[
-              {
-                label: "Pending",
-                key: "PENDING" as const,
-                color: "text-warning",
-                bg: "bg-warning-bg",
-              },
-              {
-                label: "Confirmed",
-                key: "CONFIRMED" as const,
-                color: "text-brand-600",
-                bg: "bg-brand-50",
-              },
-              {
-                label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
-                key: "OUT_FOR_DELIVERY" as const,
-                color: "text-blue-600",
-                bg: "bg-blue-50",
-              },
-              {
-                label: "Delivered",
-                key: "DELIVERED" as const,
-                color: "text-success",
-                bg: "bg-success-bg",
-              },
-              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/70", bg: "" },
-            ].map(({ label, key, color, bg }) => (
-              <Link
-                key={key}
-                href={`/orders?status=${key}`}
-                tabIndex={ordersLoading ? -1 : undefined}
-                className={cn(
-                  "flex flex-col gap-1 whitespace-nowrap px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
-                  bg && (orderPipeline[key] ?? 0) > 0 && bg,
-                )}
-              >
-                <span
+          {/* W-1016: three by two on a phone (no inner scroll, so no tile starts half-hidden), six across from sm up */}
+          <div className="grid grid-cols-3 sm:grid-cols-6">
+            {PIPELINE_STATUSES.map((key) => {
+              const tile = PIPELINE_TILES[key];
+              const { color, bg } = tile;
+              const label = tile.tenantLabel ? statusLabel(key, tile.label) : tile.label;
+              return (
+                <Link
+                  key={key}
+                  href={`/orders?status=${key}`}
+                  tabIndex={ordersLoading ? -1 : undefined}
                   className={cn(
-                    "text-xl font-semibold tabular-nums",
-                    (orderPipeline[key] ?? 0) > 0 ? color : "text-navy/20",
+                    "flex flex-col gap-1 border-surface-border px-3 py-[13px] transition-colors hover:bg-surface-raised sm:whitespace-nowrap sm:px-[18px]",
+                    "max-sm:[&:not(:nth-child(3n+1))]:border-l max-sm:[&:nth-child(n+4)]:border-t sm:[&:not(:first-child)]:border-l",
+                    bg && (orderPipeline[key] ?? 0) > 0 && bg,
                   )}
                 >
-                  {orderPipeline[key] ?? UNKNOWN_KPI}
-                </span>
-                <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
-                {(key === "DELIVERED" || key === "CANCELLED") && (
-                  <span className="-mt-0.5 text-[10.5px] font-medium text-navy/50">all time</span>
-                )}
-              </Link>
-            ))}
+                  <span
+                    className={cn(
+                      "text-xl font-semibold tabular-nums",
+                      (orderPipeline[key] ?? 0) > 0 ? color : "text-navy/20",
+                    )}
+                  >
+                    {orderPipeline[key] ?? UNKNOWN_KPI}
+                  </span>
+                  <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
+                  {(key === "DELIVERED" || key === "CANCELLED") && (
+                    <span className="-mt-0.5 text-[10.5px] font-medium text-navy/50">all time</span>
+                  )}
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1267,7 +1287,7 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between border-b border-danger/30 px-5 py-3.5">
                     <h3 className="flex items-center gap-2 text-base font-semibold text-[#B91C1C]">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
-                      Urgent Orders
+                      Urgent orders
                     </h3>
                     <Badge variant="danger" label={`${urgentOrders.length} open`} />
                   </div>
@@ -1280,12 +1300,13 @@ export default function DashboardPage() {
                           </p>
                           <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/70">
                             <Clock className="h-3 w-3" />
-                            {order.lineItems?.length ?? 0} items &middot; placed{" "}
-                            {timeAgo(order.createdAt)}
+                            {order.lineItems?.length ?? 0}{" "}
+                            {(order.lineItems?.length ?? 0) === 1 ? "item" : "items"} &middot;
+                            placed {timeAgo(order.createdAt)}
                           </p>
                         </div>
                         <Button variant="secondary" size="sm" href={`/orders/${order.id}`}>
-                          View Order
+                          View order
                         </Button>
                       </li>
                     ))}
@@ -1311,7 +1332,7 @@ export default function DashboardPage() {
             {(routesAccess || reserveRoutesSlot) && (
               <Card className={!routesAccess || runsLoading ? ROUTE_RUNS_MIN_H : undefined}>
                 <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
+                  <h3 className="text-base font-semibold text-navy">Scheduled route runs</h3>
                   <Link
                     href="/routes"
                     className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
@@ -1351,7 +1372,7 @@ export default function DashboardPage() {
             <div className="flex flex-col gap-6">
               {(routesAccess || reserveRoutesSlot) && (
                 <Card
-                  title="Driver Status"
+                  title="Driver status"
                   className={!routesAccess || driversLoading ? DRIVER_STATUS_MIN_H : undefined}
                 >
                   {!routesAccess || driversLoading ? (
@@ -1406,7 +1427,7 @@ export default function DashboardPage() {
       {readsBusinessData && (
         <Card>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
+            <h2 className="text-base font-semibold text-navy">Recent orders</h2>
             <Link
               href="/orders"
               className="flex items-center gap-1 text-sm text-brand-500 hover:underline"

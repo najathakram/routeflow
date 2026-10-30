@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { PromotionsService } from "./promotions.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -20,7 +21,11 @@ describe("PromotionsService", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
-      providers: [PromotionsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        PromotionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: FeatureConfigService, useValue: { getEffectiveMode: async () => "on" } },
+      ],
     }).compile();
     service = mod.get(PromotionsService);
     prisma.promotion.create.mockImplementation((a: any) =>
@@ -39,6 +44,8 @@ describe("PromotionsService", () => {
   });
 
   it("writes product join rows for a PRODUCTS-scoped promotion", async () => {
+    // 681: the ids are proven in-tenant first, so the scoped read must return both.
+    prisma.product.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
     await service.create({ ...base, scope: "PRODUCTS", productIds: ["p1", "p2"] });
     expect(prisma.promotionProduct.createMany).toHaveBeenCalledTimes(1);
     const rows = prisma.promotionProduct.createMany.mock.calls[0][0].data;

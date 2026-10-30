@@ -16,7 +16,8 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useProducts, type ApiProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableOnly } from "@/lib/product-search-groups";
-import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { codedToastCopy, PROMOTIONS_OFF_COPY } from "@/lib/generic-toast-copy";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import {
   ruleCanZeroPrice,
   scanPromotionZeroPrice,
@@ -59,8 +60,8 @@ function fromLocalInput(local: string): string {
 
 function fmtWindow(startsAt: string, endsAt: string): string {
   const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", year: "numeric" };
-  const s = new Date(startsAt).toLocaleDateString(undefined, opts);
-  const e = new Date(endsAt).toLocaleDateString(undefined, opts);
+  const s = new Date(startsAt).toLocaleDateString("en-US", opts);
+  const e = new Date(endsAt).toLocaleDateString("en-US", opts);
   return `${s} → ${e}`;
 }
 
@@ -92,7 +93,7 @@ const TYPE_OPTIONS: { value: PromotionType; label: string }[] = [
 ];
 
 const SCOPE_OPTIONS: { value: PromotionScope; label: string }[] = [
-  { value: "ALL", label: "Entire catalogue" },
+  { value: "ALL", label: "Entire catalog" },
   { value: "CATEGORY", label: "A category" },
   { value: "PRODUCTS", label: "Specific products" },
 ];
@@ -519,9 +520,9 @@ function PromotionFormModal({
               bills $0.00 on the invoice. {zeroImpact.count} of the {zeroImpact.inScope} product
               {zeroImpact.inScope === 1 ? "" : "s"} this promotion covers are priced at or below the
               discount — e.g. {zeroImpact.examples.join(", ")}
-              {zeroImpact.count > zeroImpact.examples.length ? ", …" : ""}. Prices shown are
-              catalogue list prices; a customer on a lower tier can be affected even when their
-              product is not counted here.
+              {zeroImpact.count > zeroImpact.examples.length ? ", …" : ""}. Prices shown are catalog
+              list prices; a customer on a lower tier can be affected even when their product is not
+              counted here.
             </p>
             <label className="mt-2 flex items-start gap-2 text-xs font-medium text-navy">
               <input
@@ -683,6 +684,9 @@ export default function PromotionsPage() {
   }, [setTitle]);
 
   const { data: promotions, isLoading, isError } = usePromotions();
+  // SA-1032: off in the back office → the list stays readable, nothing can be created or changed.
+  const { data: tenantFeatures } = useTenantFeatures();
+  const promotionsOff = tenantFeatures?.modes?.promotions === "off";
   // DELIBERATE fetch-all (the one `limit: 0` left on this page). The $0.00 guard scans EVERY active product's
   // list price against every saved rule (row warnings) and the rule being typed (live count); the API offers no
   // impact-scan endpoint (it only refuses at save), so there is no narrower read that keeps the guard whole.
@@ -751,8 +755,8 @@ export default function PromotionsPage() {
     try {
       await setActive.mutateAsync({ id: p.id, isActive: !p.isActive });
       toast({ title: p.isActive ? "Promotion paused" : "Promotion resumed", variant: "success" });
-    } catch {
-      toast({ title: "Failed to update promotion", variant: "error" });
+    } catch (e) {
+      toast({ title: codedToastCopy(e) ?? "Failed to update promotion", variant: "error" });
     }
   };
 
@@ -761,8 +765,8 @@ export default function PromotionsPage() {
     try {
       await deletePromo.mutateAsync(confirmDelete.id);
       toast({ title: "Promotion deleted", variant: "success" });
-    } catch {
-      toast({ title: "Failed to delete promotion", variant: "error" });
+    } catch (e) {
+      toast({ title: codedToastCopy(e) ?? "Failed to delete promotion", variant: "error" });
     } finally {
       setConfirmDelete(null);
     }
@@ -781,14 +785,26 @@ export default function PromotionsPage() {
         subtitle={
           list.length > 0
             ? `${list.filter((p) => promotionStatus(p) === "ACTIVE").length} active · ${list.length} total`
-            : "Run windowed merchandising deals across your catalogue"
+            : "Run windowed merchandising deals across your catalog"
         }
         action={
-          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
-            New promotion
-          </Button>
+          promotionsOff ? undefined : (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+              New promotion
+            </Button>
+          )
         }
       />
+
+      {promotionsOff && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <span className="text-sm text-navy">{PROMOTIONS_OFF_COPY}</span>
+        </div>
+      )}
 
       {/* Status filter chips */}
       <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-surface-border bg-white px-4 py-3 shadow-card">
@@ -830,17 +846,19 @@ export default function PromotionsPage() {
             description={
               statusFilter
                 ? "Try a different filter, or create a new promotion."
-                : "Create a windowed deal — percent off, fixed amount, or a quantity break — scoped to your whole catalogue, a category, or specific products."
+                : "Create a windowed deal — percent off, fixed amount, or a quantity break — scoped to your whole catalog, a category, or specific products."
             }
             action={
-              <Button size="sm" onClick={openCreate}>
-                New promotion
-              </Button>
+              promotionsOff ? undefined : (
+                <Button size="sm" onClick={openCreate}>
+                  New promotion
+                </Button>
+              )
             }
           />
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+        <div className="overflow-x-auto rounded-lg border border-surface-border bg-white shadow-card">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-surface-border bg-surface-raised/50 text-left text-xs font-medium uppercase tracking-wide text-navy/50">
@@ -889,30 +907,32 @@ export default function PromotionsPage() {
                       <Badge variant={badge.variant} label={badge.label} />
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => handleToggleActive(p)}
-                          loading={setActive.isPending && setActive.variables?.id === p.id}
-                        >
-                          {p.isActive ? "Pause" : "Resume"}
-                        </Button>
-                        <button
-                          onClick={() => openEdit(p)}
-                          title="Edit"
-                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setConfirmDelete(p)}
-                          title="Delete"
-                          className="rounded p-1.5 text-navy/70 hover:bg-danger-bg hover:text-danger transition-colors"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                      {!promotionsOff && (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleToggleActive(p)}
+                            loading={setActive.isPending && setActive.variables?.id === p.id}
+                          >
+                            {p.isActive ? "Pause" : "Resume"}
+                          </Button>
+                          <button
+                            onClick={() => openEdit(p)}
+                            title="Edit"
+                            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(p)}
+                            title="Delete"
+                            className="rounded p-1.5 text-navy/70 hover:bg-danger-bg hover:text-danger transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

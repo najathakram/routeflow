@@ -79,10 +79,10 @@ import {
 import {
   labelIdForText,
   labelNameKey,
-  LabelLockTimeoutError,
   lockLabelCategories,
   syncCategoryLabel,
 } from "../product-categories/label-writer";
+import { auditTrackedCategoryWrite } from "../tracked-categories/tracked-category-audit";
 import { txConflictState } from "../common/tx-retry";
 import {
   keepLabelsOnReparent,
@@ -110,6 +110,7 @@ import {
   type ProductDeleteOutcome,
 } from "./product-delete-classify";
 import { boundedTenantTx, stockTxBounded } from "../common/stock-tx";
+import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
@@ -351,12 +352,15 @@ export class ProductsService {
    * from a non-CA_CDTFA section — would 400 and still leave an orphan "Tobacco"
    * type in the Regulated Items nav for a tenant that never had one.
    */
-  private async resolveOrCreateTobaccoCategory(pending: {
-    trackedSubcategoryId: string | null;
-    regItemType: string | null;
-    regUomCase: string | null;
-    regUomUnit: string | null;
-  }): Promise<{ id: string }> {
+  private async resolveOrCreateTobaccoCategory(
+    pending: {
+      trackedSubcategoryId: string | null;
+      regItemType: string | null;
+      regUomCase: string | null;
+      regUomUnit: string | null;
+    },
+    actor: { id?: string | null; impersonatedBy?: string | null } | null = null,
+  ): Promise<{ id: string }> {
     const existing = await this.findTobaccoCategory();
     if (existing) return existing;
     const tenantId = this.prisma.getTenantId();
@@ -371,18 +375,30 @@ export class ProductsService {
       throw new BadRequestException("Subcategory does not belong to the chosen section.");
     }
     this.assertRegConfigMatchesTemplate({ name: TOBACCO_CATEGORY_NAME, reportTemplate }, pending);
-    return this.prisma.forTenant().trackedCategory.create({
-      data: {
+    // Row 430: the seed is a regulated-category write like any other: audited in its own transaction, naming the user
+    // whose product write triggered it (and the support session behind them), and saying it was the auto-seed.
+    return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const seeded = await tx.trackedCategory.create({
+        data: {
+          tenantId,
+          name: TOBACCO_CATEGORY_NAME,
+          taxType: "NONE",
+          requiresLicense: false,
+          reportTemplate,
+          reportCadence: "MONTHLY",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          active: true,
+        },
+      });
+      await auditTrackedCategoryWrite(tx, {
         tenantId,
-        name: TOBACCO_CATEGORY_NAME,
-        taxType: "NONE",
-        requiresLicense: false,
-        reportTemplate,
-        reportCadence: "MONTHLY",
-        invoiceTreatment: "SEPARATE_INVOICE",
-        active: true,
-      },
-      select: { id: true },
+        actor: actor?.id ? { sub: actor.id, impersonatedBy: actor.impersonatedBy ?? null } : null,
+        created: true,
+        before: null,
+        after: seeded,
+        via: "tobacco-autoseed",
+      });
+      return { id: seeded.id };
     });
   }
 
@@ -808,6 +824,8 @@ export class ProductsService {
       suppressEmit?: boolean;
       actorId?: string | null;
       actorName?: string | null;
+      /** The support session behind the actor, named on the audit row of a first-tobacco auto-seed (row 430). */
+      impersonatedBy?: string | null;
       /** SA-823 R11: which door created this product under a parent; the row is written in the create transaction. */
       reparentVia?: FamilyAssignVia;
     },
@@ -826,6 +844,8 @@ export class ProductsService {
     // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
     // the written value can still be the typed text, and checking at the top is before any read or write.
     if (dto.category !== undefined) assertSafeProductCategory(dto.category);
+    // 681 site 16: a client-sent tracked category must be this tenant's own, proven before any tx.
+    await assertRefsInTenant(this.prisma, { trackedCategoryIds: [dto.trackedCategoryId] });
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -922,12 +942,15 @@ export class ProductsService {
     if (regulated.trackedCategoryId == null && dto.isTobacco === true) {
       // The end state is handed to the resolver so it can validate BEFORE
       // seeding a first Tobacco type — the assertions below run after it.
-      const tobacco = await this.resolveOrCreateTobaccoCategory({
-        trackedSubcategoryId: regulated.trackedSubcategoryId,
-        regItemType: regulated.regItemType,
-        regUomCase: regulated.regUomCase,
-        regUomUnit: regulated.regUomUnit,
-      });
+      const tobacco = await this.resolveOrCreateTobaccoCategory(
+        {
+          trackedSubcategoryId: regulated.trackedSubcategoryId,
+          regItemType: regulated.regItemType,
+          regUomCase: regulated.regUomCase,
+          regUomUnit: regulated.regUomUnit,
+        },
+        { id: options?.actorId, impersonatedBy: options?.impersonatedBy },
+      );
       regulated.trackedCategoryId = tobacco.id;
       isTobacco = true;
     } else if (regulated.trackedCategoryId != null) {
@@ -1108,6 +1131,8 @@ export class ProductsService {
       suppressEmit?: boolean;
       actorId?: string | null;
       actorName?: string | null;
+      /** The support session behind the actor, named on the audit row of a first-tobacco auto-seed (row 430). */
+      impersonatedBy?: string | null;
       /**
        * SA-823 R11: REQUIRED (a plain Error otherwise) when this write changes `parentProductId`, so the audit row
        * names its door. Reparent callers use assignToParent / unlinkFromParent, which require it; only the PATCH
@@ -1116,6 +1141,8 @@ export class ProductsService {
       reparentVia?: FamilyAssignVia;
     },
   ) {
+    // 681 site 16: a client-sent tracked category must be this tenant's own, proven before any tx.
+    await assertRefsInTenant(this.prisma, { trackedCategoryIds: [dto.trackedCategoryId] });
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -1170,14 +1197,17 @@ export class ProductsService {
     let unflagClear = false;
     if (dto.isTobacco !== undefined && dto.trackedCategoryId === undefined) {
       if (dto.isTobacco === true) {
-        const tobacco = await this.resolveOrCreateTobaccoCategory({
-          // A move into the Tobacco type clears the old section's subcategory,
-          // so only an EXPLICIT subcategory survives into the end state.
-          trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
-          regItemType: dto.regItemType !== undefined ? dto.regItemType : existing.regItemType,
-          regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : existing.regUomCase,
-          regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : existing.regUomUnit,
-        });
+        const tobacco = await this.resolveOrCreateTobaccoCategory(
+          {
+            // A move into the Tobacco type clears the old section's subcategory,
+            // so only an EXPLICIT subcategory survives into the end state.
+            trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
+            regItemType: dto.regItemType !== undefined ? dto.regItemType : existing.regItemType,
+            regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : existing.regUomCase,
+            regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : existing.regUomUnit,
+          },
+          { id: options?.actorId, impersonatedBy: options?.impersonatedBy },
+        );
         if (existing.trackedCategoryId !== tobacco.id) {
           dto.trackedCategoryId = tobacco.id;
           // A section move always clears the old section's subcategory (the
@@ -1700,9 +1730,16 @@ export class ProductsService {
       return row;
     });
     // H2: a reparent's deadlock / write conflict (40P01, 40001, P2034 in any shape: the shared L-221 predicate) is the
-    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back).
+    // retryable coded 409, never a raw 500. Nothing was saved (the transaction rolled back). A label-lock conflict has
+    // already surfaced as LabelLockTimeoutError (an HttpException, so not matched here); what reaches this branch lost a
+    // product row race, and says so (Row 519), not "label change in progress".
     const updated = await txDone.catch((e: unknown): never => {
-      if (reparenting && txConflictState(e)) throw new LabelLockTimeoutError();
+      if (reparenting && txConflictState(e)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY,
+          message: "This product changed while you were saving it. Reload it and try again.",
+        });
+      }
       throw e;
     });
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
@@ -2038,9 +2075,10 @@ export class ProductsService {
   async bulkDelete(ids: string[]): Promise<{
     deleted: number;
     softDeleted: number;
+    softDeletedIds: string[];
     skipped: BulkDeleteSkip[];
   }> {
-    if (ids.length === 0) return { deleted: 0, softDeleted: 0, skipped: [] };
+    if (ids.length === 0) return { deleted: 0, softDeleted: 0, softDeletedIds: [], skipped: [] };
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("No tenant context");
 
@@ -2056,7 +2094,7 @@ export class ProductsService {
     const nameById = new Map(products.map((p) => [p.id, p.name]));
     const peek = await planProductDelete(db, tenantId, ids, nameById);
     if (peek.softIds.length === 0 && peek.hardIds.length === 0) {
-      return { deleted: 0, softDeleted: 0, skipped: peek.skipped };
+      return { deleted: 0, softDeleted: 0, softDeletedIds: [], skipped: peek.skipped };
     }
 
     let outcome: ProductDeleteOutcome;

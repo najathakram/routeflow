@@ -10,7 +10,7 @@ import FinancePaymentsPage from "./page";
 
 /**
  * SA-824 (lead ruling, MUST 2): the holder scope is WRITER + TARGET, never the surface name. The Payments page
- * dialog and the customer's Record Payment dialog hit the same writer (POST /invoices/payments/record) for the
+ * dialog and the customer's Record payment dialog hit the same writer (POST /invoices/payments/record) for the
  * same customer, so an unknown outcome on one blocks a new key on the other, in both directions. The Payments
  * page resolves its scope when the customer is chosen, and cannot change the customer mid-attempt.
  */
@@ -52,15 +52,15 @@ const routes = async (url: string) => {
   }
   return list;
 };
-const save = () => fireEvent.click(screen.getByRole("button", { name: "Save as Paid" }));
+const save = () => fireEvent.click(screen.getByRole("button", { name: /^Save as paid$/i }));
 const checkBtn = () => screen.queryByRole("button", { name: "Check payment status" });
 const amountField = () => screen.getAllByPlaceholderText("0.00")[0];
 
 async function openPaymentsPage(customer = "cust-1") {
   const view = renderWithProviders(<FinancePaymentsPage />);
-  fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
   await screen.findAllByRole("option", { name: /Acme Foods/ });
-  fireEvent.change(screen.getByDisplayValue("Select customer..."), { target: { value: customer } });
+  fireEvent.change(screen.getByDisplayValue("Select customer…"), { target: { value: customer } });
   fireEvent.change(amountField(), { target: { value: "50" } });
   return view;
 }
@@ -83,7 +83,7 @@ describe("one payment target, one holder, whichever dialog is open (SA-824)", ()
     renderWithProviders(<CustomerRecordPaymentModal customerId="cust-1" onClose={jest.fn()} />);
     fireEvent.change(amountField(), { target: { value: "50" } });
     expect(checkBtn()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save as paid$/i })).toBeDisabled();
     save();
     await Promise.resolve();
     expect(mockPost).toHaveBeenCalledTimes(1);
@@ -100,7 +100,7 @@ describe("one payment target, one holder, whichever dialog is open (SA-824)", ()
     modal.unmount();
     await openPaymentsPage("cust-1");
     expect(checkBtn()).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save as Paid" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save as paid$/i })).toBeDisabled();
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
@@ -116,7 +116,7 @@ describe("one payment target, one holder, whichever dialog is open (SA-824)", ()
 
   it("no holder is minted before a customer is chosen: Save without one sends nothing", async () => {
     renderWithProviders(<FinancePaymentsPage />);
-    fireEvent.click(screen.getAllByRole("button", { name: /Record Payment/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Record payment/i })[0]);
     await screen.findAllByRole("option", { name: /Acme Foods/ });
     fireEvent.change(amountField(), { target: { value: "50" } });
     save();

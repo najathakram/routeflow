@@ -49,6 +49,7 @@ import { MrrService } from "./mrr.service";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PlatformAdminService } from "../platform-admin/platform-admin.service";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import {
   buildCheckoutHarness,
   CATCHUP_PREPAID_METADATA,
@@ -239,10 +240,10 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     const row = (addonKey: string, sku: string | null, over: Record<string, unknown>) =>
       addRow(tenantId, addonKey, sku, over);
     await row("FORECASTING", "FORECASTING", {
-      priceSnapshot: 25,
+      priceSnapshot: price.FORECASTING,
       stripeItemId: `si_a_${run}${seq}`,
     });
-    await row("tobacco_dealer", null, { priceSnapshot: 39 });
+    await row("tobacco_dealer", null, { priceSnapshot: price.REGULATED_ITEMS });
     await row("MSRP", "MSRP", { priceSnapshot: 0, isComp: true });
     await row("OCR_PACK_250", "OCR_PACK_250", { priceSnapshot: 0 });
     await row("CUSTOMER_PACK_100", "CUSTOMER_PACK_100", { priceSnapshot: 12, active: false });
@@ -260,6 +261,13 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
       e: by("CUSTOMER_PACK_100"),
     };
   };
+  /**
+   * The run-rate the lock removes and the reactivation crossing re-adds: the base plus rows (a) and (b). It is built from
+   * the PUBLISHED catalog's prices (`price`), never from literals: `ensurePublishedCatalog` reuses a catalog that is
+   * already published (the compose DB's seeded v11 prices Forecasting at 19, not 25), and a fixture priced off the spec's
+   * own numbers then booked (a) at its catalog price -6 away from its snapshot (M4 and N8: net -6, not 0).
+   */
+  const runRate = () => 249 + price.FORECASTING + price.REGULATED_ITEMS;
   const delta = async (tenantId: string, type: string) =>
     (await prisma.billingEvent.findMany({ where: { tenantId, type } })).map((e) =>
       Number(e.amountDelta ?? 0),
@@ -293,13 +301,13 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(
       [r.a, r.b, r.c, r.d].map((x) => [Number(x.priceSnapshot), x.isComp, x.quantity]),
     ).toEqual([
-      [25, false, 1],
-      [39, false, 1],
+      [price.FORECASTING, false, 1],
+      [price.REGULATED_ITEMS, false, 1],
       [0, true, 1],
       [0, false, 1],
     ]);
-    // Unchanged (guard): -(base 249 + a 25 + b 39); the comp and the $0 row contribute nothing.
-    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toEqual([-313]);
+    // Unchanged (guard): -(base 249 + a + b at the published catalog prices); the comp and the $0 row contribute nothing.
+    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toEqual([-runRate()]);
     const kept = (
       await prisma.billingEvent.findFirstOrThrow({
         where: { tenantId: t, type: BILLING_EVENTS.SUBSCRIPTION_CANCELED },
@@ -321,7 +329,7 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     const r = await rows(t);
     expect([r.a.active, r.b.active, r.c.active, r.d.active]).toEqual([true, true, true, true]);
     expect(r.e.active).toBe(false); // M9: never re-enabled
-    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toEqual([313]);
+    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toEqual([runRate()]);
     expect(await netMrr(t)).toBe(0);
   }, 60_000);
 
@@ -337,7 +345,9 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     const r = await rows(t);
     expect([r.a.active, r.b.active, r.c.active, r.d.active]).toEqual([true, true, true, true]);
     expect(r.e.active).toBe(false);
-    expect((await delta(t, BILLING_EVENTS.ADDON_ENABLED)).sort((x, y) => x - y)).toEqual([25, 39]);
+    expect((await delta(t, BILLING_EVENTS.ADDON_ENABLED)).sort((x, y) => x - y)).toEqual(
+      [price.FORECASTING, price.REGULATED_ITEMS].sort((x, y) => x - y),
+    );
   }, 60_000);
 
   /**
@@ -383,7 +393,7 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     const stripe: any = {
       isConfigured: true,
       client: {
-        products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) },
+        products: fakeStripeProducts().products, // W-810: the owned-product path retrieves first
         subscriptionItems: {
           list: jest.fn(async () => ({ data: items.map((i) => ({ ...i })) })),
           create: jest.fn(async (args: any) => {
@@ -433,9 +443,9 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     expect(stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
     expect([r.c.stripeItemId, r.d.stripeItemId]).toEqual([null, null]);
     expect(r.e.active).toBe(false);
-    // Booked once: the reactivation crossing re-adds the run-rate the lock removed (base 249 + a 25 + b 39) and the
+    // Booked once: the reactivation crossing re-adds the run-rate the lock removed (base 249 + a + b at the published catalog prices) and the
     // adoption's stored -> actual deltas are 0, so the net MRR is back to 0 and the crossing exists exactly once.
-    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toEqual([313]);
+    expect(await delta(t, BILLING_EVENTS.SUBSCRIPTION_RESUMED)).toEqual([runRate()]);
     expect(await netMrr(t)).toBe(0);
 
     // A redelivery of the same paid session changes nothing: no second item, nothing more booked.
@@ -734,7 +744,7 @@ describeDb("SA-787 the cancellation lock never switches add-ons off (real Postgr
     // (b)'s price is on the ledger exactly once across both paths: one ADDON_ENABLED for it ...
     const enabled = (await delta(t, BILLING_EVENTS.ADDON_ENABLED)).sort((x, y) => x - y);
     expect(enabled).toEqual([price.FORECASTING, price.REGULATED_ITEMS]);
-    // ... and the run-rate the lock removed (-313) is back exactly once: the net is 0, never +39 over.
+    // ... and the run-rate the lock removed (-runRate()) is back exactly once: the net is 0, never one add-on over.
     expect(await netMrr(t)).toBe(0);
   }, 60_000);
 

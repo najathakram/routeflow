@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronRight, Search as SearchIcon } from "lucide-react";
 import { Button, Card, Input, cn } from "@routeflow/ui/web";
 import { BusinessCard } from "./BusinessCard";
-import { CHIPS, GROUP_META, GROUP_TITLES, ROW_ICONS, type GroupMeta } from "./settings-groups";
+import { CHIPS, GROUP_META, ROW_ICONS, entryCrumb, type GroupMeta } from "./settings-groups";
 import {
   listGroup,
   normalize,
@@ -24,6 +24,18 @@ const INSET =
   "overflow-hidden rounded-[var(--r-card)] border border-[var(--line)] bg-[var(--paper)] shadow-[var(--sh-card)]";
 const PRESS =
   "transition-colors [transition-duration:120ms] motion-reduce:transition-none hover:bg-[var(--sunken)] active:bg-[var(--sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary";
+
+/** Words people use for a setting that has no row of that name: say where to look instead of a bare dead end. */
+const DEAD_ENDS: { test: RegExp; hint: string }[] = [
+  {
+    test: /\b(collect|collection|collecting|take ?away)\b/,
+    hint: "Try pickup, delivery or counter.",
+  },
+];
+function deadEndHint(query: string): string | null {
+  const q = normalize(query);
+  return DEAD_ENDS.find((d) => d.test.test(q))?.hint ?? null;
+}
 
 /** `/` jumps to search unless the user is typing somewhere. */
 function useSlashFocus(ref: React.RefObject<HTMLInputElement | null>) {
@@ -147,7 +159,7 @@ function ResultRow({
         </span>
       )}
       <span className="block text-[13px] leading-[18px] text-[var(--ink-500)]">
-        {`${GROUP_TITLES[entry.groupKey]} › ${entry.page ?? entry.label}`}
+        {entryCrumb(entry)}
       </span>
     </span>
   );
@@ -164,7 +176,17 @@ function ResultRow({
           <ChevronRight aria-hidden="true" className="h-4 w-4 flex-none text-[var(--ink-400)]" />
         </Link>
       ) : (
-        <div className={cls}>{body}</div>
+        <div className={cls}>
+          {body}
+          {entry.go ? (
+            <Link
+              href={entry.go.href}
+              className="flex min-h-11 flex-none items-center rounded-md px-2 text-[13px] font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {entry.go.label}
+            </Link>
+          ) : null}
+        </div>
       )}
     </li>
   );
@@ -242,7 +264,11 @@ export function SettingsFinder({
       {searching && results.length === 0 && (
         <Card className="space-y-3 text-sm text-[var(--ink-500)]">
           <p>No settings match “{query.trim()}”.</p>
-          <p>Try another word, or browse all settings.</p>
+          {deadEndHint(query) ? (
+            <p>{deadEndHint(query)}</p>
+          ) : (
+            <p>Try another word, or browse all settings.</p>
+          )}
           <p>Try: counter, carrier, backorder, time zone</p>
           <Button
             variant="secondary"
@@ -252,7 +278,7 @@ export function SettingsFinder({
               inputRef.current?.focus();
             }}
           >
-            Clear Search
+            Clear search
           </Button>
         </Card>
       )}
@@ -292,7 +318,19 @@ export function SettingsFinder({
           </div>
           {groups.map(({ g, rows }) => (
             <section key={g.key} data-testid={`settings-group-${g.key}`}>
-              <h3 className={HEADING}>{g.title}</h3>
+              {g.key === "counter" && nav.counter ? (
+                <div className="flex items-baseline justify-between pr-3">
+                  <h3 className={HEADING}>{g.title}</h3>
+                  <Link
+                    href="/orders/counter-sale"
+                    className="min-h-6 text-[13px] font-medium text-[var(--accent-strong)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    Open the Counter
+                  </Link>
+                </div>
+              ) : (
+                <h3 className={HEADING}>{g.title}</h3>
+              )}
               <ul className={cn(!rail && INSET)}>
                 {rows.map((e) => (
                   <Row

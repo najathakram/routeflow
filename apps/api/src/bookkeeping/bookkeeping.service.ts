@@ -1,5 +1,13 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+  Optional,
+} from "@nestjs/common";
+import { toCollectByCustomer, toCollectState } from "../invoices/to-collect";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
+import { flagUnconfirmedOverReserved } from "../invoices/confirmed-basis";
 import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -33,6 +41,7 @@ import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
@@ -44,6 +53,8 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
+import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { counterPay } from "../invoices/counter-payment-guard";
 import {
   createPaymentRefGuard,
@@ -52,13 +63,6 @@ import {
 } from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
-
-/**
- * Receipt-extraction model. Receipts are small documents where a misread line
- * lands directly in the books, so this path pays for the most capable model;
- * kept as its own constant so it can diverge from the OCR scanners'.
- */
-const RECEIPT_MODEL = "claude-opus-4-5-20251101";
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -70,6 +74,8 @@ export class BookkeepingService implements OnModuleInit {
     private readonly systemConfig: SystemConfigService,
     private readonly platformConfig: PlatformConfigService,
     private readonly commissionEngine: CommissionEngineService,
+    // SA-827: the strict plan-flag read the display-unit resolve needs. Optional so a bare unit harness still builds.
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
 
   async onModuleInit() {
@@ -214,6 +220,20 @@ export class BookkeepingService implements OnModuleInit {
     // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
     // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
     const till = await counterPay.scope(this.prisma, id);
+    // SA-827: a DRAFT paid through this ledger path becomes an issued invoice. Its display units are RESOLVED here on a
+    // non-tx client (no catalog read joins the Serializable snapshot) and WRITTEN inside the tx once the lock confirms DRAFT.
+    const pre = await this.prisma
+      .forTenant()
+      .invoice.findUnique({ where: { id }, select: { status: true, tenantId: true } });
+    const units =
+      pre?.status === InvoiceStatus.DRAFT && pre.tenantId
+        ? await resolveIssueDisplayUnits(
+            this.prisma.forTenant(),
+            pre.tenantId,
+            id,
+            this.entitlements,
+          )
+        : null;
     const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
       await counterPay.lock(tx, till);
@@ -284,6 +304,12 @@ export class BookkeepingService implements OnModuleInit {
         },
       });
       await refGuard.recorded(tx, [recorded?.id], id);
+      // W-769: the confirmed basis stays (REG-B11); the unconfirmed rows this real money displaced are flagged
+      await flagUnconfirmedOverReserved(
+        tx,
+        { id, tenantId: inv.tenantId, total: totalOwed },
+        recorded.id,
+      );
 
       const totalPaid = roundMoney(alreadyPaid + paymentAmount);
       const newInvStatus =
@@ -305,6 +331,9 @@ export class BookkeepingService implements OnModuleInit {
           order: { select: { id: true, orderNumber: true, status: true } },
         },
       });
+
+      // SA-827: the DRAFT -> issued transition freezes the display unit (once; a SENT invoice never rewrites it).
+      if (inv.status === InvoiceStatus.DRAFT && units) await writeIssueDisplayUnits(tx, id, units);
 
       // Commission hook: this ledger path creates a PAID payment directly —
       // the accrual's payable must move with the cash in the same tx.
@@ -901,6 +930,9 @@ export class BookkeepingService implements OnModuleInit {
     const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
 
+    // SA-1035: read once; the call and both usage records use this one value. Receipts are small documents where a
+    // misread line lands directly in the books, so this path runs the most capable model (no picker).
+    const model = await this.platformConfig.resolveModelFor("receipt_scan");
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";
@@ -915,8 +947,8 @@ export class BookkeepingService implements OnModuleInit {
     let response: Anthropic.Message;
     try {
       response = await anthropic.messages.create({
-        model: RECEIPT_MODEL,
-        max_tokens: 2048,
+        model,
+        max_tokens: AI_SCAN_MAX_TOKENS,
         messages: [
           {
             role: "user",
@@ -934,7 +966,7 @@ export class BookkeepingService implements OnModuleInit {
       await this.platformConfig.recordAiUsage({
         tenantId: this.prisma.getTenantId(),
         feature: "ocr.expense_receipt",
-        model: RECEIPT_MODEL,
+        model,
         success: false,
       });
       throw err;
@@ -945,14 +977,17 @@ export class BookkeepingService implements OnModuleInit {
     await this.platformConfig.recordAiUsage({
       tenantId: this.prisma.getTenantId(),
       feature: "ocr.expense_receipt",
-      model: RECEIPT_MODEL,
+      model,
       inputTokens: response.usage?.input_tokens ?? 0,
       outputTokens: response.usage?.output_tokens ?? 0,
     });
 
     let parsed: any = {};
     try {
-      const text = (response.content[0] as any).text ?? "";
+      // The answer is the first text block (a thinking block may come first); none at all is a failed read, not an
+      // empty receipt.
+      const text = firstText(response.content);
+      if (text === null) throw new Error("no text block");
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
     } catch {
@@ -1591,6 +1626,12 @@ export class BookkeepingService implements OnModuleInit {
     // #1529 / SA-517: the deposit's "today" is the tenant's day (the same zone the buckets age in).
     const todayIso = startOfCalendarDay(now, tz).toISOString().slice(0, 10);
     const depositOverdue = { count: 0, outstanding: 0 };
+    const entries: Array<{
+      customerId: string;
+      businessName: string;
+      balance: number;
+      toCollect: ReturnType<typeof toCollectState>;
+    }> = [];
 
     for (const inv of invoices) {
       const paid = sumConfirmed(inv.payments); // the deposit check's full confirmed total
@@ -1615,7 +1656,13 @@ export class BookkeepingService implements OnModuleInit {
         depositAmount: deposit.depositAmount,
         depositDueDate: inv.depositDueDate ?? null,
         depositOverdue: deposit.depositOverdue,
+        toCollect: toCollectState(inv), // SA-1026: staff only; derived by the one rule (invoices/to-collect.ts)
       };
+      entries.push({
+        ...entry,
+        customerId: inv.customerId,
+        businessName: inv.customer?.businessName ?? "",
+      });
       if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
         continue;
@@ -1640,7 +1687,14 @@ export class BookkeepingService implements OnModuleInit {
 
     // #1529: `depositOverdue` is its own top-level key, never a `totals` key (totals stay the AR
     // buckets, agreeing with the finance dashboard).
-    return { buckets, totals, intervalDays: interval, depositOverdue };
+    // SA-1026: the To collect column, per customer (staff only; the buckets and totals above are untouched).
+    return {
+      buckets,
+      totals,
+      intervalDays: interval,
+      depositOverdue,
+      toCollectByCustomer: toCollectByCustomer(entries),
+    };
   }
 
   async getSalesByCustomer(from?: string, to?: string) {
@@ -2248,6 +2302,7 @@ export class BookkeepingService implements OnModuleInit {
           ageDays,
           amount: Number(inv.total),
           balance,
+          toCollect: toCollectState(inv), // SA-1026: staff only
         };
       })
       .filter((row) => row.balance > 0);

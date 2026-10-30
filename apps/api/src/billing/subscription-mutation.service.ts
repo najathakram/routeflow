@@ -24,6 +24,7 @@ import {
   checkoutAddonLineItem,
   isOwnedAddonItem,
 } from "./stripe-addon-items";
+import { ensureAddonProduct, stripeProductId } from "./stripe-product";
 import { emitAddonDelta, lockTenantForLedger, bookAddonsOnCrossing } from "./addon-ledger";
 import {
   addonCodeOf,
@@ -106,6 +107,9 @@ import { formatInZone } from "./subscription-billing-extras";
 import { stripeSubscriptionPeriod } from "./stripe-period";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
+import { CardFirstFlagService } from "./card-first-flag.service";
+import { isLinkPending } from "./link-pending";
+import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
 export interface SubscribeInput {
@@ -360,9 +364,42 @@ export class SubscriptionMutationService {
     @Optional() private readonly dunning?: DunningService,
     // SA-775: the rollout pause also holds a tenant admin's own immediate trial-cancel lock.
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
+    // SA-774: the dark platform switch for the card-first gate (absent or off = today's behaviour).
+    @Optional() private readonly cardFirst?: CardFirstFlagService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
+
+  /**
+   * SA-774 (card first, then active): the ONE gate every self-serve plan entry point runs first. Off (the
+   * default) it does nothing. On, a card payer proceeds, a payment in flight / manual pay / wrong entry point is
+   * refused with a coded 409, and a card-less tenant is sent to Checkout. The Checkout builder lands in a later
+   * chunk, so until then a card-less pick is refused rather than switched instantly; the flag must stay off until
+   * that chunk ships.
+   */
+  private async enforceCardFirst(tenantId: string, op: PlanGateOp): Promise<void> {
+    if (!this.cardFirst || !(await this.cardFirst.isEnabled())) return;
+    const [tenant, sub] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, readOnlyReason: true },
+      }),
+      this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { stripeSubId: true, externalPayment: true },
+      }),
+    ]);
+    if (!tenant) return; // the caller's own not-found handling owns this
+    const facts = {
+      stripeSubId: sub?.stripeSubId ?? null,
+      externalPayment: sub?.externalPayment ?? false,
+    };
+    const linkPending = await isLinkPending(this.prisma, tenantId, facts.stripeSubId);
+    const outcome = selfServePlanGate(tenant, facts, linkPending, op);
+    if (outcome.kind === "PROCEED") return;
+    if (outcome.kind === "REFUSE") throw planGateRefusal(outcome.code);
+    throw planGateRefusal(API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT);
+  }
 
   /** SA-733r M1: a tenant that owes an overdue invoice gets 409 PAYMENT_OVERDUE on every plan-mutation entry point. */
   private assertNotOverdue(tenantId: string, entryPoint: OverdueEntryPoint): Promise<void> {
@@ -416,6 +453,7 @@ export class SubscriptionMutationService {
 
   /** Commit a subscription / convert a trial by picking a plan (+ optional add-ons). */
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
+    await this.enforceCardFirst(tenantId, "subscribe");
     await this.assertNotOverdue(tenantId, "subscribe");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === input.planKey);
@@ -1342,7 +1380,9 @@ export class SubscriptionMutationService {
    * the `tenant-price` lock (SA-733 D8): every read below, the Stripe push, the local write and any revert run
    * inside it, so a second attempt sees the first one's result ("not an upgrade") instead of racing it.
    */
-  upgrade(tenantId: string, planKey: string, actorId?: string) {
+  async upgrade(tenantId: string, planKey: string, actorId?: string) {
+    // SA-774: the card-first gate runs BEFORE the tenant-price lock (never re-take it inside).
+    await this.enforceCardFirst(tenantId, "upgrade");
     // A tenant-facing endpoint: a SHORT wait (a double-click burst must not pin the small tenant-price pool for
     // the long admin wait) and tenant-safe copy on the retryable 409.
     return underTenantPriceLock(tenantId, () => this.upgradeLocked(tenantId, planKey, actorId), {
@@ -1578,6 +1618,7 @@ export class SubscriptionMutationService {
     retainedUserIds: string[],
     actorId?: string,
   ) {
+    await this.enforceCardFirst(tenantId, "downgrade");
     await this.assertNotOverdue(tenantId, "downgrade");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
@@ -2230,7 +2271,7 @@ export class SubscriptionMutationService {
     tenantId: string,
     interval: "month" | "year",
     // SA-733 D7: the catch-up DRY-RUN reads the same lines but writes nothing (no platform notice).
-    opts: { quiet?: boolean } = {},
+    opts: { quiet?: boolean; readOnly?: boolean } = {},
   ): Promise<{
     lineItems: ReturnType<typeof checkoutAddonLineItem>[];
     skus: string[];
@@ -2306,13 +2347,18 @@ export class SubscriptionMutationService {
       });
     }
     return {
-      lineItems: billable.map((b) =>
-        checkoutAddonLineItem({
-          sku: b.def.sku,
-          name: b.def.name,
-          monthlyPrice: b.def.monthlyPrice,
-          quantity: b.quantity,
-        }),
+      lineItems: await Promise.all(
+        billable.map(async (b) =>
+          checkoutAddonLineItem({
+            sku: b.def.sku,
+            // a readOnly call (plan, census, payment-due) never touches Stripe: the id is deterministic
+            productId: opts.readOnly
+              ? stripeProductId("addon", b.def.sku)
+              : await ensureAddonProduct(this.stripe.client, b.def.sku, b.def.name),
+            monthlyPrice: b.def.monthlyPrice,
+            quantity: b.quantity,
+          }),
+        ),
       ),
       skus: billable.map((b) => b.def.sku),
       invalid,
@@ -3658,10 +3704,7 @@ export class SubscriptionMutationService {
     const adopted = await this.adoptOrphanItem(tenantId, sku, subId, qty);
     if (adopted) return { itemId: adopted, createdItemId: null };
     try {
-      const product = await this.stripe.client.products.create({
-        name: `RouteFlow add-on — ${skuDef.name}`,
-        metadata: { tenantId, sku },
-      });
+      const productId = await ensureAddonProduct(this.stripe.client, sku, skuDef.name);
       const item = await this.stripe.client.subscriptionItems.create(
         {
           subscription: subId,
@@ -3674,7 +3717,7 @@ export class SubscriptionMutationService {
             currency: "usd",
             unit_amount: toCents(Number(skuDef.monthlyPrice)),
             recurring: { interval: "month" },
-            product: product.id,
+            product: productId,
           },
           metadata: { tenantId, sku },
         },

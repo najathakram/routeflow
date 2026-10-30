@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   AlertTriangle,
   User,
   FileText,
@@ -16,7 +15,7 @@ import {
   Trash2,
   Calendar,
 } from "lucide-react";
-import { Badge, Button, Card, useToast, type BadgeStatus } from "@routeflow/ui/web";
+import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -77,7 +76,8 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
-import { usePhoneWidth } from "./_components/use-phone-width";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
+import { useScrollAfterSave } from "./_components/use-scroll-after-save";
 import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
@@ -94,7 +94,7 @@ import {
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
-import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
+import { OrderStaffFlags } from "./_components/OrderStaffFlags";
 import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
@@ -267,7 +267,7 @@ export default function OrderDetailPage() {
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
   // apple-ux r4: phone width folds the action bar into one row + a More menu; Record return then opens from that menu.
-  const phone = usePhoneWidth();
+  const phone = useBelowBreakpoint("sm");
   const returnAvailable = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [returnOpen, setReturnOpen] = React.useState(false);
   const readOnlyGate = useReadOnlyGate();
@@ -311,6 +311,7 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const { cardRef: linesCardRef, markSaved: markLinesSaved } = useScrollAfterSave(isEditing);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
     const n = rebaseOnReload(
@@ -329,7 +330,7 @@ export default function OrderDetailPage() {
       fresh,
       base,
     );
-    if (n > 0) toast({ title: "Someone else changed this order - re-check it", variant: "error" });
+    if (n > 0) toast({ title: "Someone else changed this order — re-check it", variant: "error" });
   });
   const updateItems = useUpdateOrderItems({
     localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
@@ -658,6 +659,7 @@ export default function OrderDetailPage() {
     // the server default.
     saveLatchRef.current = true;
     const onSaved = () => {
+      markLinesSaved(); // r5 N10: bring the saved lines into view once the editor closes
       setIsEditing(false);
       setEditItems([]);
       setEditCredits([]);
@@ -893,7 +895,7 @@ export default function OrderDetailPage() {
             });
           }}
         >
-          Confirm Delete
+          Confirm delete
         </Button>
         <button
           onClick={() => setShowDeleteConfirm(false)}
@@ -983,18 +985,6 @@ export default function OrderDetailPage() {
 
   return (
     <div className="space-y-5 p-6">
-      {/* Back */}
-      <Link
-        href="/orders"
-        onClick={(e) => {
-          if (leaveGuard.requestLeave(() => router.push("/orders"))) e.preventDefault();
-        }}
-        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Orders
-      </Link>
-
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1012,7 +1002,7 @@ export default function OrderDetailPage() {
               status={localStatus as BadgeStatus}
               fulfillPath={order?.fulfillPath}
             />
-            <InvoicesNeedReviewBadge review={order.invoicesNeedReview} />
+            <OrderStaffFlags order={order} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
             <span>
@@ -1139,7 +1129,7 @@ export default function OrderDetailPage() {
                   }}
                   loading={updateStatus.isPending}
                 >
-                  Publish Order
+                  Publish order
                 </WriteButton>
               </ActionTier>
               <DeleteOrderTier
@@ -1148,7 +1138,7 @@ export default function OrderDetailPage() {
                 deleteOrder={deleteOrder}
                 open={showDeleteConfirm}
                 setOpen={setShowDeleteConfirm}
-                idleLabel="Delete Draft"
+                idleLabel="Delete draft"
                 successTitle="Draft deleted"
                 errorText={orderErrorText}
               />
@@ -1166,7 +1156,7 @@ export default function OrderDetailPage() {
                     onClick={handleConfirm}
                     loading={updateStatus.isPending}
                   >
-                    Confirm Order
+                    Confirm order
                   </Button>
                 </ActionTier>
               )}
@@ -1224,7 +1214,7 @@ export default function OrderDetailPage() {
                           });
                         }}
                       >
-                        Confirm Delete
+                        Confirm delete
                       </Button>
                       <button
                         onClick={() => setShowDeleteConfirm(false)}
@@ -1351,7 +1341,7 @@ export default function OrderDetailPage() {
                     leftIcon={<RotateCcw className="h-4 w-4" />}
                     onClick={() => setDemoteTarget("CONFIRMED")}
                   >
-                    Reopen Order
+                    Reopen order
                   </Button>
                   <p className="text-[11px] text-navy/50">
                     Reopening keeps the invoice in sync while you edit. Orders delivered on a route
@@ -1361,7 +1351,7 @@ export default function OrderDetailPage() {
               </ActionTier>
               <ActionTier tier="danger">
                 {renderDeleteOrderAction(
-                  "Delete this DELIVERED order? Its delivery record is removed permanently.",
+                  "Delete this delivered order? Its delivery record is removed permanently.",
                 )}
               </ActionTier>
             </>
@@ -1387,7 +1377,7 @@ export default function OrderDetailPage() {
                   }}
                   loading={reopenOrder.isPending}
                 >
-                  Reopen Order
+                  Reopen order
                 </Button>
               </ActionTier>
               <DeleteOrderTier
@@ -1420,10 +1410,14 @@ export default function OrderDetailPage() {
         {/* ── Main content ── */}
         <div className="space-y-5 lg:col-span-2">
           {/* Line items */}
-          <div className="rounded-lg bg-white p-6 shadow-card">
+          <div
+            ref={linesCardRef}
+            data-testid="order-line-items-card"
+            className="scroll-mt-16 rounded-lg bg-white p-6 shadow-card"
+          >
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
-                Line Items
+                Line items
                 {isEditing && (
                   <Badge variant="info" label="Editing" className="normal-case tracking-normal" />
                 )}
@@ -1537,7 +1531,7 @@ export default function OrderDetailPage() {
                         disabled={layerBlocked}
                         loading={updateItems.isPending}
                       >
-                        Save Draft
+                        Save draft
                       </WriteButton>
                       {access.staff && (
                         <WriteButton
@@ -1631,7 +1625,7 @@ export default function OrderDetailPage() {
                           disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
                         >
-                          Publish Order
+                          Publish order
                         </WriteButton>
                       )}
                       <Button
@@ -1647,12 +1641,13 @@ export default function OrderDetailPage() {
                     <>
                       <WriteButton
                         size="sm"
+                        className="min-h-11 sm:min-h-0"
                         onClick={handleSaveItems}
                         aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
                         loading={savingItems}
                       >
-                        Save Changes
+                        Save changes
                       </WriteButton>
                       <Button
                         size="sm"
@@ -1801,7 +1796,7 @@ export default function OrderDetailPage() {
 
           {/* Notes */}
           {order.notes && !isEditing && (
-            <Card title="Order Notes">
+            <Card title="Order notes">
               <div className="flex items-start gap-3">
                 <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                 <p className="text-sm text-navy/80 whitespace-pre-line">{order.notes}</p>
@@ -1925,7 +1920,13 @@ export default function OrderDetailPage() {
                   <dd className="money text-navy">{formatMoney(shippingFee)}</dd>
                 </div>
               )}
-              <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
+              {/* r5 Q20: below lg the line-items footer carries the total (this card is stacked under the lines); edit mode has no footer. */}
+              <div
+                className={cn(
+                  "flex items-center justify-between gap-3 border-t border-surface-border pt-2.5",
+                  !isEditing && "max-lg:hidden",
+                )}
+              >
                 <dt className="font-semibold text-navy">
                   {isEditing ? "Saved total" : "Order total"}
                 </dt>

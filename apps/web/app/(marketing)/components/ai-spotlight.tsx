@@ -7,8 +7,8 @@ export function AISpotlight() {
   return (
     <section className="ai-spotlight section wrap" aria-labelledby="ai-heading">
       <div className="ai-copy">
-        <span className="ai-label">
-          <ScanText size={17} /> AI PURCHASE-INVOICE SCANNING
+        <span className="ai-label caps">
+          <ScanText size={17} /> AI purchase-invoice scanning
         </span>
         <h2 id="ai-heading">
           Less invoice entry.
@@ -29,7 +29,7 @@ export function AISpotlight() {
       </div>
       <div className="ai-review">
         <div className="ai-review-heading">
-          <span>INVOICE → INVENTORY → COSTING</span>
+          <span className="caps">Invoice → inventory → costing</span>
           <span>Built for multiple vendors</span>
         </div>
         <ol className="ai-review-steps">
@@ -38,7 +38,7 @@ export function AISpotlight() {
               <FileText size={27} />
             </span>
             <div>
-              <small>01 / THE WORK</small>
+              <small>01 / The work</small>
               <h3>Bring your purchase invoices.</h3>
               <p>Keep purchases from different vendors in one workflow.</p>
             </div>
@@ -48,7 +48,7 @@ export function AISpotlight() {
               <ScanText size={27} />
             </span>
             <div>
-              <small>02 / AI ASSISTANCE</small>
+              <small>02 / AI assistance</small>
               <h3>Let AI scan the invoice.</h3>
               <p>Turn purchase-invoice information into usable purchase data.</p>
             </div>
@@ -58,7 +58,7 @@ export function AISpotlight() {
               <UserCheck size={27} />
             </span>
             <div>
-              <small>03 / YOUR DECISION</small>
+              <small>03 / Your decision</small>
               <h3>Update inventory and costing.</h3>
               <p>Connect what you bought with stock quantities and purchase costs.</p>
             </div>

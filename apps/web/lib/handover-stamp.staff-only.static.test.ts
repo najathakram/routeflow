@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
 /**
@@ -7,19 +8,41 @@ import { join, sep } from "node:path";
  * stamp (a receipt, a print view, a buyer page) is a new leak and goes red here.
  */
 const ROOT = join(__dirname, "..");
-const SKIP = new Set(["node_modules", ".next", "e2e", "coverage"]);
-const walk = (dir: string): string[] =>
-  readdirSync(dir).flatMap((n) => {
-    if (SKIP.has(n)) return [];
-    const p = join(dir, n);
-    if (statSync(p).isDirectory()) return walk(p);
-    return /\.(ts|tsx)$/.test(n) && !/\.test\.(ts|tsx)$/.test(n) ? [p] : [];
+const SKIP = new Set(["node_modules", ".next", ".jest-cache", "e2e", "coverage"]);
+// Dirent kinds (no per-entry statSync) and a tolerated ENOENT: a sibling Jest worker can delete a
+// cache entry between the listing and the read (row 734).
+const walk = (dir: string): string[] => {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  return entries.flatMap((d) => {
+    if (SKIP.has(d.name)) return [];
+    const p = join(dir, d.name);
+    if (d.isDirectory()) return walk(p);
+    return /\.(ts|tsx)$/.test(d.name) && !/\.test\.(ts|tsx)$/.test(d.name) ? [p] : [];
   });
+};
 
 /** The names a customer copy must never carry: the stamp's helpers and the two stamped fields (row 374 e). */
 const STAMP_NAMES = /handOverStampLine|HandOverStamp|handover-stamp|handedOverBy|registerKey/;
 
 describe("hand-over stamp stays off customer copies (row 342)", () => {
+  it("the walk skips .jest-cache (row 734)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "stamp-walk-"));
+    try {
+      mkdirSync(join(tmp, ".jest-cache"));
+      writeFileSync(join(tmp, ".jest-cache", "leak.ts"), "handedOverBy");
+      writeFileSync(join(tmp, "real.ts"), "export const a = 1;");
+      expect(walk(tmp).map((p) => p.slice(tmp.length + 1))).toEqual(["real.ts"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("the scan catches each name (planted references)", () => {
     for (const planted of [
       "renderHandOverStamp(order)",

@@ -11,6 +11,8 @@ describe("eslint no-unused-vars underscore convention (row 220)", () => {
       {
         cwd: apiDir,
         encoding: "utf8",
+        // Windows has no bare `npx` executable (only npx.cmd), so it needs a shell.
+        shell: process.platform === "win32",
         input:
           "const user = { a: 1, b: 2, c: 3 };\nconst { a: _a, ...rest } = user;\nexport const out = rest;\n",
       },

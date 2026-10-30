@@ -35,10 +35,10 @@ const rowFor = (name: string) => screen.getByText(name).closest("tr") as HTMLEle
 describe("OrderLineItemsTable — columns and a plain line", () => {
   it("renders the five column headers and the order-total footer", () => {
     renderTable([line({})], "CONFIRMED", 1234.5);
-    for (const h of ["Product", "Qty", "Unit Price", "Line Total", "Status"]) {
+    for (const h of ["Product", "Qty", "Unit price", "Line total", "Status"]) {
       expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
     }
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     expect(screen.getByText("$1,234.50")).toBeInTheDocument();
   });
 
@@ -213,7 +213,7 @@ describe("OrderLineItemsTable — line total and status", () => {
 
   it("an order with no lines renders the header and footer only", () => {
     renderTable([], "CONFIRMED", 0);
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     expect(screen.queryByText("Custom item")).toBeNull();
   });
 

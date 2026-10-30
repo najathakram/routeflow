@@ -14,7 +14,7 @@ const MASTER_ITEMS: { label: string; href: string }[] = [
   { label: "Out-of-stock ordering", href: "#out-of-stock-ordering" },
   { label: "Batch invoice import", href: "/settings/batch-import" },
   { label: "Notifications", href: "/settings?tab=notifications" },
-  { label: "Email (SMTP)", href: "/settings?tab=email" },
+  { label: "Email sending (SMTP)", href: "/settings?tab=email" },
   { label: "Regulated sections", href: "/settings?tab=regulated" },
   { label: "Product labels", href: "/settings/product-categories" },
   { label: "Claude AI scanner", href: "/settings?tab=integrations" },
@@ -50,7 +50,7 @@ describe("settings index", () => {
     for (const m of MASTER_ITEMS) {
       expect(admin.some((e) => e.href === m.href && e.label === m.label)).toBe(true);
     }
-    expect(admin.filter((e) => e.href === "/settings/restrictions")).toHaveLength(2);
+    expect(admin.filter((e) => e.href === "/settings/restrictions")).toHaveLength(1); // OK-2
   });
 
   it("every ?tab= key is one the settings page knows", () => {
@@ -114,9 +114,14 @@ describe("#3320 review folds", () => {
     expect(byId("driver-access", buildIndex({ isAdmin: true, fleet: false }))).toBeUndefined();
   });
 
-  it("N2 the low-stock digest is admin-only", () => {
-    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeUndefined();
+  // Owner 10-07 OK-6 replaces #3320 N2: operators receive the digest too, so they find its opt-out.
+  it("OK-6 the low-stock digest row is shown to operators as well as admins, never to a driver", () => {
+    const as = (role: string) => buildIndex({ isAdmin: false, fleet: true, role });
+    expect(byId("low-stock-digest", as("OPERATOR"))).toBeDefined();
     expect(byId("low-stock-digest")).toBeDefined();
+    // #3725 review: a driver who reaches Settings must not see a row that leads to nothing they receive.
+    expect(byId("low-stock-digest", as("DRIVER"))).toBeUndefined();
+    expect(byId("low-stock-digest", buildIndex({ isAdmin: false, fleet: true }))).toBeUndefined();
   });
 
   it("N3 card descriptions say what the card really holds", () => {

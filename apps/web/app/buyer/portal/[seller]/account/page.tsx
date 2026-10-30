@@ -86,14 +86,14 @@ export default function BuyerAccountPage() {
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-buyer-50 text-buyer-600">
               <User className="h-5 w-5" />
             </div>
-            <h2 className="text-base font-semibold text-navy">Your Profile</h2>
+            <h2 className="text-base font-semibold text-navy">Your profile</h2>
           </div>
 
           <dl className="divide-y divide-surface-border">
             <div className="flex items-center justify-between py-3">
               <dt className="flex items-center gap-2 text-sm text-navy/70">
                 <User className="h-4 w-4" />
-                Full Name
+                Full name
               </dt>
               <dd className="text-sm font-medium text-navy">{buyer?.name ?? "N/A"}</dd>
             </div>
@@ -116,7 +116,7 @@ export default function BuyerAccountPage() {
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-raised text-navy/70">
                 <Building2 className="h-5 w-5" />
               </div>
-              <h2 className="text-base font-semibold text-navy">Seller Connection</h2>
+              <h2 className="text-base font-semibold text-navy">Seller connection</h2>
             </div>
 
             <dl className="divide-y divide-surface-border">
@@ -125,19 +125,19 @@ export default function BuyerAccountPage() {
                 <dd className="text-sm font-medium text-navy">{activeSeller.tenant.name}</dd>
               </div>
               <div className="flex items-center justify-between py-3">
-                <dt className="text-sm text-navy/70">Your Business</dt>
+                <dt className="text-sm text-navy/70">Your business</dt>
                 <dd className="text-sm font-medium text-navy">
                   {activeSeller.customer?.businessName ?? "N/A"}
                 </dd>
               </div>
               {displayEmail(activeSeller.customer?.email) && (
                 <div className="flex items-center justify-between py-3">
-                  <dt className="text-sm text-navy/70">Business Email</dt>
+                  <dt className="text-sm text-navy/70">Business email</dt>
                   <dd className="text-sm font-medium text-navy">{activeSeller.customer?.email}</dd>
                 </div>
               )}
               <div className="flex items-center justify-between py-3">
-                <dt className="text-sm text-navy/70">Connection Status</dt>
+                <dt className="text-sm text-navy/70">Connection status</dt>
                 <dd>
                   <Badge variant={getLinkStatusVariant(activeSeller.linkStatus)}>
                     {formatLinkStatus(activeSeller.linkStatus)}
@@ -149,7 +149,7 @@ export default function BuyerAccountPage() {
             <div className="mt-4 pt-4 border-t border-surface-border">
               <Button variant="secondary" size="sm" onClick={handleSwitchSeller}>
                 <ArrowLeft className="h-4 w-4 mr-1.5" />
-                Switch Seller
+                Switch seller
               </Button>
             </div>
           </div>
@@ -167,13 +167,13 @@ export default function BuyerAccountPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-navy">Password</p>
-              <p className="text-xs text-navy/70 mt-0.5">Change your buyer portal password</p>
+              <p className="text-xs text-navy/70 mt-0.5">Change your password</p>
             </div>
             <a
               href="/buyer/change-password"
               className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
             >
-              Change Password
+              Change password
             </a>
           </div>
         </div>

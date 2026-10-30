@@ -104,8 +104,9 @@ export function OrderLineItemCards({
         </button>
       )}
 
-      <div className="flex items-center justify-between border-t-2 border-surface-border px-6 py-3">
-        <span className="text-sm font-semibold text-navy">Order Total</span>
+      {/* r5 Q20: from lg the Summary card sits beside the lines and carries the total; below it this footer does. */}
+      <div className="flex items-center justify-between border-t-2 border-surface-border px-6 py-3 lg:hidden">
+        <span className="text-sm font-semibold text-navy">Order total</span>
         <span className="money text-[15px] font-semibold text-navy">{formatMoney(total)}</span>
       </div>
     </div>

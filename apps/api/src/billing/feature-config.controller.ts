@@ -16,6 +16,7 @@ import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { FeatureConfigService, type FeatureConfigModeState } from "./feature-config.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 export class SetFeatureConfigDto {
   @IsString() @MinLength(1) mode: string;
@@ -32,6 +33,7 @@ export class SetFeatureConfigDto {
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class FeatureConfigController {
   constructor(private readonly featureConfig: FeatureConfigService) {}

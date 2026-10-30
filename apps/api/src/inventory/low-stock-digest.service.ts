@@ -5,6 +5,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TENANT_ZONE_SELECT, zoneFromConfig } from "../common/tenant-time-zone";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 /** The `UserPreference.key` a tenant admin's opt-out is stored under (N4). Missing row =
  * enabled, same convention as `notifications.service.ts`'s `pushEnabled` (B04). */
@@ -122,7 +123,7 @@ export class LowStockDigestService {
     const items = await this.getLowStockItems(tenantId);
     if (items.length > 0) {
       const recipients = await this.getDigestRecipients(tenantId);
-      const businessName = config?.businessName || "RouteFlow";
+      const businessName = sellerDisplayName(config, null, "RouteFlow");
       for (const r of recipients) {
         // Fail closed per recipient too — EmailService.send() already never throws, but a
         // template-build error must not stop the remaining recipients or the day-mark below.
@@ -175,13 +176,18 @@ export class LowStockDigestService {
       }));
   }
 
-  /** Active TENANT_ADMINs with an email on file, minus anyone who has explicitly opted out
+  /** Active TENANT_ADMINs and OPERATORs (owner 10-07 OK-6) with an email on file, minus anyone who has explicitly opted out
    * via `UserPreference{key: LOW_STOCK_DIGEST_PREF_KEY, value: "false"}` — B04's per-user
    * opt-out convention, not a new mechanism. Exposed via the existing generic
    * `GET/PATCH /users/me/preferences` endpoints (users.controller.ts) — N4 adds no new API. */
   private async getDigestRecipients(tenantId: string): Promise<{ email: string }[]> {
     const admins = await this.prisma.user.findMany({
-      where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+      where: {
+        tenantId,
+        role: { in: ["TENANT_ADMIN", "OPERATOR"] },
+        status: "ACTIVE",
+        deletedAt: null,
+      },
       select: { id: true, email: true },
     });
     const withEmail = admins.filter((a) => a.email);

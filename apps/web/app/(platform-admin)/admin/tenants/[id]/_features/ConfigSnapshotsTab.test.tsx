@@ -336,8 +336,8 @@ describe("ConfigSnapshotsTab", () => {
     const buttons = await screen.findAllByRole("button", { name: /^Restore now/ });
     const names = buttons.map((b) => b.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(2);
-    expect(names[0]).toMatch(/GROWTH/);
-    expect(names[1]).toMatch(/SCALE/);
+    expect(names[0]).toMatch(/Growth/);
+    expect(names[1]).toMatch(/Scale/);
   });
 
   it("the preview says '1 day old', not '1 days old'", async () => {

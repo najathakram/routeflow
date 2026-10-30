@@ -201,6 +201,40 @@ export class ConnectChargeReviewService {
     }
   }
 
+  /**
+   * W-769 (SA-862 rule 1, W-706 folded): a captured card / ACH settle is never refused; when it displaced unconfirmed rows
+   * on an invoice (they no longer fit), the operators are told after the commit, so a DRAFT does not sit there unseen.
+   * Best-effort: the payment transaction's PAYMENT_UNCONFIRMED_OVER_RESERVED audit row is the durable record.
+   */
+  async flagUnconfirmedOverReserved(input: {
+    tenantId: string | null;
+    paymentIntentId: string;
+    invoiceId: string;
+    displaced: string[];
+  }): Promise<void> {
+    const { tenantId, invoiceId, displaced } = input;
+    if (!tenantId || displaced.length === 0) return;
+    const inv = await this.prisma.forTenant().invoice.findFirst({
+      where: { id: invoiceId },
+      select: { invoiceNumber: true },
+    });
+    const title = "Unconfirmed payment no longer fits";
+    const body =
+      `A card payment filled invoice ${inv?.invoiceNumber ?? invoiceId}, so ${displaced.length === 1 ? "an unconfirmed payment" : "unconfirmed payments"} ` +
+      `on it no longer ${displaced.length === 1 ? "fits" : "fit"}. Void it or move it to the customer's credit.`;
+    try {
+      const operators = await this.prisma.user.findMany({
+        where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
+        select: { id: true },
+      });
+      await Promise.allSettled(
+        operators.map((op) => this.notifications.sendToUser(op.id, { title, body })),
+      );
+    } catch (err: any) {
+      this.logger.warn(`over-reserved notification failed: ${err?.message}`);
+    }
+  }
+
   private async notifyOperators(
     tenantId: string,
     kind: ChargeReviewKind,

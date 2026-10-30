@@ -98,10 +98,17 @@ export const API_ERROR_CODES = {
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  /** SA-1042 B9b, POST /returns 400: the item names an order line that is not on this order, is CANCELLED, or is another product. */
+  RETURN_LINE_NOT_ON_ORDER: "RETURN_LINE_NOT_ON_ORDER",
+  /** SA-1042 B9b, POST /returns 400: a line item mixes `qty` with `boxes`/`pieces`, or splits a line that is not split. */
+  RETURN_LINE_COUNT_SHAPE: "RETURN_LINE_COUNT_SHAPE",
+  /** SA-1042 B9b, POST /returns 400: one product has both line items and pooled items in one payload. */
+  RETURN_LINE_MIXED_WITH_POOLED: "RETURN_LINE_MIXED_WITH_POOLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   LABEL_NAME_TAKEN: "LABEL_NAME_TAKEN",
   LABEL_CHANGE_IN_PROGRESS: "LABEL_CHANGE_IN_PROGRESS",
   PRODUCT_CHAIN_UNREADABLE: "PRODUCT_CHAIN_UNREADABLE",
+  PRODUCT_CHANGED_CONCURRENTLY: "PRODUCT_CHANGED_CONCURRENTLY",
   INVOICE_TAX_STATE_STALE: "INVOICE_TAX_STATE_STALE",
   INVOICE_TOTAL_BELOW_PAID: "INVOICE_TOTAL_BELOW_PAID",
   PRICE_ADJUSTMENT_PARTIAL: "PRICE_ADJUSTMENT_PARTIAL",
@@ -155,9 +162,18 @@ export const API_ERROR_CODES = {
   // SA-767 L-2.2: a durable stock count is being committed (batch by batch); a second commit, a line edit or a
   // discard is refused until the last batch lands. 409, nothing was changed, retry is safe.
   STOCK_COUNT_COMMITTING: "STOCK_COUNT_COMMITTING",
+  // SA-999 (row 562 S1): a stock count whose batched seed has not stamped its completion (still running, or the
+  // process died mid-seed) cannot be committed. 409, nothing was written; retry is safe once the seed finishes.
+  STOCK_COUNT_SEEDING: "STOCK_COUNT_SEEDING",
   // SA-767 r-note 5 SA-3: one OPEN count per product. Adding a product to a count (or committing one) is refused
   // while another OPEN / REVIEW count already has a line for it. 409, nothing was changed.
   PRODUCT_IN_OPEN_COUNT: "PRODUCT_IN_OPEN_COUNT",
+  // B640 (row 562): a free-text stock reference may not start with a head the stock-count commits key their
+  // idempotency on (STOCK_COUNT-). 400, nothing was written.
+  STOCK_REFERENCE_RESERVED: "STOCK_REFERENCE_RESERVED",
+  // SA-990 (row 562): the legacy one-shot count was sent a sessionId that already names a saved stock count.
+  // 409, nothing was written.
+  STOCK_COUNT_ID_TAKEN: "STOCK_COUNT_ID_TAKEN",
   PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
   BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
   INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
@@ -212,10 +228,24 @@ export const API_ERROR_CODES = {
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
   AI_PARSE_FAILED: "AI_PARSE_FAILED",
+  /** SA-1035: PATCH /platform-admin/ai-config, 400: a model id that is not on the AI_MODELS list. */
+  AI_MODEL_UNKNOWN: "AI_MODEL_UNKNOWN",
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
+  FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
+  /** B297 PR5: the last-line ledger guard: a row would be booked into a LOCKED filing's period. */
+  LEDGER_PERIOD_LOCKED: "LEDGER_PERIOD_LOCKED",
+  /** B297 PR5: the lock endpoint's refusals. */
+  FILING_NOT_LOCKABLE: "FILING_NOT_LOCKABLE",
+  FILING_ALREADY_LOCKED: "FILING_ALREADY_LOCKED",
+  FILING_PERIOD_RUNNING: "FILING_PERIOD_RUNNING",
+  /** SA-995: the lock found the filing's figures differ from what the ledger gives now; regenerate, check, lock. */
+  FILING_STALE: "FILING_STALE",
+  /** SA-997: locking a filing is switched off (FILING_LOCK_READY) until the sale-routing work lands. */
+  FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
   FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
@@ -259,6 +289,7 @@ export const API_ERROR_CODES = {
   BUSINESS_PROFILE_BILLING_FAILED: "BUSINESS_PROFILE_BILLING_FAILED",
   PRICE_OVERRIDE_STRIPE_AHEAD: "PRICE_OVERRIDE_STRIPE_AHEAD",
   PLAN_CHANGE_STRIPE_AHEAD: "PLAN_CHANGE_STRIPE_AHEAD",
+  PLAN_PRICE_INVALID: "PLAN_PRICE_INVALID",
   CHECKOUT_ANNUAL_NOT_SUPPORTED: "CHECKOUT_ANNUAL_NOT_SUPPORTED",
   CHECKOUT_ANCHOR_WINDOW: "CHECKOUT_ANCHOR_WINDOW",
   TENANT_ADMIN_LOCKED: "TENANT_ADMIN_LOCKED",
@@ -280,6 +311,9 @@ export const API_ERROR_CODES = {
   CATCHUP_NO_BILLABLE_PRICE: "CATCHUP_NO_BILLABLE_PRICE",
   ACTIVATION_CATCHUP_SESSION_OPEN: "ACTIVATION_CATCHUP_SESSION_OPEN",
   EXTERNAL_PAYMENT_USE_CATCHUP: "EXTERNAL_PAYMENT_USE_CATCHUP",
+  USE_PLAN_CHANGE: "USE_PLAN_CHANGE",
+  CHECKOUT_PAYMENT_PROCESSING: "CHECKOUT_PAYMENT_PROCESSING",
+  CHOOSE_PLAN_AT_CHECKOUT: "CHOOSE_PLAN_AT_CHECKOUT",
   PAYMENT_OVERDUE: "PAYMENT_OVERDUE",
   PAYMENT_STATE_UNKNOWN: "PAYMENT_STATE_UNKNOWN",
   SCHEDULED_PRICE_CHANGE_REFUSED: "SCHEDULED_PRICE_CHANGE_REFUSED",
@@ -329,6 +363,7 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  PROMOTIONS_OFF: "PROMOTIONS_OFF",
   COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
   DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
   DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
@@ -341,10 +376,13 @@ export const API_ERROR_CODES = {
   WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
   WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
   WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  WALK_IN_STORE_CREDIT_REFUSED: "WALK_IN_STORE_CREDIT_REFUSED",
   COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
   COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
   /** 400 from POST /orders/counter-sale: a CHECK dated after the tenant's today cannot be tendered at the till; put the sale on account and record the check when it clears. Nothing is written. */
   COUNTER_CHECK_POSTDATED: "COUNTER_CHECK_POSTDATED",
+  /** 400 from POST /orders/counter-sale and the pickup hand-over (SA-1026): `expectedMethod` ("the check is not in hand yet") is valid only with `method: "ON_ACCOUNT"`. Nothing is written. */
+  COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT: "COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT",
   COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
   COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
   /**
@@ -376,6 +414,11 @@ export const API_ERROR_CODES = {
    * the write (a dispatch attached it), so releasing the old link would have cleared a fresh one. Nothing was written.
    */
   ORDER_RUN_LINK_CHANGED: "ORDER_RUN_LINK_CHANGED",
+  /**
+   * W-769 (SA-862 rule 4): PATCH /invoices/:id/payments/:paymentId, 409: confirming (DRAFT → PAID) or reopening (VOID → PAID) a
+   * payment when real money already covers the invoice. Nothing written; void it or move it to the customer's credit.
+   */
+  UNCONFIRMED_PAYMENT_SUPERSEDED: "UNCONFIRMED_PAYMENT_SUPERSEDED",
   /**
    * 400 from `PATCH /orders/:id/fulfill-path` from PICKUP to ROUTE or SHIP: the customer has no address on file,
    * so there is nowhere to deliver to and no state to judge selling restrictions on. Nothing was written.
@@ -527,6 +570,12 @@ export const API_ERROR_CODES = {
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
+   * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
+   * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
+   * hand-over stands" (raised after the claim).
+   */
+  COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
+  /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: the hand-over committed, no payment
    * was sent, and the invoices final after DELIVERED (a remainder or rebuild) leave money owing. Retry with a payment.
    */
@@ -538,6 +587,8 @@ export const API_ERROR_CODES = {
    * with a different tender or amount). 409. A same-tender, same-amount replay is a 200 with the stored result instead.
    */
   RETURN_ALREADY_RESOLVED: "RETURN_ALREADY_RESOLVED",
+  /** W-863 (SA-945 MUST 6, G5): the return's credit actually issued in the sale's transaction is below what the credit gate netted (a concurrent return of the same sold line landed between the preview and the capture). 409; nothing is committed; carries `previewed` and `issued`. */
+  RETURN_CREDIT_CHANGED: "RETURN_CREDIT_CHANGED",
   /** SA-727: the client's expectedAmount differs from the amount the server computed for the return. 409; carries `amount`. */
   REFUND_AMOUNT_CHANGED: "REFUND_AMOUNT_CHANGED",
   /** SA-727: a cash/card/check refund needs every source invoice paid in full (non-VOID, balance 0); otherwise issue store credit. 409. */
@@ -696,6 +747,8 @@ export const API_ERROR_CODES = {
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
+  /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
+  ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

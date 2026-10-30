@@ -37,3 +37,22 @@ export function matchPlanGatedRoute(pathname: string): FlagKey | null {
     if (pathname === prefix || pathname.startsWith(prefix + "/")) return key;
   return null;
 }
+
+/**
+ * SA-1032: sidebar / command-palette hrefs hidden while a back-office config mode reads a given
+ * value — `{ href: [modeKey, hiddenWhen] }`. Modes come from `GET /tenants/me/features`; an unset
+ * mode or an unloaded answer keeps the entry (today's behaviour). The server refuses writes.
+ */
+export const MODE_GATED_NAV: Readonly<Record<string, readonly [string, string]>> = {
+  "/promotions": ["promotions", "off"],
+};
+
+/** False only when `href` is mode-gated and the tenant's mode equals its hiding value. */
+export function modeGatedVisible(
+  href: string,
+  modes: Readonly<Record<string, string>> | null | undefined,
+): boolean {
+  const gate = MODE_GATED_NAV[href];
+  if (!gate || !modes) return true;
+  return modes[gate[0]] !== gate[1];
+}

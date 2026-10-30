@@ -199,25 +199,27 @@ describe("page wiring: the Units & prices card reads only where the grid owns th
     expect(cardProps).not.toHaveBeenCalled();
   });
 
-  it("row 742: v2 on and a variant (priced by its family): the card stays for unit structure only", async () => {
+  it("SA-1041: v2 on and a variant: no old card (the shell adds units there too)", async () => {
     getProduct.mockImplementation(() =>
       Promise.resolve({ data: { ...PRODUCT, parentProductId: "fam-1" } }),
     );
-    await renderPage();
-    expect(lastProps()).toMatchObject({ structureOnly: true, hideAddForm: true });
-    expect(lastProps().readOnly).toBeFalsy();
+    renderWithProviders(<ProductDetailPage />);
+    await screen.findByTestId("product-details-card");
+    expect(screen.queryByTestId("units-card")).toBeNull();
+    expect(cardProps).not.toHaveBeenCalled();
   });
 
-  it("row 742: v2 on and a recipe (priced by its recipe): the card stays for unit structure only", async () => {
+  it("SA-1041: v2 on and a recipe: no old card (the shell adds units there too)", async () => {
     kind = "RECIPE";
-    await renderPage();
-    expect(lastProps()).toMatchObject({ structureOnly: true, hideAddForm: true });
+    renderWithProviders(<ProductDetailPage />);
+    await screen.findByTestId("product-details-card");
+    expect(screen.queryByTestId("units-card")).toBeNull();
+    expect(cardProps).not.toHaveBeenCalled();
   });
 
   it("v2 off: the card is the old editable one, prices included", async () => {
     flagOn = false;
     await renderPage();
-    expect(lastProps()).toMatchObject({ hideAddForm: false, structureOnly: false });
     expect(lastProps().readOnly).toBeFalsy();
   });
 
@@ -227,6 +229,6 @@ describe("page wiring: the Units & prices card reads only where the grid owns th
       Promise.resolve({ data: { ...PRODUCT, parentProductId: "fam-1" } }),
     );
     await renderPage();
-    expect(lastProps()).toMatchObject({ structureOnly: false });
+    expect(lastProps().readOnly).toBeFalsy();
   });
 });

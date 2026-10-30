@@ -74,7 +74,7 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
   it("REG-B857 T4: the bulk 'New plan' select offers the catalog plans and applies GROWTH", async () => {
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     await waitFor(() =>
@@ -98,7 +98,7 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
     mockFetchPlanCatalog.mockReturnValue(new Promise(() => {}));
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Select acme" }));
-    fireEvent.click(screen.getByRole("button", { name: "Change Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
 
     const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => o.value)).toEqual(["STARTER"]);
@@ -106,27 +106,27 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
   });
 });
 
-describe("Back office P2: the list row no longer carries Suspend or Impersonate", () => {
+describe("Back office P2: the list row no longer carries Suspend or Sign in as admin", () => {
   it.each(["TRIAL", "ACTIVE", "READ_ONLY"])(
-    "a %s tenant's row has View only: no Suspend, no Impersonate, no Delete, no Reactivate",
+    "a %s tenant's row has View only: no Suspend, no Sign in as admin, no Delete, no Reactivate",
     async (status) => {
       mockStatus = status;
       render(<AdminTenantsPage />);
       await screen.findByRole("link", { name: "View" });
       expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Sign in as admin" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
     },
   );
 
-  it("a SUSPENDED tenant's row keeps Reactivate and Delete, and still no Suspend or Impersonate", async () => {
+  it("a SUSPENDED tenant's row keeps Reactivate and Delete, and still no Suspend or Sign in as admin", async () => {
     mockStatus = "SUSPENDED";
     render(<AdminTenantsPage />);
     await screen.findByRole("button", { name: "Reactivate" });
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sign in as admin" })).toBeNull();
   });
 
   it("Reactivate sends one PATCH to ACTIVE; a failure shows fixed copy, not the server's text", async () => {
@@ -155,7 +155,7 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     render(<AdminTenantsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete Acme (acme)?" });
-    const del = within(dialog).getByRole("button", { name: "Delete Tenant" });
+    const del = within(dialog).getByRole("button", { name: "Delete tenant" });
     expect(del).toBeDisabled();
     expect(mockDelete).not.toHaveBeenCalled();
 
@@ -179,7 +179,7 @@ describe("Back office P1: Delete on the tenants list uses the shared dialog", ()
     fireEvent.change(within(dialog).getByLabelText("Type the tenant slug to confirm deletion"), {
       target: { value: "acme" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Delete Tenant" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete tenant" }));
     expect(
       await within(dialog).findByText(
         "Only a suspended tenant can be deleted. Suspend it first, then delete.",

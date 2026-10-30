@@ -5,7 +5,9 @@ import Link from "next/link";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Download, FileText, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
+import { isLicenceExpired } from "@routeflow/types";
 import { useAuth } from "@/lib/auth-context";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -50,7 +52,7 @@ export function CompliancePackPanel({ categoryId: _categoryId }: { categoryId: s
       <Tabs.Root defaultValue="reports">
         <Tabs.List className="flex gap-1 border-b border-surface-border">
           {[
-            { value: "reports", label: "Monthly Reports" },
+            { value: "reports", label: "Monthly reports" },
             { value: "inventory", label: "Inventory" },
             { value: "purchases", label: "Purchases" },
             { value: "sales", label: "Sales" },
@@ -164,7 +166,7 @@ function ReportsTab() {
                 <th className="px-4 py-3 text-right font-medium">Purchases</th>
                 <th className="px-4 py-3 text-right font-medium">Sales</th>
                 <th className="px-4 py-3 text-right font-medium">Tax</th>
-                <th className="px-4 py-3 text-right font-medium">Ending Stock Value</th>
+                <th className="px-4 py-3 text-right font-medium">Ending stock value</th>
                 <th className="px-4 py-3 text-left font-medium">Generated</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -256,7 +258,7 @@ function InventoryTab() {
             <th className="px-4 py-3 text-left font-medium">Product</th>
             <th className="px-4 py-3 text-left font-medium">SKU</th>
             <th className="px-4 py-3 text-right font-medium">Stock</th>
-            <th className="px-4 py-3 text-right font-medium">Avg Cost</th>
+            <th className="px-4 py-3 text-right font-medium">Avg cost</th>
             <th className="px-4 py-3 text-right font-medium">Value</th>
           </tr>
         </thead>
@@ -344,7 +346,7 @@ function PurchasesTab() {
                 <th className="px-4 py-3 text-left font-medium">License #</th>
                 <th className="px-4 py-3 text-left font-medium">Reference</th>
                 <th className="px-4 py-3 text-right font-medium">Qty</th>
-                <th className="px-4 py-3 text-right font-medium">Unit Cost</th>
+                <th className="px-4 py-3 text-right font-medium">Unit cost</th>
                 <th className="px-4 py-3 text-right font-medium">Value</th>
               </tr>
             </thead>
@@ -377,6 +379,7 @@ function PurchasesTab() {
 
 function SalesTab() {
   const range = useRangeState();
+  const zone = useTenantTimeZone();
   const { data: sales = [], isLoading } = useTobaccoSales({ from: range.from, to: range.to });
   return (
     <div>
@@ -404,9 +407,10 @@ function SalesTab() {
             </thead>
             <tbody className="divide-y divide-surface-border">
               {sales.map((s) => {
+                // B330: good through the END of the printed day in the business's zone.
                 const licenseExpired =
                   s.customer?.tobaccoLicenseExpiry != null &&
-                  new Date(s.customer.tobaccoLicenseExpiry) < new Date();
+                  isLicenceExpired(s.customer.tobaccoLicenseExpiry, new Date(), zone);
                 const noLicense = !s.customer?.tobaccoLicenseNo;
                 return (
                   <tr key={s.id} className="transition-colors hover:bg-surface-raised/50">
@@ -461,7 +465,7 @@ function SettingsCard() {
   const update = useUpdateTobaccoSettings();
 
   return (
-    <Card title="Tobacco Settings">
+    <Card title="Tobacco settings">
       <label className="flex items-start gap-3">
         <input
           type="checkbox"

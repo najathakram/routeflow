@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/payment-requests";
 import { useToast, EmptyState, Button, Badge, Modal, Textarea } from "@routeflow/ui/web";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { useAuth } from "@/lib/auth-context";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
@@ -25,10 +26,6 @@ function formatAge(iso: string): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function extractErrorMessage(err: unknown): string | undefined {
-  return (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
 }
 
 const DECISION_LABELS: Partial<Record<PaymentRequest["status"], string>> = {
@@ -57,7 +54,7 @@ function AllocationPreview({ lines }: { lines: PaymentRequest["allocationPreview
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
+    <div className="overflow-x-auto rounded-lg border border-surface-border bg-white">
       <table className="w-full text-sm">
         <thead className="bg-surface-raised text-xs font-medium text-navy/70">
           <tr>
@@ -161,7 +158,7 @@ function RequestRow({
 export default function PaymentRequestsPage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Payment Requests");
+    setTitle("Payment requests");
   }, [setTitle]);
   const { toast } = useToast();
   const { user } = useAuth();
@@ -196,8 +193,10 @@ export default function PaymentRequestsPage() {
       // SA-837b item 2: a duplicate reference names the existing payment; the approving staff member may "Record anyway".
       if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleApprove(true))) return;
       // A closed-day refusal is fixed copy (the global toast is quiet for it via the hook's meta): this is the one toast.
+      const closed = dayClosedCopy(err);
       toast({
-        title: dayClosedCopy(err) ?? extractErrorMessage(err) ?? "Failed to approve payment",
+        title: closed ?? "Failed to approve payment",
+        description: closed ? undefined : genericToastCopy(err),
         variant: "error",
       });
     }
@@ -215,7 +214,11 @@ export default function PaymentRequestsPage() {
       toast({ title: "Payment rejected", variant: "success" });
       closeReject();
     } catch (err: unknown) {
-      toast({ title: extractErrorMessage(err) ?? "Failed to reject payment", variant: "error" });
+      toast({
+        title: "Failed to reject payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -281,7 +284,7 @@ export default function PaymentRequestsPage() {
 
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-navy">Payment Requests</h2>
+        <h2 className="text-2xl font-bold text-navy">Payment requests</h2>
         <p className="text-sm text-navy/70">
           Buyer-declared cash payments awaiting approval, plus card payment history.
         </p>

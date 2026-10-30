@@ -11,10 +11,17 @@ import {
   creditOverLimitSentence,
   COUNTER_COPY,
 } from "@routeflow/types";
-import type { CounterSalePaymentMethod, PickupCompleteResponse } from "@routeflow/types";
+import type {
+  CounterSalePaymentMethod,
+  PickupCompleteResponse,
+  ToCollectMethod,
+} from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
+import { useCounterDefaultTender } from "@/lib/api/counter-customer-credit";
 import { useOptionalAuth } from "@/lib/auth-context";
-import { duplicatePaymentRefMessage } from "@/lib/duplicate-payment-ref";
+import { duplicatePaymentRefMessage, retryCanHelp } from "@/lib/duplicate-payment-ref";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
+import { CheckNotReceivedChoice } from "../../_components/CheckNotReceivedChoice";
 import {
   paymentProblemCopy,
   PICKUP_DEAD_INVOICE,
@@ -27,6 +34,7 @@ import {
   pickupErrorCode,
   quickTenderOptions,
   readHeldPickupKey,
+  resolveTender,
   validatePayment,
   writeHeldPickupKey,
 } from "@/lib/counter-sale";
@@ -43,6 +51,8 @@ type Body = {
     amount?: number;
     reference?: string;
     recordAnyway?: boolean;
+    /** SA-1026: with ON_ACCOUNT only: "the check is not received yet" (the order is left To collect) */
+    expectedMethod?: ToCollectMethod;
   };
   /** SA-913 R8: the confirmed re-send after COUNTER_COMPLETE_ON_RUN (same key) */
   takeOffRun?: boolean;
@@ -65,6 +75,7 @@ export function PickupCompleteDialog({
   total,
   invoices,
   isWalkIn,
+  customerId = null,
   handOver = false,
   completeMode = false,
   heldKey,
@@ -78,6 +89,8 @@ export function PickupCompleteDialog({
   total: number;
   invoices: ReadonlyArray<{ id: string; status: string }>;
   isWalkIn: boolean;
+  /** SA-933: the order's customer; their terms set the default tender (Net N is On account). Null/walk-in: Cash. */
+  customerId?: string | null;
   /** POS-mode order (PICKUP, not a counter sale): the confirm button reads "Hand over". Counter / portal keep "Picked up". */
   handOver?: boolean;
   /** I-120: "Complete at counter" (any open order): its title, confirm and outcome copy; the payment step is the same. */
@@ -109,12 +122,31 @@ export function PickupCompleteDialog({
 
   const keyRef = React.useRef<string>("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
+  // SA-933: the same default the till applies, until the cashier chooses (a late-loading read never overrides a choice).
+  const defaultTender = useCounterDefaultTender(open && !isWalkIn ? customerId : null);
+  const defaultRef = React.useRef(defaultTender);
+  defaultRef.current = defaultTender;
+  const decidedRef = React.useRef(false);
   const [tendered, setTendered] = React.useState("");
+  /** Row 312(b): the value the dialog itself put in the cash field; a different value is the cashier's own. */
+  const autoTendered = React.useRef("");
   const [reference, setReference] = React.useState("");
+  // SA-1026: "Check not received yet" under Check (named customer): sent as On account + expectedMethod CHECK.
+  const [checkNotReceived, setCheckNotReceived] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [errorCode, setErrorCode] = React.useState<string | undefined>();
   const [outcome, setOutcome] = React.useState<PickupCompleteResponse | null>(null);
   const lastBody = React.useRef<Body>({});
+  // SA-1026 D: "Change check number" returns to the tender with the number field focused.
+  const numberRef = React.useRef<HTMLInputElement>(null);
+  const [focusNumber, setFocusNumber] = React.useState(0);
+  React.useEffect(() => {
+    if (focusNumber > 0) numberRef.current?.focus();
+  }, [focusNumber]);
+
+  React.useEffect(() => {
+    if (open && !decidedRef.current && defaultTender !== null) setMethod(defaultTender);
+  }, [open, defaultTender]);
 
   React.useEffect(() => {
     if (open) {
@@ -123,9 +155,12 @@ export function PickupCompleteDialog({
         held.current = stored ? { orderId, key: stored } : null;
       }
       keyRef.current = held.current?.orderId === orderId ? held.current.key : newIdempotencyKey();
-      setMethod("CASH");
+      decidedRef.current = false;
+      setMethod(defaultRef.current ?? "CASH");
+      autoTendered.current = "";
       setTendered("");
       setReference("");
+      setCheckNotReceived(false);
       setError(null);
       setErrorCode(undefined);
       setOwed(null);
@@ -133,6 +168,18 @@ export function PickupCompleteDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Row 312(b): the cash amount starts at the amount due (as Exact sets it), and follows it (a balance the server
+  // reported later) until the cashier types. One press fewer on an exact cash hand-over; a typed amount is never replaced.
+  React.useEffect(() => {
+    if (!open || due === null || due <= 0) return;
+    const next = String(roundMoney(due)); // the same string Exact sets (quickTenderOptions)
+    setTendered((cur) => {
+      if (cur !== autoTendered.current) return cur;
+      autoTendered.current = next;
+      return next;
+    });
+  }, [open, due]);
 
   const tenderedNum = Number(tendered) || 0;
 
@@ -177,24 +224,29 @@ export function PickupCompleteDialog({
   function confirm() {
     if (due === null) return;
     if (nothingToCollect) return void send({});
+    const tender = resolveTender(method, checkNotReceived);
     const problem = validatePayment({
-      method,
+      method: tender.method,
       total: due,
       tendered: tenderedNum,
       reference,
       isWalkIn,
+      fullTenderOnly: true, // SA-933 S4 opened part payment at the counter sale only; this dialog keeps the full-tender rule
     });
     if (problem) return setError(paymentProblemCopy(problem, due));
     void send({
       payment: {
-        method,
-        ...(method === "CASH" ? { amount: roundMoney(tenderedNum) } : {}),
-        ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...tender,
+        ...(tender.method === "CASH" ? { amount: roundMoney(tenderedNum) } : {}),
+        // SA-1026: "Check not received yet" sends no number: a typed one is dropped, never deduped
+        ...(reference.trim() && !tender.expectedMethod ? { reference: reference.trim() } : {}),
       },
     });
   }
 
   const unrecorded = outcome !== null && !outcome.paymentRecorded;
+  // SA-1026 B: after the hand-over the invoices are issued and numbered, so Print invoice prints the final copies (every non-void invoice of the order, from the response)
+  const printInvoice = usePrintInvoice();
   // SA-837b item 3: the payment was refused as a duplicate reference. The shared sentence names the existing payment, and a
   // staff role may resend THIS hand-over (same key, same body) with the generic `payment.recordAnyway` flag.
   const role = (useOptionalAuth()?.user as { role?: string } | null | undefined)?.role;
@@ -215,6 +267,18 @@ export function PickupCompleteDialog({
   const sentPayment = lastBody.current?.payment;
   const recordAnyway = () =>
     void send({ ...lastBody.current, payment: { ...sentPayment!, recordAnyway: true } });
+  // SA-1026 D: a duplicate reference can never pass on a retry. Back to the tender (Check, the typed number kept), where the
+  // cashier fixes the number or picks "Check not received yet". The dialog keeps its key: the resend is the same hand-over.
+  const changeCheckNumber = () => {
+    if (outcome && outcome.balanceDue > 0) setOwed(outcome.balanceDue); // the tender step needs a balance to collect
+    setOutcome(null);
+    setMethod("CHECK");
+    setCheckNotReceived(false);
+    setReference(sentPayment?.reference ?? reference);
+    setError(null);
+    setErrorCode(undefined);
+    setFocusNumber((n) => n + 1);
+  };
 
   return (
     <Modal
@@ -225,7 +289,7 @@ export function PickupCompleteDialog({
       footer={
         outcome ? (
           <>
-            {unrecorded && (
+            {unrecorded && retryCanHelp(outcome) && (
               <Button
                 variant="secondary"
                 type="button"
@@ -233,6 +297,11 @@ export function PickupCompleteDialog({
                 onClick={() => void send(lastBody.current)}
               >
                 Retry
+              </Button>
+            )}
+            {duplicateMessage && (
+              <Button type="button" onClick={changeCheckNumber}>
+                Change check number
               </Button>
             )}
             {duplicateMessage && sentPayment && canRecordAnyway(role) && (
@@ -243,6 +312,20 @@ export function PickupCompleteDialog({
                 onClick={recordAnyway}
               >
                 {RECORD_ANYWAY_LABEL}
+              </Button>
+            )}
+            {outcome && !unrecorded && (
+              <Button
+                variant="secondary"
+                type="button"
+                disabled={printInvoice.printing}
+                onClick={() =>
+                  void printInvoice.print(
+                    outcome.invoiceIds?.length ? outcome.invoiceIds : [outcome.invoiceId],
+                  )
+                }
+              >
+                Print invoice
               </Button>
             )}
             <Button type="button" onClick={onClose}>
@@ -319,9 +402,11 @@ export function PickupCompleteDialog({
                   ? outcome.emailed
                     ? COUNTER_COPY.completedEmailed
                     : COUNTER_COPY.completed
-                  : outcome.balanceDue > 0
-                    ? `Picked up. ${money(outcome.balanceDue)} still due.`
-                    : "Picked up and paid."}
+                  : outcome.toCollect === "TO_COLLECT" && outcome.balanceDue > 0
+                    ? `Picked up. To collect: ${money(outcome.balanceDue)}.`
+                    : outcome.balanceDue > 0
+                      ? `Picked up. ${money(outcome.balanceDue)} still due.`
+                      : "Picked up and paid."}
                 {completeMode && outcome.balanceDue > 0
                   ? ` ${money(outcome.balanceDue)} still due.`
                   : ""}
@@ -329,7 +414,9 @@ export function PickupCompleteDialog({
             )}
             {unrecorded && (
               <p className="text-xs text-navy/70">
-                The order is handed over, but the payment was not saved. Retry to record it.
+                {duplicateMessage
+                  ? "The order is handed over, but the payment was not saved."
+                  : "The order is handed over, but the payment was not saved. Retry to record it."}
               </p>
             )}
             {duplicateMessage && <p className="text-sm text-navy">{duplicateMessage}</p>}
@@ -359,7 +446,7 @@ export function PickupCompleteDialog({
               Collect <strong>{money(due)}</strong>
             </p>
             <div className="flex flex-wrap gap-2">
-              {paymentMethodOptions(isWalkIn)
+              {paymentMethodOptions(isWalkIn, defaultTender)
                 .filter((m) => !m.disabled) // a walk-in has no account: On account is not offered at all
                 .map((m) => (
                   <button
@@ -372,7 +459,9 @@ export function PickupCompleteDialog({
                       method === m.method && "border-brand-600 bg-brand-50 font-semibold",
                     )}
                     onClick={() => {
+                      decidedRef.current = true;
                       setMethod(m.method);
+                      setCheckNotReceived(false); // the choice belongs to Check
                       setError(null);
                     }}
                   >
@@ -389,7 +478,10 @@ export function PickupCompleteDialog({
                       type="button"
                       disabled={q.disabled}
                       className="rounded border px-3 py-2 text-sm disabled:opacity-40"
-                      onClick={() => setTendered(String(q.amount))}
+                      onClick={() => {
+                        decidedRef.current = true;
+                        setTendered(String(q.amount));
+                      }}
                     >
                       {q.label}
                     </button>
@@ -402,7 +494,10 @@ export function PickupCompleteDialog({
                     inputMode="decimal"
                     className="mt-1 w-full rounded border px-3 py-2"
                     value={tendered}
-                    onChange={(e) => setTendered(e.target.value)}
+                    onChange={(e) => {
+                      decidedRef.current = true; // typed money is a decision: a late default never flips the tender
+                      setTendered(e.target.value);
+                    }}
                   />
                 </label>
                 <p className="text-2xl font-bold" data-testid="pickup-change-due">
@@ -410,16 +505,30 @@ export function PickupCompleteDialog({
                 </p>
               </div>
             )}
-            {method === "CHECK" && (
+            {method === "CHECK" && !checkNotReceived && (
               <label className="block text-sm">
                 Check number
                 <input
                   aria-label="Check number"
+                  ref={numberRef}
                   className="mt-1 w-full rounded border px-3 py-2"
                   value={reference}
-                  onChange={(e) => setReference(e.target.value)}
+                  onChange={(e) => {
+                    decidedRef.current = true;
+                    setReference(e.target.value);
+                  }}
                 />
               </label>
+            )}
+            {/* SA-1026: a walk-in has no account to collect on, so the choice is not offered at all */}
+            {method === "CHECK" && !isWalkIn && (
+              <CheckNotReceivedChoice
+                checked={checkNotReceived}
+                onChange={(v) => {
+                  setCheckNotReceived(v);
+                  setError(null);
+                }}
+              />
             )}
           </section>
         )}

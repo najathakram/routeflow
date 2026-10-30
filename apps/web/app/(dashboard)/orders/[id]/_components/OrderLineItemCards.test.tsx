@@ -189,9 +189,15 @@ describe("OrderLineItemCards", () => {
       />,
     );
     expect(screen.getByTestId("order-lines-summary")).toHaveTextContent("1 item · $1,234.50");
-    expect(screen.getByText("Order Total")).toBeInTheDocument();
+    expect(screen.getByText("Order total")).toBeInTheDocument();
     // the footer repeats the amount on its own (the summary carries it inside one text node)
     expect(screen.getByText("$1,234.50")).toBeInTheDocument();
+  });
+
+  // r5 Q20: from lg the Summary card beside the lines carries the total, so this footer is for below lg only.
+  it("the Order Total footer is hidden from lg (the Summary card carries it there)", () => {
+    render(<OrderLineItemCards lineItems={[line()]} orderStatus="CONFIRMED" total={52} />);
+    expect(screen.getByText("Order total").parentElement).toHaveClass("lg:hidden");
   });
 
   it("renders one card per line with name, sku, qty × price and stored total", () => {

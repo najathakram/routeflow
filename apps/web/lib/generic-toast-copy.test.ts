@@ -2,7 +2,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
 import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
-import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
+import { PROMOTIONS_OFF_COPY, codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
  * B980: the generic mutation toast shows FIXED copy chosen by code, then status. The raw server
@@ -155,6 +155,18 @@ describe("genericToastCopy: codes users rely on", () => {
     ).not.toMatch(/part-way/);
   });
 
+  it("SA-774: the card-first plan refusals show fixed copy, never the server message", () => {
+    for (const code of [
+      API_ERROR_CODES.USE_PLAN_CHANGE,
+      API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING,
+      API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT,
+    ]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+  });
+
   it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
     for (const code of [API_ERROR_CODES.PAYMENT_OVERDUE, API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]) {
       const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
@@ -173,12 +185,30 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(copy).toBe("Nothing is due right now.");
   });
 
+  it("UNCONFIRMED_PAYMENT_SUPERSEDED (W-706: a card payment filled the invoice first) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, {
+        code: API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED,
+        message: "raw server text",
+      }),
+    );
+    expect(copy).toBe(
+      "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
+    );
+    expect(copy).not.toMatch(/[–—]/);
+  });
+
   it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
     const copy = genericToastCopy(
       err(409, { code: API_ERROR_CODES.PAYMENT_TERMS_CHANGED, message: "raw server text" }),
     );
     expect(copy).toBe("The amount changed. We've refreshed it, please check and try again.");
     expect(copy).not.toMatch(/[–—]/);
+  });
+
+  it("PRODUCT_CHANGED_CONCURRENTLY (Row 519) is fixed copy that does not blame a label change", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY }));
+    expect(copy).toBe("This product changed while you were saving it. Reload it and try again.");
   });
 
   it("PRODUCT_CHAIN_UNREADABLE (H2: a reparent refused on an unreadable family chain) is fixed copy", () => {
@@ -253,6 +283,7 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
     ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
+    ["STOCK_COUNT_SEEDING", /^This count is still being prepared. Try again in a moment.$/],
     // SA-767 r-note 5 SA-3: the fallback toast (the count screens show the session name themselves).
     ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
@@ -640,6 +671,17 @@ describe("handleMutationError: opt-outs and handled codes are unchanged (B980)",
       variant: "error",
     });
     expect(JSON.stringify(toast.mock.calls)).not.toContain(RAW);
+  });
+
+  it("W-G2 (SA-1032): a 403 PROMOTIONS_OFF toasts the mapped sentence once, never the server text or the permission line", () => {
+    const toast = run(err(403, { code: API_ERROR_CODES.PROMOTIONS_OFF }), undefined);
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: PROMOTIONS_OFF_COPY, variant: "error" });
+    expect(PROMOTIONS_OFF_COPY).toBe(
+      "Promotions are turned off for this business. Customers don't see them, and new orders don't use them. Past orders keep their promotion prices.",
+    );
+    expect(JSON.stringify(toast.mock.calls)).not.toContain(RAW);
+    expect(JSON.stringify(toast.mock.calls)).not.toContain("You don't have permission");
   });
 });
 

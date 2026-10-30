@@ -144,7 +144,7 @@ describe("new invoice — the line-item row stacks below md (390px clipping)", (
 
   it("the table header is hidden below md (the labels move onto each field) and kept from md up", async () => {
     await openBuilderWithOneLine();
-    const header = screen.getByText("Item Details").parentElement!;
+    const header = screen.getByText("Item details").parentElement!;
     expect(cls(header)).toEqual(expect.arrayContaining(["hidden", "md:grid"]));
     expect(cls(header)).toContain("md:grid-cols-[1fr_70px_100px_90px_44px_32px]");
     for (const t of ["Qty", "Rate", "Discount", "Tax"]) {

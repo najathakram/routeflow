@@ -34,10 +34,11 @@ beforeEach(() => {
           configured: false,
           source: "none",
           keyPreview: null,
-          model: "claude-sonnet-4-5",
+          model: "claude-sonnet-5-5",
+          scanModel: "claude-haiku-5-5",
           maxTokens: 4096,
           verifiedAt: null,
-          availableModels: ["claude-sonnet-4-5"],
+          availableModels: [{ id: "claude-sonnet-5-5", label: "Sonnet 5.5" }],
         },
       });
     }

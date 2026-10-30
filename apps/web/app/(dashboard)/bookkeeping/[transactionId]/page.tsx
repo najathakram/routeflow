@@ -87,7 +87,7 @@ function RecordPaymentModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Record Payment"
+      title="Record payment"
       description="Log a payment received for this invoice."
       footer={
         <>
@@ -95,7 +95,7 @@ function RecordPaymentModal({
             Cancel
           </Button>
           <Button type="submit" form="payment-form" loading={isPending}>
-            Record Payment
+            Record payment
           </Button>
         </>
       }
@@ -140,7 +140,7 @@ export default function TransactionDetailPage() {
   const { user } = useAuth();
   const { data: txn, isLoading, isError } = useTransaction(transactionId);
   const recordPayment = useRecordPayment();
-  const downloadInvoice = useDownloadInvoice();
+  const downloadInvoice = useDownloadInvoice({ localErrorToast: true }); // the onError toast below is the only one
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
 
   const handleDownloadPdf = () => {
@@ -205,7 +205,7 @@ export default function TransactionDetailPage() {
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Invoice not found.</p>
         <Button variant="secondary" href="/bookkeeping">
-          Back to Bookkeeping
+          Back to bookkeeping
         </Button>
       </div>
     );
@@ -276,7 +276,7 @@ export default function TransactionDetailPage() {
               leftIcon={<Plus className="h-4 w-4" />}
               onClick={() => setIsPaymentOpen(true)}
             >
-              Record Payment
+              Record payment
             </WriteButton>
           )}
         </div>
@@ -293,10 +293,9 @@ export default function TransactionDetailPage() {
                   <BrandMark size={32} />
                   <span className="text-lg font-bold text-navy">RouteFlow</span>
                 </div>
-                <p className="mt-1 text-xs text-navy/70">Austin, TX · routeflow.io</p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-bold text-navy">INVOICE</p>
+                <p className="text-xl font-bold uppercase text-navy">Invoice</p>
                 <p className="mt-1 font-mono text-sm text-navy/70">
                   {txn.order?.orderNumber ?? txn.id}
                 </p>
@@ -405,7 +404,7 @@ export default function TransactionDetailPage() {
                   leftIcon={<CreditCard className="h-4 w-4" />}
                   onClick={() => setIsPaymentOpen(true)}
                 >
-                  Record Payment
+                  Record payment
                 </WriteButton>
                 <ReadOnlyHint />
               </div>

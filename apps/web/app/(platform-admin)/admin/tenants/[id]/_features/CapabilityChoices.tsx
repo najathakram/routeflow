@@ -5,6 +5,7 @@ import type {
   CapabilityAvailability,
   CapabilityPresetKey,
   CapabilityPresetSummary,
+  OpensAs,
 } from "@/lib/platform-admin/capabilities-contract";
 import {
   CAPABILITY_LABELS,
@@ -32,6 +33,8 @@ export interface CapabilityChoicesProps {
   legend?: string;
   /** A capability that cannot be ticked, with the server's visible reason ("Not available yet"). */
   unavailable?: CapabilityAvailability;
+  /** An unset tenant's own opens-as (SA-1028): the D6 default does not replace it. Unset for the create form and configured tenants. */
+  keepOpensAs?: OpensAs;
 }
 
 const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400";
@@ -51,6 +54,7 @@ export function CapabilityChoices({
   disabled,
   legend = "What this business does",
   unavailable,
+  keepOpensAs,
 }: CapabilityChoicesProps) {
   const id = (part: string) => `${idPrefix}-${part}`;
   const choosable = opensAsChoosableFor(ticks);
@@ -85,7 +89,7 @@ export function CapabilityChoices({
           label={CAPABILITY_LABELS.delivery}
           checked={ticks.delivery}
           unavailableReason={unavailable?.delivery}
-          onChange={(on) => onChange(toggleCapability(ticks, "delivery", on))}
+          onChange={(on) => onChange(toggleCapability(ticks, "delivery", on, keepOpensAs))}
         />
         <div
           role="group"
@@ -108,7 +112,7 @@ export function CapabilityChoices({
           label={CAPABILITY_LABELS.shipping}
           checked={ticks.shipping}
           unavailableReason={unavailable?.shipping}
-          onChange={(on) => onChange(toggleCapability(ticks, "shipping", on))}
+          onChange={(on) => onChange(toggleCapability(ticks, "shipping", on, keepOpensAs))}
         />
         <CheckRow
           id={id("counter")}
@@ -116,7 +120,7 @@ export function CapabilityChoices({
           checked={ticks.counter}
           unavailableReason={unavailable?.counter}
           focusTarget="counter"
-          onChange={(on) => onChange(toggleCapability(ticks, "counter", on))}
+          onChange={(on) => onChange(toggleCapability(ticks, "counter", on, keepOpensAs))}
         />
 
         {showOpensAs && (

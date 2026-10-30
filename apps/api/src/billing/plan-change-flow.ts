@@ -1,4 +1,5 @@
 import { PrismaService } from "../prisma/prisma.service";
+import { catalogNameResolver } from "./catalog-display-name";
 import type { Prisma } from "@prisma/client";
 import { BadGatewayException } from "@nestjs/common";
 import { fromCents } from "@routeflow/pricing";
@@ -65,6 +66,8 @@ export interface PlanChangeFlowArgs {
   targetPlanName: string;
   /** The RESOLVED price; null when the target has no catalog price and the row no override. */
   price: { monthly: number; annual: number } | null;
+  /** True when `price` is null because a price is not a finite number (not because none is set): the push says so. */
+  priceInvalid?: boolean;
   proration: PlanChangeProration;
   /**
    * An upgrade stops billing the add-ons the new plan includes (B1103 / SA-786: the rows stay ON at $0); a
@@ -166,9 +169,11 @@ export async function beginStripeFirstPlanChange(
       targetPlanVersionId: a.targetPlanVersionId,
       planName: a.targetPlanName,
       price: a.price,
+      priceInvalid: a.priceInvalid,
       proration: a.proration,
       knownAddonItemIds,
       deleteItems,
+      fromPlanKey: a.fromPlanKey,
       localState: a.localState,
       audience: a.audience,
     },
@@ -303,7 +308,10 @@ async function compensate(
   }
   let restored;
   try {
-    restored = await revertPlanChange({ stripe, logger }, toRevert);
+    restored = await revertPlanChange(
+      { stripe, logger, resolveName: deps.resolveName ?? catalogNameResolver(prisma) },
+      toRevert,
+    );
   } catch (revertErr) {
     return stripeAhead(revertErr);
   }
@@ -369,6 +377,9 @@ async function revertVerdict(
   const live = await stripe.getSubscription(push.stripeSubId);
   const items: any[] = Array.isArray(live?.items?.data) ? live.items.data : [];
   const base = items.find((i) => i?.id === revert.baseId);
+  // W-810: the product is the shared `rf_plan_<code>`, so it no longer tells this push's price from another
+  // push of the same plan. Plan + amount matching is the state this push left, which is what the revert needs;
+  // a base item moved to a different plan or amount still fails the check below.
   if (
     !base ||
     base.price?.unit_amount !== push.newAmountCents ||
@@ -428,6 +439,7 @@ export function planChangeArgs(p: {
     targetPlanVersionId: p.version.id,
     targetPlanName: p.def.name,
     price: price.ok ? { monthly: price.monthly, annual: price.annual } : null,
+    priceInvalid: !price.ok && price.reason === "non_finite_price",
     proration: p.proration,
     stopBillingAddons: p.stopBillingAddons,
     addonSkus: p.version.addonSkus ?? [],

@@ -169,7 +169,32 @@
   file:line beside any factual claim, and a landing-procedure reminder to run `date -u` before
   quoting a time. Related: [[L-213]].
 
+### L-200 · 2026-09-18 · process · removing a UI control is a different risk class than removing dead code (#866, B519)
+
+- **Symptom:** removing the legacy `AVAILABLE_ADDONS` toggle cards (superseded by the Feature
+  Console) nearly shipped as if it fully retired the `driver_payments` dependency-enforcement gap
+  (B519) — the legacy toggle was ONE of two unenforced paths to enable `driver_payments`, but the
+  Feature Console's own `EnableAddonModal.tsx` "Enable as add-on" action has the exact same
+  missing check and was untouched by the removal.
+- **Root cause:** treating "delete this UI control" like "delete this dead code" — dead code has
+  no side effect once removed, but a UI control can be the only CLIENT-SIDE path that provisions
+  or gates something server-side reads from a DIFFERENT table/flag. A sibling control can still
+  reach the same server capability unguarded after the removed one's key is clean.
+- **Lesson:** **Before removing a UI control (a toggle, a button, a form field), grep for every
+  OTHER client entry point that reaches the same server capability/endpoint — not just whether
+  server-side code still references the control's own key. A control can be safely deletable as
+  UI while the gap it exposed is still wide open through a sibling surface.**
+- **Guard:** none yet — propose a removal checklist item: "list every client call site of the
+  endpoint(s) this control posts to, not just this control's own references."
+
 ## tooling
+
+### L-338 · 2026-10-24 · tooling · jest ignores an unknown config key, so a config pin must read the config jest resolved (#3638, #3643)
+
+- **Symptom:** a DB-lane hook wired as `setupFilesAfterEach` (the real key is `setupFilesAfterEnv`) never ran, yet the pin that guarded it stayed green.
+- **Root cause:** jest treats an unknown option as a "Validation Warning" and carries on, and the pin asserted on the object the test itself handed to jest, not on what jest loaded.
+- **Lesson:** **Pin a jest (or any tool) config through the tool itself: run `jest -c <config> --showConfig`, assert the resolved value, and fail on "Unknown option" in stderr. A pin that reads back its own input proves nothing.**
+- **Guard:** `apps/api/src/common/db-lane-serial.spec.ts` and the db-lane config pins (`--showConfig`).
 
 ### L-067 · 2026-09-04 · tooling · #597
 
@@ -303,6 +328,54 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
 - **Root cause:** `routeflow-api:local` and `routeflow-web:local` are single tags for the whole machine; whichever build finished last owns them, and two concurrent builds overwrite each other.
 - **Lesson:** **Never run two stack builds at once, and read an image's `org.routeflow.sha` label (`docker image inspect`) before claiming whose it is or that a proof ran on your sha.**
 - **Guard:** none automatic; cf. [[L-272]] and the Mac slot rule.
+
+### L-179 · 2026-09-16 · tooling · campaign-check freshness ritual
+
+- **Symptom:** every push cost 2–3 failed attempts against `campaign-check`'s freshness gate.
+- **Root cause:** the gate compares each workspace report against the newest commit timestamp of
+  ANY file, and `turbo run test --force` can still cache-skip the report-writing step — so the
+  report can never get newer than the commit that triggers the check.
+- **Lesson:** **A freshness gate keyed on "newest commit, any file" false-fails when its own
+  report-writing step can be cache-skipped.** Ritual until fixed: commit everything first, run
+  `npx jest --maxWorkers=2` per workspace directly (bypasses the turbo cache), then push
+  immediately.
+- **Guard:** none yet — propose keying freshness on source/test/ledger paths only, and having
+  the pre-push hook regenerate reports itself.
+
+### L-194 · 2026-09-17 · tooling · preview_start binds to the main checkout, not the calling session's worktree
+
+- **Symptom:** a UI proof for a worktree branch via `preview_start({name})` produced
+  plausible-looking screenshots, but a breakpoint that definitely existed in the branch appeared
+  completely broken — the main checkout's own copy of the changed file had zero references to
+  the new component.
+- **Root cause:** `preview_start` launches its named `launch.json` configs from the MAIN
+  CHECKOUT's working directory, never the calling session's worktree — a worktree whose changes
+  aren't ALSO in the main checkout gets proofed against stale, unrelated code with no warning.
+- **Lesson:** **A UI proof for a worktree/branch not checked out in the main checkout must run
+  its OWN dev server FROM the worktree, and must positively verify what's being served — grep the
+  rendered HTML for something only the branch's changes would produce — before trusting any
+  screenshot. A server coming up and a page looking plausible is not evidence the right code is
+  running.**
+- **Guard:** none yet — propose a one-line reminder in the worktree UI-proof runbook: confirm
+  the served code matches the branch BEFORE capturing.
+
+### L-198 · 2026-09-18 · tooling · `gh run rerun` replays the original checkout, not a fresh merge-ref
+
+- **Symptom:** across ~12 PRs in one landing window, the first "fresh" `gh run rerun` after a
+  root-cause fix landed on master kept failing on the SAME already-fixed assertion — costing
+  several burned branches before the mechanism was understood.
+- **Root cause:** `gh run rerun <run-id>` re-executes using the exact commit/merge ref GitHub
+  resolved at that run's ORIGINAL trigger time — it does not recompute the PR's merge ref against
+  the current base. Only a genuine new `pull_request: synchronize` event (a new commit) makes
+  GitHub recompute and pick up whatever changed on the base since the PR opened.
+- **Lesson:** **To re-test a PR against the CURRENT base branch, push a genuinely NEW commit,
+  never `gh run rerun`. An empty commit works when there's nothing real to add
+  (`git commit --allow-empty`, or `git commit-tree` plumbing when the branch can't be checked
+  out locally). Reserve `gh run rerun` for a genuinely flaky failure on an otherwise-current
+  merge ref.**
+- **Guard:** none yet — propose a landing-tool helper that pushes an empty commit instead of
+  calling `gh run rerun` whenever the PR predates a relevant base-branch fix.
+- **Fold-in 2026-09-27 (CI base must equal master):** a close/reopen or empty commit is not proof either. GitHub recomputes `refs/pull/N/merge` asynchronously, so a run started seconds after can still check out the OLD base (seen three times in one night). Before trusting a green run, read its checkout line (`HEAD is now at <merge> into <base>`) and require `<base>` to equal the current master; if not, wait until `git ls-remote origin refs/pull/N/merge` shows a merge commit whose first parent is master, then trigger again.
 
 ## testing
 
@@ -493,6 +566,22 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   its own explicit `BEGIN` and end with `COMMIT`; otherwise the statement is a silent no-op.**
 - **Guard:** `scripts/lint-migrations.mjs` (`npm run lint:migrations`) refuses `SET LOCAL` with no
   enclosing BEGIN/COMMIT (B896, #2746); pinned by `lint-migrations-script.spec.ts`.
+
+### L-183 · 2026-09-16 · deploy · Railway dual-service deploy status race
+
+- **Symptom:** a merge that changed only ONE of two Railway services showed its fresh deploy
+  flip from `success` to `inactive` seconds later, reading as failed when the code had shipped
+  fine.
+- **Root cause:** Railway's two services share ONE GitHub deployment environment. The UNTOUCHED
+  service re-posts its own `success` on its OLD sha shortly after the push (a routine re-affirm),
+  and GitHub's deployment-status API treats both services' postings as one shared history — the
+  untouched service's later post reads as superseding the just-shipped one.
+- **Lesson:** **Never judge a Railway deploy by `.statuses[0].state` alone — that slot can be
+  overwritten by the OTHER service's unrelated re-affirm within seconds. Read the full status
+  history, or confirm the actually-served commit directly, before declaring a deploy failed or
+  successful.**
+- **Guard:** none yet — propose `post-deploy-check` reading the full status array (not just
+  index 0) or verifying the served commit sha directly.
 
 ## domain
 
@@ -711,6 +800,19 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
   the transaction body calls, and pin it with a tripwire that fails on a direct emit.**
 - **Guard:** `common/after-commit.ts` (`AfterCommit`, `withAfterCommit`), `after-commit.spec.ts`,
   `invoices/emit-after-commit.tripwire.spec.ts`. Cf. [[L-221]].
+
+### L-185 · 2026-09-17 · domain · B440 (report `total` repurposed, footer stopped matching its own column)
+
+- **Symptom:** a report's `total` field was repurposed from "sum of the displayed column" to a
+  pre-tax, windowed expense figure — the footer stopped equalling the sum of its own column.
+- **Root cause:** one field was serving two consumers at once: a UI sum-of-column invariant and a
+  cross-report reconciliation value. Changing the value for one silently broke the other, because
+  nothing named which contract the field promised.
+- **Lesson:** **When a report field feeds both a displayed column's own sum AND a value another
+  report must reconcile against, give the two consumers separate named fields — never let one
+  field serve both.**
+- **Guard:** none yet — propose a regression test with a fixture where the two diverge (nonzero
+  tax), asserting both formulas independently.
 
 ## security
 
@@ -3650,7 +3752,6 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); the fleet shim of [[L-254]].
   (Archived 2026-10-07 whole and verbatim to make room at cap: L-263 is guarded by `scripts/check-git-hooks.mjs` (the SessionStart `--warn` line and the first step of `npm run verify`); least-cited and fully guarded.)
 
-
 ### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
 - **Symptom:** (a) after `git worktree move`, invalid-hook-call errors and mangled Jest paths;
@@ -4249,3 +4350,152 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the slot was treated as a rule for the big gates only; a "small" unit run still starts one worker per core, and several at once overload the machine.
 - **Lesson:** **Every jest, check-types or DB run, unit ones too, goes through `scripts/heavy-slot.mjs` with a capped worker count. Put this in every subagent brief; a subagent that runs a test outside the slot is a defect in the brief.**
 - **Guard:** `scripts/heavy-slot.mjs` (FIFO); none automatic for a bare `npx jest`.
+
+### L-330 · 2026-10-21 · domain · an origin or state is derived from structured fields, never from a free-text note prefix
+
+- **Symptom:** office-recorded partial deliveries were recognised by a marker at the start of the evidence note. Rows written before the marker existed were stranded, and anyone could type the marker into a note to be treated as the office.
+- **Root cause:** semantics were encoded in free text. A prefix test misses every historical row that lacks it and trusts whatever a user can type.
+- **Lesson:** **Derive origin and state from structured fields (route stop id, driver id, type) that only the intended writers set. When no structured field can tell, add a column; never parse a note.**
+- **Guard:** `orders/office-evidence-completion.ts` tests a null route stop and no driver; its spec includes a clerk-typed note that must still complete. Cf. [[L-294]].
+
+### L-331 · 2026-10-21 · domain · rate inference prefers the configured rate when it reproduces the stored figure, then the shortest precision
+
+- **Symptom:** an edit or a duplicate of an invoice re-billed lines at a non-round rate (8.88% for a tenant that charges 8.875%), and a half-way rate (8.625%) was stored one unit off.
+- **Root cause:** the inference took the nearest higher-precision rate that fit the stored tax instead of the tenant's configured rate, and rounded a float product (8.625 / 100 * 1e4 is 862.4999999999999) without snapping it first.
+- **Lesson:** **Infer a rate in this order: the configured rate when the single totals builder reproduces the stored figure to the cent, then the shortest precision that does. Snap a float product to the stored precision before `Math.round`.**
+- **Guard:** `packages/pricing/src/inferred-flat-rate.ts` (`preferredRate`) and `tax-precision.ts` (`sameRateAtLegacyPrecision`), pinned in `packages/pricing/src/pricing.spec.ts` and `invoices.duplicate-tax-rate.spec.ts`.
+
+### L-333 · 2026-10-21 · domain · state that depends on other state is derived during render, not cleared by an effect afterwards
+
+- **Symptom:** the capabilities card showed the fresh plan and the stale-plan notice together for one frame, and its 409 test failed under parallel load (7 of 16 runs).
+- **Root cause:** the notice was cleared by an effect that ran one commit after the fresh preview rendered, so the render in between had both. A test that reads the DOM between commits catches it only when the machine is slow.
+- **Lesson:** **When a value is a function of props or other state, compute it in the render (`fresh ? null : notice`); do not mirror it into state and clear it in an effect. An effect-driven reset is a visible intermediate frame and a flaky test.**
+- **Guard:** the CapabilitiesCard 409 test, plus a test that a second plan change shows the notice again. `DetailsMore.tsx` follows the same shape (open set during render on edit).
+
+### L-334 · 2026-10-21 · domain · a page that loads late holds its final height and mounts one layout, so nothing shifts when the data lands
+
+- **Symptom:** the product page's price grid showed one "Loading prices…" line and then grew about 870 px at 390 wide (CLS 0.11); the page also mounted its flag-off layout and swapped to the v2 one when the subscription answered (CLS 0.10).
+- **Root cause:** the loading state was shorter than the loaded content, and the layout choice waited on an async flag the page did not wait for.
+- **Lesson:** **Give a loading state the height of what replaces it (one placeholder per expected row, counted from what the page already knows), and let the page wait for the flag that picks its layout before it mounts one. Read media queries in the initializer, not after paint.**
+- **Guard:** `ProductPricesGrid.k14-fe1.test.tsx` (placeholder per unit); `usePricesV2Pending` in `lib/api/units-v2.ts`; `PriceEditBar`/`ProductJumpLinks` reserve their space the same way.
+
+## Archived 2026-10-25 — least-cited, uncited outside the register; headroom for L-345..L-349 (bookkeeping for window 6)
+
+### L-257 · 2026-10-02 · process · a stacked branch's master merge is a per-file three-way merge, never "take master's side"
+
+- **Symptom:** #3017's base was a stack branch (the WS9 settings-inventory PR), not master. Its master merge resolved all 10 conflicted files to master's side (the policy controller, the api and types error-code registries and `packages/types/index.ts`, the mobile types mock, `package.json` and the lock, four policy files). The parent owned lines in five of them, including `INVENTORY_SETTING_INVALID` and the policy-controller change; landing in stack order would have dropped them silently.
+- **Root cause:** the author reasoned "the child has no own lines in these files" and took master's side wholesale, but the conflicts came from the stack BASE, and master's side does not contain the parent's not-yet-landed lines.
+- **Lesson:** **Where a branch sits on a stack parent, never resolve conflicts by taking either side wholesale. Re-merge bottom-up, each child onto its parent's new head, with a true three-way merge per file, and have the review compute the child's own-line set against the parent's head before the push. Cf. [[L-190]].**
+- **Guard:** none automatic; caught at lead review before the push (the lane's flag plus the docs session's own-set computation), never pushed.
+
+### L-267 · 2026-10-06 · process · a "retry with the same key" path excludes every state an office action ended, and "final" is derived only from terminal facts (#3211 counter-sale review)
+
+- **Symptom:** review of the counter-sale change found that a repeated submit with the same idempotency key could replay or re-open a sale that an office action had already ended (cancelled, returned or voided), and that a sale read as "final" from facts that are not terminal.
+- **Root cause:** the replay lookup matched on the key alone, so it did not ask which states a staff action can end; and the "final" flag was inferred from a non-terminal signal instead of a terminal fact.
+- **Lesson:** **A "retry with the same key" code path must exclude every state an office action can end, and a "final" state may be derived only from terminal facts, never from a signal that a later action can undo.**
+- **Guard:** none automatic yet; caught at pre-merge review. Propose a spec that enumerates every terminal and office-ended status and asserts the replay path refuses each. Cf. [[L-228]] and [[L-264]].
+
+### L-269 · 2026-10-07 · process · re-arm the visibility watchdog on a timer at least 5 minutes before its deadline, and read visibility before every merge (W15)
+
+- **Symptom:** a PR in a public CI window merged after the watchdog had already flipped the repo private, so the merge-triggered work ran against a private repo.
+- **Root cause:** the window outlived the watchdog's deadline and nothing re-armed it or re-read visibility; the lane assumed the window was still open because nobody had said otherwise.
+- **Lesson:** **Re-arm the visibility watchdog on a timer at least 5 minutes before its deadline (an app restart also kills it), and read the repo's visibility immediately before every merge; a merge never proceeds on the belief that the window is open.**
+- **Guard:** none automatic yet; propose a pre-merge step in the landing script that fails on `PRIVATE` or on under 5 minutes of watchdog time left. Cf. [[L-253]] (archived).
+
+### L-272 · 2026-10-07 · tooling · each local image build leaves GBs of dangling layers in a fixed-size VM disk
+
+- **Symptom:** a local proof run failed mid-build with the container VM's disk full, though the host had space.
+- **Root cause:** every full image rebuild leaves dangling layers inside a fixed-size VM disk, and nothing pruned them between proof runs.
+- **Lesson:** **After each local proof run, prune dangling images and trim the VM disk; never let the VM fill mid-build. Check VM free space before a rebuild, not host free space.**
+- **Guard:** none automated; a pre-build free-space check in the local runbook is the proposal.
+- **Recurrence (2026-10-08):** a deps-only `db:up` left for a one-off DB diagnostic kept the fixed-name postgres and redis containers, which blocked the next `local:up` and cost an 8.5 minute failed build. Run `db:down` in the same step that ran `db:up`.
+
+### L-276 · 2026-10-07 · testing · a scoped jest run leaves a partial campaign report, and a jest path argument is a regex
+
+- **Symptom:** a push carried a campaign report listing only a handful of specs, and turbo's cached test replay did not rewrite it; a scoped run of `app/(dashboard)/...` matched nothing and looked green.
+- **Root cause:** `npx jest <spec>` in a workspace overwrites that workspace's report with the partial run, a cached replay writes nothing, and a path pattern is a REGEX, so unescaped parentheses match no file.
+- **Lesson:** **After any scoped jest run, regenerate the full workspace report before pushing. Escape or avoid regex characters in a path pattern and check the `Tests:` count is plausible before trusting a pass.**
+- **Guard:** none automatic; read `Tests: N` from the run and compare the report's spec count to the workspace's.
+- **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
+
+## Archived 2026-10-29 — zero outside citations; headroom for L-351..L-354 (bookkeeping for b1a2fc3d1..75f433f56)
+
+### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
+
+- **Symptom:** a disk-cleanup helper meant to delete only folders older than three days deleted every unreferenced proof and handoff folder regardless of age; the files were gitignored and not recoverable.
+- **Root cause:** the age filter (`find -newermt '-3 days'`) is invalid on this machine's `find`, printed an error and an empty list, and the helper read "nothing is recent" as "everything is old".
+- **Lesson:** **Test any delete-by-filter on a known-recent file first and require it to be KEPT, and make an erroring or empty filter abort the whole run, never default to "old". Run the listing as a dry run and read its count before the delete.**
+- **Guard:** none automated; the cleanup helper's filter check is the proposal (assert the known-recent canary survives, abort on a non-zero filter exit).
+- **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-280: guarded by scripts/janitor.mjs (unknown activity reads as recent, any failure aborts); no citation outside the register.)
+
+### L-287 · 2026-10-09 · process · never put a full local test gate on a train push that GitHub CI tests again; pre-flight takes seconds
+
+- **Symptom:** train and branch pushes sat for many minutes behind a full local verify plus the database lane, on a shared box already at its load cap, and then GitHub CI ran the same suites a second time.
+- **Root cause:** the local pre-push gate was designed when CI minutes were scarce, so it re-proves everything; on a train that CI tests anyway it is duplicate work, and it also queues every other lane behind the one push ([[L-283]]).
+- **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
+- **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-287: superseded by L-323 (the train gate runs FULL_VERIFY=1 on the landing tree); no citation outside the register.)
+
+### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
+
+- **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
+- **Root cause:** the decision was treated as the owner's by default, so a reversible, in-scope call waited on a reply that was not coming; the abandoned approach was "ask, then hold everything until answered".
+- **Lesson:** **Before holding work for the owner, ask whether the call is reversible and inside the authority already delegated. If so, decide, write the reason on the board, and keep moving. Only an irreversible or outward-facing action (prod writes, repo visibility, spend, a bypass of a standing gate) waits, and it waits as ONE queued ask with a default, while every unrelated item keeps flowing.**
+- **Guard:** none automatic; the lead's operating notes and the lane rules. Cf. [[L-253]] (a public window closes on state, never on a reply).
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-289: carried by the lead's operating rules and the fleet-lead skill; no citation outside the register.)
+
+### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
+
+- **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
+- **Root cause:** stdin-fed python (`python3 -` with a heredoc) does not return there; the exact mechanism was not chased, and waiting or retrying never helps.
+- **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
+- **Guard:** none automatic; the lane rules.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-291: no recurrence since 2026-10-10; edits go through the Edit and Write tools; no citation outside the register.)
+
+## Archived 2026-10-30 — zero outside citations; headroom for L-355..L-358 (bookkeeping for W26r..W28b)
+
+### L-258 · 2026-10-02 · testing · a harness locator is chosen by test id or role, never by position (a `.last()` produced a false repro)
+
+- **Symptom:** the Expo 390 Playwright repro of "three same-code scans through the scan sheet's manual-entry field give one bottle" used `input.last()` for the manual field. After the first scan the cart row's quantity input became the last input, so scans two and three typed into the quantity field and the capture claimed the fix was missing. A runtime probe targeting the field by test id or role showed three submits giving three bottles ($6.00 in the DB) at both 1500 ms and 350 ms.
+- **Root cause:** a positional locator is correct only while the page keeps the same element order; the first interaction reordered it.
+- **Lesson:** **Target a field by `data-testid` or accessible role, never by `.first()`, `.last()` or `nth()`, and before filing a bug from a capture re-run the failing step with the stable locator and read the persisted value. Cf. [[L-202]], [[L-212]].**
+- **Guard:** none automated; the cost was one wrong-diagnosis cycle and a static re-trace by the lane.
+
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
+
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
+
+### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
+
+- **Symptom:** a worktree reported clean by `git status` was about to be removed while it held ignored files that exist nowhere else: database backups, `*.sql` dumps, `.env*` files and `graphify-out/`.
+- **Root cause:** `git status` hides ignored files by design, so "clean" says nothing about untracked-and-ignored data; removal tooling that trusts it deletes them with the tree.
+- **Lesson:** **Before removing a worktree, run `git status --ignored --short` and list what is ignored; copy out anything not regenerable (backups, dumps, env files, built graphs) or stop and report. "Clean" is a statement about tracked files only.** Cf. [[L-180]].
+- **Guard:** none automatic; the worktree-removal step of the cleanup routine lists ignored files first.
+
+### L-317 · 2026-10-18 · domain · removing a whole-catalog fetch (limit=0) from a picker is a behavior change; prove what each consumer needs first
+
+- **Symptom:** the product-k11 train swapped `limit: 0` reads for per-line or server-searched reads on several pickers. Two swaps (the promotions picker, the purchase-order detail) broke a consumer that needed the full set and were reverted; the products-list categories and inventory pickers, which only needed distinct values, kept the swap.
+- **Root cause:** a `limit: 0` read feeds more than the dropdown: a guard scanning every product, a lookup of lines the page did not request, a picker that must show items before any search. The cost was visible, the other readers were not.
+- **Lesson:** **Before replacing a fetch-all with a narrower read, list every consumer of that data on the page and name what each needs (distinct values, a few rows, the full set). Swap only where the narrow read serves all of them; keep a deliberate fetch-all with a comment naming the consumer, and give each swap its own revert-able commit.**
+- **Guard:** none automatic; the remaining fetch-alls carry a DELIBERATE comment naming their consumer (products, promotions, purchase-orders, suppliers pages). Cf. [[L-167]].
+
+## Archived 2026-10-30 — zero outside citations; headroom for L-359, L-360 (bookkeeping for W29c)
+
+### L-336 · 2026-10-22 · testing · a layout change to a cell or control is proven in a browser hit-test at every width; jsdom cannot see an overlap
+
+- **Symptom:** row 688's invoice-edit Boxes + Pieces inputs passed every unit test, but in the browser Pieces sat UNDER Unit Price at 1440, 768 and 390 (`elementFromPoint` at its centre returned Unit Price), so loose pieces could not be reached by mouse. #3564 merged without UI captures; the proof of #3570 found it.
+- **Root cause:** jsdom computes no layout, so a control squeezed out of a 70 px grid column renders "fine" there; the unit tests checked values and labels, never geometry.
+- **Lesson:** **Any change that adds or resizes controls in a fixed-width cell, row or bar ships with a browser proof at 1440/768/390: a hit-test that the centre of each control resolves to that control, 44 px targets, and no horizontal overflow, kept as a permanent e2e spec on the local lane. Capture before merge, not after.**
+- **Guard:** `apps/web/e2e/78-invoice-edit-boxed-qty-hit.spec.ts` (project `invoice-edit-boxed-qty-hit`, on the `local:e2e` allow-list). Cf. [[L-334]].
+
+### L-341 · 2026-10-24 · domain · a price read gates on error and paused states, not only loading, through one shared gate (#3658, #3665, #3670)
+
+- **Symptom:** when the customer-prices read failed, or paused offline, scan and search stayed open and every pick was priced at LIST, or at the tier with per-product overrides dropped.
+- **Root cause:** the gates checked `isLoading` only (in TanStack Query v5 a paused or failed query is not loading), and each web and mobile screen hand-rolled its own `?? tier ?? 1` fallback chain.
+- **Lesson:** **A money read fails closed on error, paused and missing data, not just loading: the pick and the save are blocked until the read confirms. One shared gate decides it; no screen keeps its own tier fallback.**
+- **Guard:** `packages/pricing/src/customer-pricing-gate.spec.ts`, `apps/mobile/__tests__/customer-tier-fallback-pin.test.ts`, web `page.pricing-gate-w725.test.tsx`.
+

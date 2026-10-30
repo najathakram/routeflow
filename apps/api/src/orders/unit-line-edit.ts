@@ -1,7 +1,6 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import {
-  PIECE_LABEL,
-  baseLabelOf,
+  namesBase,
   type CustomerLayerPrice,
   type LadderUnit,
   type TrackedCategoryRow,
@@ -209,7 +208,7 @@ export async function normalizeDerivedBaseItems(
   const named = (i: any) => {
     const p = productOf(i);
     const l = norm(i.unitLabel ?? "");
-    return !!p && l !== "" && (l === norm(baseLabelOf(p)) || l === norm(PIECE_LABEL));
+    return !!p && l !== "" && namesBase(p, l);
   };
   const candidates = (dto.items ?? []).filter(named);
   if (candidates.length === 0) return;
@@ -313,6 +312,8 @@ export interface UnitWriteContext {
   layerOf?: (product: any, label: string) => CustomerLayerPrice | null;
   /** H3: the acting staff user, stamped on a unit line whose typed price overrides the customer's price. */
   overriddenBy?: string | null;
+  /** SA-1034: the acting user's price-edit capability (`staffMay(role, "EDIT_LINE_PRICE", deniedGroups)`). */
+  priceEditAllowed: boolean;
   /** H3: the order's lines as held under the edit's row lock, by id: the stored side of a re-sent price. */
   held?: ReadonlyMap<string, unknown>;
   /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
@@ -388,6 +389,7 @@ export async function createUnitLine(
     position,
     tenantId: ctx.tenantId,
     overriddenBy: ctx.overriddenBy,
+    priceEditAllowed: ctx.priceEditAllowed,
     stored: pairedStoredLine(ctx, item, product.id),
     // units P0b: the line's own snapshot, so a rewrite re-resolves a unit the ladder lost; ONLY for the same product
     // (a replace-all entry naming another product under a held line's id must not be billed at that line's price)
@@ -460,6 +462,7 @@ export async function updateUnitLine(
     position: 0,
     tenantId: ctx.tenantId,
     overriddenBy: ctx.overriddenBy,
+    priceEditAllowed: ctx.priceEditAllowed,
     // a substitute is a new sale: judged against the tier price, never against the line it replaces
     stored: isSubstitute ? null : (ctx.held?.get(lineId) as StoredUnitLine | undefined),
     repriceTierOnQtyOnly: ctx.repriceTierOnQtyOnly,

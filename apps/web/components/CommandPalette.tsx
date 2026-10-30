@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
+import { modeGatedVisible } from "@/lib/plan-gated-nav";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import { createPortal } from "react-dom";
 import {
   Search,
@@ -88,9 +90,11 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
   const { user } = useAuth();
   const { enabled: routesAccess } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
-  const { showButton: counterEnabled } = useCounterSaleGate({
-    enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
-  });
+  const staffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  const { showButton: counterEnabled } = useCounterSaleGate({ enabled: staffRole });
+  // SA-1032: promotions off (back office) drops the Promotions command; unloaded ⇒ shown.
+  const { data: tenantFeatures } = useTenantFeatures({ enabled: staffRole });
+  const modes = tenantFeatures?.modes;
   return React.useMemo(
     () =>
       [
@@ -169,7 +173,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-purchase-orders",
           group: "Navigate",
-          label: "Purchase Orders",
+          label: "Purchase orders",
           icon: PackageCheck,
           action: () => router.push("/purchase-orders"),
         },
@@ -197,7 +201,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-credit-notes",
           group: "Navigate",
-          label: "Credit Notes",
+          label: "Credit notes",
           icon: Receipt,
           action: () => router.push("/credit-notes"),
         },
@@ -211,7 +215,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-expenses",
           group: "Navigate",
-          label: "Supplier Bills",
+          label: "Supplier bills",
           icon: ShoppingBag,
           action: () => router.push("/vendor-bills"),
         },
@@ -282,7 +286,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "act-plan-trip",
           group: "Actions",
-          label: "Plan delivery trip",
+          label: "Plan delivery",
           icon: RouteIcon,
           action: () => router.push("/deliveries/new"),
           keywords: "adhoc trip dispatch delivery",
@@ -309,9 +313,10 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
         if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
         if (COUNTER_COMMAND_IDS.includes(c.id)) return counterEnabled;
+        if (c.id === "nav-promotions") return modeGatedVisible("/promotions", modes);
         return true;
       }),
-    [router, routesAccess, deliveryAccess, counterEnabled],
+    [router, routesAccess, deliveryAccess, counterEnabled, modes],
   );
 }
 
@@ -360,10 +365,11 @@ function useSearchResults(
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const [customersRes, ordersRes, invoicesRes] = await Promise.allSettled([
+        const [customersRes, ordersRes, invoicesRes, productsRes] = await Promise.allSettled([
           apiClient.get("/customers", { params: { search: query, limit: 4 } }),
           apiClient.get("/orders", { params: { search: query, limit: 4 } }),
           apiClient.get("/invoices", { params: { search: query, limit: 4 } }),
+          apiClient.get("/products", { params: { search: query, limit: 4 } }),
         ]);
 
         const items: SearchResult[] = [];
@@ -402,6 +408,19 @@ function useSearchResults(
               sublabel: inv.customer?.businessName ?? "",
               href: `/invoices/${inv.id}`,
               icon: FileText,
+              group: "results",
+            });
+          }
+        }
+
+        if (productsRes.status === "fulfilled") {
+          for (const p of productsRes.value.data?.data ?? []) {
+            items.push({
+              id: `product-${p.id}`,
+              label: p.name ?? "Unnamed product",
+              sublabel: p.sku ?? "",
+              href: `/products/${p.id}`,
+              icon: Package,
               group: "results",
             });
           }

@@ -19,7 +19,11 @@ import {
   useDeletePaymentImage,
   useGetPaymentImageUrl,
 } from "../../../../../../../lib/api/payments";
-import { editPaymentDto, editPaymentMaxAmount } from "../../../../../../../lib/payments-logic";
+import {
+  editPaymentDto,
+  editPaymentMaxAmount,
+  paymentEditErrorCopy,
+} from "../../../../../../../lib/payments-logic";
 import {
   SELECTABLE_METHOD_OPTIONS,
   type SelectablePaymentMethod,
@@ -60,7 +64,11 @@ export default function EditPaymentScreen() {
   // DRAFT-inclusive semantics this screen already had, now testable and the
   // one copy web/api also use.
   const otherPayments = (invoice?.payments ?? []).filter((p: any) => p.id !== paymentId);
-  const maxAmount = editPaymentMaxAmount(Number(invoice?.total ?? 0), otherPayments);
+  const maxAmount = editPaymentMaxAmount(
+    Number(invoice?.total ?? 0),
+    otherPayments,
+    payment?.status,
+  );
 
   const [method, setMethod] = useState<SelectablePaymentMethod | null>(null);
   const [amount, setAmount] = useState<string | null>(null);
@@ -217,7 +225,9 @@ export default function EditPaymentScreen() {
             chooseAction(c.title, c.message, c.actions);
             return;
           }
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+          showToast(
+            paymentEditErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+          );
         },
       },
     );

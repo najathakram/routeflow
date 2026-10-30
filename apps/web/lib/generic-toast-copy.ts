@@ -1,8 +1,10 @@
 import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
+  FILING_STALE_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
+  STOCK_COUNT_SEEDING_COPY,
   productInOpenCountCopy,
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
@@ -39,6 +41,10 @@ import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
  * (see mutation-error-toast.ts).
  */
 
+/** SA-1032: promotions turned off for the business in the back office (page notice + refusal toast). */
+export const PROMOTIONS_OFF_COPY =
+  "Promotions are turned off for this business. Customers don't see them, and new orders don't use them. Past orders keep their promotion prices.";
+
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
   // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
@@ -46,6 +52,7 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:
@@ -70,6 +77,18 @@ const CODE_COPY: Record<string, string> = {
   ORDER_DELIVERY_ADDRESS_MISSING:
     "This customer has no delivery address on file. Add one before switching the order to delivery.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
+  // B297 PR5: the filing lock and the locked-period guards (fixed copy, never the server's text).
+  [API_ERROR_CODES.FILING_PERIOD_RUNNING]:
+    "This period hasn't ended yet. Lock the filing after the period ends.",
+  [API_ERROR_CODES.FILING_STALE]: FILING_STALE_COPY,
+  [API_ERROR_CODES.FILING_ALREADY_LOCKED]: "This filing is already locked.",
+  [API_ERROR_CODES.FILING_NOT_LOCKABLE]:
+    "Only a filing that was generated can be locked. Generate it again, then lock it.",
+  [API_ERROR_CODES.FILED_PERIOD_LOCKED]:
+    "This change would move money in a filed, locked period. Record a return or a credit note instead.",
+  // Permanent for a past issue date (manual or from a backdated order): a retry fails the same way.
+  [API_ERROR_CODES.LEDGER_PERIOD_LOCKED]:
+    "This date is in a filed, locked period. Use a date in the current period.",
   // F3: the edit named one line twice; nothing was saved.
   DUPLICATE_LINE_ID: "A line appears twice. Refresh the page and try again.",
   // Row 531: a buyer cart whose quantity and box split disagree; nothing was saved.
@@ -103,6 +122,7 @@ const CODE_COPY: Record<string, string> = {
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
   [API_ERROR_CODES.STOCK_COUNT_COMMITTING]: "This count is being saved. Try again in a moment.",
+  [API_ERROR_CODES.STOCK_COUNT_SEEDING]: STOCK_COUNT_SEEDING_COPY,
   // SA-767 r-note 5 SA-3: the count screens name the other count themselves; this is the fallback.
   [API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT]: productInOpenCountCopy(),
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
@@ -168,6 +188,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.LABEL_CHANGE_IN_PROGRESS]:
     "Another product label change is in progress. Try again in a moment.",
   [API_ERROR_CODES.PRODUCT_CHAIN_UNREADABLE]: "This product's family chain can't be read.",
+  // Row 519: a product write lost a row-lock race (reparent deadlock, or the product moved under the editor); nothing saved.
+  [API_ERROR_CODES.PRODUCT_CHANGED_CONCURRENTLY]:
+    "This product changed while you were saving it. Reload it and try again.",
   // SA-812a G-1: a typed-price customer's flag read failed (503); the write never ran, so a retry is safe.
   [API_ERROR_CODES.CUSTOMER_PRICES_UNAVAILABLE]:
     "Customer prices couldn't be loaded. Nothing was saved. Try again in a moment.",
@@ -214,6 +237,13 @@ const CODE_COPY: Record<string, string> = {
   // checkout already in progress blocks a second one. Fixed sentences; no ids.
   [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
     "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  // SA-774 (card first, then active): a plan is picked at checkout; fixed sentences, no ids.
+  [API_ERROR_CODES.USE_PLAN_CHANGE]:
+    "Your plan is paid by card. Use Change plan to switch, and the new price is prorated.",
+  [API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING]:
+    "Your card payment is still being confirmed. This change is available once it clears.",
+  [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
+    "Choose your plan at checkout. Your plan starts once your payment clears.",
   [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
     "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
@@ -238,6 +268,9 @@ const CODE_COPY: Record<string, string> = {
   // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
   [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
     "The amount changed. We've refreshed it, please check and try again.",
+  // SA-862 (W-706): confirming an unconfirmed payment on an invoice a card payment already filled.
+  [API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED]:
+    "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
   // SA-832 / 453: a subscribe / checkout on a workspace a payment may not reinstate. Fixed sentence, no cause named.
   [API_ERROR_CODES.TENANT_ADMIN_LOCKED]:
     "This workspace is locked and can't take a payment right now. Please contact support.",

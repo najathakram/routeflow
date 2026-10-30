@@ -117,7 +117,7 @@ describe("buyer order detail - polish (P29-P35)", () => {
   it("P29: Cancel Order is an outline button with a 44 px target, not a filled red one", () => {
     mockOrder = order([PLAIN]);
     renderWithProviders(<BuyerOrderDetailPage />);
-    const btn = screen.getAllByRole("button", { name: "Cancel Order" })[0];
+    const btn = screen.getAllByRole("button", { name: "Cancel order" })[0];
     expect(btn).toHaveClass("text-danger");
     expect(btn).not.toHaveClass("bg-danger");
     expect(btn).toHaveClass("min-h-[44px]");
@@ -166,6 +166,17 @@ describe("buyer order detail - polish (P29-P35)", () => {
     renderWithProviders(<BuyerOrderDetailPage />);
     expect(screen.getByText(/Placed/)).toHaveTextContent(
       "Placed Sep 10, 2026 · Delivery requested Sep 15, 2026",
+    );
+  });
+
+  it("a pickup order says Pickup requested, not Delivery requested", () => {
+    mockOrder = order([PLAIN], {
+      fulfillPath: "PICKUP",
+      requestedDeliveryDate: "2026-09-15T00:00:00Z",
+    });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getByText(/Placed/)).toHaveTextContent(
+      "Placed Sep 10, 2026 · Pickup requested Sep 15, 2026",
     );
   });
 

@@ -74,7 +74,8 @@ import { useCounterLanding, useOpenCounterPref } from "@/lib/use-counter-device-
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
-import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
+import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import { SkipToContentLink } from "@/components/SkipToContentLink";
 import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { RouteGuard } from "./_components/gates/RouteGuard";
@@ -157,8 +158,11 @@ function getNavForRole(
 function filterPlanGatedNav(
   entries: NavEntry[],
   planState: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean },
+  modes?: Readonly<Record<string, string>>,
 ): NavEntry[] {
   const isVisible = (href: string): boolean => {
+    // SA-1032: a back-office config mode (e.g. promotions off) hides its page's entry.
+    if (!modeGatedVisible(href, modes)) return false;
     const key = matchPlanGatedRoute(href);
     if (!key) return true;
     return planFlagVisible({
@@ -209,7 +213,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-background">
+      <div className="flex h-screen supports-[height:100dvh]:h-dvh w-full items-center justify-center bg-background">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
@@ -979,11 +983,11 @@ function ImpersonationBanner() {
       <span>
         {imp.expired ? (
           <>
-            ⚠️ Impersonation of <strong>{imp.slug}</strong> has expired
+            ⚠️ Support session on <strong>{imp.slug}</strong> has expired
           </>
         ) : (
           <>
-            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as{" "}
+            ⚠️ Support session on <strong>{imp.slug}</strong> — signed in as{" "}
             {imp.username ?? "Tenant Admin"}
           </>
         )}
@@ -992,7 +996,7 @@ function ImpersonationBanner() {
         onClick={exitImpersonation}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
-        {imp.expired ? "Return to admin" : "Exit impersonation"}
+        {imp.expired ? "Return to admin" : "Exit support session"}
       </button>
     </div>
   );
@@ -1029,6 +1033,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
   // Per-viewer convenience memory (the strip-shown hint, the paid notice) is scoped to the workspace.
   const billingScope = user?.tenantSlug ?? user?.id ?? null;
+  // SA-1032: back-office config modes (promotions off hides its entry); unloaded ⇒ shown.
+  const { data: tenantFeatures } = useTenantFeatures();
+  const tenantModes = tenantFeatures?.modes;
   const {
     data: subscriptionStatus,
     dataUpdatedAt: subscriptionReadAt,
@@ -1093,7 +1100,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     } else if (sections.length > 0) {
       inject.push({
         kind: "group",
-        label: "Regulated Items",
+        label: "Regulated items",
         icon: ShieldCheck,
         children: sections.map((s) => ({
           kind: "leaf" as const,
@@ -1122,7 +1129,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         if (entry.kind === "leaf" && entry.href === "/customers") {
           return [
             entry,
-            { kind: "leaf", label: "Sales Agents", href: "/sales-agents", icon: Handshake },
+            { kind: "leaf", label: "Sales agents", href: "/sales-agents", icon: Handshake },
           ];
         }
         if (entry.kind === "group" && entry.label === "Finance") {
@@ -1146,11 +1153,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     // Lite-L2 (WP8/R4.3): hide gated leaves before the Analytics-relative inject index
     // is computed, so Regulated Items/Sales Agents still land in the right spot even
     // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
-    base = filterPlanGatedNav(base, {
-      flags: subscriptionStatus?.flags,
-      resolved: subscriptionResolved,
-      failed: subscriptionFailed,
-    });
+    base = filterPlanGatedNav(
+      base,
+      {
+        flags: subscriptionStatus?.flags,
+        resolved: subscriptionResolved,
+        failed: subscriptionFailed,
+      },
+      tenantModes,
+    );
 
     if (inject.length === 0) return base;
 
@@ -1171,6 +1182,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     subscriptionResolved,
     subscriptionFailed,
     counterEnabled,
+    tenantModes,
   ]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
@@ -1261,8 +1273,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         { keys: ["g", "f"], label: "Go to Finance" },
         { keys: ["g", "s"], label: "Go to Settings" },
         { keys: ["g", "t"], label: "Go to Counter sale" },
-        { keys: ["⌘", "K"], label: "Open Command Palette" },
-        { keys: ["?"], label: "Show Keyboard Shortcuts" },
+        { keys: ["⌘", "K"], label: "Open command palette" },
+        { keys: ["?"], label: "Show keyboard shortcuts" },
       ].filter(
         (s) =>
           (routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")) &&
@@ -1272,7 +1284,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="surface-operator flex h-screen overflow-hidden">
+    <div className="surface-operator flex h-screen supports-[height:100dvh]:h-dvh overflow-hidden">
       <SkipToContentLink />
       {/* Sidebar — static rail on lg+, replaced by a drawer below lg */}
       <aside
@@ -1459,7 +1471,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
-              <p className="text-sm font-semibold text-navy">Keyboard Shortcuts</p>
+              <p className="text-sm font-semibold text-navy">Keyboard shortcuts</p>
               <button
                 onClick={() => setShortcutHelpOpen(false)}
                 className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"

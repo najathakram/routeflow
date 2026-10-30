@@ -1154,7 +1154,7 @@ describe("CreateOrderModal", () => {
                     id: "r1",
                     states: ["CA"],
                     legal: true,
-                    reasonText: "This product is banned in CA by law.",
+                    reasonText: "Restricted in CA: State ban.",
                   },
                 ],
               },
@@ -1180,9 +1180,7 @@ describe("CreateOrderModal", () => {
 
         const dialog = await screen.findByRole("dialog", { name: /sell a restricted product/i });
         expect(within(dialog).getByText("Hemp Gummies")).toBeInTheDocument();
-        expect(
-          within(dialog).getByText("This product is banned in CA by law."),
-        ).toBeInTheDocument();
+        expect(within(dialog).getByText("Restricted in CA: State ban.")).toBeInTheDocument();
         await user.type(within(dialog).getByLabelText(/reason/i), "Owner approved");
         await user.click(within(dialog).getByRole("button", { name: "Sell anyway" }));
 

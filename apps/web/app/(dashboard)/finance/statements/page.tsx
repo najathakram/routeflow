@@ -64,7 +64,7 @@ interface AppliedRow {
 function StatementsPageInner() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Supplier Statements");
+    setTitle("Supplier statements");
   }, [setTitle]);
 
   const router = useRouter();
@@ -195,7 +195,7 @@ function StatementsPageInner() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Supplier Statements"
+        title="Supplier statements"
         subtitle="Upload a statement, let Claude read it, and reconcile it against your bills — nothing moves money until you Apply."
       />
 
@@ -357,7 +357,7 @@ function StatementsPageInner() {
                 )}
                 {!applied && result.appliedAt && <> · applied {fmtDate(result.appliedAt)}</>}.
               </p>
-              <div className="mt-3 overflow-hidden rounded-lg border border-surface-border">
+              <div className="mt-3 overflow-x-auto rounded-lg border border-surface-border">
                 <table className="w-full text-sm">
                   <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                     <tr>
@@ -380,7 +380,7 @@ function StatementsPageInner() {
                             <span className="font-medium text-navy">{row.billNumber}</span>
                           )}
                           {row.impliedPaid && (
-                            <span className="ml-1 text-xs text-navy/50">(implied-paid)</span>
+                            <span className="ml-1 text-xs text-navy/50">(counted as paid)</span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right text-navy">{fmt(row.amount)}</td>

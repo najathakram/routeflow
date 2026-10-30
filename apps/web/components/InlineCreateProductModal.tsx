@@ -54,6 +54,7 @@ export function InlineCreateProductModal({
   const { toast } = useToast();
   const w = unitWords();
   const createProduct = useCreateProduct();
+  const submittingRef = React.useRef(false);
   const skuInputRef = React.useRef<HTMLInputElement>(null);
 
   const [form, setForm] = React.useState({
@@ -137,6 +138,10 @@ export function InlineCreateProductModal({
     } else if (!productName) {
       return;
     }
+    // I-79: one create per attempt. `loading` disables the button only after a re-render, so a second click in the
+    // same frame would POST again and come back 409; the ref drops it until this attempt settles.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
 
     createProduct.mutate(
       {
@@ -178,6 +183,9 @@ export function InlineCreateProductModal({
             variant: "error",
           });
         },
+        onSettled: () => {
+          submittingRef.current = false;
+        },
       },
     );
   };
@@ -189,7 +197,7 @@ export function InlineCreateProductModal({
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">New Product</h2>
+          <h2 className="text-base font-semibold text-navy">New product</h2>
           <button
             type="button"
             onClick={onClose}
@@ -350,7 +358,7 @@ export function InlineCreateProductModal({
               Cancel
             </Button>
             <Button type="submit" loading={createProduct.isPending}>
-              Create Product
+              Create product
             </Button>
           </div>
         </form>

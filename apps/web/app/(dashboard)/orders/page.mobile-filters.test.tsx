@@ -64,11 +64,11 @@ jest.mock("@/lib/api/addons", () => ({
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
 }));
 
-// ── viewport: jsdom has no matchMedia; "narrow" = below md (768px) ────────────────────────────────────────────────
+// ── viewport: jsdom has no matchMedia; "narrow" = below md (max-width: 767px) ────────────────────────────────────────────────
 const realMatchMedia = window.matchMedia;
 function setViewport(width: number) {
   window.matchMedia = ((query: string) => ({
-    matches: /min-width:\s*768px/.test(query) ? width >= 768 : false,
+    matches: /max-width:\s*767px/.test(query) ? width < 768 : false,
     media: query,
     addEventListener: jest.fn(),
     removeEventListener: jest.fn(),

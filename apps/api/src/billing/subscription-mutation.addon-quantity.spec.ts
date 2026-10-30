@@ -19,6 +19,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -72,7 +73,7 @@ function make(addonRow: Record<string, unknown> | null) {
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   } as any;
   const stripeClient = {
-    products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
+    products: fakeStripeProducts().products,
     subscriptionItems: {
       create: jest.fn(async (args: any) => ({ id: "si_new", quantity: args.quantity })),
       list: jest.fn(async () => ({ data: [] })),

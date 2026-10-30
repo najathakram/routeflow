@@ -37,6 +37,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { BillingController } from "./billing.controller";
@@ -64,7 +65,7 @@ const CATALOG = {
 
 const PLAN_PRICE_DATA = {
   currency: "usd",
-  product_data: { name: "RouteFlow Starter" },
+  product: "rf_plan_starter",
   unit_amount: 9900,
   recurring: { interval: "month" },
 };
@@ -276,7 +277,7 @@ function make(opts: Opts = {}) {
     checkout: {
       sessions: { create: jest.fn().mockResolvedValue({ id: "cs_1", url: "https://pay" }) },
     },
-    products: { create: jest.fn().mockResolvedValue({ id: "prod_new" }) },
+    products: fakeStripeProducts().products,
     subscriptionItems: {
       list: jest.fn(async () => ({ data: [...stripeItems] })),
       create: jest.fn(async (args: any) => {
@@ -453,7 +454,9 @@ function make(opts: Opts = {}) {
       }),
     },
     tenantAddon,
-    user: { findFirst: jest.fn().mockResolvedValue({ email: "admin@acme.test" }) },
+    user: {
+      findMany: jest.fn().mockResolvedValue([{ email: "admin@acme.test", username: "admin" }]),
+    },
     auditLog: {
       // the APPLIED marker (flag-on redelivery) and the sticky DUPLICATE decision (the audit store)
       findFirst: jest.fn(async ({ where }: any = {}) => {
@@ -673,10 +676,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
           currency: "usd",
           unit_amount: 5000,
           recurring: { interval: "month" },
-          product_data: {
-            name: "RouteFlow add-on — Customer pack (+100)",
-            metadata: { addonSku: "CUSTOMER_PACK_100" },
-          },
+          product: "rf_addon_customer_pack_100",
         },
         quantity: 2,
       },
@@ -685,10 +685,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
           currency: "usd",
           unit_amount: 1900,
           recurring: { interval: "month" },
-          product_data: {
-            name: "RouteFlow add-on — Forecasting",
-            metadata: { addonSku: "FORECASTING" },
-          },
+          product: "rf_addon_forecasting",
         },
         quantity: 1,
       },
@@ -828,7 +825,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
 
     const call = h.client.checkout.sessions.create.mock.calls[0][0];
     expect(call.line_items).toHaveLength(2); // the plan + FORECASTING only
-    expect(call.line_items[1].price_data.product_data.metadata.addonSku).toBe("FORECASTING");
+    expect(call.line_items[1].price_data.product).toBe("rf_addon_forecasting");
     expect(call.metadata.addonSkus).toBe("FORECASTING");
 
     // a quantity-0 row alone is nothing to bill: an ANNUAL checkout is no longer an ADD-ON refusal
@@ -1269,7 +1266,7 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
           currency: "usd",
           unit_amount: 5000,
           recurring: { interval: "month" },
-          product: "prod_new",
+          product: "rf_addon_customer_pack_100",
         },
         metadata: { tenantId: "t1", sku: "CUSTOMER_PACK_100" },
       });
@@ -4042,7 +4039,7 @@ describe("SA-693 comps: a platform grant (TenantAddon.isComp) is never billed at
     const lines = h.client.checkout.sessions.create.mock.calls[0][0].line_items;
     expect(lines).toHaveLength(2);
     expect(lines[1].quantity).toBe(2);
-    expect(lines[1].price_data.product_data.metadata).toEqual({ addonSku: "CUSTOMER_PACK_100" });
+    expect(lines[1].price_data.product).toBe("rf_addon_customer_pack_100");
   });
 
   it("completion: a comp with no checkout line (rule (c)) is never billed — no Stripe call at all, nothing booked", async () => {
@@ -4152,7 +4149,7 @@ describe("SA-690 pure helpers", () => {
     expect(
       checkoutAddonLineItem({
         sku: "FORECASTING",
-        name: "Forecasting",
+        productId: "rf_addon_forecasting",
         monthlyPrice: "19",
         quantity: 3,
       }),
@@ -4161,10 +4158,7 @@ describe("SA-690 pure helpers", () => {
         currency: "usd",
         unit_amount: 1900,
         recurring: { interval: "month" },
-        product_data: {
-          name: "RouteFlow add-on — Forecasting",
-          metadata: { addonSku: "FORECASTING" },
-        },
+        product: "rf_addon_forecasting",
       },
       quantity: 3,
     });

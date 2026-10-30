@@ -63,13 +63,13 @@ export function OrderLineItemsTable({
               role="columnheader"
               className="eyebrow-label whitespace-nowrap px-4 py-2.5 text-right"
             >
-              Unit Price
+              Unit price
             </th>
             <th
               role="columnheader"
               className="eyebrow-label whitespace-nowrap px-4 py-2.5 text-right"
             >
-              Line Total
+              Line total
             </th>
             <th
               role="columnheader"
@@ -108,6 +108,7 @@ export function OrderLineItemsTable({
                     {lineBackorderPieces(li, orderStatus) > 0 && (
                       <BackorderTag
                         pieces={lineBackorderPieces(li, orderStatus)}
+                        soldPieces={Number(li.qty)}
                         // The stored facts the line was sold by, never the live product's (L-332).
                         unit={{
                           boxes: li.boxes,
@@ -155,7 +156,7 @@ export function OrderLineItemsTable({
               </td>
               <td
                 role="cell"
-                data-label="Unit Price"
+                data-label="Unit price"
                 className={cn("px-4 py-3 text-right", CARD_CELL)}
               >
                 <div className="flex flex-col items-end gap-0.5 max-md:items-start">
@@ -214,7 +215,7 @@ export function OrderLineItemsTable({
               </td>
               <td
                 role="cell"
-                data-label="Line Total"
+                data-label="Line total"
                 className={cn("px-4 py-3 text-right", CARD_CELL)}
               >
                 {li.status === "CANCELLED" ? (
@@ -245,17 +246,18 @@ export function OrderLineItemsTable({
             </tr>
           ))}
         </tbody>
-        <tfoot role="rowgroup" className="border-t-2 border-surface-border max-md:block">
+        {/* r5 Q20: from lg the Summary card sits beside the lines and carries the total; below it this footer does. */}
+        <tfoot role="rowgroup" className="border-t-2 border-surface-border max-md:block lg:hidden">
           <tr
             role="row"
-            className="max-md:flex max-md:items-center max-md:justify-between max-md:px-6 max-md:py-3"
+            className="max-md:flex max-md:items-center max-md:justify-between max-md:px-6 max-md:py-3 lg:hidden"
           >
             <td
               role="cell"
               colSpan={3}
               className="px-6 py-3 text-right text-sm font-semibold text-navy max-md:block max-md:p-0"
             >
-              Order Total
+              Order total
             </td>
             <td role="cell" className="px-4 py-3 text-right max-md:block max-md:p-0">
               <span className="money text-[15px] font-semibold text-navy">

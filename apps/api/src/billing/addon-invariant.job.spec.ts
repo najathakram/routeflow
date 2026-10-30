@@ -303,7 +303,70 @@ describe("scope, paging, cap and registry", () => {
     expect(truncated[0].tenantId).toBeNull();
   });
 
-  it("the registry is one array of checks I1..I3 (a new invariant is one entry)", () => {
-    expect(ADDON_INVARIANTS.map((c) => c.id)).toEqual(["I1", "I2", "I3"]);
+  it("the registry is one array of checks I1..I4 (a new invariant is one entry)", () => {
+    expect(ADDON_INVARIANTS.map((c) => c.id)).toEqual(["I1", "I2", "I3", "I4"]);
+  });
+});
+
+describe("I4: an unowned business change (row 556 / SA-970 §2.2)", () => {
+  const ev = (over: Record<string, unknown> = {}) => ({
+    payload: {
+      rowId: "ta1",
+      actor: { kind: "SYSTEM", id: null },
+      source: "tenant.enable",
+      changes: { priceSnapshot: [0, 25] },
+      ...over,
+    },
+  });
+  const run = async (events: any[]) => {
+    const m = make({ rows: [row({ priceSnapshot: 25, stripeItemId: "si_1" })], events });
+    return (await m.job.run(NOW)).filter((f) => f.invariant === "I4");
+  };
+
+  it("R1 (SA-1006): a SYSTEM plan.reprice price change is expected_system, so no finding", async () => {
+    expect(
+      await run([ev({ source: "plan.reprice", changes: { priceSnapshot: [0, 25] } })]),
+    ).toHaveLength(0);
+  });
+
+  it("R2 (SA-1006): a SYSTEM actor on tenant.enable (an owner source with no person) is a finding", async () => {
+    const found = await run([ev({ source: "tenant.enable", changes: { active: [false, true] } })]);
+    expect(found).toHaveLength(1);
+    expect(found[0].sentence).toContain("tenant.enable");
+  });
+
+  it("a SYSTEM change from an `expected_system` source is not a finding", async () => {
+    expect(await run([ev({ source: "checkout.adopt" })])).toHaveLength(0);
+  });
+
+  it("a SYSTEM actor on an `owner` source is a finding (that source should be a person)", async () => {
+    expect(
+      await run([ev({ source: "admin.comp", changes: { isComp: [false, true] } })]),
+    ).toHaveLength(1);
+  });
+
+  it("an unknown source string is `alert`", async () => {
+    expect(await run([ev({ source: "brand.new" })])).toHaveLength(1);
+  });
+
+  it("a person's change is owned: TENANT_USER, PLATFORM_ADMIN, and an impersonated TENANT_USER", async () => {
+    const tu = { kind: "TENANT_USER", id: "u1" };
+    expect(await run([ev({ actor: tu, source: "tenant.enable" })])).toHaveLength(0);
+    expect(await run([ev({ actor: { kind: "PLATFORM_ADMIN", id: "a1" } })])).toHaveLength(0);
+    expect(await run([ev({ actor: tu, impersonatedBy: "a1" })])).toHaveLength(0);
+  });
+
+  it("a pointer-only SYSTEM change is not a business change", async () => {
+    expect(await run([ev({ changes: { stripeItemId: ["a", "b"] } })])).toHaveLength(0);
+  });
+
+  it("the LAST business change decides: a person's later change clears an earlier SYSTEM one", async () => {
+    const later = ev({ actor: { kind: "PLATFORM_ADMIN", id: "a1" }, source: "admin.enable" });
+    expect(await run([ev(), later])).toHaveLength(0);
+    expect(await run([later, ev()])).toHaveLength(1);
+  });
+
+  it("an event with no actor kind is unattended", async () => {
+    expect(await run([ev({ actor: undefined })])).toHaveLength(1);
   });
 });

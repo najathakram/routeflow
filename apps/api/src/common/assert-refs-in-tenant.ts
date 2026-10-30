@@ -8,12 +8,17 @@ import type { PrismaService } from "../prisma/prisma.service";
  * (`ExpenseCategory.tenantId` is nullable: shared categories are legitimate), so it is accepted when its
  * tenant is the caller's OR null, and refused when it belongs to another business.
  * Empty / absent values are the caller's "none" and are left alone.
+ * Existence and tenant only: the helper never reads deletedAt / archived / sellable state, those are policy
+ * (an edit that round-trips an archived product's line must still pass). Call it on the OUTER client,
+ * before any transaction opens, never from inside a tx callback.
  */
 export interface TenantRefs {
   expenseCategoryIds?: ReadonlyArray<string | null | undefined>;
   supplierIds?: ReadonlyArray<string | null | undefined>;
   customerIds?: ReadonlyArray<string | null | undefined>;
   productIds?: ReadonlyArray<string | null | undefined>;
+  /** No null-tenant exemption: `TrackedCategory.tenantId` is NOT NULL. */
+  trackedCategoryIds?: ReadonlyArray<string | null | undefined>;
 }
 
 const present = (ids: ReadonlyArray<string | null | undefined> | undefined): string[] => [
@@ -50,6 +55,14 @@ export async function assertRefsInTenant(prisma: PrismaService, refs: TenantRefs
       "Product not found",
       (ids) =>
         prisma.forTenant().product.findMany({ where: { id: { in: ids } }, select: { id: true } }),
+    ],
+    [
+      present(refs.trackedCategoryIds),
+      "Tracked category not found",
+      (ids) =>
+        prisma
+          .forTenant()
+          .trackedCategory.findMany({ where: { id: { in: ids } }, select: { id: true } }),
     ],
   ];
   for (const [ids, message, find] of checks) {

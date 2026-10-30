@@ -21,6 +21,8 @@ import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identit
 import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
 import { isStaffRole } from "../lib/default-unit-line";
+import { SHELL_ON } from "../lib/web-shell/shell-env";
+import { creditsPendingOpenRoute } from "../lib/web-shell/shell-routing";
 
 /** B923: the legacy-replay count is logged once per app session. */
 let legacyReplayLogged = false;
@@ -176,17 +178,22 @@ export function useNetworkSync() {
       // for staff, offer to open the saved order. Drivers have no operator order route.
       if (result.creditsPending.length > 0) {
         const first = describeCreditsPendingDrain(result.creditsPending);
+        // W-830: with the shell on there is no operator route to open (see creditsPendingOpenRoute),
+        // so staff get the same fixed notice without an "Open order" button.
+        const openRoute = creditsPendingOpenRoute({
+          shellOn: SHELL_ON,
+          orderId: first.orderId,
+          activeRole: useAuthStore.getState().activeRole,
+        });
         const staff = isStaffRole(useAuthStore.getState().user?.role);
-        if (staff) {
+        if (staff && openRoute) {
           chooseAction(first.title, first.message, [
             { label: "Dismiss", style: "cancel" },
             {
               label: "Open order",
               onPress: () =>
                 // Lazy: expo-router is not loadable in the pure-logic jest lane.
-                void import("expo-router").then(({ router }) =>
-                  router.push(`/(operator)/orders/${first.orderId}` as any),
-                ),
+                void import("expo-router").then(({ router }) => router.push(openRoute as any)),
             },
           ]);
         } else {
