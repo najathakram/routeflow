@@ -194,6 +194,18 @@ export function canonicalUnitRef(units: readonly LadderViewUnit[], ref: UnitRef)
   return row && row.factorToBase === 1 ? "base" : ref;
 }
 
+/**
+ * SA-1041 ruling 4: the price-authority level of a grid ref. The row that writes the product's five price columns IS
+ * base: the "pack" row and any factor-1 row. Every other unit level is the tenant's own ("other"). The grid and the
+ * write path both ask this, so they cannot disagree.
+ */
+export function authorityLevelOfRef(
+  units: readonly LadderViewUnit[],
+  ref: UnitRef,
+): "base" | "other" {
+  return ref === "pack" || canonicalUnitRef(units, ref) === "base" ? "base" : "other";
+}
+
 /** "set" when the cell holds a typed price, "auto" when the rules work it out. The only reader of the encoding. */
 export function priceSource(row: Pick<LadderRow, "set">, tier: PriceTier): "set" | "auto" {
   return row.set[tier - 1] == null ? "auto" : "set";

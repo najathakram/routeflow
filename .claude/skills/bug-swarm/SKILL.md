@@ -64,6 +64,8 @@ Append one ledger row per batch: `node ~/.claude/skills/model-routing/scripts/pi
   rate and post-merge regression rate no worse. **Retire** a step that never changes an outcome in 3 runs; **add**
   a guard after any regression it should have caught.
 
+**Repro-first and anti-tamper checks (DARK, R4).** Builders run `node scripts/fix-revert-probe.mjs` and `node scripts/test-tamper-check.mjs` in their cluster worktree before the gate and paste the probe table in the cluster PR body: at least one test file should read `repro`; an intended test edit carries `// tamper-ok: <reason>`. Both only report until the flip review.
+
 ## Learning clause (improve as we go)
 
 After every run: (1) the ledger row; (2) one RUN-LOG entry, `.claude/pipeline/<run>/RUN-LOG.md`, with what was

@@ -100,6 +100,8 @@ const ghRun = (args) =>
     timeout: GH_TIMEOUT_MS,
   });
 
+export { GH_REPO, ghRun, gitIn }; // reused by review-tier.mjs
+
 /** The numbers for one change set. greenOnly defaults to the checkout's risk rules (gh modes). */
 function measure(rows, message, greenOnly) {
   const c = countLines(rows);
