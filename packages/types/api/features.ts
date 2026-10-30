@@ -22,6 +22,15 @@ export type FeatureSource = (typeof FEATURE_SOURCE_VALUES)[number];
 export const ENTITLEMENTS_MODE_VALUES = ["shadow", "live"] as const;
 export type EntitlementsMode = (typeof ENTITLEMENTS_MODE_VALUES)[number];
 
+// SA-1032: the `promotions` feature-config key. Anything but an explicit "off" (no row, "unset",
+// "on", an unreadable config) keeps promotions on, so a business that never touched it sees no
+// change.
+export const PROMOTIONS_MODE_VALUES = ["unset", "on", "off"] as const;
+export type PromotionsMode = (typeof PROMOTIONS_MODE_VALUES)[number];
+export function promotionsOn(mode?: string | null): boolean {
+  return mode !== "off";
+}
+
 export type FeatureLifecycle = "proposed" | "beta" | "ga" | "deprecated" | "sunset";
 
 // ─── Back office for business nature (SA-950 piece A) ──────────────────────────────────────

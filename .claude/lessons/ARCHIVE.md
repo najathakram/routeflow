@@ -4452,3 +4452,34 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
 - **Guard:** none automatic; the lane rules.
 - (Archived 2026-10-29 whole and verbatim to make room at cap: L-291: no recurrence since 2026-10-10; edits go through the Edit and Write tools; no citation outside the register.)
+
+## Archived 2026-10-30 — zero outside citations; headroom for L-355..L-358 (bookkeeping for W26r..W28b)
+
+### L-258 · 2026-10-02 · testing · a harness locator is chosen by test id or role, never by position (a `.last()` produced a false repro)
+
+- **Symptom:** the Expo 390 Playwright repro of "three same-code scans through the scan sheet's manual-entry field give one bottle" used `input.last()` for the manual field. After the first scan the cart row's quantity input became the last input, so scans two and three typed into the quantity field and the capture claimed the fix was missing. A runtime probe targeting the field by test id or role showed three submits giving three bottles ($6.00 in the DB) at both 1500 ms and 350 ms.
+- **Root cause:** a positional locator is correct only while the page keeps the same element order; the first interaction reordered it.
+- **Lesson:** **Target a field by `data-testid` or accessible role, never by `.first()`, `.last()` or `nth()`, and before filing a bug from a capture re-run the failing step with the stable locator and read the persisted value. Cf. [[L-202]], [[L-212]].**
+- **Guard:** none automated; the cost was one wrong-diagnosis cycle and a static re-trace by the lane.
+
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
+
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
+
+### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
+
+- **Symptom:** a worktree reported clean by `git status` was about to be removed while it held ignored files that exist nowhere else: database backups, `*.sql` dumps, `.env*` files and `graphify-out/`.
+- **Root cause:** `git status` hides ignored files by design, so "clean" says nothing about untracked-and-ignored data; removal tooling that trusts it deletes them with the tree.
+- **Lesson:** **Before removing a worktree, run `git status --ignored --short` and list what is ignored; copy out anything not regenerable (backups, dumps, env files, built graphs) or stop and report. "Clean" is a statement about tracked files only.** Cf. [[L-180]].
+- **Guard:** none automatic; the worktree-removal step of the cleanup routine lists ignored files first.
+
+### L-317 · 2026-10-18 · domain · removing a whole-catalog fetch (limit=0) from a picker is a behavior change; prove what each consumer needs first
+
+- **Symptom:** the product-k11 train swapped `limit: 0` reads for per-line or server-searched reads on several pickers. Two swaps (the promotions picker, the purchase-order detail) broke a consumer that needed the full set and were reverted; the products-list categories and inventory pickers, which only needed distinct values, kept the swap.
+- **Root cause:** a `limit: 0` read feeds more than the dropdown: a guard scanning every product, a lookup of lines the page did not request, a picker that must show items before any search. The cost was visible, the other readers were not.
+- **Lesson:** **Before replacing a fetch-all with a narrower read, list every consumer of that data on the page and name what each needs (distinct values, a few rows, the full set). Swap only where the narrow read serves all of them; keep a deliberate fetch-all with a comment naming the consumer, and give each swap its own revert-able commit.**
+- **Guard:** none automatic; the remaining fetch-alls carry a DELIBERATE comment naming their consumer (products, promotions, purchase-orders, suppliers pages). Cf. [[L-167]].
+

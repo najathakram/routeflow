@@ -22,7 +22,7 @@ describe("USE_POS_MODE gate", () => {
     };
     expect(s.STAFF_CAPABILITY_RULES).toEqual(STAFF_CAPABILITY_RULES);
     for (const role of ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN", "DRIVER", "CUSTOMER", null]) {
-      expect(s.staffMay(role, "USE_POS_MODE")).toBe(staffMay(role, "USE_POS_MODE"));
+      expect(s.staffMay(role, "USE_POS_MODE", [])).toBe(staffMay(role, "USE_POS_MODE", []));
     }
   });
   it("the preference key is the shared PREFERENCE_KEYS entry", () => {

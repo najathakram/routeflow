@@ -195,7 +195,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     });
 
     const visibility = new RegulatedVisibilityService(prisma);
-    const promotions = new PromotionsService(prisma);
+    const promotions = new PromotionsService(prisma, { getEffectiveMode: async () => "on" } as any);
     // The REAL engine: portal limits (selling restrictions) hide products through the one visibility context.
     restrictions = new SellingRestrictionsService(prisma, new ProductLabelsService(prisma));
     replenishment = new ReplenishmentService(prisma, restrictions);

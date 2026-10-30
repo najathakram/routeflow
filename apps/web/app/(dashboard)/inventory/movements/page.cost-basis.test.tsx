@@ -36,6 +36,15 @@ jest.mock("@/lib/api/inventory", () => ({
           product: { id: "p1", name: "Acme Soda", sku: "SODA-1" },
         },
         {
+          id: "m3",
+          type: "FUTURE_KIND",
+          quantity: 1,
+          createdAt: "2026-09-05T15:00:00.000Z",
+          notes: null,
+          reference: null,
+          product: { id: "p1", name: "Acme Soda", sku: "SODA-1" },
+        },
+        {
           id: "m2",
           type: "PURCHASE",
           quantity: 10,
@@ -45,7 +54,7 @@ jest.mock("@/lib/api/inventory", () => ({
           product: { id: "p1", name: "Acme Soda", sku: "SODA-1" },
         },
       ],
-      meta: { total: 2, page: 1, limit: 50, totalPages: 1 },
+      meta: { total: 3, page: 1, limit: 50, totalPages: 1 },
     },
   }),
 }));
@@ -64,6 +73,12 @@ describe("Stock movements — COST_BASIS (SA-1049 R6)", () => {
     renderWithProviders(<MovementsPage />);
     const badge = typeCell("Purchase");
     expect(badge.closest("span")?.className ?? badge.className).toContain("bg-success-bg");
+  });
+
+  it("W-1016: a type the server adds later still shows a word, in the neutral badge, and the page stands", () => {
+    renderWithProviders(<MovementsPage />);
+    const badge = typeCell("Future kind");
+    expect(badge.closest("span")?.className ?? badge.className).toContain("bg-sunken");
   });
 
   it("the All types filter can select Cost update", () => {
