@@ -14,6 +14,7 @@ import {
   parseFlags,
   pollOnce,
 } from "./launch-once.mjs";
+import { withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -44,6 +45,12 @@ function fakeDeps(over = {}) {
       return "gone";
     },
     sleep: async () => {},
+    withSlot: async (_opts, fn) => {
+      calls.push("seat");
+      const result = await fn({ token: "seat-1", held: true });
+      calls.push("seat released");
+      return result;
+    },
     log: () => {},
     error: () => {},
     ...over,
@@ -175,12 +182,12 @@ check(
 {
   const { deps, calls } = fakeDeps({ visibility: () => "PUBLIC" });
   check("L1 PUBLIC exits 3", await launch(defaults, deps), EXIT_NOT_PRIVATE);
-  check("L2 PUBLIC registers nothing", calls, []);
+  check("L2 PUBLIC registers nothing", calls.includes("mint"), false);
 }
 {
   const { deps, calls } = fakeDeps({ foreignQueuedRuns: () => [41] });
   check("L3 an outside run exits 4", await launch(defaults, deps), EXIT_FOREIGN_QUEUED);
-  check("L4 an outside run registers nothing", calls, []);
+  check("L4 an outside run registers nothing", calls.includes("mint"), false);
 }
 {
   const { deps, calls } = fakeDeps({
@@ -190,7 +197,64 @@ check(
     },
   });
   check("L5 the container's exit code comes back", await launch(defaults, deps), 137);
-  check("L6 order: mint, container, delete", calls, ["mint", "container", "delete"]);
+  check("L6 order: the seat frees before the delete, which can take 15 minutes", calls, [
+    "seat",
+    "mint",
+    "container",
+    "seat released",
+    "delete",
+  ]);
+}
+
+// ── The runner takes a heavy seat, never runs beside one ─────────────────────────────────────────
+{
+  const { deps, calls } = fakeDeps({
+    withSlot: (_opts, fn) => fn({ token: null, held: false }),
+  });
+  check("S1 no seat: refuse with exit 5", await launch(defaults, deps), 5);
+  check("S2 no seat: register nothing", calls, []);
+}
+{
+  const { deps, calls } = fakeDeps({
+    withSlot: (opts, fn) => withHeavySlot({ ...opts, env: { CI: "true" } }, fn),
+  });
+  check("S3 heavy-slot's own no-seat answer refuses", await launch(defaults, deps), 5);
+  check("S4 and registers nothing", calls, []);
+}
+{
+  let opts;
+  const seen = [];
+  const { deps } = fakeDeps({
+    withSlot: (o, fn) => {
+      opts = o;
+      seen.push("seat");
+      return fn({ token: "seat-1", held: true });
+    },
+    visibility: () => {
+      seen.push("visibility");
+      return "PRIVATE";
+    },
+  });
+  await launch(parseFlags(["--branch", "train/acme"]), deps);
+  check("S5 checks run after the wait for a seat, not before", seen, ["seat", "visibility"]);
+  check("S6 the seat counts as a capped verify", /verify/.test(opts?.label), true);
+  check("S7 the seat names the train", opts?.branch, "train/acme");
+}
+{
+  const { deps, calls } = fakeDeps();
+  const code = await launch(parseFlags(["--max-minutes", "81"]), deps);
+  check("S8 past the hold cap's margin: refuse with exit 2", code, 2);
+  check("S9 and take no seat", calls, []);
+}
+check(
+  "S10 80 minutes is the last allowed",
+  await launch(parseFlags(["--max-minutes", "80"]), fakeDeps().deps),
+  0,
+);
+{
+  const { deps, calls } = fakeDeps();
+  const code = await launch(parseFlags(["--max-minutes", "soon"]), deps);
+  check("S11 a bad number is refused too", [code, calls], [2, []]);
 }
 
 // ── A killed job's runner can't be deleted until its run closes ──────────────────────────────────

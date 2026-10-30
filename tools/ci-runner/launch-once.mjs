@@ -4,15 +4,22 @@
 // repo lets fork PRs reach a self-hosted runner, and a job `if:` cannot stop that: a fork edits its
 // own copy of the workflow. Routine: docs/runbooks/self-hosted-runner.md.
 //
-//   node tools/ci-runner/launch-once.mjs [--cpus 0-3] [--memory 16g] [--max-minutes 60]
+//   node tools/ci-runner/launch-once.mjs --branch <train> [--cpus 0-3] [--memory 16g] [--max-minutes 60]
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
 
 export const REPO = "najathakram/routeflow";
+const EXIT_BAD_FLAGS = 2;
 export const EXIT_NOT_PRIVATE = 3;
 export const EXIT_FOREIGN_QUEUED = 4;
+const EXIT_NO_SEAT = 5;
+/** "verify" in the label makes this one of heavy-slot's capped verify seats. */
+const SEAT_LABEL = "ci-runner-verify";
+/** Under heavy-slot's 90-minute hold cap, which ends tracked children only: docker here isn't one. */
+const MAX_MINUTES = 80;
 const IMAGE = "routeflow-ci-runner:2.338.2";
 const NETWORK = "routeflow-ci-runner";
 const LABELS = ["self-hosted", "Linux", "X64", "routeflow-ephemeral"];
@@ -36,6 +43,7 @@ export function parseFlags(argv) {
     cpus: flag("--cpus", "0-3"),
     memory: flag("--memory", "16g"),
     maxMinutes: Number(flag("--max-minutes", "60")),
+    branch: flag("--branch", undefined),
   };
 }
 
@@ -217,29 +225,48 @@ const REAL_DEPS = {
   mintRunner,
   runContainer,
   deleteRunner,
+  withSlot: withHeavySlot,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log: console.log,
   error: console.error,
 };
 
 export async function launch(flags, deps = REAL_DEPS) {
-  const seen = deps.visibility();
-  if (seen !== "PRIVATE") {
-    deps.error(`refusing: ${REPO} is ${seen}, not PRIVATE`);
-    return EXIT_NOT_PRIVATE;
-  }
-  const foreign = deps.foreignQueuedRuns();
-  if (foreign.length > 0) {
-    deps.error(`refusing: runs from outside ${REPO} are queued: ${foreign.join(", ")}`);
-    return EXIT_FOREIGN_QUEUED;
+  if (!(flags.maxMinutes > 0 && flags.maxMinutes <= MAX_MINUTES)) {
+    deps.error(`refusing: --max-minutes must be 1 to ${MAX_MINUTES}`);
+    return EXIT_BAD_FLAGS;
   }
 
-  const name = `rf-ephemeral-${Date.now()}`;
-  const { id, jitConfig } = deps.mintRunner(name);
-  deps.log(`runner ${name} (id ${id}) registered`);
-  const code = await deps.runContainer({ name, jitConfig, runnerId: id, flags });
-  await reapRunner(id, deps);
-  deps.log(`runner ${name} done, container exit ${code}`);
+  // The checks wait for the seat: a PRIVATE reading taken before a long queue proves nothing.
+  let runner = null;
+  const code = await deps.withSlot({ label: SEAT_LABEL, branch: flags.branch }, async (seat) => {
+    if (!seat.token) {
+      deps.error("refusing: no heavy seat. The runner never runs beside one (CI or slot off?)");
+      return EXIT_NO_SEAT;
+    }
+    const seen = deps.visibility();
+    if (seen !== "PRIVATE") {
+      deps.error(`refusing: ${REPO} is ${seen}, not PRIVATE`);
+      return EXIT_NOT_PRIVATE;
+    }
+    const foreign = deps.foreignQueuedRuns();
+    if (foreign.length > 0) {
+      deps.error(`refusing: runs from outside ${REPO} are queued: ${foreign.join(", ")}`);
+      return EXIT_FOREIGN_QUEUED;
+    }
+
+    const name = `rf-ephemeral-${Date.now()}`;
+    const { id, jitConfig } = deps.mintRunner(name);
+    runner = { name, id };
+    deps.log(`runner ${name} (id ${id}) registered`);
+    return deps.runContainer({ name, jitConfig, runnerId: id, flags });
+  });
+
+  // Outside the seat: the container is gone, and this can wait 15 minutes on GitHub.
+  if (runner) {
+    await reapRunner(runner.id, deps);
+    deps.log(`runner ${runner.name} done, container exit ${code}`);
+  }
   return code;
 }
 
