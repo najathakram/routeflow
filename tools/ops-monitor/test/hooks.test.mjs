@@ -324,6 +324,42 @@ test("confirmMerge: never writes into a later turn once its pending line is gone
   assert.equal(got.recorded.length, 1, "the rf event is still recorded");
 });
 
+test("confirmMerge: a confirmed merge asks for its landing row; ready, open and duplicates do not (R1-b L10)", () => {
+  const T = Date.parse("2026-10-19T10:01:00Z");
+  const view = (o = {}) =>
+    JSON.stringify({
+      number: 7,
+      state: "MERGED",
+      mergedAt: "2026-10-19T10:00:30Z",
+      headRefName: "feat/x",
+      ...o,
+    });
+  const go = (v, job = {}, extra = {}) => {
+    const landed = [];
+    confirmMerge(
+      { ts: T, number: 7, named: true, cwd: "x", file: "f", ...job },
+      { view: () => v, append() {}, record() {}, land: (n) => landed.push(n), ...extra },
+    );
+    return landed;
+  };
+  assert.deepEqual(go(view()), [7]);
+  assert.deepEqual(go(view(), { action: "ready" }), []);
+  assert.deepEqual(go(view({ state: "OPEN", mergedAt: null })), []);
+  assert.deepEqual(go(view(), {}, { seen: () => true }), []);
+  // a throwing land never breaks the confirmer (it is a detached spawn in real use)
+  assert.doesNotThrow(() =>
+    go(
+      view(),
+      {},
+      {
+        land: () => {
+          throw new Error("spawn failed");
+        },
+      },
+    ),
+  );
+});
+
 test("confirmMerge: named ready records the PR's head branch for OPEN or MERGED", () => {
   const T = Date.parse("2026-10-19T10:01:00Z");
   const go = (view, job = {}) => {

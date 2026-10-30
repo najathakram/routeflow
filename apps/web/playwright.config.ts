@@ -510,6 +510,16 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // I-101 item 6: the 10 / 200 / 4800 ladder on two variants of one family, order -> invoice at Case and Pallet.
+    // Builds its own family through the API (leaves one family, two variants, and an order + invoice per level on
+    // e2e-routeflow; same no-cleanup tolerance as 53/54). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "units-ladder-three-level",
+      testMatch: /55-units-ladder-three-level.spec.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
     // Same posture as order-edit-pricing above — a client-side requirement
     // with no web unit runner behind it, so this runs only against a live app
@@ -1162,6 +1172,18 @@ export default defineConfig({
           {
             name: "get-the-app",
             testMatch: /76-get-the-app\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // I-101: a Pallet of the 10/200/4800 ladder sold in the UI, order + invoice truth (spec 79). It CREATES a product, its
+          // units and a $19,200 invoice with no cleanup, so it is local lane only like 71-76 (never on prod's e2e-routeflow);
+          // observe-only; not on the local:e2e allow-list.
+          {
+            name: "units-pallet-ladder-sale",
+            testMatch: /79-units-pallet-ladder-sale\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

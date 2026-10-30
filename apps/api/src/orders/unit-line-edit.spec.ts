@@ -49,6 +49,7 @@ function makeCtx(): UnitWriteContext & {
     tenantId: "t1",
     tier: () => 1,
     categoryMap: new Map([["cat-1", category]]),
+    priceEditAllowed: true,
   };
 }
 

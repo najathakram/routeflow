@@ -562,6 +562,7 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
         amount: true,
         status: true,
         creditNoteId: true,
+        reference: true,
       });
     });
 

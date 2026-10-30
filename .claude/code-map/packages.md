@@ -671,3 +671,5 @@ Moved to [packages/landing-2026-10-24-w5.md](packages/landing-2026-10-24-w5.md) 
 Window 6 (2026-10-25): moved to [packages/landing-2026-10-25-w6.md](packages/landing-2026-10-25-w6.md) (this file is at its size cap): capacity policy helpers, no-longer-fits copy and error code, bugs close verb, skip-verify pushed refs, ops-monitor NUL guard.
 
 Train 2 (2026-10-25): moved to [packages/landing-2026-10-25-train2.md](packages/landing-2026-10-25-train2.md) (this file is at its size cap): `PRODUCT_CHANGED_CONCURRENTLY` in `API_ERROR_CODES`.
+
+Catch-up (2026-10-29, b1a2fc3d1..75f433f56): moved to [packages/landing-2026-10-29-w26-catchup.md](packages/landing-2026-10-29-w26-catchup.md) (this file is at its size cap): pricing, types, ui, plus apps/mobile and apps/control.

@@ -1,11 +1,13 @@
-# Prompting Fable 5.1 (and Opus 5.5) — snippets and the subagent template
+> **Note (owner 2026-10-15): Fable is not used; the snippets in this file apply to Opus (alias `opus`).** The file keeps its name because other files link to it.
 
-The snippets are quoted from Anthropic's Fable 5.1 migration guidance (the `claude-api` skill,
+# Prompting Opus — snippets and the subagent template (the file name is kept from the retired Fable 5.1 guide)
+
+The snippets are quoted from Anthropic's migration guidance for the retired Fable 5.1 (the `claude-api` skill,
 `shared/model-migration.md`). Use them by purpose; do not paste all of them into every prompt.
 
 ## De-prescribe first
 
-Prompts and skills written for prior models are often too prescriptive for Fable 5.1 and _reduce_ output
+Prompts and skills written for prior models are often too prescriptive for the retired Fable 5.1 and _reduce_ output
 quality. Before adding anything:
 
 - State outcomes, constraints, and how success is verified; keep numbered steps only where order truly
@@ -15,8 +17,8 @@ quality. Before adding anything:
   adaptive and current models plan unprompted; these cause over-planning. Lower `effort` instead of adding
   prose when a run over-deliberates.
 - Keep every prohibition that encodes a real constraint with its reason; drop no-provenance style bans.
-- Remove "hold all findings for the final response" / "don't narrate" and anti-formatting rules — Fable
-  5.1 already under-narrates and under-formats; those lines make it worse.
+- Remove "hold all findings for the final response" / "don't narrate" and anti-formatting rules — the retired Fable
+  5.1 already under-narrated and under-formatted; those lines make it worse.
 - Give the reason, not just the request: "I'm working on [the larger task] for [who it's for]. They need
   [what the output enables]. With that in mind: [request]."
 
@@ -183,9 +185,9 @@ quality. Before adding anything:
 
 ## Refusals and fallbacks
 
-Fable 5.1's classifiers can decline cyber- or bio-adjacent requests; benign security review is the common
+The retired Fable 5.1's classifiers could decline cyber- or bio-adjacent requests; benign security review is the common
 false positive. In Claude Code a declined subagent looks like a dead agent. Rules: route security review
-to Opus; when a Fable agent returns nothing, retry once on Opus at the effort the read deserves; never
+to Opus; when an agent returns nothing, retry once on Opus at the effort the read deserves; never
 report an unverified read as clean; phrase checks as "are there any bugs in this program?" rather than
 "does this compile?"; give unfamiliar languages context; keep base64 blobs out of the context.
 

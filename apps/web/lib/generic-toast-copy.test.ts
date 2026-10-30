@@ -155,6 +155,18 @@ describe("genericToastCopy: codes users rely on", () => {
     ).not.toMatch(/part-way/);
   });
 
+  it("SA-774: the card-first plan refusals show fixed copy, never the server message", () => {
+    for (const code of [
+      API_ERROR_CODES.USE_PLAN_CHANGE,
+      API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING,
+      API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT,
+    ]) {
+      const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
+      expect(copy).not.toContain("raw server text");
+      expect(copy).not.toBe(NEUTRAL_409);
+    }
+  });
+
   it("SA-733r7: the dunning refusals show fixed copy, never the server message", () => {
     for (const code of [API_ERROR_CODES.PAYMENT_OVERDUE, API_ERROR_CODES.PAYMENT_STATE_UNKNOWN]) {
       const copy = genericToastCopy(err(409, { code, message: "raw server text" }));
@@ -171,6 +183,19 @@ describe("genericToastCopy: codes users rely on", () => {
       err(409, { code: API_ERROR_CODES.PAYMENT_NOT_DUE, message: "raw server text" }),
     );
     expect(copy).toBe("Nothing is due right now.");
+  });
+
+  it("UNCONFIRMED_PAYMENT_SUPERSEDED (W-706: a card payment filled the invoice first) is one fixed plain sentence", () => {
+    const copy = genericToastCopy(
+      err(409, {
+        code: API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED,
+        message: "raw server text",
+      }),
+    );
+    expect(copy).toBe(
+      "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
+    );
+    expect(copy).not.toMatch(/[–—]/);
   });
 
   it("PAYMENT_TERMS_CHANGED (row 542c: the banner's terms no longer hold) is one fixed plain sentence", () => {
@@ -258,6 +283,7 @@ describe("genericToastCopy: codes users rely on", () => {
     ["CONCURRENT_UPDATE", /Someone else is updating/],
     // SA-767 L-2.2: a second commit / an edit of a count that is being saved.
     ["STOCK_COUNT_COMMITTING", /^This count is being saved. Try again in a moment.$/],
+    ["STOCK_COUNT_SEEDING", /^This count is still being prepared. Try again in a moment.$/],
     // SA-767 r-note 5 SA-3: the fallback toast (the count screens show the session name themselves).
     ["PRODUCT_IN_OPEN_COUNT", /^Already being counted in another count$/],
     ["BARCODE_TAKEN", /barcode/],
