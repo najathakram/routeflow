@@ -28,6 +28,16 @@ export function deniedGroupsOf(perms: Pick<MyPermissions, "groups"> | null | und
   return allPermissionGroups().filter((g) => !held.has(g));
 }
 
+/**
+ * The signed-in OPERATOR's denied groups, for a control that depends on one (the void button). Everyone else, and an
+ * operator whose read is pending or failed, gets [] (the server is the authority and refuses what the screen offered).
+ */
+export function useDeniedGroups(): string[] {
+  const user = useOptionalAuth()?.user;
+  const perms = useMyPermissions(user?.id, { enabled: user?.role === "OPERATOR" });
+  return user?.role === "OPERATOR" ? deniedGroupsOf(perms.data) : [];
+}
+
 /** A till call the server refused because the account's admin has not turned selling on (403 PERMISSION_DENIED). */
 export function isPermissionDenied(err: unknown): boolean {
   return (

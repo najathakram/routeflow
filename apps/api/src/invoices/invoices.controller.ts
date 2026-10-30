@@ -239,8 +239,8 @@ export class InvoicesController {
   sendReminder(@Param("id") id: string, @Body() body: { email?: string }) {
     return this.invoicesService.sendReminder(id, body?.email);
   }
-  @Post(":id/void") void(@Param("id") id: string) {
-    return this.invoicesService.voidInvoice(id);
+  @Post(":id/void") void(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.voidInvoice(id, user);
   }
   @Post(":id/revert-to-draft")
   @Roles(UserRole.OPERATOR)
@@ -297,8 +297,12 @@ export class InvoicesController {
 
   @Patch(":id/payments/:paymentId/void")
   @Roles(UserRole.OPERATOR)
-  voidPayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
-    return this.invoicesService.voidPayment(id, paymentId);
+  voidPayment(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.voidPayment(id, paymentId, user);
   }
 
   /** P5-12: advance a CHECK payment through Recorded→Deposited→Cleared→Bounced. */
@@ -308,8 +312,9 @@ export class InvoicesController {
     @Param("id") id: string,
     @Param("paymentId") paymentId: string,
     @Body() dto: SetCheckStatusDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.invoicesService.setCheckStatus(id, paymentId, dto);
+    return this.invoicesService.setCheckStatus(id, paymentId, dto, user);
   }
 
   @Patch(":id/payments/:paymentId")
@@ -320,6 +325,7 @@ export class InvoicesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.invoicesService.updatePayment(id, paymentId, dto, {
+      user,
       refDedupe: refDedupeFromRequest(user, dto), // row 752: the staff "record anyway" flag on an edit
     });
   }
@@ -336,7 +342,11 @@ export class InvoicesController {
   }
 
   @Delete(":id/payments/:paymentId")
-  deletePayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
-    return this.invoicesService.deletePayment(id, paymentId);
+  deletePayment(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.invoicesService.deletePayment(id, paymentId, user);
   }
 }

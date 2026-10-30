@@ -1,12 +1,17 @@
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
-import { UserRole } from "@prisma/client";
+import { FulfillPath, UserRole } from "@prisma/client";
+import type { OperatorPermissionGroup } from "@prisma/client";
 import { operatorDeniedGroups } from "../../auth/permissions/operator-denied-groups";
 import {
   OperatorPermissionsService,
   type PermissionPrincipal,
 } from "../../auth/permissions/operator-permissions.service";
 import { permissionDeniedException } from "../../auth/permissions/permission-errors";
-import { STAFF_CAPABILITY_RULES, staffMay } from "../../auth/permissions/staff-capabilities";
+import {
+  STAFF_CAPABILITY_RULES,
+  staffMay,
+  type StaffCapability,
+} from "../../auth/permissions/staff-capabilities";
 import { PrismaService } from "../../prisma/prisma.service";
 
 /**
@@ -29,6 +34,32 @@ export async function assertMayUseTill(
 ): Promise<void> {
   if (!(await mayUseTill(prisma, user))) {
     throw permissionDeniedException([STAFF_CAPABILITY_RULES.USE_POS_MODE.group]);
+  }
+}
+
+/**
+ * W-870: the denials the fulfil-path resolver's POS mode needs (`fulfilCaller(user, ...)`). POS mode only decides an
+ * explicit PICKUP, so any other request reads nothing and is `[]`; a PICKUP request reads `operatorDeniedGroups`.
+ */
+export async function posModeDeniedGroups(
+  prisma: PrismaService,
+  user: PermissionPrincipal,
+  requested: FulfillPath | null | undefined,
+): Promise<OperatorPermissionGroup[]> {
+  return requested === FulfillPath.PICKUP ? operatorDeniedGroups(prisma, user) : [];
+}
+
+/**
+ * W-870: a staff capability decided on the request path, over the principal's denied groups read live; else the 403
+ * PERMISSION_DENIED naming the capability's group. The office void of a till payment calls it with VOID_SALE.
+ */
+export async function assertStaffMay(
+  prisma: PrismaService,
+  user: PermissionPrincipal,
+  action: StaffCapability,
+): Promise<void> {
+  if (!staffMay(user.role, action, await operatorDeniedGroups(prisma, user))) {
+    throw permissionDeniedException([STAFF_CAPABILITY_RULES[action].group]);
   }
 }
 
