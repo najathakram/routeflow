@@ -3,6 +3,7 @@ import { calendarDayOf } from "./settled-date-filter";
 import { overdueCutoff } from "../common/calendar-date";
 import { type RawSqlDb, overdueInvoiceIds } from "./invoice-balance-sql";
 import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
+import { TO_COLLECT_WHERE } from "./to-collect";
 
 /**
  * The invoice LIST query, lifted verbatim out of `InvoicesService.findAll` (size-ratchet prefactor for
@@ -15,8 +16,11 @@ export function applyInvoiceStatusFilters(
   where: any,
   query: ListInvoicesDto,
   timeZone?: string | null,
+  role?: string,
 ): void {
-  const { status, statuses, isOverdue, shipped } = query;
+  const { status, statuses, isOverdue, shipped, toCollect } = query;
+  // SA-1026: the To collect list, ANDed so it intersects any status filter. Staff only: a buyer's flag is ignored.
+  if (toCollect && role !== "CUSTOMER") where.AND = [...(where.AND ?? []), TO_COLLECT_WHERE];
   // Shipments view: only invoices that carry a carrier tracking number.
   if (shipped) where.shippingTrackingNumber = { not: null };
   if (isOverdue) {

@@ -1,4 +1,4 @@
-import { isPaidAtSale } from "@routeflow/pricing";
+import { isPaidAtSale, perBaseUnitPrice } from "@routeflow/pricing";
 import { formatDate } from "../messaging/messaging.helpers";
 import { computeDepositFields } from "./deposit-fields";
 import { confirmedBalance } from "./invoice-balance-classify";
@@ -34,6 +34,14 @@ export function emailPaidBasis(inv: { total: unknown; payments?: any[] | null })
     ),
   );
   return { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue };
+}
+
+/** SA-1029: the per-piece price beside a pack line (display only); the unit word is the frozen label, else the live product's. */
+function itemPerBaseUnit(it: any) {
+  return perBaseUnitPrice(
+    { ...it, unitPrice: it.unitPrice != null ? Number(it.unitPrice) : null },
+    it.baseLabel ?? it.product?.baseUnitLabel,
+  );
 }
 
 export function buildInvoiceEmailPayload(
@@ -72,6 +80,7 @@ export function buildInvoiceEmailPayload(
       priceType: it.priceType ?? null,
       promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       ...invoiceItemQtyFields(it),
+      perBaseUnit: itemPerBaseUnit(it),
     })),
     pdfUrl: ctx.pdfUrl,
     attachment: ctx.attachment,
@@ -125,6 +134,7 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
       priceType: it.priceType ?? null,
       promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       ...invoiceItemQtyFields(it),
+      perBaseUnit: itemPerBaseUnit(it),
     })),
     pdfUrl,
     attachment,

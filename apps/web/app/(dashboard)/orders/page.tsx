@@ -43,7 +43,7 @@ import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
-import { useBelowMd } from "@/lib/hooks/useBelowMd";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
@@ -277,6 +277,7 @@ function DeliveryRange({
           stacked && "ml-auto",
         )}
         title="Clear dates"
+        aria-label="Clear dates"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -453,8 +454,12 @@ export default function OrdersPage() {
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   // Below md the secondary filters live behind one "Filters" button (orders apple-ux r4 Q01); md+ keeps them inline.
-  const narrow = useBelowMd();
+  const narrow = useBelowBreakpoint("md");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
+  // Widening past md swaps the Filters panel for the inline controls: reset it, so narrowing again later does not reopen it.
+  React.useEffect(() => {
+    if (!narrow) setFiltersOpen(false);
+  }, [narrow]);
   const filtersButtonRef = React.useRef<HTMLButtonElement>(null);
 
   const toggleSort = (col: string) => {
@@ -956,7 +961,7 @@ export default function OrdersPage() {
             ) : null}
             {storeOnlyHeader &&
             counterGate.permsKnown &&
-            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups ?? []) ? (
               <Button
                 variant="secondary"
                 className="max-sm:h-11"
@@ -1175,7 +1180,7 @@ export default function OrdersPage() {
             aria-haspopup="dialog"
             aria-label={secondaryActive > 0 ? `Filters, ${secondaryActive} active` : "Filters"}
             className={cn(
-              "flex h-10 shrink-0 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
+              "flex h-11 shrink-0 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
               secondaryActive > 0
                 ? "border-brand-200 bg-brand-50 text-brand-700"
                 : "border-line-strong bg-white text-navy/70 hover:text-navy",
@@ -1439,50 +1444,50 @@ export default function OrdersPage() {
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
-                    {selectMode && <th className="w-10 px-3 py-3" />}
-                    <th className="w-4 px-3 py-3" />
+                    {selectMode && <th className="w-10 whitespace-nowrap px-3 py-3" />}
+                    <th className="w-4 whitespace-nowrap px-3 py-3" />
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("orderNumber")}
                     >
                       Order # <SortIcon col="orderNumber" />
                     </th>
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("customer")}
                     >
                       Customer <SortIcon col="customer" />
                     </th>
-                    <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
+                    <th className="whitespace-nowrap px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 max-lg:hidden">
                       Items
                     </th>
                     <th
-                      className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("total")}
                     >
                       Total <SortIcon col="total" />
                     </th>
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("status")}
                     >
                       Status <SortIcon col="status" />
                     </th>
                     {showDelivery && (
                       <th
-                        className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                        className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                         onClick={() => toggleSort("deliveryDate")}
                       >
                         Delivery date <SortIcon col="deliveryDate" />
                       </th>
                     )}
                     <th
-                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
                       onClick={() => toggleSort("createdAt")}
                     >
                       Created <SortIcon col="createdAt" />
                     </th>
-                    <th className="w-10 px-3 py-3" />
+                    <th className="w-10 whitespace-nowrap px-3 py-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border bg-white">
@@ -1510,7 +1515,7 @@ export default function OrdersPage() {
                     >
                       {selectMode && (
                         <td
-                          className="px-3 py-3"
+                          className="whitespace-nowrap px-3 py-3"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleSelect(order.id);
@@ -1528,22 +1533,28 @@ export default function OrdersPage() {
                           />
                         </td>
                       )}
-                      <td className="px-3 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 font-mono text-xs font-semibold text-ink-900">
                         {order.orderNumber}
                       </td>
-                      <td className="px-4 py-3 font-medium text-navy">
-                        {order.customer?.businessName ?? "—"}
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 font-medium text-navy">
+                        {/* r5 (768 table): one line; a long name truncates, the title keeps all of it. */}
+                        <span
+                          title={order.customer?.businessName ?? undefined}
+                          className="block max-w-[12rem] truncate lg:max-w-xs"
+                        >
+                          {order.customer?.businessName ?? "—"}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono tabular-nums text-navy/70 max-lg:hidden">
                         {order.lineItems.length}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-right font-mono tabular-nums font-medium text-ink-900">
                         {formatMoney(order.total)}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3">
                         <div className="flex items-center gap-1.5">
                           <Badge
                             status={order.status}
@@ -1574,7 +1585,7 @@ export default function OrdersPage() {
                         </div>
                       </td>
                       {showDelivery && (
-                        <td className="px-4 py-3 text-sm">
+                        <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-sm">
                           {order.requestedDeliveryDate ? (
                             <span className="text-navy/70">
                               {formatDateOnly(order.requestedDeliveryDate)}
@@ -1584,10 +1595,13 @@ export default function OrdersPage() {
                           )}
                         </td>
                       )}
-                      <td className="px-4 py-3 text-sm text-navy/70">
+                      <td className="whitespace-nowrap px-4 py-3 max-lg:px-3 text-sm text-navy/70">
                         <OrderDateCell order={order} />
                       </td>
-                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td
+                        className="whitespace-nowrap px-3 py-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <button
                           title="View order"
                           aria-label="View order details"

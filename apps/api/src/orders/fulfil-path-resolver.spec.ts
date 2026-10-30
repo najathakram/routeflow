@@ -3,7 +3,20 @@ import { FulfillPath, UserRole } from "@prisma/client";
 import { UNSET_FULFILMENT_CAPABILITIES } from "@routeflow/types";
 import { deriveFulfilmentCapability } from "../billing/fulfilment-capability";
 import { featureDefByKey } from "../billing/feature-registry";
-import { activeFulfilPath, resolveFulfilPath } from "./fulfil-path-resolver";
+import {
+  activeFulfilPath as activeFulfilPathOf,
+  resolveFulfilPath as resolveFulfilPathOf,
+  type FulfilPathInput,
+} from "./fulfil-path-resolver";
+
+/** These specs are about the path rules, not POS denials: the caller holds every group (W-870 made `deniedGroups` required). */
+type Deps = Parameters<typeof resolveFulfilPathOf>[0];
+type CallerInput = Omit<FulfilPathInput, "deniedGroups"> &
+  Partial<Pick<FulfilPathInput, "deniedGroups">>;
+const resolveFulfilPath = (d: Deps, i: CallerInput) =>
+  resolveFulfilPathOf(d, { deniedGroups: [], ...i });
+const activeFulfilPath = (d: Deps, i: CallerInput) =>
+  activeFulfilPathOf(d, { deniedGroups: [], ...i });
 
 /**
  * The ONE fulfil-path resolver. Real shapes throughout: a customer whose stored path is ROUTE (the column

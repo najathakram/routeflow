@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/payment-requests";
 import { useToast, EmptyState, Button, Badge, Modal, Textarea } from "@routeflow/ui/web";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { useAuth } from "@/lib/auth-context";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
@@ -25,10 +26,6 @@ function formatAge(iso: string): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function extractErrorMessage(err: unknown): string | undefined {
-  return (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
 }
 
 const DECISION_LABELS: Partial<Record<PaymentRequest["status"], string>> = {
@@ -196,8 +193,10 @@ export default function PaymentRequestsPage() {
       // SA-837b item 2: a duplicate reference names the existing payment; the approving staff member may "Record anyway".
       if (toastDuplicatePaymentRef(err, toast, user?.role, () => void handleApprove(true))) return;
       // A closed-day refusal is fixed copy (the global toast is quiet for it via the hook's meta): this is the one toast.
+      const closed = dayClosedCopy(err);
       toast({
-        title: dayClosedCopy(err) ?? extractErrorMessage(err) ?? "Failed to approve payment",
+        title: closed ?? "Failed to approve payment",
+        description: closed ? undefined : genericToastCopy(err),
         variant: "error",
       });
     }
@@ -215,7 +214,11 @@ export default function PaymentRequestsPage() {
       toast({ title: "Payment rejected", variant: "success" });
       closeReject();
     } catch (err: unknown) {
-      toast({ title: extractErrorMessage(err) ?? "Failed to reject payment", variant: "error" });
+      toast({
+        title: "Failed to reject payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 

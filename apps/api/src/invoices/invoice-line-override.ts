@@ -1,19 +1,27 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, Logger } from "@nestjs/common";
 import {
   InvalidTierError,
   UnknownUnitError,
   decideStaffOverride,
+  heldLevelState,
+  heldSnapshotPrices,
   isSpecialPrice,
   resolveUnitPrice,
   roundMoney,
   withinStaffOverrideTolerance,
   type CustomerLayerPrice,
+  type HeldLevel,
   type LadderProduct,
   type LadderUnit,
 } from "@routeflow/pricing";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { decideTierOverride, specialPriceReasonRequired } from "../orders/staff-override";
+import { staffMay } from "../auth/permissions/staff-capabilities";
+import {
+  assertPriceEditAllowed,
+  decideTierOverride,
+  specialPriceReasonRequired,
+} from "../orders/staff-override";
 import { norm } from "../orders/unit-label-norm";
 import { customerPricing } from "../orders/units-prices-v2";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
@@ -51,6 +59,8 @@ export interface LinePriceStamp {
 export interface LineOverrideCtx {
   /** The acting staff user, written as `overriddenBy` on a real override. */
   actorId: string;
+  /** SA-1034: the acting user's price-edit capability (`staffMay(role, "EDIT_LINE_PRICE", deniedGroups)`). */
+  priceEditAllowed: boolean;
   /** The customer's tier for a product: its CustomerPrice tier, else the customer's default tier. */
   tierOf: (productId: string) => number;
   /** The server ladder (ProductUnit rows) of the products a line sells by a unit. */
@@ -79,6 +89,8 @@ export interface PricedProduct {
 export interface HeldLine {
   id?: string;
   unitLabel?: string | null;
+  /** SA-1044: the factor the line was sold at; judged against the live ladder (`heldLevelState`). */
+  unitsPerBox?: number | null;
   unitPrice?: unknown;
   priceType?: string | null;
   originalPrice?: unknown;
@@ -99,6 +111,7 @@ const str = (v: unknown): string | null => {
   if (typeof v === "number") return String(v);
   return (v as { toString(): string }).toString();
 };
+const log = new Logger("invoice-line-override");
 const ladderProduct = (p: PricedProduct): LadderProduct => ({
   unit: p.unit,
   unitsPerBox: p.unitsPerBox,
@@ -120,9 +133,10 @@ export async function loadOverride(
     items,
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   ladders: ReadonlyMap<string, readonly LadderUnit[]>,
-  actorId: string | undefined,
+  actor: { sub?: string; role?: string | null } | undefined,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
 ): Promise<LineOverrideCtx | undefined> {
+  const actorId = actor?.sub;
   if (!actorId) return undefined;
   const db = prisma.forTenant();
   const ids = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
@@ -141,6 +155,8 @@ export async function loadOverride(
   const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
   return {
     actorId,
+    // SA-1034: the operator's denied groups arrive with the permissions rollout.
+    priceEditAllowed: staffMay(actor?.role, "EDIT_LINE_PRICE", []),
     ladders,
     tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
     layerOf: pc.layer,
@@ -192,12 +208,13 @@ export function priceInvoiceLine(args: {
           reason,
           ctx.layerOf?.({ ...product, id: String(product.id) }, null),
         )
-      : decideUnit(ctx, product, unitLabel, tier, typed, reason);
+      : decideUnit(ctx, product, unitLabel, tier, typed, reason, held);
   // A layer-MANUAL echo (SA-811a R2) carries `overridden: false`: the ladder priced it, not a staff override.
   const overridden =
     "overridden" in decision
       ? decision.overridden
       : decision.priceType === "DISCOUNTED" || decision.priceType === "MANUAL";
+  if (overridden) assertPriceEditAllowed(ctx.priceEditAllowed); // SA-1034: pack and unit line alike
   return {
     unitPrice: decision.unitPrice,
     stamp: {
@@ -217,32 +234,54 @@ function decideUnit(
   tier: number,
   typed: number,
   reason: string | null,
+  held: HeldLine | null,
 ) {
   const lp = ladderProduct(product);
   const units = ctx.ladders.get(String(product.id)) ?? [];
   let listPrice: number;
   let tierPrice: number;
-  const layer = ctx.layerOf?.({ ...product, id: String(product.id) }, label) ?? null;
-  try {
-    // the ladder is still resolved (unknown unit / invalid tier refused as master); the layer row's own list and price win
-    const ladderList = resolveUnitPrice(lp, units, label, 1);
-    const ladderTier = resolveUnitPrice(lp, units, label, tier);
-    listPrice = layer ? layer.listPrice : ladderList;
-    tierPrice = layer ? layer.price : ladderTier;
-  } catch (e) {
-    if (e instanceof InvalidTierError) {
-      throw new BadRequestException(
-        "This customer's pricing tier is invalid (must be 1-5) — fix it on the customer first.",
-      );
-    }
-    if (e instanceof UnknownUnitError) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
-        message: `The ${e.unitLabel} is no longer offered for this product — choose another unit, or ask an admin to add it back.`,
-      });
-    }
-    throw e;
+  // SA-1044: a held row whose level the ladder deleted or resized bills at its own snapshot (list and tier),
+  // the customer layer ignored; a NEW row on a missing level still gets the 400 below.
+  const snap: HeldLevel | null = held
+    ? {
+        unitLabel: held.unitLabel,
+        unitsPerBox: held.unitsPerBox,
+        unitPrice: str(held.unitPrice),
+        originalPrice: str(held.originalPrice),
+      }
+    : null;
+  const state = snap ? heldLevelState(snap, lp, units) : null;
+  if (state === "unknown") {
+    log.warn(
+      `SA-1044: held line ${held?.id ?? "(no id)"} has an unusable unit snapshot; re-priced from the ladder`,
+    );
   }
+  const keep = snap != null && (state === "gone" || state === "resized");
+  const layer = keep
+    ? null
+    : (ctx.layerOf?.({ ...product, id: String(product.id) }, label) ?? null);
+  if (keep) ({ tierPrice, listPrice } = heldSnapshotPrices(snap));
+  else
+    try {
+      // the ladder is still resolved (unknown unit / invalid tier refused as master); the layer row's own list and price win
+      const ladderList = resolveUnitPrice(lp, units, label, 1);
+      const ladderTier = resolveUnitPrice(lp, units, label, tier);
+      listPrice = layer ? layer.listPrice : ladderList;
+      tierPrice = layer ? layer.price : ladderTier;
+    } catch (e) {
+      if (e instanceof InvalidTierError) {
+        throw new BadRequestException(
+          "This customer's pricing tier is invalid (must be 1-5) — fix it on the customer first.",
+        );
+      }
+      if (e instanceof UnknownUnitError) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.UNIT_NOT_OFFERED,
+          message: `The ${e.unitLabel} is no longer offered for this product — choose another unit, or ask an admin to add it back.`,
+        });
+      }
+      throw e;
+    }
   const d = decideStaffOverride({
     overridePrice: typed,
     baselinePrice: tierPrice,

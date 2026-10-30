@@ -78,16 +78,18 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
       orderNumber: "ORD-1",
       counterCashTendered: stored,
     }));
-    // The column behaves like the real one: the `counterCashTendered: null` filter only matches while unset.
+    // The column behaves like the real one: the `counterCashTendered: null` filter only matches while unset,
+    // the `{ not: null }` filter only while set.
     prisma.order.updateMany.mockImplementation(
       async ({
         where,
         data,
       }: {
-        where: { counterCashTendered?: null };
-        data: { counterCashTendered: number };
+        where: { counterCashTendered?: null | { not: null } };
+        data: { counterCashTendered: number | null };
       }) => {
         if (where.counterCashTendered === null && stored !== null) return { count: 0 };
+        if (where.counterCashTendered && stored === null) return { count: 0 };
         stored = data.counterCashTendered;
         return { count: 1 };
       },
@@ -231,8 +233,129 @@ describe("counter sale: Order.counterCashTendered (SA-764)", () => {
     ["an on-account sale", { method: "ON_ACCOUNT" }],
   ])("(c) %s leaves it NULL", async (_label, payment) => {
     await ring(payment);
-    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    if (payment.method === "ON_ACCOUNT") expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    // a card / check tender never writes a figure: its only write is the stale-clear, which matches nothing here
+    else
+      expect(prisma.order.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { counterCashTendered: expect.any(Number) } }),
+      );
     expect(stored).toBeNull();
+  });
+
+  describe("row 638: a crashed cash attempt's stale tendered never outlives a non-cash retry", () => {
+    const crashCash = async () => {
+      recordPayment.mockRejectedValueOnce(new Error("lock timeout"));
+      const first = await ring({ method: "CASH", amount: 50 }, "k1");
+      expect(first.paymentRecorded).toBe(false);
+      expect(stored).toBe(50);
+      expect(invoices[0].payments).toHaveLength(0);
+    };
+
+    it.each([
+      ["card", { method: "CARD" }],
+      ["check", { method: "CHECK", reference: "1001" }],
+    ])(
+      "(1) a %s retry on the same key clears the stale figure BEFORE the payment",
+      async (_l, payment) => {
+        await crashCash();
+        replay = true;
+        const order: string[] = [];
+        prisma.order.updateMany.mockImplementationOnce(async () => {
+          order.push("clear");
+          stored = null;
+          return { count: 1 };
+        });
+        recordPayment.mockImplementationOnce(
+          async (invoiceId: string, dto: { amount: number; method: string }) => {
+            order.push("pay");
+            invoices
+              .find((i) => i.id === invoiceId)!
+              .payments.push({
+                id: "pay-2",
+                amount: dto.amount,
+                method: dto.method,
+                status: "PAID",
+              });
+            return { id: invoiceId };
+          },
+        );
+        const r = await ring(payment, "k1");
+        expect(order).toEqual(["clear", "pay"]);
+        expect(prisma.order.updateMany).toHaveBeenLastCalledWith({
+          where: { id: "ord-1", counterCashTendered: { not: null } },
+          data: { counterCashTendered: null },
+        });
+        expect(stored).toBeNull();
+        expect(r.paymentRecorded).toBe(true);
+        expect(r.cashTendered).toBeUndefined();
+        expect(r.change).toBeUndefined();
+      },
+    );
+
+    it("(2) a card retry under a NEW key clears it too", async () => {
+      await crashCash();
+      const r = await ring({ method: "CARD" }, "k2");
+      expect(stored).toBeNull();
+      expect(r.paymentRecorded).toBe(true);
+      expect(r.cashTendered).toBeUndefined();
+    });
+
+    it("(3) a refused card amount over the balance clears it and takes no money", async () => {
+      await crashCash();
+      const r = await ring({ method: "CARD", amount: 99 }, "k1");
+      expect(stored).toBeNull();
+      expect(recordPayment).toHaveBeenCalledTimes(1); // only the crashed cash attempt
+      expect(invoices[0].payments).toHaveLength(0);
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.cashTendered).toBeUndefined();
+    });
+
+    it("(4) a refused zero cash tender clears it too", async () => {
+      await crashCash();
+      const r = await ring({ method: "CASH", amount: 0 }, "k1");
+      expect(stored).toBeNull();
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.cashTendered).toBeUndefined();
+    });
+
+    it("(5) when the clear rejects, NO payment is recorded and the response says so", async () => {
+      await crashCash();
+      prisma.order.updateMany.mockRejectedValueOnce(new Error("db down"));
+      const r = await ring({ method: "CARD" }, "k1");
+      expect(recordPayment).toHaveBeenCalledTimes(1);
+      expect(invoices[0].payments).toHaveLength(0);
+      expect(r.paymentRecorded).toBe(false);
+      expect(r.paymentErrorCode).toBe(API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED);
+    });
+
+    it("(6) a refused tender whose clear fails reports not-recorded, not the refusal, and takes no money", async () => {
+      await crashCash();
+      prisma.order.updateMany.mockRejectedValueOnce(new Error("db down"));
+      const r = await ring({ method: "CARD", amount: 99 }, "k1");
+      expect(r.paymentRecorded).toBe(false);
+      expect(invoices[0].payments).toHaveLength(0);
+      expect(r.paymentErrorCode).toBe(API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED);
+    });
+
+    it("(7) once a tender row exists the figure is left alone: a CARD top-up never clears a stored cash anchor", async () => {
+      replay = true;
+      stored = 20;
+      invoices[0].payments.push({ id: "p0", amount: 20, method: "CASH", status: "PAID" });
+      await ring({ method: "CARD" }, "k1");
+      expect(stored).toBe(20);
+      expect(prisma.order.updateMany).not.toHaveBeenCalledWith({
+        where: { id: "ord-1", counterCashTendered: { not: null } },
+        data: { counterCashTendered: null },
+      });
+    });
+
+    it("(8) a cash retry still just overwrites the stale figure (no separate clear)", async () => {
+      await crashCash();
+      prisma.order.updateMany.mockClear();
+      await ring({ method: "CASH", amount: 60 }, "k2");
+      expect(stored).toBe(60);
+      expect(prisma.order.updateMany).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("a refused cash tender (zero) records nothing and stores nothing", async () => {

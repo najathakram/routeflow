@@ -109,7 +109,12 @@ describe("TenantsController.getMyFeatures — SA-138 policy modes carrier", () =
     const { controller, policies } = build(modes);
     const result = await controller.getMyFeatures({ tenantId: "t1" } as unknown as JwtPayload);
     // Business profiles 1A: today's answer plus exactly the one new key (unset = today).
-    expect(result.modes).toEqual({ ...modes, fulfilment_model: "unset", counter_sales: "unset" });
+    expect(result.modes).toEqual({
+      ...modes,
+      fulfilment_model: "unset",
+      counter_sales: "unset",
+      promotions: "unset",
+    });
     expect(policies.effectiveForClient).toHaveBeenCalledWith("t1");
   });
 });
@@ -172,6 +177,7 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
       "orders.x": "amend",
       fulfilment_model: "unset",
       counter_sales: "unset",
+      promotions: "unset",
     });
     expect(r.served).toEqual(["flag.x"]);
     expect(r.capabilities.fulfilment).toEqual({
@@ -217,6 +223,16 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
     expect(r.capabilities.fulfilment.methods).toEqual(["PICKUP", "SHIP"]);
     expect(r.capabilities.fulfilment.staffDefault).toBe("PICKUP");
     expect(r.capabilities.fulfilment.portalMethods).toEqual(["PICKUP", "SHIP"]);
+  });
+
+  it("SA-1032 P-R4: modes.promotions carries the caller's promotions mode", async () => {
+    const { controller, featureConfig } = build({});
+    featureConfig.getEffectiveMode.mockImplementation((_t: string, key: string) =>
+      Promise.resolve(key === "promotions" ? "off" : "unset"),
+    );
+    const r = await controller.getMyFeatures({ tenantId: "t9" } as unknown as JwtPayload);
+    expect((r.modes as Record<string, string>).promotions).toBe("off");
+    expect(featureConfig.getEffectiveMode).toHaveBeenCalledWith("t9", "promotions");
   });
 
   it("reads ONLY the caller's tenant (cross-tenant)", async () => {

@@ -1,8 +1,12 @@
 import type {
+  InvoiceDisplayUnitView,
   InvoiceItemSystemKind,
   InvoiceStatus,
+  LineComponentView,
   OverrideStampView,
+  PerBaseUnit,
   RestrictionAck,
+  ToCollectState,
 } from "@routeflow/types";
 import type { InvoiceSendLock, InvoiceSendState } from "@/lib/invoice-send-state";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -124,6 +128,12 @@ export interface InvoiceItem extends Partial<OverrideStampView> {
    * invoice's MSRP never changes. null/absent = render nothing.
    */
   msrp?: number | null;
+  /** SA-827: frozen component pieces of a composed line (display only). */
+  components?: LineComponentView[] | null;
+  /** SA-827: how this line reads (pieces view or today's layout). */
+  displayUnit?: InvoiceDisplayUnitView | null;
+  /** SA-1029: price per base piece beside a pack line (display only); null = no per-piece cell. */
+  perBaseUnit?: PerBaseUnit | null;
 }
 
 export interface InvoicePayment {
@@ -156,6 +166,8 @@ export interface InvoicePayment {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  /** SA-1026: STAFF reads only: "To collect" (a check not received yet), derived by the server. Never computed here. */
+  toCollect?: ToCollectState;
   /** P-4: derived by the API; absent = never revised (no badge). */
   revisedAt?: string | null;
   /** P-4: > 0 only when overpaid; absent = nothing shown. */
@@ -297,6 +309,8 @@ export function useInvoices(
      * `ListInvoicesDto.isOverdue`).
      */
     isOverdue?: boolean;
+    /** SA-1026: only invoices that read To collect (a check not received yet); staff only, honoured by the server. */
+    toCollect?: boolean;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
@@ -806,9 +820,9 @@ export function useRecordPaymentStandalone() {
         },
         (config) => apiClient.post("/invoices/payments/record", dto, ...config).then((r) => r.data),
       ),
-    // Row 348: every caller (finance Payments, the customer Record Payment modal) answers a closed-day refusal in its
-    // own toast; the global one stays quiet for it so the failure is shown ONCE. Row 498: and for a duplicate reference.
-    meta: { localErrorToast: isRecordPaymentLocalRefusal },
+    // Rows 348 / 353: every caller (finance Payments, the customer Record Payment modal) renders EVERY failure in its own
+    // toast ("Failed to record payment" + the fixed reason), so the global one stays quiet for all of them: ONCE.
+    meta: { localErrorToast: true },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });

@@ -49,6 +49,7 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { _resetLockPoolForTests, withAdvisoryLock } from "../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { TILL_ADMIN } from "../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -253,7 +254,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
           s.invs[1].id,
           b.id,
           { amount: 100, method: "CHECK", reference: "CHK-100" } as any,
-          s.staffOpts(false),
+          { ...s.staffOpts(false), user: TILL_ADMIN },
         ),
       )
       .catch((e) => e);
@@ -279,7 +280,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
           s.invs[1].id,
           b.id,
           { amount: 100, method: "CHECK", reference: "CHK 100", status: "PAID" } as any,
-          s.staffOpts(false),
+          { ...s.staffOpts(false), user: TILL_ADMIN },
         ),
       )
       .catch((e) => e);
@@ -296,7 +297,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
         s.invs[1].id,
         b.id,
         { amount: 100, method: "CHECK", reference: "CHK 100", notes: "called the bank" } as any,
-        s.staffOpts(false),
+        { ...s.staffOpts(false), user: TILL_ADMIN },
       ),
     );
     expect((await s.get(b.id))?.notes).toBe("called the bank");
@@ -312,7 +313,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
         s.invs[1].id,
         b.id,
         { amount: 100, method: "CHECK", reference: "CHK-100" } as any,
-        s.staffOpts(true),
+        { ...s.staffOpts(true), user: TILL_ADMIN },
       ),
     );
     expect((await s.get(b.id))?.reference).toBe("CHK-100");
@@ -336,7 +337,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
         s.invs[0].id,
         sixty.id,
         { amount: 40, method: "CHECK", reference: "R9" } as any,
-        s.staffOpts(false),
+        { ...s.staffOpts(false), user: TILL_ADMIN },
       ),
     );
     expect(Number((await s.get(sixty.id))?.amount)).toBe(40);
@@ -357,7 +358,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             s.invs[0].id,
             pay.id,
             { amount: 25, method: "CHECK", ...body } as any,
-            s.staffOpts(false),
+            { ...s.staffOpts(false), user: TILL_ADMIN },
           ),
         )
         .catch((e) => e);
@@ -375,12 +376,10 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
     const b = await s.row(s.invs[1].id, { amount: 50, reference: "chk-100" });
     const err = await s
       .asTenant(() =>
-        invoicesA.updatePayment(
-          s.invs[1].id,
-          b.id,
-          { amount: 100, method: "CHECK" } as any,
-          s.staffOpts(false),
-        ),
+        invoicesA.updatePayment(s.invs[1].id, b.id, { amount: 100, method: "CHECK" } as any, {
+          ...s.staffOpts(false),
+          user: TILL_ADMIN,
+        }),
       )
       .catch((e) => e);
     expect(status(err)).toBe(409);
@@ -398,7 +397,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             invoiceId,
             id,
             { amount: 100, method: "CHECK", reference: "NEW 1" } as any,
-            s.staffOpts(false),
+            { ...s.staffOpts(false), user: TILL_ADMIN },
           ),
         )
         .catch((e) => e);
@@ -435,7 +434,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
           s.invs[1].id,
           b.id,
           { amount: 100, method: "CHECK", reference: "new-1" } as any,
-          s.staffOpts(false),
+          { ...s.staffOpts(false), user: TILL_ADMIN },
         ),
       )
       .finally(() => (settled = true));
@@ -462,7 +461,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
               s.invs[1].id,
               thirty.id,
               { amount, method: "CHECK", reference: "R9" } as any,
-              s.staffOpts(false),
+              { ...s.staffOpts(false), user: TILL_ADMIN },
             ),
           )
           .catch((e) => e);
@@ -496,7 +495,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             s.invs[1].id,
             thirty.id,
             { amount: 31, method: "CHECK", reference: "R9" } as any,
-            s.staffOpts(false),
+            { ...s.staffOpts(false), user: TILL_ADMIN },
           ),
         )
         .catch((e) => e);
@@ -518,7 +517,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             s.invs[1].id,
             forty.id,
             { amount: 40, method: "CHECK", reference: "Q5" } as any,
-            s.staffOpts(false),
+            { ...s.staffOpts(false), user: TILL_ADMIN },
           ),
         )
         .catch((e) => e);
@@ -578,7 +577,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
               row.invoiceId,
               row.id,
               { method: "CHECK", reference: "W9", ...body } as any,
-              s.staffOpts(false),
+              { ...s.staffOpts(false), user: TILL_ADMIN },
             ),
           )
           .catch((e) => e);
@@ -637,7 +636,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             s.invs[1].id,
             thirty.id,
             { amount: 35, method: "CHECK", reference: "W9" } as any,
-            s.staffOpts(false),
+            { ...s.staffOpts(false), user: TILL_ADMIN },
           ),
         )
         .catch((e) => e);
@@ -668,7 +667,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
     it("R7 the linked first row hard-deleted, then B $30 -> $10: no self-409 (head: 409 naming its own advance)", async () => {
       const { s, rows, advs, edit } = await standalone("w719-r7", 100, [60, 30]);
       expect(advs[0].sourcePaymentId).toBe(rows[0].id);
-      await s.asTenant(() => invoicesA.deletePayment(rows[0].invoiceId, rows[0].id));
+      await s.asTenant(() => invoicesA.deletePayment(rows[0].invoiceId, rows[0].id, TILL_ADMIN));
       const err: any = await edit(rows[1], { amount: 10 });
       expect(status(err)).toBe("ok");
       expect(Number((await s.get(rows[1].id))?.amount)).toBe(10);
@@ -676,7 +675,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
 
     it("R8 the linked first row hard-deleted, then a NEW 'W9' $40 = the group ($30 + its $10 advance): 409 naming the group (head: recorded)", async () => {
       const { s, rows } = await standalone("w719-r8", 100, [60, 30]);
-      await s.asTenant(() => invoicesA.deletePayment(rows[0].invoiceId, rows[0].id));
+      await s.asTenant(() => invoicesA.deletePayment(rows[0].invoiceId, rows[0].id, TILL_ADMIN));
       const err: any = await s
         .asTenant(() =>
           invoicesA.recordPayment(
@@ -717,7 +716,7 @@ describeDb("row 752 editing a payment into a duplicate — real Postgres", () =>
             s.invs[1].id,
             g2row.id,
             { amount: 70, method: "CHECK", reference: "W9" } as any,
-            s.staffOpts(false),
+            { ...s.staffOpts(false), user: TILL_ADMIN },
           ),
         )
         .catch((e) => e);

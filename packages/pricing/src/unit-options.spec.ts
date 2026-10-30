@@ -2,11 +2,14 @@ import {
   buildLadderOptions,
   defaultLadderOptionValue,
   derivedPackSplit,
+  heldSnapshotOption,
   ladderOptionDetail,
   ladderOptionLineTotal,
   ladderOptionPriceText,
   ladderOptionText,
   packPiecesSplit,
+  withHeldOption,
+  type LadderOption,
   type LadderProduct,
   type LadderUnit,
 } from "./index";
@@ -209,5 +212,62 @@ describe("packPiecesSplit: the one pieces-to-pack shape derivedPackSplit and the
     for (const c of [1, 2, 3, 4, 6, 7, 30]) {
       expect(derivedPackSplit(base, c)).toEqual(packPiecesSplit(base.derived!.n, c));
     }
+  });
+});
+
+describe("heldSnapshotOption / withHeldOption (SA-1044 rule 4)", () => {
+  const snap = heldSnapshotOption({
+    unitLabel: "Case",
+    unitsPerBox: 100,
+    unitPrice: 45,
+    listPrice: 50,
+  });
+
+  it("is the line's own snapshot, labelled with its size", () => {
+    expect(snap).toMatchObject({
+      value: "Case",
+      label: "Case of 100 (as ordered)",
+      factorToBase: 100,
+    });
+    expect(snap).toMatchObject({ kind: "level", price: 45, listPrice: 50, held: true });
+    expect(ladderOptionText(snap, (n) => `$${n.toFixed(2)}`, String)).toBe(
+      "Case of 100 (as ordered) · $45.00",
+    );
+  });
+
+  it("list falls back to the held price", () => {
+    expect(heldSnapshotOption({ unitLabel: "Case", unitsPerBox: 12, unitPrice: 9 }).listPrice).toBe(
+      9,
+    );
+  });
+
+  it("replaces the live option of the same label, or is added after the rest", () => {
+    const live: LadderOption[] = [
+      {
+        value: "",
+        label: "Box",
+        factorToBase: 12,
+        kind: "pack" as const,
+        price: 24,
+        listPrice: 24,
+      },
+      {
+        value: "case",
+        label: "case",
+        factorToBase: 200,
+        kind: "level" as const,
+        price: 90,
+        listPrice: 90,
+      },
+    ];
+    expect(withHeldOption(live, snap).map((o) => o.label)).toEqual([
+      "Box",
+      "Case of 100 (as ordered)",
+    ]);
+    expect(withHeldOption(live.slice(0, 1), snap).map((o) => o.label)).toEqual([
+      "Box",
+      "Case of 100 (as ordered)",
+    ]);
+    expect(withHeldOption(live, null)).toEqual(live);
   });
 });

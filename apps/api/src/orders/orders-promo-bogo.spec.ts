@@ -75,6 +75,9 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const customerPayload = {
   sub: "user-cust",
@@ -156,6 +159,7 @@ describe("OrdersService — BUY_N_GET_M (BOGO)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

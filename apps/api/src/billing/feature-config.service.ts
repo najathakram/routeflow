@@ -137,13 +137,23 @@ export class FeatureConfigService {
   }
 
   /** Read-only projection used by the controller's GET and by consumers that want the full
-   * allowed/blocked breakdown, not just the raw stored value. */
-  async getState(tenantId: string, key: string): Promise<FeatureConfigModeState> {
+   * allowed/blocked breakdown, not just the raw stored value. `hypothetical` is the preview's
+   * "after": the value a write would store, read through the SAME `resolveEffective` and tagged
+   * `TENANT` (a write always stores a row), so before and after compare like for like and nothing
+   * is written (SA-1028 section 5). */
+  async getState(
+    tenantId: string,
+    key: string,
+    hypothetical?: string,
+  ): Promise<FeatureConfigModeState> {
     const row = this.registryRow(key);
     if (!row?.config) {
       throw new BadRequestException(`"${key}" has no config modes`);
     }
-    const { value, source } = await this.store.getMode(tenantId, key);
+    const { value, source }: Pick<FeatureConfigModeState, "value" | "source"> =
+      hypothetical !== undefined
+        ? { value: hypothetical, source: "TENANT" }
+        : await this.store.getMode(tenantId, key);
     const allowed: string[] = [];
     const blocked: string[] = [];
     for (const [modeName, mode] of Object.entries(row.config.modes)) {

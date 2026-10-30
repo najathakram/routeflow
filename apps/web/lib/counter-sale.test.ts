@@ -236,6 +236,22 @@ describe("payment method chips", () => {
     expect(walk.find((m) => m.method === "ON_ACCOUNT")?.disabled).toBe(true);
     expect(paymentMethodOptions(false).every((m) => !m.disabled)).toBe(true);
   });
+  it("the default tender is listed first, the rest keep their order; a disabled default is not promoted", () => {
+    expect(paymentMethodOptions(false, "ON_ACCOUNT").map((m) => m.method)).toEqual([
+      "ON_ACCOUNT",
+      "CASH",
+      "CARD",
+      "CHECK",
+    ]);
+    expect(paymentMethodOptions(false, "CASH").map((m) => m.method)).toEqual([
+      "CASH",
+      "CARD",
+      "CHECK",
+      "ON_ACCOUNT",
+    ]);
+    expect(paymentMethodOptions(false, null).map((m) => m.method)[0]).toBe("CASH");
+    expect(paymentMethodOptions(true, "ON_ACCOUNT").map((m) => m.method)[0]).toBe("CASH");
+  });
   it("a short cash tender says what to enter, with the total in the shared money format", () => {
     expect(paymentProblemCopy("TENDER_SHORT", 18.94)).toBe("Enter at least $18.94.");
     expect(isTenderShortCopy(paymentProblemCopy("TENDER_SHORT", 3))).toBe(true);
@@ -259,6 +275,22 @@ describe("payment method chips", () => {
     expect(validatePayment({ method: "ON_ACCOUNT", total: 10, isWalkIn: false })).toBeNull();
     expect(validatePayment({ method: "CARD", total: 10, isWalkIn: true })).toBeNull();
   });
+  it("validatePayment names the limits the server would refuse: tender over 1,000,000, check number over 100 characters (W-850, W-889)", () => {
+    expect(
+      validatePayment({ method: "CASH", total: 10, tendered: 1_000_000, isWalkIn: true }),
+    ).toBeNull();
+    expect(
+      validatePayment({ method: "CASH", total: 10, tendered: 1_000_000.01, isWalkIn: true }),
+    ).toBe("TENDER_TOO_LARGE");
+    expect(
+      validatePayment({ method: "CHECK", total: 10, reference: "9".repeat(100), isWalkIn: true }),
+    ).toBeNull();
+    expect(
+      validatePayment({ method: "CHECK", total: 10, reference: "9".repeat(101), isWalkIn: true }),
+    ).toBe("CHECK_NUMBER_TOO_LONG");
+    expect(paymentProblemCopy("TENDER_TOO_LARGE", 10)).toContain("$1,000,000");
+    expect(paymentProblemCopy("CHECK_NUMBER_TOO_LONG", 10)).toContain("100 characters");
+  });
 });
 
 describe("parseScanField: type a quantity, then scan, to multiply", () => {
@@ -271,6 +303,37 @@ describe("parseScanField: type a quantity, then scan, to multiply", () => {
     expect(parseScanField("012345678905")).toEqual({ kind: "code", code: "012345678905" });
     expect(parseScanField("SKU-7")).toEqual({ kind: "code", code: "SKU-7" });
     expect(parseScanField("0")).toEqual({ kind: "code", code: "0" });
+  });
+  it("F01: a quantity prefix (2*code, 2x code, 2 x code, 2X code) is qty 2 of that code", () => {
+    expect(parseScanField("2*COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField("2x COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField("2 x COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField("2X COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+    expect(parseScanField(" 12 * 012345678905 ")).toEqual({
+      kind: "code",
+      code: "012345678905",
+      qty: 12,
+    });
+    expect(parseScanField("3 \u00d7 COLA")).toEqual({ kind: "code", code: "COLA", qty: 3 });
+  });
+  it("F01: a typed name search with spaces after the prefix stays one whole search", () => {
+    expect(parseScanField("2 x 4 stud")).toEqual({ kind: "code", code: "2 x 4 stud" });
+    expect(parseScanField("6 x 330ml can")).toEqual({ kind: "code", code: "6 x 330ml can" });
+    expect(parseScanField("2*4 stud")).toEqual({ kind: "code", code: "2*4 stud" });
+    expect(parseScanField("2*COLA")).toEqual({ kind: "code", code: "COLA", qty: 2 });
+  });
+  it("F01: the prefix quantity is capped at the 3-digit maximum a bare quantity has", () => {
+    expect(parseScanField("999*COLA")).toEqual({ kind: "code", code: "COLA", qty: 999 });
+    // a 4-digit prefix is not a quantity: the whole text stays one code, as before
+    expect(parseScanField("1000*COLA")).toEqual({ kind: "code", code: "1000*COLA" });
+    expect(parseScanField("0*COLA")).toEqual({ kind: "code", code: "0*COLA" });
+  });
+  it("F01: a code that merely contains an x or a star is never split", () => {
+    for (const code of ["BOX12", "x100", "X100", "12x100", "2xCOLA", "COLA2x", "4X8-PLY", "A*B"]) {
+      expect(parseScanField(code)).toEqual({ kind: "code", code });
+    }
+    expect(parseScanField("2x")).toEqual({ kind: "code", code: "2x" });
+    expect(parseScanField("2*")).toEqual({ kind: "code", code: "2*" });
   });
 });
 
@@ -916,5 +979,39 @@ describe("post-dated check (interim till guard)", () => {
     expect(isCounterSaleHandledError(refusal("SOMETHING_ELSE"))).toBe(false);
     expect(isCounterSaleHandledError({ response: { status: 500, data: {} } })).toBe(false);
     expect(isCounterSaleHandledError(new Error("Network Error"))).toBe(false);
+  });
+});
+
+describe("resolveTender: 'Check not received yet' is On account plus one typed intent (SA-1026 A)", () => {
+  const resolve = (
+    counterSaleModule as unknown as {
+      resolveTender?: (
+        m: string,
+        notReceived: boolean,
+      ) => { method: string; expectedMethod?: string };
+    }
+  ).resolveTender;
+
+  it("Check + not received sends ON_ACCOUNT with expectedMethod CHECK", () => {
+    expect(resolve?.("CHECK", true)).toEqual({ method: "ON_ACCOUNT", expectedMethod: "CHECK" });
+  });
+
+  it("every other tender is itself, with no expectedMethod", () => {
+    for (const m of ["CASH", "CARD", "CHECK", "ON_ACCOUNT"]) {
+      expect(resolve?.(m, false)).toEqual({ method: m });
+    }
+    // the flag belongs to Check only: a stale flag under another method never rides along
+    expect(resolve?.("CASH", true)).toEqual({ method: "CASH" });
+  });
+
+  it("a walk-in on that tender is refused by the same rule as On account", () => {
+    const t = resolve?.("CHECK", true);
+    expect(
+      counterSaleModule.validatePayment({
+        method: t?.method as never,
+        total: 10,
+        isWalkIn: true,
+      }),
+    ).toBe("WALK_IN_ON_ACCOUNT");
   });
 });

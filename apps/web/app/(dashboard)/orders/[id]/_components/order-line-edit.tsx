@@ -82,6 +82,8 @@ export interface EditItemState {
   originalBoxSplit?: boolean;
   /** Row 630: the named unit the line was STORED on (a unit line); absent = a stored pack line, whose own price and size price its derived Piece. */
   originalUnitLabel?: string;
+  /** SA-1044 A-2: the stored line's raw `unitsPerBox` (the held level's factor; null = unknown), never the pack fallback. */
+  heldUnitsPerBox?: number | null;
   /** The line's own price, restored alongside the denomination when a
    *  substitution is undone — otherwise the original product would save at the
    *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
@@ -319,6 +321,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalUnitLabel: li.unitLabel ?? undefined,
+    heldUnitsPerBox: li.unitsPerBox ?? null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
     // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
@@ -1108,6 +1111,17 @@ export function EditableLineItems({
                   }}
                   tier={tierForProductId(item.productId)}
                   layer={layerOf?.(item.productId)}
+                  held={
+                    // SA-1044 A-2: the stored snapshot, only while the line still sells its own product
+                    item.originalUnitLabel && item.productId === item.originalProductId
+                      ? {
+                          unitLabel: item.originalUnitLabel,
+                          unitsPerBox: item.heldUnitsPerBox ?? null,
+                          unitPrice: item.originalUnitPrice ?? item.unitPrice,
+                          listPrice: item.originalBasePrice ?? item.basePrice,
+                        }
+                      : null
+                  }
                   startOnDefaultUnit={item.startOnDefaultUnit}
                   disabled={!pricingReady}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
@@ -1211,13 +1225,15 @@ export function EditableLineItems({
                   <button
                     className={cn(
                       TAP_TARGET,
-                      "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
+                      "flex items-center gap-1 rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors max-sm:px-2 max-sm:text-navy/70",
                     )}
                     title={`Remove ${item.productName?.trim() || "item"}`}
                     aria-label={`Remove ${item.productName?.trim() || "item"}`}
                     onClick={() => onDelete(item.id)}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {/* r5 F11: the word on a phone (icon-only from sm up; aria-label still names the line) */}
+                    <span className="text-xs sm:sr-only">Remove</span>
                   </button>
                 </>
               )}
@@ -1356,8 +1372,9 @@ export function EditableLineItems({
           }}
           onError={(message) => toast({ variant: "error", title: message })}
         />
+        {/* r5 N09: below sm the results open ABOVE the field; below it the pinned Save bar hid all but one row. */}
         {addOpen && products.length > 0 && (
-          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg max-sm:bottom-full max-sm:top-auto max-sm:mb-1 max-sm:mt-0">
             <ul className="max-h-52 overflow-y-auto py-1">
               {products.map((p: any) => (
                 <li key={p.id}>

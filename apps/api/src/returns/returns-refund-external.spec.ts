@@ -77,7 +77,12 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
 
   /** A RECEIVED STANDARD return of 2 of product p1 on an order whose invoice lines carry the price. */
   function setReturn(
-    over: { counterSale?: boolean; registerKey?: string | null; invoiceStatus?: string } = {},
+    over: {
+      counterSale?: boolean;
+      registerKey?: string | null;
+      fulfillPath?: string;
+      invoiceStatus?: string;
+    } = {},
   ) {
     prisma.return.findUnique.mockImplementation(async (args: any) => {
       if (args?.include?.order) {
@@ -94,12 +99,15 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
             orderNumber: "ORD-1",
             counterSale: over.counterSale ?? false,
             registerKey: over.registerKey ?? null,
+            fulfillPath: over.fulfillPath ?? "DELIVERY",
             invoices: [
               {
                 id: "inv-1",
                 invoiceNumber: "INV-1",
                 status: over.invoiceStatus ?? "SENT",
                 total: 100,
+                taxAmount: 0,
+                discount: 0,
                 items: [{ productId: "p1", qty: 10, subtotal: 100 }],
               },
             ],
@@ -130,6 +138,9 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 20,
         refundedAt: expect.any(Date),
+        creditSubtotal: 20,
+        creditTax: 0,
+        creditCategoryTax: 0,
         refundTender: null, // no tender sent: unknown (tenderKnown false)
       },
     });
@@ -306,6 +317,19 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       expect(prisma.return.updateMany).not.toHaveBeenCalled();
     });
 
+    it("W-829: a Store pickup sale with a stamped register and no tender is capped as cash too", async () => {
+      setReturn({ counterSale: false, fulfillPath: "PICKUP", registerKey: "main" });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 15, invoice: { orderId: "ord-1" } },
+      ]);
+      const err: any = await refund({}).catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "REFUND_EXCEEDS_CASH_PAID",
+        maxCashRefund: 15,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
     it("CARD, CHECK and an omitted tender (non-counter order) are not capped", async () => {
       setReturn();
       prisma.invoicePayment.findMany.mockResolvedValue([]);
@@ -376,6 +400,44 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
       expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
     });
 
+    it("W-829 / SA-932 F: a walk-in Store pickup sale with a stamped register takes the same close lock and window check", async () => {
+      setReturn({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" });
+      prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+      expect(await codeOf(refund({ tender: "CASH" }))).toBe("COUNTER_SALE_DAY_CLOSED");
+      expect(raw[1].text).toBe(
+        "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
+      );
+      expect(raw[1].values).toEqual(["test-tenant:till-2"]);
+      expect(prisma.counterDayClose.findFirst.mock.calls[0][0].where).toMatchObject({
+        tenantId: "test-tenant",
+        registerKey: "till-2",
+        reopenedAt: null,
+      });
+      expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("W-829: a Store pickup refund on an open day is recorded under the lock", async () => {
+      setReturn({ counterSale: false, fulfillPath: "PICKUP", registerKey: "till-2" });
+      await expect(refund({ tender: "CASH" })).resolves.toBeDefined();
+      expect(prisma.return.updateMany).toHaveBeenCalledTimes(1);
+      expect(raw[1].values).toEqual(["test-tenant:till-2"]);
+    });
+
+    it("W-829: a pickup never handed over at a till, and a stamped route order, are not till events", async () => {
+      for (const over of [
+        { fulfillPath: "PICKUP", registerKey: null },
+        { fulfillPath: "ROUTE", registerKey: "till-2" },
+      ]) {
+        prisma.return.updateMany.mockClear();
+        prisma.counterDayClose.findFirst.mockClear();
+        prisma.counterDayClose.findFirst.mockResolvedValue({ id: "close-1" });
+        setReturn({ counterSale: false, ...over });
+        await expect(refund({ tender: "CASH" })).resolves.toBeDefined();
+        expect(prisma.counterDayClose.findFirst).not.toHaveBeenCalled();
+        expect(raw.some((c) => c.text.includes("counter-close"))).toBe(false);
+      }
+    });
+
     it("a named register is keyed tenant:register; refundedAt is set after the lock (the claim is the last write)", async () => {
       setReturn({ counterSale: true, registerKey: "till-2" });
       await refund();
@@ -394,6 +456,67 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         expect.stringMatching(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
         expect.stringMatching(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
       ]);
+    });
+  });
+
+  describe("SA-840 R6 (B704 / #1477): a recorded refund hands back what the invoice charged", () => {
+    it("REG-B704 R6: a cash refund of the taxed R1 line records 64.00 and freezes the split 50 / 4 / 10 on the Return", async () => {
+      // wrong today: refundAmount 50.00 and no split (the customer is short by the 4.00 tax and the 10.00 levy)
+      invoices = [{ id: "inv-1", status: "PAID", total: 64, payments: paidCash(64) }];
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 64, invoice: { orderId: "ord-1" } },
+      ]);
+      prisma.return.findUnique.mockImplementation(async (args: any) =>
+        args?.include?.order
+          ? {
+              id: "ret-1",
+              returnNumber: "RET-1",
+              status: "RECEIVED",
+              kind: "STANDARD",
+              customerId: "cust-1",
+              orderId: "ord-1",
+              items: [{ productId: "p1", qty: 10 }],
+              order: {
+                id: "ord-1",
+                orderNumber: "ORD-1",
+                counterSale: false,
+                registerKey: null,
+                invoices: [
+                  {
+                    id: "inv-1",
+                    invoiceNumber: "INV-1",
+                    status: "PAID",
+                    total: 64,
+                    taxAmount: 14,
+                    discount: 0,
+                    items: [
+                      {
+                        id: "li-1",
+                        productId: "p1",
+                        qty: 10,
+                        subtotal: 50,
+                        taxRate: 0.08,
+                        categoryTaxAmount: 10,
+                        systemKind: null,
+                        description: "Widget",
+                      },
+                    ],
+                  },
+                ],
+                lineItems: [{ productId: "p1", qty: 10, unitPrice: 5, subtotal: 50 }],
+              },
+            }
+          : { id: "ret-1", status: "REFUNDED", refundMethod: "EXTERNAL_REFUND" },
+      );
+      await refund({ tender: "CASH" });
+      expect(prisma.return.updateMany.mock.calls[0][0].data).toMatchObject({
+        refundAmount: 64,
+        creditSubtotal: 50,
+        creditTax: 4,
+        creditCategoryTax: 10,
+        refundTender: "CASH",
+      });
+      expect(creditNotesCreate).not.toHaveBeenCalled();
     });
   });
 });

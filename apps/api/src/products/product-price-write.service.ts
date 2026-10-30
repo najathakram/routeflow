@@ -1,11 +1,13 @@
-import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Optional } from "@nestjs/common";
 import {
   PricingRulesNotReadyError,
   applyCellPatches,
+  authorityLevelOfRef,
   canonicalUnitRef,
   ladderPrice,
   materializePack,
   planCellEdit,
+  priceAuthority,
   priceSource,
   rowOf,
   roundMoney,
@@ -30,7 +32,13 @@ import {
   lockProductsForStock,
   setStockLockTimeout,
 } from "../common/product-locks";
-import { familyPriceAuthorityError } from "./family-price";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import {
+  familyOwnerIdOf,
+  familyPriceAuthorityError,
+  readFamilyPriceMode,
+  recipeFamilyIdOf,
+} from "./family-price";
 import { priceWriteReplay } from "./product-price-replay";
 import { assertOrderUnitSwitchAllowed, pricingRulesNotReady } from "../common/pricing-rules-ready";
 import { PrismaService } from "../prisma/prisma.service";
@@ -38,7 +46,6 @@ import {
   ProductPriceGridService,
   addUnitFirst,
   baseBackingUnit,
-  governedReason,
   type PriceModel,
 } from "./product-price-grid.service";
 
@@ -69,6 +76,7 @@ export class ProductPriceWriteService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly grid: ProductPriceGridService,
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   save(
@@ -77,7 +85,10 @@ export class ProductPriceWriteService {
     actorId: string | null,
   ): Promise<SavePricesResponse> {
     return this.locked(productId, async (tx, m, tenantId) => {
-      this.assertNotGoverned(m);
+      await this.assertNotGoverned(tx, m, tenantId, [
+        ...dto.patches.map((p) => p.ref),
+        ...(dto.keeps ?? []).map((k) => k.ref),
+      ]);
       if (!this.isFresh(m, dto.expectedRevision, dto.expectedPriceState)) {
         // SA-845: a would-be 409 that is this actor's own save, re-sent after a lost reply, is that save.
         const replayed = await this.replayedSave(tx, m, productId, tenantId, dto, actorId);
@@ -122,7 +133,6 @@ export class ProductPriceWriteService {
     actorId: string | null,
   ): Promise<SavePricesResponse> {
     return this.locked(productId, async (tx, m, tenantId) => {
-      this.assertNotGoverned(m);
       const saved = await tx.auditLog.findFirst({
         where: {
           id: dto.auditId,
@@ -139,6 +149,12 @@ export class ProductPriceWriteService {
         } | null
       )?.undo;
       if (!saved || !stored) throw this.undoUnavailable();
+      await this.assertNotGoverned(
+        tx,
+        m,
+        tenantId,
+        (stored.patches ?? []).map((p) => p.ref),
+      );
       const already = await tx.auditLog.findFirst({
         where: {
           tenantId,
@@ -528,14 +544,35 @@ export class ProductPriceWriteService {
   }
 
   /**
-   * The family owns a variant's, a family's and a recipe's price (family-price.ts): this writer never touches such a
-   * row, so it can never bypass that authority. Family prices go through ProductsService (V20 is a later sprint).
+   * `priceAuthority` (@routeflow/pricing) decides per written cell: a base-level cell of a variant (or a family-linked
+   * recipe) belongs to the family in mode "on"; a FAMILY is edited on its own page; every other unit level is the
+   * tenant's. The mode is read once per request; the recipe's family link only when the answer can depend on it.
    */
-  private assertNotGoverned(m: PriceModel): void {
+  private async assertNotGoverned(
+    tx: Tx,
+    m: PriceModel,
+    tenantId: string,
+    refs: readonly string[],
+  ): Promise<void> {
     const p = m.product;
-    if (p.parentProductId) throw familyPriceAuthorityError(p.parentProductId);
-    const reason = governedReason(p);
-    if (reason) throw this.invalid([reason]);
+    const mode = await readFamilyPriceMode(this.featureConfig, tenantId);
+    const recipeFamilyId =
+      mode === "on" && p.kind === "RECIPE" && !p.familyPriceOverride
+        ? await recipeFamilyIdOf(tx, tenantId, p.id)
+        : null;
+    const subject = { ...p, recipeFamilyId };
+    const levels = new Set(
+      (refs.length > 0 ? refs : ["·none"]).map((ref) => authorityLevelOfRef(m.units, ref)),
+    );
+    for (const level of levels) {
+      const authority = priceAuthority(subject, mode, level);
+      if (authority === "family") {
+        throw familyPriceAuthorityError(familyOwnerIdOf(subject));
+      }
+      if (authority === "family-page") {
+        throw this.invalid(["Family prices are edited on the family page."]);
+      }
+    }
   }
 
   private isFresh(m: PriceModel, expectedRevision: number, expectedPriceState: string): boolean {

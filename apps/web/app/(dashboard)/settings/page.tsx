@@ -400,7 +400,7 @@ function BusinessProfileTab() {
         </div>
       </Card>
 
-      <Card title="Business address">
+      <Card id="business-address" title="Business address">
         <div className="space-y-3">
           <AddressAutocomplete
             label="Street"

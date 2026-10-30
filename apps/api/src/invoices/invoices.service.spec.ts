@@ -45,6 +45,7 @@ import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { fillSparseCasBasis } from "./testing/sparse-line-fixtures";
+import { tillCalls, TILL_ADMIN } from "../testing/till-user";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -204,6 +205,7 @@ describe("InvoicesService", () => {
     service = module.get<InvoicesService>(InvoicesService);
   });
 
+  const { setStatus, delPay, voidPay, editPay, editOf } = tillCalls(() => service);
   // ─── MSRP snapshots — applyMsrpSnapshots stamps lines at creation time ─────
 
   describe("MSRP snapshots (applyMsrpSnapshots)", () => {
@@ -2898,6 +2900,12 @@ describe("InvoicesService", () => {
 
   // ── Auto-revert a SENT pending-mirror invoice when its order is edited ──────────
   describe("revertLinkedInvoicesForOrderEdit", () => {
+    // SA-1029 A-2 / B1275: the revert now clears the issue display units (a savepoint + one updateMany)
+    beforeEach(() => {
+      (prisma.forTenant() as any).$executeRaw = jest.fn().mockResolvedValue(0);
+      prisma.invoiceItem.updateMany.mockResolvedValue({ count: 0 });
+    });
+
     it("reverts an unpaid SENT pending-mirror invoice to DRAFT (auto-revert on edit)", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
@@ -3092,6 +3100,7 @@ describe("InvoicesService", () => {
         count: jest.fn().mockResolvedValue(1),
       },
       invoicePayment: { count: jest.fn().mockResolvedValue(0) },
+      invoiceItem: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) }, // SA-1029 A-2 clear
       order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     });
@@ -3133,7 +3142,9 @@ describe("InvoicesService", () => {
 
       expect(await service.revertLinkedInvoicesForOrderEdit("ord-1", tx)).toEqual(["inv-1"]);
 
-      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      // no ROW LOCK is taken; the only raw statements are the display-unit clear's own savepoint pair
+      const sql = tx.$executeRaw.mock.calls.map((c: any) => c[0].join("?"));
+      expect(sql.filter((q: string) => !/SAVEPOINT display_unit_snapshot/.test(q))).toEqual([]);
     });
   });
 
@@ -3180,7 +3191,7 @@ describe("InvoicesService", () => {
         payments: [{ method: "CASH", amount: 25, status: "DRAFT" }],
       });
 
-      await expect(service.voidInvoice("inv-draft-void")).rejects.toBeInstanceOf(
+      await expect(service.voidInvoice("inv-draft-void", TILL_ADMIN)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -3214,7 +3225,7 @@ describe("InvoicesService", () => {
       };
       prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
 
-      await service.deletePayment("inv-del-lock", "pay-del-lock");
+      await delPay("inv-del-lock", "pay-del-lock");
 
       expect(tx.$executeRaw).toHaveBeenCalled();
       const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
@@ -3253,7 +3264,7 @@ describe("InvoicesService", () => {
       };
       prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
 
-      await service.voidPayment("inv-void-lock", "pay-void-lock");
+      await voidPay("inv-void-lock", "pay-void-lock");
 
       expect(tx.$executeRaw).toHaveBeenCalled();
       const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
@@ -3304,8 +3315,8 @@ describe("InvoicesService", () => {
       });
 
       const results = await Promise.allSettled([
-        service.voidInvoice("inv-race"),
-        service.voidInvoice("inv-race"),
+        service.voidInvoice("inv-race", TILL_ADMIN),
+        service.voidInvoice("inv-race", TILL_ADMIN),
       ]);
 
       const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -3343,7 +3354,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      const result = await service.setCheckStatus("inv-1", "pay-1", {
+      const result = await setStatus({
         status: CheckStatus.DEPOSITED,
       });
 
@@ -3367,7 +3378,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      const result = await service.setCheckStatus("inv-1", "pay-1", {
+      const result = await setStatus({
         status: CheckStatus.CLEARED,
       });
 
@@ -3399,7 +3410,7 @@ describe("InvoicesService", () => {
         payments: [], // no other surviving (non-VOID) payments
       });
 
-      const result = await service.setCheckStatus("inv-1", "pay-1", {
+      const result = await setStatus({
         status: CheckStatus.BOUNCED,
         nsfFeeAmount: 25,
       });
@@ -3458,7 +3469,7 @@ describe("InvoicesService", () => {
         payments: [{ id: "pay-2", amount: 40, status: "PAID" }],
       });
 
-      const result = await service.setCheckStatus("inv-1", "pay-1", {
+      const result = await setStatus({
         status: CheckStatus.BOUNCED,
       });
 
@@ -3505,7 +3516,7 @@ describe("InvoicesService", () => {
         payments: filterPayments(rows as any, args?.include?.payments?.where),
       }));
 
-      await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.BOUNCED });
+      await setStatus({ status: CheckStatus.BOUNCED });
 
       expect(prisma.invoice.update).toHaveBeenCalledWith({
         where: { id: "inv-1" },
@@ -3523,7 +3534,7 @@ describe("InvoicesService", () => {
       prisma.invoicePayment.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.setCheckStatus("inv-1", "pay-1", {
+        setStatus({
           status: CheckStatus.BOUNCED,
           nsfFeeAmount: 25,
         }),
@@ -3562,7 +3573,7 @@ describe("InvoicesService", () => {
       };
       prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
 
-      await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.BOUNCED });
+      await setStatus({ status: CheckStatus.BOUNCED });
 
       expect(tx.$executeRaw).toHaveBeenCalled();
       const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
@@ -3579,9 +3590,9 @@ describe("InvoicesService", () => {
         checkStatus: CheckStatus.CLEARED,
       });
 
-      await expect(
-        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.DEPOSITED }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(setStatus({ status: CheckStatus.DEPOSITED })).rejects.toThrow(
+        BadRequestException,
+      );
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
 
@@ -3591,27 +3602,25 @@ describe("InvoicesService", () => {
         checkStatus: CheckStatus.RECORDED,
       });
 
-      await expect(
-        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(setStatus({ status: CheckStatus.CLEARED })).rejects.toThrow(BadRequestException);
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
 
     it("rejects check-status changes on a non-CHECK payment", async () => {
       prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, method: "CASH" });
 
-      await expect(
-        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.DEPOSITED }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(setStatus({ status: CheckStatus.DEPOSITED })).rejects.toThrow(
+        BadRequestException,
+      );
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
 
     it("rejects check-status changes on an already-voided payment", async () => {
       prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, status: "VOID" });
 
-      await expect(
-        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.DEPOSITED }),
-      ).rejects.toThrow(BadRequestException);
+      await expect(setStatus({ status: CheckStatus.DEPOSITED })).rejects.toThrow(
+        BadRequestException,
+      );
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
 
@@ -3624,7 +3633,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      const result = await service.setCheckStatus("inv-1", "pay-1", {
+      const result = await setStatus({
         status: CheckStatus.DEPOSITED,
       });
 
@@ -4086,7 +4095,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      await service.deletePayment("inv-1", "pay-A");
+      await delPay("inv-1", "pay-A");
 
       // Remaining real paid = 0 (pay-A deleted, VOID pay-B ignored) → NOT PAID.
       // Without the fix, VOID's 100 would recompute to PAID and hide a $100 debt.
@@ -4109,8 +4118,8 @@ describe("InvoicesService", () => {
         payments: [{ id: "pay-cn", amount: 40, status: "PAID", method: "CREDIT_NOTE" }],
       });
 
-      await expect(service.deletePayment("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
-      await expect(service.deletePayment("inv-1", "pay-cn")).rejects.toThrow(/un-apply/i);
+      await expect(delPay("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
+      await expect(delPay("inv-1", "pay-cn")).rejects.toThrow(/un-apply/i);
       expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
     });
 
@@ -4122,8 +4131,8 @@ describe("InvoicesService", () => {
         method: "CREDIT_NOTE",
       });
 
-      await expect(service.voidPayment("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
-      await expect(service.voidPayment("inv-1", "pay-cn")).rejects.toThrow(/un-apply/i);
+      await expect(voidPay("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
+      await expect(voidPay("inv-1", "pay-cn")).rejects.toThrow(/un-apply/i);
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
   });
@@ -4160,7 +4169,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      await service.deletePayment("inv-1", "pay-adv");
+      await delPay("inv-1", "pay-adv");
 
       expect(prisma.advancePayment.update).toHaveBeenCalledWith({
         where: { id: "ap-1" },
@@ -4194,7 +4203,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      await service.deletePayment("inv-1", "pay-adv");
+      await delPay("inv-1", "pay-adv");
 
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
       expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-adv" } });
@@ -4220,7 +4229,7 @@ describe("InvoicesService", () => {
         payments: [],
       });
 
-      await service.voidPayment("inv-1", "pay-adv");
+      await voidPay("inv-1", "pay-adv");
 
       expect(prisma.advancePayment.update).toHaveBeenCalledWith({
         where: { id: "ap-2" },
@@ -4249,7 +4258,7 @@ describe("InvoicesService", () => {
         total: 100,
       });
 
-      await service.deletePayment("inv-1", "pay-cash");
+      await delPay("inv-1", "pay-cash");
 
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
@@ -4273,7 +4282,7 @@ describe("InvoicesService", () => {
         payments: [],
       });
 
-      await service.voidPayment("inv-1", "pay-cash");
+      await voidPay("inv-1", "pay-cash");
 
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
@@ -4287,7 +4296,7 @@ describe("InvoicesService", () => {
         payments: [{ id: "pay-cn", amount: 40, status: "PAID", method: "CREDIT_NOTE" }],
       });
 
-      await expect(service.deletePayment("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
+      await expect(delPay("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
 
@@ -4299,7 +4308,7 @@ describe("InvoicesService", () => {
         method: "CREDIT_NOTE",
       });
 
-      await expect(service.voidPayment("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
+      await expect(voidPay("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
   });
@@ -4310,6 +4319,10 @@ describe("InvoicesService", () => {
   // the payment the canonical way (InvoicePayment + recomputeStatus, never a
   // non-existent `balance`).
   describe("recordDeliveryPaymentInTx (driver Collect payment)", () => {
+    // SA-967 / SA-1029: the catalog slot then the base-label slot (null = none) sit between the method and the ctx
+    const payInTx = (orders: string[], amount: number, method: any, ctx?: any) =>
+      service.recordDeliveryPaymentInTx(prisma as any, q, orders, amount, method, null, null, ctx);
+
     const inv = (over: any = {}) => ({
       id: "inv-1",
       total: 100,
@@ -4342,7 +4355,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" }); // ensure-step: invoice exists
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      const res = await payInTx(["ord-1"], 100, "CASH");
 
       expect(res.applied).toBe(100);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4385,7 +4398,7 @@ describe("InvoicesService", () => {
         { id: "pay-draft", amount: 50, status: "DRAFT" },
       ]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 50, "CASH");
+      const res = await payInTx(["ord-1"], 50, "CASH");
 
       expect(res.applied).toBe(50);
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4406,7 +4419,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 40, "CASH");
+      await payInTx(["ord-1"], 40, "CASH");
 
       const upd = prisma.invoice.update.mock.calls[0][0];
       // recomputeStatus(40, 100, …, SENT) → PARTIAL (would be DRAFT if not finalized)
@@ -4422,7 +4435,7 @@ describe("InvoicesService", () => {
     it("pays an order's existing DRAFT invoice without touching findOpenOrderDraft/createInvoiceFromOrder/reconcile at all", async () => {
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      await payInTx(["ord-1"], 100, "CASH");
 
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
       expect(service.findOpenOrderDraft).not.toHaveBeenCalled();
@@ -4437,7 +4450,7 @@ describe("InvoicesService", () => {
         inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
       ]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      const res = await payInTx(["ord-1"], 100, "CASH");
 
       expect(res.applied).toBe(100);
       const amounts = prisma.invoicePayment.create.mock.calls.map((c: any) => ({
@@ -4455,17 +4468,10 @@ describe("InvoicesService", () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]);
       prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 30 }]); // prior paid → remaining 70
 
-      const res = await service.recordDeliveryPaymentInTx(
-        prisma as any,
-        q,
-        ["ord-1"],
-        100,
-        "CASH",
-        {
-          runId: "run-1",
-          stopId: "stop-1",
-        },
-      );
+      const res = await payInTx(["ord-1"], 100, "CASH", {
+        runId: "run-1",
+        stopId: "stop-1",
+      });
 
       expect(res.applied).toBe(70); // 30 residual not applied to the invoice
       expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
@@ -4500,17 +4506,10 @@ describe("InvoicesService", () => {
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.order.findMany.mockResolvedValue([{ customerId: "cust-1" }]);
 
-      const res = await service.recordDeliveryPaymentInTx(
-        prisma as any,
-        q,
-        ["ord-1"],
-        100,
-        "CASH",
-        {
-          runId: "run-1",
-          stopId: "stop-1",
-        },
-      );
+      const res = await payInTx(["ord-1"], 100, "CASH", {
+        runId: "run-1",
+        stopId: "stop-1",
+      });
 
       expect(res.applied).toBe(0);
       expect((res as any).excess).toBe(100);
@@ -4535,14 +4534,10 @@ describe("InvoicesService", () => {
       ]);
       prisma.invoicePayment.findMany.mockResolvedValue([]); // neither invoice has prior payments
 
-      const res = await service.recordDeliveryPaymentInTx(
-        prisma as any,
-        q,
-        ["ord-1", "ord-2"],
-        150,
-        "CASH",
-        { runId: "run-1", stopId: "stop-1" },
-      );
+      const res = await payInTx(["ord-1", "ord-2"], 150, "CASH", {
+        runId: "run-1",
+        stopId: "stop-1",
+      });
 
       expect(res.applied).toBe(100); // 60 + 40 fully paid across the two siblings
       expect((res as any).excess).toBe(50); // 150 - 100, never dropped from the response
@@ -4554,17 +4549,10 @@ describe("InvoicesService", () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]); // total 100, no prior payment
       prisma.invoicePayment.findMany.mockResolvedValue([]);
 
-      const res = await service.recordDeliveryPaymentInTx(
-        prisma as any,
-        q,
-        ["ord-1"],
-        100,
-        "CASH",
-        {
-          runId: "run-1",
-          stopId: "stop-1",
-        },
-      );
+      const res = await payInTx(["ord-1"], 100, "CASH", {
+        runId: "run-1",
+        stopId: "stop-1",
+      });
 
       expect(res.applied).toBe(100);
       expect((res as any).excess).toBe(0);
@@ -4577,7 +4565,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findMany.mockResolvedValue([inv()]);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
 
-      const res = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      const res = await payInTx(["ord-1"], 100, "CASH");
 
       expect(res.applied).toBe(100);
       // FOR UPDATE lock taken (serializes a concurrent back-office payment).
@@ -4592,7 +4580,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findMany.mockResolvedValue([inv()]);
 
-      await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 100, "CASH");
+      await payInTx(["ord-1"], 100, "CASH");
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4611,20 +4599,14 @@ describe("InvoicesService", () => {
     });
 
     it("refuses CREDIT_NOTE / ADVANCE (they must debit a source balance, not book a payment)", async () => {
-      const res = await service.recordDeliveryPaymentInTx(
-        prisma as any,
-        q,
-        ["ord-1"],
-        50,
-        "ADVANCE",
-      );
+      const res = await payInTx(["ord-1"], 50, "ADVANCE");
       expect(res.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
     });
 
     it("is a no-op for a zero amount or no orders", async () => {
-      const a = await service.recordDeliveryPaymentInTx(prisma as any, q, ["ord-1"], 0, "CASH");
-      const b = await service.recordDeliveryPaymentInTx(prisma as any, q, [], 50, "CASH");
+      const a = await payInTx(["ord-1"], 0, "CASH");
+      const b = await payInTx([], 50, "CASH");
       expect(a.applied).toBe(0);
       expect(b.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
@@ -5778,7 +5760,7 @@ describe("InvoicesService", () => {
         });
         prisma.invoicePayment.count.mockResolvedValue(0);
 
-        await service.deletePayment("inv-img", "pay-img-1");
+        await delPay("inv-img", "pay-img-1");
 
         expect(prisma.invoicePayment.count).toHaveBeenCalledWith({
           where: { imageKey: "payments/grp-3/image.jpg" },
@@ -5798,7 +5780,7 @@ describe("InvoicesService", () => {
         });
         prisma.invoicePayment.count.mockResolvedValue(1);
 
-        await service.deletePayment("inv-img", "pay-img-2");
+        await delPay("inv-img", "pay-img-2");
 
         expect(prisma.invoicePayment.count).toHaveBeenCalledWith({
           where: { imageKey: "payments/grp-4/image.jpg" },
@@ -5821,7 +5803,7 @@ describe("InvoicesService", () => {
           total: 100,
         });
 
-        await service.deletePayment("inv-1", "pay-plain");
+        await delPay("inv-1", "pay-plain");
 
         expect(prisma.invoicePayment.count).not.toHaveBeenCalled();
         expect(mockStorage.delete).not.toHaveBeenCalled();
@@ -6209,7 +6191,7 @@ describe("InvoicesService", () => {
       it("sets the bank date when supplied", async () => {
         seedExistingPayment();
 
-        await service.updatePayment("inv-1", "pay-1", {
+        await editPay({
           amount: 100,
           method: "CHECK",
           settledAt: futureSettlement,
@@ -6221,7 +6203,7 @@ describe("InvoicesService", () => {
       it("clears the bank date when explicitly null", async () => {
         seedExistingPayment();
 
-        await service.updatePayment("inv-1", "pay-1", {
+        await editPay({
           amount: 100,
           method: "CHECK",
           settledAt: null,
@@ -6233,7 +6215,7 @@ describe("InvoicesService", () => {
       it("preserves the stored bank date when the key is absent", async () => {
         seedExistingPayment();
 
-        await service.updatePayment("inv-1", "pay-1", { amount: 100, method: "CHECK" } as any);
+        await editPay({ amount: 100, method: "CHECK" } as any);
 
         expect(updateData()).not.toHaveProperty("settledAt");
       });
@@ -6270,7 +6252,7 @@ describe("InvoicesService", () => {
           // read — this resolves successfully and silently overwrites the row.
           // Red now.
           await expect(
-            service.updatePayment("inv-b81", "pay-b81", { amount: 200, method: "CASH" } as any),
+            editOf("inv-b81", "pay-b81", { amount: 200, method: "CASH" } as any),
           ).rejects.toThrow(ConflictException);
 
           expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
@@ -6311,7 +6293,7 @@ describe("InvoicesService", () => {
         it("REG-B11: PATCHing the only payment to DRAFT takes the invoice off PAID and clears paidAt", async () => {
           seedSinglePayment("PAID");
 
-          await service.updatePayment("inv-b11u", "pay-b11u", {
+          await editOf("inv-b11u", "pay-b11u", {
             amount: 500,
             method: "ACH",
             status: "DRAFT",
@@ -6326,7 +6308,7 @@ describe("InvoicesService", () => {
 
           // No status key in the dto, so newPaymentStatus falls back to the STORED
           // "DRAFT" — a not-VOID effectiveAmount would cash the full $500 here.
-          await service.updatePayment("inv-b11u", "pay-b11u", {
+          await editOf("inv-b11u", "pay-b11u", {
             amount: 500,
             method: "ACH",
             reference: "corrected-ref",
@@ -6357,7 +6339,7 @@ describe("InvoicesService", () => {
           // Before PR-2: othersTotal (CONFIRMED-only) was 0, so this $80 edit was
           // allowed. After PR-2: the DRAFT sibling reserves $30, leaving only $70.
           await expect(
-            service.updatePayment("inv-cap-u", "pay-edit", { amount: 120, method: "CASH" } as any),
+            editOf("inv-cap-u", "pay-edit", { amount: 120, method: "CASH" } as any),
           ).rejects.toThrow(BadRequestException);
           expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
         });
@@ -6377,7 +6359,7 @@ describe("InvoicesService", () => {
           };
           prisma.tenantTransaction.mockImplementationOnce((fn: any) => fn(tx));
 
-          await service.updatePayment("inv-1", "pay-1", { amount: 100, method: "CHECK" } as any);
+          await editPay({ amount: 100, method: "CHECK" } as any);
 
           expect(tx.$executeRaw).toHaveBeenCalled();
           const sql = (tx.$executeRaw.mock.calls[0][0] as any).join("?");
@@ -6531,7 +6513,7 @@ describe("InvoicesService", () => {
         prisma.invoicePayment.findFirst.mockResolvedValue(basePayment);
         seedInvoiceLookup();
 
-        await service.setCheckStatus("inv-1", "pay-1", {
+        await setStatus({
           status: CheckStatus.CLEARED,
           settledAt: "2026-07-20",
         } as any);
@@ -6545,7 +6527,7 @@ describe("InvoicesService", () => {
         prisma.invoicePayment.findFirst.mockResolvedValue(basePayment);
         seedInvoiceLookup();
 
-        await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED });
+        await setStatus({ status: CheckStatus.CLEARED });
 
         expect(updateData()).not.toHaveProperty("settledAt");
         expect(updateData().clearedAt.getTime()).toBeGreaterThanOrEqual(before);
@@ -6556,7 +6538,7 @@ describe("InvoicesService", () => {
         prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, settledAt: entered });
         seedInvoiceLookup();
 
-        await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED });
+        await setStatus({ status: CheckStatus.CLEARED });
 
         expect(updateData()).not.toHaveProperty("settledAt");
         expect(updateData().clearedAt).not.toEqual(entered);
@@ -6567,7 +6549,7 @@ describe("InvoicesService", () => {
         prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, paidAt });
         seedInvoiceLookup();
 
-        await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED });
+        await setStatus({ status: CheckStatus.CLEARED });
 
         const after = { ...basePayment, paidAt, ...updateData() };
         expect(reportingDate(after)).toEqual(paidAt);
@@ -9246,7 +9228,7 @@ describe("InvoicesService", () => {
     it("REG-B306 a RUN-tagged excess advance is reversible and the run's collected-cash total excludes advances whose payments were voided", async () => {
       arrangeRunStopVoid();
 
-      await service.voidPayment("inv-1", "pay-1");
+      await voidPay("inv-1", "pay-1");
 
       // Assert the reversal write first so a failure names the missing
       // reversal itself, not just the absent lookup that would precede it.
@@ -9266,8 +9248,8 @@ describe("InvoicesService", () => {
     it("REG-B306 an advance that was already applied is not silently reversed", async () => {
       arrangeRunStopVoid({ balance: 2 });
 
-      await expect(service.voidPayment("inv-1", "pay-1")).rejects.toThrow(BadRequestException);
-      await expect(service.voidPayment("inv-1", "pay-1")).rejects.toThrow(/advance.*applied/i);
+      await expect(voidPay("inv-1", "pay-1")).rejects.toThrow(BadRequestException);
+      await expect(voidPay("inv-1", "pay-1")).rejects.toThrow(/advance.*applied/i);
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
     });
 
@@ -9278,7 +9260,7 @@ describe("InvoicesService", () => {
     it("REG-B306 voiding one of several confirmed door payments leaves the advance alone", async () => {
       arrangeRunStopVoid({}, 1);
 
-      const result = await service.voidPayment("inv-1", "pay-1");
+      const result = await voidPay("inv-1", "pay-1");
 
       expect(result).toEqual({ success: true });
       expect(prisma.advancePayment.findMany).not.toHaveBeenCalled();

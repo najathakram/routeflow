@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Logger } from "@nestjs/common";
 import { PriceType } from "@prisma/client";
 import type { CategoryTaxSnapshot, LadderUnit } from "@routeflow/pricing";
 import { resolveLineUnits } from "../products/line-units";
@@ -46,6 +46,7 @@ const taxFor = jest.fn((qty: number, subtotal: number) => ({
 }));
 const build = (item: Record<string, unknown>, tier = 1, label = "Case") =>
   buildUnitLine({
+    priceEditAllowed: true,
     product,
     units,
     resolved: resolveLineUnits(product, units, { unitLabel: label }),
@@ -127,6 +128,7 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     expect(() => build({ qty: 0 })).toThrow(BadRequestException);
     expect(() =>
       buildUnitLine({
+        priceEditAllowed: true,
         product,
         units,
         resolved: resolveLineUnits(product, units, { unitLabel: null }),
@@ -204,6 +206,7 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
   it("a factor-1 level under any name is a per-piece line (not units stored as pieces)", () => {
     const each = level({ label: "Each", factorToBase: 1 });
     const l = buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: [each],
       resolved: resolveLineUnits(product, [each], { unitLabel: "Each" }),
@@ -232,6 +235,7 @@ describe("buildUnitLine — a typed price is decided against the customer's TIER
   ];
   const tierBuild = (item: Record<string, unknown>, tier = 3) =>
     buildUnitLine({
+      priceEditAllowed: true,
       product: tierProduct,
       units: tierUnits,
       resolved: resolveLineUnits(tierProduct, tierUnits, { unitLabel: "Case" }),
@@ -387,6 +391,7 @@ describe("buildUnitLine — a held unit the product no longer offers (#2277)", (
   const withoutCase = units.filter((u) => u.label !== "Case");
   const heldCase = () =>
     buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: withoutCase,
       resolved: resolveLineUnits(
@@ -445,6 +450,7 @@ describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)",
   };
   const rebuild = (withExisting: boolean) =>
     buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: liveUnits,
       resolved: resolveLineUnits(product, liveUnits, undefined, existing),
@@ -475,6 +481,7 @@ describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)",
     // "Étui" stored decomposed (E + U+0301), re-sent composed: trim().toLowerCase() calls them different words.
     const held = { ...existing, unitLabel: "E\u0301tui" };
     const line = buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: liveUnits,
       // buildUnitLine's own compare: a caller that resolved the word composed (NFC) while the line holds it decomposed.
@@ -490,5 +497,95 @@ describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)",
       existing: held,
     } as never);
     expect(line).toMatchObject({ unitsPerBox: 12, unitPrice: 100, qty: 36, subtotal: 300 });
+  });
+});
+
+/**
+ * SA-1044 (B11a): a line HELD on a Case of 100 @ $45 whose Case has since been resized to 200 @ $90. The live level's
+ * price at the held factor is never the line's price: the line keeps its snapshot until it is re-picked.
+ */
+describe("buildUnitLine — a held level the ladder resized (SA-1044)", () => {
+  const resized = [level({ label: "Case", factorToBase: 200, price: "90.00" })];
+  const held = {
+    id: "line-1",
+    unitLabel: "Case",
+    unitsPerBox: 100,
+    unitPrice: 45,
+    originalPrice: null,
+    priceType: PriceType.STANDARD,
+    overrideReason: null,
+  };
+  const rebuild = (item: Record<string, unknown>, existing: Record<string, unknown> | null) =>
+    buildUnitLine({
+      product,
+      units: resized,
+      resolved: resolveLineUnits(product, resized, { unitLabel: "Case" }, existing ?? undefined),
+      item: { productId: "p1", qty: 3, unitLabel: "Case", ...item },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      ...(existing ? { existing, stored: existing } : {}),
+    } as never);
+
+  it("F-2: re-sending qty 3 keeps $45 at factor 100", () => {
+    expect(rebuild({}, held)).toMatchObject({
+      unitLabel: "Case",
+      unitsPerBox: 100,
+      unitPrice: 45,
+      qty: 300,
+      subtotal: 135,
+      priceType: PriceType.STANDARD,
+    });
+  });
+
+  it("F-2: the buyer's count diff (repriceTierOnQtyOnly) keeps the snapshot price too", () => {
+    const line = buildUnitLine({
+      product,
+      units: resized,
+      resolved: resolveLineUnits(product, resized, { unitLabel: "Case" }, held),
+      item: { productId: "p1", qty: 3, unitLabel: "Case" },
+      tier: 1,
+      taxFor,
+      position: 0,
+      tenantId: "t1",
+      existing: held,
+      stored: held,
+      repriceTierOnQtyOnly: true,
+    } as never);
+    expect(line).toMatchObject({ unitsPerBox: 100, unitPrice: 45, subtotal: 135 });
+  });
+
+  it("F-1: a sent $90 is judged against the held $45, never stored as STANDARD 90", () => {
+    const line = rebuild({ unitPrice: 90, overrideReason: "asked" }, held);
+    expect(line.unitPrice).toBe(90);
+    expect(line.priceType).not.toBe(PriceType.STANDARD);
+    expect(line.originalPrice).not.toBe(90);
+  });
+
+  it("G-3: a NEW Case line takes the live 200 @ $90", () => {
+    expect(rebuild({}, null)).toMatchObject({ unitsPerBox: 200, unitPrice: 90, qty: 600 });
+  });
+
+  it("G-4: a held line with no unitsPerBox is unknown: warned with its id, priced from the ladder", () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      const noFactor = { ...held, unitsPerBox: null };
+      const line = buildUnitLine({
+        product,
+        units: resized,
+        resolved: resolveLineUnits(product, resized, { unitLabel: "Case" }),
+        item: { productId: "p1", qty: 3, unitLabel: "Case" },
+        tier: 1,
+        taxFor,
+        position: 0,
+        tenantId: "t1",
+        existing: noFactor,
+      } as never);
+      expect(line).toMatchObject({ unitsPerBox: 200, unitPrice: 90 });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("line-1"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

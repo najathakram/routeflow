@@ -353,7 +353,14 @@ describeDb(
       const s = await seed("b", "SENT");
       const r = await interleave(
         s.invoiceId,
-        () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.voidInvoice(s.invoiceId, {
+              sub: "u-1",
+              role: "TENANT_ADMIN",
+              tenantId: "t-1",
+            } as never),
+          ),
         async (c) => {
           await c.query(
             `INSERT INTO "InvoicePayment" (id, "tenantId", "invoiceId", amount, method, status, "paidAt", "createdAt") VALUES (gen_random_uuid()::text, $1, $2, 20, 'CASH', 'PAID', now(), now())`,
@@ -371,7 +378,14 @@ describeDb(
       const s = await seed("b2", "SENT");
       const r = await interleave(
         s.invoiceId,
-        () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.voidInvoice(s.invoiceId, {
+              sub: "u-1",
+              role: "TENANT_ADMIN",
+              tenantId: "t-1",
+            } as never),
+          ),
         async (c) => {
           await c.query(
             `INSERT INTO "InvoicePayment" (id, "tenantId", "invoiceId", amount, method, status, "paidAt", "createdAt") VALUES (gen_random_uuid()::text, $1, $2, 20, 'CASH', 'PAID', now(), now())`,
@@ -424,7 +438,13 @@ describeDb(
       const s = await seed("c3", "SENT");
       const disarm = await armOnce40001(s.invoiceId);
       try {
-        await tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId));
+        await tenantCtx.run(s.tenantId, () =>
+          invoicesService.voidInvoice(s.invoiceId, {
+            sub: "u-1",
+            role: "TENANT_ADMIN",
+            tenantId: "t-1",
+          } as never),
+        );
       } finally {
         expect(await disarm()).toBeGreaterThanOrEqual(2);
       }
@@ -449,7 +469,13 @@ describeDb(
       );
       expect(emails() - e0).toBe(1);
       const c = await seed("d3", "SENT");
-      await tenantCtx.run(c.tenantId, () => invoicesService.voidInvoice(c.invoiceId));
+      await tenantCtx.run(c.tenantId, () =>
+        invoicesService.voidInvoice(c.invoiceId, {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
+      );
       expect((await prisma.invoice.findUniqueOrThrow({ where: { id: c.invoiceId } })).status).toBe(
         "VOID",
       );
@@ -597,7 +623,13 @@ describeDb(
           await t2.query(`SELECT id FROM "Order" WHERE id=$1 FOR UPDATE`, [order.id]);
           const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
           const p1 = tenantCtx
-            .run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId))
+            .run(s.tenantId, () =>
+              invoicesService.voidInvoice(s.invoiceId, {
+                sub: "u-1",
+                role: "TENANT_ADMIN",
+                tenantId: "t-1",
+              } as never),
+            )
             .then(
               (v: any) => ({ ok: true, v }),
               (e: any) => ({ ok: false, e }),
@@ -1000,7 +1032,13 @@ describeDb(
         );
         await waitFor(1);
         const pVoid = settle(
-          tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.voidInvoice(s.invoiceId, {
+              sub: "u-1",
+              role: "TENANT_ADMIN",
+              tenantId: "t-1",
+            } as never),
+          ),
         );
         await waitFor(2);
         await t2.query("COMMIT");
@@ -1182,6 +1220,8 @@ describeDb(
                 [s.orderId],
                 50,
                 "CASH",
+                null,
+                null,
               ),
             ),
           ),

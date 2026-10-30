@@ -231,18 +231,18 @@ describe("SubscriptionBillingExtras labels (S4: the TENANT zone, never the brows
   // Nov 1 2026 03:00Z is Oct 31 22:00 in Chicago (CDT) but Nov 1 in UTC: the month the invoice is "for" differs.
   const edge = { ...SUB, pastDueSince: new Date("2026-11-01T03:00:00Z") };
 
-  it("America/Chicago: the failed charge was Oct 31 local, so the month is October and grace ends Nov 7", async () => {
+  it("America/Chicago: the failed charge was Oct 31 local, so the month is October and grace ends Nov 14", async () => {
     const { extras } = make({ zone: "America/Chicago" });
     const out = await extras.read("t1", edge);
     expect(out.pastDueMonthLabel).toBe("October");
-    expect(out.graceEndsLabel).toBe("Nov 7");
+    expect(out.graceEndsLabel).toBe("Nov 14");
   });
 
-  it("no zone configured: falls back to UTC (Nov 1 -> November, Nov 8)", async () => {
+  it("no zone configured: falls back to UTC (Nov 1 -> November, Nov 15)", async () => {
     const { extras } = make({ zone: null });
     const out = await extras.read("t1", edge);
     expect(out.pastDueMonthLabel).toBe("November");
-    expect(out.graceEndsLabel).toBe("Nov 8");
+    expect(out.graceEndsLabel).toBe("Nov 15");
   });
 
   it("the next-charge date label is the renewal date in the tenant zone", async () => {

@@ -12,6 +12,7 @@ import {
 import { createHash } from "crypto";
 import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import type { PickupCompleteResponse } from "@routeflow/types";
+import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -20,6 +21,8 @@ import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
+import { releaseStaleRunLink } from "../order-lifecycle";
+import { assertStopDoneForOfficeDelivered } from "../office-delivered-route-stop";
 import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
@@ -30,6 +33,11 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
+import {
+  markOpenInvoicesToCollect,
+  rollupToCollect,
+  toCollectState,
+} from "../../invoices/to-collect";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -231,6 +239,19 @@ export class PickupCompleteService {
         });
       }
     }
+    // Row 590 (SA-1000 §2): a PICKUP order still linked to a FINISHED run (activeRunLink is null for it, and updateFulfillPath
+    // skips an order already on PICKUP) is released here, then the office-DELIVERED stop check runs read-only, BOTH before the
+    // claim, so a refusal leaves no claim behind and a stale link no longer dead-ends every retry.
+    if (!alreadyPickedUp && order.fulfillPath === "PICKUP") {
+      if (await releaseStaleRunLink(this.prisma, id)) order = (await this.readOrder(id)) ?? order;
+      if (!activeRunLink(order as RunOrder)) {
+        await assertStopDoneForOfficeDelivered(
+          this.prisma,
+          order as RunOrder,
+          OrderStatus.DELIVERED,
+        );
+      }
+    }
     // SA-919: THIS completion's `completionAt`, the claim's stamp (never `deliveredAt`): its tender and its email key
     let handedOverAt: Date | null;
     try {
@@ -330,6 +351,14 @@ export class PickupCompleteService {
       }
     }
     if (issued) invoices = await this.readInvoices(id);
+
+    // SA-1026: "the check is not in hand yet": every invoice of the order that can still be owed after the send step is marked
+    // To collect (a settled sibling is not). No payment row. Replay-safe: the first intent stays, and the retry of a half-finished
+    // hand-over completes the mark. The response reads the column back from the re-read rows.
+    if (sent?.method === "ON_ACCOUNT" && sent.expectedMethod) {
+      await markOpenInvoicesToCollect(this.prisma, invoices as never, sent.expectedMethod);
+      invoices = await this.readInvoices(id);
+    }
 
     // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
     // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
@@ -846,6 +875,7 @@ export class PickupCompleteService {
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
+      invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list tenderFigures totals, so Print invoice matches the screen
       invoiceNumber: first.invoiceNumber ?? "",
       ...tenderFigures(
         invoices,
@@ -853,6 +883,10 @@ export class PickupCompleteService {
         isHandOverTender(order.id, handedOverAt),
         planError,
         duplicate,
+      ),
+      // SA-1026: read back from the stored rows, staff only
+      toCollect: rollupToCollect(
+        invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
       ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };

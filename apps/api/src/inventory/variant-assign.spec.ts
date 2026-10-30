@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PRODUCT_PARENT_REASONS } from "../products/product-parent";
@@ -58,9 +59,26 @@ const variant = (overrides: Record<string, unknown> = {}) => ({
 describe("InventoryService.assignToVariants", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stockHelper: StockHelperMock;
+  // SA-927: the helper's locked read sees the parent as the spec stubbed it on findUnique, and each
+  // target variant as `variantStates` (default: an empty AVCO variant), so one source of state per test.
+  let variantStates: Record<string, Record<string, unknown>>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    variantStates = {};
+    stockHelper = wireStockHelper(prisma, {
+      stateOf: async (ids) => {
+        const rows: any[] = [];
+        for (const id of ids) {
+          if (id === "parent-1") {
+            const p = (await prisma.product.findUnique({ where: { id } })) as any;
+            if (p) rows.push(p);
+          } else rows.push({ ...variant({ id }), ...(variantStates[id] ?? {}), id });
+        }
+        return rows;
+      },
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -92,7 +110,7 @@ describe("InventoryService.assignToVariants", () => {
     expect(prisma.product.findFirst).not.toHaveBeenCalled();
     expect(prisma.product.create).not.toHaveBeenCalled();
     expect(prisma.product.update).not.toHaveBeenCalled();
-    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(stockHelper.written()).toHaveLength(0);
     expect(prisma.stockLot.create).not.toHaveBeenCalled();
     expect(prisma.stockLot.update).not.toHaveBeenCalled();
   });
@@ -110,7 +128,8 @@ describe("InventoryService.assignToVariants", () => {
     const parentUpdate = prisma.product.update.mock.calls.find(
       (c: any) => c[0].where.id === "parent-1",
     )!;
-    expect(parentUpdate[0].data.currentStock.decrement.toString()).toBe("5");
+    // SA-927: one absolute write of the helper's folded stock (20 - 5), never a decrement
+    expect(parentUpdate[0].data.currentStock.toString()).toBe("15");
   });
 
   it("writes one negative parent ADJUSTMENT for the total and one positive per variant, all sharing one VARIANT_ASSIGN- reference", async () => {
@@ -131,9 +150,9 @@ describe("InventoryService.assignToVariants", () => {
     );
 
     expect(result.reference).toMatch(/^VARIANT_ASSIGN-/);
-    expect(prisma.stockMovement.create).toHaveBeenCalledTimes(3);
+    expect(stockHelper.written()).toHaveLength(3);
 
-    const calls = prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data);
+    const calls = stockHelper.written();
     expect(calls.every((d: any) => d.type === "ADJUSTMENT")).toBe(true);
     expect(calls.every((d: any) => d.reference === result.reference)).toBe(true);
 
@@ -198,7 +217,7 @@ describe("InventoryService.assignToVariants", () => {
       reason: PRODUCT_PARENT_REASONS.NOT_FOUND,
     });
     expect(prisma.product.findFirst).not.toHaveBeenCalled();
-    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(stockHelper.written()).toHaveLength(0);
   });
 
   it.each([
@@ -223,7 +242,7 @@ describe("InventoryService.assignToVariants", () => {
       });
       expect(prisma.product.findFirst).not.toHaveBeenCalled();
       expect(prisma.product.update).not.toHaveBeenCalled();
-      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(stockHelper.written()).toHaveLength(0);
     },
   );
 
@@ -253,9 +272,7 @@ describe("InventoryService.assignToVariants", () => {
     );
 
     expect(result.assignments[0].qty).toBe(27); // 2*12 + 3, NOT 2
-    const variantMovement = prisma.stockMovement.create.mock.calls
-      .map((c: any) => c[0].data)
-      .find((d: any) => d.productId === "variant-1")!;
+    const variantMovement = stockHelper.written().find((d: any) => d.productId === "variant-1")!;
     expect(variantMovement.quantity.toString()).toBe("27");
   });
 
@@ -297,6 +314,11 @@ describe("InventoryService.assignToVariants", () => {
     prisma.product.findFirst.mockResolvedValue(
       variant({ costingMethod: "STANDARD", averageCost: D(9.99), currentStock: D(2) }),
     );
+    variantStates["variant-1"] = {
+      costingMethod: "STANDARD",
+      averageCost: D(9.99),
+      currentStock: D(2),
+    };
 
     await service.assignToVariants(
       { parentProductId: "parent-1", assignments: [{ productId: "variant-1", qty: 5 }] } as any,
@@ -309,12 +331,43 @@ describe("InventoryService.assignToVariants", () => {
     expect(variantUpdate[0].data.averageCost).toBeUndefined();
 
     // Snapshot carries the UNCHANGED average forward, not the resolved cost.
-    const variantMovement = prisma.stockMovement.create.mock.calls
-      .map((c: any) => c[0].data)
-      .find((d: any) => d.productId === "variant-1")!;
+    const variantMovement = stockHelper.written().find((d: any) => d.productId === "variant-1")!;
     expect(variantMovement.avgCostAfter.toString()).toBe("9.99");
     // The lot/movement unitCost itself still resolves normally (parent's average).
     expect(variantMovement.unitCost.toString()).toBe("4");
+  });
+
+  it("GUARD (SA-975, row 646 / SA-814m P2): a transfer after sales costs the child at the parent's AVERAGE, never at the old lots' cost", async () => {
+    // Parent average 3. Two lots were received (100 @ 1, then 50 @ 4 = 150 units) and 100 were sold since; sales since
+    // #3487 never lower remainingQty, so both lots still read as fully available while currentStock is 50. The lots
+    // are chosen so that every lot-derived cost differs from the average AND from each other: oldest lot = 1, weighted
+    // blend = (100*1 + 50*4) / 150 = 2.0, unweighted mean of the lot costs = (1 + 4) / 2 = 2.5, newest lot = 4, parent
+    // average = 3. A child costed from any of them reads as its own wrong value, never as 3.
+    // The child must be costed at the parent's average 3: movement, lot and its own average.
+    prisma.product.findUnique.mockResolvedValue(parent({ currentStock: D(50), averageCost: D(3) }));
+    prisma.product.findFirst.mockResolvedValueOnce(
+      variant({ id: "variant-1", currentStock: D(0), averageCost: null }),
+    );
+    prisma.stockLot.findMany.mockResolvedValue([
+      { id: "lot-old", remainingQty: D(100), unitCost: D(1) },
+      { id: "lot-new", remainingQty: D(50), unitCost: D(4) },
+    ]);
+    const result = await service.assignToVariants(
+      { parentProductId: "parent-1", assignments: [{ productId: "variant-1", qty: 10 }] } as any,
+      "user-1",
+    );
+    expect(result.assignments[0].unitCost).toBe(3);
+    const movement = prisma.stockMovement.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.productId === "variant-1");
+    expect(movement.unitCost.toString()).toBe("3");
+    expect(movement.avgCostAfter.toString()).toBe("3");
+    expect(prisma.stockLot.create.mock.calls[0][0].data.unitCost.toString()).toBe("3");
+    expect(
+      prisma.product.update.mock.calls
+        .find((c: any) => c[0].where.id === "variant-1")[0]
+        .data.averageCost.toString(),
+    ).toBe("3");
   });
 
   it("conserves lots: the parent's lot drawdown sums to exactly what the variant lots gain", async () => {
@@ -527,7 +580,7 @@ describe("InventoryService.assignToVariants", () => {
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(BadRequestException);
-    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(stockHelper.written()).toHaveLength(0);
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
 
@@ -542,7 +595,7 @@ describe("InventoryService.assignToVariants", () => {
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(BadRequestException);
-    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(stockHelper.written()).toHaveLength(0);
   });
 
   it("opens variant lots only for the quantity the parent's lots actually covered", async () => {

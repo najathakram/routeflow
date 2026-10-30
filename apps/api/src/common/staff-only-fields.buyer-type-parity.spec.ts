@@ -108,6 +108,7 @@ const ORDER = {
     many: true,
   },
   changeRequests: { plan: CHANGE_REQUEST, many: true },
+  revisionNumber: "keep", // row 380
   editWindow: "keep",
   fulfillPath: "keep",
   shippingCarrier: "keep",
@@ -140,9 +141,20 @@ const INVOICE_ITEM = {
   notes: "keep",
   categoryTaxAmount: "keep",
   product: { plan: PRODUCT },
-  // no buyer screen (web portal or mobile) renders a line's tracked category or subcategory
-  trackedCategory: "strip",
+  // SA-827 I5: the pieces view's "{category} tax" row names the category, so the buyer's line keeps its NAME only
+  trackedCategory: {
+    plan: { name: "keep" } satisfies Record<
+      keyof NonNullable<BuyerInvoiceItem["trackedCategory"]>,
+      Leaf
+    >,
+  },
+  // no buyer screen (web portal or mobile) renders a line's tracked subcategory
   trackedSubcategory: "strip",
+  components: { plan: COMPONENT, many: true },
+  // derived { kind, label } object, carried whole (never a stored column)
+  displayUnit: "keep",
+  // SA-1029: derived { price, unit } per-piece cell beside a pack line, display only
+  perBaseUnit: "keep",
 } satisfies Record<keyof BuyerInvoiceItem, Plan>;
 
 const PAYMENT = {
