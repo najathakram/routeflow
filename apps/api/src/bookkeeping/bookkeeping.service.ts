@@ -68,6 +68,7 @@ import {
 } from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
+import { paidInstantOf } from "../common/paid-instant";
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -729,7 +730,7 @@ export class BookkeepingService implements OnModuleInit {
     skipped: { id: string; billNumber: string; reason: string }[];
   }> {
     const ids = Array.from(new Set(dto.ids));
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paidAt = paidInstantOf(dto.paidAt, await tenantTimeZone(this.prisma)); // SA-943: tenant-local day, today = now
     const skipped: { id: string; billNumber: string; reason: string }[] = [];
     let paid = 0;
     let totalAmount = 0;
