@@ -13,7 +13,8 @@ import type { SaleOptions } from "./sale-options";
  *    new site raises its count in its own diff, where it is reviewed (OP-7).
  *  - `assertPriceEditAllowed` takes a required `boolean`.
  *  - `staffMay(…, "EDIT_LINE_PRICE"…)` is called only inside price-edit-answer.ts (and not at all anywhere else).
- *  - neither `CreateOrderOptions` nor `SaleOptions` declares `priceEditAllowed`: a caller passes a principal, never a boolean.
+ *  - `CreateOrderOptions` and `SaleOptions` carry `priceEditAllowed` for ONE caller: the counter, whose answer is live over the
+ *    operator's denied groups (W-870, an owner-ruled slice); every office site goes through `priceEditAllowedFor` (SA-1034 r8).
  * Pure source reads: no Nest, no database.
  */
 const SRC = join(__dirname, "..");
@@ -59,8 +60,10 @@ const ASSERT_COUNTS: Record<string, number> = {
  * and order -> invoice generation.
  */
 const CUSTOM_ASSERT_COUNTS: Record<string, number> = {
-  "orders/orders.service.ts": 3, // create (covers the counter), staff full replace (new lines), diff-add
-  "invoices/invoices.service.ts": 2, // direct invoice create, invoice edit (new / re-priced custom lines)
+  "orders/orders.service.ts": 2, // create (covers the counter), diff-add
+  "orders/custom-line-authoring.ts": 1, // staff full replace (new lines); moved out of orders.service.ts (SA-065)
+  "invoices/invoices.service.ts": 1, // direct invoice create
+  "invoices/invoice-edit-plan.ts": 1, // invoice edit (new / re-priced custom lines); moved out of invoices.service.ts (SA-065)
   "estimates/estimates.service.ts": 1, // estimate create
   "recurring-invoices/recurring-invoices.service.ts": 1, // template create + update, through one private method
 };
@@ -216,14 +219,21 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
     ]);
   });
 
-  it("neither CreateOrderOptions nor SaleOptions declares priceEditAllowed (a caller passes a principal, never a boolean)", () => {
-    expect(code(read("orders/order-create-options.ts"))).not.toContain("priceEditAllowed");
-    expect(code(read("orders/sale-options.ts"))).not.toContain("priceEditAllowed");
-    // type level: an excess property on either type is a compile error (check-types fails if it is ever re-added)
-    // @ts-expect-error priceEditAllowed is not a create() option
+  it("priceEditAllowed rides both options, and only the counter sets it, over the live denied groups (SA-1034 r8)", () => {
+    expect(code(read("orders/order-create-options.ts"))).toContain("priceEditAllowed?: boolean");
+    expect(code(read("orders/sale-options.ts"))).toContain("priceEditAllowed?: boolean");
+    // type level: both option types accept it (check-types fails if either drops it)
     const create: CreateOrderOptions = { priceEditAllowed: true };
-    // @ts-expect-error priceEditAllowed is not a sale option
-    const sale: SaleOptions = { priceEditAllowed: true };
+    const sale: SaleOptions = { priceEditAllowed: false };
     expect([create, sale]).toHaveLength(2);
+    // the setters: one, in the counter, from `mayEditPrice` over `operatorDeniedGroups`; never a literal or a role-only answer
+    const setters = files.filter((f) =>
+      /\bpriceEditAllowed:\s*(?:mayEditPrice|roleMayEditPrice|true|false|staffMay)\b/.test(
+        code(read(f)),
+      ),
+    );
+    expect(setters.map((f) => f.split("\\").join("/"))).toEqual([
+      "orders/counter-sale/counter-sale.service.ts",
+    ]);
   });
 });

@@ -1495,23 +1495,38 @@ describe("CounterSaleService.ring", () => {
     };
     const sendOpts = () => createSale.mock.calls[0][2];
 
-    // SA-1034 r5.3: the counter passes NO capability. create() computes it from the principal it receives (one helper),
-    // so the answer per role (operator and admin may reprice; SUPER_ADMIN and DRIVER may not) is pinned in
-    // price-edit.spec.ts and orders.counter-price-edit.spec.ts, not here.
+    // SA-762r Ruling A: the gate is staffMay(role, "EDIT_LINE_PRICE"). Owner ruling 10-07: an operator may reprice
+    // (F4: SUPER_ADMIN is not in the row until the other price paths move onto staffMay).
     const driver = { sub: "drv-1", role: "DRIVER", tenantId: "t-1" } as never;
     it.each([
-      ["OPERATOR", staff],
-      ["TENANT_ADMIN", admin],
-      ["SUPER_ADMIN", superAdmin],
-      ["DRIVER", driver],
-    ])("%s: create() is passed no priceEditAllowed (it reads the principal)", async (_r, user) => {
+      ["OPERATOR", staff, true],
+      ["TENANT_ADMIN", admin, true],
+      ["SUPER_ADMIN", superAdmin, false],
+      ["DRIVER", driver, false],
+    ])("%s: create() is told priceEditAllowed = %s", async (_r, user, allowed) => {
       await service.ring(named({ method: "CASH" }) as never, user);
-      expect(sendOpts()).not.toHaveProperty("priceEditAllowed");
+      expect(sendOpts().priceEditAllowed).toBe(allowed);
+    });
+
+    it("T-R1 (counter half): an OPERATOR denied PRICING is told priceEditAllowed = false, whatever the permissions mode", async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        deniedPermissionGroups: ["PRICING"],
+        permissionsVersion: 1,
+      });
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(sendOpts().priceEditAllowed).toBe(false);
     });
 
     it("an OPERATOR rings a sale with a changed price: rung (not 403 PRICE_EDIT_NOT_PERMITTED), price applied, ONE price-edited audit row", async () => {
-      // create() decides the capability itself (pinned in orders.counter-price-edit.spec.ts); the stand-in rings.
-      createSale.mockResolvedValue({ id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" });
+      // createSale stands in for create()'s own gate (pinned in orders.counter-price-edit.spec.ts): it refuses a
+      // real price change exactly when the counter passed priceEditAllowed === false.
+      createSale.mockImplementation(async (_dto: any, _u: any, sale: any) => {
+        if (sale.priceEditAllowed === false) {
+          const { ForbiddenException } = jest.requireActual("@nestjs/common");
+          throw new ForbiddenException({ code: "PRICE_EDIT_NOT_PERMITTED", message: "no" });
+        }
+        return { id: "inv-1", orderId: "ord-1", invoiceNumber: "INV-1" };
+      });
       prisma.order.findFirst.mockResolvedValue({
         id: "ord-1",
         orderNumber: "ORD-1",
@@ -1523,7 +1538,7 @@ describe("CounterSaleService.ring", () => {
         "k-1",
       );
       expect(res).toMatchObject({ orderId: "ord-1" });
-      expect(sendOpts()).not.toHaveProperty("priceEditAllowed");
+      expect(sendOpts().priceEditAllowed).toBe(true);
       expect(audit.log).toHaveBeenCalledTimes(1);
       expect(audit.log.mock.calls[0][0]).toMatchObject({
         userId: "op-1",

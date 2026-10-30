@@ -1245,11 +1245,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    // SA-1034 (POS-5): the one price-edit capability, computed from the principal alone (no caller passes it, the counter
-    // included), once per request and before any lock. A line that WOULD be a real staff price override (DISCOUNTED /
-    // MANUAL, judged against the server's own tier price) is refused 403 PRICE_EDIT_NOT_PERMITTED before anything is
-    // written; a typed price within 1/2 cent of the server's is no override and passes.
-    const priceEditAllowed = await priceEditAllowedFor(this.prisma, user, "OrdersService.create");
+    // SA-1034 (POS-5): the counter's own live answer (W-870), else the office's mode-aware one, once per request before any
+    // lock. A real staff price override (judged against the server's tier price) is refused 403 before anything is written.
+    const priceEditAllowed =
+      options.priceEditAllowed ??
+      (await priceEditAllowedFor(this.prisma, user, "OrdersService.create"));
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
     // appliedCreditNotes for non-staff callers — a buyer or driver token could
     // otherwise spend a customer's credit notes on create, a right the edit path
