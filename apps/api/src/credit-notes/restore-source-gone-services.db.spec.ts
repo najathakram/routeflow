@@ -225,7 +225,13 @@ describeDb(
       const s = await seed("void");
       const before = await snapshot(s);
       const err: any = await tenantCtx
-        .run(s.tenantId, () => invoices.voidInvoice(s.invoice.id))
+        .run(s.tenantId, () =>
+          invoices.voidInvoice(s.invoice.id, {
+            sub: "u-1",
+            role: "TENANT_ADMIN",
+            tenantId: "t-1",
+          } as never),
+        )
         .catch((e) => e);
       expect(err?.getResponse?.()).toMatchObject({ code: "CREDIT_NOTE_SOURCE_GONE" });
       expect(err.getResponse().message).toMatch(/Void that credit note first/);

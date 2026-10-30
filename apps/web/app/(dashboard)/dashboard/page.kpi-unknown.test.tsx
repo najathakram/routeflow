@@ -195,12 +195,13 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
 
   // Layout (jsdom has no layout engine, so the DOM contract is what is pinned; the pixels are re-shot on
   // the PC): at 390 the strip's cells clipped "Confirmed" / "Delivered" / "Cancelled", and a tile's
-  // value ran under its icon with its label truncated.
-  it("the pipeline strip scrolls INSIDE itself instead of clipping its cells, with all six cells and the all-time label", () => {
+  // value ran under its icon with its label truncated. W-1016: the cure is a three-by-two wrap on a phone, not an inner
+  // scroller (a scroller left the sixth tile half-hidden on first paint).
+  it("the pipeline strip wraps on a phone instead of clipping or scrolling, with all six cells and the all-time label", () => {
     renderWithProviders(<DashboardPage />);
 
     const strip = screen.getByTestId("pipeline-strip");
-    expect(strip.className).toContain("overflow-x-auto");
+    expect(strip.className).not.toContain("overflow-x-auto");
     const cells = strip.querySelectorAll("a");
     expect(cells).toHaveLength(6);
     expect(Array.from(cells).map((a) => a.getAttribute("href"))).toEqual([
@@ -213,7 +214,7 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
     ]);
     // "all time" sits on its own small line inside its cell, not beside the label
     expect(screen.getAllByText("all time")).toHaveLength(2);
-    cells.forEach((a) => expect(a.className).toContain("whitespace-nowrap"));
+    cells.forEach((a) => expect(a.className).toContain("sm:whitespace-nowrap"));
   });
 
   it("every KPI tile lets its label wrap and its value shrink so neither runs under the icon", () => {

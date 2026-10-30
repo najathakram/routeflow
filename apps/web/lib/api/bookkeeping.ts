@@ -103,8 +103,9 @@ export function useRecordPayment(options?: LocalErrorToastOption) {
   });
 }
 
-export function useDownloadInvoice() {
+export function useDownloadInvoice(options?: LocalErrorToastOption) {
   return useMutation<{ url: string } | null, Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: async (id: string) => {
       // NestJS returns 202 when the PDF is still generating. Axios treats all
       // 2xx as successes so we check the status code in the response, not in

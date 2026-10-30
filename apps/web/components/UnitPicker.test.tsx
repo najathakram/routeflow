@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { heldSnapshotOption } from "@routeflow/pricing";
 import type { ProductUnitLevel } from "@routeflow/types";
 import { UnitPicker } from "./UnitPicker";
 
@@ -64,6 +65,28 @@ describe("UnitPicker", () => {
     const onChange = jest.fn();
     render(<UnitPicker product={product} units={[]} value="Case" onChange={onChange} />);
     expect(onChange).toHaveBeenCalledWith("");
+  });
+
+  it("SA-1044 A-3: an empty ladder keeps a held snapshot option selected — no reset", () => {
+    const onChange = jest.fn();
+    const heldOption = heldSnapshotOption({
+      unitLabel: "Case",
+      unitsPerBox: 100,
+      unitPrice: 50,
+      listPrice: 55,
+    });
+    render(
+      <UnitPicker
+        product={product}
+        units={[]}
+        heldOption={heldOption}
+        value="Case"
+        onChange={onChange}
+      />,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: /Case of 100 \(as ordered\)/ })).toBeInTheDocument();
+    expect((screen.getByLabelText("Sell by") as HTMLSelectElement).value).toBe("Case");
   });
 
   it("does not touch the parent while the ladder is still loading or the held label is valid", () => {

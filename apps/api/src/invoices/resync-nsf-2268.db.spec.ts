@@ -44,6 +44,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { TILL_ADMIN } from "../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -235,7 +236,12 @@ describeDb(
         where: { invoiceId: invoice.id, method: "CHECK" },
       });
       await tenantCtx.run(tenantId, () =>
-        invoices.setCheckStatus(invoice.id, check.id, { status: "BOUNCED", nsfFeeAmount: 25 }),
+        invoices.setCheckStatus(
+          invoice.id,
+          check.id,
+          { status: "BOUNCED", nsfFeeAmount: 25 },
+          TILL_ADMIN,
+        ),
       );
       const nsf = await prisma.invoiceItem.findFirstOrThrow({
         where: { invoiceId: invoice.id, systemKind: InvoiceItemSystemKind.NSF_FEE },
