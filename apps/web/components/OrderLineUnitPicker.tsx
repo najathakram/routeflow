@@ -6,13 +6,15 @@ import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import {
   buildUnitOptions,
   defaultUnitValue,
+  heldSnapshotUnitOption,
   withLayerPrices,
+  type HeldSnapshot,
   type OwnPackBasis,
   type UnitOption,
 } from "@/lib/unit-options";
 import { isShapedLine } from "@/lib/default-unit-line";
 import { ladderProductOf, unitPickerValueOf, type PackBase } from "@/lib/order-line-unit";
-import type { CustomerLayerUnit, DerivedBaseMarker } from "@routeflow/pricing";
+import { withHeldOption, type CustomerLayerUnit, type DerivedBaseMarker } from "@routeflow/pricing";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
 export interface OrderLineUnitPickerLine extends DerivedBaseMarker {
@@ -58,6 +60,7 @@ function OrderLineUnitPickerInner({
   line,
   tier,
   layer,
+  held,
   onChange,
   startOnDefaultUnit = false,
   disabled = false,
@@ -87,6 +90,12 @@ function OrderLineUnitPickerInner({
    * option with a row is offered at the layer price and `onChange` carries it (`option.layerLine`); omitted = master's ladder.
    */
   layer?: readonly CustomerLayerUnit[] | null;
+  /**
+   * SA-1044 A-2: an EXISTING line's stored snapshot. Label, price and list come from the item's `original*` fields; the
+   * factor from the stored line's raw `unitsPerBox` (null = unknown), never `line.unitsPerBox` (the pack size). Omitted = a
+   * fresh line: nothing is held.
+   */
+  held?: HeldSnapshot | null;
   onChange: (option: UnitOption, refresh: boolean) => void;
 }) {
   const enabled = useUnitsEnabled();
@@ -104,20 +113,42 @@ function OrderLineUnitPickerInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [line.ownPack?.unitPrice, line.ownPack?.unitsPerBox],
   );
+  // SA-1044 rule 4: a held level the ladder no longer offers at its sold size keeps its "(as ordered)" snapshot option.
+  const heldOption = React.useMemo(
+    () =>
+      enabled && units.data
+        ? heldSnapshotUnitOption(held, line.unitLabel, product, units.data)
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      enabled,
+      units.data,
+      product,
+      line.unitLabel,
+      held?.unitLabel,
+      held?.unitsPerBox,
+      held?.unitPrice,
+      held?.listPrice,
+    ],
+  );
   const options = React.useMemo<UnitOption[]>(() => {
-    if (!enabled || !units.data || units.data.length === 0) return [];
+    // SA-1044 A-3: an empty ladder still offers a held snapshot (a gone level), so the line is never reset to the pack.
+    if (!enabled || !units.data || (units.data.length === 0 && !heldOption)) return [];
     try {
-      return withLayerPrices(
-        buildUnitOptions(product, units.data, tier, packPrice),
-        product,
-        tier,
-        layer,
-        ownPack,
+      return withHeldOption(
+        withLayerPrices(
+          buildUnitOptions(product, units.data, tier, packPrice),
+          product,
+          tier,
+          layer,
+          ownPack,
+        ),
+        heldOption, // after the layer prices: the snapshot is the line's own, never re-priced
       );
     } catch {
       return []; // display-only: a bad tier never unmounts the order form (the server 400s on save)
     }
-  }, [enabled, units.data, product, tier, packPrice, layer, ownPack]);
+  }, [enabled, units.data, product, tier, packPrice, layer, ownPack, heldOption]);
 
   const startedRef = React.useRef(false);
   React.useEffect(() => {
@@ -159,13 +190,14 @@ function OrderLineUnitPickerInner({
   // change), never because `line.unitPrice` moved. The order-edit price row sets only `unitPrice`
   // (priceType stays STANDARD), so re-checking on every price change snapped a typed price straight
   // back to the ladder's and Save then sent nothing.
-  const held = options.find((o) => o.value === (line.unitLabel ?? ""));
+  const heldUnit = options.find((o) => o.value === (line.unitLabel ?? ""));
   const lastLadderPrice = React.useRef<number | undefined>(undefined);
   React.useEffect(() => {
-    if (disabled || !line.unitLabel || !held) return; // W-745: not recorded, so the first confirmed ladder is a first sight
+    if (disabled || !line.unitLabel || !heldUnit) return; // W-745: not recorded, so the first confirmed ladder is a first sight
+    if (heldOption) return; // SA-1044: a gone/resized level bills at its snapshot; the ladder never re-prices it
     const firstSight = lastLadderPrice.current === undefined;
-    const ladderMoved = lastLadderPrice.current !== held.price;
-    lastLadderPrice.current = held.price;
+    const ladderMoved = lastLadderPrice.current !== heldUnit.price;
+    lastLadderPrice.current = heldUnit.price;
     if (!ladderMoved) return;
     // #2381: a remount (or a ladder arriving late) is a first sight, not a ladder move; a price
     // the operator typed stands. A real move afterwards (the tier changed) still re-prices.
@@ -173,14 +205,15 @@ function OrderLineUnitPickerInner({
     if (line.priceType === "DISCOUNTED") return;
     // master: MANUAL is the operator's and stands; only the layer's own above-list price (marked by the surface) follows
     if (line.priceType === "MANUAL" && !line.layerManual) return;
-    if (held.price !== line.unitPrice) onChange(held, true);
+    if (heldUnit.price !== line.unitPrice) onChange(heldUnit, true);
   }, [
     line.unitLabel,
     line.priceType,
     line.layerManual,
     line.unitPrice,
     line.priceEdited,
-    held,
+    heldUnit,
+    heldOption,
     onChange,
     disabled,
   ]);
@@ -193,6 +226,7 @@ function OrderLineUnitPickerInner({
       packPrice={packPrice}
       layer={layer}
       ownPack={ownPack}
+      heldOption={heldOption}
       ariaLabel={`Sell ${line.productName} by`}
       value={unitPickerValueOf(line)}
       disabled={disabled}
