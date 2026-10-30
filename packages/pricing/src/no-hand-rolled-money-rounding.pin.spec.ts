@@ -400,6 +400,13 @@ const ALLOW: Allow[] = [
     note: "a script money site that PR-3 converts",
   },
   {
+    file: "apps/api/scripts/report-b403-zero-rate-lines.mjs",
+    form: "F3",
+    count: 1,
+    why: "pending:PR-3",
+    note: "a script money site that PR-3 converts",
+  },
+  {
     file: "apps/api/scripts/report-exempt-orders-taxed.mjs",
     form: "F3",
     count: 1,
@@ -946,6 +953,20 @@ const ALLOW: Allow[] = [
     note: "a script money site that PR-3 converts",
   },
   {
+    file: "scripts/factory-eval.mjs",
+    form: "F3",
+    count: 1,
+    why: "pending:PR-3",
+    note: "an eval run cost compared in cents that PR-3 converts",
+  },
+  {
+    file: "scripts/factory-scoreboard.mjs",
+    form: "F1",
+    count: 1,
+    why: "pending:PR-3",
+    note: "a median run cost in dollars that PR-3 converts",
+  },
+  {
     file: "scripts/graph.mjs",
     form: "F3",
     count: 1,
@@ -972,13 +993,6 @@ const ALLOW: Allow[] = [
     count: 1,
     why: "percent",
     note: "a release percent done",
-  },
-  {
-    file: "scripts/work/reconcile.mjs",
-    form: "F3",
-    count: 2,
-    why: "percent",
-    note: "a board percent done and open",
   },
 ];
 

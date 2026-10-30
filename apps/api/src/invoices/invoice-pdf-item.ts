@@ -12,7 +12,7 @@
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
 
-import { componentPriceText, invoiceLineQtyText } from "@routeflow/pricing";
+import { componentPriceText, invoiceLineQtyText, roundMoney } from "@routeflow/pricing";
 import type { InvoiceDisplayLines } from "@routeflow/pricing";
 import type { LineComponentView } from "@routeflow/types";
 
@@ -126,7 +126,7 @@ export function pieceUnitPriceText(n: number): string {
   return `$${n.toFixed(4)}`;
 }
 
-const amountText = (n: number): string => `$${n.toFixed(2)}`;
+const amountText = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
 
 /** One component row of a components-layout line. */
 export interface PdfDisplayRow {
