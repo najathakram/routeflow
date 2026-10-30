@@ -6,10 +6,11 @@
  * Fixture (win-heavy's S1 shape): product P on ONE order with two invoices. Lines A and B are each 200 pcs, 50.00 net, 5.00 levy,
  * both sales booked in the ledger; A's invoice is the LATER one (total 190.00, so a refund lump has room), B's the earlier.
  *
- *   R-L1  a pooled 200-pc return is received (REVERSAL on A: -200 / -50 / -5) and refunded (one 50.00 lump), then a typed credit
- *         of 50.00 / 200 pcs on A: before the fix ACCEPTED with the item's categoryTax 5.00 while the ledger booked nothing (the
- *         clamp: A is closed); after: 409 CREDIT_NOTE_OVER_HEADROOM, no note, no item, ledger unchanged.
- *   G-L2  the same return, the typed credit on B (the line with room): accepted, the category nets 0 / 0.
+ *   R-L1  a pooled 200-pc return is received (REVERSAL on A: -200 / -50 / -5) and refunded (one 50.00 lump, on B's invoice, SA-1051),
+ *         then a typed credit of 50.00 / 200 pcs on A: before the fix ACCEPTED with the item's categoryTax 5.00 while the ledger
+ *         booked nothing (the clamp: A is closed); after: 409 CREDIT_NOTE_OVER_HEADROOM from the A-4 bind, no note, no item, ledger unchanged.
+ *   G-L2  the same return, the typed credit on B (the line with room, B's invoice given room): accepted, the category nets 0 / 0.
+ *   G-L11 G-L2's original totals (B 50.00): observed, no value ruled (SA-1054): which door refuses a typed credit on B and on A.
  *   G-L3  a pooled 100-pc return, then a typed 100-pc credit on A: accepted and books A's remainder; a 150-pc one: refused.
  *   G-L4  a rotated invoice item (the credited id differs from the SALE row's): the refusal comes through the order line.
  *   G-L5  boxed line (5 boxes of 12, B661 pieces): the bind compares in the unit the clamp uses.
@@ -131,9 +132,21 @@ describeDb(
      */
     async function seed(
       label: string,
-      opts: { shape?: Shape; regulated?: boolean; bookA?: boolean; soldAt?: Date } = {},
+      opts: {
+        shape?: Shape;
+        regulated?: boolean;
+        bookA?: boolean;
+        soldAt?: Date;
+        roomB?: boolean;
+      } = {},
     ) {
-      const { shape = PIECES, regulated = true, bookA = true, soldAt = new Date() } = opts;
+      const {
+        shape = PIECES,
+        regulated = true,
+        bookA = true,
+        soldAt = new Date(),
+        roomB = false,
+      } = opts;
       seq += 1;
       const slug = assertTestTenant(
         `qa-a4-${RUN}-${seq}-${label}`,
@@ -218,7 +231,7 @@ describeDb(
           subtotal: shape.net,
           taxAmount: 0,
           discount: 0,
-          total: shape.net,
+          total: roomB ? shape.net * 3.8 : shape.net,
           createdAt: new Date(Date.now() - 3_600_000),
         },
       });
@@ -230,9 +243,7 @@ describeDb(
             orderItemId,
             productId: product.id,
             description: "P",
-            ...(regulated
-              ? { trackedCategoryId: category.id, categoryTaxAmount: shape.levy }
-              : {}),
+            ...(regulated ? { trackedCategoryId: category.id, categoryTaxAmount: shape.levy } : {}),
             ...lineShape,
           } as any,
         });
@@ -323,6 +334,17 @@ describeDb(
         .catch((e: any) => e);
 
     const codeOf = (e: any) => e?.getResponse?.()?.code ?? null;
+    /** Which refusal answered, from the wording each door in credit-notes.service.ts uses (null = accepted). */
+    const doorOf = (e: any) => {
+      if (!e) return null;
+      const m = String(e?.getResponse?.()?.message ?? e?.message ?? "");
+      if (/would exceed invoice total/.test(m)) return "invoice-total";
+      if (/past what it was billed/.test(m)) return "order-billed";
+      if (/after the return already refunded/.test(m)) return "pinned (A-3)";
+      if (/still allow to be credited for the product/.test(m)) return "pool";
+      if (/regulated ledger can still reverse/.test(m)) return "ledger room (A-4)";
+      return `other: ${m}`;
+    };
     const noteCount = (s: Seed) =>
       prisma.creditNote.count({ where: { tenantId: s.tenantId, status: { not: "VOID" } } });
     const itemCount = (s: Seed) => prisma.creditNoteItem.count({ where: { tenantId: s.tenantId } });
@@ -354,21 +376,28 @@ describeDb(
       const s = await seed("rl1");
       const lump = await returnAndRefund(s, 200);
       expect(Number(lump.amount)).toBe(50);
-      expect(lump.invoiceId).toBe(s.invoiceA.id);
+      expect(lump.invoiceId).toBe(s.invoiceB.id); // SA-1051: the pooled refund fills the oldest invoice (B) first; the ledger reverses A
       expect(await filing(s)).toEqual({ net: 50, tax: 5 }); // B only: A's reversal took 50 / 5
       const before = (await ledgerRows(s)).length;
       const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      expect(doorOf(err)).toBe("ledger room (A-4)"); // the red comes from the A-4 bind, not another door
       expect({
         code: codeOf(err),
         notes: await noteCount(s),
         items: await itemCount(s),
         rows: (await ledgerRows(s)).length - before,
         filing: await filing(s),
-      }).toEqual({ code: "CREDIT_NOTE_OVER_HEADROOM", notes: 1, items: 0, rows: 0, filing: { net: 50, tax: 5 } });
+      }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        notes: 1,
+        items: 0,
+        rows: 0,
+        filing: { net: 50, tax: 5 },
+      });
     });
 
     it("G-L2: the same return, then the typed credit on B (the line with room): accepted, the category nets 0 / 0", async () => {
-      const s = await seed("gl2");
+      const s = await seed("gl2", { roomB: true }); // B's invoice gets room, so its total cap cannot mask the bind (SA-1054)
       await returnAndRefund(s, 200);
       const err = await typedCredit(s, s.invoiceB.id, s.iB.id, 50, 200);
       expect({ code: codeOf(err), notes: await noteCount(s), filing: await filing(s) }).toEqual({
@@ -377,6 +406,36 @@ describeDb(
         filing: { net: 0, tax: 0 },
       });
       expect(await taxAgreement(s)).toEqual({ stored: 5, booked: 5 });
+    });
+
+    it("G-L11 (OBSERVED, no value ruled): G-L2's original totals (B 50.00): which door refuses a typed credit on B and on A, and does any fit", async () => {
+      const s = await seed("gl11"); // B's invoice total stays 50.00: the refund lump (50.00) already uses all of it
+      const lump = await returnAndRefund(s, 200);
+      const ledgerLines = (await ledgerRows(s))
+        .filter((r) => r.entryType === "REVERSAL")
+        .map((r) => (r.orderItemId === s.lineA.id ? "A" : "B"));
+      const full = { onB: await typedCredit(s, s.invoiceB.id, s.iB.id, 50, 200), onA: null as any };
+      full.onA = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      // the smallest typed credit: 1 pc / 0.25 on each line
+      const smallB = await typedCredit(s, s.invoiceB.id, s.iB.id, 0.25, 1);
+      const smallA = await typedCredit(s, s.invoiceA.id, s.iA.id, 0.25, 1);
+      expect({
+        lumpOn: lump.invoiceId === s.invoiceB.id ? "B" : "A",
+        ledgerReversedLine: ledgerLines,
+        fullOnB: doorOf(full.onB),
+        fullOnA: doorOf(full.onA),
+        smallOnB: doorOf(smallB),
+        smallOnA: doorOf(smallA),
+        notes: await noteCount(s),
+      }).toEqual({
+        lumpOn: "B", // the money consumed B ...
+        ledgerReversedLine: ["A"], // ... and the ledger consumed A (F-7)
+        fullOnB: "invoice-total",
+        fullOnA: "ledger room (A-4)",
+        smallOnB: "invoice-total",
+        smallOnA: "ledger room (A-4)",
+        notes: 1, // no typed credit fits either line
+      });
     });
 
     it("G-L3: a pooled 100-pc return, then a typed 100-pc credit on A is accepted and books A's remainder", async () => {
@@ -449,7 +508,9 @@ describeDb(
     });
 
     it("G-L6: the SALE sits in an earlier LOCKED period: the same refusal, and a credit that fits books into the current period", async () => {
-      const prev = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 10));
+      const prev = new Date(
+        Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 10),
+      );
       const key = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}`;
       const lock = (s: Seed) =>
         prisma.regulatedFiling.create({
