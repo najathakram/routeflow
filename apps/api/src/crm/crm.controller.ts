@@ -25,6 +25,7 @@ import { SaveCrmConnectionDto } from "./dto/save-crm-connection.dto";
 import { UpdateCrmConfigDto } from "./dto/update-crm-config.dto";
 import { ListHandoffsDto } from "./dto/list-handoffs.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * GoHighLevel CRM connector (spec R1-R8, R22, R23). Every route requires an authenticated
  * OPERATOR AND the `crm_gohighlevel` add-on grant (registered `dark` at launch — see
@@ -35,6 +36,7 @@ import { ListHandoffsDto } from "./dto/list-handoffs.dto";
  * scanner in `addon-gate-registry.spec.ts` is literal-only by design, and a shared const
  * made all of these routes invisible to it (F6).
  */
+@RequirePermission("CUSTOMERS")
 @ApiTags("crm")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)

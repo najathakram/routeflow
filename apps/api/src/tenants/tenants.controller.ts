@@ -44,6 +44,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { TenantFeaturesResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 @ApiTags("tenants")
 @Controller("tenants")
 export class TenantsController {
@@ -134,6 +135,7 @@ export class TenantsController {
 
   // ─── Me: Addons ──────────────────────────────────────────────────────────────
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("me/addons")
   @UseGuards(JwtAuthGuard, RolesGuard)
   // Widened for developer_mode: pure DRIVER-role users of a dev-mode tenant

@@ -25,6 +25,8 @@ import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 import { PostLocationDto } from "./dto/post-location.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+@RequirePermission("DISPATCH")
 @ApiTags("drivers")
 @ApiBearerAuth()
 // Owner decision 2026-08-28: /drivers is SHARED between the two delivery features — the driver
@@ -38,6 +40,7 @@ import { PostLocationDto } from "./dto/post-location.dto";
 export class DriversController {
   constructor(private readonly driversService: DriversService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

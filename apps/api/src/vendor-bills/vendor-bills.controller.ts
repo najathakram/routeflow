@@ -32,8 +32,10 @@ import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // OPERATOR-only end to end. AddonGuard passes handlers without @RequireAddon
 // metadata — only the AI scan endpoint below is addon-gated.
+@RequirePermission("FINANCE")
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)

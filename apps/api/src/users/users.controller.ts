@@ -25,6 +25,7 @@ import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
 import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 @ApiTags("users")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -35,6 +36,7 @@ export class UsersController {
     private readonly permissions: OperatorPermissionsService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)

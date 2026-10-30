@@ -32,6 +32,7 @@ import { CaptureInlineReturnDto } from "./dto/capture-inline-return.dto";
 import { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /** #2406: `GET /returns?kind=` whitelist — the Prisma `ReturnKind` enum (the same set as the
  * shared RETURN_KIND_VALUES, pinned by enum-parity.spec.ts) plus the read-only "ALL" filter.
  * Anything else is a 400 BEFORE the service/prisma is touched — never a raw string into
@@ -45,6 +46,7 @@ const isReturnKindFilter = (value: string): value is ReturnKindFilter =>
 // This controller also serves CUSTOMER and DRIVER roles (not just OPERATOR), so
 // gating it must stay behind the kill switch until the v7-STARTER audit question
 // (flag.returns is granted to v8 STARTER but not v7 STARTER) is answered.
+@RequirePermission("ORDERS")
 @Controller("returns")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
@@ -243,6 +245,7 @@ export class ReturnsController {
     return this.returnsService.receive(id, user.sub, { restock: dto?.restock });
   }
 
+  @RequirePermission("ORDERS", "FINANCE")
   @Post(":id/refund")
   @Roles(UserRole.OPERATOR)
   processRefund(
