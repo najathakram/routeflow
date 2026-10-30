@@ -18,6 +18,7 @@
  * both figures to the SA/owner.
  */
 import { isDeepStrictEqual } from "node:util";
+import type { PriceType } from "@prisma/client";
 import {
   computeLineSubtotal,
   invoiceLineQtyText,
@@ -374,7 +375,7 @@ export interface StoredLine {
   unitLabel: string;
   unitsPerBox: number;
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
+  priceType: Exclude<PriceType, "PROMO">;
   originalPrice: number | null;
 }
 export interface PriceLineArgs {

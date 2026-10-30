@@ -15,7 +15,7 @@
  */
 import { Logger } from "@nestjs/common";
 import { invoiceLineQtyText } from "@routeflow/pricing";
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient, PromotionType } from "@prisma/client";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import type { PrismaService } from "../../prisma/prisma.service";
 import type { TenantContextService } from "../../tenant/tenant-context.service";
@@ -96,7 +96,7 @@ const noop = new Proxy(
 
 export interface PromoRule {
   id: string;
-  type: "PERCENT" | "BUY_N_GET_M" | "FIXED" | "QTY_BREAK";
+  type: PromotionType;
   value: number;
   minQty: number | null;
 }
