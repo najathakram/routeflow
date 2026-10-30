@@ -145,8 +145,8 @@ export function CreatePOModal({
               </button>
             </div>
 
-            <div className="rounded-lg border border-surface-border overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="rounded-lg border border-surface-border overflow-x-auto">
+              <table className="min-w-[560px] w-full text-sm">
                 <thead className="bg-surface-raised text-xs text-navy/70">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Product</th>
