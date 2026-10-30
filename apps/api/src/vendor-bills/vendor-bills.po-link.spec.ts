@@ -10,6 +10,7 @@ import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { ProductAliasService } from "../import/product-alias.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
  * Units/PO step 7 — a vendor bill linked to a purchase order:
@@ -94,6 +95,7 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     // R5-5: refs resolve inside the tenant unless a test says otherwise.
     prisma.supplier.findMany.mockImplementation(async (args: any) =>
       (args?.where?.id?.in ?? []).map((id: string) => ({ id })),

@@ -105,13 +105,16 @@ const TABLE: Record<string, Row> = {
     "tracked-categories/tracked-categories.service.ts",
     "TrackedCategoriesService.unassignProducts",
   )]: X("only clears the column (null) on tenant-scoped products"),
+  [f("orders/testing/units-fold-db-harness.ts", "seedFoldTenant")]: X(
+    "test-only seeding fixture of the D3 units-fold DB specs (orders/testing, imported only by *.db.spec.ts): every customer, product and category id it stores comes from rows it just created in its own throwaway qa-ufold-* tenant",
+  ),
 
   // ── PR B: pending (run / stop ids; 681 PR B takes this to 0) ─────────────────────────────────
   [f("drivers/drivers.service.ts", "DriversService.recordLocation")]: P(PR_B),
   [f("messages/messages.service.ts", "MessagesService.create")]: P(PR_B),
   [f("messaging/messaging.service.ts", "MessagingService.sendMessage")]: P(PR_B),
   [f("orders/orders.service.ts", "OrdersService.create")]: P(PR_B),
-  [f("orders/order-lifecycle.ts", "updateFulfillPathImpl")]: P(PR_B),
+  [f("orders/order-lifecycle.ts", "releaseFinishedRunLink")]: P(PR_B),
   [f("orders/counter-sale/complete-at-counter-run.ts", "takeOrderOffRun")]: P(PR_B),
   [f("returns/inline-returns.service.ts", "InlineReturnsService.captureInTx")]: P(PR_B),
   [f("routes/routes.service.ts", "RoutesService.createRun")]: P(PR_B),

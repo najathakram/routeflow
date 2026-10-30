@@ -12,6 +12,9 @@ import { ProductAliasService } from "../import/product-alias.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { BILL_REVERTED_NOTE, billReceiptNote, pairedReceiptIds } from "../inventory/bill-revert";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 /**
  * B846 — revertToDraft must APPEND a signed PURCHASE row per receipt row instead of deleting the
@@ -89,6 +92,7 @@ interface Harness {
 
 async function harness(): Promise<Harness> {
   const prisma = createMockPrisma();
+  stock = wireStockHelper(prisma, { ample: true });
   const rows: Row[] = [];
   const lots: Row[] = [];
   const product = { currentStock: D(0), averageCost: null as Prisma.Decimal | null };
@@ -96,7 +100,8 @@ async function harness(): Promise<Harness> {
   let clock = NOW.getTime();
 
   prisma.stockMovement.create.mockImplementation(async ({ data }: any) => {
-    const row = { id: `mv-${++seq}`, createdAt: new Date((clock += 1000)), ...data };
+    // the harness numbers its rows mv-N (the stock writer's own uuid is replaced)
+    const row = { createdAt: new Date((clock += 1000)), ...data, id: `mv-${++seq}` };
     rows.push(row);
     return row;
   });
@@ -123,13 +128,15 @@ async function harness(): Promise<Harness> {
     ...product,
   }));
   prisma.product.update.mockImplementation(async ({ data }: any) => {
-    if (data.currentStock?.increment)
-      product.currentStock = product.currentStock.add(data.currentStock.increment);
-    if (data.currentStock?.decrement)
-      product.currentStock = product.currentStock.sub(data.currentStock.decrement);
+    // SA-927: the stock writer sets the counter absolute (stockAfter), never an increment
+    if (data.currentStock !== undefined) product.currentStock = D(data.currentStock);
     if (data.averageCost !== undefined) product.averageCost = data.averageCost;
     return { ...product };
   });
+  // the stock writer's locked read sees this harness's one product
+  stock.setState(() => [
+    { id: "prod-1", currentStock: product.currentStock, averageCost: product.averageCost },
+  ]);
   prisma.stockLot.create.mockImplementation(async ({ data }: any) => {
     lots.push({ id: `lot-${lots.length + 1}`, ...data });
     return data;

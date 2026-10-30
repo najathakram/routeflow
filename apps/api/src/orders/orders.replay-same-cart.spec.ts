@@ -108,6 +108,51 @@ describe("OrdersService.create - an Idempotency-Key replay must be a replay of t
   });
 });
 
+// SA-892 (W-751): a sequential same-key resend ("Record anyway") replays at the pre-check, BEFORE the restriction
+// judgement, so a rule added since the ring can never refuse the resend of a sale that already exists.
+describe("OrdersService.create - a same-key replay is never re-judged for restrictions (SA-892)", () => {
+  const dto = (key: string) =>
+    ({ customerId: "cust-1", items: [{ productId: "p1", qty: 1 }], idempotencyKey: key }) as never;
+  const warning = () =>
+    new ConflictException({ code: "RESTRICTION_WARNING", lines: [], warningHash: "rw1:x" });
+
+  async function build(preCheck: unknown) {
+    const h = await buildOrdersService();
+    h.prisma.customer.findUnique.mockResolvedValue({
+      id: "cust-1",
+      deletedAt: null,
+      user: { status: "ACTIVE" },
+    });
+    h.prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "P1", unit: "each" }]);
+    jest.spyOn(h.service, "findReplayCandidateByKey").mockResolvedValueOnce(preCheck as never);
+    // a rule that NOW matches the cart: any judgement would refuse it
+    h.restrictions.assertLinesSellable.mockRejectedValue(warning());
+    return h;
+  }
+
+  it("control: the same cart with no stored order is judged, and the new rule refuses it", async () => {
+    const h = await build(null);
+    const e = await h.service.create(dto("k-new"), operatorPayload as never).catch((x) => x);
+    expect(e).toBeInstanceOf(ConflictException);
+    expect(h.restrictions.assertLinesSellable).toHaveBeenCalledTimes(1);
+  });
+
+  it("a stored order for the key and the same cart: create() returns the replay and never calls assertLinesSellable", async () => {
+    const h = await build({
+      id: "ord-1",
+      customerId: "cust-1",
+      status: "PENDING",
+      lineItems: [{ productId: "p1", name: "P1", qty: 1, status: "PENDING" }],
+    });
+    const onReplay = jest.fn();
+    await expect(
+      h.service.create(dto("k-rung"), operatorPayload as never, { onReplay }),
+    ).resolves.toBeDefined();
+    expect(onReplay).toHaveBeenCalledTimes(1);
+    expect(h.restrictions.assertLinesSellable).not.toHaveBeenCalled();
+  });
+});
+
 describe("isIdempotencyKeyViolation - the pg driver adapter's P2002 shape", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { isIdempotencyKeyViolation } = require("./replay-same-cart");

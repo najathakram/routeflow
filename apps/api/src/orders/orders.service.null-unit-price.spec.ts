@@ -47,6 +47,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { Prisma } from "@prisma/client";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -125,6 +126,7 @@ describe("OrdersService.updateOrderItems — a null line price is no override (r
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

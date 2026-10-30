@@ -81,6 +81,7 @@ const driverPayload = {
 };
 
 const CATALOG = { customerId: "cust-1" } as any; // SA-967: what the pre-tx load returns
+const BASE_LABELS = new Map([["p1", "Bag"]]); // SA-1029: what the other pre-tx load returns
 
 describe("RoutesService", () => {
   let service: RoutesService;
@@ -103,6 +104,7 @@ describe("RoutesService", () => {
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
     loadUnitCatalog: jest.Mock;
+    loadBaseLabels: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -116,6 +118,7 @@ describe("RoutesService", () => {
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
       loadUnitCatalog: jest.fn().mockResolvedValue(CATALOG),
+      loadBaseLabels: jest.fn().mockResolvedValue(BASE_LABELS),
     };
 
     gateway = {
@@ -2008,6 +2011,7 @@ describe("RoutesService", () => {
         50,
         "CASH",
         CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
+        BASE_LABELS, // SA-1029: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
       );
       // B663: reconciled unconditionally too, even though a payment was ALSO
@@ -2090,6 +2094,7 @@ describe("RoutesService", () => {
         50,
         "CASH",
         CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
+        BASE_LABELS, // SA-1029: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
       );
       // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
@@ -2259,6 +2264,7 @@ describe("RoutesService", () => {
         }),
       );
       expect(loadedBeforeTx).toBe(true);
+      expect(invoicesService.loadBaseLabels).toHaveBeenCalledTimes(1); // SA-1029: once, before the tx
     });
 
     it("B663: an on-account completion (no payment) still reconciles to the delivered basis, and never calls recordDeliveryPaymentInTx", async () => {

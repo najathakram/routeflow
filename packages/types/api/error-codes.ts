@@ -421,6 +421,16 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /**
+   * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
+   * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
+   */
+  LINES_REPLACE_AFTER_DELIVERY: "LINES_REPLACE_AFTER_DELIVERY",
+  /**
+   * W-861 (SA-944): a walk-in sale with a live payment on its invoice cannot be edited (the shared Walk-in customer
+   * cannot owe). Ring up added items as a new sale, or take items back with a Return. 409, nothing written.
+   */
+  WALK_IN_SALE_PAID: "WALK_IN_SALE_PAID",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
@@ -814,6 +824,11 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
   COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
+  /**
+   * Row 590 (SA-978a): PATCH /orders/:id/status to DELIVERED, 409: the order rides a run stop that is not COMPLETED. The stop is the
+   * one writer of a run order's delivery; complete it on the route, or take the order off the run first. Nothing written.
+   */
+  ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.

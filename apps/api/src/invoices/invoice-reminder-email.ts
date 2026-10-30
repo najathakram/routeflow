@@ -52,7 +52,8 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
     where: { id },
     include: {
       customer: { select: { id: true, businessName: true, contactName: true, email: true } },
-      items: true,
+      // SA-1029 A-1: the product's base word for a legacy line that never froze one (no per-item query)
+      items: { include: { product: { select: { baseUnitLabel: true } } } },
       // F03/R8: CONFIRMED (PAID) payments only — feeds totalPaid/balanceDue below.
       // B421: creditNote relation needed for the customer-facing "Credit
       // issued — CN-…" line's number.
