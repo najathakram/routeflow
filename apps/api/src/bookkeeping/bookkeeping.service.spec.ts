@@ -36,6 +36,7 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_TASKS, type AiTask } from "../platform-admin/ai-models";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -110,7 +111,11 @@ describe("BookkeepingService", () => {
         },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+            recordAiUsage,
+            resolveModelFor: jest.fn(async (task: AiTask) => AI_TASKS[task].fallback),
+          },
         },
         {
           provide: SystemConfigService,
@@ -2257,7 +2262,7 @@ describe("BookkeepingService", () => {
   });
 
   describe("extractExpenseItems", () => {
-    const RECEIPT_MODEL = "claude-opus-4-5-20251101";
+    const RECEIPT_MODEL = "claude-opus-5-5"; // SA-1035 M-R5: the receipt task's fallback (no picker)
 
     /** `createMockPrisma` predates ExpenseLineItem — graft it onto the object forTenant() returns. */
     const graftExpenseLineItem = () => {
@@ -2299,6 +2304,7 @@ describe("BookkeepingService", () => {
 
       await service.extractExpenseItems("exp-1");
 
+      expect(mockAnthropicCreate.mock.calls[0][0].model).toBe(RECEIPT_MODEL); // M-R5: the call itself
       expect(recordAiUsage).toHaveBeenCalledWith({
         tenantId: "test-tenant",
         feature: "ocr.expense_receipt",
@@ -2306,6 +2312,46 @@ describe("BookkeepingService", () => {
         inputTokens: 555,
         outputTokens: 66,
       });
+    });
+
+    it("reads the text block when the response starts with a thinking block (Opus 5.5 always thinks)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          { type: "thinking", thinking: "" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              vendor: "Acme",
+              total: 12,
+              items: [{ description: "Widget", qty: 1, unitCost: 12, amount: 12 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      });
+      await service.extractExpenseItems("exp-1");
+      const lines = (prisma.forTenant() as any).expenseLineItem.createMany;
+      expect(lines).toHaveBeenCalledTimes(1);
+      expect(lines.mock.calls[0][0].data).toHaveLength(1);
+    });
+
+    it("a response with a thinking block and no text block is refused, not read as an empty receipt", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "thinking", thinking: "" }],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      });
+      await expect(service.extractExpenseItems("exp-1")).rejects.toThrow(/Could not parse receipt/);
+    });
+
+    it("leaves headroom for thinking in max_tokens (the receipt keeps the model's default effort)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ items: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await service.extractExpenseItems("exp-1");
+      const req = mockAnthropicCreate.mock.calls[0][0];
+      expect(req.max_tokens).toBe(8192);
+      expect(req.output_config).toBeUndefined();
     });
 
     it("records a failed AiUsageEvent and rethrows when the Anthropic call errors", async () => {

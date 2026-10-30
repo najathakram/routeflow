@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { handleMutationError } from "@/lib/mutation-error-toast";
@@ -132,6 +132,75 @@ describe("PickupCompleteDialog — hand-over copy (row 345)", () => {
     expect(await screen.findByTestId("pickup-outcome")).toHaveTextContent(
       "Picked up. $7.58 still due.",
     );
+  });
+});
+
+describe("PickupCompleteDialog — default tender (SA-933 / W-822a)", () => {
+  const terms = (own: string, tenant = "Due on Receipt") =>
+    get.mockImplementation((url: string) => {
+      if (/^\/customers\/[^/]+$/.test(url))
+        return Promise.resolve({ data: { id: "c1", defaultPaymentTerms: own } });
+      if (url === "/settings/invoice") return Promise.resolve({ data: { defaultTerms: tenant } });
+      return Promise.resolve({ data: { id: "i1", status: "SENT", total: 25, balanceDue: 25 } });
+    });
+  const methods = () =>
+    within(screen.getByRole("region", { name: "Payment" })).getAllByRole("button");
+  const checkedMethod = () =>
+    methods().find((r) => r.getAttribute("aria-pressed") === "true")?.textContent;
+
+  it("a Net-terms customer's hand-over opens on On account, listed first", async () => {
+    terms("Net 30");
+    mount({ customerId: "c1" });
+    await waitFor(() => expect(checkedMethod()).toBe("On account"));
+    expect(methods()[0]).toHaveTextContent("On account");
+  });
+
+  it("a Due on Receipt customer, a walk-in and an unknown customer open on Cash", async () => {
+    terms("Due on Receipt");
+    const a = mount({ customerId: "c1" });
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toBeInTheDocument());
+    expect(checkedMethod()).toBe("Cash");
+    a.unmount();
+    terms("Net 30");
+    const b = mount({ customerId: undefined, isWalkIn: true });
+    await waitFor(() => expect(screen.getByLabelText("Amount tendered")).toBeInTheDocument());
+    expect(checkedMethod()).toBe("Cash");
+    b.unmount();
+  });
+
+  it("a cash amount the cashier typed before the terms arrive keeps the tender on Cash", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    get.mockImplementation((url: string) => {
+      if (/^\/customers\/[^/]+$/.test(url))
+        return gate.then(() => ({ data: { id: "c1", defaultPaymentTerms: "Net 30" } }));
+      if (url === "/settings/invoice") return Promise.resolve({ data: { defaultTerms: "Net 30" } });
+      return Promise.resolve({ data: { id: "i1", status: "SENT", total: 25, balanceDue: 25 } });
+    });
+    mount({ customerId: "c1" });
+    const amount = await screen.findByLabelText("Amount tendered");
+    fireEvent.change(amount, { target: { value: "40" } });
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(checkedMethod()).toBe("Cash");
+    expect(screen.getByLabelText("Amount tendered")).toHaveValue("40");
+  });
+
+  it("a tender the cashier chose before the terms arrive is kept", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    get.mockImplementation((url: string) => {
+      if (/^\/customers\/[^/]+$/.test(url))
+        return gate.then(() => ({ data: { id: "c1", defaultPaymentTerms: "Net 30" } }));
+      if (url === "/settings/invoice") return Promise.resolve({ data: { defaultTerms: "Net 30" } });
+      return Promise.resolve({ data: { id: "i1", status: "SENT", total: 25, balanceDue: 25 } });
+    });
+    mount({ customerId: "c1" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Card" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(checkedMethod()).toBe("Card");
   });
 });
 

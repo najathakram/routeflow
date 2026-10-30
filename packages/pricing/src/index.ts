@@ -7,6 +7,7 @@ export * from "./tier-pricing";
 export * from "./payment-confirmation";
 export * from "./cleared-tender";
 export * from "./money-invariants";
+export * from "./price-authority";
 export * from "./unit-levels";
 export * from "./build-line";
 export * from "./po-line";

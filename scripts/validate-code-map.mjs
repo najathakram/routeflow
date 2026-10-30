@@ -65,7 +65,10 @@
 //      was the CI bug this rule fixes (owner ruling 2026-09-14): a missing
 //      object, or any merge-base exit code other than 0/1, is classified
 //      UNVERIFIABLE — a WARNING, never an error, on master or off — and
-//      drift is skipped entirely. Only exit code 1 stays an ERROR.
+//      drift is skipped entirely. Only exit code 1 stays an ERROR — except
+//      in a shallow repo (`git rev-parse --is-shallow-repository` is true),
+//      where exit 1 can also mean "present, but history is cut at the depth
+//      boundary", so a miss there is UNVERIFIABLE as well.
 //   3. STALE = `drift` is non-empty AND `mapTouched` is false — code changed
 //      that could affect the map, and nothing under the map directory
 //      acknowledged it. A branch that touches the map alongside its code
@@ -324,7 +327,18 @@ if (meta && typeof meta.mappedSha === "string" && meta.mappedSha) {
       // Only exit 1 ("X exists, but is not an ancestor") is a real ancestry
       // violation. A missing object, or any other non-zero merge-base exit
       // (e.g. 128 "unknown object"), is UNVERIFIABLE — never an error.
-      if (objectMissing || ancestor.status > 1) {
+      // In a shallow clone exit 1 is not trustworthy either: the commit object
+      // can be present (fetched as another tip) while history is cut at the
+      // depth boundary, so a real ancestor answers "no". A miss there is
+      // UNVERIFIABLE too.
+      const shallow =
+        !objectMissing &&
+        ancestor.status === 1 &&
+        spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+        }).stdout.trim() === "true";
+      if (objectMissing || ancestor.status > 1 || shallow) {
         warn(
           `mappedSha ${meta.mappedSha.slice(0, 8)} not present locally (shallow clone) — ` +
             `ancestry and drift unverifiable.`,

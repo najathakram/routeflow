@@ -93,7 +93,7 @@ describe("check-types ratchet rules (B806)", () => {
       c.classifyWorkerExit({ status: 0, signal: null, stderr: "" }),
     ]));`) as Array<{ kind: string; message: string } | null>;
     expect(out[0]?.kind).toBe("oom");
-    // the hint names the heap THIS host chose (8192 under 14 GiB, 9216 on CI / the Mac mini / the PC)
+    // the hint names the heap THIS host chose (8192 under 14 GiB, 12288 on CI / the Mac mini / the PC)
     expect(out[0]?.message).toContain(`--max-old-space-size=${core("console.log(c.HEAP_MB)")}`);
     expect(out[0]?.message).toContain("raise HEAP_MB");
     expect(out[1]).toBeNull();
@@ -112,21 +112,21 @@ describe("check-types ratchet rules (B806)", () => {
     ).toBe(true);
   });
 
-  it("the heap follows the host: 8192 MB under 14 GiB, 9216 MB from 14 GiB (CI), and CHECK_TYPES_HEAP_MB wins", () => {
+  it("the heap follows the host: 8192 MB under 14 GiB, 12288 MB from 14 GiB (CI), and CHECK_TYPES_HEAP_MB wins", () => {
     const GIB = 1024 ** 3;
     const pick = (bytes: number, env: Record<string, string>) =>
       core(`console.log(JSON.stringify(c.chooseHeapMb(${bytes}, ${JSON.stringify(env)})));`);
     expect(pick(8 * GIB, {})).toBe(8192);
     expect(pick(14 * GIB - 1, {})).toBe(8192);
-    expect(pick(14 * GIB, {})).toBe(9216);
-    expect(pick(16 * GIB, {})).toBe(9216);
+    expect(pick(14 * GIB, {})).toBe(12288);
+    expect(pick(16 * GIB, {})).toBe(12288);
     expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "6144" })).toBe(6144);
-    expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: "12288" })).toBe(12288);
+    expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: "10240" })).toBe(10240);
     expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "1024" })).toBe(1024);
     expect(pick(8 * GIB, { CHECK_TYPES_HEAP_MB: "65536" })).toBe(65536);
     // anything but whole MB in [1024, 65536] is ignored: never a 0 / NaN / runaway heap flag
     for (const bad of ["", "0", "1", "-1", "1023", "65537", "9216.5", "1e21", "0x2400", "lots"])
-      expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: bad })).toBe(9216);
+      expect(pick(16 * GIB, { CHECK_TYPES_HEAP_MB: bad })).toBe(12288);
   });
 
   it("tsconfig.spec.json covers everything the old check-types did, plus the specs", () => {

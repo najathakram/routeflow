@@ -68,6 +68,8 @@ itself.** When you catch one, write the guard, not the apology.
 | 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#3686; #2554 until 2026-10-23; #938 until 2026-09-27) at the exact merging sha** + real green CI |
 | 2    | UI, docs, tests, tooling                                   | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded)                         |
 
+- **DARK until the flip (R5):** also record `node scripts/review-tier.mjs` (computed tier) beside
+  the hand tier on the board head: `tier (computed): N`. The hand tier still decides.
 - The coordinator resolves every sha against origin before merging (`merge-base --is-ancestor`);
   tree-identity is the only exception, and only when tree hashes match.
 - **Before every merge: `gh pr view N --json baseRefName` must print `master`. After every
@@ -173,6 +175,8 @@ handoff card** (`.claude/handoffs/<date>-lead-*.md`: bridge addresses, gates, in
 rulings, lessons), and the **board** (#3686, successor of #2554 and #938 — roll at ~2,300 comments, L-240) where verdicts and shas live. Update the tracker
 artifact only from master's registers. Write the memory entry for the lead rules at day's end.
 
+A feature with more than one slice gets a `docs/plans/<slug>.plan.json` (`node scripts/plan.mjs --waves` gives the landing order); the lane brief cites slice ids, not prose.
+
 ## 10. Checklist per window
 
 1. `date -u`; owner decisions since last window relayed verbatim; nothing held on the owner.
@@ -216,3 +220,5 @@ that sha; tier 1; squash; base check before, ref check after; BUILDING → SUCCE
 
 **Checkpoint timer:** `until [ "$(date -u +%H%M)" -ge HHMM ]; do sleep 30; done; …` in the
 background, printing visibility, open PRs with `mergeStateStatus` and `isDraft`, and master's ref.
+
+Advisory (dark, owner ruling pending on the budget): a change to a skill, hook, model or routing rule should carry a `factory-eval report` (`scripts/factory-eval.mjs`, frozen task set in `evals/factory/`).
