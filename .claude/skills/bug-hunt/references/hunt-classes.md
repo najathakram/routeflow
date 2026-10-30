@@ -11,7 +11,7 @@ names findings a class actually produced.
 
 ## Tier A — highest critical yield (run these first)
 
-### A1 · Conservation invariants · **Fable**
+### A1 · Conservation invariants · **Opus**
 
 Money, customer credit/advance, and inventory must each balance across _any_ sequence of
 create/edit/split/void/write-off/pay/refund/cancel/delete. Method: enumerate every writer of a
@@ -19,7 +19,7 @@ balance, then check each has a working inverse. Construct adversarial sequences,
 → B53 (returns refund ordered-not-delivered qty), B64–B69, B81, B82.
 Ask specifically: _which path books this, and which path un-books it — and do they agree to the cent?_
 
-### A2 · State-machine reachability · **Fable**
+### A2 · State-machine reachability · **Opus**
 
 Model each lifecycle (Order, Invoice, CreditNote, Return, RouteRun/Stop, Estimate): every status,
 every transition the **server** allows, versus what each **client** offers. Hunt transitions that
@@ -34,7 +34,7 @@ produce **different results for the same inputs**, or one enforces a rule anothe
 → B47 (buyer merge conflates boxes and pieces), B49, B50, B78.
 Distinct from constant/enum mirror drift (Tier B): this is _behavioural_ divergence.
 
-### A4 · Shared-mirror logic bugs · **Fable**
+### A4 · Shared-mirror logic bugs · **Opus**
 
 Money/line/tax math lives once in `packages/pricing` (`@routeflow/pricing`) — there are no copies
 to drift, but a bug sitting in that single shared implementation is invisible to a drift check by
@@ -51,7 +51,7 @@ edits from two surfaces; cron overlap and restart double-fire.
 Verified sound here: Stripe settlement, credit apply/restore, recurring-invoice CAS claim — see the
 register's cleared section before re-testing these.
 
-### A6 · Background jobs & scheduling · **Fable**
+### A6 · Background jobs & scheduling · **Opus**
 
 Every `@Cron`: does its "claim" actually advance past now? Is it idempotent on restart? What
 happens on a missed window, DST, or a tenant in another timezone? Trace the _next-run_ arithmetic

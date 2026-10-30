@@ -26,6 +26,14 @@ jest.mock("@/lib/api-client", () => ({
   apiClient: { get: (...a: unknown[]) => get(...a), post: (...a: unknown[]) => post(...a) },
 }));
 
+jest.mock("@/lib/fetch-pdf-blob", () => ({
+  fetchPdfBlob: () => Promise.resolve(new Blob(["pdf"])),
+}));
+const printPdfBlob = jest.fn();
+jest.mock("@/lib/print-pdf-blob", () => ({
+  printPdfBlob: (...a: unknown[]) => printPdfBlob(...a),
+}));
+
 const result = (over: Record<string, unknown> = {}) => ({
   data: {
     orderId: "o1",
@@ -797,5 +805,249 @@ describe("PickupCompleteDialog: I-120 the hand-over's credit-over-limit line (SA
     confirm();
     expect(await screen.findByText("Payment not recorded")).toBeVisible();
     expect(screen.queryByTestId("pickup-credit-over-limit")).toBeNull();
+  });
+});
+
+describe("PickupCompleteDialog — Check not received yet (SA-1026 A-R1)", () => {
+  const CHOICE = "Check not received yet";
+
+  it("a named customer paying by Check is offered the choice; it is not offered under Cash or Card", async () => {
+    balance(25);
+    mount();
+    expect(screen.queryByLabelText(CHOICE)).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    expect(screen.getByLabelText(CHOICE)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    expect(screen.queryByLabelText(CHOICE)).toBeNull();
+  });
+
+  it("a walk-in is never offered it (no account to collect on)", async () => {
+    balance(25);
+    mount({ isWalkIn: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    expect(screen.queryByLabelText(CHOICE)).toBeNull();
+    expect(screen.getByLabelText("Check number")).toBeInTheDocument();
+  });
+
+  it("choosing it hides the number and sends ON_ACCOUNT + expectedMethod CHECK with no reference", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    expect(screen.queryByLabelText("Check number")).toBeNull();
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({
+      payment: { method: "ON_ACCOUNT", expectedMethod: "CHECK" },
+    });
+  });
+
+  it("a number typed before choosing it is not sent", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1].payment).toEqual({
+      method: "ON_ACCOUNT",
+      expectedMethod: "CHECK",
+    });
+  });
+
+  it("unchoosing brings the number back (kept) and the number is required again", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    expect(screen.getByLabelText("Check number")).toHaveValue("1042");
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "" } });
+    confirm();
+    expect(await screen.findByText("Enter the check number.")).toBeVisible();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("switching to another method drops the choice", async () => {
+    balance(25);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    fireEvent.click(screen.getByRole("button", { name: "Card" }));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CARD" } });
+  });
+
+  it("the outcome of a To collect hand-over says what is to collect", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(result({ paid: 0, balanceDue: 25, toCollect: "TO_COLLECT" }));
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.click(screen.getByLabelText(CHOICE));
+    confirm();
+    expect(await screen.findByText("Picked up. To collect: $25.00.")).toBeVisible();
+  });
+});
+
+describe("PickupCompleteDialog: a duplicate check number is never a dead end (SA-1026 D-R1, D-R2, D-G1)", () => {
+  const SENTENCE =
+    "A payment with this reference was already recorded on Oct 1, 2026 for $25.00 (INV-0042).";
+  const dupResult = () =>
+    result({
+      paymentRecorded: false,
+      paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+      paymentCauseCode: "DUPLICATE_PAYMENT_REF",
+      existingPayment: {
+        id: "pay-1",
+        paymentNumber: "PAY-A-0001",
+        paidAt: "2026-10-01T12:00:00.000Z",
+        amount: 25,
+        invoiceId: "inv-9",
+        invoiceNumber: "INV-0042",
+      },
+      paid: 0,
+      balanceDue: 25,
+    });
+  const refuseWithCheck = async (number = "1042") => {
+    balance(25);
+    post.mockResolvedValueOnce(dupResult());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Check" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: number } });
+    confirm();
+    expect(await screen.findByText(SENTENCE)).toBeVisible();
+  };
+
+  it("D-R1: no Retry (it can never pass); the existing payment is named; Change check number and Record anyway are offered to staff", async () => {
+    await refuseWithCheck();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(
+      screen.queryByText(
+        "The order is handed over, but the payment was not saved. Retry to record it.",
+      ),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Change check number" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Record anyway" })).toBeEnabled();
+  });
+
+  it("D-R2: a role outside Record anyway still has Change check number; choosing it keeps the method and the number, focused", async () => {
+    authUser = { id: "u-a", tenantSlug: "acme", role: "DRIVER" };
+    await refuseWithCheck("1042");
+    expect(screen.queryByRole("button", { name: "Record anyway" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Change check number" }));
+    const field = screen.getByLabelText("Check number");
+    expect(field).toHaveValue("1042");
+    expect(field).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Check" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Payment not recorded")).toBeNull();
+  });
+
+  it("a fixed number resends the SAME hand-over (same key) with the new reference", async () => {
+    await refuseWithCheck("1042");
+    post.mockResolvedValueOnce(result());
+    fireEvent.click(screen.getByRole("button", { name: "Change check number" }));
+    fireEvent.change(screen.getByLabelText("Check number"), { target: { value: "1043" } });
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+    expect(post.mock.calls[1][1]).toEqual({ payment: { method: "CHECK", reference: "1043" } });
+  });
+
+  it("Check not received yet is the other way out: same key, On account + CHECK, no reference", async () => {
+    await refuseWithCheck("1042");
+    post.mockResolvedValueOnce(result({ paid: 0, balanceDue: 25, toCollect: "TO_COLLECT" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change check number" }));
+    fireEvent.click(screen.getByLabelText("Check not received yet"));
+    confirm();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+    expect(post.mock.calls[1][1]).toEqual({
+      payment: { method: "ON_ACCOUNT", expectedMethod: "CHECK" },
+    });
+  });
+
+  it("D-G1: a not-recorded outcome with no cause code still offers Retry, and it reposts under the same key", async () => {
+    balance(25);
+    post.mockResolvedValueOnce(
+      result({
+        paymentRecorded: false,
+        paymentErrorCode: "COUNTER_PAYMENT_NOT_RECORDED",
+        paid: 0,
+        balanceDue: 25,
+      }),
+    );
+    post.mockResolvedValueOnce(result());
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Card" }));
+    confirm();
+    expect(await screen.findByText("Payment not recorded")).toBeVisible();
+    expect(
+      screen.getByText(
+        "The order is handed over, but the payment was not saved. Retry to record it.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Change check number" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
+      post.mock.calls[0][2].headers["Idempotency-Key"],
+    );
+  });
+});
+
+describe("PickupCompleteDialog: Print invoice after the hand-over (SA-1026 B-R2, B-R4)", () => {
+  const serve = () =>
+    get.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith("/pdf")
+          ? { data: { url: `https://files/${url.split("/")[2]}.pdf` } }
+          : { data: { id: "i1", status: "PAID", total: 25, balanceDue: 0 } },
+      ),
+    );
+  const pdfCalls = () => get.mock.calls.map((c) => String(c[0])).filter((u) => u.endsWith("/pdf"));
+
+  it("is not offered before the hand-over", async () => {
+    serve();
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Print invoice" })).toBeNull();
+  });
+
+  it("B-R2: the success state offers it, and one tap prints the invoice", async () => {
+    serve();
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
+  });
+
+  it("B-R4: a hand-over of two invoices prints both, in invoiceIds order", async () => {
+    serve();
+    post.mockResolvedValue(result({ invoiceIds: ["i1", "i2"] }));
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(2));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf", "/invoices/i2/pdf"]);
+  });
+
+  it("an older response without invoiceIds prints its one invoiceId", async () => {
+    serve();
+    mount();
+    expect(await screen.findByText("Paid — nothing to collect")).toBeInTheDocument();
+    confirm();
+    fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
+    await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
+    expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
   });
 });

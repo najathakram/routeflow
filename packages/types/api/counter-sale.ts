@@ -3,6 +3,8 @@
 // POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
 // never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
+import type { InlineReturnLinesRequest } from "./inline-returns";
+import type { ToCollectMethod, ToCollectState } from "./enums";
 import type { DuplicatePaymentRefExisting } from "./payment-ref";
 import type { RestrictionAck } from "./restrictions";
 
@@ -15,6 +17,8 @@ export interface CounterSaleItem {
   qty?: number;
   boxes?: number;
   pieces?: number;
+  /** SA-1040 B4a: sell by a unit of the product (a Case, a Pallet); `qty` then counts the unit and boxes/pieces are omitted. Blank = the pack. */
+  unitLabel?: string | null;
   /**
    * A one-time NET unit price for the line (a boxed line's is the BOX price). Only a caller who may edit prices
    * (account admins today, `canEditPrices`) may send a price that differs from the server's own for this customer:
@@ -41,6 +45,12 @@ export interface CounterSalePayment {
   recordAnyway?: boolean;
   /** CHECK only: the date written on the check, YYYY-MM-DD. After the tenant's today = 400 COUNTER_CHECK_POSTDATED. Omitted = not checked. */
   checkDate?: string;
+  /**
+   * SA-1026: "the check is not in hand yet". Valid only with `method: "ON_ACCOUNT"` (a named customer): no payment row is
+   * written and the invoice is marked To collect until a payment clears it. Any other method with it is a 400
+   * COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT; a walk-in is refused by WALK_IN_NO_ACCOUNT as for any On account.
+   */
+  expectedMethod?: ToCollectMethod;
 }
 
 /**
@@ -54,6 +64,8 @@ export interface CounterSaleRequest extends RestrictionAck {
   items: CounterSaleItem[];
   payment: CounterSalePayment;
   notes?: string;
+  /** W-863 (SA-945): Create Order's own inline return, riding the sale. Named customers only: a walk-in's is refused 409. */
+  inlineReturn?: InlineReturnLinesRequest;
 }
 
 /**
@@ -74,6 +86,8 @@ export interface CounterSaleResponse {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
+  /** SA-1026 B: every invoice the sale made, in issue order, the same list `total` adds up (`invoiceId` is the first); a mixed regulated + unregulated sale has siblings. Absent on an older server or a kept sale: read it as `[invoiceId]`. */
+  invoiceIds?: string[];
   invoiceNumber: string;
   total: number;
   paid: number;
@@ -87,6 +101,11 @@ export interface CounterSaleResponse {
   change?: number;
   paymentId?: string;
   /**
+   * The check number of the sale's first CHECK tender (`Payment.reference`), so the receipt reads "Check #1042". Only the FIRST check's number is served when there are several. Omitted when
+   * the sale has no check tender or the check carries no number, and by an older server (the receipt then reads "Check").
+   */
+  checkReference?: string | null;
+  /**
    * The tender method, echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
    * tender; none = "ON_ACCOUNT", since nothing marks "left on account" apart from "tender failed").
    */
@@ -97,6 +116,8 @@ export interface CounterSaleResponse {
    */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** SA-1026: "To collect" read back from storage after the sale (staff only; omitted by an older server). */
+  toCollect?: ToCollectState;
   /**
    * Row 498 (SA-837b): WHY the payment was not recorded when the cause is a duplicate payment reference
    * (`DUPLICATE_PAYMENT_REF`), with the existing payment it repeats; the till shows the shared sentence and a
@@ -189,6 +210,8 @@ export interface PickupCompleteResponse {
   orderId: string;
   orderNumber: string;
   invoiceId: string;
+  /** SA-1026 B: every non-void invoice of the order after the hand-over, in issue order, the same list the figures total (`invoiceId` is the first). */
+  invoiceIds: string[];
   invoiceNumber: string;
   total: number;
   paid: number;
@@ -199,6 +222,8 @@ export interface PickupCompleteResponse {
   /** false when the hand-over committed but recording the payment failed; `paymentErrorCode` names why. */
   paymentRecorded: boolean;
   paymentErrorCode?: string;
+  /** SA-1026: "To collect" read back from storage after the hand-over (staff only; omitted by an older server). */
+  toCollect?: ToCollectState;
   /** Row 498 (SA-837b): as on the counter-sale response. */
   paymentCauseCode?: string;
   existingPayment?: DuplicatePaymentRefExisting;
@@ -292,6 +317,8 @@ export interface TodaysSaleRow {
   returnCredit?: number;
   /** `methods` without the own-return credit */
   tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** The check number of the sale's first CHECK tender (`Payment.reference`); omitted when none. Only the first check's number is served when there are several. Older servers omit it. */
+  checkReference?: string | null;
   /**
    * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
    * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the
@@ -303,6 +330,11 @@ export interface TodaysSaleRow {
    */
   returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
   paymentState: TodaysSalePaymentState;
+  /**
+   * SA-1026: "To collect", derived by the server from the sale's live invoices (a check not received yet): the row's chip reads
+   * it. The payment state stays ON_ACCOUNT and no money counts as taken. Omitted by an older server.
+   */
+  toCollect?: ToCollectState;
   /** the cash handed over, as stored by the tender (null = card / check / on account / a sale rung before it was stored) */
   cashTendered: number | null;
   /**

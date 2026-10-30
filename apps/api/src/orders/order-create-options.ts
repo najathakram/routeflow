@@ -15,8 +15,17 @@ export interface ReplayedOrder {
     status?: string | null;
     unitPrice?: unknown;
     overriddenBy?: string | null;
+    /** SA-1040 B4a: the stored unit of a unit line (a Case); null on a pack line. */
+    unitLabel?: string | null;
   }> | null;
 }
+
+/** SA-1047: the request lines as the replay compare saw them (a pack-resolving unit line comes back with `unitLabel` null). */
+export type ReplayedCart = ReadonlyArray<{
+  productId?: string | null;
+  unitLabel?: string | null;
+  unitPrice?: number | null;
+}> | null;
 
 /**
  * `OrdersService.create`'s third argument. Every field is INTERNAL (never a request DTO field).
@@ -58,7 +67,7 @@ export interface CreateOrderOptions {
    */
   lineAuthor?: OrderItemAuthorChannel;
   priceEditAllowed?: boolean;
-  onReplay?: (order: ReplayedOrder) => void;
+  onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   creditPaidNow?: (total: number) => number;
 }

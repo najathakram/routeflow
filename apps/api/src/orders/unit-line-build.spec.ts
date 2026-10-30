@@ -46,6 +46,7 @@ const taxFor = jest.fn((qty: number, subtotal: number) => ({
 }));
 const build = (item: Record<string, unknown>, tier = 1, label = "Case") =>
   buildUnitLine({
+    priceEditAllowed: true,
     product,
     units,
     resolved: resolveLineUnits(product, units, { unitLabel: label }),
@@ -127,6 +128,7 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     expect(() => build({ qty: 0 })).toThrow(BadRequestException);
     expect(() =>
       buildUnitLine({
+        priceEditAllowed: true,
         product,
         units,
         resolved: resolveLineUnits(product, units, { unitLabel: null }),
@@ -204,6 +206,7 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
   it("a factor-1 level under any name is a per-piece line (not units stored as pieces)", () => {
     const each = level({ label: "Each", factorToBase: 1 });
     const l = buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: [each],
       resolved: resolveLineUnits(product, [each], { unitLabel: "Each" }),
@@ -232,6 +235,7 @@ describe("buildUnitLine — a typed price is decided against the customer's TIER
   ];
   const tierBuild = (item: Record<string, unknown>, tier = 3) =>
     buildUnitLine({
+      priceEditAllowed: true,
       product: tierProduct,
       units: tierUnits,
       resolved: resolveLineUnits(tierProduct, tierUnits, { unitLabel: "Case" }),
@@ -387,6 +391,7 @@ describe("buildUnitLine — a held unit the product no longer offers (#2277)", (
   const withoutCase = units.filter((u) => u.label !== "Case");
   const heldCase = () =>
     buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: withoutCase,
       resolved: resolveLineUnits(
@@ -445,6 +450,7 @@ describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)",
   };
   const rebuild = (withExisting: boolean) =>
     buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: liveUnits,
       resolved: resolveLineUnits(product, liveUnits, undefined, existing),
@@ -475,6 +481,7 @@ describe("buildUnitLine — snapshot fallback for an EXISTING line (units P0b)",
     // "Étui" stored decomposed (E + U+0301), re-sent composed: trim().toLowerCase() calls them different words.
     const held = { ...existing, unitLabel: "E\u0301tui" };
     const line = buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: liveUnits,
       // buildUnitLine's own compare: a caller that resolved the word composed (NFC) while the line holds it decomposed.

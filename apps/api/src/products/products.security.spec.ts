@@ -157,6 +157,7 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
     await expect(service.clearAll()).resolves.toEqual({
       deleted: 2,
       softDeleted: 0,
+      softDeletedIds: [],
       skipped: [],
     });
     expect(prisma.tenantTransaction).toHaveBeenCalled();
@@ -168,6 +169,7 @@ describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
     await expect(service.clearAll()).resolves.toEqual({
       deleted: 0,
       softDeleted: 0,
+      softDeletedIds: [],
       skipped: [],
     });
     expect(prisma.$transaction).not.toHaveBeenCalled();

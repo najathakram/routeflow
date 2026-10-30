@@ -5,6 +5,8 @@ description: "Use for any question about a codebase, its architecture, file rela
 
 # /graphify
 
+> RouteFlow: use `scripts/graph.mjs` or the graphify MCP tools. Never build or update a graph in a worktree. Never run `graphify claude install` (it re-adds the slow hook). Never natural-language `query`.
+
 Turn any folder of files into a navigable knowledge graph with community detection, an honest audit trail, and three outputs: interactive HTML, GraphRAG-ready JSON, and a plain-language GRAPH_REPORT.md.
 
 ## Usage
