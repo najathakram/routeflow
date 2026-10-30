@@ -66,6 +66,11 @@ import { AfterCommit } from "../common/after-commit";
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const RUN_SUFFIX = randomUUID().slice(0, 8);
+// One shared wait for "T1 is blocked on T2's lock": 1600 x 25 ms = 40 s, and the loop exits the moment T1 blocks, so it costs
+// nothing when healthy. The lane's 30 s testTimeout is below it, so every test in this file gets an explicit limit above the
+// wait plus the cleanup after it, and a stuck run fails as "not blocked", not as a Jest timeout.
+const BLOCKED_WAIT_ITERS = 1600;
+jest.setTimeout(120_000);
 let tenantSeq = 0;
 /** A fresh, policy-approved throwaway tenant slug — never reused across tests in this file. */
 function freshTenantSlug(label: string): string {
@@ -256,7 +261,8 @@ describeDb(
           (e) => ({ ok: false as const, e }),
         );
         let blocked = false;
-        for (let i = 0; i < 800 && !blocked; i++) {
+        for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+          await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
           const r = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
@@ -338,9 +344,7 @@ describeDb(
         status: "VOID",
         emailsSent: 0,
       });
-      // 60 s, not the lane's 30 s default: the first sendEmail of a run pays a cold warm-up
-      // (F2 measured 22–25 s once), and a timeout there is a false red, not a race result.
-    }, 60_000);
+    });
 
     // SA-404b documented residual, red BY DESIGN: a bare payment INSERT that never touches the
     // Invoice row is invisible to void's Serializable snapshot. No production writer does that —
@@ -349,7 +353,14 @@ describeDb(
       const s = await seed("b", "SENT");
       const r = await interleave(
         s.invoiceId,
-        () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.voidInvoice(s.invoiceId, {
+              sub: "u-1",
+              role: "TENANT_ADMIN",
+              tenantId: "t-1",
+            } as never),
+          ),
         async (c) => {
           await c.query(
             `INSERT INTO "InvoicePayment" (id, "tenantId", "invoiceId", amount, method, status, "paidAt", "createdAt") VALUES (gen_random_uuid()::text, $1, $2, 20, 'CASH', 'PAID', now(), now())`,
@@ -367,7 +378,14 @@ describeDb(
       const s = await seed("b2", "SENT");
       const r = await interleave(
         s.invoiceId,
-        () => tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+        () =>
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.voidInvoice(s.invoiceId, {
+              sub: "u-1",
+              role: "TENANT_ADMIN",
+              tenantId: "t-1",
+            } as never),
+          ),
         async (c) => {
           await c.query(
             `INSERT INTO "InvoicePayment" (id, "tenantId", "invoiceId", amount, method, status, "paidAt", "createdAt") VALUES (gen_random_uuid()::text, $1, $2, 20, 'CASH', 'PAID', now(), now())`,
@@ -420,7 +438,13 @@ describeDb(
       const s = await seed("c3", "SENT");
       const disarm = await armOnce40001(s.invoiceId);
       try {
-        await tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId));
+        await tenantCtx.run(s.tenantId, () =>
+          invoicesService.voidInvoice(s.invoiceId, {
+            sub: "u-1",
+            role: "TENANT_ADMIN",
+            tenantId: "t-1",
+          } as never),
+        );
       } finally {
         expect(await disarm()).toBeGreaterThanOrEqual(2);
       }
@@ -445,7 +469,13 @@ describeDb(
       );
       expect(emails() - e0).toBe(1);
       const c = await seed("d3", "SENT");
-      await tenantCtx.run(c.tenantId, () => invoicesService.voidInvoice(c.invoiceId));
+      await tenantCtx.run(c.tenantId, () =>
+        invoicesService.voidInvoice(c.invoiceId, {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
+      );
       expect((await prisma.invoice.findUniqueOrThrow({ where: { id: c.invoiceId } })).status).toBe(
         "VOID",
       );
@@ -593,12 +623,19 @@ describeDb(
           await t2.query(`SELECT id FROM "Order" WHERE id=$1 FOR UPDATE`, [order.id]);
           const pid = (await t2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
           const p1 = tenantCtx
-            .run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId))
+            .run(s.tenantId, () =>
+              invoicesService.voidInvoice(s.invoiceId, {
+                sub: "u-1",
+                role: "TENANT_ADMIN",
+                tenantId: "t-1",
+              } as never),
+            )
             .then(
               (v: any) => ({ ok: true, v }),
               (e: any) => ({ ok: false, e }),
             );
-          for (let i = 0; i < 800 && !blocked; i++) {
+          for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+            await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
             const q = await t2.query(
               `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
               [pid],
@@ -703,7 +740,8 @@ describeDb(
           (e) => ({ ok: false as const, e }),
         );
         let blocked = false;
-        for (let i = 0; i < 800 && !blocked; i++) {
+        for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+          await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
           const q = await t2.query(
             `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
             [pid],
@@ -994,7 +1032,13 @@ describeDb(
         );
         await waitFor(1);
         const pVoid = settle(
-          tenantCtx.run(s.tenantId, () => invoicesService.voidInvoice(s.invoiceId)),
+          tenantCtx.run(s.tenantId, () =>
+            invoicesService.voidInvoice(s.invoiceId, {
+              sub: "u-1",
+              role: "TENANT_ADMIN",
+              tenantId: "t-1",
+            } as never),
+          ),
         );
         await waitFor(2);
         await t2.query("COMMIT");
@@ -1176,6 +1220,8 @@ describeDb(
                 [s.orderId],
                 50,
                 "CASH",
+                null,
+                null,
               ),
             ),
           ),
@@ -1222,7 +1268,8 @@ describeDb(
               (v: unknown) => ({ ok: true as const, v }),
               (e: any) => ({ ok: false as const, e }),
             );
-          for (let i = 0; i < 800 && !blocked; i++) {
+          for (let i = 0; i < BLOCKED_WAIT_ITERS && !blocked; i++) {
+            await t2.query("SELECT pg_stat_clear_snapshot()"); // pg_stat_activity is cached for the open tx; a fresh read sees a new pooled connection
             const q = await t2.query(
               `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
               [pid],

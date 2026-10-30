@@ -25,6 +25,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 import { IdempotencyService } from "../common/idempotency.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -120,14 +121,14 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   });
 
   /**
-   * A walk-in customer, one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
+   * A customer (not a walk-in unless `walkIn`: W-913 refuses store credit to a walk-in, and these cases exercise it), one DELIVERED sale of 10 pieces at $10.00 = $100.00 and (when `paid`) a payment of $100.00 by
    * `method` (CASH unless a case needs another tender, e.g. CREDIT_NOTE for the store-credit rule).
    */
   async function seed(
     label: string,
     opts: { paid?: boolean; walkIn?: boolean; method?: string } = {},
   ) {
-    const { paid = true, walkIn = true, method = "CASH" } = opts;
+    const { paid = true, walkIn = false, method = "CASH" } = opts;
     seq += 1;
     const slug = assertTestTenant(
       `qa-refund-${RUN}-${seq}-${label}`,
@@ -291,7 +292,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
 
   /**
    * F8: a DETERMINISTIC race. A raw pg connection takes the Return row lock first; `start()` then launches the competing
-   * service calls; the helper polls pg_stat_activity (a recursive walk of pg_blocking_pids from the holder, so a second
+   * service calls; the helper polls the blocked backends (a recursive walk from the holder, so a second
    * waiter queued behind the first waiter counts too) until ALL of them are queued behind that lock, and only then
    * releases it. So the calls really do contend for the lock (no timing luck, no call that finished before the other
    * started), and the winner is whoever Postgres wakes first. Returns what the calls settled to.
@@ -315,19 +316,15 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
       const holderPid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
       const calls = start();
       settled = Promise.allSettled(calls);
-      let queued = 0;
-      for (let i = 0; i < 200 && queued < calls.length; i++) {
-        const r = await poller.query(
-          `WITH RECURSIVE w(pid) AS (
-             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-             UNION
-             SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
-           ) SELECT count(*)::int AS n FROM w`,
-          [holderPid],
-        );
-        queued = Number(r.rows[0].n);
-        if (queued < calls.length) await new Promise((res) => setTimeout(res, 50));
-      }
+      const queued = (
+        await waitUntilBlocked(poller, {
+          holderPid,
+          transitive: true,
+          atLeast: calls.length,
+          timeoutMs: 10_000,
+          intervalMs: 50,
+        })
+      ).length;
       if (queued < calls.length) {
         throw new Error(`only ${queued} of ${calls.length} calls queued behind the Return lock`);
       }
@@ -675,7 +672,7 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
   }, 60_000);
 
   it("15. the quote carries the additive refund fields for a paid walk-in sale (canRefund true, paidMethods [CASH]) and canRefund false for an unpaid one", async () => {
-    const s = await seed("quote");
+    const s = await seed("quote", { walkIn: true });
     const q = await inTenant(s, () =>
       inline.quoteService.quote(
         {
@@ -873,5 +870,97 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     await refund(f, rf.id, "CASH", 40);
     expect(codeOf(await fail(storeCredit(f, rf.id)))).toBe("RETURN_ALREADY_RESOLVED");
     expect(await creditNoteCount(f)).toBe(0);
+  }, 60_000);
+
+  it("23. SA-980: cancelling an inline store-credit return voids its note and hands NO frozen tax back to net sales (the row keeps refundMethod, creditNoteId and the split)", async () => {
+    const s = await seed("cancel-credited");
+    const r = await capture(s, 4); // omitted resolution = STORE_CREDIT: REFUNDED / CREDIT_NOTE, note minted for the gross
+    // The seed sells at 0% tax, so freeze a split by hand: $40.00 gross = 37.04 net + 2.96 tax, the shape a taxed sale leaves.
+    await prisma.return.update({
+      where: { id: r.id },
+      data: { creditSubtotal: 37.04, creditTax: 2.96, creditCategoryTax: 0 },
+    });
+    // live: the note is in the credit-note term and its frozen tax comes off it, so only the NET leaves net sales
+    expect((await netSales(s)).net).toBe(62.96);
+
+    await inTenant(s, () => inline.cancel(r.id, staff(s)));
+
+    const stored = await row(r.id);
+    expect(stored.status).toBe("CANCELLED");
+    // the premise: the cancel leaves the pointers and the split on the row, and voids the note
+    expect(stored.refundMethod).toBe("CREDIT_NOTE");
+    expect(stored.creditNoteId).toBe(r.creditNoteId);
+    expect(Number(stored.creditTax)).toBe(2.96);
+    const note = await prisma.creditNote.findUniqueOrThrow({ where: { id: r.creditNoteId } });
+    expect(note.status).toBe("VOID");
+    // the voided note is out of the credit-note term, so its tax must not be given back: net sales are whole again, not 102.96
+    expect((await netSales(s)).net).toBe(100);
+  }, 60_000);
+
+  it("24. W-829: a hand-over stamps the register on a Store pickup while its INLINE cash refund waits for the Order lock: retryable 409 CONCURRENT_UPDATE, nothing written; the retry takes the close lock first and is recorded", async () => {
+    const s = await seed("pickup-stamp");
+    const r = await capture(s, 4, "REFUND");
+    // the sale is a Store pickup that no hand-over has stamped yet (a pickup's refund reads null and takes no close lock)
+    await prisma.order.update({
+      where: { id: s.orderId },
+      data: { counterSale: false, fulfillPath: "PICKUP", registerKey: null } as any,
+    });
+    const url = requireLocalDatabaseUrl();
+    const holder = new Client({ connectionString: url });
+    const poller = new Client({ connectionString: url });
+    await holder.connect();
+    await poller.connect();
+    /** True once `n` backends are queued behind the holder (the helper walks the lock-wait chain). */
+    const waitForBlocked = async (pid: number, n: number) =>
+      (
+        await waitUntilBlocked(poller, {
+          holderPid: pid,
+          transitive: true,
+          atLeast: n,
+          timeoutMs: 10_000,
+          intervalMs: 50,
+        })
+      ).length >= n;
+    try {
+      // the hand-over: holds the Order row lock and stamps the register
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "Order" WHERE id = $1 FOR UPDATE`, [s.orderId]);
+      await holder.query(`UPDATE "Order" SET "registerKey" = 'w829r' WHERE id = $1`, [s.orderId]);
+      const holderPid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const pending = fail(refund(s, r.id, "CASH", 40));
+      const blocked = await waitForBlocked(holderPid, 1);
+      await holder.query("COMMIT");
+      const err = await pending;
+
+      expect(blocked).toBe(true); // the refund WAITED on the hand-over's Order lock
+      // red before: the refund read the stamp as null, took no close lock and committed a cash refund the Z report can miss
+      expect(status(err)).toBe(409);
+      expect(codeOf(err)).toBe("CONCURRENT_UPDATE");
+      expect(await auditRows(s)).toHaveLength(0);
+      const after = await row(r.id);
+      expect([after.status, after.refundedAt, after.refundMethod]).toEqual([
+        "RECEIVED",
+        null,
+        "EXTERNAL_REFUND",
+      ]);
+
+      // the retry reads the stamp before its first lock, so it queues behind a close in progress on that register
+      await holder.query("BEGIN");
+      await holder.query(`SELECT pg_advisory_xact_lock(hashtext('counter-close'), hashtext($1))`, [
+        `${s.tenantId}:w829r`,
+      ]);
+      const closePid = Number((await holder.query("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+      const retry = fail(refund(s, r.id, "CASH", 40));
+      const queued = await waitForBlocked(closePid, 1);
+      await holder.query("COMMIT");
+      expect(await retry).toBeUndefined();
+      expect(queued).toBe(true);
+      expect((await row(r.id)).status).toBe("REFUNDED");
+      expect(await auditRows(s)).toHaveLength(1);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      await holder.end().catch(() => undefined);
+      await poller.end().catch(() => undefined);
+    }
   }, 60_000);
 });

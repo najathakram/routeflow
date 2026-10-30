@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import Link from "next/link";
 import {
@@ -68,19 +69,26 @@ import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
 import { canEmailAgain, invoiceSendStateLine, sendsAfterLabel } from "@/lib/invoice-send-state";
 import { EmailInvoiceAction } from "@/components/invoices/EmailInvoiceAction";
+import { ToCollectChip } from "@/components/ToCollectChip";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
-import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
-import { editPaymentCap, resolveConfirmedAmounts } from "@routeflow/pricing";
+import {
+  basePriceText,
+  editPaymentCap,
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
+  resolveConfirmedAmounts,
+} from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import type { LineComponentView } from "@routeflow/types";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
@@ -107,9 +115,14 @@ import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
-import { useTenantTimeZone } from "@/lib/tenant-timezone";
+import {
+  tenantDateOf,
+  tenantTodayIso,
+  useResyncOnZone,
+  useTenantTimeZone,
+} from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
-import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
@@ -372,11 +385,6 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** YYYY-MM-DD slice of a stored timestamp, for a native date input. */
-function dateInputValue(iso?: string | null): string {
-  return iso ? new Date(iso).toISOString().slice(0, 10) : "";
-}
-
 function RecordPaymentModal({
   isOpen,
   onClose,
@@ -393,14 +401,18 @@ function RecordPaymentModal({
   /** SA-824: the unknown-outcome "Check payment status" state (Record is off while it is unknown). */
   statusCheck: PaymentStatusCheckState;
 }) {
+  const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
-    paidAt: todayIso(),
+    paidAt: tenantTodayIso(zone),
     settledAt: "",
     reference: "",
     notes: "",
   });
+  useResyncOnZone(zone, tenantTodayIso, form.paidAt, (paidAt) =>
+    setForm((f) => ({ ...f, paidAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const [file, setFile] = React.useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -410,7 +422,7 @@ function RecordPaymentModal({
       setForm({
         method: "ACH",
         amount: balanceDue > 0 ? balanceDue.toFixed(2) : "",
-        paidAt: todayIso(),
+        paidAt: tenantTodayIso(zone),
         settledAt: "",
         reference: "",
         notes: "",
@@ -418,6 +430,7 @@ function RecordPaymentModal({
       setAmountError("");
       setFile(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SA-943: the zone arriving mid-open must not wipe what was typed
   }, [isOpen, balanceDue]);
 
   function handleSubmit(e: React.FormEvent) {
@@ -695,14 +708,28 @@ function EditPaymentModal({
   isPending: boolean;
 }) {
   const { toast } = useToast();
+  const zone = useTenantTimeZone(); // SA-943: the edit box shows the stored instant's TENANT-local day
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
-    paidAt: todayIso(),
+    paidAt: tenantTodayIso(zone),
     settledAt: "",
     reference: "",
     notes: "",
   });
+  // The edit box shows the stored instants in the zone that arrives after the modal opened.
+  useResyncOnZone(
+    zone,
+    (z) => (payment ? tenantDateOf(payment.paidAt ?? payment.createdAt, z) : tenantTodayIso(z)),
+    form.paidAt,
+    (paidAt) => setForm((f) => ({ ...f, paidAt })),
+  );
+  useResyncOnZone(
+    zone,
+    (z) => tenantDateOf(payment?.settledAt, z),
+    form.settledAt,
+    (settledAt) => setForm((f) => ({ ...f, settledAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const imageFileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPaymentImage = useUploadPaymentImage();
@@ -714,13 +741,14 @@ function EditPaymentModal({
       setForm({
         method: payment.method as PaymentFormState["method"],
         amount: Number(payment.amount).toFixed(2),
-        paidAt: dateInputValue(payment.paidAt ?? payment.createdAt),
-        settledAt: dateInputValue(payment.settledAt),
+        paidAt: tenantDateOf(payment.paidAt ?? payment.createdAt, zone),
+        settledAt: tenantDateOf(payment.settledAt, zone),
         reference: payment.reference ?? "",
         notes: payment.notes ?? "",
       });
       setAmountError("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SA-943: the zone arriving mid-open must not wipe what was typed
   }, [isOpen, payment]);
 
   function handleViewImage() {
@@ -964,21 +992,28 @@ function VoidConfirmModal({
 
 // ─── Write-off modal ──────────────────────────────────────────────────────────
 
+/** SA-1050: the usual reasons, one tap each. "Other" empties the text so the person writes their own. */
+const WRITE_OFF_REASONS = ["Customer closed", "Bankrupt", "Disputed", "Can't reach them"] as const;
+
 function WriteOffModal({
   isOpen,
   onClose,
   onConfirm,
   invoiceNumber,
+  amount,
   isPending,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
   invoiceNumber: string;
+  /** The balance still owed, already formatted: it is what the write-off takes off the books. */
+  amount: string;
   isPending: boolean;
 }) {
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState("");
+  const reasonRef = React.useRef<HTMLTextAreaElement>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -1022,9 +1057,48 @@ function WriteOffModal({
             be undone.
           </p>
         </div>
+        <p className="text-sm text-navy">
+          Amount written off:{" "}
+          <span data-testid="write-off-amount" className="money font-semibold">
+            {amount}
+          </span>
+        </p>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Reason *</label>
+          <label
+            htmlFor="write-off-reason"
+            className="mb-1.5 block text-sm font-medium text-navy/80"
+          >
+            Reason *
+          </label>
+          <div className="mb-2 flex flex-wrap gap-2">
+            {[...WRITE_OFF_REASONS, "Other"].map((label) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={reason === label}
+                onClick={() => {
+                  setError("");
+                  if (label === "Other") {
+                    setReason("");
+                    reasonRef.current?.focus();
+                  } else {
+                    setReason(label);
+                  }
+                }}
+                className={cn(
+                  "min-h-11 rounded-full border px-3 text-sm font-medium transition-colors",
+                  reason === label
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <textarea
+            id="write-off-reason"
+            ref={reasonRef}
             rows={3}
             placeholder="e.g. Customer declared bankruptcy, debt too old to collect…"
             value={reason}
@@ -1453,6 +1527,7 @@ export default function InvoiceDetailPage() {
   const uploadPaymentImage = useUploadPaymentImage();
   const getPaymentImageUrl = useGetPaymentImageUrl();
   const downloadPdf = useDownloadInvoicePdf();
+  const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
@@ -1540,6 +1615,8 @@ export default function InvoiceDetailPage() {
   );
   // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
   const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
+  // SA-1029: the Per piece column shows only when a today-layout line has a per-piece price.
+  const showPerPiece = showPerPieceColumn(invoice?.items);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -1727,20 +1804,7 @@ export default function InvoiceDetailPage() {
     });
   };
 
-  const handlePrint = () => {
-    downloadPdf.mutate(
-      { id: invoice.id, variant: pdfVariant },
-      {
-        onSuccess: ({ blob }) => printPdfBlob(blob),
-        onError: () =>
-          toast({
-            title: "Failed to generate PDF",
-            description: "Please try again.",
-            variant: "error",
-          }),
-      },
-    );
-  };
+  const handlePrint = () => void printInvoice.print(invoice.id, { variant: pdfVariant });
 
   const handleReminder = () => {
     // Import sentinels count as "no email" — they aren't real inboxes.
@@ -2134,6 +2198,7 @@ export default function InvoiceDetailPage() {
               {invoice.invoiceNumber}
             </h1>
             <Badge status={status} />
+            {user?.role !== "CUSTOMER" && <ToCollectChip state={invoice.toCollect} />}
             <TenantInvoiceRevisionMarks
               revisedAt={invoice.revisedAt}
               overpaidBy={invoice.overpaidBy}
@@ -2234,7 +2299,7 @@ export default function InvoiceDetailPage() {
             variant="secondary"
             leftIcon={<Printer className="h-3.5 w-3.5" />}
             onClick={handlePrint}
-            loading={downloadPdf.isPending}
+            loading={printInvoice.printing}
           >
             Print
           </Button>
@@ -2326,12 +2391,6 @@ export default function InvoiceDetailPage() {
                       },
                     ]
                   : []),
-                {
-                  label: "Write off",
-                  onClick: () => setIsWriteOffOpen(true),
-                  danger: true,
-                  disabled: readOnlyGate.readOnly,
-                },
               ]}
             />
           )}
@@ -2389,6 +2448,19 @@ export default function InvoiceDetailPage() {
                 danger: true,
                 disabled: !canVoid || readOnlyGate.readOnly,
               },
+              // SA-1050: moved here from the Record payment dropdown (a loss is not a way to be paid). Offered on
+              // an open invoice; read-only keeps it in the menu but disabled, like the other writes. The server
+              // still refuses anything that is not an open invoice.
+              ...(canRecordPayment
+                ? [
+                    {
+                      label: "Write off",
+                      onClick: () => setIsWriteOffOpen(true),
+                      danger: true,
+                      disabled: readOnlyGate.readOnly,
+                    },
+                  ]
+                : []),
             ]}
           />
         </div>
@@ -2538,6 +2610,9 @@ export default function InvoiceDetailPage() {
                     <th className="eyebrow-label px-8 py-2.5 text-left">Item</th>
                     <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
                     <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+                    {showPerPiece && (
+                      <th className="eyebrow-label px-4 py-2.5 text-right">Per piece</th>
+                    )}
                     <th className="eyebrow-label px-8 py-2.5 text-right">Amount</th>
                   </tr>
                 </thead>
@@ -2547,7 +2622,7 @@ export default function InvoiceDetailPage() {
                       return (
                         <tr key={`section-${row.label}`} className="bg-amber-50/40">
                           <td
-                            colSpan={4}
+                            colSpan={showPerPiece ? 5 : 4}
                             className="px-8 py-2 text-[11px] font-semibold uppercase tracking-wider text-amber-700"
                           >
                             {row.label} · regulated
@@ -2556,8 +2631,20 @@ export default function InvoiceDetailPage() {
                       );
                     }
                     const item = row.item;
-                    return (
-                      <tr key={item.id} className="hover:bg-surface-raised">
+                    // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
+                    const display = invoiceItemDisplayLines(item);
+                    const groupRow = (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-surface-raised"
+                        data-testid={
+                          display.layout === "components"
+                            ? `display-group-row-${item.id}`
+                            : display.layout === "pieces"
+                              ? `display-pieces-${item.id}`
+                              : undefined
+                        }
+                      >
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
@@ -2565,9 +2652,10 @@ export default function InvoiceDetailPage() {
                               {item.notes}
                             </p>
                           )}
-                          <ComponentSubLines
-                            components={(item as { components?: LineComponentView[] }).components}
-                          />
+                          {/* The component rows replace the "(included)" sub-lines in the components layout. */}
+                          {display.layout !== "components" && (
+                            <ComponentSubLines components={item.components} />
+                          )}
                           <RestrictionOverrideNote line={item} />
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -2579,7 +2667,9 @@ export default function InvoiceDetailPage() {
                                 : undefined
                             }
                           >
-                            {invoiceLineQtyText(item)}
+                            {display.layout === "pieces"
+                              ? displayQtyText(display.qty, display.unitLabel)
+                              : invoiceLineQtyText(item)}
                           </span>
                           {/* BUY_N_GET_M: name the free units, or the reduced
                               subtotal reads as a pricing error. */}
@@ -2591,20 +2681,51 @@ export default function InvoiceDetailPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           {/* Row 322c: the struck original follows pricing's showOriginalPrice (the PDF's rule). */}
-                          <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          {display.layout === "pieces" ? (
+                            <InvoiceLinePrice
+                              item={item}
+                              hideOriginal={hideOriginal}
+                              chargedText={basePriceText(display.unitPrice)}
+                              noStrike
+                            />
+                          ) : (
+                            <InvoiceLinePrice item={item} hideOriginal={hideOriginal} />
+                          )}
                           {/* Suggested retail price, snapshotted at line creation — appears
                               regardless of priceType. Keyed off data presence, not the flag,
                               so an issued invoice keeps rendering it even if the tenant later
                               loses the MSRP addon. */}
                           {item.msrp != null && (
                             <p className="mt-0.5 text-[10px] text-navy/50">
-                              MSRP {fmt(Number(item.msrp))}/pc
+                              MSRP {fmt(Number(item.msrp))}/{baseUnitSuffix(item.perBaseUnit)}
                             </p>
                           )}
                         </td>
+                        {showPerPiece && (
+                          <td className="mono px-4 py-3 text-right text-navy/70">
+                            {item.perBaseUnit && display.layout === "today"
+                              ? formatPerBaseUnitPrice(item.perBaseUnit)
+                              : null}
+                          </td>
+                        )}
                         <InvoiceLineAmount item={item} />
                       </tr>
                     );
+                    if (display.layout === "components") {
+                      return (
+                        <InvoiceDisplayRows
+                          key={item.id}
+                          lines={display}
+                          itemId={item.id}
+                          fmt={fmt}
+                          variant="staff"
+                          perPieceCol={showPerPiece}
+                        >
+                          {groupRow}
+                        </InvoiceDisplayRows>
+                      );
+                    }
+                    return groupRow;
                   })}
                 </tbody>
               </table>
@@ -3038,6 +3159,7 @@ export default function InvoiceDetailPage() {
         onClose={() => setIsWriteOffOpen(false)}
         onConfirm={handleWriteOff}
         invoiceNumber={invoice.invoiceNumber}
+        amount={fmt(balanceDue)}
         isPending={writeOffInvoice.isPending}
       />
 

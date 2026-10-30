@@ -156,6 +156,14 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
     expect(created().items.create[0].systemKind).toBeNull();
   });
 
+  it("SA-1029 G-5: a duplicate never carries the source's frozen baseLabel (the copy freezes its own at issue)", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(
+      source({ items: [{ ...boxedLine, baseLabel: "Bag" }] }),
+    );
+    await service.duplicate("inv-1");
+    expect(created().items.create[0].baseLabel ?? null).toBeNull();
+  });
+
   describe("regulated LEVY - a subtotal-only assertion would pass while the levy is 12x wrong", () => {
     // A regulated boxed product: 12 pieces per box, EXCISE_PER_UNIT $0.10 per PIECE. 6 boxes = 72 pieces
     // at $40/box: subtotal $240 and levy 72 x $0.10 = $7.20 (a qty-only rebuild bases the levy on

@@ -11,6 +11,7 @@ import type { ChangeRequest } from "@/lib/change-requests";
 import { buyerOrderConflict } from "@/lib/buyer-order-conflict";
 import { isSellerUnavailableRefusal } from "@/lib/seller-unavailable";
 import {
+  API_ERROR_CODES,
   isTrackingLive,
   type FulfilmentMethod,
   type InvoiceStatus,
@@ -436,10 +437,29 @@ export function useBuyerCreateOrder() {
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ orderId, items }: { orderId: string; items: BuyerOrderItemEdit[] }) =>
+    mutationFn: ({
+      orderId,
+      items,
+      expectedRevisionNumber,
+    }: {
+      orderId: string;
+      items: BuyerOrderItemEdit[];
+      /** Row 380: the revision the editor loaded; behind the server's latest it is 409 ORDER_REVISION_STALE. */
+      expectedRevisionNumber?: number;
+    }) =>
       buyerApiClient
-        .patch(`/buyer/orders/${orderId}/items`, { items, namesLines: true })
+        .patch(`/buyer/orders/${orderId}/items`, {
+          items,
+          namesLines: true,
+          expectedRevisionNumber,
+        })
         .then((r) => r.data),
+    // Row 380: the order page shows a stale save itself (notice + Reload); no generic toast on top of it.
+    meta: {
+      localErrorToast: (e: unknown) =>
+        (e as { response?: { data?: { code?: string } } })?.response?.data?.code ===
+        API_ERROR_CODES.ORDER_REVISION_STALE,
+    },
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });

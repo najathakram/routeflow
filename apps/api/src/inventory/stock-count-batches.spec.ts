@@ -20,6 +20,8 @@ import { LockUnavailableError } from "../common/db-locks";
  * session flips to COMMITTED by a CAS only after the LAST batch. The real-Postgres proofs are
  * `sa767-stock-writers.db.spec.ts` (r1-r5); this pins the shape on every unit run.
  */
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
+
 const mockWithAdvisoryLock = jest.fn();
 jest.mock("../common/db-locks", () => ({
   ...jest.requireActual("../common/db-locks"),
@@ -33,6 +35,7 @@ const deadlock = () => Object.assign(new Error("deadlock detected"), { code: "40
 describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let helper: StockHelperMock;
   let alerts: jest.SpyInstance;
   let stock: Map<string, Prisma.Decimal>;
   let txs: Array<{ $executeRaw: jest.Mock }>;
@@ -64,6 +67,18 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-927: the real stock helper runs; its locked read is the `stock` map (AVCO at an average of 2).
+    helper = wireStockHelper(prisma, {
+      stateOf: (ids) =>
+        ids
+          .filter((id) => stock.has(id))
+          .map((id) => ({
+            id,
+            currentStock: stock.get(id),
+            averageCost: D(2),
+            costingMethod: "AVCO",
+          })),
+    });
     events = [];
     txs = [];
     lockedIds = [];
@@ -81,16 +96,18 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
       events.push("tx");
       const mine: string[] = [];
       lockedIds.push(mine);
-      const tx = {
+      const tx = helper.wrapTx({
         ...prisma,
+        // Only the FIRST lock statement of the tx is recorded: the batch's up-front lock. The helper then
+        // re-locks the rows it writes (already held by this tx: a no-op), which is not a new lock.
         $executeRaw: jest.fn().mockImplementation((_s: unknown, ...rest: unknown[]) => {
           const ids = rest.find((v) => Array.isArray(v));
-          if (ids) mine.push(...(ids as string[]));
+          if (ids && mine.length === 0) mine.push(...(ids as string[]));
           return Promise.resolve(0);
         }),
         // the shared stock-count lock probe: an explicit grant (the probe fails closed on anything else)
         $queryRaw: jest.fn().mockResolvedValue([{ ok: true }]),
-      };
+      });
       txs.push(tx);
       return fn(tx);
     });
@@ -110,14 +127,11 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
         }));
     });
     prisma.product.update.mockImplementation(async ({ where, data }: any) => {
-      const next = stock.get(where.id)!.plus(data.currentStock.increment);
+      // SA-927: the helper writes the folded stock as an absolute value
+      const next = D(data.currentStock);
       stock.set(where.id, next);
       return { currentStock: next };
     });
-    let mv = 0;
-    prisma.stockMovement.create.mockImplementation(async ({ data }: any) => ({
-      id: `mv-${++mv}-${data.type}`,
-    }));
     prisma.stockMovement.findMany.mockResolvedValue([]);
     prisma.stockCountSession.updateMany.mockImplementation(async () => {
       events.push("cas");
@@ -140,7 +154,7 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
   const commit = (dto: Record<string, unknown> = {}) =>
     service.commitStockCountSession("sess-1", dto as any, { sub: "user-1" });
 
-  it("splits 120 lines into batches of 50 / 50 / 20, in productId order, one tx and one lock statement each", async () => {
+  it("splits 120 lines into batches of 50 / 50 / 20, in productId order, one tx and one up-front lock statement each", async () => {
     const ids = Array.from({ length: 120 }, (_, i) => pid(i + 1));
     seed(ids);
     // Shuffled on purpose: the committer, not the caller, decides the order.
@@ -154,7 +168,7 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     expect(lockedIds.map((b) => b.length)).toEqual([50, 50, 20]);
     expect(lockedIds.flat()).toEqual(ids); // ascending productId across the batches
     expect(prisma.product.update).toHaveBeenCalledTimes(120);
-    expect(prisma.stockMovement.create).toHaveBeenCalledTimes(120);
+    expect(helper.written()).toHaveLength(120);
     expect(res).toMatchObject({
       sessionId: "sess-1",
       reference: "STOCK_COUNT-sess-1",
@@ -201,12 +215,11 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     await commit();
 
     // delta = 90 - 100 = -10 (the old locked-stock rule would have written +20 and erased the sale)
-    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
-      currentStock: { increment: D(-10) },
-    });
-    const mv = prisma.stockMovement.create.mock.calls[0][0].data;
+    // one absolute write of the helper's fold (locked 70 - 10), never an increment
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("60");
+    const mv = helper.written()[0];
     expect(mv.quantity.toString()).toBe("-10");
-    expect(mv.stockAfter.toString()).toBe("60"); // the counter the UPDATE returned (70 - 10)
+    expect(mv.stockAfter.toString()).toBe("60"); // the locked 70 - 10
     expect(mv.reference).toBe("STOCK_COUNT-sess-1");
     expect(stock.get(pid(1))!.toString()).toBe("60");
   });
@@ -219,9 +232,8 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
 
     await commit();
 
-    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
-      currentStock: { increment: D(4) },
-    });
+    // locked 5 + the counted 4, written as one absolute value
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("9");
     expect(prisma.stockLot.create).toHaveBeenCalledTimes(1);
     expect(alerts).toHaveBeenCalledWith([pid(1)]);
   });
@@ -290,7 +302,7 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
 
     expect(txNo).toBe(3); // batch 1, batch 2 (failed), batch 2 again
     expect(prisma.product.update).toHaveBeenCalledTimes(60); // each line exactly once
-    expect(prisma.stockMovement.create).toHaveBeenCalledTimes(60);
+    expect(helper.written()).toHaveLength(60);
     expect(prisma.stockCountSession.updateMany).toHaveBeenCalledTimes(1);
   });
 
@@ -303,10 +315,12 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     );
     const boom = new BadRequestException("boom");
     let n = 0;
-    prisma.stockMovement.create.mockImplementation(async () => {
+    const insert = (prisma.stockMovement as any).createManyAndReturn as jest.Mock;
+    const realInsert = insert.getMockImplementation()!;
+    insert.mockImplementation(async (args: any) => {
       n += 1;
-      if (n === 51) throw boom; // the first movement of batch 2
-      return { id: `mv-${n}` };
+      if (n === 2) throw boom; // batch 2's insert (one helper insert per batch)
+      return realInsert(args);
     });
 
     await expect(commit()).rejects.toBe(boom);
@@ -338,14 +352,16 @@ describe("commitStockCountSession - batched committer (SA-767 L-2.2)", () => {
     expect(err).toBeInstanceOf(NotFoundException);
     expect(err).not.toBeInstanceOf(TypeError);
     expect(prisma.product.update).not.toHaveBeenCalled();
-    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(helper.written()).toHaveLength(0);
     expect(prisma.stockCountSession.updateMany).not.toHaveBeenCalled();
   });
 
   it("a CAS that matches no row (someone else finished) returns the alreadyCommitted outcome", async () => {
     seed([pid(1)]);
-    // pre-check: OPEN; the re-read (status + lines) under the lock: OPEN; the re-read after the failed CAS: COMMITTED
+    // pre-check: OPEN; the seed-state read under the lock (SA-999): OPEN; the re-read (status + lines) under the
+    // lock: OPEN; the re-read after the failed CAS: COMMITTED
     prisma.stockCountSession.findUnique
+      .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValueOnce(session([line(1)]))
       .mockResolvedValue({ status: "COMMITTED" });

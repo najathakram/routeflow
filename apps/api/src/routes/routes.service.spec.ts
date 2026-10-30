@@ -80,6 +80,9 @@ const driverPayload = {
   tenantSlug: "test",
 };
 
+const CATALOG = { customerId: "cust-1" } as any; // SA-967: what the pre-tx load returns
+const BASE_LABELS = new Map([["p1", "Bag"]]); // SA-1029: what the other pre-tx load returns
+
 describe("RoutesService", () => {
   let service: RoutesService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -100,6 +103,8 @@ describe("RoutesService", () => {
     recordDeliveryPaymentInTx: jest.Mock;
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
+    loadUnitCatalog: jest.Mock;
+    loadBaseLabels: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -112,6 +117,8 @@ describe("RoutesService", () => {
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
+      loadUnitCatalog: jest.fn().mockResolvedValue(CATALOG),
+      loadBaseLabels: jest.fn().mockResolvedValue(BASE_LABELS),
     };
 
     gateway = {
@@ -496,7 +503,7 @@ describe("RoutesService", () => {
   // "plannedPolyline invalidation" tests in this file.
 
   describe("deleteRoute", () => {
-    it("REG-B96 / T-B96: refuses a SCHEDULED route with a COMPLETED run and deletes nothing", async () => {
+    it("REG-B209 R6 (flips REG-B96 / T-B96): refuses a SCHEDULED route with a COMPLETED run with a 409 + ROUTE_HAS_DELIVERY_EVIDENCE and deletes nothing", async () => {
       prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, kind: RouteKind.SCHEDULED });
       prisma.routeRun.findMany.mockResolvedValue([
         {
@@ -508,16 +515,22 @@ describe("RoutesService", () => {
         },
       ]);
 
-      // RED TODAY: the guard is gated on `route.kind === RouteKind.ADHOC`, so
-      // a SCHEDULED route sails straight through it and nothing is rejected.
-      await expect(service.deleteRoute("route-1")).rejects.toThrow(BadRequestException);
+      // RED TODAY: the refusal is a BadRequestException (400) with no code; SA-842 flips it on
+      // purpose to ConflictException (409) carrying ROUTE_HAS_DELIVERY_EVIDENCE.
+      const err: any = await service.deleteRoute("route-1").catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toEqual(
+        expect.objectContaining({ code: "ROUTE_HAS_DELIVERY_EVIDENCE" }),
+      );
 
       // Call-shape, not return value: a guard that throws AFTER already
-      // deleting would still pass a return-value-only check.
+      // deleting would still pass a return-value-only check. (The refusal now
+      // happens INSIDE the transaction, under the locks, so the tx is entered.)
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(prisma.deliveryMutation.updateMany).not.toHaveBeenCalled();
       expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
       expect(prisma.routeRun.deleteMany).not.toHaveBeenCalled();
       expect(prisma.route.delete).not.toHaveBeenCalled();
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -1997,6 +2010,8 @@ describe("RoutesService", () => {
         ["ord-1"],
         50,
         "CASH",
+        CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
+        BASE_LABELS, // SA-1029: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
       );
       // B663: reconciled unconditionally too, even though a payment was ALSO
@@ -2078,6 +2093,8 @@ describe("RoutesService", () => {
         ["ord-1", "ord-2"],
         50,
         "CASH",
+        CATALOG, // SA-967: REQUIRED, loaded BEFORE the tx opened
+        BASE_LABELS, // SA-1029: REQUIRED, loaded BEFORE the tx opened
         { runId: "run-1", stopId: "stop-1" },
       );
       // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
@@ -2212,6 +2229,44 @@ describe("RoutesService", () => {
     // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
     // filter doesn't cover routes/**, so a regression that moved the reconcile call
     // back behind `if (dto.payment...)` — B663's ENTIRE bug — would pass CI unnoticed.
+    it("SA-967: the stop's unit catalog is loaded ONCE before the tx opens, never inside it", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock: any = { ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      let loadedBeforeTx = false;
+      invoicesService.loadUnitCatalog.mockImplementation(async () => {
+        loadedBeforeTx = (prisma.tenantTransaction as jest.Mock).mock.calls.length === 0;
+        return CATALOG;
+      });
+      await service
+        .completeWithPayment(
+          "run-1",
+          "stop-1",
+          { payment: { amount: 50, method: "CASH" } },
+          operatorPayload,
+        )
+        .catch(() => undefined);
+      expect(invoicesService.loadUnitCatalog).toHaveBeenCalledTimes(1);
+      expect(invoicesService.loadUnitCatalog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "stop-1",
+          orders: [expect.objectContaining({ id: "ord-1" })],
+        }),
+      );
+      expect(loadedBeforeTx).toBe(true);
+      expect(invoicesService.loadBaseLabels).toHaveBeenCalledTimes(1); // SA-1029: once, before the tx
+    });
+
     it("B663: an on-account completion (no payment) still reconciles to the delivered basis, and never calls recordDeliveryPaymentInTx", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
       prisma.routeRunStop.findFirst.mockResolvedValue({

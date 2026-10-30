@@ -1,5 +1,11 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  filedThroughOf,
+  type FiledCache,
+  type FiledProduct,
+  type FiledThroughDb,
+} from "../regulated/filed-periods";
 
 /**
  * B846 / SA-808 — the date a bill-driven stock row is booked at. One module, one filed-period
@@ -16,126 +22,10 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  * Non-regulated products never move.
  */
 
-export interface StockDateProduct {
-  id: string;
-  isTobacco: boolean;
-  trackedCategoryId: string | null;
-  /** The tracked category's name, which the 409 names (W-755). */
-  trackedCategory?: { name: string } | null;
-}
+export type StockDateProduct = FiledProduct;
 
 /** The minimal client surface the predicate reads; a tenant transaction satisfies it. */
-export interface StockDateDb {
-  product: { findMany(args: any): Promise<any> };
-  tobaccoReport: { findFirst(args: any): Promise<any> };
-  regulatedFiling: { findFirst(args: any): Promise<any> };
-}
-
-const monthLabel = (d: Date): string =>
-  `${d.toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${d.getUTCFullYear()}`;
-
-export interface FiledThrough {
-  /** EXCLUSIVE close of the latest filed period: an instant `t` is closed when `t < through`. */
-  through: Date;
-  /** That period's label ("September 2026"), for the note and the 409 message. */
-  label: string;
-  /** WHAT is filed: "Tobacco" or the tracked category's name (SA-894 LOW-1). */
-  filedFor: string;
-}
-
-/**
- * One filing read per key per call (W-755): the tobacco report is tenant-wide and a filing is per
- * category, so a count of many products reads each once. Lives only for one `stockWriteDate` /
- * `documentStockDate` call, on whatever client the caller passes: a transaction for the bill paths
- * and the legacy count, `forTenant()` for an adjustment, a purchase and the session commit (their
- * date gate reads before their own write transaction).
- */
-type FiledCache = Map<string, Promise<FiledThrough | null>>;
-
-const tobaccoFiled = (db: StockDateDb, tenantId: string, cache: FiledCache) => {
-  const key = "tobacco";
-  if (!cache.has(key)) {
-    cache.set(
-      key,
-      db.tobaccoReport
-        .findFirst({
-          where: { tenantId, status: { not: "FAILED" } },
-          orderBy: { periodEnd: "desc" },
-          select: { periodStart: true, periodEnd: true },
-        })
-        .then((report: any) =>
-          report
-            ? {
-                // A tobacco report stores an INCLUSIVE end: the close is the next millisecond.
-                through: new Date(new Date(report.periodEnd).getTime() + 1),
-                label: monthLabel(report.periodStart),
-                filedFor: "Tobacco",
-              }
-            : null,
-        ),
-    );
-  }
-  return cache.get(key)!;
-};
-
-const categoryFiled = (
-  db: StockDateDb,
-  tenantId: string,
-  product: StockDateProduct,
-  cache: FiledCache,
-) => {
-  const key = `category:${product.trackedCategoryId}`;
-  if (!cache.has(key)) {
-    cache.set(
-      key,
-      db.regulatedFiling
-        .findFirst({
-          where: {
-            tenantId,
-            trackedCategoryId: product.trackedCategoryId,
-            status: { in: ["GENERATED", "LOCKED"] },
-          },
-          orderBy: { periodEnd: "desc" },
-          select: { periodStart: true, periodEnd: true, periodKey: true, cadence: true },
-        })
-        .then((filing: any) =>
-          filing
-            ? {
-                through: new Date(filing.periodEnd), // already exclusive
-                label:
-                  filing.cadence === "MONTHLY" || filing.cadence == null
-                    ? monthLabel(filing.periodStart)
-                    : String(filing.periodKey),
-                filedFor: product.trackedCategory?.name ?? "this product's category",
-              }
-            : null,
-        ),
-    );
-  }
-  return cache.get(key)!;
-};
-
-/**
- * SA-808a: "filed" means filed THROUGH, not filed AT. A month's ending stock is `currentStock −
- * Σ(movements after periodEnd)`, so a movement dated `t` changes the ending stock of every month
- * ending at or after `t`: a row backdated into an unfiled August still moves a filed September.
- * Returns the close of the LATEST filed period covering the product (tobacco or its category: the later close wins, a tie
- * keeps tobacco), or null. A FAILED month after the latest filed one stays open; a FAILED month before it is closed.
- */
-async function filedThroughOf(
-  db: StockDateDb,
-  tenantId: string,
-  product: StockDateProduct,
-  cache: FiledCache,
-): Promise<FiledThrough | null> {
-  let best: FiledThrough | null = null;
-  if (product.isTobacco) best = await tobaccoFiled(db, tenantId, cache);
-  if (product.trackedCategoryId) {
-    const filing = await categoryFiled(db, tenantId, product, cache);
-    if (filing && (!best || filing.through > best.through)) best = filing;
-  }
-  return best;
-}
+export type StockDateDb = FiledThroughDb & { product: { findMany(args: any): Promise<any> } };
 
 const loadProducts = async (db: StockDateDb, ids: string[]): Promise<StockDateProduct[]> =>
   (await db.product.findMany({

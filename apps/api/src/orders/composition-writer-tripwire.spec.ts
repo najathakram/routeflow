@@ -54,6 +54,25 @@ const REGISTRY: Record<string, Entry> = {
       "an order-linked invoice cannot be duplicated (RF-011); composed lines exist only on those",
   },
   "invoices/invoices.service.ts::update": { kind: "invoice" },
+  "invoices/invoice-display-unit.ts::writeIssueDisplayUnits": {
+    kind: "exempt",
+    reason:
+      "SA-827 rule 5: display snapshot columns only (invoiceUnitLabel/Factor); never a quantity, price or composition write",
+  },
+  "invoices/invoice-display-unit.ts::writeIssueBaseLabels": {
+    kind: "exempt",
+    reason:
+      "SA-1029: display snapshot column only (baseLabel); never a quantity, price or composition write",
+  },
+  "invoices/invoice-display-unit.ts::clearIssueDisplayUnits": {
+    kind: "exempt",
+    reason: "SA-827 rule 5: clears the display snapshot on a revert to draft; no composition write",
+  },
+  "invoices/kept-invoice-lines.ts::rebuildKeptItems": {
+    kind: "exempt",
+    reason:
+      "rebuildSiblingDrafts step: deletes the non-kept rows and updates the kept ones in place; the caller builds the created lines through buildInvoiceItemData",
+  },
   "orders/line-composition.ts::syncLineCompositions": {
     kind: "exempt",
     reason:

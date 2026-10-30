@@ -85,6 +85,9 @@ function priced(total = 30, subtotal = 28, taxAmount = 2, categoryTax = 0) {
 }
 
 import { inlineReturnItemsFingerprint } from "./inline-return-fingerprint";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const CAPTURE_DTO = {
   customerId: "cust-1",
@@ -122,6 +125,7 @@ describe("InlineReturnsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     quoteService = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {
       // Echoes back the requested amount/customer so a test that mints a DIFFERENT amount
@@ -252,7 +256,7 @@ describe("InlineReturnsService", () => {
     // restockReturnItems: one StockMovement + one Product increment for the single item.
     expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
     expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+      expect.objectContaining({ data: { currentStock: expect.anything() } }),
     );
     // Ledger reversal keyed to the SOURCE order, not the carrying order.
     expect(ledger.reverseReturnEntries).toHaveBeenCalledWith(
@@ -708,6 +712,7 @@ describe("InlineReturnsService", () => {
 
     it("the audit row is written on the capture's OWN tx client, never the root prisma", async () => {
       const tx = createMockPrisma();
+      stock = wireStockHelper(tx, { ample: true });
       tx.order.findFirst.mockResolvedValue({
         id: "ord-carrying",
         customerId: "cust-1",
@@ -1325,7 +1330,7 @@ describe("InlineReturnsService", () => {
 
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       expect(ledger.reverseReturnEntries).toHaveBeenCalled();
       expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
@@ -1339,6 +1344,54 @@ describe("InlineReturnsService", () => {
           data: expect.objectContaining({ approvedById: OPERATOR.sub }),
         }),
       );
+    });
+
+    describe("SA-980: a reduced approval re-freezes the Return's split pro rata", () => {
+      const HELD_TAXED: any = {
+        ...HELD,
+        heldAmount: 10.8,
+        creditSubtotal: 10,
+        creditTax: 0.8,
+        creditCategoryTax: 0,
+      };
+      const linkData = () =>
+        (prisma.return.updateMany.mock.calls as any[][])
+          .map((c) => c[0].data)
+          .find((d) => d.creditNoteId);
+
+      it("10.80 hold approved at 5.40 writes creditSubtotal 5.00, creditTax 0.40, creditCategoryTax 0", async () => {
+        prisma.return.findFirst.mockResolvedValue(HELD_TAXED);
+        prisma.return.updateMany.mockResolvedValue({ count: 1 });
+        await service.approve("ret-held", OPERATOR, { amount: 5.4 });
+        expect(linkData()).toMatchObject({
+          refundAmount: 5.4,
+          creditSubtotal: 5,
+          creditTax: 0.4,
+          creditCategoryTax: 0,
+        });
+      });
+
+      it("approval at the full held amount writes no split fields", async () => {
+        prisma.return.findFirst.mockResolvedValue(HELD_TAXED);
+        prisma.return.updateMany.mockResolvedValue({ count: 1 });
+        await service.approve("ret-held", OPERATOR);
+        const d = linkData();
+        expect(d.refundAmount).toBe(10.8);
+        expect(d).not.toHaveProperty("creditSubtotal");
+        expect(d).not.toHaveProperty("creditTax");
+        expect(d).not.toHaveProperty("creditCategoryTax");
+      });
+
+      it("a return with no frozen split (creditSubtotal null) writes none even when reduced", async () => {
+        prisma.return.findFirst.mockResolvedValue({ ...HELD_TAXED, creditSubtotal: null });
+        prisma.return.updateMany.mockResolvedValue({ count: 1 });
+        await service.approve("ret-held", OPERATOR, { amount: 5.4 });
+        const d = linkData();
+        expect(d.refundAmount).toBe(5.4);
+        expect(d).not.toHaveProperty("creditSubtotal");
+        expect(d).not.toHaveProperty("creditTax");
+        expect(d).not.toHaveProperty("creditCategoryTax");
+      });
     });
 
     it("REG-B735-api-approve-parked: approve() reverses the ledger it deferred from capture, and its own response carries any resulting park", async () => {
@@ -1620,7 +1673,7 @@ describe("InlineReturnsService", () => {
       await service.cancel("ret-received", OPERATOR);
 
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { decrement: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       // LOW: a compensating (negative-qty) movement — never a delete of the original entry.
       expect(prisma.stockMovement.create).toHaveBeenCalledWith(

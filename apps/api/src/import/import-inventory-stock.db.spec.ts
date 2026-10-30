@@ -23,6 +23,7 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -162,7 +163,7 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
     }
   }
 
-  /** Make the NEXT tenantTransaction's stockMovement.create throw (the update before it is in the same tx). */
+  /** Make the NEXT tenantTransaction's movement insert (the stock helper's createManyAndReturn) throw. */
   function breakNextMovementCreate(): { fired: number } {
     const state = { fired: 0 };
     const real = prisma.tenantTransaction.bind(prisma);
@@ -175,7 +176,7 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
                 k === "stockMovement"
                   ? new Proxy(t[k], {
                       get: (d, m) =>
-                        m === "create"
+                        m === "createManyAndReturn"
                           ? async () => {
                               state.fired++;
                               throw new Error("forced stockMovement.create failure");
@@ -238,14 +239,7 @@ describeDb("B568 Zoho stock sync is atomic and serialized with sales (real Postg
       // ENTRY CONDITION, proven not timed: the import's stock tx is BLOCKED on T2's Product lock (it
       // pre-read currentStock = 100 by sku before the lock). Pre-fix the ambient UPDATE also blocked
       // on T2's lock, but then SET 80 over T2's 90 and wrote −20 from the stale read: drift 10.
-      for (let i = 0; i < 400 && !sawBlocked; i++) {
-        const { rows } = await t2.query(
-          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-          [pid],
-        );
-        sawBlocked = rows[0].n > 0;
-        if (!sawBlocked) await new Promise((r) => setTimeout(r, 25));
-      }
+      sawBlocked = await waitUntilBlockedBy(t2, pid, { timeoutMs: 10_000 });
       // the sale of 10: counter 100 -> 90 and its SALE row, in T2's transaction
       await t2.query(`UPDATE "Product" SET "currentStock" = "currentStock" - 10 WHERE id = $1`, [
         productId,

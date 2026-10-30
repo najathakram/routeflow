@@ -22,6 +22,7 @@ import {
   RESTRICTION_OVERRIDE_REASON_MAX,
   RESTRICTION_OVERRIDE_REASON_MIN,
   SUPPORT_SESSION_RESTRICTION_BLOCK_MESSAGE,
+  RESTRICTION_OVERRIDE_IMPORTED_REASON,
 } from "./override-constants";
 import { stampRestrictionOverrides, type StampTx } from "./restriction-override-stamps";
 import type { ChannelPrincipal } from "./selling-restrictions.core";
@@ -209,13 +210,33 @@ const isLive = (h: HeldLine) => h.status !== "CANCELLED";
 const isSuperset = (have: readonly string[], need: readonly string[]) =>
   need.every((id) => have.includes(id));
 
+/**
+ * W-748 Q2 (SA-958): the historical-import marker is provenance for the IMPORTED quantity only. It never stands in for
+ * an override of MORE units: while an edit adds quantity of its product, the marker covers and carries nothing, so the
+ * increase is judged like any staff edit (a fresh reason, row 510). A decrease or an unchanged quantity keeps the cover
+ * and the marker rides onto a recreated line. An ACKNOWLEDGED raise stamps EVERY live line of the product with the staff
+ * override (restriction-override-stamps.ts), imported lines included: their "Imported (historical)" reason does not survive
+ * it, and from then on the import provenance lives only in the audit row written when the import marked the line.
+ */
+const isImportMarker = (h: HeldLine) =>
+  h.restrictionOverrideReason === RESTRICTION_OVERRIDE_IMPORTED_REASON;
+
+/** The products an edit adds quantity of (an omitted or non-numeric delta is unsized, so it counts as adding). */
+const addingProductIds = (lines: readonly GateLine[]): ReadonlySet<string> =>
+  new Set(lines.filter(addsQuantity).map((l) => l.productId));
+
 /** Is `breach` already acknowledged by a live stamped line of its product on the document? */
-function isCovered(breach: StaffBreachDetail, held: readonly HeldLine[]): boolean {
+function isCovered(
+  breach: StaffBreachDetail,
+  held: readonly HeldLine[],
+  adding: ReadonlySet<string>,
+): boolean {
   return held.some(
     (h) =>
       isLive(h) &&
       h.productId === breach.productId &&
       hasOverrideStamp(h) &&
+      !(isImportMarker(h) && adding.has(breach.productId)) &&
       isSuperset(h.restrictionOverrideRuleIds ?? [], breachKeys(breach)),
   );
 }
@@ -230,8 +251,9 @@ function uncoveredRows(
   held: readonly HeldLine[],
 ): WarningRow[] {
   const rows: WarningRow[] = [];
+  const addedProducts = addingProductIds(lines);
   for (const breach of breaches) {
-    if (isCovered(breach, held)) continue;
+    if (isCovered(breach, held, addedProducts)) continue;
     const mine = lines.filter((l) => l.productId === breach.productId);
     const adding = mine.filter(addsQuantity);
     for (const l of adding.length > 0 ? adding : mine) rows.push({ lineKey: l.lineKey, breach });
@@ -240,16 +262,25 @@ function uncoveredRows(
 }
 
 /** Every live stamped held line's stamp, one per product (the first), for re-applying to recreated / new lines. */
-function carriedFrom(held: readonly HeldLine[]): CarriedStamp[] {
+function carriedFrom(held: readonly HeldLine[], lines: readonly GateLine[]): CarriedStamp[] {
   const out = new Map<string, CarriedStamp>();
+  const adding = addingProductIds(lines);
   for (const h of held) {
     if (!isLive(h) || !h.productId || !hasOverrideStamp(h) || out.has(h.productId)) continue;
+    if (isImportMarker(h) && adding.has(h.productId)) continue; // the marker never rides onto added units
     out.set(h.productId, { productId: h.productId, stamp: carryOverrideStamp(h) });
   }
   return [...out.values()];
 }
 
 // ─── the copy (built only here) ───────────────────────────────────────────────────────────────────────────────────
+
+/** "<lead>: <reason>." — the business's own reason is the text; never a legal claim (SA-947). No double stop. */
+function reasonLine(lead: string, reason: string): string {
+  const r = reason.trim();
+  if (!r) return `${lead}.`;
+  return /[.!?]$/.test(r) ? `${lead}: ${r}` : `${lead}: ${r}.`;
+}
 
 function ruleReasonText(
   rule: StaffBreachRule,
@@ -258,12 +289,14 @@ function ruleReasonText(
 ): string {
   switch (rule.kind) {
     case "FEDERAL":
-      return "This product is banned federally by law.";
+      return reasonLine("Restricted everywhere", rule.reason);
     case "STATE_HIT":
-      return `This product is banned in ${breach.state ?? "this sale's state"} by law.`;
+      // A STATE_HIT always carries its state (staff-breaches.ts builds it only from a resolved one); the bare
+      // "Restricted: <reason>." is a guard for a breach that somehow has none, never a reachable case (SA-961).
+      return reasonLine(breach.state ? `Restricted in ${breach.state}` : "Restricted", rule.reason);
     case "MALFORMED_STATE":
     case "UNRECOGNISED":
-      return `This product is banned by law (${rule.reason}).`;
+      return reasonLine("Restricted", rule.reason);
     case "STATE_UNRESOLVED":
       return basis === "STORE"
         ? "This store's state can't be determined — add it under Settings > Business."
@@ -290,7 +323,7 @@ function warningLine(row: WarningRow, judgement: StaffJudgement): RestrictionWar
         legal: rule.legal,
         reasonText: rule.legal
           ? ruleReasonText(rule, breach, judgement.basis)
-          : `This product is limited for this sale (${rule.reason}).`,
+          : reasonLine("Limited for this sale", rule.reason),
       }));
   return {
     lineKey: row.lineKey,
@@ -298,6 +331,10 @@ function warningLine(row: WarningRow, judgement: StaffJudgement): RestrictionWar
     displayName: breach.productName,
     outcome: breach.outcome,
     rules,
+    // row 672: display only, never hashed (the hash reads lineKey / productId / outcome / breachKeys)
+    ...(breach.remedy ? { remedy: breach.remedy } : {}),
+    ...(breach.customerId ? { customerId: breach.customerId } : {}),
+    ...(breach.addressId ? { addressId: breach.addressId } : {}),
   };
 }
 
@@ -373,7 +410,7 @@ function buildDecision(d: DecisionInput): StaffWriteDecision {
   );
   const decision: StaffWriteDecision = {
     stamps: d.stamps,
-    carried: carriedFrom(d.held),
+    carried: carriedFrom(d.held, d.lines),
     heldStamped,
     warningHash: d.ackedHash,
     basis: d.judgement.basis,
@@ -430,7 +467,8 @@ export interface DecideParams {
   lines: readonly GateLine[];
   /** The document's lines already on it (empty for a create). */
   held?: readonly HeldLine[];
-  principal?: ChannelPrincipal | null;
+  /** W-870: `deniedGroups` is REQUIRED, so a caller that forgets the operator's live denials fails to compile. */
+  principal?: (ChannelPrincipal & { deniedGroups: readonly string[] }) | null;
   ack?: RestrictionAck | null;
   customerId: string | null;
   blocked: StaffBlock;

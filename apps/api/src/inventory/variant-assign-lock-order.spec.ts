@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
+import { wireStockHelper } from "./testing/stock-helper-mock";
 
 /**
  * SA-584 B1 (#2717 M2 fold): with `mixed_packs` on, `assignToVariants` takes the FAMILY row lock
@@ -50,6 +51,10 @@ const EXISTING = {
 
 async function run(mode: "on" | "off") {
   const prisma = createMockPrisma();
+  // SA-927: the real stock helper runs; its locked read answers from the parent / variant rows below.
+  const stock = wireStockHelper(prisma, {
+    stateOf: (ids) => ids.map((id) => (id === "parent-1" ? PARENT : { ...EXISTING, id })),
+  });
   const events: string[] = [];
   const tx: any = {
     ...prisma,
@@ -85,7 +90,7 @@ async function run(mode: "on" | "off") {
       }),
     },
   };
-  prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(tx));
+  prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(stock.wrapTx(tx)));
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       InventoryService,

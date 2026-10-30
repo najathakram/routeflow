@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CounterReturnAction } from "./CounterReturnAction";
 
 /**
@@ -78,13 +78,30 @@ describe("CounterReturnAction", () => {
       /w-full sm:w-auto/,
     );
   });
+  it("SHOULD 3: the recorded line spans both columns of the receipt's 2-column grid and keeps its flex behaviour", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
+    const cls = screen.getByRole("status").className;
+    expect(cls).toMatch(/(^|\s)col-span-2(\s|$)/);
+    expect(cls).toMatch(/(^|\s)basis-full(\s|$)/);
+    expect(cls).toMatch(/(^|\s)order-last(\s|$)/);
+  });
+  it("calls onRecorded once a return is recorded (not on a bare close)", () => {
+    const onRecorded = jest.fn();
+    render(<CounterReturnAction orderId="o1" onRecorded={onRecorded} />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    expect(onRecorded).not.toHaveBeenCalled();
+    React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
+    expect(onRecorded).toHaveBeenCalledTimes(1);
+  });
   it("store credit: names the amount and the customer, and never says to hand money back", () => {
     orderState = { data: { id: "o1", customerId: "c1", customer: { businessName: "Acme Deli" } } };
     const { container } = render(<CounterReturnAction orderId="o1" />);
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "STORE_CREDIT", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit of $12.40 added to Acme Deli.",
+      "Return recorded. $12.40 given as store credit for Acme Deli.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(
       /hand|cash|back to the customer|card/i,
@@ -97,7 +114,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, undefined));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit added to the customer's account.",
+      "Return recorded. Store credit given for the customer.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/hand|cash|back to the customer/i);
   });
@@ -106,7 +123,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Hand $12.40 back to the customer.",
+      "Return recorded. Refunded $12.40 in cash. Hand it back to the customer.",
     );
   });
   it("W21b: a whole-sale return keeps its success line when the row flips to fully returned", () => {
@@ -116,7 +133,7 @@ describe("CounterReturnAction", () => {
     // the refetch marks the sale FULL: the component must stay mounted with its success line
     rerender(<CounterReturnAction orderId="o1" canReturn={false} />);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Hand $12.40 back to the customer.",
+      "Return recorded. Refunded $12.40 in cash. Hand it back to the customer.",
     );
     expect(screen.getByRole("button", { name: "Return items" })).toBeInTheDocument();
   });
@@ -129,7 +146,7 @@ describe("CounterReturnAction", () => {
     React.act(() => onClose());
     expect(screen.queryByRole("button", { name: "Return items" })).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Hand $12.40 back to the customer.",
+      "Return recorded. Refunded $12.40 in cash. Hand it back to the customer.",
     );
   });
   it("W21b: a sale that is already fully returned offers no Return items button", () => {
@@ -141,7 +158,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CARD", amount: 12.4 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Give $12.40 back on the customer's card at the terminal.",
+      "Return recorded. Refunded $12.40 to the card. Give it back on the customer's card at the terminal.",
     );
   });
   it("a saved return with the refund still pending says so and never says to hand money over", () => {
@@ -156,6 +173,39 @@ describe("CounterReturnAction", () => {
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/\$/);
     expect(screen.getByRole("status").textContent).not.toMatch(/^Return recorded/);
+  });
+  it("SA-929: the toast words the server's recorded figures (check, $9.50), whatever was chosen on screen", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CHECK", amount: 9.5 }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Return recorded. Refunded $9.50 by check. Hand it back to the customer.",
+    );
+  });
+  it("SA-929: a refund the server recorded with no tender says only what it knows", () => {
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", amount: 9.5 }));
+    expect(screen.getByRole("status").textContent).toBe("Return recorded. Refunded $9.50.");
+  });
+  it("mm-ux retake: the recorded line is scrolled into view (it sat below the fold of the Today's sales sheet)", () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 9.5 }));
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+  });
+  it("mm-ux 390: the line is scrolled into view again once the return dialog has closed (the sheet re-lays out then)", async () => {
+    const scroll = jest.fn();
+    Element.prototype.scrollIntoView = scroll;
+    render(<CounterReturnAction orderId="o1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Return items" }));
+    React.act(() => recorded?.({}, { resolution: "REFUND", tender: "CASH", amount: 9.5 }));
+    scroll.mockClear();
+    const onClose = dialogProps.mock.calls.at(-1)?.[0].onClose as () => void;
+    React.act(() => onClose());
+    await waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: "end" }));
   });
   it("W21b: Done returns focus to the Return items button, not body", () => {
     render(<CounterReturnAction orderId="o1" />);

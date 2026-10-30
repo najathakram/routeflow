@@ -1,0 +1,6 @@
+{"v":1,"pr":301,"mergedAt":"2026-10-20T10:00:00Z","route":"lane","reviewRounds":2,"firstPass":false,"lines":650,"reworkOf":null,"costUsd":null,"computedAt":"2026-10-20T10:01:00Z"}
+{"v":1,"pr":301,"mergedAt":"2026-10-20T10:00:00Z","route":"lane","reviewRounds":2,"firstPass":false,"lines":650,"reworkOf":null,"costUsd":4.5,"computedAt":"2026-10-21T09:00:00Z"}
+{"v":1,"pr":302,"mergedAt":"2026-10-21T10:00:00Z","route":"bug-swarm","reviewRounds":1,"firstPass":true,"lines":120,"reworkOf":301,"costUsd":1.5,"computedAt":"2026-10-21T10:01:00Z"}
+{"v":1,"pr":303,"mergedAt":"2026-10-22T10:00:00Z","route":"docs","reviewRounds":null,"firstPass":null,"lines":450,"reworkOf":null,"costUsd":null,"computedAt":"2026-10-22T10:01:00Z"}
+{"v":1,"pr":304,"mergedAt":"2026-10-10T10:00:00Z","route":"lane","reviewRounds":1,"firstPass":true,"lines":10,"reworkOf":null,"costUsd":9,"computedAt":"2026-10-10T10:01:00Z"}
+{"v":1,"pr":305,"mergedAt":"2026-10-23T1

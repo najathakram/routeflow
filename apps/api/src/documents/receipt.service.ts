@@ -45,6 +45,7 @@ import {
 } from "./receipt-model";
 import { renderOrderReceipt } from "./render-order-receipt";
 import type { SendReceiptDto } from "./send-receipt.dto";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 /** The EmailDelivery `kind` and `entityType` every receipt send is logged (and counted) under. */
 const RECEIPT_KIND = "RECEIPT" as const;
@@ -130,6 +131,7 @@ export class ReceiptService {
             unitsPerBox: true,
             boxes: true,
             pieces: true,
+            unitLabel: true,
             product: {
               select: {
                 name: true,
@@ -164,7 +166,13 @@ export class ReceiptService {
               orderBy: { createdAt: "asc" },
               // SA-838: the credit note each payment applied (a scalar column: no relation, no extra query for ANY order).
               // The invoice that NOTE was issued against comes from a counter sale's one credit-note read.
-              select: { method: true, amount: true, status: true, creditNoteId: true },
+              select: {
+                method: true,
+                amount: true,
+                status: true,
+                creditNoteId: true,
+                reference: true,
+              },
             },
           },
         },
@@ -273,6 +281,7 @@ export class ReceiptService {
         amount: p.amount,
         status: p.status,
         creditNoteId: p.creditNoteId,
+        reference: p.reference,
       })),
     );
     // A COUNTER sale prints the reprint's return lines (SA-838a): the same reads the Today's-sales page makes, for this one order.
@@ -281,7 +290,7 @@ export class ReceiptService {
       ? await this.readReturnData(tenantId, db, order.id, payments)
       : null;
     const branding: ReceiptBranding = {
-      businessName: config?.businessName || settings["settings.businessName"],
+      businessName: sellerDisplayName(config, null, settings["settings.businessName"]),
       street: config?.addressLine1 ?? settings["settings.street"],
       city: config?.city ?? settings["settings.city"],
       state: config?.state ?? settings["settings.state"],

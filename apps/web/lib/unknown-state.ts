@@ -5,6 +5,7 @@
 
 import {
   BULK_STATE_MAX_CUSTOMERS,
+  STAFF_ORDERS_SWITCH_LABEL,
   UNKNOWN_STATE_BUCKET_VALUES,
   UNKNOWN_STATE_PAGE_DEFAULT,
   type AddressStateResponse,
@@ -36,17 +37,17 @@ export const TRUNCATED_LINE =
   "Your customer list is too large to check all at once, so some customers may still need a state.";
 
 /** The label of the tenant switch on the Selling restrictions page; the OFF copy quotes it. */
-export const STAFF_ORDERS_SWITCH_LABEL =
-  "Also block restricted products on staff orders and invoices";
+// The switch label lives once in @routeflow/types (the rule-edit impact copy quotes it too); re-exported for this module's users.
+export { STAFF_ORDERS_SWITCH_LABEL };
 
 /**
- * What a missing state does, by the staff-orders switch: the portal always hides legal bans; staff orders are checked
+ * What a missing state does, by the staff-orders switch: the portal always hides state-restricted products; staff orders are checked
  * only with it on, and then (row 510) staff are warned and may override with a reason, so ON never says "can't be sold".
  */
 const noStateEffect = (staffOrdersChecked: boolean) =>
   staffOrdersChecked
-    ? "Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't."
-    : `Until it's set, products with a legal state ban stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to block them).`;
+    ? "Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. On staff orders and invoices, staff are warned and can choose Sell anyway with a reason; drivers can't."
+    : `Until it's set, products with a state restriction stay hidden from them in your portal and can't be ordered there. Other state limits won't reach them. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to check them).`;
 
 export function headerLine(total: number, truncated = false, staffOrdersChecked: boolean): string {
   if (truncated) return `${TRUNCATED_LINE} ${noStateEffect(staffOrdersChecked)}`;
@@ -66,9 +67,9 @@ export function bucketLine(key: BucketKey, n: number): string {
 export const bucketAction = (key: BucketKey): "Fix" | "Review" | "Choose default" =>
   key === "needsReview" ? "Review" : key === "needsDefault" ? "Choose default" : "Fix";
 
-/** needsDefault (Lead ruling, row 414): unresolved, so legal bans hide (fail closed) and portal limits do not reach them. */
+/** needsDefault (Lead ruling, row 414): unresolved, so state-restricted products hide (fail closed) and portal limits do not reach them. */
 export const NEEDS_DEFAULT_LINE =
-  "We can't tell which state applies. Legal bans still keep those products hidden, but other state limits won't reach them until you choose.";
+  "We can't tell which state applies. State restrictions still keep those products hidden, but other state limits won't reach them until you choose.";
 export const NEEDS_DEFAULT_HINT = "Choose the address that sets their state.";
 
 /** One address choice of a needsDefault row: "1 Main St, Dallas, TX · Billing · TX". */

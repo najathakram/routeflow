@@ -15,6 +15,7 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 describe("ImportService — formula-led addresses and license numbers (B964-1)", () => {
   let service: ImportService;
@@ -27,6 +28,7 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     customers = {
       assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
       maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),

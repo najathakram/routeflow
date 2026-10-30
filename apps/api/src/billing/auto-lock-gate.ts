@@ -14,7 +14,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 export const AUTO_LOCK_KINDS = [
   "trial_expired",
   "subscription_cancelled",
-  "overdue_suspended",
+  "overdue_suspended", // legacy: no writer emits it since SA-934 §3, kept so old skip records still read
   "stripe_cancelled",
   "payment_overdue",
   "trial_cancelled",

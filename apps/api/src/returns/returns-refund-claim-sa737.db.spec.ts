@@ -695,4 +695,135 @@ describeDb("SA-737 the STANDARD refund claim under the Order lock — real Postg
       expect(out.ok).toBe(true);
     });
   });
+
+  // ─── T10: a Store pickup stamped while the refund waited (W-829 fold) ────
+
+  describe("T10: a hand-over stamps the register while a pickup sale's cash refund waits for the Order lock", () => {
+    /** The standard seed, its order a Store pickup that no hand-over has stamped yet. */
+    async function seedUnstampedPickup(label: string) {
+      const s = await seed(label);
+      await prisma.order.update({
+        where: { id: s.orderId },
+        data: { counterSale: false, fulfillPath: "PICKUP", registerKey: null } as any,
+      });
+      return s;
+    }
+    const cashRefund = (s: Seed) =>
+      settle(
+        tenantCtx.run(s.tenantId, () =>
+          returns.processRefund(
+            s.returnId,
+            { method: "EXTERNAL_REFUND", tender: "CASH" } as any,
+            actor(s),
+          ),
+        ),
+      );
+
+    it("is a retryable 409 CONCURRENT_UPDATE with nothing written; the retry takes the close lock first and is recorded", async () => {
+      const s = await seedUnstampedPickup("t10-stamp");
+      const h = await holder(async (c) => {
+        await lockOrder(s.orderId)(c);
+        await c.query(`UPDATE "Order" SET "registerKey" = 'w829r' WHERE id = $1`, [s.orderId]);
+      });
+      const pending = cashRefund(s);
+      const blocked = await waitForWaiters(1);
+      await h.commit();
+      const out = await pending;
+
+      expect(blocked).toBe(true); // the refund WAITED on the hand-over's Order lock
+      // red before: the refund read the stamp as null, took no close lock and committed a cash refund the Z report can miss
+      expect(statusOf(out)).toBe(409);
+      expect(codeOf(out)).toBe("CONCURRENT_UPDATE");
+      const row = await returnRow(s);
+      expect([row.status, row.refundedAt, row.refundMethod]).toEqual(["RECEIVED", null, null]);
+      expect(await prisma.auditLog.count({ where: { tenantId: s.tenantId } })).toBe(0);
+
+      // the retry reads the stamp before its first lock, so it queues behind a close in progress on that register
+      const closing = await holder(async (c) => {
+        await c.query(`SELECT pg_advisory_xact_lock(hashtext('counter-close'), hashtext($1))`, [
+          `${s.tenantId}:w829r`,
+        ]);
+      });
+      const retry = cashRefund(s);
+      const queued = await waitForWaiters(1);
+      await closing.commit();
+      const done = await retry;
+      expect(queued).toBe(true);
+      expect(done.ok).toBe(true);
+      expect((await returnRow(s)).status).toBe("REFUNDED");
+    });
+
+    it("a cash refund of an already stamped pickup inside a closed day is 409 COUNTER_SALE_DAY_CLOSED; a store-credit refund is not refused (review-b note 1)", async () => {
+      const MIN = 60_000;
+      const stampedClosed = async (label: string) => {
+        const s = await seed(label);
+        await prisma.order.update({
+          where: { id: s.orderId },
+          data: { counterSale: false, fulfillPath: "PICKUP", registerKey: "w829r" } as any,
+        });
+        await prisma.counterDayClose.create({
+          data: {
+            tenantId: s.tenantId,
+            registerKey: "w829r",
+            day: new Date(),
+            zone: "UTC",
+            windowStart: new Date(Date.now() - 60 * MIN),
+            windowEnd: new Date(Date.now() + 60 * MIN),
+            closedAt: new Date(),
+            expectedCash: 0,
+            countedCash: 0,
+            variance: 0,
+            denominations: [],
+            totals: {},
+          },
+        });
+        return s;
+      };
+      const cash = await stampedClosed("t10-closed");
+      const refused = await cashRefund(cash);
+      // red before: the pickup's refund took no lock and no window check, so the closed day's totals moved
+      expect(statusOf(refused)).toBe(409);
+      expect(codeOf(refused)).toBe("COUNTER_SALE_DAY_CLOSED");
+      expect((await returnRow(cash)).status).toBe("RECEIVED");
+
+      const credit = await stampedClosed("t10-credit");
+      const out = await refund(credit, "CREDIT_NOTE");
+      expect(codeOf(out)).not.toBe("COUNTER_SALE_DAY_CLOSED");
+      expect(out.ok).toBe(true);
+    });
+
+    it("a no-tender refund of a STAMPED pickup is capped as cash: 409 REFUND_EXCEEDS_CASH_PAID over the cash taken; the same refund on an unstamped pickup is not capped", async () => {
+      const capped = async (label: string, registerKey: string | null) => {
+        const s = await seedUnstampedPickup(label);
+        await prisma.order.update({ where: { id: s.orderId }, data: { registerKey } as any });
+        // a split sale: $15.00 cash + $85.00 card (the invoice stays paid in full); the return is worth $20.00 (2 x $10.00)
+        await prisma.invoicePayment.updateMany({
+          where: { tenantId: s.tenantId },
+          data: { amount: 15 },
+        });
+        const inv = await prisma.invoice.findFirstOrThrow({ where: { tenantId: s.tenantId } });
+        await prisma.invoicePayment.create({
+          data: {
+            tenantId: s.tenantId,
+            invoiceId: inv.id,
+            amount: 85,
+            method: "CREDIT_CARD",
+            status: "PAID",
+          },
+        });
+        return { s, out: await refund(s, "EXTERNAL_REFUND") };
+      };
+
+      const stamped = await capped("t11-stamped", "w829r");
+      // red before: the pickup's refund was not "a counter order's", so no tender meant no cap and $20.00 left a $15.00 drawer
+      expect(statusOf(stamped.out)).toBe(409);
+      expect(codeOf(stamped.out)).toBe("REFUND_EXCEEDS_CASH_PAID");
+      expect((stamped.out as any).e.getResponse().maxCashRefund).toBe(15);
+      const row = await returnRow(stamped.s);
+      expect([row.status, row.refundedAt]).toEqual(["RECEIVED", null]);
+
+      const unstamped = await capped("t11-unstamped", null);
+      expect(unstamped.out.ok).toBe(true); // not a till sale: a no-tender refund is not assumed to be cash
+    });
+  });
 });

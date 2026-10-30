@@ -84,6 +84,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -133,6 +134,7 @@ describe("OrdersService — F07 lifecycle-conservation pins (green pre-fix)", ()
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
 
     const module: TestingModule = await Test.createTestingModule({

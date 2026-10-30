@@ -1,8 +1,9 @@
-import type { StaffBreach } from "@routeflow/types";
+import type { RestrictionRemedyFields, StaffBreach } from "@routeflow/types";
 import {
   matchingRules,
   ruleStates,
   UNKNOWN_PRODUCT_NAME,
+  unresolvedStateRemedy,
   type EvaluateInput,
   type ProductFacts,
   type RestrictionRuleFacts,
@@ -29,12 +30,12 @@ export interface StaffBreachRule {
   states: string[];
   /** surface ALL = a legal ban that binds every channel. */
   legal: boolean;
-  /** The admin-entered rule reason (shown only for a malformed rule, whose states cannot be named). */
+  /** The admin-entered rule reason: the text of every warning line (restriction-warning.ts words it, never as a legal claim). */
   reason: string;
 }
 
 /** A breach with the detail the warning needs. Extends the shared `StaffBreach` (productId / outcome / ruleIds). */
-export interface StaffBreachDetail extends StaffBreach {
+export interface StaffBreachDetail extends StaffBreach, RestrictionRemedyFields {
   productName: string;
   rules: StaffBreachRule[];
   /** An unresolvable product: no rule matched, the engine fails closed (INDETERMINATE with `ruleIds: []`). */
@@ -130,6 +131,7 @@ function breachOf(
     ruleIds: pending.map((r) => r.id),
     rules: pending,
     unknownProduct: false,
+    ...unresolvedStateRemedy(input), // row 672: what fixes it (display only, never in breachKeys or the hash)
   };
 }
 

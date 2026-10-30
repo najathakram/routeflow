@@ -43,6 +43,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Badge, Button, Modal, useToast, cn, badgeStatusLabel } from "@routeflow/ui/web";
+import { useOnTenantToday } from "@/lib/tenant-timezone";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDrivers } from "@/lib/api/drivers";
 import { useCustomers } from "@/lib/api/customers";
@@ -307,8 +308,9 @@ function DispatchModal({
   const { data: routeSettings } = useRouteSettings();
   const analyzeRoute = useAnalyzeRoute();
 
-  const today = new Date().toISOString().split("T")[0];
-  const [date, setDate] = React.useState(today);
+  // SA-964 §4: the run date is the TENANT's day, seeded when the zone resolves; never the browser's.
+  const [date, setDate] = React.useState("");
+  useOnTenantToday((day) => setDate((cur) => cur || day));
   const [driverId, setDriverId] = React.useState("");
   const [startTime, setStartTime] = React.useState("");
   const [lateStops, setLateStops] = React.useState<LateStop[]>([]);
@@ -387,6 +389,7 @@ function DispatchModal({
   const needsAcknowledge = lateStops.length > 0 && !acknowledged;
 
   const handleDispatch = () => {
+    if (!date) return;
     createRun.mutate(
       {
         routeId,
@@ -419,7 +422,7 @@ function DispatchModal({
           <Button
             onClick={handleDispatch}
             loading={createRun.isPending}
-            disabled={needsAcknowledge || windowCheck === "checking"}
+            disabled={needsAcknowledge || windowCheck === "checking" || !date}
             title={
               needsAcknowledge
                 ? "Acknowledge the late-stop warning to dispatch"
@@ -1051,8 +1054,8 @@ export default function RouteTemplateDetailPage() {
                       Print
                     </button>
                   </div>
-                  <div className="overflow-hidden rounded-lg border border-surface-border">
-                    <table className="w-full text-sm">
+                  <div className="overflow-x-auto rounded-lg border border-surface-border">
+                    <table className="min-w-[400px] w-full text-sm">
                       <thead className="bg-surface-raised text-xs text-navy/70">
                         <tr>
                           <th className="px-3 py-2 text-left font-medium">Product</th>
@@ -1139,8 +1142,8 @@ export default function RouteTemplateDetailPage() {
                     )}
 
                     {/* ETA rows */}
-                    <div className="overflow-hidden rounded-lg border border-surface-border">
-                      <table className="w-full text-sm">
+                    <div className="overflow-x-auto rounded-lg border border-surface-border">
+                      <table className="min-w-[640px] w-full text-sm">
                         <thead className="bg-surface-raised text-xs text-navy/70">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">#</th>

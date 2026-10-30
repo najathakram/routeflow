@@ -52,6 +52,9 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { Prisma } from "@prisma/client";
 import { ORDER_SEQ_PATTERN } from "./order-number";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -111,6 +114,7 @@ describe("OrdersService.create — B587 order-number generation", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -282,7 +286,9 @@ describe("OrdersService.create — B587 order-number generation", () => {
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
       fn({
         ...prisma,
-        $queryRaw: (...args: any[]) => (isStockUpdate(args) ? Promise.resolve([]) : qr(...args)),
+        $queryRaw: stock.queryRaw((...args: any[]) =>
+          isStockUpdate(args) ? Promise.resolve([]) : qr(...args),
+        ),
         $executeRaw: jest.fn().mockResolvedValue(0),
       }),
     );

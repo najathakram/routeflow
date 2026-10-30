@@ -39,6 +39,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { TenantContextService } from "../../tenant/tenant-context.service";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import { createMockPrisma } from "../../testing/prisma-mock";
+import { wireStockHelper } from "../../inventory/testing/stock-helper-mock";
 import { NotificationsService } from "../../notifications/notifications.service";
 import { InventoryService } from "../../inventory/inventory.service";
 import { AuthorizationGuardService } from "../../authorizations/authorization-guard.service";
@@ -73,6 +74,7 @@ export const buyerPseudoUser = { ...customerPayload, type: "BUYER" as const };
 
 export async function buildOrdersService() {
   const prisma = createMockPrisma();
+  const stock = wireStockHelper(prisma, { ample: true });
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       oversellReaderOffProvider,
@@ -203,6 +205,8 @@ export async function buildOrdersService() {
   return {
     service,
     prisma,
+    /** the stock-helper wiring (locked-read answer for a spec's own hand-built tx) */
+    stock,
     module,
     /** the `SellingRestrictionsService` stub (`assertLinesSellable` / `checkLinesSellable` / `getPolicy`, OFF) */
     restrictions: module.get(SellingRestrictionsService) as unknown as {

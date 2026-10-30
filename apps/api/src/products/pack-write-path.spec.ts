@@ -43,9 +43,11 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/src/inventory/inventory.service.ts",
   "apps/api/src/inventory/testing/count-db-harness.ts",
   "apps/api/src/inventory/testing/order-stock-world.ts", // a test fixture that seeds stock worlds, never production
+  "apps/api/src/invoices/invoice-display-unit.ts", // SA-827/SA-1029: display snapshot writes only; its tier-price selects trip the text scan
   "apps/api/src/invoices/invoice-edit-plan.ts",
   "apps/api/src/invoices/invoice-restriction-lines.ts",
   "apps/api/src/orders/orders.service.ts",
+  "apps/api/src/orders/testing/units-fold-db-harness.ts", // a test fixture that seeds units-fold tenants (qa-ufold-*), never production
   "apps/api/src/products/family-price.ts",
   "apps/api/src/products/product-families.service.ts",
   "apps/api/src/products/product-units.service.ts",

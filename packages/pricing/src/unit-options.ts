@@ -1,4 +1,5 @@
-import { computeLineSubtotal, roundMoney } from "./pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "./pricing";
+import { heldSnapshotPrices } from "./held-level";
 import {
   baseLabelOf,
   defaultSellingLabel,
@@ -30,6 +31,8 @@ export interface LadderOption {
    * (computeLineSubtotal proration), so `price` is a DISPLAY figure — never qty x price.
    */
   derived?: { n: number; packPrice: number; exact: boolean };
+  /** SA-1044: a gone-or-resized held line's own snapshot (`heldSnapshotOption`); its label already names the size. */
+  held?: true;
 }
 
 /**
@@ -125,6 +128,39 @@ export function buildLadderOptions(
   return options;
 }
 
+/**
+ * SA-1044 rule 4: the option a gone-or-resized held line shows — its OWN snapshot (label, size, price), never the live
+ * level of that name, so the line cannot silently take the new size. "Case of 100 (as ordered)".
+ */
+export function heldSnapshotOption(held: {
+  unitLabel: string;
+  unitsPerBox: number;
+  unitPrice: number;
+  listPrice?: number | null;
+}): LadderOption {
+  const n = held.unitsPerBox;
+  const { tierPrice, listPrice } = heldSnapshotPrices({
+    unitPrice: held.unitPrice,
+    originalPrice: held.listPrice,
+  });
+  return {
+    value: held.unitLabel,
+    label: `${held.unitLabel} of ${n} (as ordered)`,
+    factorToBase: n,
+    kind: n === 1 ? "piece" : "level",
+    price: tierPrice,
+    listPrice,
+    held: true,
+  };
+}
+
+/** `options` with `held` in place of the option of the same label (or after the rest when the ladder no longer names it). */
+export function withHeldOption<T extends LadderOption>(options: readonly T[], held: T | null): T[] {
+  if (!held) return [...options];
+  const i = options.findIndex((o) => norm(o.value) === norm(held.value));
+  return i === -1 ? [...options, held] : options.map((o, j) => (j === i ? held : o));
+}
+
 /** The value the picker starts on: the level flagged `isDefaultSelling` that the picker actually offers, else the pack (`""`). */
 export function defaultLadderOptionValue(
   product: LadderProduct,
@@ -146,6 +182,55 @@ export function ladderOptionPriceText(o: LadderOption, fmt: (n: number) => strin
     return `≈${fmt(o.price)} (1/${o.derived.n} of ${fmt(o.derived.packPrice)})`;
   }
   return fmt(o.price);
+}
+
+/**
+ * The detail part of an option's picker text, shared by web and mobile (row 513): "288 pcs · $480.00". A factor-1 unit
+ * (Piece) omits the piece count: "$2.00". The apps pass their own formatters; both render whole numbers bare.
+ */
+export function ladderOptionDetail(
+  o: LadderOption,
+  fmtMoney: (n: number) => string,
+  fmtQty: (n: number) => string,
+): string {
+  const pcs = o.factorToBase === 1 || o.held ? "" : `${fmtQty(o.factorToBase)} pcs · `;
+  return `${pcs}${ladderOptionPriceText(o, fmtMoney)}`;
+}
+
+/** The full picker text: "Case · 288 pcs · $480.00". The one string both apps render (web's dropdown, mobile's row). */
+export function ladderOptionText(
+  o: LadderOption,
+  fmtMoney: (n: number) => string,
+  fmtQty: (n: number) => string,
+): string {
+  return `${o.label} · ${ladderOptionDetail(o, fmtMoney, fmtQty)}`;
+}
+
+/**
+ * The pack-pieces shape of `count` pieces of a DERIVED base option (units P0b / SA-728): `boxes`/`pieces` split on the pack
+ * size (the option's own `derived.n`, rolled over at a full pack), `qty` the total pieces, NO unit label. The line then
+ * bills through `computeLineSubtotal` at the PACK price, the server's own proration, never `count` x a rounded per-piece
+ * price. Null for any option that is not a derived base (a level, an own-priced Piece, the pack).
+ */
+export function derivedPackSplit(
+  option: Pick<LadderOption, "derived">,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } | null {
+  if (!option.derived) return null;
+  return packPiecesSplit(option.derived.n, count);
+}
+
+/**
+ * `count` loose pieces of a `unitsPerBox` pack as `{ qty, boxes, pieces }`, rolled over at a full pack: the ONE
+ * place that shape is built (a hand-rolled `normalizeBoxesPieces({ boxes: 0, pieces })` elsewhere is how web, mobile
+ * and the server drifted; `no-inline-pack-split.pin.spec.ts` keeps it that way).
+ */
+export function packPiecesSplit(
+  unitsPerBox: number,
+  count: number,
+): { qty: number; boxes: number; pieces: number; unitsPerBox: number } {
+  const n = normalizeBoxesPieces({ boxes: 0, pieces: count, unitsPerBox });
+  return { qty: n.qty, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, unitsPerBox };
 }
 
 /**

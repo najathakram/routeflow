@@ -1,5 +1,14 @@
 import type { API_ERROR_CODES } from "./error-codes";
 
+/**
+ * SA-1029: the per-piece price printed beside a pack line (display only; never stored, summed or multiplied back).
+ * `unit` is the lowercase base word ("pc", "bag"). The ONE declaration: pricing, the buyer wire and the web client reuse it.
+ */
+export interface PerBaseUnit {
+  price: number;
+  unit: string;
+}
+
 // ─── Invoice KPI summary (B12) ─────────────────────────────────────────────
 //
 // `GET /invoices/kpi-summary?today=YYYY-MM-DD` — the invoices page's six KPI
@@ -50,4 +59,10 @@ export interface PriceAdjustmentPartialBody {
   refused?: { invoiceId: string; invoiceNumber: string | null; code: string; message: string };
   syncFailed?: { invoiceId: string; invoiceNumber: string | null };
   skipped: string[];
+}
+
+/** SA-827: how an invoice line reads. "pieces" = the customer's invoice unit is the base piece; "legacy" = today's layout. */
+export interface InvoiceDisplayUnitView {
+  kind: "legacy" | "pieces";
+  label: string | null;
 }

@@ -23,7 +23,7 @@ import {
  * body and its hash, the resubmit, the stale hash, the reason bounds and the formula guard, an override on a line that
  * is not breached, who may override, sticky coverage, and the re-judge under the lock.
  */
-const OPERATOR = { role: "OPERATOR", sub: "user-op" };
+const OPERATOR = { role: "OPERATOR", sub: "user-op", deniedGroups: [] as string[] };
 const breach = (productId: string, ruleIds: string[], over: Partial<StaffBreachDetail> = {}) =>
   ({
     productId,
@@ -112,7 +112,7 @@ describe("decideStaffWrite: the warning", () => {
             id: "r1",
             states: ["CA"],
             legal: true,
-            reasonText: "This product is banned in CA by law.",
+            reasonText: "Restricted in CA: State ban.",
           },
         ],
       },
@@ -158,15 +158,15 @@ describe("decideStaffWrite: the warning", () => {
       thrown(() => decideStaffWrite(base({ judgement: judgement([b], basis) }))).getResponse()
         .lines[0].rules[0].reasonText;
 
-    it("a state ban names the state; a federal ban says federally", () => {
-      expect(textOf(breach("p1", ["r1"]))).toBe("This product is banned in CA by law.");
+    it("a state rule names the state; a federal rule says everywhere", () => {
+      expect(textOf(breach("p1", ["r1"]))).toBe("Restricted in CA: State ban.");
       expect(
         textOf(
           breach("p1", ["f"], {
             rules: [{ id: "f", kind: "FEDERAL", states: [], legal: true, reason: "x" }],
           }),
         ),
-      ).toBe("This product is banned federally by law.");
+      ).toBe("Restricted everywhere: x.");
     });
 
     it("a malformed rule quotes the admin's reason; an unresolved state asks for the address (the store's on a store basis)", () => {
@@ -178,7 +178,7 @@ describe("decideStaffWrite: the warning", () => {
             ],
           }),
         ),
-      ).toBe("This product is banned by law (No gummies).");
+      ).toBe("Restricted: No gummies.");
       const pending = breach("p1", ["s"], {
         outcome: "INDETERMINATE",
         state: null,
@@ -188,6 +188,53 @@ describe("decideStaffWrite: the warning", () => {
         "This customer's state can't be determined — add or correct the customer's address.",
       );
       expect(textOf(pending, "STORE")).toMatch(/store's state can't be determined/);
+    });
+
+    const withRule = (
+      over: Partial<StaffBreachDetail["rules"][number]>,
+      state: string | null = "CA",
+    ) =>
+      breach("p1", ["r1"], {
+        state,
+        rules: [
+          {
+            id: "r1",
+            kind: "STATE_HIT" as const,
+            states: ["CA"],
+            legal: true,
+            reason: "x",
+            ...over,
+          },
+        ],
+      });
+
+    it("a rule that is not a legal ban reads 'Limited for this sale', with the business's own reason (SA-947)", () => {
+      expect(textOf(withRule({ legal: false, reason: "Keep under 50 a week" }))).toBe(
+        "Limited for this sale: Keep under 50 a week.",
+      );
+      // the same lead whatever the rule's kind: a federal-shaped rule that is not legal is still a limit, never a ban
+      expect(textOf(withRule({ kind: "FEDERAL", states: [], legal: false, reason: "Cap" }))).toBe(
+        "Limited for this sale: Cap.",
+      );
+    });
+
+    it("an empty or blank reason leaves just the lead and one stop, never 'lead: .'", () => {
+      expect(textOf(withRule({ legal: false, reason: "   " }))).toBe("Limited for this sale.");
+      expect(textOf(withRule({ reason: "" }))).toBe("Restricted in CA.");
+      expect(textOf(withRule({ kind: "FEDERAL", states: [], reason: " " }))).toBe(
+        "Restricted everywhere.",
+      );
+    });
+
+    it("a reason that already ends a sentence gets no second stop, and one that does not gets exactly one", () => {
+      expect(textOf(withRule({ reason: "No gummies." }))).toBe("Restricted in CA: No gummies.");
+      expect(textOf(withRule({ reason: "Really!" }))).toBe("Restricted in CA: Really!");
+      expect(textOf(withRule({ reason: "Why?" }))).toBe("Restricted in CA: Why?");
+      expect(textOf(withRule({ reason: "  State ban  " }))).toBe("Restricted in CA: State ban.");
+    });
+
+    it("a state hit that somehow carries no state still reads as a restriction, never 'in null' (SA-961 guard)", () => {
+      expect(textOf(withRule({ reason: "State ban" }, null))).toBe("Restricted: State ban.");
     });
 
     it("an unknown product uses the engine's own message and 'Unknown product'", () => {
@@ -354,7 +401,7 @@ describe("decideStaffWrite: who may override", () => {
             id: "r1",
             states: ["CA"],
             legal: true,
-            reasonText: "This product is banned in CA by law.",
+            reasonText: "Restricted in CA: State ban.",
           },
         ],
       },
@@ -563,6 +610,82 @@ describe("decideStaffWrite: sticky coverage", () => {
         }),
       );
       expect(d.stamps).toEqual([]);
+    });
+
+    describe("W-748 Q2 (SA-958): the import marker covers the imported quantity only", () => {
+      const imported = (productId: string): HeldLine => ({
+        ...stamp(productId, ["r1:CA"]),
+        restrictionOverrideReason: "Imported (historical)",
+      });
+      const j = judgement([breach("p1", ["r1"])]);
+      const edit = (qtyDelta: number, held: HeldLine[]) =>
+        base({ judgement: j, lines: [{ productId: "p1", lineKey: "l:li-p1", qtyDelta }], held });
+
+      it("a quantity INCREASE on an imported line is judged again: it warns (needs a fresh reason)", () => {
+        expect(thrown(() => decideStaffWrite(edit(5, [imported("p1")]))).getResponse().code).toBe(
+          "RESTRICTION_WARNING",
+        );
+      });
+
+      it("a decrease or an unchanged quantity keeps the import marker's cover AND carries the marker onto recreated lines", () => {
+        for (const delta of [-2, 0]) {
+          const d = decideStaffWrite(edit(delta, [imported("p1")]));
+          expect(d.stamps).toEqual([]);
+          // Carried: a decreased-and-recreated imported line keeps its "Imported (historical)" stamp (M3 mutant guard).
+          expect(d.carried).toEqual([
+            {
+              productId: "p1",
+              stamp: expect.objectContaining({
+                restrictionOverrideReason: "Imported (historical)",
+                restrictionOverrideRuleIds: ["r1:CA"],
+              }),
+            },
+          ]);
+        }
+      });
+
+      it("a NEW second line of the imported product (a new lineKey) is judged: it warns on that line only", () => {
+        const e = thrown(() =>
+          decideStaffWrite(
+            base({
+              judgement: j,
+              lines: [
+                { productId: "p1", lineKey: "l:li-p1", qtyDelta: 0 },
+                { productId: "p1", lineKey: "n:1", qtyDelta: 3 },
+              ],
+              held: [imported("p1")],
+            }),
+          ),
+        );
+        expect(e.getResponse().code).toBe("RESTRICTION_WARNING");
+        expect(e.getResponse().lines.map((l: { lineKey: string }) => l.lineKey)).toEqual(["n:1"]);
+      });
+
+      it("control: the same increase on a line a STAFF member overrode stays covered (row 510 sticky coverage)", () => {
+        expect(decideStaffWrite(edit(5, [stamp("p1", ["r1:CA"])])).stamps).toEqual([]);
+      });
+
+      it("a product with BOTH an imported line and a staff-overridden line stays covered for an increase", () => {
+        expect(
+          decideStaffWrite(edit(5, [imported("p1"), stamp("p1", ["r1:CA"], "li-2")])).stamps,
+        ).toEqual([]);
+      });
+
+      it("the fresh override replaces the marker: the increase is stamped with the staff reason, the marker is not carried", () => {
+        const hash = thrown(() => decideStaffWrite(edit(5, [imported("p1")]))).getResponse()
+          .warningHash;
+        const d = decideStaffWrite({
+          ...edit(5, [imported("p1")]),
+          ack: {
+            restrictionOverrides: [{ lineKey: "l:li-p1", reason: "Customer reorder approved" }],
+            warningHash: hash,
+          },
+        });
+        expect(d.stamps).toEqual([
+          expect.objectContaining({ lineKey: "l:li-p1", reason: "Customer reorder approved" }),
+        ]);
+        expect(d.carried).toEqual([]);
+      });
     });
 
     it("the warning hash binds the judged state: the same rule and outcome at TX is a different acknowledgement", () => {

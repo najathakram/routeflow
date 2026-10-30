@@ -12,6 +12,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
  * B48: a standing-order line was priced with the raw catalog price
@@ -34,6 +35,7 @@ let v2On = true;
 describe("S19: a standing order prices from the customer layer (flag.units_prices_v2)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   let ordersService: {
     mergeAllPendingForCustomer: jest.Mock;
     loadActivePromotions: jest.Mock;
@@ -50,6 +52,7 @@ describe("S19: a standing order prices from the customer layer (flag.units_price
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const flagRead = jest.fn(async (_t: string, k: string) => k === V2 && v2On);
     ordersService = {
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),

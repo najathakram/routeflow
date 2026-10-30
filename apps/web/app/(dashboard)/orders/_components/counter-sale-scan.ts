@@ -7,6 +7,7 @@ import {
 import { displayProductName } from "@/lib/product-display";
 import type { PriceOverride } from "@/lib/counter-price-edit";
 import { mergePieceIntoLine, mergeQtyIntoLine, newLineQtyForLevel } from "./add-line-merge";
+import { COUNTER_MAX_LINE_QTY } from "./counter-sale-line-edit";
 
 /**
  * Pure line logic of the counter-sale till (B1208): what a scan lands on the cart, and the box/piece stepper.
@@ -77,13 +78,15 @@ export function addScannedProduct(
   const unitScan = level === "UNIT" && (upb ?? 0) > 1;
   const idx = prev.findIndex((l) => l.productId === product.id);
   if (idx >= 0) {
-    return prev.map((l, i) =>
-      i === idx ? (unitScan ? mergePieceIntoLine(l, n) : mergeQtyIntoLine(l, n)) : l,
-    );
+    const merged = unitScan ? mergePieceIntoLine(prev[idx], n) : mergeQtyIntoLine(prev[idx], n);
+    // a line holds at most COUNTER_MAX_LINE_QTY pieces (the server's cap): a scan past it leaves the cart as it was
+    if (merged.qty > COUNTER_MAX_LINE_QTY) return prev;
+    return prev.map((l, i) => (i === idx ? merged : l));
   }
   // A UNIT multiplier at or over the pack size (x30 on a 24-pack) rolls into boxes: 1 box + 6 pcs, never 0 boxes + 30 pcs.
   const lp = customerLinePrice({ product, tier, layer });
   const born = newLineQtyForLevel(upb, level, n);
+  if (born.qty > COUNTER_MAX_LINE_QTY) return prev;
   const qty = unitScan && upb ? normalizeBoxesPieces({ qty: born.qty, unitsPerBox: upb }) : null;
   return [
     ...prev,
@@ -124,10 +127,10 @@ export function stepLine(l: SaleLine, unit: StepUnit, dir: 1 | -1): SaleLine {
   const upb = l.unitsPerBox ?? 0;
   if (upb > 1) {
     const total = (l.boxes ?? 0) * upb + (l.pieces ?? 0) + dir * (unit === "box" ? upb : 1);
-    if (total < 1) return l;
+    if (total < 1 || total > COUNTER_MAX_LINE_QTY) return l;
     const norm = normalizeBoxesPieces({ qty: total, unitsPerBox: upb });
     return { ...l, boxes: norm.boxes ?? 0, pieces: norm.pieces ?? 0, qty: norm.qty };
   }
   const next = mergeQtyIntoLine(l, dir);
-  return next.qty < 1 ? l : next;
+  return next.qty < 1 || next.qty > COUNTER_MAX_LINE_QTY ? l : next;
 }

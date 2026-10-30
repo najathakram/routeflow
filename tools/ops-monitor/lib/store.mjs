@@ -24,6 +24,9 @@ import { BUG_ID_RE, validateEvent } from "./schema.mjs";
 import { fold } from "./fold.mjs";
 import { allocateItemId, utcDate } from "./ids.mjs";
 import { REPO_ROOT, loadConfig, opsHome, specsDir } from "./config.mjs";
+import { RegistryUnavailable, registryDir } from "./registry.mjs";
+
+export { RegistryUnavailable };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -541,16 +544,20 @@ export function readAllEvents(dir) {
   return out;
 }
 
-/** Bug ids in the registry on origin/master (empty set when git fails). */
+/** Bug ids in the registry on origin/master. Throws RegistryUnavailable when git cannot read it. */
 export async function loadBugIds(repoRoot = REPO_ROOT) {
   const r = await git(repoRoot, [
     "ls-tree",
     "--name-only",
     "origin/master",
-    ".claude/campaign/bugs/",
+    `${registryDir()}/bugs/`,
   ]);
+  if (r.code !== 0) {
+    throw new RegistryUnavailable(
+      `git ls-tree origin/master failed in ${repoRoot}: ${(r.stderr || "").trim().slice(0, 160)}`,
+    );
+  }
   const ids = new Set();
-  if (r.code !== 0) return ids;
   for (const line of r.stdout.split(/\r?\n/)) {
     const m = /(?:^|\/)(B\d{1,5})\.[^/]+$/.exec(line.trim());
     if (m) ids.add(m[1]);

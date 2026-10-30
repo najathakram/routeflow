@@ -26,6 +26,8 @@ function build(opts: {
   invoiceLineHit?: boolean;
   createError?: unknown;
   noTenant?: boolean;
+  mode?: "on" | "off";
+  recipeFamilyId?: string | null;
 }) {
   const product =
     opts.product === undefined
@@ -43,6 +45,11 @@ function build(opts: {
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
     product: { findFirst: jest.fn().mockResolvedValue(product) },
+    recipe: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(opts.recipeFamilyId ? { familyProductId: opts.recipeFamilyId } : null),
+    },
     productUnit: {
       findMany: jest.fn().mockResolvedValue(opts.rows ?? []),
       findFirst: jest
@@ -69,10 +76,76 @@ function build(opts: {
     forTenant: () => db,
     tenantTransaction: jest.fn().mockImplementation(async (fn) => fn(db)),
   };
-  return { service: new ProductUnitsService(prisma as never), db, tx: db, prisma };
+  const featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(opts.mode ?? "off") };
+  const service = new ProductUnitsService(prisma as never, featureConfig as never);
+  return { service, db, tx: db, prisma };
 }
 
 const caseRow: Row = { id: "u-case", label: "Case", factorToBase: 288 };
+
+describe("ProductUnitsService price guard (row 749)", () => {
+  const variantProduct = {
+    unit: "Box",
+    unitsPerBox: 24,
+    trackedCategoryId: null,
+    parentProductId: "fam1",
+    kind: "VARIANT",
+  };
+
+  it("mode off: a variant's Case price is written on create and on update (SA-1041)", async () => {
+    const c = build({ product: variantProduct, mode: "off" });
+    await c.service.create("p1", { label: "Case", factorToBase: 288, price: 480 });
+    expect(c.tx.productUnit.create).toHaveBeenCalled();
+    const u = build({ product: variantProduct, rows: [caseRow], mode: "off" });
+    await u.service.update("p1", "u-case", { price: 9 });
+    expect(u.tx.productUnit.update).toHaveBeenCalled();
+  });
+
+  it("mode on: a variant's factor-288 Case price is written (owner Q1)", async () => {
+    const { service, tx } = build({ product: variantProduct, mode: "on" });
+    await service.create("p1", { label: "Case", factorToBase: 288, price: 480 });
+    expect(tx.productUnit.create).toHaveBeenCalled();
+  });
+
+  it("mode on: a variant's factor-1 price is refused with a 409 and writes nothing", async () => {
+    const { service, tx } = build({ product: variantProduct, mode: "on" });
+    await expect(
+      service.create("p1", { label: "Each", factorToBase: 1, price: 4 }),
+    ).rejects.toThrow(ConflictException);
+    expect(tx.productUnit.create).not.toHaveBeenCalled();
+  });
+
+  it("a recipe is refused only with a family link and no override in mode on", async () => {
+    const recipe = { ...variantProduct, parentProductId: null, kind: "RECIPE" };
+    const one: Row = { id: "u-one", label: "Piece", factorToBase: 1 };
+    const linked = build({ product: recipe, rows: [one], mode: "on", recipeFamilyId: "f1" });
+    await expect(linked.service.update("p1", "u-one", { price: 9 })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(linked.tx.productUnit.update).not.toHaveBeenCalled();
+    const unlinked = build({ product: recipe, rows: [one], mode: "on", recipeFamilyId: null });
+    await unlinked.service.update("p1", "u-one", { price: 9 });
+    expect(unlinked.tx.productUnit.update).toHaveBeenCalled();
+    const off = build({ product: recipe, rows: [one], mode: "off", recipeFamilyId: "f1" });
+    await off.service.update("p1", "u-one", { price: 9 });
+    expect(off.tx.productUnit.update).toHaveBeenCalled();
+  });
+
+  it("R-a8: a family-linked recipe's factor-1 price 409 names the recipe's family, not the recipe (SA-1041 A-2)", async () => {
+    const recipe = { ...variantProduct, id: "p1", parentProductId: null, kind: "RECIPE" };
+    const one: Row = { id: "u-one", label: "Piece", factorToBase: 1 };
+    const linked = build({ product: recipe, rows: [one], mode: "on", recipeFamilyId: "f1" });
+    const err = await linked.service.update("p1", "u-one", { price: 9 }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "f1" });
+  });
+
+  it("a structure-only create on a variant still succeeds", async () => {
+    const { service, tx } = build({ product: variantProduct });
+    await service.create("p1", { label: "Case", factorToBase: 288 });
+    expect(tx.productUnit.create).toHaveBeenCalled();
+  });
+});
 
 describe("ProductUnitsService.create", () => {
   it("creates a level, storing null for every unset price and the trimmed label", async () => {

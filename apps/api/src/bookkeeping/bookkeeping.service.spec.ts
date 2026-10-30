@@ -23,12 +23,27 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
   VendorBillsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+// SA-827: the display-unit helpers are mocked so the wiring (resolve outside the tx, write inside it, DRAFT only) is observable.
+jest.mock("../invoices/invoice-display-unit", () => ({
+  resolveIssueDisplayUnits: jest.fn(),
+  writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+  writeIssueBaseLabels: jest.fn().mockResolvedValue(undefined),
+  loadDraftBaseLabels: jest.fn(),
+}));
+
 import { BookkeepingService } from "./bookkeeping.service";
+import {
+  loadDraftBaseLabels,
+  resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
+  writeIssueDisplayUnits,
+} from "../invoices/invoice-display-unit";
 import { InvoiceService } from "./invoice.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_TASKS, type AiTask } from "../platform-admin/ai-models";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -103,7 +118,11 @@ describe("BookkeepingService", () => {
         },
         {
           provide: PlatformConfigService,
-          useValue: { resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"), recordAiUsage },
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+            recordAiUsage,
+            resolveModelFor: jest.fn(async (task: AiTask) => AI_TASKS[task].fallback),
+          },
         },
         {
           provide: SystemConfigService,
@@ -268,6 +287,94 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("recordPayment — SA-827: a DRAFT paid through the ledger freezes its display unit once", () => {
+    const UNITS = new Map([["it-1", { kind: "pieces" as const, label: "Piece" }]]);
+    const WORDS = new Map([["p-1", "Bag"]]); // SA-1029: the pre-tx base words
+
+    function arm(status: string) {
+      (resolveIssueDisplayUnits as jest.Mock).mockReset().mockResolvedValue(UNITS);
+      (loadDraftBaseLabels as jest.Mock).mockReset().mockResolvedValue(WORDS);
+      (writeIssueDisplayUnits as jest.Mock).mockClear();
+      (writeIssueBaseLabels as jest.Mock).mockClear();
+      prisma.invoice.findUnique.mockResolvedValue({ status, tenantId: "tenant-acme-1" });
+      const txClient = {
+        $executeRaw: jest.fn(),
+        invoice: {
+          findMany: jest.fn(async () => []),
+          findUnique: jest.fn().mockResolvedValue({
+            id: "inv-827",
+            tenantId: "tenant-acme-1",
+            status,
+            total: 100,
+            payments: [],
+          }),
+          update: jest.fn().mockResolvedValue({ id: "inv-827", status: "PARTIAL", payments: [] }),
+        },
+        // master's W-769 flag reads the created payment's id (as the sibling recordPayment specs mock it)
+        invoicePayment: {
+          create: jest.fn().mockResolvedValue({ id: "pay-827" }),
+          findMany: jest.fn(async () => []),
+        },
+      };
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(txClient));
+      return txClient;
+    }
+
+    it("a DRAFT: resolves OUTSIDE the tx (a non-tx client, the row's own tenant), writes INSIDE it for this invoice", async () => {
+      const tx = arm("DRAFT");
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(resolveIssueDisplayUnits).toHaveBeenCalledTimes(1);
+      const [readDb, tenantId, invoiceId] = (resolveIssueDisplayUnits as jest.Mock).mock.calls[0];
+      expect(readDb).toBe(prisma.forTenant());
+      expect(tenantId).toBe("tenant-acme-1");
+      expect(invoiceId).toBe("inv-827");
+      expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
+      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][0]).toBe(tx);
+      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][1]).toBe("inv-827");
+      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBe(UNITS);
+      expect((resolveIssueDisplayUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.tenantTransaction.mock.invocationCallOrder[0],
+      );
+      // SA-1029 A-1: the words are read off-tx too, then handed to the in-tx writer
+      const [wdb, wtenant, winv] = (loadDraftBaseLabels as jest.Mock).mock.calls[0];
+      expect(wdb).toBe(prisma.forTenant());
+      expect(wtenant).toBe("tenant-acme-1");
+      expect(winv).toBe("inv-827");
+      expect((loadDraftBaseLabels as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.tenantTransaction.mock.invocationCallOrder[0],
+      );
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+        WORDS,
+      ]);
+    });
+
+    it("D-R2: a DRAFT whose resolve found NO pieces line (null units) still freezes the base labels in the tx", async () => {
+      const tx = arm("DRAFT");
+      (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(null);
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+        WORDS,
+      ]);
+    });
+
+    it("an already issued (SENT) invoice makes zero resolve calls and no write", async () => {
+      arm("SENT");
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).not.toHaveBeenCalled();
+      expect(loadDraftBaseLabels).not.toHaveBeenCalled(); // no extra read on an issued invoice
+    });
+  });
+
   describe("recordPayment — SA-121: dto.amount is rounded to the cent", () => {
     it("a sub-cent amount (10.005) is stored cent-exact, not silently truncated", async () => {
       const create = jest.fn();
@@ -359,6 +466,10 @@ describe("BookkeepingService", () => {
           findFirst: jest.fn(async () =>
             opts.counter ? { counterSale: true, registerKey: "r1" } : null,
           ),
+        },
+        // SA-827: the pre-tx status read (an issued invoice resolves nothing)
+        invoice: {
+          findUnique: jest.fn(async () => ({ status: "SENT", tenantId: "tenant-acme-1" })),
         },
       } as never);
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
@@ -2192,7 +2303,7 @@ describe("BookkeepingService", () => {
   });
 
   describe("extractExpenseItems", () => {
-    const RECEIPT_MODEL = "claude-opus-4-5-20251101";
+    const RECEIPT_MODEL = "claude-opus-5-5"; // SA-1035 M-R5: the receipt task's fallback (no picker)
 
     /** `createMockPrisma` predates ExpenseLineItem — graft it onto the object forTenant() returns. */
     const graftExpenseLineItem = () => {
@@ -2234,6 +2345,7 @@ describe("BookkeepingService", () => {
 
       await service.extractExpenseItems("exp-1");
 
+      expect(mockAnthropicCreate.mock.calls[0][0].model).toBe(RECEIPT_MODEL); // M-R5: the call itself
       expect(recordAiUsage).toHaveBeenCalledWith({
         tenantId: "test-tenant",
         feature: "ocr.expense_receipt",
@@ -2241,6 +2353,46 @@ describe("BookkeepingService", () => {
         inputTokens: 555,
         outputTokens: 66,
       });
+    });
+
+    it("reads the text block when the response starts with a thinking block (Opus 5.5 always thinks)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          { type: "thinking", thinking: "" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              vendor: "Acme",
+              total: 12,
+              items: [{ description: "Widget", qty: 1, unitCost: 12, amount: 12 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      });
+      await service.extractExpenseItems("exp-1");
+      const lines = (prisma.forTenant() as any).expenseLineItem.createMany;
+      expect(lines).toHaveBeenCalledTimes(1);
+      expect(lines.mock.calls[0][0].data).toHaveLength(1);
+    });
+
+    it("a response with a thinking block and no text block is refused, not read as an empty receipt", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "thinking", thinking: "" }],
+        usage: { input_tokens: 5, output_tokens: 6 },
+      });
+      await expect(service.extractExpenseItems("exp-1")).rejects.toThrow(/Could not parse receipt/);
+    });
+
+    it("leaves headroom for thinking in max_tokens (the receipt keeps the model's default effort)", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ items: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      await service.extractExpenseItems("exp-1");
+      const req = mockAnthropicCreate.mock.calls[0][0];
+      expect(req.max_tokens).toBe(8192);
+      expect(req.output_config).toBeUndefined();
     });
 
     it("records a failed AiUsageEvent and rethrows when the Anthropic call errors", async () => {

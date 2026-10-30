@@ -35,8 +35,9 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, UserRole } from "@prisma/client";
-import { roundMoney } from "@routeflow/pricing";
+import { MovementType, Prisma, UserRole } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
+import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -65,6 +66,8 @@ import { restockReturnItems } from "./returns-restock.util";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { creditOverrideAuditItems } from "./inline-returns-pricing";
+import { assertWalkInCaptureRefused } from "./walk-in-return-guard";
+import { assertCreditCustomerNotWalkIn } from "../credit-notes/walk-in-credit-guard";
 import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture-inline-return.dto";
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
@@ -83,7 +86,13 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
-import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import {
+  dbClockNow,
+  lockCounterClose,
+  tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
+} from "./counter-close-lock";
+import { refundBusy } from "./standard-refund-claim";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import {
   refundTenderColumn,
@@ -409,6 +418,11 @@ export class InlineReturnsService {
 
     // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
     await this.assertWithinLineHeadroom(tx, priced.chunks);
+
+    // W-913: a walk-in return is a till refund, never store credit: judged before any write (a REFUND keeps assertRefundable)
+    if (!opts.forRefund) {
+      await assertWalkInCaptureRefused(tx, { customerId: order.customerId, user, priced });
+    }
 
     // SA-727: a REFUND-resolution capture is refused HERE, before any write, unless the refund could succeed: every returned
     // line on a source invoice paid in full, and worth money. Otherwise the goods would be restocked with no way to resolve
@@ -823,6 +837,7 @@ export class InlineReturnsService {
         where: { invoiceId },
         select: {
           id: true,
+          orderItemId: true,
           productId: true,
           subtotal: true,
           qty: true,
@@ -1096,6 +1111,8 @@ export class InlineReturnsService {
       creditNoteNumber?: string;
       /** In-order path (#2094): cap the system-owned intent at the order's remaining balance. */
       capIntentToOrderBalance?: boolean;
+      /** SA-980: a REDUCED hold approval re-freezes the Return's split pro rata, in the same guarded write. */
+      refrozenSplit?: { creditSubtotal: number; creditTax: number; creditCategoryTax: number };
     },
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
@@ -1141,6 +1158,7 @@ export class InlineReturnsService {
         refundedAt: new Date(),
         holdReason: null,
         heldAmount: null,
+        ...(extra?.refrozenSplit ?? {}),
         ...(extra?.approvedById
           ? { approvedById: extra.approvedById, approvedAt: new Date() }
           : {}),
@@ -1325,7 +1343,28 @@ export class InlineReturnsService {
       await restockReturnItems(tx, fresh, user.sub);
       await this.reverseLedgerForReturn(tx, fresh);
 
-      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, { approvedById: user.sub });
+      // SA-980: a reduced approval re-freezes the split pro rata (only when a split was frozen and the amount differs).
+      let refrozenSplit:
+        { creditSubtotal: number; creditTax: number; creditCategoryTax: number } | undefined;
+      if (fresh.creditSubtotal != null) {
+        const frozen = {
+          net: Number(fresh.creditSubtotal),
+          tax: Number(fresh.creditTax ?? 0),
+          categoryTax: Number(fresh.creditCategoryTax ?? 0),
+        };
+        if (Math.abs(amount - roundMoney(frozen.net + frozen.tax + frozen.categoryTax)) > 0.001) {
+          const s = scaleFrozenSplit(frozen, amount);
+          refrozenSplit = {
+            creditSubtotal: s.net,
+            creditTax: s.tax,
+            creditCategoryTax: s.categoryTax,
+          };
+        }
+      }
+      minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, {
+        approvedById: user.sub,
+        refrozenSplit,
+      });
       if (fresh.holdReason === ALREADY_RETURNED_HOLD_REASON) {
         await tx.auditLog.create({
           data: {
@@ -1379,10 +1418,10 @@ export class InlineReturnsService {
     // SA-740r2 item 6: a COUNTER order's refund counts in the day's drawer, so the transaction's FIRST statement is the shared
     // counter-close lock on the carrying order's register (it is immutable, so this unlocked read is safe); the close waits
     // for refunds in flight and a refund's `refundedAt` (the database clock, dbClockNow) can never land behind a close's cutoff.
-    const registerKey = registerKeyOfOrder(
+    const registerKey = tillRegisterOfSale(
       await this.prisma.forTenant().order.findFirst({
         where: { id: pre.orderId },
-        select: { counterSale: true, registerKey: true },
+        select: { counterSale: true, registerKey: true, fulfillPath: true },
       }),
     );
 
@@ -1423,6 +1462,8 @@ export class InlineReturnsService {
         fresh.orderId,
         ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
       ]);
+      // W-829: a pickup stamped by a hand-over while this waited for the Order lock needs the close lock first: retry
+      if (await tillRegisterStampedUnderLock(tx, fresh.orderId, registerKey)) throw refundBusy();
 
       // M2: the SERVER's figure (exactly what the credit mint would issue); the client only confirms it
       const amount = inlineReturnAmount(fresh);
@@ -1609,6 +1650,7 @@ export class InlineReturnsService {
         if (await this.isStoreCreditReplay(tx, fresh)) return; // nothing minted, nothing to emit
         throw this.alreadyResolved();
       }
+      await assertCreditCustomerNotWalkIn(tx, fresh.customerId); // W-913: a walk-in return is never turned into credit
       if (!isRefundPending(fresh) || fresh.holdReason) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_NOT_REFUNDABLE,
@@ -1845,35 +1887,27 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
       let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
-        for (const item of fresh.items as any[]) {
-          if (!item.restock) continue;
-          const product = await tx.product.findFirst({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          const qty = new Prisma.Decimal(item.qty);
-          const currentStock = product?.currentStock ?? new Prisma.Decimal(0);
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { currentStock: { decrement: qty } },
-          });
-          // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
-          // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
-          // audit trail (a delete erased history; the prefix match also risks colliding
-          // across two returns whose ids happen to share their first 8 characters).
-          await tx.stockMovement.create({
-            data: {
-              productId: item.productId,
-              type: "RETURN",
-              quantity: qty.neg(),
-              unitCost: product?.averageCost ?? null,
-              avgCostAfter: product?.averageCost ?? null,
-              stockAfter: currentStock.sub(qty),
+        // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
+        // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
+        // audit trail (a delete erased history; the prefix match also risks colliding
+        // across two returns whose ids happen to share their first 8 characters).
+        // SA-927: through the one writer (lock, tenant-scoped counter read, stockAfter, one insert).
+        const restocked = (fresh.items as any[]).filter((item) => item.restock);
+        await applyStockMovements(
+          tx,
+          this.prisma.getTenantId() as string,
+          (locked) =>
+            restocked.map((item) => ({
+              productId: item.productId as string,
+              type: MovementType.RETURN,
+              quantity: new Prisma.Decimal(item.qty).neg(),
+              unitCost: locked.get(item.productId)?.averageCost ?? null,
+              average: "keep" as const,
               performedById: user.sub,
               reference: `RET-CANCEL-${fresh.id.slice(0, 8)}`,
-            },
-          });
-        }
+            })),
+          { productIds: restocked.map((item) => item.productId as string) },
+        );
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.
         const settled = await this.ledger.settleRegulatedLedger(tx, {

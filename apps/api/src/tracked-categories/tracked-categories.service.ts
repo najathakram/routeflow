@@ -18,6 +18,7 @@ import {
   assertNoOpenRecipe,
   lockProductsForCategoryWrite,
 } from "../products/recipe-category-guard";
+import { auditTrackedCategoryWrite, type TrackedCategoryActor } from "./tracked-category-audit";
 import { assertSafeCategoryName, assertSafeSubcategoryName } from "../common/text-cell-guards";
 
 /**
@@ -120,7 +121,7 @@ export class TrackedCategoriesService {
     }
   }
 
-  async create(dto: CreateTrackedCategoryDto) {
+  async create(dto: CreateTrackedCategoryDto, actor?: TrackedCategoryActor) {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) {
       throw new BadRequestException("A tenant context is required to create a category.");
@@ -129,9 +130,20 @@ export class TrackedCategoriesService {
     this.assertSupportedTaxConfig(dto.taxType, dto.rate, dto.priceIncludesTax);
     this.assertValidReportColumnPrefs((dto as any).reportColumnPrefs);
     try {
-      const row = await this.prisma
-        .forTenant()
-        .trackedCategory.create({ data: { ...this.toData(dto), tenantId }, include: WITH_COUNT });
+      const row = await this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+        const created = await tx.trackedCategory.create({
+          data: { ...this.toData(dto), tenantId },
+          include: WITH_COUNT,
+        });
+        await auditTrackedCategoryWrite(tx, {
+          tenantId,
+          actor,
+          created: true,
+          before: null,
+          after: created,
+        });
+        return created;
+      });
       return this.serialize(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
@@ -141,7 +153,7 @@ export class TrackedCategoriesService {
     }
   }
 
-  async update(id: string, dto: UpdateTrackedCategoryDto) {
+  async update(id: string, dto: UpdateTrackedCategoryDto, actor?: TrackedCategoryActor) {
     const existing = await this.findOne(id);
     if (dto.name !== undefined) assertSafeCategoryName(dto.name, (existing as any).name); // B983: change-only
     // Validate the MERGED config so a partial update (e.g. flipping only
@@ -153,9 +165,22 @@ export class TrackedCategoriesService {
     );
     this.assertValidReportColumnPrefs((dto as any).reportColumnPrefs);
     try {
-      const row = await this.prisma
-        .forTenant()
-        .trackedCategory.update({ where: { id }, data: this.toData(dto), include: WITH_COUNT });
+      const tenantId = this.tenantIdOrThrow();
+      const row = await this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+        const updated = await tx.trackedCategory.update({
+          where: { id },
+          data: this.toData(dto),
+          include: WITH_COUNT,
+        });
+        await auditTrackedCategoryWrite(tx, {
+          tenantId,
+          actor,
+          created: false,
+          before: existing as Record<string, unknown>,
+          after: updated,
+        });
+        return updated;
+      });
       return this.serialize(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
@@ -190,12 +215,23 @@ export class TrackedCategoriesService {
   }
 
   /** Flip active on/off. Deactivation keeps historic sales/ledger data intact. */
-  async toggle(id: string) {
+  async toggle(id: string, actor?: TrackedCategoryActor) {
     const cat = await this.findOne(id);
-    const row = await this.prisma.forTenant().trackedCategory.update({
-      where: { id },
-      data: { active: !cat.active },
-      include: WITH_COUNT,
+    const tenantId = this.tenantIdOrThrow();
+    const row = await this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.trackedCategory.update({
+        where: { id },
+        data: { active: !cat.active },
+        include: WITH_COUNT,
+      });
+      await auditTrackedCategoryWrite(tx, {
+        tenantId,
+        actor,
+        created: false,
+        before: cat as Record<string, unknown>,
+        after: updated,
+      });
+      return updated;
     });
     return this.serialize(row);
   }

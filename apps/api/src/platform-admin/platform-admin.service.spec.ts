@@ -3983,6 +3983,43 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
+  describe("createTenantAdmin — emailSent reports the real send result (row 551)", () => {
+    beforeEach(() => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        name: "Acme",
+      } as any);
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({
+        id: "admin-new",
+        username: "newadmin",
+        email: "newadmin@example.com",
+        status: "ACTIVE",
+        createdAt: new Date(),
+      } as any);
+    });
+    const create = () =>
+      service.createTenantAdmin(
+        TENANT_ID,
+        { username: "newadmin", email: "newadmin@example.com" },
+        ADMIN_ID,
+      );
+
+    it("true only when the transport says it delivered", async () => {
+      emailServiceMock.send.mockResolvedValue({ delivered: true, transport: "resend" });
+      expect(await create()).toMatchObject({ emailSent: true, tempPassword: expect.any(String) });
+    });
+
+    it("false when the send is not delivered, and when it throws; the account is still created", async () => {
+      emailServiceMock.send.mockResolvedValue({ delivered: false, transport: "none" });
+      expect(await create()).toMatchObject({ emailSent: false });
+      emailServiceMock.send.mockRejectedValue(new Error("smtp down"));
+      expect(await create()).toMatchObject({ emailSent: false, tempPassword: expect.any(String) });
+      expect(prisma.user.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
   // SA-738 R16-4: the super admin sets the tenant's IANA zone at creation.
   describe("createTenant — time zone (SA-738)", () => {
     const dto = {

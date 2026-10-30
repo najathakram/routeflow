@@ -99,7 +99,7 @@ describe("a PICKUP and a ROUTE order of one customer never fold", () => {
       h.prisma.customer.findFirst.mockResolvedValue({ fulfillPath: "ROUTE" });
       await h.service.findActiveOrder("cust-1", {
         forMerge: true,
-        mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR" },
+        mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR", deniedGroups: [] },
       });
       expect(h.prisma.order.findFirst.mock.calls[0][0].where).toMatchObject({
         fulfillPath: "PICKUP",

@@ -21,8 +21,8 @@ import { addedRestrictionLinesWithHeld } from "./invoice-restriction-lines";
  * An invoice has no fulfil path of its own (L8, `sale-fulfilment.ts`): an order-linked invoice is judged at its order's
  * kind (`orderFulfilmentKind`), an order-less one at the kind the caller resolved (`defaultSaleFulfilmentKind`, passed as
  * `sale`), so a builder never assumes one. The actor is the staff user
- * (`undefined` for an internal caller, which can never override). `lineKey`: "n:<index>" for a payload entry,
- * "l:<lineId>" for an existing line the payload names or a source line being copied.
+ * (`undefined` for an internal caller, which can never override). `lineKey`: "n:<index>" for a payload entry (an edit keys
+ * a product on the entry it ADDS), "l:<lineId>" for an existing line the payload names or a source line being copied.
  */
 
 export { stampOverrideNames } from "../common/restriction-override-names";
@@ -96,8 +96,9 @@ export function whole(
 }
 
 /**
- * The DRAFT item edit: the netted lines (per product), each keyed by the FIRST payload entry of its product ("l:<id>" when
- * the entry names a kept line, else "n:<index>"), with the invoice's held lines for coverage.
+ * The DRAFT item edit: the netted lines (per product), each keyed by the first payload entry of its product that names no
+ * line, i.e. the line the edit adds ("n:<index>"); a product with no such entry is keyed by its first entry ("l:<id>" for a
+ * kept line, else "n:<index>"). The invoice's held lines ride along for coverage.
  */
 export function edit(
   tenant: string,
@@ -109,8 +110,10 @@ export function edit(
   ack: Ack,
   sale: Sale,
 ): SellableLinesArgs {
+  // The warning names what the user just added: the first entry of the product that names no line, else the first entry.
   const keyOf = (productId: string) => {
-    const i = items.findIndex((it) => it.productId === productId);
+    const added = items.findIndex((it) => it.productId === productId && !it.id);
+    const i = added >= 0 ? added : items.findIndex((it) => it.productId === productId);
     return items[i]?.id ? `l:${items[i].id}` : `n:${i}`;
   };
   return {

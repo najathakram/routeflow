@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   AlertTriangle,
   User,
   FileText,
@@ -16,7 +15,7 @@ import {
   Trash2,
   Calendar,
 } from "lucide-react";
-import { Badge, Button, Card, useToast, type BadgeStatus } from "@routeflow/ui/web";
+import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
 import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -35,7 +34,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
-import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
@@ -77,7 +76,8 @@ import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
 import { ActionTier } from "./_components/ActionTier";
-import { usePhoneWidth } from "./_components/use-phone-width";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
+import { useScrollAfterSave } from "./_components/use-scroll-after-save";
 import { phoneActionItems } from "./_components/phone-action-items";
 import { useInvoiceDraftNotice } from "./_components/use-invoice-draft-notice";
 import { SAVE_CHORD_KEYS, saveChordHandler } from "./_components/use-save-chord";
@@ -94,8 +94,9 @@ import {
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
-import { InvoicesNeedReviewBadge } from "./_components/InvoicesNeedReviewBadge";
-import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
+import { OrderStaffFlags } from "./_components/OrderStaffFlags";
+import { EditClosedChip } from "./_components/EditClosedChip";
+import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
@@ -105,7 +106,7 @@ import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authori
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -169,7 +170,6 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
-  const statusLabel = useOrderStatusLabel();
   const staffFulfilment = useStaffFulfilment();
   // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
   // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
@@ -267,7 +267,7 @@ export default function OrderDetailPage() {
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
   // apple-ux r4: phone width folds the action bar into one row + a More menu; Record return then opens from that menu.
-  const phone = usePhoneWidth();
+  const phone = useBelowBreakpoint("sm");
   const returnAvailable = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [returnOpen, setReturnOpen] = React.useState(false);
   const readOnlyGate = useReadOnlyGate();
@@ -311,6 +311,7 @@ export default function OrderDetailPage() {
 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
+  const { cardRef: linesCardRef, markSaved: markLinesSaved } = useScrollAfterSave(isEditing);
   const overpay = useOrderOverpayGuard(order, isEditing);
   const stale = useOrderStaleRevision(order, isEditing, (fresh, base) => {
     const n = rebaseOnReload(
@@ -658,6 +659,7 @@ export default function OrderDetailPage() {
     // the server default.
     saveLatchRef.current = true;
     const onSaved = () => {
+      markLinesSaved(); // r5 N10: bring the saved lines into view once the editor closes
       setIsEditing(false);
       setEditItems([]);
       setEditCredits([]);
@@ -766,13 +768,13 @@ export default function OrderDetailPage() {
       {
         // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
         onError: guardError(() => handleDeliver()),
-        onSuccess: () => {
+        onSuccess: (done: unknown) => {
           setLocalStatus("DELIVERED");
-          // #2089 (owner ruling): "automatically open the invoice, then ask if you
-          // want to send it" — offline is checked FIRST and unconditionally
-          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
-          // network call below, since a dropped connection right after delivery
-          // must read as "try again once synced," never as "no invoice."
+          routeHeldNotice(done, order.lineItems, toast); // row 590: lines the driver's figure holds
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you want to
+          // send it" — offline is checked FIRST and unconditionally (postDeliveryInvoicePrompt's
+          // own contract), before ever attempting the network call below, since a dropped
+          // connection right after delivery must read as "try again once synced," not "no invoice."
           if (
             postDeliveryInvoicePrompt({
               invoice: undefined,
@@ -983,18 +985,6 @@ export default function OrderDetailPage() {
 
   return (
     <div className="space-y-5 p-6">
-      {/* Back */}
-      <Link
-        href="/orders"
-        onClick={(e) => {
-          if (leaveGuard.requestLeave(() => router.push("/orders"))) e.preventDefault();
-        }}
-        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Orders
-      </Link>
-
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1012,7 +1002,7 @@ export default function OrderDetailPage() {
               status={localStatus as BadgeStatus}
               fulfillPath={order?.fulfillPath}
             />
-            <InvoicesNeedReviewBadge review={order.invoicesNeedReview} />
+            <OrderStaffFlags order={order} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
             <span>
@@ -1050,7 +1040,7 @@ export default function OrderDetailPage() {
           className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:[&>:not([data-tier])]:order-5"
         >
           {/* Edit Items button */}
-          {canEdit && access.editItems && !isEditing && (
+          {canEdit && !order?.editItemsLocked && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
               <WriteButton
                 size="sm"
@@ -1091,17 +1081,9 @@ export default function OrderDetailPage() {
               </ActionTier>
             ))}
 
-          {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
-              ("STATUS"); the buyer-facing window instead closes once dispatched
-              ("DISPATCHED") — see the canEdit comment above. Either reason shows here. */}
-          {!canEdit && order?.editWindow?.closedReason && !isEditing && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              {order.editWindow.closedReason === "DISPATCHED"
-                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
-                : "Order cancelled — editing closed"}
-            </span>
-          )}
+          <EditClosedChip show={!canEdit && !isEditing} order={order} />
 
+          <EditItemsLockedNote show={!!order?.editItemsLocked && access.editItems && !isEditing} />
           {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
           {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 
@@ -1420,7 +1402,11 @@ export default function OrderDetailPage() {
         {/* ── Main content ── */}
         <div className="space-y-5 lg:col-span-2">
           {/* Line items */}
-          <div className="rounded-lg bg-white p-6 shadow-card">
+          <div
+            ref={linesCardRef}
+            data-testid="order-line-items-card"
+            className="scroll-mt-16 rounded-lg bg-white p-6 shadow-card"
+          >
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
                 Line items
@@ -1647,6 +1633,7 @@ export default function OrderDetailPage() {
                     <>
                       <WriteButton
                         size="sm"
+                        className="min-h-11 sm:min-h-0"
                         onClick={handleSaveItems}
                         aria-keyshortcuts={SAVE_CHORD_KEYS}
                         disabled={layerBlocked}
@@ -1925,7 +1912,13 @@ export default function OrderDetailPage() {
                   <dd className="money text-navy">{formatMoney(shippingFee)}</dd>
                 </div>
               )}
-              <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
+              {/* r5 Q20: below lg the line-items footer carries the total (this card is stacked under the lines); edit mode has no footer. */}
+              <div
+                className={cn(
+                  "flex items-center justify-between gap-3 border-t border-surface-border pt-2.5",
+                  !isEditing && "max-lg:hidden",
+                )}
+              >
                 <dt className="font-semibold text-navy">
                   {isEditing ? "Saved total" : "Order total"}
                 </dt>

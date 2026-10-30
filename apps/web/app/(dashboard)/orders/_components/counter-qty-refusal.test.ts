@@ -45,6 +45,15 @@ describe("qtyRefusalMessage (CQ-12)", () => {
     expect(qtyRefusalMessage(" 12 ", "boxes")).toBeNull();
   });
 
+  it("a quantity over the 100,000 cap is refused with copy that names it (W-833)", () => {
+    expect(setLineQty(plain, { qty: "100000" })).not.toBeNull();
+    expect(setLineQty(plain, { qty: "100001" })).toBeNull();
+    expect(qtyRefusalMessage("100001", "qty")).toBe(QTY_TOO_LARGE_COPY);
+    expect(QTY_TOO_LARGE_COPY).toContain("100,000");
+    expect(setLineQty({ ...boxed, pieces: 0 }, { boxes: "100001" })).toBeNull();
+    expect(qtyRefusalMessage("100001", "boxes")).toBe(QTY_TOO_LARGE_COPY);
+  });
+
   it("explains exactly the texts setLineQty refuses (and none it accepts would reach it)", () => {
     for (const text of ["0", "-2", "abc", "", "1.5", " ", "1e3"]) {
       expect(setLineQty(plain, { qty: text })).toBeNull();

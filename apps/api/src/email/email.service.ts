@@ -21,6 +21,8 @@ import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // shared with the email too — one formatter, never a second copy of the same
 // boxes/pieces/unitLabel display logic.
 import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
+import { baseUnitSuffix, formatPerBaseUnitPrice, type PerBaseUnitPrice } from "@routeflow/pricing";
+import { sellerDisplayName } from "../common/seller-display-name";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -682,7 +684,7 @@ export class EmailService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return "RouteFlow";
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    return cfg?.businessName ?? "RouteFlow";
+    return sellerDisplayName(cfg, null, "RouteFlow");
   }
 
   // ─── Transactional From-identity (Resend) ──────────────────────────────────
@@ -1102,6 +1104,8 @@ export class EmailService {
       priceType?: string | null;
       /** BUY_N_GET_M free units on this line — null/0 renders no note. */
       promoFreeUnits?: number | null;
+      /** SA-1029: per-piece price beside a pack line (display only) — null/undefined renders nothing. */
+      perBaseUnit?: PerBaseUnitPrice | null;
       /** units_v1/boxed split (B653) — null/null renders the bare `qty`, unchanged. */
       boxes?: number | null;
       pieces?: number | null;
@@ -1644,6 +1648,8 @@ export class EmailService {
         priceType?: string | null;
         /** BUY_N_GET_M free units on this line — null/0 renders no note. */
         promoFreeUnits?: number | null;
+        /** SA-1029: per-piece price beside a pack line (display only). */
+        perBaseUnit?: PerBaseUnitPrice | null;
         /** units_v1/boxed split (B653) — null/null renders the bare `qty`, unchanged. */
         boxes?: number | null;
         pieces?: number | null;
@@ -1667,6 +1673,7 @@ export class EmailService {
     const fmt = (n: number) =>
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
+    const showPerPiece = params.items.some((i) => !!i.perBaseUnit);
     const itemRows = params.items
       .map((it) => {
         // F03/R9 — mirrors the web invoice detail renderer and the PDF: name the
@@ -1692,9 +1699,14 @@ export class EmailService {
               : ""
           }${fmt(it.unitPrice)}${
             it.msrp != null
-              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/pc</div>`
+              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/${escapeHtml(baseUnitSuffix(it.perBaseUnit))}</div>`
               : ""
-          }</td>
+          }</td>${
+            showPerPiece
+              ? `
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:right;">${it.perBaseUnit ? escapeHtml(formatPerBaseUnitPrice(it.perBaseUnit)) : ""}</td>`
+              : ""
+          }
           <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:right;font-weight:600;">${fmt(it.subtotal)}</td>
         </tr>`;
       })
@@ -1730,10 +1742,11 @@ export class EmailService {
     // reminder that is the whole point of the fix (B102). Callers that haven't
     // been updated yet (balanceDue undefined) keep the pre-F03 single
     // "Amount Due" = total row.
+    const footSpan = showPerPiece ? 4 : 3;
     const amountPaidRow =
       params.totalPaid != null && params.totalPaid > 0
         ? `<tr>
-                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#16a34a;text-align:right;">Amount Paid</td>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#16a34a;text-align:right;">Amount Paid</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#16a34a;text-align:right;">${fmt(params.totalPaid)}</td>
               </tr>`
         : "";
@@ -1747,14 +1760,14 @@ export class EmailService {
     const creditAppliedRow =
       params.creditApplied != null && params.creditApplied > 0
         ? `<tr>
-                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(creditNoteLabel)}</td>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(creditNoteLabel)}</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.creditApplied)}</td>
               </tr>`
         : "";
     const advanceAppliedRow =
       params.advanceApplied != null && params.advanceApplied > 0
         ? `<tr>
-                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Advance applied</td>
+                <td colspan="${footSpan}" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">Advance applied</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.advanceApplied)}</td>
               </tr>`
         : "";
@@ -1762,11 +1775,11 @@ export class EmailService {
       params.balanceDue != null
         ? `${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}
               <tr style="background:#f9fafb;">
-                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
+                <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
         : `<tr style="background:#f9fafb;">
-                <td colspan="3" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
+                <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
 
@@ -1812,7 +1825,12 @@ export class EmailService {
               <tr style="background:#f9fafb;">
                 <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:left;text-transform:uppercase;letter-spacing:0.5px;">Item</th>
                 <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:center;text-transform:uppercase;letter-spacing:0.5px;">Qty</th>
-                <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:0.5px;">Price</th>
+                <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:0.5px;">Price</th>${
+                  showPerPiece
+                    ? `
+                <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:0.5px;">Per piece</th>`
+                    : ""
+                }
                 <th style="padding:10px 12px;font-size:12px;font-weight:600;color:#6b7280;text-align:right;text-transform:uppercase;letter-spacing:0.5px;">Total</th>
               </tr>
             </thead>
@@ -1863,7 +1881,7 @@ export class EmailService {
       params.items
         .map((it) => {
           const freeUnits = it.promoFreeUnits != null ? Number(it.promoFreeUnits) : 0;
-          return `${it.description} — qty ${qtyCellText(it)}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)} = ${fmt(it.subtotal)}`;
+          return `${it.description} — qty ${qtyCellText(it)}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)}${it.perBaseUnit ? ` (${formatPerBaseUnitPrice(it.perBaseUnit)})` : ""} = ${fmt(it.subtotal)}`;
         })
         .join("\n"),
     );

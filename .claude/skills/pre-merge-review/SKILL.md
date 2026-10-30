@@ -12,7 +12,7 @@ differently-filtered line sets — drivers over-collecting cash). PR #711 read R
 1,012 lines of engine scratch at the repo root and 19 commits authored by a test identity, about
 to land on a public master. Neither lane could see its own blind spot. This gate exists for that.
 
-## Model routing (owner ruling 2026-09-13 — Fable never implements)
+## Model routing (owner rulings 2026-09-13 + 2026-10-15 — the decider never implements; Fable is not used)
 
 | Step                        | Model · effort      | Why                                                                   |
 | --------------------------- | ------------------- | --------------------------------------------------------------------- |
@@ -23,7 +23,7 @@ to land on a public master. Neither lane could see its own blind spot. This gate
 | Re-review of the delta      | **Opus** · high     | delta only, never the whole PR again                                  |
 | Docs-only PRs               | lead reads the diff | an adversarial pass on docs is theatre                                |
 
-Never Fable for any step. Never the lane's own in-lane reviewer for the verdict — independence
+Opus (alias `opus`) for every verdict and design step; Fable is not used. Never the lane's own in-lane reviewer for the verdict — independence
 is the entire point.
 
 ## Procedure
@@ -80,6 +80,7 @@ re-finds what the lane already found. Always include:
    - A **second lock** layered on `withAdvisoryLock`, or a transaction threaded into
      `updateOrderItems`?
    - For a seam: are the two halves of any computed amount fed from **the same filtered set**?
+     3b. **Radius.** Embed the review-pack radius for every changed export. An unaddressed grep-only caller of a changed contract is a FAIL. Label post-sha symbols.
 4. **Scope discipline for the reviewer**: hard cap ~12 tool calls; work from the diff and the
    files it touches; no repo-wide exploration; no style/formatting findings; report only what
    would hold the merge or that an approver must know.
@@ -95,6 +96,9 @@ One `Agent` call, `model: opus`, `effort: high`, `subagent_type: general-purpose
 above. **Never the lane's own session**, never a reviewer that already reviewed this branch.
 Two PRs → two agents in one message, in parallel.
 
+**DARK until the flip (R5):** the dispatch count is `node scripts/review-tier.mjs` (tier 1 = two
+independent PASSes, tier 2 = one). Record its line next to the hand tier; keep tiering by hand.
+
 ### 4. Record the verdict where merges are decided
 
 Write it on the PR's row in the merge queue (`local-assets/handoff/<date>/MERGE-QUEUE.md`):
@@ -106,6 +110,10 @@ hygiene the owner lane clears before the window; otherwise it is a BLOCK.
 
 - The **owning lane** fixes it — red-first test for the finding, Sonnet fix, **one** in-lane
   Opus refute of the delta. Not the reviewer, not the lead.
+- **DARK until the flip (R5):** label each finding **MECH** (format, commit subject or trailer,
+  comment typo, import order) or **MUST**; label only while dark, the delta re-read below is still
+  dispatched. For each MUST the builder replies **ACCEPT** (fixed at sha) or **REJECT** (reason
+  plus evidence); a REJECT goes to the same reviewer's delta read, which holds or withdraws it.
 - Then the lead dispatches an **independent re-review of the delta only** (`git diff
 <verdict-sha>..HEAD`), same model, a brief that quotes the original finding and asks: is it
   closed, and did the fix introduce anything? Never re-review the whole PR.
@@ -115,10 +123,29 @@ hygiene the owner lane clears before the window; otherwise it is a BLOCK.
   force-push (a branch push is not a merge and is not covered by any merge freeze); re-verify
   with the step-1 commands, no agent needed.
 
+### 5b. After the merge — the registry is part of "done" (owner ruling 2026-09-13)
+
+A fix is not finished when it merges; it is finished when the registry says so. Within the same
+window as the merge (or in the Option B follow-up PR at the latest):
+
+- every registry row the PR fixes: `node scripts/campaign/bugs.mjs prove B### --pr <n>` — from a
+  master-current tree, via the CLI, never a hand-edited `state:`;
+- every fix the PR shipped that has NO row yet (neutral tags like `TRIAL-1`): the sole minter
+  files it **as fixed, citing the PR**, not as queued — a fix without a row is invisible to the
+  next audit;
+- rows the PR _claimed_ but did not fix: release the claim (back to `queued`, with a note).
+  The lead checks this on the next PR from the same lane; a lane with unproven merged fixes does
+  not get its next PR reviewed until the rows are current. Periodic reconciliation (a worker
+  auditing every open row against master for fixes that already landed — batch F49 found 31,
+  #693 fixed two nobody proved) is a standing task, not a one-off.
+
 ### 6. Gate semantics
 
 - No PR enters block A without a recorded verdict of CLEAN or cleared MERGE-WITH-NOTES.
 - A verdict is per-HEAD. New commits after the verdict → re-review the delta.
+  **DARK until the flip (R5):** run `node scripts/review-delta.mjs <verdict-sha> <head-sha>`; record
+  the `review-delta` line beside the verdict; still dispatch the delta re-read; the flip compares
+  the two. A carry still needs green CI at the new head.
 - The independent pass **replaces** in-lane rounds 2 and 3, it does not add to them: the
   house standard is one in-lane refute + one independent verdict. Four Opus passes where two do
   better is the cost the owner cut on 2026-09-13.
