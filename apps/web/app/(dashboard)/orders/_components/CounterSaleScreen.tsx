@@ -140,6 +140,23 @@ import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
+import {
+  CounterPartPayCreditError,
+  CounterPartPayField,
+  CounterPartPaySplit,
+} from "./CounterPartPay";
+import { useCounterCustomerCredit } from "@/lib/api/counter-customer-credit";
+import { useCounterTenderDefault } from "./useCounterTenderDefault";
+import {
+  isPartPayProblemCopy,
+  counterPaymentAmount,
+  partPayAmountProblem,
+  partPaySplit,
+  partPayEqualsTotal,
+  creditMayApply,
+  isPartPayExceedsTotal,
+  PART_PAY_FULL_COPY,
+} from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
 interface PickedCustomer {
@@ -177,7 +194,7 @@ export function CounterSaleScreen() {
   const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
   // POS-5 / SA-762r: the ONE price-edit gate (operator + admin). False = no price control exists on the screen.
-  const mayEditPrices = staffMay(authUser?.role, "EDIT_LINE_PRICE");
+  const mayEditPrices = staffMay(authUser?.role, "EDIT_LINE_PRICE", gate.deniedGroups ?? []);
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
   const liveKey = liveCartKey(authUser?.tenantSlug, authUser?.id);
@@ -226,6 +243,21 @@ export function CounterSaleScreen() {
   const [lastSale, setLastSale] = useLastSaleNote(lines.length); // CQ-17: the order "Complete & next" just finished
   const [scanText, setScanText] = React.useState("");
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
+  // SA-933: the customer's terms set the default tender until the tender is decided (the clerk, or any restored sale).
+  const tenderDefault = useCounterTenderDefault({
+    customerId: customer && !customer.isWalkIn ? customer.id : null,
+    setMethod,
+  });
+  const decideTender = tenderDefault.decide;
+  const resetTenderDefault = tenderDefault.reset;
+  const defaultTender = tenderDefault.defaultTender;
+  const chooseMethod = (m: CounterSalePaymentMethod) => {
+    decideTender(); // the clerk's own choice: the default never overrides it
+    // The tender is shared across methods: a cash amount typed for another method must not arrive in the Amount paying now
+    // field as a silent part payment. Blank is a full payment. (Restores set the method directly and keep what was saved.)
+    if (m !== method && (m === "CHECK" || m === "CARD")) setTendered("");
+    setMethod(m);
+  };
   const [tendered, setTendered] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [checkDate, setCheckDate] = React.useState(""); // "" = today (the business's day)
@@ -259,12 +291,13 @@ export function CounterSaleScreen() {
     setLines(held.lines as SaleLine[]);
     setCustomer((held.customer as PickedCustomer | null) ?? null);
     restoreBuyer((held.customer as PickedCustomer | null) ?? null, true); // that sale was already sent: its buyer was chosen
+    decideTender(); // a held sale keeps the tender it was sent with
     setMethod(held.method as CounterSalePaymentMethod);
     setTendered(held.tendered ?? "");
     setReference(held.reference ?? "");
     setCheckDate(isCalendarDay(held.checkDate) ? held.checkDate : "");
     setOutcomeUnknown(true);
-  }, [heldKey, restoreBuyer]);
+  }, [heldKey, restoreBuyer, decideTender]);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   // While a walk-in sale waits for the customer to ship to, the customer field keeps focus instead.
   const { refocus, focusCustomerFind, refocusFromActive } = useCounterScanFocus({
@@ -300,8 +333,11 @@ export function CounterSaleScreen() {
       setLines(snap.lines as SaleLine[]);
       setCustomer((snap.customer as PickedCustomer | null) ?? null);
       buyerChoice.restore((snap.customer as PickedCustomer | null) ?? null, snap.walkIn === true);
+      decideTender(); // a refreshed cart keeps the tender it was saved with
       setMethod(snap.method as CounterSalePaymentMethod);
-      // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total.
+      // The cash is not restored: prices may have moved since it was tapped, so it is entered against today's total. A
+      // check or card PART amount is the clerk's stated figure, so it comes back (blank = a full payment).
+      if (snap.method === "CHECK" || snap.method === "CARD") setTendered(snap.tendered);
       setReference(snap.reference);
       setCheckDate(snap.checkDate ?? "");
     },
@@ -450,6 +486,8 @@ export function CounterSaleScreen() {
   }, [receipt, refocus]);
 
   const isWalkIn = customer === null;
+  // SA-933 S4: the tenant's walk-in customer RECORD is a walk-in to the server too (it holds the sale to the full total).
+  const walkInBuyer = isWalkIn || customer?.isWalkIn === true;
   // SA-1026: the choice belongs to Check with a named customer; any other tender, or no account, drops it
   const noAccount = !customer || !!customer.isWalkIn;
   React.useEffect(() => {
@@ -500,6 +538,16 @@ export function CounterSaleScreen() {
   const namedCustomer = customer !== null && !customer.isWalkIn;
   const ret = useCounterInlineReturn(totals.total, namedCustomer, setError);
   const payTotal = ret.payTotal;
+  // the server owns what credit it applies: the same shared statement read the customer panel uses
+  const { view: creditView, retryCredit } = useCounterCustomerCredit(
+    customer && !customer.isWalkIn ? customer.id : null,
+  );
+  const partSplit = partPaySplit({
+    method: resolveTender(method, checkNotReceived).method,
+    isWalkIn: walkInBuyer,
+    total: payTotal,
+    tendered: tenderedNum,
+  }); // S4: "Pay $X now · $Y goes on account" while an identified customer's tender is short
 
   const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: customerSearch.trim() || undefined,
@@ -686,7 +734,7 @@ export function CounterSaleScreen() {
     );
   // R7b 1.2 (b): the tender methods are a WAI-ARIA radiogroup: Left/Right (and Up/Down) move to the next enabled method.
   // The radiogroup always has ONE tab stop: the checked method, or the first enabled one when the checked one is disabled.
-  const tenderOptions = paymentMethodOptions(isWalkIn);
+  const tenderOptions = paymentMethodOptions(isWalkIn, defaultTender);
   const tabStopMethod = (
     tenderOptions.find((m) => m.method === method && !m.disabled) ??
     tenderOptions.find((m) => !m.disabled)
@@ -699,7 +747,7 @@ export function CounterSaleScreen() {
           ? -1
           : 0;
     if (!dir || locked) return;
-    const options = paymentMethodOptions(isWalkIn).filter((m) => !m.disabled);
+    const options = tenderOptions.filter((m) => !m.disabled);
     // movement starts from the tab stop (the checked method, or the first enabled one when that is disabled), wrapping
     const at = Math.max(
       0,
@@ -708,7 +756,7 @@ export function CounterSaleScreen() {
     const next = options[(at + dir + options.length) % options.length];
     if (!next) return;
     e.preventDefault();
-    setMethod(next.method);
+    chooseMethod(next.method);
     focusPaymentControl(
       e.currentTarget.querySelector<HTMLButtonElement>(`[data-method="${next.method}"]`),
     );
@@ -826,6 +874,7 @@ export function CounterSaleScreen() {
     setLines([]);
     setScanText("");
     scan.reset();
+    resetTenderDefault();
     setMethod("CASH");
     setTendered("");
     setReference("");
@@ -853,6 +902,7 @@ export function CounterSaleScreen() {
     setLines(p.lines as SaleLine[]);
     setCustomer(p.customer as PickedCustomer | null);
     buyerChoice.restore(p.customer as PickedCustomer | null, p.walkIn === true);
+    decideTender(); // after resetSale: a resumed parked sale keeps the tender it was parked with
     setMethod(p.method as CounterSalePaymentMethod);
     setTendered(p.tendered);
     setReference(p.reference);
@@ -878,6 +928,8 @@ export function CounterSaleScreen() {
       const sent = await createSale.mutateAsync({ dto: attempt.dto, idempotencyKey: attempt.key });
       // The method the cashier chose, if the server's answer does not echo it (captured before the screen resets).
       const res = { ...sent, method: sent.method ?? attempt.dto.payment.method };
+      // SA-998: the server's own sweep left less due than the screen's read said (a note changed in between): re-read the credit.
+      if (isPartPayExceedsTotal(res)) void retryCredit();
       attemptRef.current = null;
       offlineKeyRef.current = null;
       clearHeldAttempt(heldKey);
@@ -972,12 +1024,29 @@ export function CounterSaleScreen() {
     const inlineReturn = customer ? ret.prepare(customer.id) : undefined;
     if (inlineReturn === null) return null;
     const tender = resolveTender(method, checkNotReceived);
+    const partPayProblem = partPayAmountProblem({
+      method: tender.method,
+      isWalkIn: walkInBuyer,
+      tendered,
+      total: payTotal,
+      autoApplyCredit:
+        creditView.autoApplyCredit.state === "ready"
+          ? creditView.autoApplyCredit.value
+          : creditView.autoApplyCredit.state === "failed"
+            ? "failed"
+            : null,
+    });
+    if (partPayProblem) {
+      setError(partPayProblem);
+      setTenderFix((n) => n + 1); // focus the Amount paying now field
+      return null;
+    }
     const problem = validatePayment({
       method: tender.method,
       total: payTotal,
       tendered: tenderedNum,
       reference,
-      isWalkIn,
+      isWalkIn: walkInBuyer,
     });
     if (problem) {
       // B1181: On account is refused for a walk-in, so it can no longer be the checked tender (its radio is disabled): fall
@@ -1017,7 +1086,12 @@ export function CounterSaleScreen() {
       items: lines.map(toSaleItem),
       payment: {
         ...tender,
-        ...(tender.method === "CASH" ? { amount: tenderAmount } : {}),
+        ...counterPaymentAmount({
+          method: tender.method,
+          isWalkIn: walkInBuyer,
+          total: payTotal,
+          tendered: tenderedNum,
+        }),
         // SA-1026: "Check not received yet" sends no number: a typed one is dropped, never deduped
         ...(reference.trim() && !tender.expectedMethod ? { reference: reference.trim() } : {}),
         ...(tender.method === "CHECK" && submitCheckDate ? { checkDate: submitCheckDate } : {}),
@@ -1583,7 +1657,7 @@ export function CounterSaleScreen() {
               data-testid="counter-tender-methods"
               onKeyDown={onTenderKeyDown}
             >
-              {paymentMethodOptions(isWalkIn).map((m) => (
+              {tenderOptions.map((m) => (
                 <button
                   key={m.method}
                   type="button"
@@ -1598,7 +1672,7 @@ export function CounterSaleScreen() {
                     method === m.method && "border-brand-600 bg-brand-50 font-semibold",
                   )}
                   onClick={(e) => {
-                    setMethod(m.method);
+                    chooseMethod(m.method);
                     refocusAfterPointer(e);
                   }}
                 >
@@ -1617,6 +1691,7 @@ export function CounterSaleScreen() {
                       disabled={q.disabled || locked}
                       className={cn(TAP_TARGET, "rounded border px-3 text-sm disabled:opacity-40")}
                       onClick={(e) => {
+                        decideTender(); // cash is in the drawer: a late terms read must not flip the sale
                         setTendered(String(q.amount));
                         clearUnderpaidError();
                         refocusAfterPointer(e);
@@ -1636,6 +1711,7 @@ export function CounterSaleScreen() {
                     value={tendered}
                     disabled={locked}
                     onChange={(e) => {
+                      decideTender(); // cash is in the drawer: a late terms read must not flip the sale
                       setTendered(e.target.value);
                       clearUnderpaidError();
                     }}
@@ -1664,13 +1740,32 @@ export function CounterSaleScreen() {
                 notReceived={checkNotReceived}
                 onNotReceivedChange={onNotReceivedChange}
                 onPutOnAccount={() => {
-                  setMethod("ON_ACCOUNT");
+                  chooseMethod("ON_ACCOUNT");
                   setError("");
                   focusPaymentControl(
                     document.querySelector<HTMLElement>('[data-method="ON_ACCOUNT"]'),
                   );
                 }}
               />
+            ) : null}
+
+            {(method === "CHECK" || method === "CARD") && !walkInBuyer ? (
+              <>
+                <CounterPartPayField
+                  value={tendered}
+                  onChange={(v) => {
+                    setTendered(v);
+                    clearUnderpaidError();
+                    setError((e) => (isPartPayProblemCopy(e) ? "" : e));
+                  }}
+                  disabled={locked}
+                  inputRef={tenderRef}
+                  onEnter={() => void completeSale(false)}
+                />
+                {creditView.autoApplyCredit.state === "failed" ? (
+                  <CounterPartPayCreditError onRetry={retryCredit} />
+                ) : null}
+              </>
             ) : null}
           </section>
 
@@ -1870,6 +1965,23 @@ export function CounterSaleScreen() {
             {ret.storeCredit > 0 ? (
               <p className="text-sm font-semibold text-navy" data-testid="return-store-credit">
                 Store credit {money(ret.storeCredit)}
+              </p>
+            ) : null}
+
+            {partSplit ? (
+              <CounterPartPaySplit
+                split={partSplit}
+                creditMayApply={creditMayApply(creditView.autoApplyCredit)}
+              />
+            ) : null}
+            {partPayEqualsTotal({
+              method: resolveTender(method, checkNotReceived).method,
+              isWalkIn: walkInBuyer,
+              total: payTotal,
+              tendered: tenderedNum,
+            }) ? (
+              <p className="text-sm text-muted-foreground" data-testid="counter-part-pay-full">
+                {PART_PAY_FULL_COPY}
               </p>
             ) : null}
 

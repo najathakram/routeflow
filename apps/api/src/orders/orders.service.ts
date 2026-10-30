@@ -104,7 +104,7 @@ import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
-import { assertMayUseTill } from "./counter-sale/till-permission.guard";
+import { assertMayUseTill, posModeDeniedGroups } from "./counter-sale/till-permission.guard";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -1375,7 +1375,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (orderDate && !options.skipAutoMerge && !options.separateOnce) {
       await assertNoBackdatedMerge(this, customerId, {
         explicit: dto.fulfillPath,
-        ...fulfilCaller(user),
+        ...fulfilCaller(user, await posModeDeniedGroups(this.prisma, user, dto.fulfillPath)), // W-870
       });
     }
 
@@ -1419,7 +1419,7 @@ export class OrdersService implements OnApplicationBootstrap {
       (await resolveFulfilPath(this.fulfilDeps(), {
         explicit: dto.fulfillPath,
         stored: customerRecord?.fulfillPath,
-        ...fulfilCaller(user),
+        ...fulfilCaller(user, await posModeDeniedGroups(this.prisma, user, dto.fulfillPath)), // W-870
       }));
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the

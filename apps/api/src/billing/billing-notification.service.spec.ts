@@ -310,13 +310,13 @@ describe("BillingNotificationService", () => {
       ]);
     });
 
-    it("the admin query filters status ACTIVE, role TENANT_ADMIN, deletedAt null, ordered by createdAt asc", async () => {
+    it("the admin query filters status ACTIVE, role TENANT_ADMIN, deletedAt null, ordered by createdAt asc then id", async () => {
       const { svc, prisma } = makeService();
       await svc.notifyCancelled("t1");
       expect(prisma.user.findMany).toHaveBeenCalledWith({
         where: { tenantId: "t1", role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
         select: { email: true, username: true },
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
     });
   });

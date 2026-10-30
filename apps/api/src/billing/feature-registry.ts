@@ -1360,6 +1360,40 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       },
     },
   },
+  {
+    key: "promotions",
+    nature: { purpose: "business", category: "what_it_sells" },
+    keywords: ["promotion", "promo", "bogo", "buy one get one", "sale price"],
+    kind: "boolean",
+    area: "routes",
+    label: "Promotions",
+    description:
+      "Lets this business run promotions. Off stops new orders pricing them; past orders keep what they were charged.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-27",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // SA-1032: no row (or "on") keeps today's behavior; "off" stops new pricing and edits only.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        on: { label: "On", available: true, lifecycle: "ga", settings: [] },
+        off: { label: "Off", available: true, lifecycle: "ga", settings: [] },
+      },
+    },
+  },
 ];
 
 // ── Derived: byte-identical projection of today's ADDON_GATE_REGISTRY. ─────────────────────────

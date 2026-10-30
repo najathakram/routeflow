@@ -46,6 +46,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
     mergeAllPendingForCustomer: jest.Mock;
     findOne: jest.Mock;
     create: jest.Mock;
+    prisma: { user: { findFirst: jest.Mock } };
   };
 
   const activeOrder = {
@@ -69,6 +70,14 @@ describe("OrdersController — merge choice vs orderDate", () => {
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
       findOne: jest.fn().mockResolvedValue(activeOrder),
       create: jest.fn().mockResolvedValue({ id: "ord-new", customerId: "cust-1" }),
+      // W-870: a PICKUP request reads the operator's denied groups (none denied here)
+      prisma: {
+        user: {
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }),
+        },
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -198,7 +207,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
     for (const [, opts] of calls)
       expect(opts).toEqual({
         forMerge: true,
-        mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR" },
+        mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR", deniedGroups: [] },
       });
   });
 
@@ -218,17 +227,17 @@ describe("OrdersController — merge choice vs orderDate", () => {
     await controller.getActiveOrderForCustomer("cust-1", "SHIP", operatorPayload);
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR" },
+      mergeAs: { explicit: "SHIP", audience: "staff", role: "OPERATOR", deniedGroups: [] },
     });
     await controller.getActiveOrderForCustomer("cust-1", undefined, operatorPayload);
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR" },
+      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR", deniedGroups: [] },
     });
     await controller.getActiveOrderForCustomer("cust-1", "garbage", operatorPayload);
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR" },
+      mergeAs: { explicit: undefined, audience: "staff", role: "OPERATOR", deniedGroups: [] },
     });
   });
   it("POS mode: the pre-resolve and the in-lock re-read carry an explicit PICKUP with the caller's role", async () => {
@@ -241,23 +250,27 @@ describe("OrdersController — merge choice vs orderDate", () => {
           mergeChoice: "merge",
           fulfillPath: "PICKUP",
         } as any,
-        { ...operatorPayload, role } as JwtPayload,
+        // W-870: a PICKUP request reads the operator's permissions, which are tenant-scoped
+        { ...operatorPayload, role, tenantId: "t-1" } as JwtPayload,
       );
       const calls = ordersService.findActiveOrder.mock.calls;
       expect(calls.length).toBeGreaterThanOrEqual(2);
       for (const [, opts] of calls)
         expect(opts).toEqual({
           forMerge: true,
-          mergeAs: { explicit: "PICKUP", audience: "staff", role },
+          mergeAs: { explicit: "PICKUP", audience: "staff", role, deniedGroups: [] },
         });
     }
   });
 
   it("POS mode: GET /orders/active accepts PICKUP for staff, so the preview and the create pick one target", async () => {
-    await controller.getActiveOrderForCustomer("cust-1", "PICKUP", operatorPayload);
+    await controller.getActiveOrderForCustomer("cust-1", "PICKUP", {
+      ...operatorPayload,
+      tenantId: "t-1", // W-870: the PICKUP permission read is tenant-scoped
+    });
     expect(ordersService.findActiveOrder).toHaveBeenLastCalledWith("cust-1", {
       forMerge: true,
-      mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR" },
+      mergeAs: { explicit: "PICKUP", audience: "staff", role: "OPERATOR", deniedGroups: [] },
     });
   });
 

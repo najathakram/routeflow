@@ -264,6 +264,7 @@ for the right reason. Method, anti-vacuity rules and Playwright house rules: [TE
    names no package, or a cycle, is a `(build-plan)` blocker. Test and implementation packages resolve `dependsOn`
    in ONE namespace now — the engine's `tasks[]` graph (S7) has no separate test/implementation id space; each task
    owns both its `tests[]` and its `files[]`. Size packages so no wave has a single long-pole package.
+   The S3/S4 output (slices, files, `testIds`, `dependsOn`, EARS criteria) may also be written as a `docs/plans/<slug>.plan.json` (see `docs/plans/README.md`; `node scripts/plan.mjs --check`). The engine reading it directly is deferred until R7-d owns `pipeline.js`.
 3. **Every package declares `satisfies:` (R#s) and `provenBy:` (T#s)**, with **exact code for the tricky parts** — 20
    hard lines from the planner beat Sonnet guessing. Per-package `effort` is omitted (= `medium`) except `high` for the
    money/tenancy/auth package; `model` upgrades only the one risky package.
@@ -274,6 +275,7 @@ for the right reason. Method, anti-vacuity rules and Playwright house rules: [TE
    red gate's whole job is that every test in scope fails.
 6. Pass `lessonsPath` (the project's `.claude/lessons/LESSONS.md`), `startedAt` (an ISO timestamp taken at launch)
    and `runDir` (the run's absolute artifact directory — enables per-phase checkpoints and the `result.json` summary).
+
 7. **Transcription split (2026-09-10):** Opus writes the decisions of S4 and S5 — the `R#`→`T#` matrix with each
    oracle's concrete value, the package boundaries with file ownership, the hard lines, the tiered commands — as a
    compact ruling (≤ 12 KB across both). A Sonnet `medium` agent expands that ruling into the full

@@ -1,4 +1,5 @@
 import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "./pricing";
+import { heldSnapshotPrices } from "./held-level";
 import {
   baseLabelOf,
   defaultSellingLabel,
@@ -30,6 +31,8 @@ export interface LadderOption {
    * (computeLineSubtotal proration), so `price` is a DISPLAY figure — never qty x price.
    */
   derived?: { n: number; packPrice: number; exact: boolean };
+  /** SA-1044: a gone-or-resized held line's own snapshot (`heldSnapshotOption`); its label already names the size. */
+  held?: true;
 }
 
 /**
@@ -125,6 +128,39 @@ export function buildLadderOptions(
   return options;
 }
 
+/**
+ * SA-1044 rule 4: the option a gone-or-resized held line shows — its OWN snapshot (label, size, price), never the live
+ * level of that name, so the line cannot silently take the new size. "Case of 100 (as ordered)".
+ */
+export function heldSnapshotOption(held: {
+  unitLabel: string;
+  unitsPerBox: number;
+  unitPrice: number;
+  listPrice?: number | null;
+}): LadderOption {
+  const n = held.unitsPerBox;
+  const { tierPrice, listPrice } = heldSnapshotPrices({
+    unitPrice: held.unitPrice,
+    originalPrice: held.listPrice,
+  });
+  return {
+    value: held.unitLabel,
+    label: `${held.unitLabel} of ${n} (as ordered)`,
+    factorToBase: n,
+    kind: n === 1 ? "piece" : "level",
+    price: tierPrice,
+    listPrice,
+    held: true,
+  };
+}
+
+/** `options` with `held` in place of the option of the same label (or after the rest when the ladder no longer names it). */
+export function withHeldOption<T extends LadderOption>(options: readonly T[], held: T | null): T[] {
+  if (!held) return [...options];
+  const i = options.findIndex((o) => norm(o.value) === norm(held.value));
+  return i === -1 ? [...options, held] : options.map((o, j) => (j === i ? held : o));
+}
+
 /** The value the picker starts on: the level flagged `isDefaultSelling` that the picker actually offers, else the pack (`""`). */
 export function defaultLadderOptionValue(
   product: LadderProduct,
@@ -157,7 +193,7 @@ export function ladderOptionDetail(
   fmtMoney: (n: number) => string,
   fmtQty: (n: number) => string,
 ): string {
-  const pcs = o.factorToBase === 1 ? "" : `${fmtQty(o.factorToBase)} pcs · `;
+  const pcs = o.factorToBase === 1 || o.held ? "" : `${fmtQty(o.factorToBase)} pcs · `;
   return `${pcs}${ladderOptionPriceText(o, fmtMoney)}`;
 }
 

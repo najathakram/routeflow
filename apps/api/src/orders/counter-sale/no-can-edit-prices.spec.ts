@@ -39,6 +39,6 @@ describe("no canEditPrices is defined anywhere (SA-762r)", () => {
 
   it("the counter passes through staffMay", () => {
     const src = readFileSync(join(__dirname, "counter-sale.service.ts"), "utf8");
-    expect(src).toContain('staffMay(user.role, "EDIT_LINE_PRICE", [])');
+    expect(src).toMatch(/staffMay\(\s*user\.role,\s*"EDIT_LINE_PRICE",/);
   });
 });
