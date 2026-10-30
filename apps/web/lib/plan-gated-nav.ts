@@ -1,4 +1,4 @@
-import type { FlagKey } from "@routeflow/types";
+import { promotionsOn, type FlagKey } from "@routeflow/types";
 
 /**
  * Lite-L2 (WP7): the web sidebar hrefs gated behind a plan feature flag — a subset of
@@ -39,20 +39,24 @@ export function matchPlanGatedRoute(pathname: string): FlagKey | null {
 }
 
 /**
- * SA-1032: sidebar / command-palette hrefs hidden while a back-office config mode reads a given
- * value — `{ href: [modeKey, hiddenWhen] }`. Modes come from `GET /tenants/me/features`; an unset
- * mode or an unloaded answer keeps the entry (today's behaviour). The server refuses writes.
+ * SA-1032: sidebar / command-palette hrefs hidden while a back-office config mode is off —
+ * `{ href: [modeKey, isOn] }`. `isOn` is the mode's shared predicate (SA-070, SA-1032 rule 3: one
+ * predicate in one place), or an inline `(m) => m !== "<hiddenWhen>"` where none exists. Modes come
+ * from `GET /tenants/me/features`; an unloaded answer keeps the entry (today's behaviour). The
+ * server refuses writes.
  */
-export const MODE_GATED_NAV: Readonly<Record<string, readonly [string, string]>> = {
-  "/promotions": ["promotions", "off"],
+export const MODE_GATED_NAV: Readonly<
+  Record<string, readonly [string, (mode: string | undefined) => boolean]>
+> = {
+  "/promotions": ["promotions", promotionsOn],
 };
 
-/** False only when `href` is mode-gated and the tenant's mode equals its hiding value. */
+/** False only when `href` is mode-gated and its predicate says the tenant's mode is off. */
 export function modeGatedVisible(
   href: string,
   modes: Readonly<Record<string, string>> | null | undefined,
 ): boolean {
   const gate = MODE_GATED_NAV[href];
   if (!gate || !modes) return true;
-  return modes[gate[0]] !== gate[1];
+  return gate[1](modes[gate[0]]);
 }
