@@ -396,4 +396,27 @@ describe("AddUnitPanel: the missing 1-piece unit (F07)", () => {
       "A 1-piece unit is always called Piece. Rename it to Piece, or give it more than one piece.",
     );
   });
+
+  describe("SA-984 D2: a product with no pack size", () => {
+    const count = () => screen.getByTestId("units-v2-add-n") as HTMLInputElement;
+    const submit = () => screen.getByTestId("units-v2-add-submit");
+    it("refuses a count of 1 (no dead 1-of-base Piece) and says how to fix it", async () => {
+      setup({ pieceMissing: true, prefillPiece: true, noPack: true });
+      await userEvent.click(opener());
+      expect(count()).toHaveValue(null);
+      expect(count()).toHaveAttribute("min", "2");
+      await userEvent.type(count(), "1");
+      expect(submit()).toBeDisabled();
+      expect(screen.queryByTestId("units-v2-add-name-hint")).toBeNull();
+      expect(screen.getByTestId("units-v2-add-nopack")).toHaveTextContent(
+        "Set a pack size to sell single pieces.",
+      );
+    });
+
+    it("shows no such line when the product has a pack size", async () => {
+      setup({ pieceMissing: true });
+      await userEvent.click(opener());
+      expect(screen.queryByTestId("units-v2-add-nopack")).toBeNull();
+    });
+  });
 });

@@ -71,6 +71,7 @@ export type CreditableInvoice = Omit<StoredInvoice, "items"> & {
 export function billedLinesOf(creditable: readonly CreditableInvoice[], productId: string) {
   const lines: HeadroomLine[] = [];
   const invoiceOfLine = new Map<string, RefundableInvoice>();
+  const invoiceIdOfLine = new Map<string, string>();
   const ordered = [...creditable].sort(compareInvoiceFillOrder);
   ordered.forEach((inv, n) => {
     const items = inv.items ?? [];
@@ -80,9 +81,31 @@ export function billedLinesOf(creditable: readonly CreditableInvoice[], productI
       if (it.productId !== productId) return;
       lines.push({ ...toHeadroomLine(it), id: ids[i] });
       invoiceOfLine.set(ids[i], refundable);
+      if (inv.id) invoiceIdOfLine.set(ids[i], inv.id);
     });
   });
-  return { lines, invoiceOf: (id: string) => invoiceOfLine.get(id) as RefundableInvoice };
+  return {
+    lines,
+    invoiceOf: (id: string) => invoiceOfLine.get(id) as RefundableInvoice,
+    /** SA-1051: the id of the invoice a line sits on (what `refundSourceInvoice` takes as `touched`). */
+    invoiceIdOf: (id: string) => invoiceIdOfLine.get(id),
+  };
+}
+
+/**
+ * SA-1051: the invoice a refund's credit note is minted on: the LAST of `creditable` in the one fill order
+ * (`compareInvoiceFillOrder`) among the invoices the priced slices took qty from (`touched`, invoice ids). When nothing was
+ * priced (`touched` is empty or names no creditable invoice) it is the last creditable invoice in fill order, which is today's
+ * "latest" with the id tiebreak. A refund is one note, so a fill that spans invoices still mints on the last one it touched.
+ */
+export function refundSourceInvoice(
+  creditable: readonly Pick<CreditableInvoice, "id" | "createdAt">[],
+  touched: ReadonlySet<string>,
+): string {
+  const ordered = [...creditable].sort(compareInvoiceFillOrder);
+  if (ordered.length === 0) throw new Error("refundSourceInvoice: no creditable invoice");
+  const last = ordered.filter((inv) => inv.id != null && touched.has(inv.id)).pop();
+  return String((last ?? ordered[ordered.length - 1]).id);
 }
 
 /**

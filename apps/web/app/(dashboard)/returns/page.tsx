@@ -662,8 +662,8 @@ export default function ReturnsPage() {
         </div>
 
         {/* Table */}
-        <div className="overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="min-w-[880px] w-full text-sm">
             <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Return #</th>

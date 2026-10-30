@@ -144,7 +144,7 @@ describe("priceReturn: a line item is credited at its line's price (SA-1042 rule
     const split = order([inv("inv-1", [a1, iiB], "2026-01-01"), inv("inv-2", [a2], "2026-01-02")]);
     const split1 = price([lineItem("A", 200)], split);
     expect(split1.amount).toBe(45);
-    expect(split1.invoiceId).toBe("inv-2"); // the latest of 2+, as today
+    expect(split1.invoiceId).toBe("inv-1"); // SA-1051: the invoice the fill took it from (a1's 300 absorb all 200), not the latest
   });
   it("a line never billed on a creditable invoice is NOTHING_BILLED for that group (amount 0, a reason)", () => {
     const onlyA = order([inv("inv-1", [iiA])]);

@@ -75,7 +75,7 @@ export interface UnitsPricesV2Deps {
 }
 
 /** A tier master's chain and customerTierFor could disagree on: anything that is not null or an integer 1 to 5 (PF-14). */
-const isOddTier = (t: unknown): boolean => {
+export const isOddTier = (t: unknown): boolean => {
   if (t == null) return false;
   const n = Number(t);
   return !(Number.isInteger(n) && n >= 1 && n <= 5);

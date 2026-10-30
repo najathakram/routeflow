@@ -396,8 +396,8 @@ export function CustomerRecordPaymentModal({
             {openInvoices.length === 0 ? (
               <p className="text-sm text-navy/70 italic">No unpaid invoices for this customer.</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-surface-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-surface-border">
+                <table className="min-w-[420px] w-full text-sm">
                   <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                     <tr>
                       <th className="px-3 py-2 text-left">Invoice #</th>

@@ -164,6 +164,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
 
+      # A DB spec may run a report script that imports the compiled predicates from
+      # apps/api/dist. The install's postinstalls already ran prisma generate and built packages.
+      - name: Build the api
+        run: npm run build -w apps/api
+
       - name: DB-backed specs
         run: npm run test:db -w apps/api
         env:
