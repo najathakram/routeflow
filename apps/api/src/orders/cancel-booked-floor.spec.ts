@@ -46,7 +46,10 @@ describe("cancelOrderInTx: the stock credit honours the booked floor (counter sa
         skipDeliveryStateCheck: true, // this spec pins the stock credit, not the SA-814h guard
       } as never),
     );
-    return prisma.product.update.mock.calls.map((c) => (c[0] as any).data.currentStock.increment);
+    // the stock helper writes the counter absolute: the credit is the rise over the 88 on hand
+    return prisma.product.update.mock.calls.map(
+      (c) => Number((c[0] as any).data.currentStock) - 88,
+    );
   }
 
   it("credits all 12 booked units when the cut left qty 10 and the floor was 12", async () => {

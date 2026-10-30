@@ -18,6 +18,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
 import { fulfilCaller } from "./fulfil-path-resolver";
+import { posModeDeniedGroups } from "./counter-sale/till-permission.guard";
 import { ChangeRequestsService } from "./change-requests.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -131,7 +132,13 @@ export class OrdersController {
     let separateForDiscount = false;
     if (isStaff && dto.customerId) {
       // A merge target must share the incoming order's fulfil path (merge-candidates.ts).
-      const mergeAs = { explicit: dto.fulfillPath, ...fulfilCaller(user) };
+      const mergeAs = {
+        explicit: dto.fulfillPath,
+        ...fulfilCaller(
+          user,
+          await posModeDeniedGroups(this.ordersService.prisma, user, dto.fulfillPath),
+        ),
+      };
       const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
         forMerge: true,
         mergeAs,
@@ -516,7 +523,10 @@ export class OrdersController {
         : undefined;
     const order = await this.ordersService.findActiveOrder(customerId, {
       forMerge: true,
-      mergeAs: { explicit, ...fulfilCaller(user) },
+      mergeAs: {
+        explicit,
+        ...fulfilCaller(user, await posModeDeniedGroups(this.ordersService.prisma, user, explicit)),
+      },
     });
     if (!order) return null;
     return {

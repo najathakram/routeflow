@@ -156,8 +156,10 @@ export function EditRuleDialog({
   };
 
   const impactCount = review ? review.preview.impact.openOrders + review.preview.impact.drafts : 0;
-  // The owner-only staff-orders switch decides what the impact line promises; unknown (still loading) never claims a warning.
-  const staffChecked = useRestrictionsSettings().data?.enabled === true;
+  // The owner-only staff-orders switch decides what the impact line says about staff; while it is loading (or its read
+  // failed) the line claims nothing about staff either way (W-751 L1).
+  const settings = useRestrictionsSettings().data;
+  const staffChecked = settings ? settings.enabled === true : null;
   // SA: the scan is bounded, never the edit. Capped = counting stopped at the cap (a lower bound).
   const impactCapped = review?.preview.impact.capped === true;
 

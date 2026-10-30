@@ -417,6 +417,7 @@ const KNOWN_UNSCANNED_FREE_WRITERS = [
   "orders/order-line-removal.ts::writeLineRemoval",
   "orders/order-line-removal.ts::writeLineUpdate",
   "orders/testing/merge-recheck.ts::pass",
+  "orders/testing/units-fold-db-harness.ts::cleanupFoldTenants",
   "orders/unit-line-edit.ts::createUnitLine",
 ];
 

@@ -236,6 +236,22 @@ describe("payment method chips", () => {
     expect(walk.find((m) => m.method === "ON_ACCOUNT")?.disabled).toBe(true);
     expect(paymentMethodOptions(false).every((m) => !m.disabled)).toBe(true);
   });
+  it("the default tender is listed first, the rest keep their order; a disabled default is not promoted", () => {
+    expect(paymentMethodOptions(false, "ON_ACCOUNT").map((m) => m.method)).toEqual([
+      "ON_ACCOUNT",
+      "CASH",
+      "CARD",
+      "CHECK",
+    ]);
+    expect(paymentMethodOptions(false, "CASH").map((m) => m.method)).toEqual([
+      "CASH",
+      "CARD",
+      "CHECK",
+      "ON_ACCOUNT",
+    ]);
+    expect(paymentMethodOptions(false, null).map((m) => m.method)[0]).toBe("CASH");
+    expect(paymentMethodOptions(true, "ON_ACCOUNT").map((m) => m.method)[0]).toBe("CASH");
+  });
   it("a short cash tender says what to enter, with the total in the shared money format", () => {
     expect(paymentProblemCopy("TENDER_SHORT", 18.94)).toBe("Enter at least $18.94.");
     expect(isTenderShortCopy(paymentProblemCopy("TENDER_SHORT", 3))).toBe(true);
@@ -258,6 +274,22 @@ describe("payment method chips", () => {
     );
     expect(validatePayment({ method: "ON_ACCOUNT", total: 10, isWalkIn: false })).toBeNull();
     expect(validatePayment({ method: "CARD", total: 10, isWalkIn: true })).toBeNull();
+  });
+  it("validatePayment names the limits the server would refuse: tender over 1,000,000, check number over 100 characters (W-850, W-889)", () => {
+    expect(
+      validatePayment({ method: "CASH", total: 10, tendered: 1_000_000, isWalkIn: true }),
+    ).toBeNull();
+    expect(
+      validatePayment({ method: "CASH", total: 10, tendered: 1_000_000.01, isWalkIn: true }),
+    ).toBe("TENDER_TOO_LARGE");
+    expect(
+      validatePayment({ method: "CHECK", total: 10, reference: "9".repeat(100), isWalkIn: true }),
+    ).toBeNull();
+    expect(
+      validatePayment({ method: "CHECK", total: 10, reference: "9".repeat(101), isWalkIn: true }),
+    ).toBe("CHECK_NUMBER_TOO_LONG");
+    expect(paymentProblemCopy("TENDER_TOO_LARGE", 10)).toContain("$1,000,000");
+    expect(paymentProblemCopy("CHECK_NUMBER_TOO_LONG", 10)).toContain("100 characters");
   });
 });
 

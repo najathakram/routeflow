@@ -101,6 +101,18 @@ describe("Dashboard pipeline strip — partly delivered (SA-1049 R1)", () => {
     expect(pd?.options?.refetchInterval).toBe(30_000);
   });
 
+  it("W-1016: on a phone the six tiles wrap three by two; the strip never scrolls inside itself", () => {
+    // jsdom has no layout, so the contract is the class list: a phone grid of 3 columns (6 tiles = 2 rows), 6 across
+    // from sm up, and no fixed minimum width or inner scroller that would hide the Partly delivered tile on first paint
+    renderWithProviders(<DashboardPage />);
+    const strip = screen.getByTestId("pipeline-strip");
+    expect(strip.className).not.toContain("overflow-x-auto");
+    const grid = strip.firstElementChild as HTMLElement;
+    expect(grid.className).toContain("grid-cols-3");
+    expect(grid.className).toContain("sm:grid-cols-6");
+    expect(grid.className).not.toMatch(/min-w-\[/);
+  });
+
   it("G-5: a DRAFT is never counted: no DRAFT query, no DRAFT tile, Active orders stays 14", () => {
     renderWithProviders(<DashboardPage />);
     expect(orderCalls.some((c) => c.status === "DRAFT")).toBe(false);

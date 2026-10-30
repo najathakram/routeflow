@@ -14,6 +14,7 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
@@ -21,11 +22,13 @@ const D = (n: number | string) => new Prisma.Decimal(n);
 describe("purchase order line money: exact totals from the entered case cost", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: StockHelperMock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma); // SA-927: the real stock helper over the mock
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) }),
+      fn(stock.wrapTx({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) })),
     );
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -303,9 +306,7 @@ describe("purchase order line money: exact totals from the entered case cost", (
         "u1",
       );
       expect(nested().totalAmount).toBe(11000);
-      const purchase = prisma.stockMovement.create.mock.calls
-        .map((c: any) => c[0].data)
-        .find((d: any) => d.type === "PURCHASE");
+      const purchase: any = stock.written().find((d: any) => d.type === "PURCHASE");
       expect(Number(purchase.unitCost)).toBe(0.9167); // costing: per piece, 4 dp, not widened
     });
   });
@@ -346,7 +347,7 @@ describe("purchase order line money: exact totals from the entered case cost", (
       const poUpdate = prisma.purchaseOrder.update.mock.calls[0][0].data;
       expect(poUpdate).not.toHaveProperty("totalAmount");
       expect(prisma.purchaseOrderItem.update.mock.calls[0][0].data).not.toHaveProperty("totalCost");
-      const mv = prisma.stockMovement.create.mock.calls[0][0].data;
+      const mv = stock.written()[0];
       expect(Number(mv.unitCost)).toBe(0.9167);
     });
   });

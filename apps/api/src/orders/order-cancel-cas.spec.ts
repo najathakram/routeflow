@@ -74,6 +74,9 @@ import {
   RouteRunStopStatus,
   NotificationEvent,
 } from "@prisma/client";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 /**
  * SA-404f F2 / SA-470 condition 1: the order-cancel status write is a compare-and-set on the
@@ -125,6 +128,7 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
     tenantCtx = { run: jest.fn((_tenantId: string | null, fn: () => unknown) => fn()) };
     mockQueue = { add: jest.fn() };
@@ -413,9 +417,7 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
     prisma.order.findFirst.mockResolvedValue(pre);
   };
   const credit = () =>
-    prisma.product.update.mock.calls.find(
-      (c: any[]) => c[0]?.data?.currentStock?.increment !== undefined,
-    );
+    prisma.product.update.mock.calls.find((c: any[]) => c[0]?.data?.currentStock !== undefined);
 
   it("#2472 fold: DRAFT pre-read but PENDING under the lock ⇒ the real stock credit WRITES (+5)", async () => {
     arrange(1);
@@ -424,10 +426,9 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
     const settle = jest.spyOn(service as any, "settleStockForEdit"); // NOT mocked
     await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload as any);
     expect((settle.mock.calls[0] as any[])[1]).toMatchObject({ id: "ord-1", status: "PENDING" });
-    expect(credit()?.[0]).toEqual({
-      where: { id: "prod-1" },
-      data: { currentStock: { increment: 5 } },
-    });
+    // the stock helper writes the counter absolute: 10 on hand + the 5 credited back
+    expect(credit()?.[0].where).toEqual({ id: "prod-1" });
+    expect(Number(credit()?.[0].data.currentStock)).toBe(15);
   });
 
   it("#2472 fold mirror: DRAFT under the lock too ⇒ no credit write (a draft never took stock)", async () => {

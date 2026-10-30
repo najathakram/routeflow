@@ -590,8 +590,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
         {preCheckedMatches.length === 0 ? (
           <p className="text-sm italic text-navy/50">No lines matched exactly.</p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-surface-border">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-surface-border">
+            <table className="min-w-[480px] w-full text-sm">
               <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                 <tr>
                   <th className="w-8 px-3 py-2" />
@@ -835,8 +835,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
             No open local bills are missing from this statement.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-surface-border">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-surface-border">
+            <table className="min-w-[480px] w-full text-sm">
               <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                 <tr>
                   <th className="px-3 py-2 text-left">Bill #</th>
@@ -991,8 +991,8 @@ function ImpliedPaidConfirmOverlay({
             statement&apos;s own opening balance already accounts for. Every bill this will mark
             paid is listed below; nothing outside this list is affected.
           </p>
-          <div className="mt-3 overflow-hidden rounded-lg border border-surface-border">
-            <table className="w-full text-sm">
+          <div className="mt-3 overflow-x-auto rounded-lg border border-surface-border">
+            <table className="min-w-[420px] w-full text-sm">
               <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                 <tr>
                   <th className="px-3 py-2 text-left">Bill #</th>

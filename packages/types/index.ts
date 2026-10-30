@@ -156,6 +156,8 @@ export * from "./api/payment-ref";
 export * from "./payment-ref-copy";
 export * from "./credit-over-limit-copy";
 export * from "./counter-copy";
+export * from "./order-route-stop-copy";
+export * from "./counter-default-tender";
 export * from "./no-longer-fits-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
@@ -192,6 +194,7 @@ export * from "./api/zip-state";
 export * from "./api/config-snapshots";
 export * from "./api/auto-locks";
 export * from "./api/counter-day-close";
+export * from "./api/counter-drawer-event";
 export * from "./api/counter-sale";
 export * from "./api/receipt";
 export * from "./api/counter-quick-keys";
@@ -267,6 +270,7 @@ export const ORDER_DELIVERY_ADDON = "order_delivery";
  * Route insights are NOT covered by this key.
  */
 export const OCR_ADDON = "ocr";
+export * from "./api/dunning-clock";
 
 // ─── Licence validity (B330: the ONE "is this licence still good" rule) ───────
 

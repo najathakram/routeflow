@@ -7,6 +7,7 @@ import {
   QTY_NEGATIVE_COPY,
   QTY_NOT_A_NUMBER_COPY,
   QTY_NOT_WHOLE_COPY,
+  QTY_TOO_LARGE_COPY,
   QTY_ZERO_COPY,
 } from "./counter-qty-refusal";
 
@@ -82,6 +83,27 @@ describe("CounterLineRow typed quantity refusals (CQ-12)", () => {
     expect(onQty).toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(field).toHaveValue(3);
+  });
+
+  it("boxes that fit alone but push the line over 100,000 pieces say so (W-833)", () => {
+    const boxedLine: SaleLine = { ...base, unitsPerBox: 12, boxes: 1, pieces: 0, qty: 12 };
+    const onQty = jest.fn(
+      (_id: string, typed: { boxes?: string }) => setLineQty(boxedLine, typed) !== null,
+    );
+    render(
+      <ul>
+        <CounterLineRow
+          line={boxedLine}
+          locked={false}
+          onStep={() => undefined}
+          onRemove={() => undefined}
+          onNote={() => undefined}
+          onQty={onQty}
+        />
+      </ul>,
+    );
+    type(screen.getByRole("spinbutton", { name: "Boxes of Cola" }), "9000");
+    expect(screen.getByRole("alert")).toHaveTextContent(QTY_TOO_LARGE_COPY);
   });
 
   it("1e3 gets the generic whole-number line, not 'at least 1'", () => {

@@ -124,6 +124,7 @@ export class ProductsController {
       reparentVia: "editor",
       actorId: user.sub ?? null,
       actorName: user.username ?? null,
+      impersonatedBy: user.impersonatedBy ?? null,
     });
   }
 
@@ -198,6 +199,7 @@ export class ProductsController {
       clientAgent: userAgent ?? null,
       actorId: user.sub ?? null,
       actorName: user.username ?? null,
+      impersonatedBy: user.impersonatedBy ?? null,
     });
   }
 

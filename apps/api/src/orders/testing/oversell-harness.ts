@@ -43,6 +43,7 @@ import { MessagingService } from "../../messaging/messaging.service";
 import { CreditNotesService } from "../../credit-notes/credit-notes.service";
 import { RegulatedLedgerService } from "../../regulated/regulated-ledger.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
+import { wireStockHelper } from "../../inventory/testing/stock-helper-mock";
 import { PolicyOversellReader } from "../policy-oversell-reader";
 import * as orderStock from "../order-stock";
 import * as oversellPolicy from "../oversell-policy";
@@ -75,6 +76,7 @@ export type PolicyFor = unknown;
 
 export async function buildOversellOrders(policy: PolicyFor = "off") {
   const prisma = createMockPrisma();
+  wireStockHelper(prisma, { ample: true });
   const read = jest.fn(async (a: { tenantId: string; customerId?: string | null }) =>
     typeof policy === "function" ? (policy as (x: typeof a) => unknown)(a) : policy,
   );
@@ -189,12 +191,6 @@ export function stockTx(base: Record<string, unknown>, stock: { v: number }) {
     $queryRaw: jest.fn(async (s: TemplateStringsArray, ...values: any[]) => {
       const text = s.join("?");
       if (/PolicyValue/.test(text)) events.push("policy-sql");
-      if (/UPDATE "Product"/.test(text)) {
-        events.push("stock-update");
-        const sql = values[0];
-        stock.v -= Number(sql.values[1]);
-        return [{ id: "prod-1", currentStock: D(stock.v) }];
-      }
       return [{ max: null }];
     }),
     product: {
@@ -207,6 +203,12 @@ export function stockTx(base: Record<string, unknown>, stock: { v: number }) {
         averageCost: D(1),
         standardCost: null,
       })),
+      // the stock helper writes the counter absolute (one write per product)
+      update: jest.fn(async ({ data }: any) => {
+        events.push("stock-update");
+        stock.v = Number(data.currentStock);
+        return { id: "prod-1", currentStock: D(stock.v) };
+      }),
     },
     stockLot: { findMany: jest.fn().mockResolvedValue([]) },
     stockMovement: {
@@ -216,11 +218,16 @@ export function stockTx(base: Record<string, unknown>, stock: { v: number }) {
       }),
     },
   };
-  Object.defineProperty(tx, "policyValue", {
+  // the stock helper reads its locked counter from `stock.v`
+  const helper = wireStockHelper(createMockPrisma(), {
+    stateOf: (ids) => ids.map((id) => ({ id, currentStock: stock.v, averageCost: 1 })),
+  });
+  const wrapped = helper.wrapTx(tx); // (the spread copies values, so the policy tripwire goes on after it)
+  Object.defineProperty(wrapped, "policyValue", {
     get() {
       events.push("policy-delegate");
       return {};
     },
   });
-  return { tx, events, movements };
+  return { tx: wrapped, events, movements };
 }

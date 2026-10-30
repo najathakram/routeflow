@@ -17,6 +17,9 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -40,6 +43,7 @@ describe("ProductsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -942,7 +946,7 @@ describe("ProductsService", () => {
           fn({
             ...prisma.forTenant(),
             $executeRaw: exec,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
           }),
         );
         await service.update("prod-1", { unitsPerBox: 12 } as any, {
@@ -964,7 +968,7 @@ describe("ProductsService", () => {
           fn({
             ...prisma.forTenant(),
             $executeRaw: exec,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
           }),
         );
 
@@ -1026,7 +1030,7 @@ describe("ProductsService", () => {
           fn({
             ...prisma.forTenant(),
             $executeRaw: exec,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
           }),
         );
         await service.update("prod-1", { name: "Renamed" } as any, {
@@ -1470,11 +1474,45 @@ describe("ProductsService", () => {
           invoiceTreatment: "SEPARATE_INVOICE",
           active: true,
         },
-        select: { id: true },
+      });
+      // Row 430: the seed is audited (no signed-in user is threaded here, so the row says it was the auto-seed).
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "tracked-category.created",
+          entityType: "TrackedCategory",
+          entityId: "new-tobacco-cat",
+          userId: null,
+          meta: expect.objectContaining({ before: null, via: "tobacco-autoseed" }),
+        }),
       });
       const data = prisma.product.update.mock.calls[0][0].data;
       expect(data.trackedCategoryId).toBe("new-tobacco-cat");
       expect(data.isTobacco).toBe(true);
+    });
+
+    it("the auto-seed audit row names the acting user and the support session behind them (row 430)", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, trackedCategoryId: null });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findFirst.mockImplementation((args: any) =>
+        Promise.resolve(args?.where?.id ? { name: "Tobacco" } : null),
+      );
+      prisma.trackedCategory.create.mockResolvedValue({ id: "new-tobacco-cat" });
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { isTobacco: true } as any, {
+        packPrecondition: "internal",
+        actorId: "u-op",
+        impersonatedBy: "sa-1",
+      });
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: "u-op",
+          impersonatedBy: "sa-1",
+          meta: expect.objectContaining({ via: "tobacco-autoseed" }),
+        }),
+      });
     });
 
     it("PATCH {isTobacco:false} on a Tobacco-type member clears the category and the flag", async () => {
@@ -2639,6 +2677,8 @@ describe("ProductsService", () => {
     it("writes a PURCHASE movement carrying the opening qty + cost when currentStock is nonzero", async () => {
       prisma.product.findFirst.mockResolvedValue(null); // no name/sku/barcode collisions
       prisma.product.create.mockResolvedValue({ id: "new-prod-1" });
+      // a freshly created product starts at 0 on hand: the opening row is its whole stock
+      stock.setState((ids) => ids.map((id) => ({ id, currentStock: 0, averageCost: null })));
 
       const result = await service.importFromZoho({
         items: [
@@ -2915,7 +2955,7 @@ function makeBulkDeleteReferenceStore() {
           if (v[0] === "product-barcode") advisoryLocks.push(String(v[1]).split(":")[1]);
           return Promise.resolve(0);
         }),
-        $queryRaw: jest.fn().mockResolvedValue([]),
+        $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
       }),
     ),
   };

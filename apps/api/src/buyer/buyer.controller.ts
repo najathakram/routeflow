@@ -542,7 +542,7 @@ export class BuyerController {
     const order = path
       ? await this.ordersService.findActiveOrder(ctx.customerId, {
           forMerge: true,
-          mergeAs: { audience: "buyer", role: UserRole.CUSTOMER, explicit: path },
+          mergeAs: { audience: "buyer", role: UserRole.CUSTOMER, deniedGroups: [], explicit: path },
         })
       : await this.ordersService.findActiveOrder(ctx.customerId);
     return toCustomerOrder(order);
@@ -634,6 +634,7 @@ export class BuyerController {
               mergeAs: {
                 audience: "buyer",
                 role: UserRole.CUSTOMER,
+                deniedGroups: [],
                 ...(dto.fulfillPath ? { explicit: dto.fulfillPath } : {}),
               },
             });
