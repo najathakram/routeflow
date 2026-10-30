@@ -280,6 +280,7 @@ describeDb("SA-1029 A-1 base-word freeze from one pre-tx read — real Postgres"
     const stop = { customerId: s.customer.id, orders: [{ id: s.order.id }] };
     await tenantCtx.run(s.tenantId, async () => {
       const catalog = await invoices.loadUnitCatalog(stop);
+      const baseLabels = await invoices.loadBaseLabels(stop);
       expect(catalog).toBeNull(); // the entry condition: flag off and not PIECES, so no catalog
       const taken = await prisma.tenantTransaction((tx: any) =>
         invoices.recordDeliveryPaymentInTx(
@@ -289,6 +290,7 @@ describeDb("SA-1029 A-1 base-word freeze from one pre-tx read — real Postgres"
           96,
           "CASH",
           catalog,
+          baseLabels,
         ),
       );
       expect(taken.applied).toBe(96);

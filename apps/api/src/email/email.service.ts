@@ -1699,7 +1699,7 @@ export class EmailService {
               : ""
           }${fmt(it.unitPrice)}${
             it.msrp != null
-              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/${baseUnitSuffix(it.perBaseUnit)}</div>`
+              ? `<div style="font-size:11px;color:#9ca3af;font-weight:400;margin-top:2px;">MSRP ${fmt(it.msrp)}/${escapeHtml(baseUnitSuffix(it.perBaseUnit))}</div>`
               : ""
           }</td>${
             showPerPiece

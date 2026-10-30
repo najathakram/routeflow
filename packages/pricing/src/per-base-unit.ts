@@ -1,6 +1,10 @@
+import { unitWords } from "./unit-words";
+import { round4 } from "./pricing";
+import type { PerBaseUnit } from "@routeflow/types";
+
 /**
  * Per-piece price printed beside a pack line (display only; never summed or multiplied back).
- * `round4(unitPrice / unitsPerBox)`; the unit word is the frozen base label, else "pc".
+ * `round4(unitPrice / unitsPerBox)`; the unit word is `unitWords({ baseUnitLabel }).base.short.one` ("pc" by default, else the lowercase label).
  */
 export interface PerBaseUnitLine {
   unitPrice: number | string | null;
@@ -10,15 +14,11 @@ export interface PerBaseUnitLine {
   systemKind?: string | null;
 }
 
-export interface PerBaseUnitPrice {
-  price: number;
-  unit: string;
-}
+/** The shape lives in `@routeflow/types` (one declaration); this name stays for existing callers. */
+export type PerBaseUnitPrice = PerBaseUnit;
 
 /** The one literal for a base unit with no frozen label. */
 export const DEFAULT_BASE_UNIT_WORD = "pc";
-
-const round4 = (n: number): number => Math.round((n + Number.EPSILON) * 10000) / 10000;
 
 export function perBaseUnitPrice(
   line: PerBaseUnitLine,
@@ -29,8 +29,7 @@ export function perBaseUnitPrice(
   if (!line.productId || line.systemKind || line.compositionMode) return null;
   const unitPrice = Number(line.unitPrice);
   if (!Number.isFinite(unitPrice) || unitPrice < 0) return null;
-  const label = baseUnitLabel?.trim().toLowerCase();
-  return { price: round4(unitPrice / pack), unit: label || DEFAULT_BASE_UNIT_WORD };
+  return { price: round4(unitPrice / pack), unit: unitWords({ baseUnitLabel }).base.short.one };
 }
 
 /** A per-piece price: min 2, max 4 decimals, trailing zeros trimmed ("$2.00", "$2.0005"). The ONE price text on the invoice surfaces. */

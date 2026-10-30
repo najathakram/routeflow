@@ -319,7 +319,12 @@ export class InvoicePdfService {
           if (lines.layout === "components") {
             for (const v of views) barcodes.set(v.componentProductId, await this.subLineBarcode(v));
           }
-          return { ...item, display: pdfItemDisplay(lines, barcodes) };
+          // the MSRP note names the line's word on this layout too; the template's `!item.display` guard keeps the cell empty
+          return {
+            ...item,
+            display: pdfItemDisplay(lines, barcodes),
+            ...(perById.get(item.id) ? { perBaseUnit: perById.get(item.id) } : {}),
+          };
         }),
       );
     } catch (err) {

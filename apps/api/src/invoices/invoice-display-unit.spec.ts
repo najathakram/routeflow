@@ -597,21 +597,26 @@ describe("itemsWithDisplayUnits (read-side decorator)", () => {
 });
 
 describe("freezeDraftIssueUnits (resolve + write at the DRAFT -> issued transition)", () => {
-  it("reads own rows through tx, the catalog through readDb, and writes pieces only in tx", async () => {
-    const catalog = makeDb({ products: [productRow("p1")], business: "smallest", items: [] });
+  it("reads own rows through tx, the catalog through readDb, and writes in tx only (units, then the SA-1029 base word)", async () => {
+    const catalog = makeDb({
+      products: [productRow("p1")],
+      business: "smallest",
+      items: [{ id: "it-a", productId: "p1" }],
+    });
     const tx: any = makeDb({ items: [{ id: "it-a", productId: "p1" }] });
     tx.$executeRaw = jest.fn(async () => 0);
     tx.invoiceItem.updateMany = jest.fn(async () => ({ count: 1 }));
     await freezeDraftIssueUnits(catalog as any, tx, { id: "inv-1", tenantId: TENANT }, flag(true));
-    // 1 for the unit snapshot, 1 for the SA-1029 baseLabel freeze (writeIssueBaseLabels)
+    // tx: 1 read for the unit snapshot + 1 for the baseLabel writer; the baseLabel WORDS were read through readDb
     expect(tx.invoiceItem.findMany).toHaveBeenCalledTimes(2);
-    expect(catalog.invoiceItem.findMany).not.toHaveBeenCalled();
+    expect(catalog.invoiceItem.findMany).toHaveBeenCalledTimes(1); // loadDraftBaseLabels, pre-tx
     expect(catalog.product.findMany).toHaveBeenCalled();
-    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(2);
     expect(tx.invoiceItem.updateMany.mock.calls[0][0].data).toEqual({
       invoiceUnitLabel: "Piece",
       invoiceUnitFactor: 1,
     });
+    expect(tx.invoiceItem.updateMany.mock.calls[1][0].data).toEqual({ baseLabel: "Piece" });
   });
 
   it("a null tenantId does nothing", async () => {

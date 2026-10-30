@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import Link from "next/link";
 import {
@@ -80,8 +81,6 @@ import {
   editPaymentCap,
   baseUnitSuffix,
   formatPerBaseUnitPrice,
-  invoiceDisplayLines,
-  invoiceDisplayCategoryTax,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
@@ -1597,9 +1596,7 @@ export default function InvoiceDetailPage() {
   // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
   const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
   // SA-1029: the Per piece column shows only when a today-layout line has a per-piece price.
-  const showPerPiece = (invoice?.items ?? []).some(
-    (it) => !!it.perBaseUnit && it.displayUnit?.kind !== "pieces",
-  );
+  const showPerPiece = showPerPieceColumn(invoice?.items);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -2615,30 +2612,7 @@ export default function InvoiceDetailPage() {
                     }
                     const item = row.item;
                     // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
-                    const display = invoiceDisplayLines(
-                      {
-                        description: item.description,
-                        qty: Number(item.qty),
-                        boxes: item.boxes,
-                        pieces: item.pieces,
-                        unitsPerBox: item.unitsPerBox,
-                        unitLabel: item.unitLabel,
-                        unitPrice: Number(item.unitPrice),
-                        subtotal: Number(item.subtotal),
-                        categoryTax: invoiceDisplayCategoryTax(item),
-                      },
-                      (item.components ?? []).map((c) => ({
-                        componentProductId: c.componentProductId,
-                        name: c.name,
-                        qty: Number(c.qty),
-                        unitSku: c.unitSku,
-                        unitBarcode: c.unitBarcode,
-                        displayUnitPrice4:
-                          c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
-                        position: c.position,
-                      })),
-                      item.displayUnit,
-                    );
+                    const display = invoiceItemDisplayLines(item);
                     const groupRow = (
                       <tr
                         key={item.id}

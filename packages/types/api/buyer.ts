@@ -19,7 +19,7 @@ import type {
   RouteRunStatusValue,
 } from "./enums";
 import type { LineComponentView } from "./orders";
-import type { InvoiceDisplayUnitView } from "./invoices";
+import type { InvoiceDisplayUnitView, PerBaseUnit } from "./invoices";
 import type { DecimalWire } from "./decimal";
 
 export interface LockedCategory {
@@ -467,7 +467,7 @@ export interface BuyerInvoiceItem {
   /** SA-827: how this line reads (pieces view or today's layout). */
   displayUnit?: InvoiceDisplayUnitView | null;
   /** SA-1029: price per base piece beside a pack line (display only); null = no per-piece cell. */
-  perBaseUnit?: { price: number; unit: string } | null;
+  perBaseUnit?: PerBaseUnit | null;
 }
 
 /** A payment row on GET /buyer/invoices/:id (newest first). `creditNote` is set when

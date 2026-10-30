@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -16,10 +17,8 @@ import {
 import { Badge, useToast } from "@routeflow/ui/web";
 import {
   basePriceText,
-  invoiceDisplayCategoryTax,
   baseUnitSuffix,
   formatPerBaseUnitPrice,
-  invoiceDisplayLines,
   invoiceLineQtyText,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
@@ -215,9 +214,7 @@ export default function BuyerInvoiceDetailPage() {
       : null;
   const deposit = invoiceDepositFields(invoice);
 
-  const showPerPiece = (invoice.items ?? []).some(
-    (it) => !!it.perBaseUnit && it.displayUnit?.kind !== "pieces",
-  );
+  const showPerPiece = showPerPieceColumn(invoice?.items);
 
   return (
     <div className="p-6 max-w-4xl">
@@ -363,30 +360,7 @@ export default function BuyerInvoiceDetailPage() {
             {(invoice.items ?? []).map((item) => {
               const msrp = itemMsrp(item);
               // SA-827: pieces / components layouts come from pricing; everything else is today's row.
-              const display = invoiceDisplayLines(
-                {
-                  description: item.description,
-                  qty: Number(item.qty),
-                  boxes: item.boxes,
-                  pieces: item.pieces,
-                  unitsPerBox: item.unitsPerBox,
-                  unitLabel: item.unitLabel,
-                  unitPrice: Number(item.unitPrice),
-                  subtotal: Number(item.subtotal),
-                  categoryTax: invoiceDisplayCategoryTax(item),
-                },
-                (item.components ?? []).map((c) => ({
-                  componentProductId: c.componentProductId,
-                  name: c.name,
-                  qty: Number(c.qty),
-                  unitSku: c.unitSku,
-                  unitBarcode: c.unitBarcode,
-                  displayUnitPrice4:
-                    c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
-                  position: c.position,
-                })),
-                item.displayUnit,
-              );
+              const display = invoiceItemDisplayLines(item);
               const groupRow = (
                 <tr
                   key={item.id}

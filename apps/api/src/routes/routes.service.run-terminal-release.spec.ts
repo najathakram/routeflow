@@ -143,6 +143,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
     reconcileDeliveredOrdersInTx: jest.Mock;
     reverseRunAdvancesInTx: jest.Mock;
     loadUnitCatalog: jest.Mock;
+    loadBaseLabels: jest.Mock;
   };
   let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
@@ -201,6 +202,7 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
       reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
       reverseRunAdvancesInTx: jest.fn().mockResolvedValue(0),
       loadUnitCatalog: jest.fn().mockResolvedValue(null), // SA-967
+      loadBaseLabels: jest.fn().mockResolvedValue(null),
     };
 
     gateway = {

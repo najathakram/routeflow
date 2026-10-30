@@ -2898,6 +2898,12 @@ describe("InvoicesService", () => {
 
   // ── Auto-revert a SENT pending-mirror invoice when its order is edited ──────────
   describe("revertLinkedInvoicesForOrderEdit", () => {
+    // SA-1029 A-2 / B1275: the revert now clears the issue display units (a savepoint + one updateMany)
+    beforeEach(() => {
+      (prisma.forTenant() as any).$executeRaw = jest.fn().mockResolvedValue(0);
+      prisma.invoiceItem.updateMany.mockResolvedValue({ count: 0 });
+    });
+
     it("reverts an unpaid SENT pending-mirror invoice to DRAFT (auto-revert on edit)", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
@@ -3092,6 +3098,7 @@ describe("InvoicesService", () => {
         count: jest.fn().mockResolvedValue(1),
       },
       invoicePayment: { count: jest.fn().mockResolvedValue(0) },
+      invoiceItem: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) }, // SA-1029 A-2 clear
       order: { findFirst: jest.fn().mockResolvedValue({ status: "PENDING" }) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     });
@@ -3133,7 +3140,9 @@ describe("InvoicesService", () => {
 
       expect(await service.revertLinkedInvoicesForOrderEdit("ord-1", tx)).toEqual(["inv-1"]);
 
-      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      // no ROW LOCK is taken; the only raw statements are the display-unit clear's own savepoint pair
+      const sql = tx.$executeRaw.mock.calls.map((c: any) => c[0].join("?"));
+      expect(sql.filter((q: string) => !/SAVEPOINT display_unit_snapshot/.test(q))).toEqual([]);
     });
   });
 
@@ -4310,9 +4319,9 @@ describe("InvoicesService", () => {
   // the payment the canonical way (InvoicePayment + recomputeStatus, never a
   // non-existent `balance`).
   describe("recordDeliveryPaymentInTx (driver Collect payment)", () => {
-    // SA-967: the catalog slot (null = no catalog) sits between the method and the ctx
+    // SA-967 / SA-1029: the catalog slot then the base-label slot (null = none) sit between the method and the ctx
     const payInTx = (orders: string[], amount: number, method: any, ctx?: any) =>
-      service.recordDeliveryPaymentInTx(prisma as any, q, orders, amount, method, null, ctx);
+      service.recordDeliveryPaymentInTx(prisma as any, q, orders, amount, method, null, null, ctx);
 
     const inv = (over: any = {}) => ({
       id: "inv-1",

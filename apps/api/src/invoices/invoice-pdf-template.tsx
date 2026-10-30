@@ -321,7 +321,7 @@ function buildStyles(primary: string, navy: string) {
     colDescription: { flex: 3 },
     colQty: { flex: 1, textAlign: "right" },
     colUnit: { flex: 1.4, textAlign: "right" },
-    colPerUnit: { flex: 1.4, textAlign: "right" },
+    colPerUnit: { flex: 1.2, textAlign: "right" },
     colSubtotal: { flex: 1.4, textAlign: "right" },
     cellText: { fontSize: 9, color: navy },
     cellTextRight: { fontSize: 9, color: navy, textAlign: "right" },
