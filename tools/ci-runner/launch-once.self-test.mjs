@@ -5,6 +5,7 @@ import {
   EXIT_FOREIGN_QUEUED,
   EXIT_NOT_PRIVATE,
   REPO,
+  deleteRunner,
   dockerArgs,
   foreignQueuedRuns,
   gh,
@@ -38,7 +39,11 @@ function fakeDeps(over = {}) {
       calls.push("container");
       return 0;
     },
-    deleteRunner: () => calls.push("delete"),
+    deleteRunner: () => {
+      calls.push("delete");
+      return "gone";
+    },
+    sleep: async () => {},
     log: () => {},
     error: () => {},
     ...over,
@@ -186,6 +191,55 @@ check(
   });
   check("L5 the container's exit code comes back", await launch(defaults, deps), 137);
   check("L6 order: mint, container, delete", calls, ["mint", "container", "delete"]);
+}
+
+// ── A killed job's runner can't be deleted until its run closes ──────────────────────────────────
+{
+  const replies = ["refused", "refused", "gone"];
+  let deletes = 0;
+  const { deps } = fakeDeps({
+    deleteRunner: () => {
+      deletes++;
+      return replies.shift();
+    },
+  });
+  await launch(defaults, deps);
+  check("R1 a refused delete is tried again until the runner goes", deletes, 3);
+}
+{
+  let deletes = 0;
+  const errors = [];
+  const { deps } = fakeDeps({
+    deleteRunner: () => {
+      deletes++;
+      return "refused";
+    },
+    error: (line) => errors.push(line),
+  });
+  check("R2 the exit code survives a runner that won't go", await launch(defaults, deps), 0);
+  check("R3 it gives up after 15 minutes of tries", deletes, 60);
+  check(
+    "R4 giving up prints the command to finish the job",
+    errors.some((line) => line.includes(`gh api -X DELETE repos/${REPO}/actions/runners/7`)),
+    true,
+  );
+}
+{
+  const failing = (stderr) => () => {
+    throw Object.assign(new Error("Command failed"), { stderr });
+  };
+  check(
+    "R5 a 200 is gone",
+    deleteRunner(7, () => ""),
+    "gone",
+  );
+  check("R6 a 404 is gone", deleteRunner(7, failing("gh: Not Found (HTTP 404)")), "gone");
+  check(
+    "R7 a busy 422 is refused",
+    deleteRunner(7, failing("gh: Bad request (HTTP 422)")),
+    "refused",
+  );
+  check("R8 a timeout is refused", deleteRunner(7, failing("")), "refused");
 }
 
 console.log(`\nlaunch-once self-test: ${passed} passed, ${failed} failed`);

@@ -23,6 +23,9 @@ export const GH_TIMEOUT_MS = 20_000;
 export const UNSAFE_AFTER_MS = 45_000;
 /** The runner's own line for a job starting. It comes from the container, so an outage can't hide it. */
 export const JOB_STARTED = /: Running job: /;
+/** 15 minutes of tries. The trial's killed runner took 5m22s to free up after its run was cancelled. */
+const REAP_WAIT_MS = 15_000;
+const REAP_ATTEMPTS = 60;
 
 export function parseFlags(argv) {
   const flag = (name, fallback) => {
@@ -73,12 +76,27 @@ function mintRunner(name) {
   return { id: jit.runner.id, jitConfig: jit.encoded_jit_config };
 }
 
-function deleteRunner(id) {
+const runnerPath = (id) => `repos/${REPO}/actions/runners/${id}`;
+
+export function deleteRunner(id, ghFn = gh) {
   try {
-    gh(["api", "-X", "DELETE", `repos/${REPO}/actions/runners/${id}`]);
-  } catch {
-    // Already gone: an ephemeral runner deregisters itself after its job.
+    ghFn(["api", "-X", "DELETE", runnerPath(id)]);
+    return "gone";
+  } catch (e) {
+    // A 404 is success: an ephemeral runner deregisters itself after its job.
+    return /HTTP 404/.test(e?.stderr ?? "") ? "gone" : "refused";
   }
+}
+
+/** GitHub refuses to delete a busy runner, and a killed job's runner stays busy until its run closes. */
+async function reapRunner(id, { deleteRunner: del, sleep, log, error }) {
+  for (let attempt = 1; attempt <= REAP_ATTEMPTS; attempt++) {
+    if (del(id) === "gone") return true;
+    if (attempt === 1) log(`runner ${id} not deleted yet: its run may still be closing`);
+    if (attempt < REAP_ATTEMPTS) await sleep(REAP_WAIT_MS);
+  }
+  error(`runner ${id} would not go. Once its run closes: gh api -X DELETE ${runnerPath(id)}`);
+  return false;
 }
 
 // NET_ADMIN, SETUID, SETGID and SETPCAP are for entrypoint.sh's root phase only: setpriv clears them
@@ -199,6 +217,7 @@ const REAL_DEPS = {
   mintRunner,
   runContainer,
   deleteRunner,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log: console.log,
   error: console.error,
 };
@@ -219,7 +238,7 @@ export async function launch(flags, deps = REAL_DEPS) {
   const { id, jitConfig } = deps.mintRunner(name);
   deps.log(`runner ${name} (id ${id}) registered`);
   const code = await deps.runContainer({ name, jitConfig, runnerId: id, flags });
-  deps.deleteRunner(id);
+  await reapRunner(id, deps);
   deps.log(`runner ${name} done, container exit ${code}`);
   return code;
 }
