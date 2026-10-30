@@ -10,8 +10,8 @@
 --   "Invoice"."writtenOffById" TEXT NULL (no default, no backfill, no FK)
 --   "OperatorPermissionGroup"  += BAD_DEBT (last)
 -- The new enum value is only ADDED here. Using it (the column default, the deny-list append) is folder 2,
--- 20261028100100_bad_debt_default_denied, because a value added in a transaction cannot be used until that transaction
--- commits ("unsafe use of new value").
+-- 20261028100100_bad_debt_default_denied (PR-0b), because a value added in a transaction cannot be used until that
+-- transaction commits ("unsafe use of new value").
 --
 -- Additive only: a new empty table, one nullable column (metadata-only, no rewrite), one enum value. Nothing dropped or rewritten.
 -- LOCK PROFILE: ONE transaction. A brief ACCESS EXCLUSIVE on "Invoice" for the ADD COLUMN and SHARE ROW EXCLUSIVE on "Invoice" and
@@ -19,8 +19,12 @@
 -- the FKs and CHECKs validate nothing). `SET LOCAL lock_timeout = '5s'` bounds every wait; a timeout rolls the whole file back
 -- (recorded FAILED; recover with `prisma migrate resolve --rolled-back 20261028100000_invoice_write_off_events_and_bad_debt_group`
 -- from apps/api, then re-run; NEVER `--applied`).
--- DEPLOY ORDER (L-184): apply to prod (fresh backup, `prod-migrate.mjs`), `schema-drift.mjs` exit 0, then folder 2, and ONLY THEN
--- merge any code that reads or writes these objects.
+-- DEPLOY ORDER (SA-1050 A-3, which supersedes the order first ruled): this folder goes to prod FIRST, from a tree at this PR's
+-- gated head, up to date with master (fresh backup, `prod-migrate.mjs`; it ends with the drift check, exit 0 required). Then
+-- merge this PR and PR-0b in one train, wait until BOTH deployments reach SUCCESS, and only then apply folder 2
+-- (20261028100100_bad_debt_default_denied, PR-0b) from a tree at the merged master sha. Folder 2 never runs before the code
+-- that knows BAD_DEBT is serving: it writes the value into every OPERATOR's deny list, and a client generated without it
+-- throws P2023 on every read of that column (login and refresh included). This PR alone is safe: nothing reads the value yet.
 --
 -- Rollback (nothing references the objects yet):
 --   DROP TABLE "InvoiceWriteOffEvent"; DROP TYPE "InvoiceWriteOffKind"; ALTER TABLE "Invoice" DROP COLUMN "writtenOffById";
