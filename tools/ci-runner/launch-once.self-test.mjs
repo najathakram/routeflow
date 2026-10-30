@@ -11,13 +11,14 @@ import {
   dockerArgs,
   foreignQueuedRuns,
   gh,
+  jobOrigin,
   launch,
   noteRunnerLine,
   parseFlags,
   pollOnce,
   runContainer,
 } from "./launch-once.mjs";
-import { withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
+import { isCappedLabel, withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
 
 let passed = 0;
 let failed = 0;
@@ -62,11 +63,12 @@ function fakeDeps(over = {}) {
 }
 
 // ── Sizing ───────────────────────────────────────────────────────────────────────────────────────
-const defaults = parseFlags([]);
+const defaults = parseFlags(["--branch", "train/acme"]);
 check("F1 default size is what passed the trial: 4 CPUs, 16 GB", defaults, {
   cpus: "0-3",
   memory: "16g",
   maxMinutes: 60,
+  branch: "train/acme",
 });
 check(
   "F2 flags override",
@@ -137,12 +139,12 @@ check(
 // ── The guard while the runner waits ─────────────────────────────────────────────────────────────
 const tick = (visibility, busy) =>
   pollOnce(
-    { deadline: 2_000, lastPrivateAt: 1_000, jobRunning: busy },
+    { deadline: 2_000, lastPrivateAt: 1_000, jobRunning: busy, jobConfirmed: busy },
     { now: 1_000, readVisibility: () => visibility, log: () => {} },
   );
 check("P1 PRIVATE and idle: keep waiting", tick("PRIVATE", false), "wait");
 check("P2 PUBLIC and idle: remove the runner", tick("PUBLIC", false), "remove");
-check("P3 PUBLIC with a job running: let the job finish", tick("PUBLIC", true), "wait");
+check("P3 PUBLIC with our job running: let it finish", tick("PUBLIC", true), "wait");
 check(
   "P4 past the deadline: stop",
   pollOnce(
@@ -156,7 +158,7 @@ check(
 const lastSeen = 100_000;
 const blind = (now, jobRunning = false) =>
   pollOnce(
-    { deadline: 9_000_000, lastPrivateAt: lastSeen, jobRunning },
+    { deadline: 9_000_000, lastPrivateAt: lastSeen, jobRunning, jobConfirmed: jobRunning },
     {
       now,
       readVisibility: () => {
@@ -171,15 +173,7 @@ check(
   blind(lastSeen + 45_000),
   "remove",
 );
-check("U3 a running job is left alone, even blind", blind(lastSeen + 45_000, true), "wait");
-check(
-  "U4 PUBLIC with a job running stays up when the busy read fails",
-  pollOnce(
-    { deadline: 9_000_000, lastPrivateAt: lastSeen, jobRunning: true },
-    { now: lastSeen, readVisibility: () => "PUBLIC", log: () => {} },
-  ),
-  "wait",
-);
+check("U3 our running job is left alone, even blind", blind(lastSeen + 45_000, true), "wait");
 {
   const state = { deadline: 9_000_000, lastPrivateAt: 0, jobRunning: false };
   pollOnce(state, { now: 90_000, readVisibility: () => "PRIVATE", log: () => {} });
@@ -205,6 +199,91 @@ check(
   check("J3 a finished job stays marked: this runner takes no other", state.jobRunning, true);
 }
 
+// ── A started job must be the one we dispatched ──────────────────────────────────────────────────
+const startedAt = 100_000;
+const jobTick = (now, readJob, state = { deadline: 9_000_000, jobRunning: true }) =>
+  pollOnce(state, { now, readVisibility: () => "PRIVATE", readJob, log: () => {} });
+check(
+  "O1 someone else's job: stop it",
+  jobTick(startedAt, () => "foreign"),
+  "stop job",
+);
+check(
+  "O2 ours: let it run",
+  jobTick(startedAt, () => "ours"),
+  "wait",
+);
+{
+  const state = { deadline: 9_000_000, jobRunning: true };
+  jobTick(startedAt, () => "ours", state);
+  let reads = 0;
+  jobTick(startedAt + 15_000, () => reads++ && null, state);
+  check("O3 once confirmed, no more reads", reads, 0);
+}
+{
+  const state = { deadline: 9_000_000, jobRunning: true };
+  check(
+    "O4 GitHub can't say yet: wait",
+    jobTick(startedAt, () => null, state),
+    "wait",
+  );
+  check(
+    "O5 still can't say after 2 minutes: stop it",
+    jobTick(startedAt + 120_000, () => null, state),
+    "stop job",
+  );
+}
+{
+  const state = { deadline: 9_000_000, jobRunning: true };
+  const broken = () => {
+    throw new Error("TLS handshake timeout");
+  };
+  check("O6 a failed read is a blip", jobTick(startedAt, broken, state), "wait");
+  check("O7 and fails closed", jobTick(startedAt + 120_000, broken, state), "stop job");
+}
+const origin = (run) =>
+  jobOrigin("rf-ephemeral-1", "train/acme", (a) =>
+    /\/jobs/.test(a[1])
+      ? JSON.stringify({ jobs: [{ runner_name: "other" }, { runner_name: "rf-ephemeral-1" }] })
+      : JSON.stringify({ workflow_runs: [run] }),
+  );
+const dispatch = {
+  id: 5,
+  event: "workflow_dispatch",
+  head_branch: "train/acme",
+  head_repository: { full_name: REPO },
+};
+check("O8 a dispatch on our branch in this repo is ours", origin(dispatch), "ours");
+check(
+  "O9 a fork's run is foreign",
+  origin({ ...dispatch, head_repository: { full_name: "someone/routeflow" } }),
+  "foreign",
+);
+check(
+  "O10 a run with no head repo is foreign",
+  origin({ ...dispatch, head_repository: null }),
+  "foreign",
+);
+check(
+  "O11 a pull_request run is foreign",
+  origin({ ...dispatch, event: "pull_request" }),
+  "foreign",
+);
+check(
+  "O12 another branch is foreign",
+  origin({ ...dispatch, head_branch: "train/other" }),
+  "foreign",
+);
+check(
+  "O13 no run shows this runner yet",
+  jobOrigin("rf-ephemeral-1", "train/acme", (a) =>
+    /\/jobs/.test(a[1])
+      ? JSON.stringify({ jobs: [{ runner_name: null }] })
+      : JSON.stringify({ workflow_runs: [dispatch] }),
+  ),
+  null,
+);
+
 // ── The container's whole life ───────────────────────────────────────────────────────────────────
 function fakeRun(over = {}) {
   const child = Object.assign(new EventEmitter(), {
@@ -218,6 +297,7 @@ function fakeRun(over = {}) {
     {
       spawn: () => child,
       readVisibility: () => "PRIVATE",
+      readJob: () => "ours",
       deleteRunner: (id) => calls.push(`delete ${id}`),
       removeContainer: (name) => calls.push(`remove ${name}`),
       pollMs: 1,
@@ -259,6 +339,21 @@ const end = (child, code = 0) => {
   const before = calls.length;
   await ticks();
   check("C3 the runner's job line reaches the guard", calls.length, before);
+  end(child);
+  await finished;
+}
+{
+  let asked;
+  const { child, calls, finished } = fakeRun({
+    readJob: (name, branch) => {
+      asked = [name, branch];
+      return "foreign";
+    },
+  });
+  child.stdout.write("2026-10-30 19:16:43Z: Running job: Verify\n");
+  await ticks();
+  check("C7 the job check names this runner and branch", asked, ["rf-ephemeral-1", "train/acme"]);
+  check("C8 someone else's job: the container goes", calls[0], "remove rf-ephemeral-1");
   end(child);
   await finished;
 }
@@ -360,24 +455,29 @@ const end = (child, code = 0) => {
   });
   await launch(parseFlags(["--branch", "train/acme"]), deps);
   check("S5 checks run after the wait for a seat, not before", seen, ["seat", "visibility"]);
-  check("S6 the seat counts as a capped verify", /verify/.test(opts?.label), true);
+  check("S6 the seat counts as a capped verify", isCappedLabel(opts?.label), true);
   check("S7 the seat names the train", opts?.branch, "train/acme");
 }
 {
   const { deps, calls } = fakeDeps();
-  const code = await launch(parseFlags(["--max-minutes", "81"]), deps);
+  const code = await launch({ ...defaults, maxMinutes: 81 }, deps);
   check("S8 past the hold cap's margin: refuse with exit 2", code, 2);
   check("S9 and take no seat", calls, []);
 }
 check(
   "S10 80 minutes is the last allowed",
-  await launch(parseFlags(["--max-minutes", "80"]), fakeDeps().deps),
+  await launch({ ...defaults, maxMinutes: 80 }, fakeDeps().deps),
   0,
 );
 {
   const { deps, calls } = fakeDeps();
-  const code = await launch(parseFlags(["--max-minutes", "soon"]), deps);
+  const code = await launch({ ...defaults, maxMinutes: Number("soon") }, deps);
   check("S11 a bad number is refused too", [code, calls], [2, []]);
+}
+{
+  const { deps, calls } = fakeDeps();
+  const code = await launch(parseFlags([]), deps);
+  check("S12 no --branch: nothing to check a job against, refuse", [code, calls], [2, []]);
 }
 
 // ── A killed job's runner can't be deleted until its run closes ──────────────────────────────────

@@ -31,6 +31,8 @@ export const UNSAFE_AFTER_MS = 45_000;
 /** The runner's own line for a job starting. It comes from the container, so an outage can't hide it. */
 export const JOB_STARTED = /: Running job: /;
 /** 15 minutes of tries. The trial's killed runner took 5m22s to free up after its run was cancelled. */
+/** A started job is stopped if GitHub hasn't shown it to be ours by now. */
+const JOB_CHECK_MS = 120_000;
 const REAP_WAIT_MS = 15_000;
 const REAP_ATTEMPTS = 60;
 
@@ -82,6 +84,22 @@ export function foreignQueuedRuns(ghFn = gh) {
     }
   }
   return foreign;
+}
+
+/** Whose job this runner took: "ours", "foreign", or null while GitHub doesn't show it. */
+export function jobOrigin(runnerName, branch, ghFn = gh) {
+  for (const run of runsWithStatus("in_progress", ghFn)) {
+    const jobs = JSON.parse(
+      ghFn(["api", `repos/${REPO}/actions/runs/${run.id}/jobs?per_page=100`]),
+    ).jobs;
+    if (!jobs.some((job) => job.runner_name === runnerName)) continue;
+    const ours =
+      run.head_repository?.full_name === REPO &&
+      run.event === "workflow_dispatch" &&
+      run.head_branch === branch;
+    return ours ? "ours" : "foreign";
+  }
+  return null;
 }
 
 function mintRunner(name) {
@@ -155,14 +173,33 @@ export function dockerArgs(name, flags) {
   ];
 }
 
+/** A started job has to be the one we dispatched. No answer within JOB_CHECK_MS fails closed. */
+function checkJob(state, { now, readJob, log }) {
+  if (state.jobConfirmed) return "wait";
+  state.jobFirstCheckedAt ??= now;
+  let origin = null;
+  try {
+    origin = readJob();
+  } catch (e) {
+    log(`job check failed: ${e instanceof Error ? e.message : e}`);
+  }
+  if (origin === "foreign") return "stop job";
+  if (origin === "ours") {
+    state.jobConfirmed = true;
+    return "wait";
+  }
+  return now - state.jobFirstCheckedAt >= JOB_CHECK_MS ? "stop job" : "wait";
+}
+
 /**
- * One guard tick. "stop" at the deadline. "remove" an idle runner unless the repo reads PRIVATE: a
- * repo that left PRIVATE, or no good reading for UNSAFE_AFTER_MS, fails closed. A running job is
- * left alone: a one-job runner cannot take a second job, whatever the repo's visibility.
+ * One guard tick. "stop" at the deadline. "stop job" if a started job isn't ours. "remove" an idle
+ * runner unless the repo reads PRIVATE: a repo that left PRIVATE, or no good reading for
+ * UNSAFE_AFTER_MS, fails closed. Our own running job is left alone: a one-job runner cannot take a
+ * second job, whatever the repo's visibility.
  */
-export function pollOnce(state, { now, readVisibility, log }) {
+export function pollOnce(state, { now, readVisibility, readJob, log }) {
   if (now > state.deadline) return "stop";
-  if (state.jobRunning) return "wait";
+  if (state.jobRunning) return checkJob(state, { now, readJob, log });
   let seen = null;
   try {
     seen = readVisibility();
@@ -211,10 +248,14 @@ export function runContainer({ name, jitConfig, runnerId, flags }, io = REAL_IO)
     const action = pollOnce(state, {
       now: Date.now(),
       readVisibility: io.readVisibility,
+      readJob: () => io.readJob(name, flags.branch),
       log: io.error,
     });
     if (action === "stop") {
       io.error("max-minutes reached: stopping the runner");
+      stop();
+    } else if (action === "stop job") {
+      io.error(`this runner's job is not a dispatch on ${flags.branch}: stopping it`);
       stop();
     } else if (action === "remove") {
       io.error("repo not confirmed PRIVATE with this runner idle: removing it");
@@ -238,6 +279,7 @@ export function runContainer({ name, jitConfig, runnerId, flags }, io = REAL_IO)
 const REAL_IO = {
   spawn,
   readVisibility: visibility,
+  readJob: jobOrigin,
   deleteRunner,
   removeContainer,
   pollMs: POLL_MS,
@@ -258,6 +300,10 @@ const REAL_DEPS = {
 };
 
 export async function launch(flags, deps = REAL_DEPS) {
+  if (!flags.branch) {
+    deps.error("refusing: --branch is required, to check the job the runner takes");
+    return EXIT_BAD_FLAGS;
+  }
   if (!(flags.maxMinutes > 0 && flags.maxMinutes <= MAX_MINUTES)) {
     deps.error(`refusing: --max-minutes must be 1 to ${MAX_MINUTES}`);
     return EXIT_BAD_FLAGS;
