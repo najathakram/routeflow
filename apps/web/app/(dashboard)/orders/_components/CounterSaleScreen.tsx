@@ -1604,6 +1604,7 @@ export function CounterSaleScreen() {
                 canEditPrices={mayEditPrices}
                 priceTier={reprice.tierFor(l.productId)}
                 customerName={customer?.businessName}
+                historyCustomerId={customer && !customer.isWalkIn ? customer.id : null}
                 onPriceEdit={editPrice}
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}

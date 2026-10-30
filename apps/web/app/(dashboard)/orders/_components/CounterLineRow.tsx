@@ -19,7 +19,13 @@ import {
 } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
-import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
+import {
+  cartStrikesList,
+  editedLineFigures,
+  historyPriceEdit,
+  priceEditLineOf,
+} from "./counter-sale-price-edit";
+import { PriceHistoryButton } from "@/components/PriceHistory";
 
 // A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
 const UW = unitWords();
@@ -233,6 +239,7 @@ export function CounterLineRow({
   canEditPrices = false,
   priceTier = 1,
   customerName,
+  historyCustomerId = null,
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
@@ -253,6 +260,8 @@ export function CounterLineRow({
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
   customerName?: string;
+  /** W-853: the NAMED customer (never a walk-in) whose past prices the line offers; shown only with `canEditPrices`. */
+  historyCustomerId?: string | null;
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
@@ -321,6 +330,24 @@ export function CounterLineRow({
           onReset={() => onPriceReset?.(l.tempId)}
           onClosed={onPriceClosed}
         />
+        {canEditPrices && historyCustomerId ? (
+          <fieldset disabled={locked} className="contents">
+            <PriceHistoryButton
+              customerId={historyCustomerId}
+              customerName={customerName}
+              productId={l.productId}
+              productName={l.name}
+              unitHint={isBoxedLine(l) ? "case" : l.unit}
+              packHint={l.unitsPerBox ?? null}
+              onUsePrice={(price) => {
+                const edit = historyPriceEdit(l, priceTier, price);
+                if (edit) onPriceEdit?.(l.tempId, edit);
+                // the panel puts focus back on its own button one tick later: hand it to the scan field after that
+                setTimeout(() => setTimeout(() => onPriceClosed?.(), 0), 0);
+              }}
+            />
+          </fieldset>
+        ) : null}
         {edited ? (
           <span
             className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"
