@@ -1,6 +1,6 @@
 # Test plan: <task title>
 
-> **Stage S4 — "how we'll know".** Authored by Fable 5 on `<YYYY-MM-DD>`.
+> **Stage S4 — "how we'll know".** Authored by Opus on `<YYYY-MM-DD>`.
 > Status: `DRAFT | APPROVED | IMPLEMENTED | CLOSED`
 > **Written BEFORE the build plan and before any implementation code exists.** If you
 > already know what the code looks like, you are copying it — go back to the requirement.

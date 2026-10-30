@@ -47,6 +47,8 @@ Run the two verifiers **in parallel** — independent review is the one place fa
 Run builders **one per file set**, and for anything touching money math or tenant scoping, one
 agent at a time. Parallel implementation is how two agents editing the same DTO drift apart.
 
+A feature with more than one slice gets a `docs/plans/<slug>.plan.json` (format and checker: `docs/plans/README.md`, `node scripts/plan.mjs`); the lane brief cites slice ids, not prose.
+
 ## Commands
 
 ```bash
@@ -118,7 +120,7 @@ without anyone remembering to ask for it:
 
 | Role                          | Model    | Effort | Why                                                                     |
 | ----------------------------- | -------- | ------ | ----------------------------------------------------------------------- |
-| `@tech-lead`                  | `fable`  | high   | One run per requirement; shapes every downstream token                  |
+| `@tech-lead`                  | `opus`   | high   | One run per requirement; shapes every downstream token                  |
 | `@builder`                    | `sonnet` | medium | Highest volume, longest turns — executes a spec that is already decided |
 | `@qa-engineer`                | `sonnet` | high   | Cheap tier + high effort is the best value point in the team            |
 | `@feature-reviewer`           | `opus`   | high   | Lowest volume, last gate, highest cost of a miss                        |

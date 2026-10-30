@@ -34,6 +34,17 @@ describe("displayAuthStatus (lazy expiry)", () => {
       displayAuthStatus({ status: "PENDING_REVIEW", expiresAt: "2026-08-01T00:00:00Z" }, NOW),
     ).toBe("PENDING_REVIEW");
   });
+  // B330: a licence is good through its printed day in the business's zone (the shared rule in
+  // @routeflow/types). Chicago CDT: the day printed 2026-03-09 ends at 2026-03-10T05:00Z.
+  it("REG-B330 keeps a VERIFIED licence on its printed day (evening, Chicago) and expires it next day", () => {
+    const row = { status: "VERIFIED" as const, expiresAt: "2026-03-09T00:00:00.000Z" };
+    expect(displayAuthStatus(row, new Date("2026-03-10T03:00:00.000Z"), "America/Chicago")).toBe(
+      "VERIFIED",
+    );
+    expect(displayAuthStatus(row, new Date("2026-03-10T05:00:00.000Z"), "America/Chicago")).toBe(
+      "EXPIRED",
+    );
+  });
 });
 
 describe("authStatusPill", () => {

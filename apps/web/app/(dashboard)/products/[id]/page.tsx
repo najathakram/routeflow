@@ -303,6 +303,7 @@ export default function ProductDetailPage() {
   const updateProduct = useUpdateProduct();
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
+  const variantSubmittingRef = React.useRef(false);
   const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
   // The header's Delete button opens DeleteProductConfirm: it stays open until the DELETE settles and hands
   // off to the family cascade prompt.
@@ -864,6 +865,10 @@ export default function ProductDetailPage() {
         },
       );
     } else {
+      // I-79: one create per attempt. `loading` disables the button only after a re-render, so a second click in the
+      // same frame would POST again and come back 409; the ref drops it until this attempt settles.
+      if (variantSubmittingRef.current) return;
+      variantSubmittingRef.current = true;
       createProduct.mutate(
         {
           // `name` stores only the variant name; parent context comes from
@@ -892,6 +897,9 @@ export default function ProductDetailPage() {
               description: codedToastCopy(e) ?? undefined,
               variant: "error",
             }),
+          onSettled: () => {
+            variantSubmittingRef.current = false;
+          },
         },
       );
     }
@@ -2379,12 +2387,10 @@ export default function ProductDetailPage() {
             }
             bottom={
               <>
-                {/* Row 742 (owner 2026-10-22): with the prices grid on it is the one place for units and prices; the old
-                card stays only on a variant or recipe, for unit STRUCTURE (its prices follow the family / recipe).
-                It goes away entirely when row 659 (family ladder with variant inherit / override) ships. */}
-                {(!v2 || (!isFamily && unitStructureGoverned(product))) && (
-                  <ProductUnitsCard product={product} hideAddForm={v2} structureOnly={v2} />
-                )}
+                {/* Row 742 (owner 2026-10-22), SA-1041: with the prices grid on it is the one place for units and
+                prices on every product (a variant and a recipe now add units there too); the old card is the
+                flag-off surface only. */}
+                {!v2 && <ProductUnitsCard product={product} />}
 
                 {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five

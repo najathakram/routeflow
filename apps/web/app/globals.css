@@ -290,3 +290,13 @@ body {
 )::-webkit-date-and-time-value {
   min-height: 1.2em;
 }
+
+/* W-928 (533 g) — a person who asked their device for less motion gets none from the Tailwind enter / exit animations
+   (dialogs, drawers, sheets, popovers, scrims). One rule here covers every overlay, including the ones that never carried
+   their own motion-reduce class. Declared outside any @layer, with !important, so it beats the data-[state] variants. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .animate-out {
+    animation: none !important;
+  }
+}

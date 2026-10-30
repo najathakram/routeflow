@@ -80,7 +80,9 @@ const openSheet = async () => {
 const rowVoidButton = () => screen.getByRole("button", { name: "Void sale ORD-1" });
 const confirmVoid = () => screen.getByRole("button", { name: "Void sale" });
 const typeReason = (text: string) =>
-  fireEvent.change(screen.getByLabelText("Reason for voiding"), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText("Reason for voiding (required)"), {
+    target: { value: text },
+  });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -280,7 +282,9 @@ describe("Void sale: the dialog", () => {
     await openSheet();
     fireEvent.click(rowVoidButton());
     fireEvent.click(screen.getByRole("button", { name: "Keep sale" }));
-    await waitFor(() => expect(screen.queryByLabelText("Reason for voiding")).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Reason for voiding (required)")).toBeNull(),
+    );
     expect(post).not.toHaveBeenCalled();
   });
 });

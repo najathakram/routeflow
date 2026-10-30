@@ -60,26 +60,12 @@
 - **Lesson:** **Before a member is merged into a train, read that member's own latest CI result for its exact head sha. Red, missing or stale means it does not enter, whatever the local checks said; the tip's CI is the second check, not the first.**
 - **Guard:** none automatic; train assembly reads each member's own latest CI (all jobs, not just Verify) and runs its changed specs before merging it. Cf. [[L-288]]. Extended 2026-10-21: a reviewer gate run inside a builder's live worktree measured uncommitted edits. A gate result counts only from a tree verified clean (`git status --porcelain` empty) at the exact reviewed sha.
 
-### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
-
-- **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
-- **Root cause:** the decision was treated as the owner's by default, so a reversible, in-scope call waited on a reply that was not coming; the abandoned approach was "ask, then hold everything until answered".
-- **Lesson:** **Before holding work for the owner, ask whether the call is reversible and inside the authority already delegated. If so, decide, write the reason on the board, and keep moving. Only an irreversible or outward-facing action (prod writes, repo visibility, spend, a bypass of a standing gate) waits, and it waits as ONE queued ask with a default, while every unrelated item keeps flowing.**
-- **Guard:** none automatic; the lead's operating notes and the lane rules. Cf. [[L-253]] (a public window closes on state, never on a reply).
-
 ### L-288 · 2026-10-09 · process · use one merge strategy end to end: trains merge to master with a MERGE COMMIT, so stacked and train-based branches stay ancestors of master
 
 - **Symptom:** a branch built on a train tip looked 256 commits ahead of master after that train was squash-merged, and merging it would have reverted four later fixes; the same shape threatened a second branch built on an earlier sitting.
 - **Root cause:** members were squashed or rebased while the train itself was squashed, so no branch built on a train tip could ever be an ancestor of the landed master; a mixed strategy made "is this merged?" unanswerable ([[L-197]], [[L-268]]).
 - **Lesson:** **Land a train with a merge commit (no squash, no rebase) so every member and every branch stacked on a train tip remains an ancestor of master. Before opening a PR for a branch built on any train, sitting or stacked base, run `git merge-base --is-ancestor <base> origin/master`; if it fails, cherry-pick the branch's own commits onto fresh master and prove `git diff origin/master...HEAD` lists only the PR's files.**
 - **Guard:** none automatic; the landing checklist's empty-diff proof (the file set of the two-dot and three-dot diffs against master must be identical). Supersedes the rebase-merge rule of [[L-268]].
-
-### L-287 · 2026-10-09 · process · never put a full local test gate on a train push that GitHub CI tests again; pre-flight takes seconds
-
-- **Symptom:** train and branch pushes sat for many minutes behind a full local verify plus the database lane, on a shared box already at its load cap, and then GitHub CI ran the same suites a second time.
-- **Root cause:** the local pre-push gate was designed when CI minutes were scarce, so it re-proves everything; on a train that CI tests anyway it is duplicate work, and it also queues every other lane behind the one push ([[L-283]]).
-- **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
-- **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
 
 ### L-264 · 2026-10-05 · process · two PRs that touch one constructor, signature or shared type are verified on the COMBINED master before the next land (window 6)
 
@@ -90,15 +76,14 @@
 - **Recurrence (2026-10-17, units-v2-3):** a merge that makes a parameter REQUIRED must re-run every spec and call site that passes it on the merged tree, not only the files the PR touched; run the full check-types ratchet plus the specs that import the changed function before the train is cut.
 - **Recurrence (2026-10-18, fixes-4):** members that each passed alone broke combined: one member's component began calling `useSearchParams` while another's page test mocked `next/navigation` without it (a mock misses a new hook call), and a third's picker output grew past what a Linux pipe flushes. Run the FULL web and api suites on the combined train tree, not only each member's own set.
 
-### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
-
-- **Symptom:** a disk-cleanup helper meant to delete only folders older than three days deleted every unreferenced proof and handoff folder regardless of age; the files were gitignored and not recoverable.
-- **Root cause:** the age filter (`find -newermt '-3 days'`) is invalid on this machine's `find`, printed an error and an empty list, and the helper read "nothing is recent" as "everything is old".
-- **Lesson:** **Test any delete-by-filter on a known-recent file first and require it to be KEPT, and make an erroring or empty filter abort the whole run, never default to "old". Run the listing as a dry run and read its count before the delete.**
-- **Guard:** none automated; the cleanup helper's filter check is the proposal (assert the known-recent canary survives, abort on a non-zero filter exit).
-- **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
-
 ## tooling
+
+### L-354 · 2026-10-29 · tooling · a worktree whose hooks directory is missing runs no hooks and says nothing; every tree-making path installs them and a push checks they exist
+
+- **Symptom:** a train branch was pushed from a fresh worktree and its pre-push never ran; earlier the same silence came from a relative shared `core.hooksPath` that a plain `npm ci` rewrote.
+- **Root cause:** `npm ci --ignore-scripts`, the rule that stopped husky rewriting the shared hooksPath, also skips creating `.husky/_`, and git treats a hooksPath to a missing directory as no hooks, with no warning. Fixing the install line one way reopened the other way.
+- **Lesson:** **Every path that creates a tree (worktree, heavy-slot, dispatch, swarm scripts) installs or copies the hooks itself and refuses a hookless tree. Before the first commit or push from a new tree, assert `.husky/_/pre-push` exists and `check-git-hooks` passes; a push that ran no hook is unverified, whatever it printed.**
+- **Guard:** `worktree.mjs` refuses a hookless tree (B642, #3880); heavy-slot, dispatch and bug-swarm trees ensure hooks (#3951); new trees copy hooks (#3956); `scripts/check-git-hooks.mjs`. Cf. archived L-263, L-274.
 
 ### L-348 · 2026-10-25 · tooling · pass test patterns to a child process as an argv array with no shell; on Windows a shell re-splits and re-escapes them (726)
 
@@ -120,13 +105,6 @@
 - **Root cause:** `git status` hides ignored files by design, so "clean" says nothing about untracked-and-ignored data; removal tooling that trusts it deletes them with the tree.
 - **Lesson:** **Before removing a worktree, run `git status --ignored --short` and list what is ignored; copy out anything not regenerable (backups, dumps, env files, built graphs) or stop and report. "Clean" is a statement about tracked files only.** Cf. [[L-180]].
 - **Guard:** none automatic; the worktree-removal step of the cleanup routine lists ignored files first.
-
-### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
-
-- **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
-- **Root cause:** stdin-fed python (`python3 -` with a heredoc) does not return there; the exact mechanism was not chased, and waiting or retrying never helps.
-- **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
-- **Guard:** none automatic; the lane rules.
 
 ### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
 
@@ -205,6 +183,13 @@
 - **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
 
 ## testing
+
+### L-353 · 2026-10-29 · testing · a spec with literal fixture dates, over code that reads the real clock, turns master red on a calendar date with no commit
+
+- **Symptom:** a train push went red on master's own billing spec (5 of 109 cases) although no commit had touched it; the train's members were suspected first.
+- **Root cause:** the code reads `new Date()` for a 72-hour floor while the spec billed a literal future date, so the case flipped once the wall clock passed the floor. Member passes were days old and nobody had run bare master that day.
+- **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
+- **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335.
 
 ### L-336 · 2026-10-22 · testing · a layout change to a cell or control is proven in a browser hit-test at every width; jsdom cannot see an overlap
 
@@ -292,6 +277,20 @@
 - **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]]. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
+
+### L-351 · 2026-10-29 · domain · a business day (due, overdue, expiry, default date) is the tenant's calendar day, judged by one shared rule; host and browser zones never decide it
+
+- **Symptom:** in one window six surfaces judged a day in the wrong zone: browser-day sale and invoice dates, host-day badge and OVERDUE, a licence expired from UTC midnight of its printed date, a report date moved by the host offset.
+- **Root cause:** each caller compared a stored date with `new Date()` in its own zone. The house rule named a helper but nothing listed the callers, so each compare was a fresh copy, and UTC CI hid it.
+- **Lesson:** **Judge every today, due, overdue, expiry or default date through one shared tenant-day rule, passing the tenant's zone in; an unknown zone reads UTC, never "always valid". Pin the callers in a spec that fails on a new inline date-vs-clock compare, and test with the zone as data in a child process, never an in-worker `process.env.TZ`.**
+- **Guard:** `licence-validity-callers.spec` (07ce43595), `page.no-browser-clock.static.test.ts` (#3775), child-process premise in `pg-utc-types.spec.ts` (#3717). Evidence #3775, #3778, #3781, #3717, B330. Cf. archived L-047, L-232, L-252.
+
+### L-352 · 2026-10-29 · domain · a button disabled while pending does not stop a second click in the same frame; a create holds a synchronous per-attempt latch
+
+- **Symptom:** a double-click on a create action sent two POSTs; the second came back 409 "already exists".
+- **Root cause:** the loading state disables the button only after a re-render, so a second click in the same frame still submits. Disabling on the pending flag was the approach that did not hold.
+- **Lesson:** **Guard every create or money-writing submit with a ref latch set synchronously at the top of the handler and released in `onSettled`, so a failed attempt can retry; the disabled state is cosmetic. Its red-first spec fires two clicks in one tick and asserts one request, then asserts a retry after a failure is sent.**
+- **Guard:** red-first specs on the inline product create and the variant create (I-79, d0cd10bd3). Server idempotency stays the second line (cf. L-344).
 
 ### L-349 · 2026-10-25 · domain · prove every id a write references is in the tenant, on the outer client, before any write (681 PR A)
 
@@ -482,4 +481,3 @@
   `git diff --name-only <base>..<merge> -- apps/api/prisma/migrations` on every landing.**
 - **Guard:** none yet — propose the merge coordinator's landing checklist running that diff as a
   hard gate, and/or folding a drift check into `post-deploy-check` itself.
-

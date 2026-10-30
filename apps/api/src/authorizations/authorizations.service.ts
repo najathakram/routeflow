@@ -10,6 +10,8 @@ import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
 import { RenewAuthorizationDto } from "./dto/renew-authorization.dto";
 import { SubmitAuthorizationDto } from "./dto/submit-authorization.dto";
 import { escapeHtml } from "../common/html-escape";
+import { calendarFieldStamp } from "../common/calendar-date";
+import { isLicenceExpired, licenceZone } from "./licence-validity";
 
 export interface BuyerAuthorizationRow {
   trackedCategoryId: string;
@@ -77,6 +79,7 @@ export class AuthorizationsService {
       orderBy: { name: "asc" },
     });
     if (categories.length === 0) return [];
+    const zone = await licenceZone(this.prisma);
 
     const auths = await this.prisma.forTenant().customerAuthorization.findMany({
       where: { customerId, trackedCategoryId: { in: categories.map((c) => c.id) } },
@@ -85,7 +88,11 @@ export class AuthorizationsService {
 
     return categories.map((c) => {
       const a = byId.get(c.id);
-      const expired = !!(a?.status === "VERIFIED" && a.expiresAt && new Date(a.expiresAt) < now);
+      const expired = !!(
+        a?.status === "VERIFIED" &&
+        a.expiresAt &&
+        isLicenceExpired(a.expiresAt, now, zone)
+      );
       return {
         trackedCategoryId: c.id,
         categoryName: c.name,
@@ -110,7 +117,8 @@ export class AuthorizationsService {
     // forTenant() would run UNSCOPED across all tenants — return nothing instead
     // of leaking every tenant's licenses (the bell is a per-tenant operator tool).
     if (!this.prisma.getTenantId()) return [];
-    return this.mapExpiring(await this.queryExpiring(withinDays, now), now);
+    const zone = await licenceZone(this.prisma);
+    return this.mapExpiring(await this.queryExpiring(withinDays, now), now, zone);
   }
 
   /** W7b expiry bell (buyer): the caller's own expiring/expired licenses at this seller. */
@@ -119,7 +127,8 @@ export class AuthorizationsService {
     withinDays = 30,
     now = new Date(),
   ): Promise<ExpiringAuthorization[]> {
-    return this.mapExpiring(await this.queryExpiring(withinDays, now, customerId), now);
+    const zone = await licenceZone(this.prisma);
+    return this.mapExpiring(await this.queryExpiring(withinDays, now, customerId), now, zone);
   }
 
   private async queryExpiring(withinDays: number, now: Date, customerId?: string) {
@@ -149,13 +158,14 @@ export class AuthorizationsService {
       trackedCategory: { name: string } | null;
     }>,
     now: Date,
+    zone: string | null,
   ): ExpiringAuthorization[] {
     return rows.map((a) => {
       let expired = a.status === "EXPIRED";
       let bucket: 30 | 7 | 1 | null = null;
       if (!expired && a.expiresAt) {
         const ms = new Date(a.expiresAt).getTime() - now.getTime();
-        if (ms <= 0) expired = true;
+        if (isLicenceExpired(a.expiresAt, now, zone)) expired = true;
         else if (ms <= DAY_MS) bucket = 1;
         else if (ms <= 7 * DAY_MS) bucket = 7;
         else if (ms <= 30 * DAY_MS) bucket = 30;
@@ -187,20 +197,21 @@ export class AuthorizationsService {
     const category = await this.assertLicenseCategory(dto.trackedCategoryId);
 
     const now = new Date();
+    const zone = await licenceZone(this.prisma);
     const existing = await this.prisma.forTenant().customerAuthorization.findUnique({
       where: {
         customerId_trackedCategoryId: { customerId, trackedCategoryId: dto.trackedCategoryId },
       },
     });
     // A buyer must not knock a currently-valid license back into review.
-    this.assertNotLiveVerified(existing, now);
+    this.assertNotLiveVerified(existing, now, zone);
     assertSafeLicense({ licenseNumber: dto.licenseNumber }, existing); // B964: buyer-typed, change-only, before any write
 
     const submitted = {
       status: "PENDING_REVIEW" as const,
       source: "RETAILER_SUBMITTED" as const,
       licenseNumber: dto.licenseNumber,
-      expiresAt: new Date(dto.expiresAt),
+      expiresAt: calendarFieldStamp(dto.expiresAt, "expiresAt"),
       documentKey: dto.documentKey ?? null,
       // Clear any stale verifier snapshot from a prior (now expired/rejected) cycle —
       // a PENDING row is unverified by definition.
@@ -233,7 +244,7 @@ export class AuthorizationsService {
       // The row we raced may be a VERIFIED license a concurrent operator create()
       // just wrote — re-apply the guard so we never demote it (and lose its
       // verifier snapshot) via the catch path.
-      this.assertNotLiveVerified(raced, now);
+      this.assertNotLiveVerified(raced, now, zone);
       auth = await this.prisma
         .forTenant()
         .customerAuthorization.update({ where: { id: raced.id }, data: submitted });
@@ -266,7 +277,7 @@ export class AuthorizationsService {
       status: "VERIFIED" as const,
       source: "WHOLESALER_ADDED" as const,
       licenseNumber: dto.licenseNumber ?? null,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: dto.expiresAt ? calendarFieldStamp(dto.expiresAt, "expiresAt") : null,
       documentKey: dto.documentKey ?? null,
       verifiedById: user.sub,
       verifiedByName: user.username,
@@ -358,7 +369,7 @@ export class AuthorizationsService {
         // 30/7/1 bucket on the next sweep.
         ...(dto.expiresAt !== undefined
           ? {
-              expiresAt: new Date(dto.expiresAt),
+              expiresAt: calendarFieldStamp(dto.expiresAt, "expiresAt"),
               expiryNotifiedAt: null,
               expiringSoonNotifiedBucket: null,
             }
@@ -396,8 +407,9 @@ export class AuthorizationsService {
   private assertNotLiveVerified(
     row: { status: string; expiresAt: Date | null } | null,
     now: Date,
+    zone: string | null,
   ): void {
-    if (row && row.status === "VERIFIED" && (!row.expiresAt || new Date(row.expiresAt) > now)) {
+    if (row && row.status === "VERIFIED" && !isLicenceExpired(row.expiresAt, now, zone)) {
       throw new BadRequestException(
         "This license is already verified with this seller — it doesn't need to be resubmitted.",
       );
