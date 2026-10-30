@@ -126,6 +126,10 @@ export class TenantsController {
         ...policyModes,
         fulfilment_model: fulfilment.fulfilmentMode,
         counter_sales: fulfilment.counterSales,
+        // SA-1032: the web hides the Promotions page actions while this reads "off".
+        promotions: await this.featureConfig
+          .getEffectiveMode(user.tenantId, "promotions")
+          .catch(() => "on"),
       },
       capabilities: { fulfilment: capabilityFromInputs(fulfilment) },
       catalogVersionId: resolved.catalogVersionId,
