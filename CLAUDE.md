@@ -7,7 +7,7 @@ Multi-tenant delivery / route-management SaaS. **npm + Turbo monorepo**: NestJS 
 
 ## Tech Stack
 
-- npm workspaces (`apps/*`, `packages/*`) + **Turbo**; npm 10.8, Node >= 18 (CI 20).
+- npm workspaces (`apps/*`, `packages/*`) + **Turbo**; npm 11.9, Node >= 18 (CI 20).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + Postgres, Redis (Socket.io), Passport JWT. Jest `*.spec.ts`.
 - **Web** (`apps/web`): Next.js 15.5 / React 19 App Router, golden reference for flows/DTOs. Radix + Tailwind, TanStack Query, RHF + zod. Jest+RTL `*.test.tsx`, Playwright `e2e/*.spec.ts`.
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role. Jest pure-logic `__tests__/*.test.ts`.
