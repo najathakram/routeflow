@@ -170,13 +170,11 @@ async function main() {
     console.log(await selfTest());
     return;
   }
-  // CENSUS_DATABASE_URL (the old override) wins; under `railway run` the shared report resolution picks the proxy host;
-  // with neither it is the compose database.
+  // CENSUS_DATABASE_URL (the old override) wins; under `railway run` (any RAILWAY_ variable) the shared report resolution
+  // picks the target (B768: this script never names the platform variable itself); with neither it is the compose database.
+  const underRailway = Object.keys(process.env).some((k) => k.startsWith("RAILWAY_"));
   const url =
-    process.env.CENSUS_DATABASE_URL ??
-    (process.env.DATABASE_URL || process.env.RAILWAY_TCP_PROXY_DOMAIN
-      ? resolveReportDbUrl(NAME)
-      : COMPOSE_URL);
+    process.env.CENSUS_DATABASE_URL ?? (underRailway ? resolveReportDbUrl(NAME) : COMPOSE_URL);
   if (!url) process.exit(2);
   const target = targetOf(url);
   console.error(`${NAME}: DB host ${target.host} · database ${target.database}`);
