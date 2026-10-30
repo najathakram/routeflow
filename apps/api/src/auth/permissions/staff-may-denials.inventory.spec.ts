@@ -122,13 +122,35 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
     expect(offenders).toEqual([]);
   });
 
+  // The ONE exemption: the office price-edit sites stay dark until the owner's perms flip (SA-1034 r6); #3977 moves them.
+  const DARK_OFFICE_PRICE_SITES = {
+    "invoices/invoice-line-override.ts": 1,
+    "orders/orders.service.ts": 2,
+  };
+  const emptyDenials = (a: string[]) => /^(\[\s*\]|undefined|null)$/.test(a[2] ?? "");
+
   it("no staffMay call hands in an empty denials literal: a request path reads the caller's real groups", () => {
     const offenders = Object.entries(sources()).flatMap(([file, src]) =>
       callArgs(src, "staffMay")
-        .filter((a) => /^(\[\s*\]|undefined|null)$/.test(a[2] ?? ""))
+        .filter(
+          (a) =>
+            emptyDenials(a) && !(a[1] === '"EDIT_LINE_PRICE"' && file in DARK_OFFICE_PRICE_SITES),
+        )
         .map(() => file),
     );
     expect(offenders).toEqual([]);
+  });
+
+  it("the exemption is exact: EDIT_LINE_PRICE only, and only the three dark office sites", () => {
+    const found = Object.fromEntries(
+      Object.entries(sources())
+        .map(
+          ([file, src]) => [file, callArgs(src, "staffMay").filter(emptyDenials).length] as const,
+        )
+        .filter(([, n]) => n > 0)
+        .sort(([x], [y]) => x.localeCompare(y)),
+    );
+    expect(found).toEqual(DARK_OFFICE_PRICE_SITES);
   });
 
   it("the pin bites: a planted empty-denials call has [] as its third argument", () => {
@@ -155,9 +177,11 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
       decideStaffWrite: callsOf("decideStaffWrite"),
     }).toEqual({
       staffMay: {
+        "invoices/invoice-line-override.ts": 1, // dark until the owner's perms flip (SA-1034 r6); #3977 moves it
         "orders/counter-sale/counter-sale.service.ts": 1,
         "orders/counter-sale/till-permission.guard.ts": 2,
         "orders/fulfil-path-resolver.ts": 1,
+        "orders/orders.service.ts": 2, // dark until the owner's perms flip (SA-1034 r6); #3977 moves them
         "selling-restrictions/restriction-warning.ts": 1,
       },
       mayUseTill: {
