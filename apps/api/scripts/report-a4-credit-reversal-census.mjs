@@ -16,6 +16,8 @@
 //   - Every session of the pool is read-only, and the run exits 2 unless SHOW transaction_read_only is `on` both on the
 //     session and inside the transaction that does the reads. That transaction ends with ROLLBACK. No write flag exists.
 //   - Counts and a short sample of credit note ids only: no tenant, customer or name is printed or selected.
+//   - SA-1054 A-1: the result ends with a `denominators` object (credit notes by status, items, the regulated-line and
+//     ledger cross-checks). All-zero denominators mean the run proved nothing: an empty database prints the same census.
 import { createRequire } from "module";
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";

@@ -197,6 +197,44 @@ describeDb("SA-1042 A-4 G5: the old-rows census is scoped to live, non-dead SALE
         categoryTax: 9,
       },
     });
+    // SA-1054 A-1 denominators: a REVERSAL naming the VOID note (never counted), a return-refund-shaped item (no category stamp) on a
+    // regulated line, and two lump notes (no items), one of them APPLIED
+    await row("N1", "REVERSAL", { qty: -1, net: -10, tax: -1, at: t1, creditNoteId: voided.id });
+    const returnRow = await prisma.creditNote.create({
+      data: {
+        tenantId,
+        customerId: customer.id,
+        invoiceId: invoice.id,
+        creditNoteNumber: `CN-CEN-${RUN}-R`,
+        amount: 50,
+        status: "ISSUED",
+      },
+    });
+    await prisma.creditNoteItem.create({
+      data: {
+        tenantId,
+        creditNoteId: returnRow.id,
+        invoiceItemId: lines.N1.invoiceItemId,
+        trackedCategoryId: null,
+        amount: 50,
+        qty: 5,
+        categoryTax: 0,
+      },
+    });
+    for (const [suffix, status] of [
+      ["L1", "ISSUED"],
+      ["L2", "APPLIED"],
+    ] as const) {
+      await prisma.creditNote.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          creditNoteNumber: `CN-CEN-${RUN}-${suffix}`,
+          amount: 20,
+          status,
+        },
+      });
+    }
   }, 120_000);
 
   afterAll(async () => {
@@ -229,5 +267,36 @@ describeDb("SA-1042 A-4 G5: the old-rows census is scoped to live, non-dead SALE
       notesBookedLessTaxThanStored: 1,
     });
     expect(census.sample).toEqual([{ creditNoteId: noteIds.N4, storedTax: 6, bookedTax: 2 }]);
+  });
+
+  it("carries the denominators (SA-1054 A-1): the counts that tell a live database from an empty one", async () => {
+    const { denominators: d } = await censusOldTypedCredits(prisma, { tenantId });
+    expect(d).toEqual({
+      creditNotes: 8, // N1..N4, the return-row note and one lump ISSUED; one lump APPLIED; the VOID note
+      creditNotesByStatus: { ISSUED: 6, APPLIED: 1, VOID: 1 },
+      notesWithItems: 6, // N1..N4, the return-row note, the VOID note
+      notesWithoutItems: 2, // the two lumps
+      creditNoteItems: 6,
+      itemsOnRegulatedLine: 5, // N1..N4 and the return row (no category stamp); the VOID note's item is out
+      reversalsNamingCreditNote: 2, // N1 and N4's notes; the VOID note's REVERSAL and N3's un-named one are out
+      regulatedSaleRows: 3, // N1, N3, N4 (N2 never booked)
+    });
+    expect(d.notesWithItems + d.notesWithoutItems).toBe(d.creditNotes);
+  });
+
+  it("runs the platform-wide path (no tenant filter, as production does) and never reads less than the tenant's own", async () => {
+    const own = (await censusOldTypedCredits(prisma, { tenantId })).denominators;
+    const all = (await censusOldTypedCredits(prisma)).denominators;
+    for (const k of [
+      "creditNotes",
+      "notesWithItems",
+      "notesWithoutItems",
+      "creditNoteItems",
+      "itemsOnRegulatedLine",
+      "reversalsNamingCreditNote",
+      "regulatedSaleRows",
+    ] as const) {
+      expect(all[k]).toBeGreaterThanOrEqual(own[k]);
+    }
   });
 });

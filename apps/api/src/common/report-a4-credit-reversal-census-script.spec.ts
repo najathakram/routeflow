@@ -58,6 +58,33 @@ describe("report-a4-credit-reversal-census (SA-1054 r2)", () => {
     expect(code).toContain("censusOldTypedCredits(tx)");
   });
 
+  it("SA-1054 A-1: the printed result carries the denominators, from the one shared census, counts only and SELECT only", () => {
+    const census = fs.readFileSync(
+      path.resolve(API_DIR, "src/regulated/credit-reversal-census.ts"),
+      "utf8",
+    );
+    const body = census.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    // the runner prints whatever censusOldTypedCredits returns, so the denominators ride the same call (no second query home)
+    expect(code).toContain("censusOldTypedCredits(tx)");
+    expect(body).toMatch(/denominators:\s*await loadDenominators\(db, opts\)/);
+    for (const key of [
+      "creditNotesByStatus",
+      "notesWithItems",
+      "notesWithoutItems",
+      "creditNoteItems",
+      "itemsOnRegulatedLine",
+      "reversalsNamingCreditNote",
+      "regulatedSaleRows",
+    ])
+      expect(body).toContain(key);
+    // every raw statement the census issues is a SELECT, and there is no write call
+    const raws = [...body.matchAll(/\$queryRaw`([\s\S]*?)`/g)].map((m) => m[1].trim());
+    expect(raws.length).toBeGreaterThanOrEqual(2);
+    for (const sql of raws) expect(sql).toMatch(/^SELECT\b/);
+    expect(body).not.toMatch(/\$executeRaw|\$queryRawUnsafe/);
+    expect(body).not.toMatch(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/);
+  });
+
   it("holds no write: no INSERT/UPDATE/DELETE/DDL, no $executeRaw, no create/update/delete call", () => {
     expect(code).not.toMatch(
       /\b(INSERT\s+INTO|UPDATE\s+"|DELETE\s+FROM|ALTER\s+TABLE|DROP\s+TABLE|TRUNCATE)\b/i,
