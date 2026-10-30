@@ -142,10 +142,25 @@ function getStockStatus(currentStock: number, isActive: boolean, kind?: string):
 
 // ─── Info row ─────────────────────────────────────────────────────────────────
 
-function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+function InfoRow({
+  label,
+  value,
+  htmlFor,
+}: {
+  label: string;
+  value: React.ReactNode;
+  htmlFor?: string;
+}) {
+  const labelClass = "text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70";
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">{label}</p>
+      {htmlFor ? (
+        <label htmlFor={htmlFor} className={`block ${labelClass}`}>
+          {label}
+        </label>
+      ) : (
+        <p className={labelClass}>{label}</p>
+      )}
       <div className="mt-1 text-sm font-medium text-navy">{value}</div>
     </div>
   );
@@ -1658,9 +1673,11 @@ export default function ProductDetailPage() {
                   />
                   <InfoRow
                     label={`${UW.base.other} per ${UW.pack.lower}`}
+                    htmlFor={isEditing ? "product-pack-count" : undefined}
                     value={
                       isEditing ? (
                         <DecimalInput
+                          id="product-pack-count"
                           decimals={0}
                           min={0}
                           value={
