@@ -2387,12 +2387,10 @@ export default function ProductDetailPage() {
             }
             bottom={
               <>
-                {/* Row 742 (owner 2026-10-22): with the prices grid on it is the one place for units and prices; the old
-                card stays only on a variant or recipe, for unit STRUCTURE (its prices follow the family / recipe).
-                It goes away entirely when row 659 (family ladder with variant inherit / override) ships. */}
-                {(!v2 || (!isFamily && unitStructureGoverned(product))) && (
-                  <ProductUnitsCard product={product} hideAddForm={v2} structureOnly={v2} />
-                )}
+                {/* Row 742 (owner 2026-10-22), SA-1041: with the prices grid on it is the one place for units and
+                prices on every product (a variant and a recipe now add units there too); the old card is the
+                flag-off surface only. */}
+                {!v2 && <ProductUnitsCard product={product} />}
 
                 {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five

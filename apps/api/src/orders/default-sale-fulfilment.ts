@@ -30,7 +30,7 @@ export async function defaultSaleFulfilmentKind(
       featureConfig: { getEffectiveMode: () => storedFulfilmentMode(prisma, tenantId) },
       tenantId,
     },
-    { stored: customer?.fulfillPath, audience: "staff", role: null },
+    { stored: customer?.fulfillPath, audience: "staff", role: null, deniedGroups: [] },
   );
   return saleFulfilmentKind({ counterSale: false, fulfillPath });
 }

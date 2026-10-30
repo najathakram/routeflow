@@ -140,7 +140,7 @@ export default function TransactionDetailPage() {
   const { user } = useAuth();
   const { data: txn, isLoading, isError } = useTransaction(transactionId);
   const recordPayment = useRecordPayment();
-  const downloadInvoice = useDownloadInvoice();
+  const downloadInvoice = useDownloadInvoice({ localErrorToast: true }); // the onError toast below is the only one
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
 
   const handleDownloadPdf = () => {

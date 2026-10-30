@@ -295,3 +295,5 @@ builder Sonnet/medium, qa-engineer Sonnet/high, feature-reviewer Opus/high); `bu
 mechanical sweeps on Sonnet behind a strong verifier). All three are the same ladder. The one open
 disagreement — money judgment defaults to Sonnet-at-high in `qa-engineer` but to Opus in the global
 rule — is the owner's call; until ruled, escalate money/tenancy verification to Opus per invocation.
+
+Advisory (dark, owner ruling pending on the budget): a change to a skill, hook, model or routing rule should carry a `factory-eval report` (`scripts/factory-eval.mjs`, frozen task set in `evals/factory/`).

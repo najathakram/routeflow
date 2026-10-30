@@ -342,6 +342,24 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     expect(params.automatic_tax?.enabled).not.toBe(true);
   });
 
+  it("R1 (SA-1037 r3 PR-1): the catch-up session offers card and us_bank_account when the env says card_and_bank", async () => {
+    const KEY = "BILLING_CHECKOUT_PAYMENT_METHODS";
+    const prior = process.env[KEY];
+    process.env[KEY] = "card_and_bank";
+    try {
+      const h = make({ invoices: [OCT_OPEN], sub: sub() });
+      activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
+      const r = await h.svc.plan("t1", NOW);
+      if (!r.plan.ok) throw new Error("plan not ok");
+      await h.svc.open("t1", { now: NOW, expectedStubCents: r.plan.stub.totalCents });
+      const params = h.stripe.client.checkout.sessions.create.mock.calls[0][0];
+      expect(params.payment_method_types).toEqual(["card", "us_bank_account"]);
+    } finally {
+      if (prior === undefined) delete process.env[KEY];
+      else process.env[KEY] = prior;
+    }
+  });
+
   describe("F6: the return paths are joined to the one FRONTEND_URL base inside open()", () => {
     const saved = process.env.FRONTEND_URL;
     afterEach(() => {

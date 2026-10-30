@@ -52,6 +52,9 @@ const ALLOWED: Record<string, string> = {
   "b562-d2-average-repair.mjs": "a writer: hands the resolved target to the compiled runner",
   // `--local` mode only: production goes through resolveDatabaseUrl(); DATABASE_URL is read solely
   // when the operator explicitly asks for a local run.
+  // SA-1027: a WRITER (resolveDatabaseUrl, requireProxy unless --local); it sets the resolved target for the compiled
+  // module's PrismaService, which reads nothing else.
+  "catalog-copy.mjs": "a writer: hands the resolved target to the compiled module",
   "data-questions-report.mjs": "--local mode only",
   "sa077-split-qty-consistency.mjs": "--local mode only",
   "labels-from-categories.mjs": "--local mode only (writer: requireProxy otherwise)",

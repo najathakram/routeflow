@@ -46,6 +46,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { TILL_ADMIN } from "../testing/till-user";
 
 describe("InvoicesService — every payment write rounds (#2293)", () => {
   let service: InvoicesService;
@@ -109,25 +110,34 @@ describe("InvoicesService — every payment write rounds (#2293)", () => {
 
     it("writes the rounded amount and bank charges", async () => {
       seedSole(100);
-      await service.updatePayment("inv-1", "pay-1", {
-        amount: 10.005,
-        method: "CHECK",
-        bankCharges: 0.3333,
-      } as any);
+      await service.updatePayment(
+        "inv-1",
+        "pay-1",
+        {
+          amount: 10.005,
+          method: "CHECK",
+          bankCharges: 0.3333,
+        } as any,
+        { user: TILL_ADMIN },
+      );
       expect(written().amount).toBe(10.01);
       expect(written().bankCharges).toBe(0.33);
     });
 
     it("computes the invoice status from the rounded amount (10.005 fully pays a 10.01 invoice)", async () => {
       seedSole(10.01);
-      await service.updatePayment("inv-1", "pay-1", { amount: 10.005, method: "CHECK" } as any);
+      await service.updatePayment("inv-1", "pay-1", { amount: 10.005, method: "CHECK" } as any, {
+        user: TILL_ADMIN,
+      });
       expect(invoiceData().status).toBe(InvoiceStatus.PAID);
     });
 
     it("checks remaining capacity against the rounded amount (10.004 fits a 10.00 invoice)", async () => {
       seedSole(10);
       await expect(
-        service.updatePayment("inv-1", "pay-1", { amount: 10.004, method: "CHECK" } as any),
+        service.updatePayment("inv-1", "pay-1", { amount: 10.004, method: "CHECK" } as any, {
+          user: TILL_ADMIN,
+        }),
       ).resolves.toBeDefined();
       expect(written().amount).toBe(10);
       expect(invoiceData().status).toBe(InvoiceStatus.PAID);
@@ -140,7 +150,9 @@ describe("InvoicesService — every payment write rounds (#2293)", () => {
         { id: "pay-2", status: "PAID", amount: 10, settledAt: null },
         { id: "pay-3", status: "DRAFT", amount: 10, settledAt: null },
       ]);
-      await service.updatePayment("inv-1", "pay-1", { amount: 10.004, method: "CHECK" } as any);
+      await service.updatePayment("inv-1", "pay-1", { amount: 10.004, method: "CHECK" } as any, {
+        user: TILL_ADMIN,
+      });
       expect(written().amount).toBe(10);
       expect(invoiceData().status).toBe(InvoiceStatus.PARTIAL); // 10 + 10 of 30
     });
@@ -148,22 +160,31 @@ describe("InvoicesService — every payment write rounds (#2293)", () => {
     it("a genuinely over-balance amount is still refused after rounding", async () => {
       seedSole(10);
       await expect(
-        service.updatePayment("inv-1", "pay-1", { amount: 10.006, method: "CHECK" } as any),
+        service.updatePayment("inv-1", "pay-1", { amount: 10.006, method: "CHECK" } as any, {
+          user: TILL_ADMIN,
+        }),
       ).rejects.toThrow("Payment exceeds remaining balance");
       expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
     });
 
     it("bankCharges: an explicit null still clears it; an absent key leaves it untouched", async () => {
       seedSole(100);
-      await service.updatePayment("inv-1", "pay-1", {
-        amount: 5,
-        method: "CHECK",
-        bankCharges: null,
-      } as any);
+      await service.updatePayment(
+        "inv-1",
+        "pay-1",
+        {
+          amount: 5,
+          method: "CHECK",
+          bankCharges: null,
+        } as any,
+        { user: TILL_ADMIN },
+      );
       expect(written()).toHaveProperty("bankCharges", null);
 
       prisma.invoicePayment.update.mockClear();
-      await service.updatePayment("inv-1", "pay-1", { amount: 5, method: "CHECK" } as any);
+      await service.updatePayment("inv-1", "pay-1", { amount: 5, method: "CHECK" } as any, {
+        user: TILL_ADMIN,
+      });
       expect(written()).not.toHaveProperty("bankCharges");
     });
   });
