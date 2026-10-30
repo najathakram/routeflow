@@ -14,6 +14,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * SA-828 (row 657) + SA-804(3): `countProduct` (set a product's stock to a count, or adjust it by
@@ -41,17 +42,22 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
   let prisma: ReturnType<typeof createMockPrisma>;
   let stockAlerts: { fireForProducts: jest.Mock };
   let exec: jest.Mock;
+  let stock: StockHelperMock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-927: the real stock helper reads the LOCKED row from the stubs the test gives findUnique / findMany.
+    stock = wireStockHelper(prisma);
     exec = jest.fn().mockResolvedValue(0);
     stockAlerts = { fireForProducts: jest.fn().mockResolvedValue({ notified: 0 }) };
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({
-        ...prisma,
-        $executeRaw: exec,
-        $queryRaw: jest.fn().mockResolvedValue([]),
-      }),
+      fn(
+        stock.wrapTx({
+          ...prisma,
+          $executeRaw: exec,
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        }),
+      ),
     );
     prisma.stockMovement.count.mockResolvedValue(0);
     prisma.stockMovement.create.mockResolvedValue({ id: "mv-1" });
@@ -175,9 +181,8 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       );
 
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
-      expect(prisma.product.update.mock.calls[0][0].data).toEqual({
-        currentStock: { increment: D(16) },
-      });
+      // SA-927: one absolute write of the helper's fold (locked 20 + 16), never an increment
+      expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("36");
       const m = movement();
       expect(m.type).toBe("ADJUSTMENT");
       expect(m.quantity.toString()).toBe("16");
@@ -192,8 +197,9 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
         deltaPieces: 16,
         stockBefore: 20,
         stockAfter: 36,
-        movementId: "mv-1",
+        movementId: m.id,
       });
+      expect(m.id).toEqual(expect.any(String));
       // a gain opens a lot and fires the stock alerts after the commit
       expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("16");
       expect(stockAlerts.fireForProducts).toHaveBeenCalledWith(["prod-1"]);
@@ -485,7 +491,10 @@ describe("InventoryService reasons and countProduct (SA-828 / SA-804(3))", () =>
       expect(spy).toHaveBeenCalledWith(
         expect.anything(),
         "prod-1",
-        expect.objectContaining({ trigger: "PRODUCT_COUNT:mv-1", performedById: "u-1" }),
+        expect.objectContaining({
+          trigger: `PRODUCT_COUNT:${movement().id}`,
+          performedById: "u-1",
+        }),
       );
     });
 

@@ -242,7 +242,7 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
   });
 
-  it("countProduct SET is counted minus the LOCKED stock, written as an increment (SA-828)", async () => {
+  it("countProduct SET is counted minus the LOCKED stock, written as the helper's fold (SA-828)", async () => {
     // validation read + the date gate's flag read: 100 on hand; by the time the lock is granted a sale left 70.
     // The count is DATED: since row 563 (#3673) the gate reads product flags only for a person-chosen
     // date, so an undated count has no flag read (the twin below).
@@ -263,13 +263,15 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       "u-1",
     );
 
-    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
-      currentStock: { increment: D(20) },
-    });
-    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("90");
+    // SA-927: one absolute write of the helper's fold (locked 70 + 20), never an increment
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
+    const movement = stock.written()[0];
+    expect(movement.quantity.toString()).toBe("20");
+    expect(movement.stockAfter.toString()).toBe("90");
     // findMany calls: 1 the SA-802 date gate's flag read, 2 the locked read.
     expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
-    expect(lockCalls()).toHaveLength(1);
+    // the up-front statement, then the helper's re-lock of the same row (held already: a no-op)
+    expect(lockCalls()).toHaveLength(2);
   });
 
   it("an undated countProduct SET: the first findMany IS the locked read (no date-gate read)", async () => {
@@ -283,11 +285,9 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       "u-1",
     );
 
-    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
-      currentStock: { increment: D(20) },
-    });
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
     expect(prisma.product.findMany).toHaveBeenCalledTimes(1);
     expect(lockedBefore(prisma.product.findMany, 1)).toBe(true);
-    expect(lockCalls()).toHaveLength(1);
+    expect(lockCalls()).toHaveLength(2);
   });
 });

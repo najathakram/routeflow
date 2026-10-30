@@ -44,6 +44,7 @@ const SRC_ROOT = path.resolve(__dirname, "..");
  */
 const SEED_FIXTURES = new Set([
   "inventory/testing/order-stock-world.ts",
+  "inventory/testing/sa802-world.ts", // newProduct(): a product's starting stock in a backdating DB spec
   "orders/testing/units-fold-db-harness.ts",
 ]);
 
