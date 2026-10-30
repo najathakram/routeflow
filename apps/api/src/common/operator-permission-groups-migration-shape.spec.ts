@@ -74,9 +74,8 @@ describe("operator permission groups migration shape", () => {
 
     const model = schema.slice(schema.indexOf("model User {"));
     const userBody = model.slice(0, model.indexOf("\n}"));
-    // the column default became {BAD_DEBT} in SA-1050 (20261028100100_bad_debt_default_denied)
     expect(userBody).toMatch(
-      /^\s+deniedPermissionGroups\s+OperatorPermissionGroup\[\]\s+@default\(\[BAD_DEBT\]\)/m,
+      /^\s+deniedPermissionGroups\s+OperatorPermissionGroup\[\]\s+@default\(\[\]\)/m,
     );
     expect(userBody).toMatch(/^\s+permissionsVersion\s+Int\s+@default\(0\)/m);
   });

@@ -3,17 +3,15 @@ import { join } from "path";
 import { INVOICE_WRITE_OFF_KIND_VALUES, OPERATOR_PERMISSION_GROUP_VALUES } from "@routeflow/types";
 
 /**
- * SA-1050 PR-0: the bad-debt write-off ledger and the BAD_DEBT permission group, as two additive migration folders.
- *
- * Folder 1 is schema only: the kind enum, the event table (CHECKs inline, two FKs, two indexes), one nullable column
- * on Invoice and the new BAD_DEBT enum value. Folder 2 is the first USE of that value, so it must be a later
- * transaction: a value added in a transaction cannot be used until it commits ("unsafe use of new value"). It sets
- * the column default to `{BAD_DEBT}` and appends the group to every OPERATOR's deny list.
+ * SA-1050 PR-0: the bad-debt write-off ledger and the BAD_DEBT permission group (folder 1 of 2, schema only): the kind
+ * enum, the event table (CHECKs inline, two FKs, two indexes), one nullable column on Invoice and the new BAD_DEBT enum
+ * value. Folder 2 (the column default and the deny-list append, the first USE of the value) is PR-0b's, applied to
+ * production only AFTER the code that knows the value is serving (SA-1050 A-3): a folder-2 row read by a client that
+ * lacks the value throws P2023.
  *
  * Nothing in the app reads or writes any of this yet; merges only inside sitting #5.
  */
 const SCHEMA_FOLDER = "20261028100000_invoice_write_off_events_and_bad_debt_group";
-const DATA_FOLDER = "20261028100100_bad_debt_default_denied";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "prisma", "migrations");
 const SCHEMA_DIR = join(__dirname, "..", "..", "prisma", "schema");
 
@@ -30,9 +28,7 @@ describe("SA-1050 PR-0 migration folders", () => {
   it("sort after the previous newest migration and own their timestamps", () => {
     const all = readdirSync(MIGRATIONS_DIR).filter((n) => n !== "migration_lock.toml");
     expect(SCHEMA_FOLDER > "20261026090000_stock_count_seed_state").toBe(true);
-    expect(DATA_FOLDER > SCHEMA_FOLDER).toBe(true);
     expect(all.filter((n) => n.startsWith("20261028100000"))).toEqual([SCHEMA_FOLDER]);
-    expect(all.filter((n) => n.startsWith("20261028100100"))).toEqual([DATA_FOLDER]);
   });
 
   describe("folder 1: schema", () => {
@@ -118,38 +114,6 @@ describe("SA-1050 PR-0 migration folders", () => {
     });
   });
 
-  describe("folder 2: data", () => {
-    const sql = () => squash(executable(DATA_FOLDER));
-
-    it("is one bounded transaction", () => {
-      expect((executable(DATA_FOLDER).match(/^BEGIN;/gm) ?? []).length).toBe(1);
-      expect((executable(DATA_FOLDER).match(/^COMMIT;/gm) ?? []).length).toBe(1);
-      expect(sql()).toContain("SET LOCAL lock_timeout = '5s'");
-    });
-
-    it("makes BAD_DEBT the default deny for a new account", () => {
-      expect(sql()).toContain(
-        `ALTER TABLE "User" ALTER COLUMN "deniedPermissionGroups" SET DEFAULT ARRAY['BAD_DEBT']::"OperatorPermissionGroup"[]`,
-      );
-    });
-
-    it("appends BAD_DEBT to every OPERATOR's deny list, once, and bumps the version", () => {
-      const t = sql();
-      expect(t).toContain(`UPDATE "User" SET`);
-      expect(t).toContain(
-        `"deniedPermissionGroups" = array_append("deniedPermissionGroups", 'BAD_DEBT'::"OperatorPermissionGroup")`,
-      );
-      expect(t).toContain(`"permissionsVersion" = "permissionsVersion" + 1`);
-      expect(t).toMatch(
-        /WHERE "role" = 'OPERATOR' AND NOT \('BAD_DEBT'::"OperatorPermissionGroup" = ANY\("deniedPermissionGroups"\)\)/,
-      );
-    });
-
-    it("drops, truncates and deletes nothing", () => {
-      expect(executable(DATA_FOLDER)).not.toMatch(/\bDROP\b|\bTRUNCATE\b|^\s*DELETE\b/im);
-    });
-  });
-
   describe("the Prisma schema folder", () => {
     const finance = () => readFileSync(join(SCHEMA_DIR, "finance.prisma"), "utf8");
     const tenancy = () => readFileSync(join(SCHEMA_DIR, "tenancy.prisma"), "utf8");
@@ -167,7 +131,7 @@ describe("SA-1050 PR-0 migration folders", () => {
       expect(f).toMatch(/^\s+writtenOffById\s+String\?/m);
     });
 
-    it("lists BAD_DEBT last in the permission group enum and defaults the deny list to it", () => {
+    it("lists BAD_DEBT last in the permission group enum and leaves the deny-list default empty (PR-0b changes it)", () => {
       const t = tenancy();
       const enumBody = t.slice(t.indexOf("enum OperatorPermissionGroup {"));
       const values = enumBody
@@ -177,7 +141,7 @@ describe("SA-1050 PR-0 migration folders", () => {
         .filter((l) => l && !l.startsWith("//"));
       expect(values).toEqual([...OPERATOR_PERMISSION_GROUP_VALUES]);
       expect(t).toMatch(
-        /^\s+deniedPermissionGroups\s+OperatorPermissionGroup\[\]\s+@default\(\[BAD_DEBT\]\)/m,
+        /^\s+deniedPermissionGroups\s+OperatorPermissionGroup\[\]\s+@default\(\[\]\)/m,
       );
     });
   });

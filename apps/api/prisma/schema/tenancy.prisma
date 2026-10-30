@@ -332,9 +332,8 @@ model User {
   lockedUntil         DateTime?
   /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
   lastLoginAt         DateTime?
-  /// Feature groups switched OFF for this user. Read for OPERATOR accounts only. New accounts start with BAD_DEBT
-  /// denied (SA-1050, owner 2026-10-20: off by default); every other group is on.
-  deniedPermissionGroups OperatorPermissionGroup[] @default([BAD_DEBT])
+  /// Feature groups switched OFF for this user. [] = every group. Read for OPERATOR accounts only.
+  deniedPermissionGroups OperatorPermissionGroup[] @default([])
   /// Bumped on every write to deniedPermissionGroups (compare-and-set token).
   permissionsVersion  Int        @default(0)
   createdAt           DateTime   @default(now())
