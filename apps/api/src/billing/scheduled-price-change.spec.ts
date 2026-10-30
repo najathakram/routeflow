@@ -608,6 +608,34 @@ describe("the backup sweep (applyDue)", () => {
 });
 
 describe("the invoice.upcoming webhook", () => {
+  // The webhook path calls apply(tenantId) with no `now`, so it reads the real clock; the fixtures
+  // (baseItem's current_period_end = NOW + 48h) are relative to NOW. Freeze Date alone at NOW: the
+  // path awaits promises and the lock queue, so nextTick / setImmediate / timers stay real.
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: NOW,
+      doNotFake: [
+        "hrtime",
+        "nextTick",
+        "performance",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "requestIdleCallback",
+        "cancelIdleCallback",
+        "setImmediate",
+        "clearImmediate",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        "clearTimeout",
+      ],
+    });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   function wire(rows: SubRow[] = [row()], items: any[] = [baseItem()]) {
     const m = make(rows, items);
     const billingPrisma: any = {
