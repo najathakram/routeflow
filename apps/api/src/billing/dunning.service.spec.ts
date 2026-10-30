@@ -376,15 +376,15 @@ describe("DunningService", () => {
 
     // deploy day (Opus re-review): a clock that keeps an OLD finalization time (discovery, a moved clock) must not
     // mail d0 + d3 + d6 in one sweep - only the highest milestone due goes out
-    it("deploy day, enforced, 200 h clock and nothing logged: ONE email (the final notice); d0/d3 skipped, dunning_final recorded", async () => {
+    it("deploy day, enforced, 368 h clock and nothing logged: ONE email (the final notice); d0/d3/d7 skipped, dunning_final recorded", async () => {
       mode("enforced");
       const d = make({ sweepRows: [row()] });
-      const out = await d.svc.sweep(at(200));
+      const out = await d.svc.sweep(at(368));
       expect(sentMilestones(d)).toEqual([["DUNNING_D6", EP, "final"]]);
       const recorded = d.notifications.recordDunningMilestone.mock.calls
         .map((c: any[]) => c[1])
         .sort();
-      expect(recorded).toEqual(["DUNNING_D0", "DUNNING_D3", "DUNNING_FINAL"]);
+      expect(recorded).toEqual(["DUNNING_D0", "DUNNING_D3", "DUNNING_D7", "DUNNING_FINAL"]);
       expect(out.paused).toBe(0); // the 24 h lead still starts now
     });
 
@@ -395,11 +395,12 @@ describe("DunningService", () => {
         logged: [
           { milestone: "DUNNING_D0", sentAt: at(0) },
           { milestone: "DUNNING_D3", sentAt: at(72) },
-          { milestone: "DUNNING_D6", sentAt: at(144) },
-          { milestone: "DUNNING_FINAL", sentAt: at(144) },
+          { milestone: "DUNNING_D7", sentAt: at(168) },
+          { milestone: "DUNNING_D6", sentAt: at(312) },
+          { milestone: "DUNNING_FINAL", sentAt: at(312) },
         ],
       });
-      await d.svc.sweep(at(151));
+      await d.svc.sweep(at(319));
       expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
     });
 
@@ -412,7 +413,7 @@ describe("DunningService", () => {
           { milestone: "DUNNING_D3", sentAt: at(72) },
         ],
       });
-      await d.svc.sweep(at(150));
+      await d.svc.sweep(at(318));
       expect(d.notifications.notifyDunning).toHaveBeenCalledWith(
         "t1",
         "DUNNING_D6",
@@ -441,7 +442,7 @@ describe("DunningService", () => {
           ],
           autoLocks,
         });
-        await d.svc.sweep(at(150));
+        await d.svc.sweep(at(318));
         return d;
       };
 
@@ -463,7 +464,7 @@ describe("DunningService", () => {
           { milestone: "DUNNING_D3", sentAt: at(72) },
           ...(init.logged ?? []),
         ];
-        let clock = at(150);
+        let clock = at(318);
         const d = make({
           sweepRows: [row({ tenant: { ...row().tenant, class: cls } })],
           logged,
@@ -472,7 +473,7 @@ describe("DunningService", () => {
             // the contract: null only while paused; an unpaused switch with no instant set = unpaused long ago
             unpausedSince: async () => (sw.paused ? null : (sw.unpausedAt ?? new Date(0))),
           },
-          localPausedAt: at(177),
+          localPausedAt: at(345),
           txTenant: { status: "ACTIVE", readOnlyReason: null, class: cls },
         });
         d.notifications.notifyDunning.mockImplementation(
@@ -498,7 +499,7 @@ describe("DunningService", () => {
 
       it("held + PRODUCTION: the neutral notice goes out ONCE under D6; it is NOT the final notice (no DUNNING_FINAL)", async () => {
         const { d, sweepAt } = lifecycle();
-        await sweepAt(150);
+        await sweepAt(318);
         expect(finals(d)).toHaveLength(1);
         expect(finals(d)[0].slice(0, 4)).toEqual(["t1", "DUNNING_D6", EP, "final"]);
         expect(finals(d)[0][4].omitLockWarning).toBe(true);
@@ -509,26 +510,26 @@ describe("DunningService", () => {
           EP,
         );
         // the next hourly sweeps send nothing and pause nobody (the gate holds the lock)
-        await sweepAt(151);
-        await sweepAt(177);
+        await sweepAt(319);
+        await sweepAt(345);
         expect(finals(d)).toHaveLength(1);
         expect(d.transition).not.toHaveBeenCalled();
       });
 
       it("held, then unpaused: the REAL final (with its date) is sent once, and the pause waits 24 h after it", async () => {
         const { d, sw, sweepAt } = lifecycle();
-        await sweepAt(150); // held: neutral notice only
+        await sweepAt(318); // held: neutral notice only
         sw.paused = false; // a super admin unpauses
-        await sweepAt(160);
+        await sweepAt(328);
         expect(finals(d)).toHaveLength(2);
         expect(finals(d)[1].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", EP, "final"]);
         expect(finals(d)[1][4]).toEqual(
           expect.objectContaining({ omitLockWarning: false, readOnlyOn: "Nov 9, 2026" }),
         );
         expect(d.transition).not.toHaveBeenCalled(); // never in the sweep that sent the notice
-        await sweepAt(183); // 23 h after the real final
+        await sweepAt(351); // 23 h after the real final
         expect(d.transition).not.toHaveBeenCalled();
-        await sweepAt(185); // 25 h after it (09:00+ local)
+        await sweepAt(353); // 25 h after it (09:00+ local)
         expect(d.transition).toHaveBeenCalledTimes(1);
         expect(finals(d)).toHaveLength(2); // sent once, never resent
       });
@@ -537,24 +538,24 @@ describe("DunningService", () => {
         const reKey = (u: Date) => `${EP}:u${u.toISOString()}`;
         // The tenant got the REAL dated final at +150 h while the switch was unpaused (unpausedAt +100 h).
         const realFinal = [
-          { milestone: "DUNNING_D6", sentAt: at(144) },
-          { milestone: "DUNNING_FINAL", sentAt: at(150) },
+          { milestone: "DUNNING_D6", sentAt: at(312) },
+          { milestone: "DUNNING_FINAL", sentAt: at(318) },
         ];
-        const world = (cls = "PRODUCTION", unpausedAt: Date | null = at(100)) =>
+        const world = (cls = "PRODUCTION", unpausedAt: Date | null = at(268)) =>
           lifecycle(cls, { paused: false, unpausedAt, logged: realFinal });
 
         it("final -> pause (held) -> unpause: ONE new real final (new claim key, fresh date), no lock until it is 24 h old", async () => {
           const { d, sw, sweepAt } = world();
           sw.paused = true; // the SA-775 switch is paused at +160 h: the lock is held
           sw.unpausedAt = null;
-          await sweepAt(160);
+          await sweepAt(328);
           expect(finals(d)).toHaveLength(0);
           expect(d.transition).not.toHaveBeenCalled();
 
-          const U = at(270); // unpaused 5 days after the real final
+          const U = at(438); // unpaused 5 days after the real final
           sw.paused = false;
           sw.unpausedAt = U;
-          await sweepAt(270);
+          await sweepAt(438);
           expect(finals(d)).toHaveLength(1);
           expect(finals(d)[0].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", reKey(U), "final"]);
           expect(finals(d)[0][4]).toEqual(
@@ -562,11 +563,11 @@ describe("DunningService", () => {
           );
           expect(d.transition).not.toHaveBeenCalled(); // never in the sweep that sent the notice
 
-          await sweepAt(271); // idempotent: the re-issued claim exists, nothing more is sent
+          await sweepAt(439); // idempotent: the re-issued claim exists, nothing more is sent
           expect(finals(d)).toHaveLength(1);
-          await sweepAt(293); // 23 h after the NEW final
+          await sweepAt(461); // 23 h after the NEW final
           expect(d.transition).not.toHaveBeenCalled();
-          await sweepAt(295); // 25 h after it
+          await sweepAt(463); // 25 h after it
           expect(d.transition).toHaveBeenCalledTimes(1);
           expect(finals(d)).toHaveLength(1);
         });
@@ -574,47 +575,47 @@ describe("DunningService", () => {
         it("a second pause -> unpause (new boundary) re-issues exactly once more, under a key per boundary", async () => {
           const { d, sw, sweepAt } = world();
           sw.paused = false;
-          sw.unpausedAt = at(270);
-          await sweepAt(270);
+          sw.unpausedAt = at(438);
+          await sweepAt(438);
           sw.paused = true;
           sw.unpausedAt = null;
-          await sweepAt(280);
-          const U2 = at(400);
+          await sweepAt(448);
+          const U2 = at(568);
           sw.paused = false;
           sw.unpausedAt = U2;
-          await sweepAt(400);
-          await sweepAt(401);
-          expect(finals(d).map((c: any[]) => c[2])).toEqual([reKey(at(270)), reKey(U2)]);
-          await sweepAt(420); // 20 h after the second re-issue
+          await sweepAt(568);
+          await sweepAt(569);
+          expect(finals(d).map((c: any[]) => c[2])).toEqual([reKey(at(438)), reKey(U2)]);
+          await sweepAt(588); // 20 h after the second re-issue
           expect(d.transition).not.toHaveBeenCalled();
-          await sweepAt(425); // 25 h
+          await sweepAt(593); // 25 h
           expect(d.transition).toHaveBeenCalledTimes(1);
           expect(finals(d)).toHaveLength(2);
         });
 
         it("a final sent AFTER the unpause is honoured: no resend, the normal lock 24 h later", async () => {
-          const { d, sweepAt } = world("PRODUCTION", at(140)); // unpaused at +140 h, final at +150 h
-          await sweepAt(173); // 23 h after the final
+          const { d, sweepAt } = world("PRODUCTION", at(308)); // unpaused at +140 h, final at +150 h
+          await sweepAt(341); // 23 h after the final
           expect(d.transition).not.toHaveBeenCalled();
-          await sweepAt(175); // 25 h
+          await sweepAt(343); // 25 h
           expect(d.transition).toHaveBeenCalledTimes(1);
           expect(finals(d)).toHaveLength(0);
         });
 
         it("a final sent exactly AT the unpause instant is honoured", async () => {
-          const { d, sweepAt } = world("PRODUCTION", at(150));
-          await sweepAt(175);
+          const { d, sweepAt } = world("PRODUCTION", at(318));
+          await sweepAt(343);
           expect(finals(d)).toHaveLength(0);
           expect(d.transition).toHaveBeenCalledTimes(1);
         });
 
         it("TEST class: unchanged - a final older than the unpause still counts, and it locks while paused too", async () => {
-          const a = world("TEST", at(270));
-          await a.sweepAt(295);
+          const a = world("TEST", at(438));
+          await a.sweepAt(463);
           expect(finals(a.d)).toHaveLength(0);
           expect(a.d.transition).toHaveBeenCalledTimes(1);
           const b = lifecycle("TEST", { paused: true, logged: realFinal });
-          await b.sweepAt(175);
+          await b.sweepAt(343);
           expect(finals(b.d)).toHaveLength(0);
           expect(b.d.transition).toHaveBeenCalledTimes(1);
         });
@@ -629,17 +630,17 @@ describe("DunningService", () => {
               ...realFinal,
             ],
           });
-          await d.svc.sweep(at(295));
+          await d.svc.sweep(at(463));
           expect(finals(d)).toHaveLength(0);
           expect(d.transition).toHaveBeenCalledTimes(1);
         });
 
         it("a tenant that never had a real final keeps the first-final key (no re-issue suffix)", async () => {
           const { d, sw, sweepAt } = lifecycle("PRODUCTION"); // held neutral notice first
-          await sweepAt(150);
+          await sweepAt(318);
           sw.paused = false;
-          sw.unpausedAt = at(160);
-          await sweepAt(160);
+          sw.unpausedAt = at(328);
+          await sweepAt(328);
           expect(finals(d)).toHaveLength(2);
           expect(finals(d)[1].slice(0, 4)).toEqual(["t1", "DUNNING_FINAL", EP, "final"]);
         });
@@ -648,8 +649,8 @@ describe("DunningService", () => {
           const oldLog = [
             { milestone: "DUNNING_D0", sentAt: at(0) },
             { milestone: "DUNNING_D3", sentAt: at(72) },
-            { milestone: "DUNNING_D6", sentAt: at(144) },
-            { milestone: "DUNNING_FINAL", sentAt: at(150) },
+            { milestone: "DUNNING_D6", sentAt: at(312) },
+            { milestone: "DUNNING_FINAL", sentAt: at(318) },
           ];
           /**
            * A scripted switch: the answer changes when the sweep reads the tenant zone, which happens AFTER the
@@ -683,8 +684,8 @@ describe("DunningService", () => {
 
           it("PAUSED at the notice lookup, UNPAUSED (after the final) at the gate: the stale final does not lock", async () => {
             mode("enforced");
-            const { d } = scripted({ paused: true, at: null }, { paused: false, at: at(270) });
-            await d.svc.sweep(at(295));
+            const { d } = scripted({ paused: true, at: null }, { paused: false, at: at(438) });
+            await d.svc.sweep(at(463));
             expect(d.transition).not.toHaveBeenCalled();
             expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
             expect(d.tx.tenant.updateMany).not.toHaveBeenCalled();
@@ -692,8 +693,8 @@ describe("DunningService", () => {
 
           it("a double flip: unpaused before the final (U), then a later unpause (U' > final) at the gate: held", async () => {
             mode("enforced");
-            const { d } = scripted({ paused: false, at: at(140) }, { paused: false, at: at(270) });
-            await d.svc.sweep(at(295));
+            const { d } = scripted({ paused: false, at: at(308) }, { paused: false, at: at(438) });
+            await d.svc.sweep(at(463));
             expect(d.transition).not.toHaveBeenCalled();
             expect(d.tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
           });
@@ -701,10 +702,10 @@ describe("DunningService", () => {
           it("control: the final sent after the unpause locks, and the gate re-reads the boundary inside the transaction", async () => {
             mode("enforced");
             const { d, p } = scripted(
-              { paused: false, at: at(140) },
-              { paused: false, at: at(140) },
+              { paused: false, at: at(308) },
+              { paused: false, at: at(308) },
             );
-            await d.svc.sweep(at(295));
+            await d.svc.sweep(at(463));
             expect(d.transition).toHaveBeenCalledTimes(1);
             expect(p.unpausedReads).toBeGreaterThanOrEqual(2); // the notice lookup and the gate
           });
@@ -712,11 +713,11 @@ describe("DunningService", () => {
           it("TEST class keeps locking whatever the switch says (unchanged)", async () => {
             mode("enforced");
             const { d } = scripted(
-              { paused: false, at: at(280) },
-              { paused: false, at: at(290) },
+              { paused: false, at: at(448) },
+              { paused: false, at: at(458) },
               "TEST",
             );
-            await d.svc.sweep(at(295));
+            await d.svc.sweep(at(463));
             expect(d.transition).toHaveBeenCalledTimes(1);
           });
         });
@@ -732,7 +733,7 @@ describe("DunningService", () => {
             ],
             autoLocks: { isPaused: async () => false },
           });
-          await d.svc.sweep(at(295));
+          await d.svc.sweep(at(463));
           expect(finals(d)).toHaveLength(0);
           expect(d.transition).toHaveBeenCalledTimes(1);
         });
@@ -758,17 +759,18 @@ describe("DunningService", () => {
       });
     });
 
-    it("flipping dark -> enforced with a 200 h clock sends the final notice and pauses NOBODY in hour one", async () => {
+    it("flipping dark -> enforced with a 368 h clock sends the final notice and pauses NOBODY in hour one", async () => {
       mode("enforced");
       const d = make({
         sweepRows: [row()],
         logged: [
           { milestone: "DUNNING_D0", sentAt: at(0) },
           { milestone: "DUNNING_D3", sentAt: at(72) },
-          { milestone: "DUNNING_D6", sentAt: at(144) },
+          { milestone: "DUNNING_D7", sentAt: at(168) },
+          { milestone: "DUNNING_D6", sentAt: at(312) },
         ],
       });
-      const out = await d.svc.sweep(at(200)); // 200 h = 08:00Z, past 03:00 UTC
+      const out = await d.svc.sweep(at(368)); // 368 h = 08:00Z, past 03:00 UTC
       expect(sentMilestones(d)).toEqual([["DUNNING_FINAL", EP, "final"]]);
       expect(out.paused).toBe(0);
       expect(d.transition).not.toHaveBeenCalled();
@@ -788,12 +790,12 @@ describe("DunningService", () => {
     it("off mode and an unconfigured Stripe sweep nothing", async () => {
       mode("off");
       const a = make({ sweepRows: [row()] });
-      await a.svc.sweep(at(200));
+      await a.svc.sweep(at(368));
       expect(a.prisma.tenantSubscription.findMany).not.toHaveBeenCalled();
       mode("dark");
       const b = make({ sweepRows: [row()] });
       b.stripe.isConfigured = false;
-      await b.svc.sweep(at(200));
+      await b.svc.sweep(at(368));
       expect(b.prisma.tenantSubscription.findMany).not.toHaveBeenCalled();
     });
 
@@ -813,7 +815,7 @@ describe("DunningService", () => {
     it("skips a row whose catch-up claim is held even if one reaches it", async () => {
       mode("enforced");
       const d = make({ sweepRows: [row({ catchupState: "SESSION_OPEN" })] });
-      await d.svc.sweep(at(400));
+      await d.svc.sweep(at(568));
       expect(d.stripe.getInvoiceFacts).not.toHaveBeenCalled();
       expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
       expect(d.transition).not.toHaveBeenCalled();
@@ -836,11 +838,11 @@ describe("DunningService", () => {
     const since = new Date("2026-11-01T00:00:00Z");
     const sentAt = (d: Date) => ({ sentAt: d });
     /** 2026-11-08 09:00Z: +177 h, and 09:00 UTC / 03:00 CST local. */
-    const NOW = new Date("2026-11-08T09:00:00Z");
+    const NOW = new Date("2026-11-15T09:00:00Z");
     const fullLog = (finalAt: Date | null) => [
       { milestone: "DUNNING_D0", ...sentAt(since) },
       { milestone: "DUNNING_D3", ...sentAt(new Date(since.getTime() + 72 * 3_600_000)) },
-      { milestone: "DUNNING_D6", ...sentAt(new Date(since.getTime() + 144 * 3_600_000)) },
+      { milestone: "DUNNING_D6", ...sentAt(new Date(since.getTime() + 312 * 3_600_000)) },
       ...(finalAt ? [{ milestone: "DUNNING_FINAL", sentAt: finalAt }] : []),
     ];
     const hoursBefore = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -915,7 +917,7 @@ describe("DunningService", () => {
         logged: fullLog(hoursBefore(30)),
         tz: "America/Chicago",
       });
-      const out1 = await early.svc.sweep(new Date("2026-11-08T08:59:00Z")); // 02:59 CST
+      const out1 = await early.svc.sweep(new Date("2026-11-15T08:59:00Z")); // 02:59 CST
       expect(out1.paused).toBe(0);
       expect(early.transition).not.toHaveBeenCalled();
 
@@ -924,21 +926,22 @@ describe("DunningService", () => {
         logged: fullLog(new Date("2026-11-07T00:00:00Z")),
         tz: "America/Chicago",
       });
-      const out2 = await on.svc.sweep(new Date("2026-11-08T09:00:00Z")); // 03:00 CST
+      const out2 = await on.svc.sweep(new Date("2026-11-15T09:00:00Z")); // 03:00 CST
       expect(out2.paused).toBe(1);
     });
 
     it("the 03:00 rule follows daylight time (America/Chicago CDT before the fall-back)", async () => {
       mode("enforced");
-      const s = new Date("2026-10-20T00:00:00Z");
+      const s = new Date("2026-10-13T00:00:00Z");
       const sweepRow = row({ pastDueSince: s });
       const logged = [
         { milestone: "DUNNING_D0", sentAt: s, key: ep(s) },
-        { milestone: "DUNNING_D3", sentAt: new Date("2026-10-23T00:00:00Z"), key: ep(s) },
+        { milestone: "DUNNING_D3", sentAt: new Date("2026-10-16T00:00:00Z"), key: ep(s) },
+        { milestone: "DUNNING_D7", sentAt: new Date("2026-10-20T00:00:00Z"), key: ep(s) },
         { milestone: "DUNNING_D6", sentAt: new Date("2026-10-26T00:00:00Z"), key: ep(s) },
         { milestone: "DUNNING_FINAL", sentAt: new Date("2026-10-26T00:00:00Z"), key: ep(s) },
       ];
-      // +168 h = 2026-10-27 00:00Z. CDT is UTC-5: 07:59Z = 02:59 local, 08:00Z = 03:00 local.
+      // +336 h = 2026-10-27 00:00Z. CDT is UTC-5: 07:59Z = 02:59 local, 08:00Z = 03:00 local.
       const a = make({ sweepRows: [sweepRow], logged, tz: "America/Chicago" });
       expect((await a.svc.sweep(new Date("2026-10-27T07:59:00Z"))).paused).toBe(0);
       const b = make({ sweepRows: [sweepRow], logged, tz: "America/Chicago" });
@@ -1191,11 +1194,12 @@ describe("DunningService", () => {
         logged: [
           { milestone: "DUNNING_D0", sentAt: since },
           { milestone: "DUNNING_D3", sentAt: since },
+          { milestone: "DUNNING_D7", sentAt: since },
           { milestone: "DUNNING_D6", sentAt: since },
         ],
       });
       const log = jest.spyOn((d.svc as any).logger, "log").mockImplementation(() => undefined);
-      const t0 = new Date("2026-11-08T09:00:00Z");
+      const t0 = new Date("2026-11-15T09:00:00Z");
       await d.svc.sweep(t0);
       await d.svc.sweep(new Date(t0.getTime() + H));
       await d.svc.sweep(new Date(t0.getTime() + 2 * H));
@@ -1209,7 +1213,7 @@ describe("DunningService", () => {
       const s2 = new Date("2026-11-03T00:00:00Z");
       const rows = [row({ pastDueSince: s1 })];
       const logged = [s1, s2].flatMap((s) =>
-        ["DUNNING_D0", "DUNNING_D3", "DUNNING_D6"].map((m) => ({
+        ["DUNNING_D0", "DUNNING_D3", "DUNNING_D7", "DUNNING_D6"].map((m) => ({
           milestone: m,
           sentAt: s,
           key: ep(s),
@@ -1217,7 +1221,7 @@ describe("DunningService", () => {
       );
       const d = make({ sweepRows: rows, logged });
       const log = jest.spyOn((d.svc as any).logger, "log").mockImplementation(() => undefined);
-      const t0 = new Date("2026-11-12T09:00:00Z");
+      const t0 = new Date("2026-11-19T09:00:00Z");
       await d.svc.sweep(t0);
       await d.svc.sweep(new Date(t0.getTime() + H));
       rows[0] = row({ pastDueSince: s2 }); // exit + re-stamp of the SAME invoice
@@ -1230,7 +1234,7 @@ describe("DunningService", () => {
       mode("enforced");
       const d = make({ sweepRows: [row({ pastDueSince: null })] });
       const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
-      const out = await d.svc.sweep(new Date("2026-11-12T09:00:00Z"));
+      const out = await d.svc.sweep(new Date("2026-11-19T09:00:00Z"));
       expect(out.paused).toBe(0);
       expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
       expect(d.transition).not.toHaveBeenCalled();
@@ -1244,7 +1248,7 @@ describe("DunningService", () => {
       const d = make({ sweepRows: [row({ pastDueSince: since })] });
       d.notifications.notifyDunning.mockResolvedValue({ status: "no_recipients", recipients: 0 });
       const warn = jest.spyOn((d.svc as any).logger, "warn").mockImplementation(() => undefined);
-      const t0 = new Date("2026-11-08T09:00:00Z");
+      const t0 = new Date("2026-11-15T09:00:00Z");
       await d.svc.sweep(t0);
       await d.svc.sweep(new Date(t0.getTime() + H));
       const lines = warn.mock.calls.filter((c: any[]) => /no_deliverable_admin/.test(String(c[0])));
@@ -1252,7 +1256,7 @@ describe("DunningService", () => {
       expect(d.transition).not.toHaveBeenCalled();
     });
 
-    it("the flip sequence: days 0-6 in DARK send nothing; the flip to enforced sends the final notice (d6) and pauses NOBODY in hour one; the pause follows >= 24 h later at 03:00+ local", async () => {
+    it("the flip sequence: days 0-13 in DARK send nothing; the flip to enforced sends the final notice (d6) and pauses NOBODY in hour one; the pause follows >= 24 h later at 03:00+ local", async () => {
       // America/Chicago, CST (UTC-6) from Nov 1 2026
       const log: { milestone: string; sentAt: Date }[] = [];
       const d = make({ sweepRows: [row({ pastDueSince: since })], tz: "America/Chicago" });
@@ -1275,23 +1279,23 @@ describe("DunningService", () => {
         return d.svc.sweep(clock);
       };
 
-      // days 0-6 in DARK: stamp and log only - no tenant email at all (A1)
+      // days 0-13 in DARK: stamp and log only - no tenant email at all (A1)
       mode("dark");
-      await sweepAt("2026-11-07T20:00:00Z"); // +164 h
+      await sweepAt("2026-11-14T20:00:00Z"); // +332 h
       expect(sentKinds).toEqual([]);
       expect(log).toEqual([]);
 
       // the owner flips to ENFORCED at 2026-11-08 21:00Z (15:00 local): d6 IS the final notice, NO pause now
       mode("enforced");
-      const flip = await sweepAt("2026-11-08T21:00:00Z");
+      const flip = await sweepAt("2026-11-15T21:00:00Z");
       expect(sentKinds.at(-1)).toEqual(["DUNNING_D6", "final"]);
       expect(log.some((l) => l.milestone === "DUNNING_FINAL")).toBe(true);
       expect(flip.paused).toBe(0);
 
       // +23 h (20:00Z next day, 14:00 local): still no pause
-      expect((await sweepAt("2026-11-09T20:00:00Z")).paused).toBe(0);
-      // the final notice is >= 24 h old at 2026-11-09T21:00Z (15:00 local, hour >= 3): pause.
-      const out = await sweepAt("2026-11-09T21:00:00Z");
+      expect((await sweepAt("2026-11-16T20:00:00Z")).paused).toBe(0);
+      // the final notice is >= 24 h old at 2026-11-16T21:00Z (15:00 local, hour >= 3): pause.
+      const out = await sweepAt("2026-11-16T21:00:00Z");
       expect(out.paused).toBe(1);
     });
 
@@ -1299,8 +1303,9 @@ describe("DunningService", () => {
       const log = [
         { milestone: "DUNNING_D0", sentAt: since },
         { milestone: "DUNNING_D3", sentAt: since },
+        { milestone: "DUNNING_D7", sentAt: since },
         { milestone: "DUNNING_D6", sentAt: since },
-        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-11-07T07:00:00Z") },
+        { milestone: "DUNNING_FINAL", sentAt: new Date("2026-11-14T07:00:00Z") },
       ];
       mode("enforced");
       const early = make({
@@ -1308,14 +1313,14 @@ describe("DunningService", () => {
         tz: "America/Chicago",
         logged: log,
       });
-      // 2026-11-08T08:59Z = 02:59 CST (>= 24 h after the final notice)
-      expect((await early.svc.sweep(new Date("2026-11-08T08:59:00Z"))).paused).toBe(0);
+      // 2026-11-15T08:59Z = 02:59 CST (>= 24 h after the final notice)
+      expect((await early.svc.sweep(new Date("2026-11-15T08:59:00Z"))).paused).toBe(0);
       const on = make({
         sweepRows: [row({ pastDueSince: since })],
         tz: "America/Chicago",
         logged: log,
       });
-      expect((await on.svc.sweep(new Date("2026-11-08T09:00:00Z"))).paused).toBe(1);
+      expect((await on.svc.sweep(new Date("2026-11-15T09:00:00Z"))).paused).toBe(1);
     });
   });
 
@@ -1372,25 +1377,25 @@ describe("DunningService", () => {
     const sent = (d: ReturnType<typeof make>) =>
       d.notifications.notifyDunning.mock.calls.map((c: any[]) => [c[1], c[2], c[3]]);
 
-    it("(i) after an exit the SAME invoice is re-stamped: d0 goes out again, the old FINAL cannot authorise a pause, no pause before +168 h, and the PAUSED notice is sent when it does pause", async () => {
+    it("(i) after an exit the SAME invoice is re-stamped: d0 goes out again, the old FINAL cannot authorise a pause, no pause before +336 h, and the PAUSED notice is sent when it does pause", async () => {
       mode("enforced");
       const w = world(oldEpisodeRows); // episode 1 is history: d0, d3, d6, FINAL and PAUSED under the OLD key
       await w.sweepAt(1);
       expect(sent(w.d)).toEqual([["DUNNING_D0", ep(T1), "d0"]]); // fresh notice, not suppressed by the old rows
 
-      await w.sweepAt(144); // d6 is due: it IS the final notice of THIS episode
+      await w.sweepAt(312); // d6 is due: it IS the final notice of THIS episode
       expect(sent(w.d).at(-1)).toEqual(["DUNNING_D6", ep(T1), "final"]);
       expect(w.log.some((l) => l.milestone === "DUNNING_FINAL" && l.key === ep(T1))).toBe(true);
 
-      expect((await w.sweepAt(167)).paused).toBe(0); // 167 h: one hour short of the week
-      const out = await w.sweepAt(168); // 168 h, final notice exactly 24 h old, 04:00 UTC
+      expect((await w.sweepAt(335)).paused).toBe(0); // 167 h: one hour short of the week
+      const out = await w.sweepAt(336); // 168 h, final notice exactly 24 h old, 04:00 UTC
       expect(out.paused).toBe(1);
       expect(sent(w.d).at(-1)).toEqual(["DUNNING_PAUSED", ep(T1), "paused"]); // told again, under the new key
       // the audit trail is kept: nothing deleted, the old rows are still there
       expect(w.log.filter((l) => l.key === ep(OLD))).toHaveLength(5);
     });
 
-    it("(ii) a payment_failed webhook re-stamp after an exit: d0 again, no pause before +168 h, the PAUSED notice when it does pause", async () => {
+    it("(ii) a payment_failed webhook re-stamp after an exit: d0 again, no pause before +336 h, the PAUSED notice when it does pause", async () => {
       mode("enforced");
       // the row is unclocked when the webhook arrives; afterwards the sweep sees the clock the stamp wrote
       const w = world(oldEpisodeRows, { row: row({ pastDueInvoiceId: null, pastDueSince: null }) });
@@ -1401,10 +1406,10 @@ describe("DunningService", () => {
       });
       expect(sent(w.d)).toEqual([["DUNNING_D0", ep(T1), "d0"]]); // not suppressed by episode 1's rows
 
-      await w.sweepAt(144); // this episode's own final notice
-      expect((await w.sweepAt(167)).paused).toBe(0); // the old FINAL cannot short-cut the week
+      await w.sweepAt(312); // this episode's own final notice
+      expect((await w.sweepAt(335)).paused).toBe(0); // the old FINAL cannot short-cut the week
       expect(w.d.transition).not.toHaveBeenCalled();
-      expect((await w.sweepAt(168)).paused).toBe(1);
+      expect((await w.sweepAt(336)).paused).toBe(1);
       expect(sent(w.d).at(-1)).toEqual(["DUNNING_PAUSED", ep(T1), "paused"]);
       expect(w.log.filter((l) => l.key === ep(OLD))).toHaveLength(5); // history kept
     });
@@ -1413,23 +1418,23 @@ describe("DunningService", () => {
       mode("enforced");
       const w = world(oldEpisodeRows);
       // 200 h into the new episode, 03:00+ UTC, with a (stale) FINAL in the log under the old key
-      const out = await w.sweepAt(200);
+      const out = await w.sweepAt(368);
       expect(out.paused).toBe(0);
       expect(w.d.transition).not.toHaveBeenCalled();
       expect(sent(w.d)).toEqual([["DUNNING_D6", ep(T1), "final"]]); // this episode's own final goes out first
     });
 
-    it("a pause is announced ONCE: pause at +168 h, the next hourly sweep (now paused) sends no paused_still_owed for the same episode", async () => {
+    it("a pause is announced ONCE: pause at +336 h, the next hourly sweep (now paused) sends no paused_still_owed for the same episode", async () => {
       mode("enforced");
       const rows = [row({ pastDueSince: T1 })];
       const w = world([], { sweepRows: rows });
       await w.sweepAt(1);
-      await w.sweepAt(144); // d6 is this episode's final notice
-      expect((await w.sweepAt(168)).paused).toBe(1);
+      await w.sweepAt(312); // d6 is this episode's final notice
+      expect((await w.sweepAt(336)).paused).toBe(1);
       // the next sweep re-reads the row: paused now
       rows[0] = row({
         pastDueSince: T1,
-        pausedAt: at(168),
+        pausedAt: at(336),
         tenant: {
           status: "READ_ONLY",
           readOnlyReason: "payment_overdue",
@@ -1437,8 +1442,8 @@ describe("DunningService", () => {
           class: "PRODUCTION",
         },
       });
-      await w.sweepAt(169);
-      await w.sweepAt(170);
+      await w.sweepAt(337);
+      await w.sweepAt(338);
       const kinds = sent(w.d).map((c: any[]) => c[0]);
       expect(kinds.filter((m: string) => m === "DUNNING_PAUSED")).toHaveLength(1);
       expect(kinds.filter((m: string) => m === "DUNNING_PAUSED_STILL_OWED")).toHaveLength(0);
@@ -1463,9 +1468,9 @@ describe("DunningService", () => {
         { milestone: "DUNNING_D0", sentAt: T1, key: ep(T1) },
         { milestone: "DUNNING_D3", sentAt: T1, key: ep(T1) },
         { milestone: "DUNNING_D6", sentAt: T1, key: ep(T1) },
-        { milestone: "DUNNING_FINAL", sentAt: at(100), key: ep(T1) },
+        { milestone: "DUNNING_FINAL", sentAt: at(268), key: ep(T1) },
       ]);
-      expect((await w.sweepAt(170)).paused).toBe(1);
+      expect((await w.sweepAt(338)).paused).toBe(1);
       expect(w.d.notifications.notifyDunning).toHaveBeenCalledWith(
         "t1",
         "DUNNING_PAUSED",
@@ -2109,8 +2114,8 @@ describe("DunningService", () => {
       const data = mv.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
       expect(data).toEqual({ pastDueInvoiceId: "in_0", pastDueSince: now });
 
-      // the sweep that follows: ACTIVE-and-clocked again (the pause was exited), 200 h into the NEW episode, 13:00Z
-      const later = new Date(now.getTime() + 200 * 3_600_000);
+      // the sweep that follows: ACTIVE-and-clocked again (the pause was exited), 320 h into the NEW episode (last day, before the 336 h pause)
+      const later = new Date(now.getTime() + 320 * 3_600_000);
       const sw = make({
         sweepRows: [row({ pastDueInvoiceId: "in_0", pastDueSince: data.pastDueSince })],
         logged: oldRows,
@@ -2415,5 +2420,152 @@ describe("DunningService", () => {
         expect(hit).not.toBeNull();
       });
     });
+  });
+
+  // SA-1037 r2 PR-6: the owner chose "retry, remind, pause at 14 days" (05:21Z). It SUPERSEDES the day-7 pause (D-2026-10-08).
+  describe("SA-1037 PR-6: the 14-day clock", () => {
+    /** 2026-11-15 09:00Z = 03:00 CST, the tenant-local pause hour. */
+    const NOW = new Date("2026-11-15T09:00:00Z");
+    const hrsAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+    /** The rows the log holds for the episode that began `sinceH` hours ago (the log is keyed by the episode). */
+    const logged = (sinceH: number, ...ms: [string, number][]) =>
+      ms.map(([milestone, h]) => ({ milestone, sentAt: hrsAgo(h), key: ep(hrsAgo(sinceH)) }));
+    const sentMilestones = (d: ReturnType<typeof make>) =>
+      d.notifications.notifyDunning.mock.calls.map((c: any[]) => [c[1], c[3]]);
+
+    it("R4: enforced, +200 h past due, the final sent 30 h ago: NOT paused (the pause is on day 14)", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: hrsAgo(200) })],
+        logged: logged(200, ["DUNNING_D0", 200], ["DUNNING_D3", 128], ["DUNNING_FINAL", 30]),
+        tz: "America/Chicago",
+        localPausedAt: NOW,
+      });
+      const out = await d.svc.sweep(NOW);
+      expect(out.paused).toBe(0);
+      expect(d.transition).not.toHaveBeenCalled();
+    });
+
+    it("R4b: enforced, +340 h past due, the final sent 30 h ago: paused at 03:00 local", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: hrsAgo(340) })],
+        logged: logged(
+          340,
+          ["DUNNING_D0", 340],
+          ["DUNNING_D3", 268],
+          ["DUNNING_D7", 172],
+          ["DUNNING_D6", 30],
+          ["DUNNING_FINAL", 30],
+        ),
+        tz: "America/Chicago",
+        localPausedAt: NOW,
+      });
+      const out = await d.svc.sweep(NOW);
+      expect(out.paused).toBe(1);
+    });
+
+    it("R5: enforced, +170 h, D0 and D3 sent: ONE D7 reminder (the d3 copy) and no last-day notice; the next sweep sends nothing more", async () => {
+      mode("enforced");
+      const since = hrsAgo(170);
+      const first = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: logged(170, ["DUNNING_D0", 170], ["DUNNING_D3", 98]),
+      });
+      await first.svc.sweep(NOW);
+      expect(sentMilestones(first)).toEqual([["DUNNING_D7", "d3"]]);
+      const again = make({
+        sweepRows: [row({ pastDueSince: since })],
+        logged: logged(170, ["DUNNING_D0", 170], ["DUNNING_D3", 98], ["DUNNING_D7", 0]),
+      });
+      await again.svc.sweep(new Date(NOW.getTime() + 3_600_000));
+      expect(again.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
+    it("an episode whose last-day notice already went out (the 7-day clock) gets no d7 reminder after it", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: hrsAgo(200) })],
+        logged: logged(
+          200,
+          ["DUNNING_D0", 200],
+          ["DUNNING_D3", 128],
+          ["DUNNING_D6", 50],
+          ["DUNNING_FINAL", 50],
+        ),
+      });
+      await d.svc.sweep(NOW);
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
+    it("G-s: a tenant paused at +170 h (under the 7-day clock) stays paused after the constant moves: no resume, no unpause, no mail", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [
+          row({
+            pastDueSince: hrsAgo(200),
+            pausedAt: hrsAgo(30),
+            tenant: {
+              status: "READ_ONLY",
+              readOnlyReason: "payment_overdue",
+              deletedAt: null,
+              class: "PRODUCTION",
+            },
+          }),
+        ],
+        logged: logged(
+          200,
+          ["DUNNING_D0", 200],
+          ["DUNNING_D3", 128],
+          ["DUNNING_D6", 60],
+          ["DUNNING_FINAL", 60],
+          ["DUNNING_PAUSED", 30],
+        ),
+        localPausedAt: hrsAgo(30),
+      });
+      const out = await d.svc.sweep(NOW);
+      expect(out.paused).toBe(0);
+      expect(d.transition).not.toHaveBeenCalled();
+      expect(d.stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(d.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
+    it("the last-day notice is due at +312 h (the pause minus the 24 h lead), and carries the read-only date", async () => {
+      mode("enforced");
+      const d = make({
+        sweepRows: [row({ pastDueSince: hrsAgo(315) })],
+        logged: logged(315, ["DUNNING_D0", 315], ["DUNNING_D3", 243], ["DUNNING_D7", 147]),
+      });
+      await d.svc.sweep(NOW);
+      expect(sentMilestones(d)).toEqual([["DUNNING_D6", "final"]]);
+      const early = make({
+        sweepRows: [row({ pastDueSince: hrsAgo(311) })],
+        logged: logged(311, ["DUNNING_D0", 311], ["DUNNING_D3", 239], ["DUNNING_D7", 143]),
+      });
+      await early.svc.sweep(NOW);
+      expect(early.notifications.notifyDunning).not.toHaveBeenCalled();
+    });
+
+    it.each(["dark", "off"])(
+      "G-k: %s: nobody is paused and no milestone email goes out, at any elapsed hour",
+      async (m) => {
+        mode(m);
+        for (const h of [1, 80, 170, 200, 312, 345, 500]) {
+          const d = make({
+            sweepRows: [row({ pastDueSince: hrsAgo(h) })],
+            tz: "America/Chicago",
+            localPausedAt: NOW,
+          });
+          const out = await d.svc.sweep(NOW);
+          expect(out.paused).toBe(0);
+          expect(d.transition).not.toHaveBeenCalled();
+          expect(
+            d.notifications.notifyDunning.mock.calls.filter((c: any[]) =>
+              String(c[1]).startsWith("DUNNING_"),
+            ),
+          ).toEqual([]);
+        }
+      },
+    );
   });
 });

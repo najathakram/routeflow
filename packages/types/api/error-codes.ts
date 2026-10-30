@@ -459,6 +459,8 @@ export const API_ERROR_CODES = {
   AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
   AI_UNAVAILABLE: "AI_UNAVAILABLE",
   AI_PARSE_FAILED: "AI_PARSE_FAILED",
+  /** SA-1035: PATCH /platform-admin/ai-config, 400: a model id that is not on the AI_MODELS list. */
+  AI_MODEL_UNKNOWN: "AI_MODEL_UNKNOWN",
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
@@ -594,6 +596,8 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  /** 403 from a promotion create, edit, pause/resume or delete while the business has promotions turned off (SA-1032). Existing promotions stay readable. */
+  PROMOTIONS_OFF: "PROMOTIONS_OFF",
   /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Record it with today's date instead. */
   COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
   /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */

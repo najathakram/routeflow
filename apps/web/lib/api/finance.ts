@@ -1,4 +1,5 @@
 import type { ToCollectState } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ExpenseCategory } from "@routeflow/types";
@@ -331,10 +332,11 @@ export interface CreateExpenseDto {
   lineItems?: { account: string; notes?: string; amount: number }[];
 }
 
-export function useCreateExpense() {
+export function useCreateExpense(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Expense, Error, CreateExpenseDto>({
     mutationFn: (dto) => apiClient.post("/bookkeeping/expenses", dto).then((r) => r.data),
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance-dashboard"] });
@@ -342,11 +344,12 @@ export function useCreateExpense() {
   });
 }
 
-export function useBulkCreateExpenses() {
+export function useBulkCreateExpenses(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<{ created: number; errors: string[] }, Error, CreateExpenseDto[]>({
     mutationFn: (expenses) =>
       apiClient.post("/bookkeeping/expenses/bulk", { expenses }).then((r) => r.data),
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance-dashboard"] });

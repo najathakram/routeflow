@@ -51,6 +51,7 @@ import { foldDayClose } from "../orders/counter-sale/day-close/day-close-fold";
 import { _resetLockPoolForTests } from "../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { TILL_ADMIN } from "../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -250,10 +251,10 @@ describeDb("an office edit of a pickup hand-over payment after the close, real P
   };
 
   const ops = {
-    void: (inv: string, p: string) => invoices.voidPayment(inv, p),
-    delete: (inv: string, p: string) => invoices.deletePayment(inv, p),
+    void: (inv: string, p: string) => invoices.voidPayment(inv, p, TILL_ADMIN),
+    delete: (inv: string, p: string) => invoices.deletePayment(inv, p, TILL_ADMIN),
     edit: (inv: string, p: string) =>
-      invoices.updatePayment(inv, p, { amount: 40, method: "CASH" } as any),
+      invoices.updatePayment(inv, p, { amount: 40, method: "CASH" } as any, { user: TILL_ADMIN }),
   } as const;
   type Op = keyof typeof ops;
   const opNames = Object.keys(ops) as Op[];

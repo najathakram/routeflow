@@ -1,14 +1,13 @@
 /**
- * Display formatting — the ONE place money, quantities, dates, and enum labels
- * are turned into strings for the UI. Never re-derive with toFixed/
- * toLocaleDateString inline; import from here. Display only — money MATH stays
- * in lib/pricing.ts.
+ * Display formatting — the place money, quantities, dates, and enum labels are turned into
+ * strings for the UI. `formatMoney` is `formatReceiptMoney` (@routeflow/pricing); `fmt` in
+ * lib/formatting.ts prints the same text. Import from here rather than re-deriving with
+ * toFixed/toLocaleDateString inline. Display only — money MATH stays in @routeflow/pricing.
  */
-const moneyFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+import { formatReceiptMoney } from "@routeflow/pricing";
 
 export function formatMoney(value: number | string | null | undefined): string {
-  const n = Number(value ?? 0);
-  return moneyFmt.format(Number.isFinite(n) ? n : 0);
+  return formatReceiptMoney(value);
 }
 
 /** Whole numbers render bare ("61"), fractional quantities keep up to 2 dp ("1.5"). */

@@ -17,6 +17,7 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import {
@@ -94,9 +95,6 @@ export interface PriorScanSummary {
   supplierInvoiceNumber: string | null;
   total: number | null;
 }
-
-/** Phase-1 OCR model. Persisted with each scan, so the constant is the single source. */
-const SCAN_MODEL = "claude-haiku-4-5";
 
 /** Extension per accepted upload type — the stored key keeps the original bytes readable. */
 const SCAN_FILE_EXTENSIONS: Record<string, string> = {
@@ -2618,6 +2616,10 @@ export class VendorBillsService {
       );
     }
 
+    // SA-1035: the model is read ONCE per scan and used for the call, both usage records and the stored scan row, so the
+    // row says what was actually called even if the setting changes mid-scan.
+    const model = await this.platformConfig.resolveModelFor("bill_scan");
+
     // ── Phase 0: Normalise inputs ─────────────────────────────────────────────
     // Multi-page invoices arrive as N images (HEIC from iPhone, JPEG, PNG, etc.)
     // or one PDF. HEIC isn't a Claude vision media type, so convert it to JPEG
@@ -2717,8 +2719,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     try {
       message = await anthropic.messages.create(
         {
-          model: SCAN_MODEL,
-          max_tokens: 4096,
+          model,
+          max_tokens: AI_SCAN_MAX_TOKENS,
+          // Bill scanning is extraction, not reasoning: low effort keeps Haiku 5.5's adaptive thinking short and cheap.
+          output_config: { effort: "low" },
           messages: [
             {
               role: "user",
@@ -2734,7 +2738,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       await this.platformConfig.recordAiUsage({
         tenantId: this.prisma.getTenantId(),
         feature: "ocr.vendor_bill",
-        model: SCAN_MODEL,
+        model,
         success: false,
       });
       if (status === 401 || status === 403) {
@@ -2766,13 +2770,13 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     await this.platformConfig.recordAiUsage({
       tenantId: this.prisma.getTenantId(),
       feature: "ocr.vendor_bill",
-      model: SCAN_MODEL,
+      model,
       inputTokens: message.usage?.input_tokens ?? 0,
       outputTokens: message.usage?.output_tokens ?? 0,
     });
 
-    const content = message.content[0];
-    if (content.type !== "text") {
+    const rawText = firstText(message.content);
+    if (rawText === null) {
       throw new UnprocessableEntityException({
         message: "The AI scanner returned an unexpected response. Try again.",
         code: API_ERROR_CODES.AI_PARSE_FAILED,
@@ -2781,7 +2785,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
 
     let parsed: Record<string, unknown>;
     try {
-      let text = content.text.trim();
+      let text = rawText.trim();
       text = text
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```\s*$/i, "")
@@ -2792,7 +2796,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       }
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch (_e) {
-      this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${content.text}`);
+      this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${rawText}`);
       throw new UnprocessableEntityException({
         message: "Couldn't read the scan result. Try again — a retry usually works.",
         code: API_ERROR_CODES.AI_PARSE_FAILED,
@@ -2819,6 +2823,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       items,
       result,
       scanDurationMs,
+      model,
       scannedById,
       supplierId,
     });
@@ -2899,6 +2904,8 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     items: any[];
     result: Record<string, unknown>;
     scanDurationMs: number;
+    /** The model the scan actually called (required: the stored row never guesses it). */
+    model: string;
     scannedById?: string;
     supplierId?: string | null;
   }): Promise<{ id: string } | null> {
@@ -2915,7 +2922,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           pageCount: files.length,
           fileHash,
           extractedPayload: result as unknown as Prisma.InputJsonValue,
-          model: SCAN_MODEL,
+          model: args.model,
           scanDurationMs: args.scanDurationMs,
           supplierNameRaw: typeof parsed.supplier === "string" ? parsed.supplier : null,
           supplierId: args.supplierId ?? null,

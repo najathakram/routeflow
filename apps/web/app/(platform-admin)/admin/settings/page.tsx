@@ -24,9 +24,11 @@ interface AiConfig {
   source: "database" | "environment" | "none";
   keyPreview: string | null;
   model: string;
+  /** SA-1035: the model supplier-bill scanning runs on. */
+  scanModel: string;
   maxTokens: number;
   verifiedAt: string | null;
-  availableModels: string[];
+  availableModels: { id: string; label: string }[];
 }
 
 interface AiUsage {
@@ -83,6 +85,46 @@ function StatusBadge({ configured, source }: { configured: boolean; source: stri
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/** A model dropdown that lists the API's labelled models and keeps a stored older id selectable, marked "(older model)". */
+function ModelSelect({
+  label,
+  hint,
+  value,
+  onChange,
+  models,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (id: string) => void;
+  models: { id: string; label: string }[];
+}) {
+  const id = React.useId();
+  const older = value !== "" && !models.some((m) => m.id === value);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium text-slate-200">
+        {label}
+      </label>
+      <select
+        id={id}
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+      >
+        {older && <option value={value}>{value} (older model)</option>}
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <p className="text-xs text-slate-400">{hint}</p>
+    </div>
+  );
+}
+
 export default function AdminSettingsPage() {
   const [config, setConfig] = React.useState<AiConfig | null>(null);
   const [usage, setUsage] = React.useState<AiUsage | null>(null);
@@ -96,7 +138,8 @@ export default function AdminSettingsPage() {
   // Form state
   const [apiKey, setApiKey] = React.useState("");
   const [showKey, setShowKey] = React.useState(false);
-  const [model, setModel] = React.useState("claude-sonnet-4-5");
+  const [model, setModel] = React.useState("");
+  const [scanModel, setScanModel] = React.useState("");
   const [maxTokens, setMaxTokens] = React.useState(4096);
 
   const load = React.useCallback(async () => {
@@ -108,6 +151,7 @@ export default function AdminSettingsPage() {
       ]);
       setConfig(cfg.data);
       setModel(cfg.data.model);
+      setScanModel(cfg.data.scanModel);
       setMaxTokens(cfg.data.maxTokens);
       if (use) setUsage(use.data);
     } catch {
@@ -150,13 +194,19 @@ export default function AdminSettingsPage() {
     setSaveSuccess(false);
 
     try {
-      const body: Record<string, unknown> = { model, maxTokens };
+      const body: Record<string, unknown> = { maxTokens };
+      // Only a CHANGED model is sent: the API accepts list ids only, so re-sending an untouched older stored id
+      // would be refused.
+      if (config && model !== config.model) body.model = model;
+      if (config && scanModel !== config.scanModel) body.scanModel = scanModel;
       // Only send apiKey if the field has been touched (not empty placeholder)
       if (apiKey !== "") {
         body.apiKey = apiKey;
       }
       const { data } = await superAdminClient.patch<AiConfig>("/platform-admin/ai-config", body);
       setConfig(data);
+      setModel(data.model);
+      setScanModel(data.scanModel);
       setApiKey(""); // clear after save
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -305,53 +355,24 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
 
-              {/* Model selection */}
+              {/* Model selection: one select per job (SA-1035). A stored older id stays visible, marked, never switched. */}
               <div className="rounded-xl border border-slate-700/50 bg-slate-900 p-5">
-                <h2 className="mb-4 text-sm font-semibold text-slate-200">Default Model</h2>
-
-                <div className="grid gap-2">
-                  {(config?.availableModels ?? []).map((m) => {
-                    const selected = model === m;
-                    const isOpus = m.includes("opus");
-                    const isSonnet = m.includes("sonnet");
-                    const isHaiku = m.includes("haiku");
-                    const tier = isOpus
-                      ? "Most capable"
-                      : isSonnet
-                        ? "Balanced"
-                        : isHaiku
-                          ? "Fastest"
-                          : "";
-                    const tierColor = isOpus
-                      ? "text-purple-400"
-                      : isSonnet
-                        ? "text-indigo-400"
-                        : "text-emerald-400";
-
-                    return (
-                      <label
-                        key={m}
-                        className={`flex cursor-pointer items-center justify-between rounded-lg border px-4 py-3 transition-colors ${
-                          selected
-                            ? "border-indigo-500 bg-indigo-950/40"
-                            : "border-slate-700 hover:border-slate-600 hover:bg-slate-800/50"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="radio"
-                            name="model"
-                            value={m}
-                            checked={selected}
-                            onChange={() => setModel(m)}
-                            className="h-4 w-4 accent-indigo-500"
-                          />
-                          <span className="font-mono text-sm text-slate-200">{m}</span>
-                        </div>
-                        {tier && <span className={`text-xs font-medium ${tierColor}`}>{tier}</span>}
-                      </label>
-                    );
-                  })}
+                <h2 className="mb-4 text-sm font-semibold text-slate-200">Models</h2>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <ModelSelect
+                    label="AI model"
+                    hint="Route analysis and the connection test."
+                    value={model}
+                    onChange={setModel}
+                    models={config?.availableModels ?? []}
+                  />
+                  <ModelSelect
+                    label="Supplier bill scanning"
+                    hint="Reads supplier invoices. Haiku 5.5 is the fast, low-cost default."
+                    value={scanModel}
+                    onChange={setScanModel}
+                    models={config?.availableModels ?? []}
+                  />
                 </div>
                 <p className="mt-3 text-xs text-slate-400">
                   Tenants can override this with their own model selection if the feature is

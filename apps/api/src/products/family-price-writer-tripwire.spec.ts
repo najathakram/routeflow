@@ -56,6 +56,9 @@ const PRODUCTS_CALLER_EXEMPT: Record<string, string> = {
 
 /** Scripts/prisma files allowed to UPDATE price columns, with a reason. */
 const SCRIPT_UPDATE_ALLOW: Record<string, string> = {
+  "scripts/e2e-seed.js":
+    "Reseeds the approved e2e-routeflow tenant's own fixture products (assertTestTenant) and resets a price a spec moved " +
+    "(row 601); it never runs against a live tenant and creates no variants.",
   "prisma/seed.ts":
     "Seeds its own standalone dummy catalog into the approved test tenant only (assertTestTenant); " +
     "it never runs against a live tenant and creates no variants.",

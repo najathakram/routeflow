@@ -398,16 +398,25 @@ describe("ProductUnitsCard on the v2 surface (K10d: one Add a unit, one Remove p
     expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(2);
   });
 
+  it.each([["a family", { ...product, kind: "FAMILY" }]])(
+    "%s keeps its old form and its old Remove: the shell mounts neither there",
+    (_n, p) => {
+      mockUnits = [caseUnit];
+      loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"));
+      renderWith({ hideAddForm: true }, p);
+      expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    },
+  );
+
   it.each([
     ["a variant", { ...product, parentProductId: "fam-1" }],
     ["a recipe", { ...product, kind: "RECIPE" }],
-    ["a family", { ...product, kind: "FAMILY" }],
-  ])("%s keeps its old form and its old Remove: the shell mounts neither there", (_n, p) => {
+  ])("SA-1041: %s hands its add form to the shell like any product", (_n, p) => {
     mockUnits = [caseUnit];
     loaded(gridRow("pack", "pack"), gridRow("u-case", "unit"));
     renderWith({ hideAddForm: true }, p);
-    expect(screen.getByRole("button", { name: "Add unit" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add unit" })).toBeNull();
   });
 
   it("a grid error with cached rows keeps the old Remove (an errored grid is not a mounted shell)", () => {

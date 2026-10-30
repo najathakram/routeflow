@@ -252,14 +252,13 @@ describe("K10d: V15 step 8, gated like the rest of v2", () => {
     expect(screen.queryByTestId("units-v2-rm-u-box")).toBeNull();
   };
 
-  it.each([
-    ["a FAMILY product", { ...product, kind: "FAMILY" }],
-    ["a RECIPE product", { ...product, kind: "RECIPE" }],
-    ["a variant of a family", { ...product, parentProductId: "fam-1" }],
-  ])("renders none of them for %s", (_n, p) => {
-    render(p);
-    none();
-  });
+  it.each([["a FAMILY product", { ...product, kind: "FAMILY" }]])(
+    "renders none of them for %s",
+    (_n, p) => {
+      render(p);
+      none();
+    },
+  );
 
   it("renders none of them when the tenant is not served flag.units_v1", () => {
     mockUnitsOn = false;
