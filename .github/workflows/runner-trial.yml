@@ -1,0 +1,59 @@
+# Trial only: does a self-hosted job start while the repo is PRIVATE? Never merged.
+# `hosted-control` is the same moment on ubuntu-latest, so the billing block is seen live beside it.
+# Report: docs/runbooks/self-hosted-runner-trial.md.
+name: Runner trial
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/runner-trial.yml"
+      - "tools/ci-runner/**"
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-control:
+    name: Hosted control
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: echo "hosted job started"
+
+  self-hosted:
+    name: Self-hosted proof
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, routeflow-ephemeral]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Repo is private right now
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://api.github.com/repos/${GITHUB_REPOSITORY}")
+          echo "anonymous API read: $code (404 = private, 200 = public)"
+          test "$code" = "404"
+
+      - name: Who and where
+        run: |
+          uname -srm
+          id
+          grep -E '^(CapEff|CapBnd|NoNewPrivs)' /proc/self/status
+          test "$(grep '^CapEff' /proc/self/status | awk '{print $2}')" = "0000000000000000"
+          test ! -e /var/run/docker.sock
+
+      - name: Nothing private is reachable
+        run: |
+          for target in host.docker.internal:5432 host.docker.internal:3000 192.168.65.254:5432; do
+            if timeout 5 bash -c "exec 3<>/dev/tcp/${target%:*}/${target#*:}" 2>/dev/null; then
+              echo "::error::reached $target"
+              exit 1
+            fi
+            echo "blocked: $target"
+          done
+
+      - name: No secret in the environment
+        run: |
+          ! env | cut -d= -f1 | grep -E 'DATABASE_URL|RAILWAY|SENTRY|PLAYWRIGHT|^GH_TOKEN|^GITHUB_TOKEN'
