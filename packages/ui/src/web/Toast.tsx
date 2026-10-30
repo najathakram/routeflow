@@ -149,6 +149,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
+/** The toast API when a ToastProvider is above, else null: for shared hooks that also run where no provider is mounted. */
+export function useOptionalToast(): ToastContextValue | null {
+  return React.useContext(ToastContext);
+}
+
 export function useToast(): ToastContextValue {
   const ctx = React.useContext(ToastContext);
   if (!ctx) {

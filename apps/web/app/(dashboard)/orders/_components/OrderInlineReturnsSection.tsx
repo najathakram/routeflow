@@ -51,13 +51,15 @@ export interface OrderInlineReturnsSectionProps {
   /** #2647: the return already recorded under this capture key (a key-reused 409): shown as a
    *  link, so the operator checks what was credited before returning anything else. */
   refusalReturn?: { returnId: string; returnNumber: string | null } | null;
+  /** W-863: the quoted return's total as the draft changes (0 with no quote), so a host that tenders can net it. */
+  onQuoteTotalChange?: (total: number) => void;
 }
 
 export const OrderInlineReturnsSection = React.forwardRef<
   OrderInlineReturnsSectionHandle,
   OrderInlineReturnsSectionProps
 >(function OrderInlineReturnsSection(
-  { customerId, entryOrderId, refusalMessage, refusalReturn },
+  { customerId, entryOrderId, refusalMessage, refusalReturn, onQuoteTotalChange },
   ref,
 ) {
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
@@ -137,8 +139,11 @@ export const OrderInlineReturnsSection = React.forwardRef<
           customerId={customerId}
           entryOrderId={entryOrderId}
           resetToken={resetToken}
+          // the return's credit note is held for THIS order first, so it is not "for the next order"
+          creditContext="thisOrder"
           onStateChange={(state) => {
             stateRef.current = state;
+            onQuoteTotalChange?.(state.quote?.total ?? 0);
           }}
         />
       )}

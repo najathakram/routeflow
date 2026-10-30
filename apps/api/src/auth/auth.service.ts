@@ -32,6 +32,15 @@ export interface DeviceInfo {
   deviceName?: string;
 }
 
+/**
+ * RF-176 / W-767 (SA-917): a staff session with no business is a PLATFORM session, SUPER_ADMIN only. A null-tenantId JWT
+ * bypasses every forTenant() scope and can read across businesses. The ONE check, made before EVERY staff token mint in
+ * this file (login, refresh, mintSessionForUser): `session-tenant.spec.ts` keeps each sign site behind it.
+ */
+export function hasSessionTenant(user: { tenantId: string | null; role: string }): boolean {
+  return !!user.tenantId || user.role === "SUPER_ADMIN";
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -169,7 +178,7 @@ export class AuthService {
     // RF-176: reject logins where the user has no tenant association unless the
     // user is a platform-level super-admin.  A null-tenantId JWT bypasses all
     // forTenant() query scoping and can read data across every tenant.
-    if (!user.tenantId && user.role !== "SUPER_ADMIN") {
+    if (!hasSessionTenant(user)) {
       throw new UnauthorizedException("Tenant not found");
     }
     await this.touchLastLogin(user.id);
@@ -316,7 +325,8 @@ export class AuthService {
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
-    if (!user || user.status !== "ACTIVE" || user.deletedAt) {
+    // W-767 (SA-917): login's RF-176 rule too — a user with no business renews only as a SUPER_ADMIN.
+    if (!user || user.status !== "ACTIVE" || user.deletedAt || !hasSessionTenant(user)) {
       // B155: the old delete-then-check ordering consumed the token here too —
       // keep that, or a suspended user's row survives in listSessions.
       await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });
@@ -655,6 +665,8 @@ export class AuthService {
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
+    // W-767 (SA-924): login's RF-176 rule BEFORE any write; mintSessionForUser checks again before it mints.
+    if (!hasSessionTenant(user)) throw new UnauthorizedException("Tenant not found");
 
     if (!user.password)
       throw new BadRequestException("This account uses Google sign-in and has no password");
@@ -696,6 +708,8 @@ export class AuthService {
   async setPassword(userId: string, newPassword: string, deviceInfo?: DeviceInfo) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
+    // W-767 (SA-924): login's RF-176 rule BEFORE any write; mintSessionForUser checks again before it mints.
+    if (!hasSessionTenant(user)) throw new UnauthorizedException("Tenant not found");
 
     if (user.password)
       throw new BadRequestException(
@@ -746,6 +760,8 @@ export class AuthService {
    * hasPassword) while every other session dies.
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
+    // W-767 (SA-917): login's RF-176 rule, before anything is revoked or minted.
+    if (!hasSessionTenant(user)) throw new UnauthorizedException("Tenant not found");
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
     await this.touchLastLogin(user.id);
 

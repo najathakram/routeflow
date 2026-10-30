@@ -217,7 +217,13 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
       .spyOn(service, "voidInvoiceInTx")
       .mockResolvedValue(invoice(InvoiceStatus.VOID) as any);
     conflictOnce();
-    await expect(service.voidInvoice(INVOICE_ID)).resolves.toMatchObject({
+    await expect(
+      service.voidInvoice(INVOICE_ID, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    ).resolves.toMatchObject({
       status: InvoiceStatus.VOID,
     });
     expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
@@ -250,7 +256,13 @@ describe("#2255 Serializable invoice transactions retry on conflict, guards re-r
     const voidTx = jest
       .spyOn(service, "voidInvoiceInTx")
       .mockResolvedValue(invoice(InvoiceStatus.VOID) as any);
-    await expect(service.voidInvoice(INVOICE_ID)).rejects.toThrow(BadRequestException);
+    await expect(
+      service.voidInvoice(INVOICE_ID, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    ).rejects.toThrow(BadRequestException);
     expect(voidTx).not.toHaveBeenCalled();
   });
 

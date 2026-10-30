@@ -1,11 +1,11 @@
 {
-  "nextId": 351,
+  "nextId": 359,
   "activeCount": 52,
-  "archivedCount": 284,
+  "archivedCount": 292,
   "maxEntries": 52,
   "maxBytes": 81920,
-  "updatedAt": "2026-10-25T17:52:13.498Z",
+  "updatedAt": "2026-10-30T15:15:31.439Z",
   "schemaVersion": 1,
-  "note": "2026-10-25 (win-books) minted L-350 (process: a train merge checks the SA merge preconditions of every PR; row 428), archived L-338 (guarded by db-lane-serial.spec.ts, uncited); 2026-10-25 (win-books register catch-up) maxBytes 65,536 -> 81,920 per the owner ruling of 2026-09-23 (entry cap stays 52); L-335 gains the disjoint-delta exception. No new entry: row 606 is already L-309. || Previous: 2026-10-25 (bookkeeping for window 6, dc95e0eac..2cc4f3e15; PENDING-2026-10-25 retired) minted L-345 (domain: recurring Stripe prices name a product we own), L-346 (domain: payment capacity on the confirmed basis), L-347 (process: a text sweep changes strings only), L-348 (tooling: argv array, no shell), L-349 (domain: prove referenced ids in tenant before any write). Archived verbatim the five oldest entries nothing outside the register cites: L-257, L-267, L-269, L-272, L-276. The other fixes in the pending list (W-785 text follow-ups, B988/B892 script fixes, 642 close verb, W-880 NUL guard) carry no transferable rule beyond these.",
+  "note": "2026-10-30 (coordinator, bookkeeping for 75f433f568..f732d6209f, trains W26r-W28b): minted L-355 (process: train carry-over by delta, not patch-id), L-356 (tooling: hook failure is not a conflict), L-357 (deploy: window = merges + deploys, CI starts at open), L-358 (tooling: build workspace packages before reading a type-check count). Archived verbatim L-258, L-304, L-309, L-317 (zero outside citations).",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged. 2026-09-15 owner ruling (via lead c4): bytes stay load-bearing at 65,536; maxEntries 64 -> 52 so the two caps agree (~1.24 KB average entry)."
 }

@@ -55,6 +55,11 @@ import {
   branchTip,
   execute,
   buildPlan,
+  parseAllowList,
+  classifyIgnoredForAllowList,
+  samePath,
+  salvageIgnored,
+  allowListVerdict,
   CMD_UNSAFE,
   unlinkLinksWithin,
   cmdRmdirArgs,
@@ -62,6 +67,9 @@ import {
   unlinkLinksWindows,
   WINDOWS_DEPS,
   applyActions,
+  scopePlan,
+  removeWorktreePlain,
+  resolveListedPaths,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -2019,6 +2027,561 @@ t("row 719: a precomputed scan map is reused across candidates", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- --allow-list: per-worktree qualifier (red-first cases) ---
+const AL_NOW = Date.parse("2026-10-26T16:00:00Z");
+const AL_OLD = AL_NOW - 48 * 3600 * 1000;
+const alOk = {
+  name: "wt-x",
+  isMainCheckout: false,
+  isLocked: false,
+  isDirty: false,
+  onOrigin: true,
+  headMs: AL_OLD,
+  indexMs: AL_OLD,
+  nowMs: AL_NOW,
+  linkedFrom: [],
+};
+t("allow-list: a clean, on-origin, idle, detached worktree qualifies", () => {
+  assert.equal(allowListVerdict(alOk).ok, true);
+});
+t("allow-list: dirty is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, isDirty: true }).ok, false);
+});
+t("allow-list: HEAD not on any origin ref is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, onOrigin: false }).ok, false);
+});
+t("allow-list: HEAD or index idle under 24h (or unknown) is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, headMs: AL_NOW - 3600e3 }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, indexMs: AL_NOW - 3600e3 }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, indexMs: null }).ok, false);
+});
+t("allow-list: main checkout, protected name and locked are refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, isMainCheckout: true }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, name: "rf-migrate" }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, isLocked: true }).ok, false);
+});
+t("allow-list: a sibling tree linking into it (or an unreadable scan) is refused", () => {
+  assert.equal(allowListVerdict({ ...alOk, linkedFrom: ["/w/sib"] }).ok, false);
+  assert.equal(allowListVerdict({ ...alOk, linkedFrom: null }).ok, false);
+});
+t("allow-list: file parsing takes column 1, skips comments and blanks", () => {
+  const text = ["# c", "", "C:/a|b|1|origin", "C:/b\tx", "  C:/c  ", ""].join("\n");
+  assert.deepEqual(parseAllowList(text), ["C:/a", "C:/b", "C:/c"]);
+});
+t("allow-list: removal never follows a junction inside the worktree into a sibling", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al-")));
+  try {
+    const wt = join(root, "wt");
+    const sib = join(root, "sib");
+    mkdirSync(join(wt, "node_modules"), { recursive: true });
+    mkdirSync(sib);
+    writeFileSync(join(sib, "keep.txt"), "x");
+    dirLink(sib, join(wt, "node_modules", "pkg"));
+    removeWorktreeSafely(wt, {
+      git: () => {},
+      unlinkLinksWithin,
+      exists: (p) => existsSync(p),
+      removeTree: (p) => safeRemoveTree(p),
+    });
+    assert.equal(existsSync(wt), false);
+    assert.equal(readFileSync(join(sib, "keep.txt"), "utf8"), "x");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- --allow-list: ignored-path classes (cache passes / local-assets salvaged / unknown blocks) ---
+const ign = (...p) => p.map((x) => "!! " + x).join("\n");
+t("allow-list: regenerable cache dirs are not blockers", () => {
+  const r = classifyIgnoredForAllowList(
+    "",
+    ign(
+      "apps/api/.jest-cache/",
+      ".turbo/",
+      "apps/web/.next/",
+      "apps/web/test-results/",
+      "apps/web/playwright-report/",
+      "apps/api/dist/",
+      "node_modules/",
+      "coverage/",
+      ".expo/",
+      "packages/x/build/",
+    ),
+  );
+  assert.deepEqual(r, { dirty: false, salvage: [], blockers: [] });
+});
+t(
+  "allow-list: a nested src/build/ (source folder) is refused, anchored build output passes",
+  () => {
+    const r = classifyIgnoredForAllowList(
+      "",
+      ign("apps/api/src/build/", "apps/api/dist/", "build/", "apps/web/src/coverage/"),
+    );
+    assert.deepEqual(r.blockers, ["apps/api/src/build/", "apps/web/src/coverage/"]);
+  },
+);
+t("allow-list: samePath is case-insensitive only when asked (Windows main checkout)", () => {
+  assert.equal(samePath("C:/ClaudeCode/Routeflow", "c:/claudecode/routeflow", true), true);
+  assert.equal(samePath("/a/Routeflow", "/a/routeflow", false), false);
+});
+t("allow-list: local-assets is salvage, not a blocker", () => {
+  const r = classifyIgnoredForAllowList("", ign("local-assets/", "local-assets/proofs/x.png"));
+  assert.equal(r.blockers.length, 0);
+  assert.equal(r.salvage.length, 2);
+});
+t("allow-list: an unknown ignored file blocks and is named", () => {
+  const r = classifyIgnoredForAllowList("", ign("apps/api/.env", ".jest-cache/"));
+  assert.deepEqual(r.blockers, ["apps/api/.env"]);
+  const v = allowListVerdict({ ...alOk, isDirty: true, blockers: r.blockers });
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /apps\/api\/\.env/);
+});
+t("allow-list: tracked changes or an unreadable status stay dirty", () => {
+  assert.equal(classifyIgnoredForAllowList(" M a.ts", "").dirty, true);
+  assert.equal(classifyIgnoredForAllowList(null, "").dirty, true);
+});
+t("allow-list: local-assets is moved to the salvage root, then the worktree is removed", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al2-")));
+  try {
+    const wt = join(root, "wt");
+    const salvageRoot = join(root, "main", "local-assets", "worktree-salvage");
+    mkdirSync(join(wt, "local-assets", "proofs"), { recursive: true });
+    writeFileSync(join(wt, "local-assets", "proofs", "x.png"), "img");
+    const log = [];
+    const a = {
+      kind: "worktree",
+      target: wt,
+      worktree: "wt",
+      worktreePath: wt,
+      allowListed: true,
+      salvage: ["local-assets/"],
+      salvageRoot,
+    };
+    const out = execute(a, {
+      refuseDelete: () => null,
+      isDirty: () => true,
+      isDirtyAllowList: () => false,
+      salvage: (x) => salvageIgnored(x.worktreePath, x.worktree, x.salvage, x.salvageRoot),
+      removeWorktree: (t) =>
+        removeWorktreeSafely(t, {
+          git: () => {},
+          unlinkLinksWithin,
+          exists: (p) => existsSync(p),
+          removeTree: (p) => safeRemoveTree(p),
+        }),
+      log: (m) => log.push(m),
+    });
+    assert.equal(out, "done");
+    assert.equal(existsSync(wt), false);
+    assert.equal(
+      readFileSync(join(salvageRoot, "wt", "local-assets", "proofs", "x.png"), "utf8"),
+      "img",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+t("allow-list: a failed or colliding salvage skips the worktree and keeps it", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-al3-")));
+  try {
+    const wt = join(root, "wt");
+    const salvageRoot = join(root, "salvage");
+    mkdirSync(join(wt, "local-assets"), { recursive: true });
+    mkdirSync(join(salvageRoot, "wt", "local-assets"), { recursive: true });
+    let removed = false;
+    const a = {
+      kind: "worktree",
+      target: wt,
+      worktree: "wt",
+      worktreePath: wt,
+      allowListed: true,
+      salvage: ["local-assets/"],
+      salvageRoot,
+    };
+    const out = execute(a, {
+      refuseDelete: () => null,
+      isDirty: () => false,
+      isDirtyAllowList: () => false,
+      salvage: (x) => salvageIgnored(x.worktreePath, x.worktree, x.salvage, x.salvageRoot),
+      removeWorktree: () => {
+        removed = true;
+      },
+      log: () => {},
+    });
+    assert.equal(out, "skipped");
+    assert.equal(removed, false);
+    assert.equal(existsSync(join(wt, "local-assets")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- --worktrees-only / --paths / detached-HEAD proof / broken index (2026-10-29) ---
+const wtAct = (step, kind, worktreePath, extra = {}) => ({
+  step,
+  kind,
+  target: kind === "node_modules" ? join(worktreePath, "node_modules") : worktreePath,
+  worktree: worktreePath.split(/[\\/]/).pop(),
+  worktreePath,
+  ...extra,
+});
+const fullPlan = () => [
+  wtAct(1, "node_modules", "/w/a"),
+  wtAct(2, "worktree", "/w/a"),
+  wtAct(1, "node_modules", "/w/b"),
+  wtAct(2, "worktree", "/w/b"),
+  { step: 3, kind: "orphan-dir", target: "/w/orphan" },
+  { step: 4, kind: "docker-build-cache" },
+  { step: 5, kind: "npm-cache" },
+  { step: 6, kind: "stale-proof-dir", target: "/m/local-assets/proofs/old" },
+  { step: 7, kind: "jest-cache", target: "/tmp/jest_x", root: "/tmp" },
+];
+t("worktrees-only: keeps steps 1-3 and never plans docker, npm cache, proofs or Jest", () => {
+  const { actions } = scopePlan(fullPlan(), { worktreesOnly: true });
+  assert.deepEqual(
+    actions.map((a) => a.step),
+    [1, 2, 1, 2, 3],
+  );
+  assert.ok(!actions.some((a) => ["docker-build-cache", "npm-cache"].includes(a.kind)));
+});
+t("paths: acts only on listed trees; every other action is report-only", () => {
+  const { actions, reported } = scopePlan(fullPlan(), { paths: ["/w/a"] });
+  assert.deepEqual(
+    actions.map((a) => `${a.kind} ${a.target}`),
+    ["worktree /w/a"],
+  );
+  assert.ok(reported.some((r) => r.worktree === "b" && /report-only/.test(r.reason)));
+  assert.ok(reported.some((r) => /docker/.test(r.reason)));
+  assert.ok(reported.some((r) => /orphan/.test(r.reason)));
+});
+t("paths: a listed tree's removal is PLAIN (never --force); its node_modules step folds in", () => {
+  const { actions } = scopePlan(fullPlan(), { paths: ["/w/a", "/w/b"] });
+  assert.ok(actions.every((a) => a.kind === "worktree" && a.plain === true));
+  assert.equal(actions.length, 2);
+});
+t("paths: a listed tree with only a node_modules clear (unpushed) keeps that clear", () => {
+  const { actions } = scopePlan([wtAct(1, "node_modules", "/w/c")], { paths: ["/w/c"] });
+  assert.deepEqual(
+    actions.map((a) => a.kind),
+    ["node_modules"],
+  );
+});
+t("paths: matching is case-insensitive when asked (Windows paths)", () => {
+  const { actions } = scopePlan([wtAct(2, "worktree", "C:/WT/Lane")], {
+    paths: ["c:/wt/lane"],
+    caseInsensitive: true,
+  });
+  assert.equal(actions.length, 1);
+});
+t("removeWorktreePlain: links first, then a plain `git worktree remove`, never --force", () => {
+  const calls = [];
+  removeWorktreePlain("/w/lane", {
+    git: (...args) => (calls.push(`git ${args.join(" ")}`), { ok: true }),
+    unlinkLinksWithin: (d) => calls.push(`unlink ${d}`),
+    exists: () => false,
+  });
+  assert.deepEqual(calls, ["unlink /w/lane", "git worktree remove /w/lane", "git worktree prune"]);
+  assert.ok(!calls.some((c) => c.includes("--force")));
+});
+t("removeWorktreePlain: a tree git refuses stays and the refusal is thrown, never forced", () => {
+  const calls = [];
+  assert.throws(
+    () =>
+      removeWorktreePlain("/w/lane", {
+        git: (...args) => (calls.push(args.join(" ")), { ok: false, stderr: "index.lock exists" }),
+        unlinkLinksWithin: () => {},
+        exists: () => true,
+      }),
+    /index\.lock exists/,
+  );
+  assert.deepEqual(calls, ["worktree remove /w/lane"]);
+});
+t(
+  "removeWorktreePlain: a junction-nested node_modules is unlinked before git; target survives",
+  () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-plain-")));
+    try {
+      const wt = join(root, "wt");
+      const sib = join(root, "sib");
+      mkdirSync(join(wt, "apps", "api", "node_modules"), { recursive: true });
+      mkdirSync(join(sib, "pkg"), { recursive: true });
+      writeFileSync(join(sib, "pkg", "keep.txt"), "x");
+      dirLink(sib, join(wt, "node_modules"));
+      dirLink(join(sib, "pkg"), join(wt, "apps", "api", "node_modules", "pkg"));
+      let linksAtGit = null;
+      removeWorktreePlain(wt, {
+        git: (...args) => {
+          if (args[1] === "remove") {
+            linksAtGit = [
+              join(wt, "node_modules"),
+              join(wt, "apps", "api", "node_modules", "pkg"),
+            ].filter((p) => pathPresent(p));
+            rmSync(wt, { recursive: true, force: true }); // stands in for git, AFTER the unlink
+          }
+          return { ok: true };
+        },
+        unlinkLinksWithin,
+        exists: (p) => existsSync(p),
+      });
+      assert.deepEqual(linksAtGit, []);
+      assert.equal(readFileSync(join(sib, "pkg", "keep.txt"), "utf8"), "x");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+t("execute: a plain action goes through removeWorktreePlain, never removeWorktree", () => {
+  const calls = [];
+  const out = execute(wtAct(2, "worktree", "/w/a", { plain: true }), {
+    refuseDelete: () => null,
+    isDirty: () => false,
+    removeWorktree: () => calls.push("force"),
+    removeWorktreePlain: (p) => calls.push(`plain ${p}`),
+    log: () => {},
+  });
+  assert.equal(out, "done");
+  assert.deepEqual(calls, ["plain /w/a"]);
+});
+t("execute: a strict-ignored (detached) removal re-checks with the ignored-path-aware test", () => {
+  const calls = [];
+  const out = execute(wtAct(2, "worktree", "/w/a", { plain: true, strictIgnored: true }), {
+    refuseDelete: () => null,
+    isDirty: () => false,
+    isDirtyAllowList: () => true,
+    removeWorktreePlain: () => calls.push("plain"),
+    log: () => {},
+  });
+  assert.equal(out, "refused");
+  assert.deepEqual(calls, []);
+});
+t("execute: a broken-index removal skips the status re-check but refuses if HEAD moved", () => {
+  const a = wtAct(2, "worktree", "/w/a", { plain: true, brokenIndex: "missing", head: "abc" });
+  const calls = [];
+  const deps = (head) => ({
+    refuseDelete: () => null,
+    isDirty: () => true, // an unreadable status reads dirty; a broken index never asks it
+    isDirtyAllowList: () => true,
+    headOf: () => head,
+    removeWorktreePlain: () => calls.push("plain"),
+    log: () => {},
+  });
+  assert.equal(execute(a, deps("def")), "refused");
+  assert.deepEqual(calls, []);
+  assert.equal(execute(a, deps("abc")), "done");
+  assert.deepEqual(calls, ["plain"]);
+});
+// Review fold (#3974, Opus FAIL): stale lock, plain everywhere, relative paths, orphans.
+t(
+  "execute: a stale-lock removal re-checks clean + ignored state at delete time, not only HEAD",
+  () => {
+    const a = wtAct(2, "worktree", "/w/a", {
+      plain: true,
+      brokenIndex: "stale-lock",
+      head: "abc",
+      strictIgnored: true,
+    });
+    const calls = [];
+    const out = execute(a, {
+      refuseDelete: () => null,
+      isDirty: () => false,
+      isDirtyAllowList: () => true, // an ignored .env appeared
+      headOf: () => "abc",
+      removeWorktreePlain: () => calls.push("plain"),
+      log: () => {},
+    });
+    assert.equal(out, "refused");
+    assert.deepEqual(calls, []);
+  },
+);
+t("worktrees-only: every whole-tree removal is plain, with or without --paths", () => {
+  const wts = scopePlan(fullPlan(), { worktreesOnly: true }).actions.filter(
+    (a) => a.kind === "worktree",
+  );
+  assert.equal(wts.length, 2);
+  assert.ok(wts.every((a) => a.plain === true));
+});
+t("paths: a relative --paths entry resolves against the repo root, not the cwd", () => {
+  const root = resolve("/repo-root");
+  const abs = resolve("/abs/c");
+  assert.deepEqual(resolveListedPaths(["wt/a", "../wt/b", abs], root), [
+    join(root, "wt", "a"),
+    resolve(root, "../wt/b"),
+    abs,
+  ]);
+});
+t("paths: a listed orphan dir or stray file is reported, never removed", () => {
+  const { actions, reported } = scopePlan(
+    [
+      { step: 3, kind: "orphan-dir", target: "/w/orphan" },
+      { step: 3, kind: "stray-file", target: "/w/x.log" },
+    ],
+    { paths: ["/w/orphan", "/w/x.log"] },
+  );
+  assert.deepEqual(actions, []);
+  assert.equal(reported.length, 2);
+  assert.ok(reported.every((r) => /never removes/.test(r.reason)));
+});
+
+// Real repos: a detached merged tree, its proofs, and the broken-index rule (all under --paths).
+{
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "janitor-detached-")));
+  const main = join(root, "main");
+  const origin = join(root, "origin.git");
+  const wtRoot = join(root, "wt");
+  const git = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
+    }).trim();
+  const id = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const idle = (wt) => {
+    const gd = git(wt, "rev-parse", "--absolute-git-dir");
+    utimesSync(join(gd, "logs", "HEAD"), old, old);
+    return gd;
+  };
+  const plan = (paths, prs = []) => buildPlan(main, main, wtRoot, { paths, prs });
+  const removalFor = (r, wt) =>
+    r.actions.find((a) => a.kind === "worktree" && samePath(a.worktreePath, wt, true));
+  try {
+    execFileSync("git", ["init", "-q", "--bare", origin], { env: fixtureGitEnv() });
+    execFileSync("git", ["init", "-q", "-b", "master", main], { env: fixtureGitEnv() });
+    writeFileSync(join(main, ".gitignore"), "node_modules/\n*.local\n.env\n");
+    writeFileSync(join(main, "a.txt"), "a");
+    git(main, "add", ".gitignore", "a.txt");
+    git(main, ...id, "commit", "-q", "-m", "base");
+    git(main, "remote", "add", "origin", origin);
+    git(main, "checkout", "-q", "-b", "feat/x");
+    writeFileSync(join(main, "x.txt"), "x");
+    git(main, "add", "x.txt");
+    git(main, ...id, "commit", "-q", "-m", "x work");
+    const xSha = git(main, "rev-parse", "HEAD");
+    git(main, "checkout", "-q", "master");
+    git(main, ...id, "merge", "-q", "--no-ff", "-m", "merge x", "feat/x");
+    git(main, "push", "-q", "origin", "master");
+    git(main, "fetch", "-q", "origin");
+
+    const merged = join(wtRoot, "merged");
+    git(main, "worktree", "add", "-q", "--detach", merged, xSha);
+    mkdirSync(join(merged, "node_modules", "p"), { recursive: true });
+    idle(merged);
+
+    const unmerged = join(wtRoot, "unmerged");
+    git(main, "worktree", "add", "-q", "--detach", unmerged, xSha);
+    writeFileSync(join(unmerged, "u.txt"), "u");
+    git(unmerged, "add", "u.txt");
+    git(unmerged, ...id, "commit", "-q", "-m", "never merged");
+    idle(unmerged);
+
+    t("detached: a merged, clean, idle detached tree is NOT planned without --paths", () => {
+      const r = plan(null);
+      assert.equal(removalFor(r, merged), undefined);
+      assert.ok(r.skipped.some((s) => s.worktree === "merged" && /--paths/.test(s.reason)));
+    });
+    t("detached: listed in --paths, HEAD in origin/master proves it; removal planned", () => {
+      const a = removalFor(plan([merged]), merged);
+      assert.ok(a, "expected a worktree action for the listed detached merged tree");
+      assert.match(a.detachedProof, /origin\/master/);
+      assert.equal(a.strictIgnored, true);
+    });
+    t("detached: a listed tree whose HEAD is not merged anywhere is refused", () => {
+      const r = plan([unmerged]);
+      assert.equal(removalFor(r, unmerged), undefined);
+      assert.ok(r.skipped.some((s) => s.worktree === "unmerged" && /not merged/.test(s.reason)));
+    });
+    t("detached: a tree byte-equal (same tree) to a merged PR head is proven", () => {
+      const tree = git(unmerged, "rev-parse", "HEAD^{tree}");
+      const twin = git(main, ...id, "commit-tree", tree, "-p", xSha, "-m", "pr head twin");
+      const masterSha = git(main, "rev-parse", "origin/master");
+      const prs = [{ number: 7, headRefOid: twin, mergeCommit: { oid: masterSha } }];
+      const a = removalFor(plan([unmerged], prs), unmerged);
+      assert.ok(a, "expected the tree-equal proof to plan the removal");
+      assert.match(a.detachedProof, /#7/);
+    });
+    t("detached: a non-regenerable ignored file blocks it; node_modules does not", () => {
+      writeFileSync(join(merged, "notes.local"), "mine");
+      try {
+        assert.equal(removalFor(plan([merged]), merged), undefined);
+      } finally {
+        rmSync(join(merged, "notes.local"));
+      }
+      assert.ok(removalFor(plan([merged]), merged));
+    });
+    t("detached: a HEAD that moved within RECENT_ACTIVITY_HOURS is refused", () => {
+      const gd = git(merged, "rev-parse", "--absolute-git-dir");
+      const now = new Date();
+      utimesSync(join(gd, "logs", "HEAD"), now, now);
+      try {
+        assert.equal(removalFor(plan([merged]), merged), undefined);
+      } finally {
+        utimesSync(join(gd, "logs", "HEAD"), old, old);
+      }
+    });
+
+    const broken = join(wtRoot, "broken");
+    git(main, "worktree", "add", "-q", "--detach", broken, xSha);
+    const brokenGd = idle(broken);
+    rmSync(join(brokenGd, "index"));
+    t(
+      "broken index: a listed tree with a missing index and HEAD in master is planned, plain",
+      () => {
+        const a = removalFor(plan([broken]), broken);
+        assert.ok(a, "expected a removal for the listed broken-index tree");
+        assert.equal(a.brokenIndex, "missing");
+        assert.equal(a.plain, true);
+        assert.equal(a.head, xSha);
+      },
+    );
+    t("broken index: the same tree NOT listed is never planned", () => {
+      assert.equal(removalFor(plan(null), broken), undefined);
+      assert.equal(removalFor(plan([merged]), broken), undefined);
+    });
+    const locked = join(wtRoot, "lockd");
+    git(main, "worktree", "add", "-q", "--detach", locked, xSha);
+    const lockGd = idle(locked);
+    writeFileSync(join(lockGd, "index.lock"), "");
+    t("broken index: a FRESH index.lock (a live git command) is refused even when listed", () => {
+      assert.equal(removalFor(plan([locked]), locked), undefined);
+    });
+    t("broken index: a STALE index.lock on a listed tree in master is planned", () => {
+      utimesSync(join(lockGd, "index.lock"), old, old);
+      const a = removalFor(plan([locked]), locked);
+      assert.ok(a, "expected a removal for the stale-lock tree");
+      assert.equal(a.brokenIndex, "stale-lock");
+      assert.equal(
+        a.strictIgnored,
+        true,
+        "a stale-lock removal must re-check status at delete time",
+      );
+    });
+    t("broken index: a stale-lock tree holding a non-regenerable ignored file is refused", () => {
+      writeFileSync(join(locked, ".env"), "SECRET=1");
+      try {
+        const r = plan([locked]);
+        assert.equal(removalFor(r, locked), undefined);
+        assert.ok(r.skipped.some((x) => x.worktree === "lockd" && /ignored/.test(x.reason)));
+      } finally {
+        rmSync(join(locked, ".env"));
+      }
+    });
+    t("broken index: a stale-lock tree with an uncommitted change is refused", () => {
+      writeFileSync(join(locked, "a.txt"), "changed");
+      try {
+        assert.equal(removalFor(plan([locked]), locked), undefined);
+      } finally {
+        writeFileSync(join(locked, "a.txt"), "a");
+      }
+    });
+    t("paths: a listed path that is not a registered worktree is reported", () => {
+      const r = plan([join(root, "nowhere")]);
+      assert.ok(r.skipped.some((s) => /not a registered worktree/.test(s.reason)));
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
 if (failures.length) {

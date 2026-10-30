@@ -45,6 +45,7 @@ import { NumberingService } from "../import/numbering.service";
 import { AddonService } from "../billing/addon.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -365,11 +366,23 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
 
   it("R2: void -> unvoid -> void -> unvoid steps 0, 10, 0, 10 and ends with 3 SALE + 2 REVERSAL", async () => {
     const s = await seedSale();
-    await as(() => invoices.voidInvoice(s.invoiceId));
+    await as(() =>
+      invoices.voidInvoice(s.invoiceId, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
     expect(await lineSum(s.itemId)).toEqual(ZERO);
     await as(() => invoices.unvoidInvoice(s.invoiceId));
     expect(await lineSum(s.itemId)).toEqual(FULL);
-    await as(() => invoices.voidInvoice(s.invoiceId));
+    await as(() =>
+      invoices.voidInvoice(s.invoiceId, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
     expect(await lineSum(s.itemId)).toEqual(ZERO);
     await as(() => invoices.unvoidInvoice(s.invoiceId));
     expect(await lineSum(s.itemId)).toEqual(FULL);
@@ -383,7 +396,13 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     const s = await seedSale();
     const r1 = await seedReturn(s);
     const r1Rows = await prisma.regulatedSalesLedger.findMany({ where: { returnId: r1 } });
-    await as(() => invoices.voidInvoice(s.invoiceId));
+    await as(() =>
+      invoices.voidInvoice(s.invoiceId, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
     await as(() => returns.cancel(r1, operator()));
 
     expect((await prisma.return.findUnique({ where: { id: r1 } }))?.status).toBe("CANCELLED");
@@ -399,7 +418,13 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
   it("R5: R4 as an INLINE return (PIECES): the VOID line ends at 0", async () => {
     const s = await seedSale();
     const r1 = await seedReturn(s, "INLINE");
-    await as(() => invoices.voidInvoice(s.invoiceId));
+    await as(() =>
+      invoices.voidInvoice(s.invoiceId, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
     await as(() => inline.cancel(r1, operator()));
 
     expect((await prisma.return.findUnique({ where: { id: r1 } }))?.status).toBe("CANCELLED");
@@ -409,7 +434,13 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
 
   it("R12 (B693): unvoid when the owning order is CANCELLED is a 409 and writes no row", async () => {
     const s = await seedSale();
-    await as(() => invoices.voidInvoice(s.invoiceId));
+    await as(() =>
+      invoices.voidInvoice(s.invoiceId, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
     await prisma.order.update({ where: { id: s.orderId }, data: { status: "CANCELLED" } });
     const before = await prisma.regulatedSalesLedger.count({ where: { invoiceId: s.invoiceId } });
 
@@ -504,7 +535,13 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     await as(() => invoices.send(other.id, { allowPreDelivery: true }));
     await as(() => creditNotes.applyToInvoice(note.id, other.id, 10));
 
-    await as(() => invoices.voidInvoice(s.invoiceId));
+    await as(() =>
+      invoices.voidInvoice(s.invoiceId, {
+        sub: "u-1",
+        role: "TENANT_ADMIN",
+        tenantId: "t-1",
+      } as never),
+    );
     const capped = await prisma.creditNote.findUnique({ where: { id: note.id } });
     expect({ status: capped?.status, amount: Number(capped?.amount) }).toEqual({
       status: "APPLIED",
@@ -528,7 +565,7 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     (await c.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
   /**
    * The pid of the ONE backend (other than `exclude`) that Postgres reports blocked by `blocker`
-   * (`pg_blocking_pids`), or null after ~4 s (Prisma's interactive tx budget is 5 s). Keyed on the
+   * (blocked-wait helper), or null after ~4 s (Prisma's interactive tx budget is 5 s). Keyed on the
    * pids under test, never a database-wide count, so an unrelated waiter can neither satisfy nor mask it.
    */
   async function waitForBlockedBy(
@@ -536,15 +573,12 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
     blocker: number,
     exclude: number[] = [],
   ): Promise<number | null> {
-    for (let i = 0; i < 160; i++) {
-      const r = await c.query(
-        `SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) AND NOT (pid = ANY($2::int[]))`,
-        [blocker, exclude],
-      );
-      if (r.rows.length > 0) return r.rows[0].pid;
-      await new Promise((x) => setTimeout(x, 25));
-    }
-    return null;
+    const [first] = await waitUntilBlocked(c, {
+      holderPid: blocker,
+      excludePids: exclude,
+      timeoutMs: 4_000,
+    });
+    return first ? first.pid : null;
   }
 
   it("R15 (a): void first, the cancel waiting on the Return lock commits SECOND: the VOID line ends at 0", async () => {
@@ -558,7 +592,13 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
       const holderPid = await backendPid(holder);
       const cancel = settle(as(() => returns.cancel(r1, operator())));
       expect(await waitForBlockedBy(holder, holderPid)).not.toBeNull(); // the cancel waits on the Return
-      await as(() => invoices.voidInvoice(s.invoiceId)); // the void commits while the cancel waits
+      await as(() =>
+        invoices.voidInvoice(s.invoiceId, {
+          sub: "u-1",
+          role: "TENANT_ADMIN",
+          tenantId: "t-1",
+        } as never),
+      ); // the void commits while the cancel waits
       await holder.query("COMMIT");
       const r = await cancel;
       expect(r.ok).toBe(true);
@@ -585,7 +625,15 @@ describeDb("SA-839: regulated ledger void / unvoid / undo on a real Postgres", (
       // No fallback: a cancel that does not lock the Invoice never waits on the holder, and this fails.
       const cancelPid = await waitForBlockedBy(holder, holderPid);
       expect(cancelPid).not.toBeNull();
-      voided = settle(as(() => invoices.voidInvoice(s.invoiceId)));
+      voided = settle(
+        as(() =>
+          invoices.voidInvoice(s.invoiceId, {
+            sub: "u-1",
+            role: "TENANT_ADMIN",
+            tenantId: "t-1",
+          } as never),
+        ),
+      );
       // The void (its snapshot already taken) waits on the Order the CANCEL holds.
       expect(await waitForBlockedBy(holder, cancelPid!, [holderPid])).not.toBeNull();
       await holder.query("COMMIT");

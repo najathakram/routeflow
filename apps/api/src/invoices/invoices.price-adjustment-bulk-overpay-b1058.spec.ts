@@ -254,7 +254,7 @@ describe("bulk re-price: the overpay judgment is a PRE-FLIGHT check (B1058)", ()
       localMap: new Map<string, number>(inv.items.map((l: any) => [l.id as string, price])),
     });
     const overpaid = async (inv: any, db: any = noDb) => {
-      const err: any = await preflightBulkPriceAdjustment([plan(inv)], false, db).then(
+      const err: any = await preflightBulkPriceAdjustment([plan(inv)], false, db, "t1").then(
         () => null,
         (e) => e,
       );

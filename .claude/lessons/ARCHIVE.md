@@ -4418,3 +4418,68 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** none automatic; read `Tests: N` from the run and compare the report's spec count to the workspace's.
 - **Recurrence (2026-10-08):** a master merge, or a merge of another branch, makes the api and mobile `.campaign/runs` reports STALE even when no test file changed on your branch, because turbo serves cached test results and never regenerates them. Regenerate with the full suite (`cd apps/api && npx jest --maxWorkers=2`, the same in mobile) before the push.
 
+## Archived 2026-10-29 — zero outside citations; headroom for L-351..L-354 (bookkeeping for b1a2fc3d1..75f433f56)
+
+### L-280 · 2026-10-08 · process · a delete-by-filter ran with an erroring age filter and removed recent files
+
+- **Symptom:** a disk-cleanup helper meant to delete only folders older than three days deleted every unreferenced proof and handoff folder regardless of age; the files were gitignored and not recoverable.
+- **Root cause:** the age filter (`find -newermt '-3 days'`) is invalid on this machine's `find`, printed an error and an empty list, and the helper read "nothing is recent" as "everything is old".
+- **Lesson:** **Test any delete-by-filter on a known-recent file first and require it to be KEPT, and make an erroring or empty filter abort the whole run, never default to "old". Run the listing as a dry run and read its count before the delete.**
+- **Guard:** none automated; the cleanup helper's filter check is the proposal (assert the known-recent canary survives, abort on a non-zero filter exit).
+- **Recurrence (2026-10-08):** the age-filter rule also covers cleanup scripts: a cleanup script must age-filter (keep anything recent) before it deletes.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-280: guarded by scripts/janitor.mjs (unknown activity reads as recent, any failure aborts); no citation outside the register.)
+
+### L-287 · 2026-10-09 · process · never put a full local test gate on a train push that GitHub CI tests again; pre-flight takes seconds
+
+- **Symptom:** train and branch pushes sat for many minutes behind a full local verify plus the database lane, on a shared box already at its load cap, and then GitHub CI ran the same suites a second time.
+- **Root cause:** the local pre-push gate was designed when CI minutes were scarce, so it re-proves everything; on a train that CI tests anyway it is duplicate work, and it also queues every other lane behind the one push ([[L-283]]).
+- **Lesson:** **For a train push whose members were each verified and whose tip CI will test, do the seconds-long pre-flight only (`npm run lint:migrations`, `split-prisma-schema.mjs --check`, the fail-fast guards) and let CI in the window be the gate. Do not add FULL_VERIFY or the database lane to such a push. Bypassing the pre-push hook is still an owner decision (an audited SKIP_VERIFY), never a lane's.**
+- **Guard:** none automatic; the lead's lane rules and the audited `SKIP_VERIFY_REASON` line in `.git/skip-verify.log`.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-287: superseded by L-323 (the train gate runs FULL_VERIFY=1 on the landing tree); no citation outside the register.)
+
+### L-289 · 2026-10-09 · process · a lead decides within its own authority when the owner is away; it never parks a train on an absent owner's reply
+
+- **Symptom:** work idled behind a question that only the owner could answer, while the owner was not reachable and everything else was ready.
+- **Root cause:** the decision was treated as the owner's by default, so a reversible, in-scope call waited on a reply that was not coming; the abandoned approach was "ask, then hold everything until answered".
+- **Lesson:** **Before holding work for the owner, ask whether the call is reversible and inside the authority already delegated. If so, decide, write the reason on the board, and keep moving. Only an irreversible or outward-facing action (prod writes, repo visibility, spend, a bypass of a standing gate) waits, and it waits as ONE queued ask with a default, while every unrelated item keeps flowing.**
+- **Guard:** none automatic; the lead's operating notes and the lane rules. Cf. [[L-253]] (a public window closes on state, never on a reply).
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-289: carried by the lead's operating rules and the fleet-lead skill; no citation outside the register.)
+
+### L-291 · 2026-10-10 · tooling · never feed python a heredoc on Windows (`python3 -`): it hangs; write the script to a file or use node
+
+- **Symptom:** a lane's shell hung indefinitely on a `python3 - <<EOF` edit on a Windows machine.
+- **Root cause:** stdin-fed python (`python3 -` with a heredoc) does not return there; the exact mechanism was not chased, and waiting or retrying never helps.
+- **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
+- **Guard:** none automatic; the lane rules.
+- (Archived 2026-10-29 whole and verbatim to make room at cap: L-291: no recurrence since 2026-10-10; edits go through the Edit and Write tools; no citation outside the register.)
+
+## Archived 2026-10-30 — zero outside citations; headroom for L-355..L-358 (bookkeeping for W26r..W28b)
+
+### L-258 · 2026-10-02 · testing · a harness locator is chosen by test id or role, never by position (a `.last()` produced a false repro)
+
+- **Symptom:** the Expo 390 Playwright repro of "three same-code scans through the scan sheet's manual-entry field give one bottle" used `input.last()` for the manual field. After the first scan the cart row's quantity input became the last input, so scans two and three typed into the quantity field and the capture claimed the fix was missing. A runtime probe targeting the field by test id or role showed three submits giving three bottles ($6.00 in the DB) at both 1500 ms and 350 ms.
+- **Root cause:** a positional locator is correct only while the page keeps the same element order; the first interaction reordered it.
+- **Lesson:** **Target a field by `data-testid` or accessible role, never by `.first()`, `.last()` or `nth()`, and before filing a bug from a capture re-run the failing step with the stable locator and read the persisted value. Cf. [[L-202]], [[L-212]].**
+- **Guard:** none automated; the cost was one wrong-diagnosis cycle and a static re-trace by the lane.
+
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
+
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
+
+### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
+
+- **Symptom:** a worktree reported clean by `git status` was about to be removed while it held ignored files that exist nowhere else: database backups, `*.sql` dumps, `.env*` files and `graphify-out/`.
+- **Root cause:** `git status` hides ignored files by design, so "clean" says nothing about untracked-and-ignored data; removal tooling that trusts it deletes them with the tree.
+- **Lesson:** **Before removing a worktree, run `git status --ignored --short` and list what is ignored; copy out anything not regenerable (backups, dumps, env files, built graphs) or stop and report. "Clean" is a statement about tracked files only.** Cf. [[L-180]].
+- **Guard:** none automatic; the worktree-removal step of the cleanup routine lists ignored files first.
+
+### L-317 · 2026-10-18 · domain · removing a whole-catalog fetch (limit=0) from a picker is a behavior change; prove what each consumer needs first
+
+- **Symptom:** the product-k11 train swapped `limit: 0` reads for per-line or server-searched reads on several pickers. Two swaps (the promotions picker, the purchase-order detail) broke a consumer that needed the full set and were reverted; the products-list categories and inventory pickers, which only needed distinct values, kept the swap.
+- **Root cause:** a `limit: 0` read feeds more than the dropdown: a guard scanning every product, a lookup of lines the page did not request, a picker that must show items before any search. The cost was visible, the other readers were not.
+- **Lesson:** **Before replacing a fetch-all with a narrower read, list every consumer of that data on the page and name what each needs (distinct values, a few rows, the full set). Swap only where the narrow read serves all of them; keep a deliberate fetch-all with a comment naming the consumer, and give each swap its own revert-able commit.**
+- **Guard:** none automatic; the remaining fetch-alls carry a DELIBERATE comment naming their consumer (products, promotions, purchase-orders, suppliers pages). Cf. [[L-167]].
+

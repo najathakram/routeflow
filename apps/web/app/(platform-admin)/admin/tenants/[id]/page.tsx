@@ -44,7 +44,9 @@ import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
 import { TierChangeControl } from "./_features/TierChangeControl";
 import { PreviewDrawer } from "./_features/PreviewDrawer";
 import { previewTenantFeatures } from "@/lib/platform-admin/features";
+import { adminCreatedNote } from "@/lib/platform-admin/admin-created-note";
 import type { FeaturePreviewResponse } from "./_features/types";
+import { tenantDisplayName } from "@/lib/tenant-display-name";
 
 const usd = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -179,6 +181,7 @@ function TenantAdminSection({
   const [createResult, setCreateResult] = React.useState<{
     tempPassword?: string;
     username?: string;
+    emailSent?: boolean;
   } | null>(null);
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -247,9 +250,7 @@ function TenantAdminSection({
           <code className="block rounded bg-slate-900 px-3 py-2 font-mono text-sm text-green-400">
             {createResult.tempPassword}
           </code>
-          <p className="mt-2 text-xs text-yellow-500">
-            Share this securely. The user will be forced to change it on next login.
-          </p>
+          <p className="mt-2 text-xs text-yellow-500">{adminCreatedNote(createResult.emailSent)}</p>
         </div>
       )}
 
@@ -338,7 +339,8 @@ function TenantAdminSection({
                 />
               </div>
               <p className="text-xs text-slate-400">
-                A temporary password will be auto-generated and emailed to the admin.
+                A temporary password will be generated and shown here once. We also try to email it
+                to the admin.
               </p>
               <div className="flex gap-2">
                 <button
@@ -663,7 +665,7 @@ function OverviewTab({
               onClick={() => setConfirming("impersonate")}
               className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
             >
-              Impersonate
+              Sign in as admin
             </button>
           )}
 
@@ -1988,8 +1990,9 @@ export default function AdminTenantDetailPage() {
     router.replace(`/admin/tenants/${id}?tab=${key}`, { scroll: false });
   };
 
+  // A refetch after an action stays silent: the loading gate below unmounts the tree, which would
+  // drop state held in it (the one-time temporary password of a new tenant admin, B1271).
   const fetchTenant = React.useCallback(() => {
-    setLoading(true);
     superAdminClient
       .get<TenantDetail>(`/platform-admin/tenants/${id}`)
       .then((res) => setTenant(res.data))
@@ -1998,6 +2001,7 @@ export default function AdminTenantDetailPage() {
   }, [id]);
 
   React.useEffect(() => {
+    setLoading(true);
     fetchTenant();
   }, [fetchTenant]);
 
@@ -2120,7 +2124,7 @@ export default function AdminTenantDetailPage() {
           Tenants
         </Link>
         <span className="text-slate-400">/</span>
-        <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
+        <h1 className="text-xl font-bold text-white">{tenantDisplayName(tenant)}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
         <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
       </div>

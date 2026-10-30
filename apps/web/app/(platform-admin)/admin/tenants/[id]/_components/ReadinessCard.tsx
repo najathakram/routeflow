@@ -7,6 +7,7 @@ import {
   type BusinessCapabilities,
 } from "@/lib/platform-admin/readiness-contract";
 import { AdminCard } from "../../../../_components/AdminCard";
+import { tenantDisplayName } from "@/lib/tenant-display-name";
 
 /** The slice of the tenant detail the card reads. `counts.products` may be absent (an older API): "Not checked". */
 export interface ReadinessTenant {
@@ -45,7 +46,7 @@ function buildRows(
   admin: ReadinessAdmin,
   adminState: AdminReadState,
 ): Row[] {
-  const name = tenant.businessName ?? tenant.name;
+  const name = tenantDisplayName(tenant);
   const base = `/admin/tenants/${tenant.id}`;
   const onTrial = tenant.status === "TRIAL";
   const canSell = CAN_SELL_STATUSES.includes(tenant.status);
@@ -166,7 +167,7 @@ export function ReadinessCard({
   }
   if (caps && !caps.configured) {
     // D7: nothing is chosen yet. One neutral sentence, ready or not is not the question; it does not wait for the admin read.
-    const name = tenant.businessName ?? tenant.name;
+    const name = tenantDisplayName(tenant);
     return (
       <AdminCard title={title} className="lg:col-span-2">
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-300">

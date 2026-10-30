@@ -16,7 +16,8 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useProducts, type ApiProduct } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableOnly } from "@/lib/product-search-groups";
-import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { codedToastCopy, PROMOTIONS_OFF_COPY } from "@/lib/generic-toast-copy";
+import { useTenantFeatures } from "@/lib/tenant-features";
 import {
   ruleCanZeroPrice,
   scanPromotionZeroPrice,
@@ -683,6 +684,9 @@ export default function PromotionsPage() {
   }, [setTitle]);
 
   const { data: promotions, isLoading, isError } = usePromotions();
+  // SA-1032: off in the back office → the list stays readable, nothing can be created or changed.
+  const { data: tenantFeatures } = useTenantFeatures();
+  const promotionsOff = tenantFeatures?.modes?.promotions === "off";
   // DELIBERATE fetch-all (the one `limit: 0` left on this page). The $0.00 guard scans EVERY active product's
   // list price against every saved rule (row warnings) and the rule being typed (live count); the API offers no
   // impact-scan endpoint (it only refuses at save), so there is no narrower read that keeps the guard whole.
@@ -751,8 +755,8 @@ export default function PromotionsPage() {
     try {
       await setActive.mutateAsync({ id: p.id, isActive: !p.isActive });
       toast({ title: p.isActive ? "Promotion paused" : "Promotion resumed", variant: "success" });
-    } catch {
-      toast({ title: "Failed to update promotion", variant: "error" });
+    } catch (e) {
+      toast({ title: codedToastCopy(e) ?? "Failed to update promotion", variant: "error" });
     }
   };
 
@@ -761,8 +765,8 @@ export default function PromotionsPage() {
     try {
       await deletePromo.mutateAsync(confirmDelete.id);
       toast({ title: "Promotion deleted", variant: "success" });
-    } catch {
-      toast({ title: "Failed to delete promotion", variant: "error" });
+    } catch (e) {
+      toast({ title: codedToastCopy(e) ?? "Failed to delete promotion", variant: "error" });
     } finally {
       setConfirmDelete(null);
     }
@@ -784,11 +788,23 @@ export default function PromotionsPage() {
             : "Run windowed merchandising deals across your catalog"
         }
         action={
-          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
-            New promotion
-          </Button>
+          promotionsOff ? undefined : (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+              New promotion
+            </Button>
+          )
         }
       />
+
+      {promotionsOff && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <span className="text-sm text-navy">{PROMOTIONS_OFF_COPY}</span>
+        </div>
+      )}
 
       {/* Status filter chips */}
       <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-surface-border bg-white px-4 py-3 shadow-card">
@@ -833,9 +849,11 @@ export default function PromotionsPage() {
                 : "Create a windowed deal — percent off, fixed amount, or a quantity break — scoped to your whole catalog, a category, or specific products."
             }
             action={
-              <Button size="sm" onClick={openCreate}>
-                New promotion
-              </Button>
+              promotionsOff ? undefined : (
+                <Button size="sm" onClick={openCreate}>
+                  New promotion
+                </Button>
+              )
             }
           />
         </div>
@@ -889,30 +907,32 @@ export default function PromotionsPage() {
                       <Badge variant={badge.variant} label={badge.label} />
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => handleToggleActive(p)}
-                          loading={setActive.isPending && setActive.variables?.id === p.id}
-                        >
-                          {p.isActive ? "Pause" : "Resume"}
-                        </Button>
-                        <button
-                          onClick={() => openEdit(p)}
-                          title="Edit"
-                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setConfirmDelete(p)}
-                          title="Delete"
-                          className="rounded p-1.5 text-navy/70 hover:bg-danger-bg hover:text-danger transition-colors"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                      {!promotionsOff && (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleToggleActive(p)}
+                            loading={setActive.isPending && setActive.variables?.id === p.id}
+                          >
+                            {p.isActive ? "Pause" : "Resume"}
+                          </Button>
+                          <button
+                            onClick={() => openEdit(p)}
+                            title="Edit"
+                            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(p)}
+                            title="Delete"
+                            className="rounded p-1.5 text-navy/70 hover:bg-danger-bg hover:text-danger transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

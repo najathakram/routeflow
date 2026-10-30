@@ -1,3 +1,5 @@
+import type { ToCollectState } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ExpenseCategory } from "@routeflow/types";
@@ -42,6 +44,8 @@ export interface ArAgingBucket {
   depositAmount?: number | null;
   depositDueDate?: string | null;
   depositOverdue?: boolean;
+  /** SA-1026: staff aging only; derived by the server. */
+  toCollect?: ToCollectState;
 }
 
 export interface ExpenseLineItem {
@@ -130,6 +134,13 @@ export function useArAgingInvoices(intervalDays?: number) {
     };
     /** #1529: overdue deposits, never a totals key (the buckets already hold those balances). */
     depositOverdue?: { count: number; outstanding: number };
+    /** SA-1026 A-G11: per customer, how many invoices read To collect and their summed balance (absent from an older server). */
+    toCollectByCustomer?: {
+      customerId: string;
+      businessName: string;
+      count: number;
+      balance: number;
+    }[];
   }>({
     queryKey: ["reports", "ar-aging-invoices", intervalDays],
     queryFn: () =>
@@ -321,10 +332,11 @@ export interface CreateExpenseDto {
   lineItems?: { account: string; notes?: string; amount: number }[];
 }
 
-export function useCreateExpense() {
+export function useCreateExpense(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Expense, Error, CreateExpenseDto>({
     mutationFn: (dto) => apiClient.post("/bookkeeping/expenses", dto).then((r) => r.data),
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance-dashboard"] });
@@ -332,11 +344,12 @@ export function useCreateExpense() {
   });
 }
 
-export function useBulkCreateExpenses() {
+export function useBulkCreateExpenses(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<{ created: number; errors: string[] }, Error, CreateExpenseDto[]>({
     mutationFn: (expenses) =>
       apiClient.post("/bookkeeping/expenses/bulk", { expenses }).then((r) => r.data),
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance-dashboard"] });

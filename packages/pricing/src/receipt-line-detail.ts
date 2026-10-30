@@ -1,8 +1,10 @@
 /**
  * Row 317b: the ONE text of a receipt line's detail, shared by the live counter receipt, the Today's-sales reprint (apps/web)
  * and the emailed receipt (apps/api), so "3 × $2.50 each" reads the same on every surface. A plain line prints its quantity,
- * its price and the product's own selling unit; a boxed line prints boxes + pieces at the BOX price.
+ * its price and the product's own selling unit; a boxed line prints boxes + pieces at the BOX price; a UNIT line
+ * (SA-1040 B4a: a Case, a Pallet) prints its count and its own unit word at the unit price.
  */
+import { plural } from "./unit-words";
 
 import { roundMoney } from "./pricing";
 
@@ -37,8 +39,18 @@ export function receiptLineDetail(l: {
   pieces?: number | null;
   /** the product's own selling unit ("each", "lb"); printed after the price of a plain line. Absent/blank: no word. */
   unit?: string | null;
+  /**
+   * The line's stored selling unit ("Case"), null on a pack line. REQUIRED, so the compiler finds every caller (SA-1040 B4a).
+   * A unit line's count is its stored `boxes` (a live till line, which has none, passes the count as `qty`).
+   */
+  unitLabel: string | null;
 }): string {
   const price = formatReceiptMoney(l.unitPrice);
+  const label = (l.unitLabel ?? "").trim();
+  if (label) {
+    const count = l.boxes ?? l.qty;
+    return `${count} ${plural(label, count)} × ${price} per ${label}`;
+  }
   if ((l.unitsPerBox ?? 0) <= 1) {
     // "1 × $1.75 each": the unit follows the price in a sentence, never as "/ each"; another unit reads "per lb" like "per box"
     const unit = (l.unit ?? "").trim() ? priceUnitWord(l.unit) : "";

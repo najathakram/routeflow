@@ -88,3 +88,111 @@ test("R7b 3.1: Remove then Undo brings the return line back (390)", async ({
   await expect(dialog).toContainText("Cola 12oz Can");
   await expect(dialog.getByLabel(/^pieces$/i)).toHaveValue("1");
 });
+
+test("W-711 F23: the optional line fields sit behind More; the pieces field stays in view (390)", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(/\/api\/v1\/tenants\/me\/addons/, (r) =>
+    r.fulfill({ json: { addons: ["orders_inline_returns"] } }),
+  );
+  await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
+  await page.goto("/orders/e2e-r1");
+  await page.getByRole("button", { name: /record return|return items/i }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel(/^pieces$/i)).toBeVisible();
+  // collapsed: the panel stays mounted but hidden
+  await expect(dialog.getByLabel(/note \(optional\)/i)).toBeHidden();
+  const more = dialog.getByRole("button", { name: "More for Cola 12oz Can" });
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await more.click();
+  await expect(dialog.getByRole("button", { name: "Less for Cola 12oz Can" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await dialog.getByLabel(/note \(optional\)/i).fill("Dented can");
+  // a note keeps its line open and its value
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await dialog.getByRole("button", { name: "Undo" }).click();
+  await expect(dialog.getByRole("button", { name: "Less for Cola 12oz Can" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(dialog.getByLabel(/note \(optional\)/i)).toHaveValue("Dented can");
+  await page.screenshot({ path: "test-results/w783-returns-more-390.png" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: "test-results/w783-returns-more-1280.png" });
+});
+
+test("W-711 F22 + W-712 F25: the quote names the product and says where the money goes (390)", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await setTenantCookie(context, baseURL ?? "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(/\/api\/v1\/tenants\/me\/addons/, (r) =>
+    r.fulfill({ json: { addons: ["orders_inline_returns"] } }),
+  );
+  await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
+  await page.route(/\/api\/v1\/returns\/inline\/quote$/, (r) =>
+    r.fulfill({
+      json: {
+        chunks: [
+          {
+            sourceOrderId: "e2e-r1",
+            sourceInvoiceItemId: "inv-1",
+            sourceOrderItemId: "l1",
+            productId: "p1",
+            pieces: 1,
+            subtotal: 1.5,
+            taxAmount: 0,
+            categoryTax: 0,
+            priceSource: "SOURCE_INVOICE",
+            unitPrice: 1.5,
+          },
+        ],
+        subtotal: 1.5,
+        taxAmount: 0,
+        categoryTax: 0,
+        total: 1.5,
+        productBreakdown: {},
+        canRefund: true,
+        paidInFull: true,
+        paidMethods: ["CASH"],
+        paidWithStoreCredit: false,
+        customerIsWalkIn: true,
+      },
+    }),
+  );
+  await page.goto("/orders/e2e-r1");
+  await page.getByRole("button", { name: /record return|return items/i }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel(/^pieces$/i).fill("1");
+  await dialog.getByLabel(/^reason$/i).selectOption({ index: 1 });
+  await dialog.getByRole("button", { name: /get quote/i }).click();
+  // the quote line is titled by its product; the order is the quieter line under it
+  const quoteRow = dialog
+    .locator("div.rounded-lg")
+    .filter({ hasText: /From order #ORD-00001/ })
+    .last();
+  await expect(quoteRow.getByText("Cola 12oz Can")).toBeVisible();
+  await expect(quoteRow.getByText(/From order #ORD-00001/)).toBeVisible();
+  const rowText = await quoteRow.innerText();
+  expect(rowText.indexOf("Cola 12oz Can")).toBeGreaterThanOrEqual(0);
+  expect(rowText.indexOf("Cola 12oz Can")).toBeLessThan(rowText.indexOf("From order #ORD-00001"));
+  // walk-in sales refund: ONE sentence says why (mm-ux judge, notes/apple-ux/2026-10-25-w783-judge-3748.md: no second
+  // "goes back" line) and the button carries the real amount
+  await expect(dialog).toContainText("Walk-in sales can't hold store credit, so refund the money.");
+  await expect(dialog).not.toContainText(/goes back to the customer/i);
+  await expect(
+    dialog.getByRole("button", { name: "Take back items and refund $1.50" }),
+  ).toBeVisible();
+  await expect(dialog).not.toContainText(/credit note/i);
+  await page.screenshot({ path: "test-results/w783-returns-quote-390.png" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: "test-results/w783-returns-quote-1280.png" });
+});
