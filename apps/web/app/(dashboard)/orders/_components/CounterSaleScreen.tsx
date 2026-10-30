@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { Camera } from "lucide-react";
 import { Button, TAP_TARGET, cn } from "@routeflow/ui/web";
 import {
   formatReceiptMoney as money,
@@ -108,6 +109,10 @@ import { repriceLines } from "./counter-sale-reprice";
 import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
+import { unlockScanCue } from "@/lib/scan-cue";
+import { isTouchFirst } from "@/lib/touch-first";
+import { cameraFrameBlocked, counterDialogOpen } from "./counter-scan-guard";
+import { CounterCameraStrip } from "./CounterCameraStrip";
 import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
@@ -243,6 +248,11 @@ export function CounterSaleScreen() {
   const [lines, setLines] = React.useState<SaleLine[]>([]);
   const [lastSale, setLastSale] = useLastSaleNote(lines.length); // CQ-17: the order "Complete & next" just finished
   const [scanText, setScanText] = React.useState("");
+  // SA-1059: on a phone or tablet the clerk scans with the camera and the cursor stays out of the scan field (no keyboard over
+  // the picture). Read once per mount; a desktop till (and jsdom) answers false and nothing below shows or changes.
+  const [touchFirst] = React.useState(() => isTouchFirst());
+  // The strip's OPEN state is the clerk's choice and survives every pause (receipt, locked cart, a picker or a retry waiting).
+  const [cameraOpen, setCameraOpen] = React.useState(false);
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   // SA-933: the customer's terms set the default tender until the tender is decided (the clerk, or any restored sale).
   const tenderDefault = useCounterTenderDefault({
@@ -400,10 +410,12 @@ export function CounterSaleScreen() {
     if (receipt || locked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-      if (!/^[0-9]$/.test(e.key)) return; // digits only: letters are the g-then-x navigation shortcuts
+      // digits only: letters are the g-then-x navigation shortcuts. SA-1059: a touch-first device has no standing focus in the scan
+      // field, so a wedge's code that starts with a letter would lose it; there letters are routed too (a desktop stays digits only).
+      if (!(isTouchFirst() ? /^[0-9A-Za-z]$/ : /^[0-9]$/).test(e.key)) return;
       const scanEl = scanRef.current;
       if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
-      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      if (counterDialogOpen()) return;
       // a Radix Select / Menu typeahead owns the digits while its list or trigger holds focus
       if (
         document.activeElement?.closest(
@@ -816,6 +828,24 @@ export function CounterSaleScreen() {
     setScanText("");
     scan.submit(text);
   }
+  // SA-1059: a code the camera decoded. The same guard as onScanSubmit (a mid-POST scan would miss the sale), and the same
+  // activity stamp (a scanner's trailing Enter must not read as a human pause). A receipt is not a sale to add to either.
+  const onCameraCode = (code: string) => {
+    lastScanActivityRef.current = performance.now();
+    if (receipt || lineLocked || saleInFlight()) return;
+    scan.submitCamera(code);
+  };
+  // The tap that opens the strip is what grants the camera and unlocks the sound; it also takes the cursor out of the scan
+  // field, so a keyboard that is already up goes down. The strip is open or closed by the clerk only.
+  const toggleCamera = () => {
+    if (!cameraOpen) {
+      unlockScanCue();
+      scanRef.current?.blur();
+    }
+    setCameraOpen((o) => !o);
+  };
+  // MUST 3: the camera runs only while a scan could land. The strip stays mounted through a pause so its engine state survives.
+  const cameraEnabled = cameraOpen && !receipt && !lineLocked && !scan.picker && !scan.failed;
 
   const stepItem = (tempId: string, unit: StepUnit, dir: 1 | -1) => {
     if (lineLocked || saleInFlight()) return;
@@ -1453,59 +1483,84 @@ export function CounterSaleScreen() {
           />
 
           {/* scan / search: always focused; a typed quantity multiplies the next scan */}
-          <form
-            onSubmit={onScanSubmit}
-            className="sticky top-0 z-20 flex items-center gap-2 bg-white py-2"
-            data-testid="counter-scan-bar"
-          >
-            <input
-              ref={scanRef}
-              aria-label="Scan or search items"
-              className="min-h-[44px] w-full text-ellipsis rounded border px-3 py-2 text-base"
-              placeholder="Scan or type an item"
-              aria-describedby="counter-scan-hint"
-              {...live.nav.inputProps}
-              value={scanText}
-              disabled={lineLocked}
-              onChange={(e) => {
-                if (lineLocked || saleInFlight()) return;
-                lastScanActivityRef.current = performance.now();
-                scan.dismissMessage(); // F05: a miss message goes at the next keystroke
-                setScanText(e.target.value);
-              }}
-              onKeyDown={(e) => {
-                // POS-3: Ctrl/Cmd+Z with an empty scan field takes the last removal back (the same as the Undo button).
-                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !scanText && undo) {
-                  e.preventDefault();
-                  undoRemove();
-                }
-                if (live.nav.onKeyDown(e)) return; // W-852: Arrow keys move the highlight; Enter adds the highlighted row
-                if (e.key === "Enter" && !scanText.trim()) {
-                  e.preventDefault(); // an empty Enter is never a scan
-                  if (
-                    lines.length > 0 &&
-                    !lineLocked &&
-                    !scanBusyRef.current &&
-                    performance.now() - lastScanActivityRef.current >= EMPTY_ENTER_QUIET_MS
-                  )
-                    focusPayment(); // the next keys are the payment
-                }
-              }}
-              onBlur={(e) => {
-                // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
-                if (!receipt && !locked && !e.relatedTarget) refocus();
-              }}
-              autoFocus
-            />
-            {scan.pendingQty > 1 ? (
-              <span
-                className="rounded bg-amber-100 px-2 py-1 text-sm font-semibold"
-                data-testid="pending-qty"
-              >
-                ×{scan.pendingQty}
-              </span>
+          <div className="sticky top-0 z-20 bg-white" data-testid="counter-scan-bar">
+            {/* SA-1059: inline above the field, inside the sticky bar, so the strip never covers the cart */}
+            {touchFirst && cameraOpen ? (
+              <CounterCameraStrip
+                enabled={cameraEnabled}
+                frameBlocked={() => cameraFrameBlocked(scanRef.current)}
+                onCode={onCameraCode}
+              />
             ) : null}
-          </form>
+            <form onSubmit={onScanSubmit} className="flex items-center gap-2 py-2">
+              <input
+                ref={scanRef}
+                aria-label="Scan or search items"
+                className="min-h-[44px] w-full text-ellipsis rounded border px-3 py-2 text-base"
+                placeholder="Scan or type an item"
+                aria-describedby="counter-scan-hint"
+                {...live.nav.inputProps}
+                value={scanText}
+                disabled={lineLocked}
+                onChange={(e) => {
+                  if (lineLocked || saleInFlight()) return;
+                  lastScanActivityRef.current = performance.now();
+                  scan.dismissMessage(); // F05: a miss message goes at the next keystroke
+                  setScanText(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  // POS-3: Ctrl/Cmd+Z with an empty scan field takes the last removal back (the same as the Undo button).
+                  if (
+                    (e.ctrlKey || e.metaKey) &&
+                    e.key.toLowerCase() === "z" &&
+                    !scanText &&
+                    undo
+                  ) {
+                    e.preventDefault();
+                    undoRemove();
+                  }
+                  if (live.nav.onKeyDown(e)) return; // W-852: Arrow keys move the highlight; Enter adds the highlighted row
+                  if (e.key === "Enter" && !scanText.trim()) {
+                    e.preventDefault(); // an empty Enter is never a scan
+                    if (
+                      lines.length > 0 &&
+                      !lineLocked &&
+                      !scanBusyRef.current &&
+                      performance.now() - lastScanActivityRef.current >= EMPTY_ENTER_QUIET_MS
+                    )
+                      focusPayment(); // the next keys are the payment
+                  }
+                }}
+                onBlur={(e) => {
+                  // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
+                  if (!receipt && !locked && !e.relatedTarget) refocus();
+                }}
+                autoFocus={!touchFirst}
+              />
+              {touchFirst ? (
+                <button
+                  type="button"
+                  aria-label="Scan with camera"
+                  aria-pressed={cameraOpen}
+                  onClick={toggleCamera}
+                  className={cn(
+                    "flex h-11 w-11 shrink-0 items-center justify-center rounded border",
+                    cameraOpen ? "border-brand-500 bg-brand-500 text-white" : "bg-white text-navy",
+                  )}
+                >
+                  <Camera className="h-5 w-5" aria-hidden />
+                </button>
+              ) : null}
+              {scan.pendingQty > 1 ? (
+                <span
+                  className="rounded bg-amber-100 px-2 py-1 text-sm font-semibold"
+                  data-testid="pending-qty"
+                >
+                  ×{scan.pendingQty}
+                </span>
+              ) : null}
+            </form>
+          </div>
           {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
           <CounterLiveMatches live={live} onPick={pickLive} />
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}

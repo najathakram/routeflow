@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { SellLevel } from "@routeflow/pricing";
+import { cueForOutcome } from "@routeflow/scanning";
 import {
   archivedMessage,
   resolveProductByCode,
@@ -11,6 +12,7 @@ import {
 import { fetchCategoryPage, findCategoryProducts } from "@/lib/counter-category-search";
 import { parseScanField } from "@/lib/counter-sale";
 import { displayProductName } from "@/lib/product-display";
+import { playScanCue } from "@/lib/scan-cue";
 import { scanLevelForHit } from "./scan/useScanCodeHandler";
 import { ADDED_CONFIRMATION_MS, addedCopy, noProductCopy } from "./counter-scan-feedback";
 
@@ -20,10 +22,12 @@ export const COUNTER_SCAN_FAILED_COPY =
 
 /**
  * One entry of the scan queue: a code (`qty` set when it came as "2*code" / "2x code", F01), or a 1-3 digit entry that is a
- * code only if a product matches it EXACTLY.
+ * code only if a product matches it EXACTLY. `camera` marks a code the camera decoded (SA-1059): only those are answered with
+ * the accept / reject cue, a wedge or typed scan stays silent as it always was.
  */
 type ScanItem =
-  { kind: "code"; code: string; qty?: number } | { kind: "short"; n: number; code: string };
+  | { kind: "code"; code: string; qty?: number; camera?: boolean }
+  | { kind: "short"; n: number; code: string };
 
 export interface ScanPicker {
   code: string;
@@ -96,6 +100,12 @@ export function useCounterSaleScan(deps: Deps) {
     queueRef.current.shift();
     setWaiting(queueRef.current.length);
   };
+  // SA-1059: a camera scan is answered by sound (the clerk is looking at the item, not the screen): the shared decision turns
+  // "added" into the accept cue and every other outcome (a miss, a refused add, an ambiguous pick, a failed lookup) into reject.
+  const cue = (item: ScanItem, kind: "added" | "error") => {
+    if (item.kind === "code" && item.camera)
+      playScanCue(cueForOutcome({ feedback: { kind, text: item.code } }));
+  };
 
   const drain = React.useCallback(async (): Promise<void> => {
     if (runningRef.current || pausedRef.current) return;
@@ -118,10 +128,12 @@ export function useCounterSaleScan(deps: Deps) {
         }
         if (!aliveRef.current || epoch !== epochRef.current) return; // the sale was reset meanwhile
         if (depsRef.current.locked) {
+          cue(item, "error"); // dropped, not counted
           shift(); // a late lookup must not change a locked cart
           continue;
         }
         if (lookupFailed || !result) {
+          cue(item, "error");
           pausedRef.current = true;
           setFailed(true);
           return;
@@ -138,6 +150,7 @@ export function useCounterSaleScan(deps: Deps) {
           const byCategory = item.kind === "code" ? await findCategoryProducts(item.code) : null;
           if (!aliveRef.current || epoch !== epochRef.current) return;
           if (byCategory) {
+            cue(item, "error"); // not counted until one is chosen
             pausedRef.current = true;
             setPicker({
               code: item.code,
@@ -152,14 +165,17 @@ export function useCounterSaleScan(deps: Deps) {
             });
             return; // the item stays at the head until one is chosen
           }
+          cue(item, "error");
           clearAdded();
           setMessage(noProductCopy(item.code));
           setCarry(1);
         } else if (result.archived) {
+          cue(item, "error");
           clearAdded();
           setMessage(archivedMessage(result.product));
           setCarry(1);
         } else if (result.ambiguous && result.matches) {
+          cue(item, "error"); // not counted until one is chosen
           pausedRef.current = true;
           setPicker({ code: item.code, qty, matches: result.matches });
           return; // the item stays at the head until one is chosen
@@ -170,6 +186,7 @@ export function useCounterSaleScan(deps: Deps) {
             qty,
           );
           // A refused add (the line is at its cap) must not say "Added": the item was never rung up.
+          cue(item, applied === false ? "error" : "added");
           if (applied === false) clearAdded();
           else confirmAdded(result.product);
           setMessage("");
@@ -200,6 +217,19 @@ export function useCounterSaleScan(deps: Deps) {
       queueRef.current.push({ kind: "code", code: parsed.code, qty: parsed.qty });
       setPendingQty(1);
     }
+    setWaiting(queueRef.current.length);
+    void drain();
+  };
+
+  /**
+   * SA-1059: a code the CAMERA decoded joins the same queue, but never through `parseScanField`: that is a parser for typed text,
+   * and on a machine read it would turn a decoded "123" into a quantity and "2x1234" into quantity 2 of "1234". The code is
+   * looked up whole. The carry is left alone, so a typed quantity still multiplies the next scan in queue order.
+   */
+  const submitCamera = (code: string) => {
+    if (!code) return;
+    queueRef.current.push({ kind: "code", code, camera: true });
+    setPendingQty(1); // as `submit` does for a code: the chip is spent once the scan is queued
     setWaiting(queueRef.current.length);
     void drain();
   };
@@ -292,6 +322,7 @@ export function useCounterSaleScan(deps: Deps) {
     failed,
     waiting,
     submit,
+    submitCamera,
     pick,
     choose,
     loadMore,
