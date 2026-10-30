@@ -195,3 +195,24 @@ describe("pickupRunConfirm (mobile)", () => {
     expect(pickupRunConfirm(new Error("network"))).toBeNull();
   });
 });
+
+// W-775 (W-773's client half): the hand-over / Complete-at-counter sheet answers a 409 RESTRICTION_WARNING with the shared
+// warning modal and re-sends THIS hand-over (same Idempotency-Key, the one-per-order key) plus the acknowledgement, exactly
+// like the order screen's other staff writes. Head: the 409 fell to the sheet's generic error line, no way to proceed.
+describe("W-775 the hand-over sheet carries the restriction acknowledgement", () => {
+  const screen = readFileSync(
+    join(__dirname, "..", "app", "(operator)", "(tabs)", "orders", "[id].tsx"),
+    "utf8",
+  );
+  const submit = screen.slice(screen.indexOf("function submitHandOver("));
+  it("sends the body through rw.attach, so the pending ack rides it once", () => {
+    expect(submit).toContain("pickupMut.mutate(rw.attach(body)");
+  });
+  it("routes the error through rw.handle first, retrying the SAME submit", () => {
+    const onError = submit.slice(submit.indexOf("onError: (e) =>"));
+    expect(onError.indexOf("rw.handle(e, () => submitHandOver(body))")).toBeGreaterThan(-1);
+    // before the run confirm and the generic error line
+    expect(onError.indexOf("rw.handle(")).toBeLessThan(onError.indexOf("pickupRunConfirm(e)"));
+    expect(onError.indexOf("rw.handle(")).toBeLessThan(onError.indexOf("setHandOverError("));
+  });
+});
