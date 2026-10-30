@@ -39,6 +39,15 @@ describe("perBaseUnitPrice (PB-1)", () => {
   });
 });
 
+describe("perBaseUnitPrice unit word (PB-4: unitWords, one source for the word)", () => {
+  it('an explicit "Piece" label prints the default word, as every other screen does', () => {
+    expect(perBaseUnitPrice(line() as never, "Piece")).toEqual({ price: 2, unit: "pc" });
+  });
+  it("a padded label is trimmed and lowercased", () => {
+    expect(perBaseUnitPrice(line() as never, "  Bag ")).toEqual({ price: 2, unit: "bag" });
+  });
+});
+
 describe("perBaseUnitPrice null cases (PB-2)", () => {
   it.each([
     ["pack 1", { unitsPerBox: 1 }],

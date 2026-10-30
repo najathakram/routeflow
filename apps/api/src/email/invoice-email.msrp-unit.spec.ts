@@ -55,4 +55,10 @@ describe("invoice e-mail — MSRP note unit word (SA-1029 G-6)", () => {
     const { html } = build({ msrp: 3.49 });
     expect(html).toContain("MSRP $3.49/pc");
   });
+
+  it("E-R3: a unit word is tenant text, so the MSRP note escapes it", () => {
+    const { html } = build({ msrp: 3.49, perBaseUnit: { price: 2, unit: "<b>x" } });
+    expect(html).toContain("MSRP $3.49/&lt;b&gt;x");
+    expect(html).not.toContain("MSRP $3.49/<b>x");
+  });
 });

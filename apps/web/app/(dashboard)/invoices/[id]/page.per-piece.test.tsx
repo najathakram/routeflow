@@ -158,6 +158,20 @@ describe("SA-1029 staff invoice: per-piece price column", () => {
   });
 });
 
+describe("SA-1029 A-1: the column follows the layout the line renders in (staff)", () => {
+  it("SHOULD: a pieces-kind line whose stored pack disagrees renders today's layout WITH its Per piece cell", () => {
+    mockInvoice = invoiceWith({
+      ...packLine,
+      pieces: 1, // 2 x 24 + 1 = 49 stored pieces, not the 48 qty: the SA-827b fallback keeps today's layout
+      displayUnit: { kind: "pieces", label: "Piece" },
+      perBaseUnit: { price: 2, unit: "pc" },
+    });
+    renderWithProviders(<InvoiceDetailPage />);
+    expect(screen.getAllByText("Per piece").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$2.00/pc").length).toBeGreaterThan(0);
+  });
+});
+
 describe("SA-1029 G-6: one price text, one word (staff)", () => {
   it("W-P1: the pieces layout prints the charged price trimmed, $2.00 not $2.0000", () => {
     mockInvoice = invoiceWith({

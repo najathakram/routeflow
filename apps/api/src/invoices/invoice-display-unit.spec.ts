@@ -12,6 +12,7 @@ import {
   resolveIssueDisplayUnits,
   resolveLiveDisplayUnits,
   withItemDisplayUnits,
+  writeIssueBaseLabels,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 
@@ -772,6 +773,76 @@ describe("SA-967: one resolver, split into loadDisplayUnitCatalog (all the I/O) 
     await expect(
       freezeIssueUnitsFromCatalog(tx, { id: "inv-1", tenantId: TENANT }, catalog),
     ).rejects.toThrow("serialization");
+  });
+});
+
+describe("writeIssueBaseLabels (SA-1029 D-S1: the writer names no product; the word comes from the pre-tx map)", () => {
+  const txOfRows = (rows: unknown[]) => {
+    const { tx, sql } = makeTx();
+    tx.invoiceItem.findMany = jest.fn(async () => rows); // a tx with NO product model at all
+    return { tx, sql };
+  };
+  const labels = new Map([
+    ["p1", "Bag"],
+    ["p2", "Bag"],
+    ["p3", "Tin"],
+  ]);
+
+  it("D-S1: its findMany selects only id and productId, never a product relation", async () => {
+    const { tx } = txOfRows([]);
+    await writeIssueBaseLabels(tx, "inv-1", TENANT, labels);
+    expect(tx.invoiceItem.findMany).toHaveBeenCalledTimes(1);
+    const args = tx.invoiceItem.findMany.mock.calls[0][0];
+    expect(args.select).toEqual({ id: true, productId: true });
+    expect(args.select).not.toHaveProperty("product");
+    expect(tx.product).toBeUndefined();
+  });
+
+  it("D-S1: its findMany reads the invoice's own unfrozen lines that have a productId (a loose line too)", async () => {
+    const { tx } = txOfRows([]);
+    await writeIssueBaseLabels(tx, "inv-1", TENANT, labels);
+    expect(tx.invoiceItem.findMany.mock.calls[0][0].where).toEqual({
+      invoiceId: "inv-1",
+      baseLabel: null,
+      productId: { not: null },
+      invoice: { tenantId: TENANT },
+    });
+  });
+
+  it("D-S1: one updateMany per distinct label, from the map alone (a tx with no product model passes)", async () => {
+    const { tx } = txOfRows([
+      { id: "it-a", productId: "p1" },
+      { id: "it-b", productId: "p2" },
+      { id: "it-c", productId: "p3" },
+    ]);
+    await writeIssueBaseLabels(tx, "inv-1", TENANT, labels);
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.invoiceItem.updateMany.mock.calls.map((c: any[]) => c[0])).toEqual([
+      {
+        where: { id: { in: ["it-a", "it-b"] }, invoiceId: "inv-1", baseLabel: null },
+        data: { baseLabel: "Bag" },
+      },
+      {
+        where: { id: { in: ["it-c"] }, invoiceId: "inv-1", baseLabel: null },
+        data: { baseLabel: "Tin" },
+      },
+    ]);
+  });
+
+  it("D-S1: a product missing from the map is written nothing, with a warn; a null map writes nothing", async () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { tx } = txOfRows([
+      { id: "it-a", productId: "p1" },
+      { id: "it-x", productId: "p-unknown" },
+    ]);
+    await writeIssueBaseLabels(tx, "inv-1", TENANT, labels);
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.invoiceItem.updateMany.mock.calls[0][0].where.id).toEqual({ in: ["it-a"] });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("inv-1"));
+    const none = txOfRows([{ id: "it-a", productId: "p1" }]);
+    await writeIssueBaseLabels(none.tx, "inv-1", TENANT, null);
+    expect(none.tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
