@@ -10,21 +10,23 @@ import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
  * then with it OFF (master's value) and asserts both, so a pin that passes on both values cannot exist.
  *
  *   tiers row   ruling K12 P06 (and the 10-18 ruling item 1): the prices grid owns prices on a product it can edit.
- *   old card    ruling row 742 (owner 2026-10-22; D-2026-10-18): the old Units card stays only for unit STRUCTURE on a
- *               variant or recipe, and goes away on a standard product and a family.
+ *   old card    ruling row 742 (owner 2026-10-22; D-2026-10-18), as amended by SA-1041 (R-a6): with the grid on the old
+ *               Units card is gone from EVERY product; a variant and a recipe add units in the shell. It is the flag-off
+ *               surface only, mounted with no props.
  *   stock       ruling OR10 (SA-984 §0): with the grid on, the product page shows no stock numbers; counts live on Inventory.
  *
  * Sources: OR10 and D-1022 are not repo documents. They live in rf-specs-handoff: decisions/sa/SA-983.md, decisions/sa/SA-984.md
  * and handoff/findings/GAP-561-product-units-2026-10-25.md.
  *
  * NOTE (corrects the SA-984 §4 wording "the tiers row and the legacy card are gone"): that holds on a STANDARD product only.
- * What the code does, and what is pinned here (page.tsx:475, :1780-1789, :2383-2385; unit-structure.ts:5-8):
+ * What the code does, and what is pinned here (page.tsx pricesInWindow and the `!v2 && <ProductUnitsCard` gate;
+ * unit-structure.ts, governed = FAMILY only since SA-1041):
  *
  *   shape            flag-on tiers row                  flag-on old units card
  *   STANDARD         gone                               gone
  *   FAMILY           kept (inside its price section)    gone
- *   RECIPE           KEPT                               kept, structure only
- *   VARIANT          KEPT                               kept, structure only
+ *   RECIPE           gone (the price window owns it)    gone
+ *   VARIANT          gone (the price window owns it)    gone
  */
 let flagOn = true;
 let current: Record<string, unknown>;
@@ -155,19 +157,19 @@ const tiersRows = () => screen.queryAllByText("Pricing Tiers").length;
 const card = () => screen.queryByTestId("units-card");
 
 // shape -> [flag-on tiers rows, flag-on old card shown]
-const FLAG_ON: Record<string, { tiers: number; card: false | { structureOnly: "true" } }> = {
-  STANDARD: { tiers: 0, card: false },
-  FAMILY: { tiers: 1, card: false },
-  RECIPE: { tiers: 1, card: { structureOnly: "true" } },
-  VARIANT: { tiers: 1, card: { structureOnly: "true" } },
+const FLAG_ON: Record<string, { tiers: number }> = {
+  STANDARD: { tiers: 0 },
+  FAMILY: { tiers: 1 },
+  RECIPE: { tiers: 0 },
+  VARIANT: { tiers: 0 },
 };
 
 describe("E3 web: the unit-structure rule decides the shapes", () => {
-  it("unitStructureGoverned is FAMILY, RECIPE or a variant, never a standard product (unit-structure.ts:5-8)", () => {
+  it("unitStructureGoverned is FAMILY only; a standard product, a recipe and a variant own their structure (SA-1041)", () => {
     expect(unitStructureGoverned({ kind: "STANDALONE", parentProductId: null })).toBe(false);
     expect(unitStructureGoverned({ kind: "FAMILY" })).toBe(true);
-    expect(unitStructureGoverned({ kind: "RECIPE" })).toBe(true);
-    expect(unitStructureGoverned({ kind: "STANDALONE", parentProductId: "fam-1" })).toBe(true);
+    expect(unitStructureGoverned({ kind: "RECIPE" })).toBe(false);
+    expect(unitStructureGoverned({ kind: "STANDALONE", parentProductId: "fam-1" })).toBe(false);
   });
 });
 
@@ -186,21 +188,15 @@ describe("E3 web, K12 P06: the Pricing Tiers row, per shape (flag on = new value
 
 describe("E3 web, row 742: the old Units card, per shape (flag on = new value, flag off = master)", () => {
   for (const shape of Object.keys(SHAPES)) {
-    const want = FLAG_ON[shape].card;
-    it(`${shape}: flag on ${want ? "keeps it, structure only" : "removes it"}; flag off (master) shows the full card`, () => {
+    it(`${shape}: flag on removes it; flag off (master) shows the full card`, () => {
       const on = renderShape(shape, true);
-      if (want) {
-        expect(card()).not.toBeNull();
-        expect(card()).toHaveAttribute("data-structure-only", want.structureOnly);
-        expect(card()).toHaveAttribute("data-hide-add", "true");
-      } else {
-        expect(card()).toBeNull();
-      }
+      expect(card()).toBeNull();
       on.unmount();
       const off = renderShape(shape, false);
+      // the full card: mounted with neither structureOnly nor hideAddForm (the mock prints an absent prop as "undefined")
       expect(card()).not.toBeNull();
-      expect(card()).toHaveAttribute("data-structure-only", "false");
-      expect(card()).toHaveAttribute("data-hide-add", "false");
+      expect(card()).toHaveAttribute("data-structure-only", "undefined");
+      expect(card()).toHaveAttribute("data-hide-add", "undefined");
       off.unmount();
     });
   }
