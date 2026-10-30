@@ -23,7 +23,7 @@ gh workflow run ci.yml --repo najathakram/routeflow --ref <train-branch> -f runn
 node tools/ci-runner/launch-once.mjs --branch <train-branch>
 ```
 
-The launcher takes its own heavy seat, so do not wrap it in `heavy-slot run`. Run it in the background and read its output when it exits. While it waits for a seat, nothing is registered, and it is safe to stop.
+The launcher takes its own heavy seat, so do not wrap it in `heavy-slot run`. Run it in the background and read its output when it exits. While it waits for a seat, nothing is registered, and it is safe to stop. `--branch` must match the dispatch: the launcher stops any job that isn't a dispatch on that branch.
 
 The branch needs this PR's `ci.yml`, because a dispatch reads the workflow from the branch.
 
@@ -46,7 +46,8 @@ docker network create routeflow-ci-runner
 ## One Verify at a time
 
 - The PC fits only one. Docker's VM is capped at 24 GB.
-- **A runner takes whatever matching job is waiting, oldest first.** Queue only one job with `runner=self-hosted`. Before you start, cancel any older one that is still queued.
+- **A runner takes whatever matching job is waiting, oldest first.** Queue only one job with `runner=self-hosted`. Before you start, cancel any older one that is still queued. If it takes the wrong job, the launcher stops it, and you lose that seat.
+- A queued `runner=self-hosted` run blocks any other dispatch on the same branch until it finishes or you cancel it.
 - It runs `Verify` only. Dispatching with `runner=self-hosted` skips the E2E jobs.
 
 ## Reading the result
@@ -57,14 +58,16 @@ docker network create routeflow-ci-runner
 gh run list --repo najathakram/routeflow --workflow ci.yml --branch <train-branch> --limit 1
 ```
 
-| Exit | Meaning                                            | What to do                                            |
-| ---- | -------------------------------------------------- | ----------------------------------------------------- |
-| 2    | `--max-minutes` is not 1 to 80                     | Fix the flag                                          |
-| 3    | The repo is not PRIVATE                            | Wait for the window to close, then start the launcher |
-| 4    | A run from outside the repo is queued              | Do not start a runner. Read the run first             |
-| 5    | No heavy seat: `CI` is set, or `RF_HEAVY_SLOT=off` | Unset it. The runner never runs beside a seat         |
+| Exit | Meaning                                                 | What to do                                            |
+| ---- | ------------------------------------------------------- | ----------------------------------------------------- |
+| 2    | `--branch` is missing, or `--max-minutes` isn't 1 to 80 | Fix the flag                                          |
+| 3    | The repo is not PRIVATE                                 | Wait for the window to close, then start the launcher |
+| 4    | A run from outside the repo is queued or running        | Do not start a runner. Read the run first             |
+| 5    | No heavy seat: `CI` is set, or `RF_HEAVY_SLOT=off`      | Unset it. The runner never runs beside a seat         |
 
-Any other code is the container's own. Exits 2 to 5 register no runner. The job stays queued for up to 24 hours, so a later launcher can still take it.
+These four print a `refusing:` line and register no runner. The job stays queued for up to 24 hours, so a later launcher can still take it.
+
+With no `refusing:` line, the code comes from elsewhere. A failed `gh` call or a seat wait that timed out exits 1, 76 is the seat's hold cap, and anything else is the container's. Read the launcher's output, then check `docker ps` and the run.
 
 ## Stopping it
 
@@ -98,11 +101,19 @@ gh api -X DELETE repos/najathakram/routeflow/actions/runners/<id>
 
 A public repo lets a fork PR reach a self-hosted runner, and the repo goes public for deploys. A job `if:` cannot stop this, because a fork edits its own copy of the workflow. So no runner should exist while the repo is public:
 
-- The launcher refuses unless the repo is PRIVATE and no outside run is queued. It checks after it gets the seat.
+- The launcher refuses unless the repo is PRIVATE and no outside run is queued or running. It checks after it gets the seat.
 - Every 15 seconds it checks again. An idle runner is removed if the repo leaves PRIVATE, or if 45 seconds pass with no PRIVATE reading.
+- When a job starts, the launcher finds the run holding this runner. Unless it is a dispatch in this repo on `--branch`, the container is stopped. If GitHub can't confirm that within 2 minutes, it is stopped too.
+- If the launcher dies, the container ends with it.
 - The runner's token is good for one job, and the container is deleted after it.
 - The container holds no secrets, runs as an unprivileged user and can't reach private addresses.
 
-**Do not start a runner when a window is due.** A job that has started keeps running if the repo goes public. A one-job runner can't take a second job, so that job is the only one exposed.
+**Check for a live runner before opening a window.** The deploy flow doesn't check this for you.
+
+```bash
+gh api repos/najathakram/routeflow/actions/runners --jq ".total_count"
+```
+
+A confirmed job keeps running if the repo goes public. A one-job runner can't take a second job, so that job is the only one exposed.
 
 **Keep the `runner` input on dispatch only.** PR events must stay on `ubuntu-latest`.
