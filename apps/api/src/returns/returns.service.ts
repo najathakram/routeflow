@@ -112,6 +112,7 @@ import {
   addSplit,
   billedLinesOf,
   priceProductSlice,
+  refundSourceInvoice,
   refundTaxOpts,
   splitOfItems,
   splitTotal,
@@ -823,7 +824,7 @@ export class ReturnsService {
    * F08 B53: prices a refund from what was actually BILLED — the order's
    * "creditable" (non-VOID/non-WRITTEN_OFF) invoices — instead of re-deriving it
    * from the order line. A single creditable invoice sources the credit directly;
-   * 2+ mint against the LATEST one (by createdAt) so create()'s per-invoice cap
+   * 2+ mint against the invoice the fill touched LAST (SA-1051) so create()'s per-invoice cap
    * still applies, gated by a headroom check against what's already been credited
    * on those invoices; none creditable (invoices exist but all excluded) refuses
    * rather than silently falling back; an order with zero invoice rows at all
@@ -932,13 +933,13 @@ export class ReturnsService {
     }
 
     // The credit is always minted against ONE invoice — the only creditable one, or
-    // the LATEST of 2+ (picked by priceReturn) — because a standalone (invoiceId:
+    // the invoice the fill touched last of 2+ (picked by priceReturn, SA-1051) — because a standalone (invoiceId:
     // undefined) credit would skip create()'s per-invoice cap entirely. Both shapes
     // are gated BEFORE the caller's RECEIVED→REFUNDED claim: 2+ invoices additionally
-    // get an order-wide headroom check (the latest invoice alone is not the order's
+    // get an order-wide headroom check (the source invoice alone is not the order's
     // ceiling), and EVERY shape gets the source invoice's OWN remaining-room check,
     // which is what create() actually caps against.
-    const latest = creditable.find((inv: any) => inv.id === invoiceId);
+    const source = creditable.find((inv: any) => inv.id === invoiceId);
 
     if (creditable.length >= 2) {
       const totalBilled = creditable.reduce(
@@ -977,15 +978,15 @@ export class ReturnsService {
     // sail past this method and throw inside create() after the claim had committed.
     // SA-628 (B946): a single-invoice refund is ITEMISED against that invoice's lines under the SAME per-line headroom
     // credit notes use, so a credit note and a return refund can never together exceed a line's value. 2+ creditable
-    // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
+    // invoices keep the lump-sum credit minted against the source invoice (v1: a refund is one credit note, and a credit
     // note's items must belong to its one invoice). B947: the refund is still CHECKED against the older invoices' lines too (pooled).
     // Done BEFORE the invoice-room check so that check reads the amount that will actually be minted.
     // SA-840: the itemised rows carry the NET slice with its tax shares beside it; what is paid out is their total.
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
     let effectiveSplit = split;
-    if (creditable.length === 1 && latest) {
-      const itemised = await this.itemiseRefund(items, latest, packBases, credited);
+    if (creditable.length === 1 && source) {
+      const itemised = await this.itemiseRefund(items, source, packBases, credited);
       if (itemised.length > 0) {
         refundItems = itemised;
         effectiveSplit = splitOfItems(itemised);
@@ -993,7 +994,7 @@ export class ReturnsService {
       }
     }
 
-    // B947: 2+ creditable invoices keep the lump sum minted on the latest invoice, but the refund is checked against the SAME
+    // B947: 2+ creditable invoices keep the lump sum minted on the source invoice, but the refund is checked against the SAME
     // per-line headroom across ALL the creditable invoices (a line on an older invoice was invisible to it). SA-1042 A-2: per
     // GROUP, on the lines the group was priced on (a line group on its own line's invoice items, a pooled group on the
     // product's). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
@@ -1026,19 +1027,19 @@ export class ReturnsService {
       }
     }
 
-    const latestAgg = await db.creditNote.aggregate({
+    const sourceAgg = await db.creditNote.aggregate({
       where: { status: { not: "VOID" }, invoiceId },
       _sum: { amount: true },
     });
-    const latestRoom = Number(latest?.total ?? 0) - Number((latestAgg as any)?._sum?.amount ?? 0);
-    if (effectiveAmount > latestRoom + 0.001) {
+    const sourceRoom = Number(source?.total ?? 0) - Number((sourceAgg as any)?._sum?.amount ?? 0);
+    if (effectiveAmount > sourceRoom + 0.001) {
       // The operator reads this string verbatim, so it names the invoice the way the
       // UI does. `invoiceNumber` is selected by every caller that can reach this line
       // (processRefund's query); the `?? invoiceId` fallback covers only the impossible
       // case of a row that lost the field, and a UUID there is a bug, not a label.
       throw new BadRequestException(
-        `Refund ${effectiveAmount} exceeds the remaining room ${roundMoney(latestRoom)} on invoice ` +
-          `${latest?.invoiceNumber ?? invoiceId}; give store credit for what is still billable, or cancel the return`,
+        `Refund ${effectiveAmount} exceeds the remaining room ${roundMoney(sourceRoom)} on invoice ` +
+          `${source?.invoiceNumber ?? invoiceId}; give store credit for what is still billable, or cancel the return`,
       );
     }
     return {
@@ -1311,6 +1312,7 @@ export class ReturnsService {
     // 12 x (120 / 24), not 1 x (120 / 24).
     let split = NO_SPLIT;
     let unresolvedProductId: string | undefined;
+    const touched = new Set<string>(); // SA-1051: the invoices whose lines the priced slices took qty from
     for (const g of groups.values()) {
       const billedItems = groupInvoiceItems<any>(g, billedAll);
       if (billedQtyOf(g) <= 0) continue;
@@ -1333,6 +1335,10 @@ export class ReturnsService {
         mode: "count",
       });
       split = addSplit(split, splitOfItems(priced));
+      for (const it of priced) {
+        const invoiceId = billed.invoiceIdOf(it.invoiceItemId);
+        if (it.qty > 0 && invoiceId) touched.add(invoiceId);
+      }
     }
     let amount = splitTotal(split);
 
@@ -1355,14 +1361,15 @@ export class ReturnsService {
       return { amount, invoiceId: creditable[0].id, creditable, split, ...why };
     }
 
-    // 2+ creditable invoices: the source is the LATEST one (by createdAt) so
-    // create()'s per-invoice cap still applies. billedBasisFor gates it.
-    const latest = [...creditable].sort((a: any, b: any) => {
-      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return bt - at;
-    })[0];
-    return { amount, invoiceId: latest.id, creditable, split, ...why };
+    // 2+ creditable invoices (SA-1051): the source is the invoice the fill touched LAST, so create()'s per-invoice cap still
+    // applies, on the invoice the goods were billed on. billedBasisFor gates it.
+    return {
+      amount,
+      invoiceId: refundSourceInvoice(creditable, touched),
+      creditable,
+      split,
+      ...why,
+    };
   }
 
   async processRefund(id: string, dto?: ProcessRefundDto, actor?: JwtPayload) {
@@ -1424,7 +1431,7 @@ export class ReturnsService {
     // Sequential, NOT nested (the claim transaction above has committed): create() opens its own Serializable tx and books NO
     // regulated reversal for a lump-sum credit (no items) — the returned regulated
     // goods were already reversed at receive(). billedBasisFor already picked the
-    // single creditable invoice, or the latest of 2+ after a headroom check, or
+    // single creditable invoice, or the source invoice of 2+ after a headroom check, or
     // undefined for a zero-invoice (legacy) or VOID-sourced order.
     let cn: Awaited<ReturnType<CreditNotesService["create"]>>;
     try {
