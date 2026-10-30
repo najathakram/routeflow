@@ -448,6 +448,7 @@ export async function priceLine(a: PriceLineArgs): Promise<LineRun> {
         taxFor: (qty, sub) => categoryTaxForLine(shape.category, qty, sub),
         position: 0,
         tenantId: TENANT,
+        priceEditAllowed: true,
         ...(a.existing ? { stored: a.existing as never, existing: a.existing as never } : {}),
       });
       stored = { ...built };

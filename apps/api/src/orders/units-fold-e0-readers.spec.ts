@@ -354,7 +354,10 @@ describe("unchanged by construction: no money path reads the flag (labelled, not
     const gate = /customerPricing\(|assertMayUseUnits\(|prepareUnitLadders\(|hasFlagStrict/;
     // INV-b's own context file is the one invoices/ reader of the unit gate (a line that NAMES a unit); a pack line never reaches it
     expect(calls(gate, ["credit-notes"])).toEqual([]);
+    // invoice-display-unit.ts (SA-827) reads the units flag for the DISPLAY unit only; it never reads or writes money
+    // (pinned by invoice-unit-display-only.spec.ts), so it is a reader here, not a money path.
     expect(calls(gate, ["invoices"])).toEqual([
+      "invoices/invoice-display-unit.ts",
       "invoices/invoice-edit-plan.ts",
       "invoices/invoice-line-override.ts",
       "invoices/manual-invoice-context.ts",
