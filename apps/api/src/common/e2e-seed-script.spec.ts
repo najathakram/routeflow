@@ -159,4 +159,20 @@ describe("e2e-seed.js units_v1 fixture runs only against a local DB (#2195 / #22
     // Both main() branches (existing tenant, fresh tenant) go through the gate.
     expect(src.match(/await ensureUnitsFixtureIfLocal\(/g)).toHaveLength(2);
   });
+
+  it("row 601: a reseed puts the units fixtures' prices back (upsert update resets price and tiers)", () => {
+    const src: string = require("node:fs").readFileSync(SCRIPT, "utf8");
+    const fixture = src.slice(
+      src.indexOf("async function ensureUnitsFixture(tenantId)"),
+      src.indexOf("async function ensureBuyerFixtureIfLocal("),
+    );
+    expect(fixture).toMatch(
+      /update: \{ isActive: true, pricePerUnit: UNITS_PRODUCT\.pricePerUnit, \.\.\.ZERO_TIERS \}/,
+    );
+    expect(fixture).toMatch(/update: \{ price: UNITS_CASE\.price, \.\.\.NULL_UNIT_TIERS \}/);
+    expect(fixture).toMatch(/pricePerUnit: CASE_DEFAULT_PRODUCT\.pricePerUnit, \.\.\.ZERO_TIERS/);
+    expect(fixture).toMatch(
+      /price: CASE_DEFAULT_LEVEL\.price, \.\.\.NULL_UNIT_TIERS, isDefaultSelling: true/,
+    );
+  });
 });

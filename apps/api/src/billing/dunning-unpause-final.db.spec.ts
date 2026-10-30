@@ -178,8 +178,8 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
     await dunning.sweep(clock);
   };
 
-  /** An overdue PRODUCTION (or other class) tenant whose real final went out at +150 h. */
-  async function tenantWithRealFinal(label: string, cls: TenantClass, finalAtH = 150) {
+  /** An overdue PRODUCTION (or other class) tenant whose real final went out at +318 h. */
+  async function tenantWithRealFinal(label: string, cls: TenantClass, finalAtH = 318) {
     seq += 1;
     const slug = assertTestTenant(`qa-sa775r412-${run}-${seq}-${label}`, SPEC);
     const t = await prisma.tenant.create({
@@ -215,7 +215,8 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
       data: [
         { tenantId: t.id, milestone: "DUNNING_D0", key: ep, sentAt: at(0) },
         { tenantId: t.id, milestone: "DUNNING_D3", key: ep, sentAt: at(72) },
-        { tenantId: t.id, milestone: "DUNNING_D6", key: ep, sentAt: at(144) },
+        { tenantId: t.id, milestone: "DUNNING_D7", key: ep, sentAt: at(168) },
+        { tenantId: t.id, milestone: "DUNNING_D6", key: ep, sentAt: at(312) },
         { tenantId: t.id, milestone: "DUNNING_FINAL", key: ep, sentAt: at(finalAtH) },
       ],
     });
@@ -230,17 +231,17 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
   const tenantRow = (id: string) => prisma.tenant.findUniqueOrThrow({ where: { id } });
 
   it("PRODUCTION: final -> pause -> unpause sends ONE new final under a new claim key, and locks 24 h after IT", async () => {
-    await setSwitch("unpaused", at(100)); // T0 < T
+    await setSwitch("unpaused", at(268)); // T0 < T
     const d = await tenantWithRealFinal("seq", TenantClass.PRODUCTION);
 
-    await setSwitch("paused", at(160)); // T + 10 h: the lock is held
-    await sweepAt(160);
+    await setSwitch("paused", at(328)); // T + 10 h: the lock is held
+    await sweepAt(328);
     expect(await finals(d.t)).toHaveLength(1);
     expect((await tenantRow(d.t)).status).toBe("ACTIVE");
 
-    const U = at(270); // T + 5 d
+    const U = at(438); // T + 5 d
     await setSwitch("unpaused", U);
-    await sweepAt(270);
+    await sweepAt(438);
     const afterUnpause = await finals(d.t);
     expect(afterUnpause).toHaveLength(2);
     expect(afterUnpause[1].key).toBe(`${d.ep}:u${U.toISOString()}`);
@@ -251,11 +252,11 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
       (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: d.t } })).pausedAt,
     ).toBeNull();
 
-    await sweepAt(271); // idempotent: the claim for this unpause exists
+    await sweepAt(439); // idempotent: the claim for this unpause exists
     expect(await finals(d.t)).toHaveLength(2);
-    await sweepAt(293); // 23 h after the new final
+    await sweepAt(461); // 23 h after the new final
     expect((await tenantRow(d.t)).status).toBe("ACTIVE");
-    await sweepAt(295); // 25 h
+    await sweepAt(463); // 25 h
     const locked = await tenantRow(d.t);
     expect(locked.status).toBe("READ_ONLY");
     expect(locked.readOnlyReason).toBe("payment_overdue");
@@ -269,7 +270,7 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
     expect(
       (await notifications.notifyDunning(d.t, "DUNNING_FINAL", d.ep, "final", extra)).status,
     ).toBe("skipped");
-    const key = `${d.ep}:u${at(270).toISOString()}`;
+    const key = `${d.ep}:u${at(438).toISOString()}`;
     expect(
       (await notifications.notifyDunning(d.t, "DUNNING_FINAL", key, "final", extra)).status,
     ).toBe("sent");
@@ -280,65 +281,65 @@ describeDb("row 412: a pre-pause final is stale after an unpause (real Postgres)
   });
 
   it("a second pause -> unpause re-issues exactly once more, under the key of the new unpause", async () => {
-    await setSwitch("unpaused", at(100));
+    await setSwitch("unpaused", at(268));
     const d = await tenantWithRealFinal("again", TenantClass.PRODUCTION);
-    await setSwitch("unpaused", at(270));
-    await sweepAt(270);
-    await setSwitch("paused", at(280));
-    await sweepAt(280);
-    const U2 = at(400);
+    await setSwitch("unpaused", at(438));
+    await sweepAt(438);
+    await setSwitch("paused", at(448));
+    await sweepAt(448);
+    const U2 = at(568);
     await setSwitch("unpaused", U2);
-    await sweepAt(400);
-    await sweepAt(401);
+    await sweepAt(568);
+    await sweepAt(569);
     const keys = (await finals(d.t)).map((f) => f.key);
     expect(keys).toEqual([
       d.ep,
-      `${d.ep}:u${at(270).toISOString()}`,
+      `${d.ep}:u${at(438).toISOString()}`,
       `${d.ep}:u${U2.toISOString()}`,
     ]);
     expect((await tenantRow(d.t)).status).toBe("ACTIVE");
-    await sweepAt(425);
+    await sweepAt(593);
     expect((await tenantRow(d.t)).status).toBe("READ_ONLY");
   });
 
   it("a final sent AFTER the unpause is honoured: no resend, locked 24 h after it", async () => {
-    await setSwitch("unpaused", at(140));
-    const d = await tenantWithRealFinal("after", TenantClass.PRODUCTION, 150);
-    await sweepAt(173);
+    await setSwitch("unpaused", at(308));
+    const d = await tenantWithRealFinal("after", TenantClass.PRODUCTION, 318);
+    await sweepAt(341);
     expect((await tenantRow(d.t)).status).toBe("ACTIVE");
-    await sweepAt(175);
+    await sweepAt(343);
     expect((await tenantRow(d.t)).status).toBe("READ_ONLY");
     expect(await finals(d.t)).toHaveLength(1);
   });
 
   it("TEST class: unchanged - never re-sent, locks 24 h after the old final even after an unpause", async () => {
-    await setSwitch("unpaused", at(270));
+    await setSwitch("unpaused", at(438));
     const d = await tenantWithRealFinal("test", TenantClass.TEST);
-    await sweepAt(295);
+    await sweepAt(463);
     expect(await finals(d.t)).toHaveLength(1);
     expect((await tenantRow(d.t)).status).toBe("READ_ONLY");
   });
 
   it("a legacy bare 'false' (no at): the row's write time is the boundary - a final sent before it is re-sent", async () => {
     await setSwitch("unpaused", at(0), true);
-    // the legacy row was last written AFTER the old final (+150 h) but before the sweep
+    // the legacy row was last written AFTER the old final (+318 h) but before the sweep
     await prisma.platformConfig.update({
       where: { key: AUTO_LOCKS_PAUSED_KEY },
-      data: { updatedAt: at(200) },
+      data: { updatedAt: at(368) },
     });
     sw.invalidate();
-    expect((await sw.unpausedSince())?.getTime()).toBe(at(200).getTime());
+    expect((await sw.unpausedSince())?.getTime()).toBe(at(368).getTime());
     const d = await tenantWithRealFinal("legacy", TenantClass.PRODUCTION);
-    await sweepAt(272);
+    await sweepAt(440);
     const f = await finals(d.t);
-    expect(f.map((x) => x.key)).toEqual([d.ep, `${d.ep}:u${at(200).toISOString()}`]);
+    expect(f.map((x) => x.key)).toEqual([d.ep, `${d.ep}:u${at(368).toISOString()}`]);
     expect((await tenantRow(d.t)).status).toBe("ACTIVE");
   });
 
   it("a legacy bare 'false' written BEFORE the final: the final is honoured (no resend), the normal lock follows", async () => {
     await setSwitch("unpaused", at(0), true); // written now (real clock, long before the 2099 final)
     const d = await tenantWithRealFinal("legacy2", TenantClass.PRODUCTION);
-    await sweepAt(272);
+    await sweepAt(440);
     expect(await finals(d.t)).toHaveLength(1);
     expect((await tenantRow(d.t)).status).toBe("READ_ONLY");
   });

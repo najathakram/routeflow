@@ -107,8 +107,11 @@ describeDb(
       restrictionOverrideRuleIds: [`${w.ruleId}:CA`],
     });
 
+    /** The marker `ImportService.importInvoices` writes on a historical line (W-748 Q2): the fixed reason, same rule ids. */
+    const IMPORTED = () => ({ ...STAMPED(), restrictionOverrideReason: "Imported (historical)" });
+
     async function seedInvoice(
-      lines: Array<{ productId: string; qty?: number; stamped?: boolean }>,
+      lines: Array<{ productId: string; qty?: number; stamped?: boolean; imported?: boolean }>,
       over: { status?: string; orderId?: string; customerId?: string } = {},
     ) {
       seq += 1;
@@ -132,7 +135,7 @@ describeDb(
               discount: 0,
               taxRate: 0,
               subtotal: (l.qty ?? 2) * 10,
-              ...(l.stamped ? STAMPED() : {}),
+              ...(l.imported ? IMPORTED() : l.stamped ? STAMPED() : {}),
             })),
           },
         },
@@ -339,6 +342,85 @@ describeDb(
         });
       });
 
+      describe("W-748 Q2 (SA-958): the import marker covers the imported quantity only", () => {
+        it("a qty RAISE on a KEPT imported line warns (the marker is not an override of more units)", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 2, imported: true },
+          ]);
+          const e = await errOf(edit(invoiceId, [row(items[0].id, w.banned, 9)]));
+          expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
+          const [r] = await itemRows(invoiceId);
+          expect(Number(r.qty)).toBe(2); // the warning wrote nothing
+          expect(r.restrictionOverrideReason).toBe("Imported (historical)"); // the marker is intact
+          expect(await audits(invoiceId)).toHaveLength(0);
+        });
+
+        it("a SECOND line of the imported product (added in the edit) warns on that new line", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 2, imported: true },
+          ]);
+          const e = await errOf(
+            edit(invoiceId, [
+              row(items[0].id, w.banned, 2),
+              { description: "x", productId: w.banned, qty: 1, unitPrice: 10 },
+            ]),
+          );
+          expect(bodyOf(e).code).toBe("RESTRICTION_WARNING");
+          expect(bodyOf(e).lines.map((l: { lineKey: string }) => l.lineKey)).toEqual(["n:1"]);
+          expect(await itemRows(invoiceId)).toHaveLength(1); // nothing written
+          expect(await audits(invoiceId)).toHaveLength(0);
+        });
+
+        it("the acknowledged raise REPLACES the marker's stamp columns with the staff reason", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 2, imported: true },
+          ]);
+          const lines = [row(items[0].id, w.banned, 9)];
+          const e = await errOf(edit(invoiceId, lines));
+          await edit(invoiceId, lines, ackFrom(e));
+          const [r] = await itemRows(invoiceId);
+          expect(Number(r.qty)).toBe(9);
+          expect(r.restrictionOverrideReason).toBe(REASON);
+          expect(r.restrictionOverrideBy).toBe(w.operatorId);
+          expect(await audits(invoiceId)).toHaveLength(1);
+        });
+
+        it("a qty DECREASE on a KEPT imported line keeps the marker and does not warn", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 5, imported: true },
+          ]);
+          await edit(invoiceId, [row(items[0].id, w.banned, 2)]);
+          const [r] = await itemRows(invoiceId);
+          expect(Number(r.qty)).toBe(2);
+          expect(r.restrictionOverrideReason).toBe("Imported (historical)");
+          expect(await audits(invoiceId)).toHaveLength(0);
+        });
+
+        it("an UNCHANGED quantity keeps the marker and does not warn", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 3, imported: true },
+          ]);
+          await edit(invoiceId, [row(items[0].id, w.banned, 3)]);
+          const [r] = await itemRows(invoiceId);
+          expect(r.restrictionOverrideReason).toBe("Imported (historical)");
+          expect(await audits(invoiceId)).toHaveLength(0);
+        });
+
+        it("a decreased-and-RECREATED imported line (no id, same product) keeps its Imported (historical) stamp", async () => {
+          const { invoiceId, items } = await seedInvoice([
+            { productId: w.banned, qty: 5, imported: true },
+          ]);
+          await edit(invoiceId, [{ description: "x", productId: w.banned, qty: 2, unitPrice: 10 }]);
+          const rows = await itemRows(invoiceId);
+          expect(rows).toHaveLength(1);
+          expect(rows[0].id).not.toBe(items[0].id);
+          expect(rows[0]).toMatchObject({
+            restrictionOverrideReason: "Imported (historical)",
+            restrictionOverrideBy: w.operatorId,
+          });
+        });
+      });
+
       it("a product swap on a KEPT row clears the stamp (clean target) or re-warns (restricted target) and then stamps", async () => {
         const a = await seedInvoice([{ productId: w.banned, qty: 2, stamped: true }]);
         await edit(a.invoiceId, [row(a.items[0].id, w.clean, 2)]);
@@ -499,10 +581,13 @@ describeDb(
     describe("estimate -> invoice", () => {
       it("converting an ACCEPTED estimate with a restricted line warns, then stamps the invoice line", async () => {
         const est: any = await as(() =>
-          estimates.create({
-            customerId: w.caCustomerId,
-            items: [{ description: "Gummies", productId: w.banned, qty: 2, unitPrice: 10 }],
-          } as never, NO_PRICE_RIGHTS),
+          estimates.create(
+            {
+              customerId: w.caCustomerId,
+              items: [{ description: "Gummies", productId: w.banned, qty: 2, unitPrice: 10 }],
+            } as never,
+            NO_PRICE_RIGHTS,
+          ),
         );
         await raw.estimate.update({ where: { id: est.id }, data: { status: "ACCEPTED" } });
         const convert = (ack?: object) =>

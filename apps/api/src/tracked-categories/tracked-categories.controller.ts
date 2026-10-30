@@ -3,6 +3,8 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { TrackedCategoriesService } from "./tracked-categories.service";
 import { CreateTrackedCategoryDto } from "./dto/create-tracked-category.dto";
 import { UpdateTrackedCategoryDto } from "./dto/update-tracked-category.dto";
@@ -30,18 +32,22 @@ export class TrackedCategoriesController {
   }
 
   @Post()
-  create(@Body() dto: CreateTrackedCategoryDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateTrackedCategoryDto, @CurrentUser() user: JwtPayload) {
+    return this.service.create(dto, user);
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() dto: UpdateTrackedCategoryDto) {
-    return this.service.update(id, dto);
+  update(
+    @Param("id") id: string,
+    @Body() dto: UpdateTrackedCategoryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.update(id, dto, user);
   }
 
   @Patch(":id/toggle")
-  toggle(@Param("id") id: string) {
-    return this.service.toggle(id);
+  toggle(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.toggle(id, user);
   }
 
   @Post(":id/products/assign")
