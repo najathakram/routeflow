@@ -178,7 +178,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
    * What `InvoicesService.writeInvoicePayment` holds while it records a payment: the INVOICE row FOR UPDATE (never the
    * Order row), the payment insert, the invoice status write, all uncommitted until `release()`.
    */
-  async function openPayment(invoiceId: string, amount: string) {
+  async function openPayment(invoiceId: string, amount: string | null) {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     let held!: () => void;
@@ -186,10 +186,13 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     const done = raw.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} FOR UPDATE`;
-        await tx.invoicePayment.create({
-          data: { tenantId, invoiceId, amount, method: "CASH", status: "PAID" } as never,
-        });
-        await tx.invoice.update({ where: { id: invoiceId }, data: { status: "PAID" } });
+        if (amount !== null) {
+          // `null`: a holder that commits with no payment (a failed or refused record)
+          await tx.invoicePayment.create({
+            data: { tenantId, invoiceId, amount, method: "CASH", status: "PAID" } as never,
+          });
+          await tx.invoice.update({ where: { id: invoiceId }, data: { status: "PAID" } });
+        }
         held();
         await gate;
       },
@@ -393,6 +396,27 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
     expect(after.lines.map((l) => Number(l.qty))).toEqual([2]);
     expect(outcome).toMatchObject({ status: 409, response: { code: "WALK_IN_SALE_PAID" } });
     expect(blocked.length).toBeGreaterThan(0); // the edit WAITED behind the payment, it did not race past it
+  }, 60_000);
+
+  it("SA-1056 A-2: a walk-in edit that waits behind an invoice holder with NO payment applies, it is not refused", async () => {
+    const { o, inv, productId: pid } = await paidSale(await customer(true), { paid: false });
+    const holder = await openPayment(inv.id, null); // the invoice row is held, nothing is paid
+    const editing = edit(o.id, {
+      items: [{ id: o.lineItems[0].id, productId: pid, qty: 3 }],
+      replaceAll: false,
+    }).then(
+      () => "edited",
+      (e: any) => e,
+    );
+    let settled = false;
+    void editing.then(() => (settled = true));
+    const blocked = await waitUntilBlocked(prismaQueryable(raw), { until: () => settled });
+    holder.release();
+    await holder.done;
+    expect(await editing).toBe("edited");
+    expect(blocked.length).toBeGreaterThan(0); // waiting, not refusing
+    const after = await snapshot(o.id);
+    expect(Number(after.header.total)).toBe(3);
   }, 60_000);
 
   it("the judge fails closed on a real tx: 2.00 paid over a 1.50 order total the re-sync cannot project is 409", async () => {
