@@ -1,9 +1,5 @@
-// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
-jest.mock("./counter-sale/till-permission.guard", () =>
-  require("../testing/till-user").tillGuardMock(),
-);
-// SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
-jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() })); // SA-429: ownership is pinned elsewhere
+jest.mock("./counter-sale/till-permission.guard", require("../testing/till-user").tillGuardMock);
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
