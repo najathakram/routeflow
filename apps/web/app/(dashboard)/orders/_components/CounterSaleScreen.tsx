@@ -135,6 +135,7 @@ import { CounterScanFeedback } from "./CounterScanFeedback";
 import { CounterBuyerChoice } from "./CounterBuyerChoice";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
+import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
@@ -567,6 +568,7 @@ export function CounterSaleScreen() {
     customerSearch,
     pickCustomer,
   );
+  const door = useNewCustomerDoor(pickCustomer);
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
@@ -1382,6 +1384,7 @@ export function CounterSaleScreen() {
                 setCustomer(null);
                 buyerChoice.chooseWalkIn();
               }}
+              onNewCustomer={() => door.open()}
             />
             <input
               {...customerListbox.inputProps}
@@ -1439,7 +1442,9 @@ export function CounterSaleScreen() {
               answered={customersData !== undefined && !customersFetching}
               disabled={lineLocked}
               onPick={pickCustomer}
+              onCreateNew={door.open}
             />
+            {door.modal}
           </section>
 
           {/* SA-747: quick keys; a tap is the scan add path, and a frozen cart ignores it */}

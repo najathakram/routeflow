@@ -126,6 +126,7 @@ import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
@@ -766,14 +767,20 @@ export function CreateOrderModal({
   const [customerListOpen, setCustomerListOpen] = React.useState(true);
   // Seeds the order's fulfilment from the customer's own default here (not in a
   // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
-  const pickCustomer = (c: SelectedCustomer) => {
+  const pickCustomer = (c: SelectedCustomer, keepPath = false) => {
     setSelectedCustomer(c);
-    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    // W-1041: a customer made in the sale holds the form default, not the path the clerk chose: keep the clerk's.
+    if (!keepPath) setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setCustomerListOpen(true);
     customerUndo.dismiss();
   };
+  // W-1041: a pickup (POS) order needs no address; a delivery or shipped one does.
+  const newCustomerDoor = useNewCustomerDoor<SelectedCustomer>(
+    (c) => pickCustomer(c, true),
+    !posMode,
+  );
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
@@ -2673,8 +2680,10 @@ export function CreateOrderModal({
                   listOpen={customerListOpen}
                   onListOpenChange={setCustomerListOpen}
                   onPick={pickCustomer}
+                  onCreateNew={newCustomerDoor.open}
                   error={customerError}
                 />
+                {newCustomerDoor.modal}
                 {customerUndo.previous && (
                   <p role="status" className="flex items-center gap-2 text-xs text-navy/70">
                     Customer cleared ({customerUndo.previous.customer.businessName}).
