@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
+import { isCreateReturnRefusal } from "../return-error-text";
 import type {
   CreateReturnItemDto,
   CreateReturnLineItemDto,
@@ -154,6 +155,7 @@ export function useCreateReturn() {
   const qc = useQueryClient();
   return useMutation<Return, Error, CreateReturnDto>({
     mutationFn: (dto) => apiClient.post("/returns", dto).then((r) => r.data),
+    meta: { localErrorToast: isCreateReturnRefusal }, // the form toasts these itself, and only it has the sentence
     onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
   });
 }

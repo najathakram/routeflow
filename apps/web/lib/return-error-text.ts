@@ -2,6 +2,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import { RETURN_MIXED_UNIT_PRODUCT_COPY } from "./credit-note-error-copy";
 
 const CAP_REFUSAL = /^Return qty exceeds what is left on this line: /;
+const RETRY = "Please try again.";
 
 /**
  * The toast text when a new return is refused. The form only knows what was ordered, so the server's cap refusal is the
@@ -26,5 +27,9 @@ export function createReturnErrorText(err: unknown): string {
     (code === API_ERROR_CODES.RETURN_LINE_COUNT_SHAPE || CAP_REFUSAL.test(sentence))
   )
     return sentence;
-  return "Please try again.";
+  return RETRY;
 }
+
+/** A refusal the form explains itself, so the global mutation toast stands down and does not cover the sentence. */
+export const isCreateReturnRefusal = (err: unknown): boolean =>
+  createReturnErrorText(err) !== RETRY;
