@@ -1665,11 +1665,11 @@ export default function ProductDetailPage() {
                   />
                   <InfoRow
                     label={`${UW.base.other} per ${UW.pack.lower}`}
-                    htmlFor={isEditing ? "product-units-per-box" : undefined}
+                    htmlFor={isEditing ? "product-pack-count" : undefined}
                     value={
                       isEditing ? (
                         <DecimalInput
-                          id="product-units-per-box"
+                          id="product-pack-count"
                           decimals={0}
                           min={0}
                           value={
