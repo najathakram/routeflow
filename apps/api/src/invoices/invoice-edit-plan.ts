@@ -36,6 +36,7 @@ import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
@@ -165,6 +166,16 @@ export function authoredCustomEditLines(
     if (row?.systemKind) return false;
     return !row || !same(item.unitPrice, row.unitPrice);
   });
+}
+
+/** SA-1034 rule 4 at an edit: a custom line this edit authors needs price rights, before any write; no `override` = internal. */
+export function assertEditAuthoredPrices(
+  items: EditPayloadLine[],
+  matches: LineMatch[],
+  override: { priceEditAllowed: boolean } | undefined,
+): void {
+  if (!override) return;
+  assertCustomPricesAllowed(authoredCustomEditLines(items, matches), override.priceEditAllowed);
 }
 
 /** The payload with an absent `unitLabel` filled from the matched row's unit (SA-070: absent = unchanged). */

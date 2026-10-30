@@ -69,7 +69,7 @@ import {
   inheritHeldUnit,
   inPlacePatch,
   matchEditLines,
-  authoredCustomEditLines,
+  assertEditAuthoredPrices,
 } from "./invoice-edit-plan";
 import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -3175,13 +3175,7 @@ export class InvoicesService {
         const { storedRows, isTaxExempt, invoice: cur } = locked;
         const matches = matchEditLines(items, storedRows);
         if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
-        // SA-1034 rule 4: a custom line this edit authors (new, or re-priced) needs price rights; before any write.
-        if (override) {
-          assertCustomPricesAllowed(
-            authoredCustomEditLines(items, matches),
-            override.priceEditAllowed,
-          );
-        }
+        assertEditAuthoredPrices(items, matches, override); // SA-1034 rule 4: before any write
         assertNsfLinesUntaxed(
           items,
           matches.map((m) => m.row),

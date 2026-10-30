@@ -1,4 +1,5 @@
 import { roundMoney } from "@routeflow/pricing";
+import { assertCustomPricesAllowed } from "./staff-override";
 
 type Entry = {
   id?: string | null;
@@ -36,4 +37,15 @@ export function authoredCustomEntries<T extends Entry>(
       : custom.find((h) => (h.name ?? "").trim() === name && cents(h.unitPrice) === typed);
     return !same || cents(same.unitPrice) !== typed;
   });
+}
+
+/** The edit-site check (verbatim move from updateOrderItems): the held lines' names come from the order's own rows. */
+export function assertEditAuthoredCustomPrices(
+  items: readonly Entry[],
+  heldItems: readonly HeldLine[],
+  lineItems: readonly { id: string; name?: string | null }[],
+  priceEditAllowed: boolean,
+): void {
+  const held = heldItems.map((h) => ({ ...h, name: lineItems.find((l) => l.id === h.id)?.name }));
+  assertCustomPricesAllowed(authoredCustomEntries(items, held), priceEditAllowed);
 }

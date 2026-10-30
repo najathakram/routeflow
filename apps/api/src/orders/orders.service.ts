@@ -59,7 +59,7 @@ import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { judgeEditTail } from "./edit-overpay-judge";
-import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
+import { syncInvoicesAfterEdit } from "./order-edit-invoice-sync";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import {
@@ -85,7 +85,7 @@ import {
   assertPriceEditAllowed,
   decideTierOverride,
 } from "./staff-override";
-import { authoredCustomEntries } from "./custom-line-authoring";
+import { assertEditAuthoredCustomPrices } from "./custom-line-authoring";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
@@ -3258,16 +3258,8 @@ export class OrdersService implements OnApplicationBootstrap {
             // SA-1034 rule 4: the custom lines this payload AUTHORES (new, or re-sent at another price) need price
             // rights; the create auto-merge re-homes lines that were authored earlier (COPY), so it is not judged here.
             if (isStaffEdit && !opts?.isCreateMerge) {
-              assertCustomPricesAllowed(
-                authoredCustomEntries(
-                  dto.items,
-                  heldItems.map((h) => ({
-                    ...h,
-                    name: (order.lineItems ?? []).find((l) => l.id === h.id)?.name,
-                  })),
-                ),
-                uctx.priceEditAllowed,
-              );
+              const lines = order.lineItems ?? [];
+              assertEditAuthoredCustomPrices(dto.items, heldItems, lines, uctx.priceEditAllowed);
             }
 
             // SA-124i (non-blocking): validate every item's own pack against the live product
@@ -4188,10 +4180,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * case, since credits are payment-level and settling is convergent. The skip is explicit here
    * (the `!== undefined` guard below) rather than delegated to `syncOrderCreditSelections`'s own
    * `undefined` early-return, so the contract is readable at the call site that depends on it.
-   *
-   * `routing` is passed in rather than derived here: `skipInPlaceResync` depends on which line
-   * rows the caller can see (the fold holds the PRE-EDIT snapshot; a replay has only current
-   * rows), even though the RULE is shared — `shouldSkipInPlaceResync` in merge-idempotency.ts.
+   * `routing` is passed in, not derived here: see order-edit-invoice-sync.ts.
    */
   private async reconcileOrderAfterEdit(
     orderId: string,
@@ -4203,41 +4192,18 @@ export class OrdersService implements OnApplicationBootstrap {
   ): Promise<{
     issuedPartialsUnchanged: Array<{ invoiceId: string; invoiceNumber: string | null }>;
   }> {
-    let rebuilt = true; // did a rebuild path restate the invoices? (else the partials follow price edits)
-    // Keep the order's linked invoice(s) in lockstep with the edit.
-    //  - Undelivered edit: re-sync the open pending-mirror draft at order basis
-    //    (no-op when there's no open draft) — unchanged.
-    //  - Post-delivery edit (R1): the order may carry SENT / PAID / delivery-batch
-    //    invoices, not just an open draft. Rebuild each in place from the edited
-    //    lines at order basis, KEEP payments, recompute status/balance, and re-sync
-    //    the regulated ledger — so the invoice tracks the correction and simply shows
-    //    the new balance. Never blocks (bails on an unclean partition).
-    if (routing.postDeliveryEdit) {
-      if (!routing.skipInPlaceResync) {
-        const resynced = await (actor
-          ? this.invoicesService.resyncOrderInvoicesForEdit(orderId, undefined, undefined, actor)
-          : this.invoicesService.resyncOrderInvoicesForEdit(orderId));
-        rebuilt = resynced !== null; // null: nothing linked, or an unclean partition (bailed)
-      } else {
-        rebuilt = false; // partially invoiced: the in-place re-sync is skipped
-      }
-    } else {
-      const res = await this.invoicesService.reconcileOrderDraftInvoice(orderId, {
-        basis: "order",
-        ...(actor ? { actor } : {}),
-      });
-      rebuilt = res !== null && res !== RECONCILE_PARTIALS;
-    }
-    // SA-760 Q-760-1 (owner 10-10): where no rebuild restated the invoices, a staff edit's PRICE changes reach
-    // the order's DRAFT partials (price only, under the R-1 lock order); issued partials never change.
-    const followed =
-      staffEdit && !rebuilt ? await this.invoicesService.followPartialPrices(orderId) : null;
-
-    // Credit-note intents: sync operator selection changes, then settle (shrink or
-    // top-up) against the order's current invoices. Runs even when line-resync was
+    // The invoices follow the edit (order-edit-invoice-sync.ts), then the credit-note intents: sync operator selection
+    // changes and settle (shrink or top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
+    const issuedPartialsUnchanged = await syncInvoicesAfterEdit(
+      this.invoicesService,
+      orderId,
+      routing,
+      actor,
+      staffEdit,
+    );
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
-    return { issuedPartialsUnchanged: followed?.issuedPartialsUnchanged ?? [] };
+    return { issuedPartialsUnchanged };
   }
 
   private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {
