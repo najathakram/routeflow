@@ -121,13 +121,13 @@ async function main() {
       ({ rows: zoneRows } = await client.query(`SELECT "tenantId", timezone FROM "TenantConfig"`));
       const q = (sql) => client.query(sql).then((r) => r.rows);
       const cn =
-        await q(`SELECT "tenantId", "createdAt" AS at, amount::float8 AS amount FROM "CreditNote"
+        await q(`SELECT "tenantId", "createdAt" AT TIME ZONE 'UTC' AS at, amount::float8 AS amount FROM "CreditNote"
             WHERE status <> 'VOID' AND "createdAt" >= ${since}`);
       const rf =
-        await q(`SELECT "tenantId", "refundedAt" AS at, "refundAmount"::float8 AS amount FROM "Return"
+        await q(`SELECT "tenantId", "refundedAt" AT TIME ZONE 'UTC' AS at, "refundAmount"::float8 AS amount FROM "Return"
             WHERE "refundMethod" = 'EXTERNAL_REFUND' AND "refundedAt" >= ${since}`);
       const wo =
-        await q(`SELECT "tenantId", "writtenOffAt" AS at, total::float8 AS amount FROM "Invoice"
+        await q(`SELECT "tenantId", "writtenOffAt" AT TIME ZONE 'UTC' AS at, total::float8 AS amount FROM "Invoice"
             WHERE status = 'WRITTEN_OFF' AND "writtenOffAt" >= ${since}`);
       events = [
         ...cn.map((r) => ({ ...r, kind: "credit" })),

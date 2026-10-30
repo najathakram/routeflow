@@ -2417,4 +2417,38 @@ describe("BookkeepingService", () => {
       expect(updateData.amount).toBe(0.02);
     });
   });
+
+  // SA-1057 F-2: a real-instant column (a credit note's or a payment's createdAt) is filtered on the tenant's own days, so a
+  // credit at 23:30 Chicago on Oct 31 is October's in Refund History and Receivable Summary as it is in the P&L. The head filtered
+  // `lte: 2026-10-31T23:59:59.999Z` (calendar stamps) and left it out.
+  describe("SA-1057 F-2: Refund History and Receivable Summary window real instants on the tenant's days", () => {
+    const OCT_CHICAGO = {
+      gte: new Date("2026-10-01T05:00:00.000Z"),
+      lt: new Date("2026-11-01T05:00:00.000Z"),
+    };
+
+    beforeEach(() => {
+      prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/Chicago" });
+    });
+
+    it("getRefundHistory: void payments and applied credit notes filter on the tenant-local instants", async () => {
+      await service.getRefundHistory("2026-10-01", "2026-10-31");
+      expect(prisma.invoicePayment.findMany.mock.calls[0][0].where.createdAt).toEqual(OCT_CHICAGO);
+      expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual(OCT_CHICAGO);
+    });
+
+    it("getReceivableSummary: the credit-note read filters on the tenant-local instants", async () => {
+      await service.getReceivableSummary("2026-10-01", "2026-10-31");
+      expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual(OCT_CHICAGO);
+    });
+
+    it("a null zone keeps UTC days (the same window as today)", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      await service.getRefundHistory("2026-10-01", "2026-10-31");
+      expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual({
+        gte: new Date("2026-10-01T00:00:00.000Z"),
+        lt: new Date("2026-11-01T00:00:00.000Z"),
+      });
+    });
+  });
 });

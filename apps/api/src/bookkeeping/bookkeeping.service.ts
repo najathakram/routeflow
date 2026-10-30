@@ -2288,11 +2288,11 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Refund History Report ──
   async getRefundHistory(from?: string, to?: string) {
-    const { fromDate, toDate } = await this.reportPeriod(from, to);
+    const { period, fromDate, toDate } = await this.reportPeriod(from, to); // createdAt is a real instant: the tenant's days (SA-1057 F-2)
 
     const [voidPayments, appliedCreditNotes] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
-        where: { status: PaymentStatus.VOID, createdAt: { gte: fromDate, lte: toDate } },
+        where: { status: PaymentStatus.VOID, createdAt: period.instants },
         include: {
           invoice: {
             select: {
@@ -2304,7 +2304,7 @@ export class BookkeepingService implements OnModuleInit {
         orderBy: { createdAt: "desc" },
       }),
       this.prisma.forTenant().creditNote.findMany({
-        where: { status: CreditNoteStatus.APPLIED, createdAt: { gte: fromDate, lte: toDate } },
+        where: { status: CreditNoteStatus.APPLIED, createdAt: period.instants },
         include: {
           customer: { select: { id: true, businessName: true } },
         },
@@ -2356,7 +2356,7 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Receivable Summary Report ──
   async getReceivableSummary(from?: string, to?: string) {
-    const { fromDate, toDate } = await this.reportPeriod(from, to);
+    const { period, fromDate, toDate } = await this.reportPeriod(from, to);
 
     const [invoices, creditNotes, payments] = await Promise.all([
       this.prisma.forTenant().invoice.findMany({
@@ -2374,7 +2374,7 @@ export class BookkeepingService implements OnModuleInit {
         },
       }),
       this.prisma.forTenant().creditNote.findMany({
-        where: { createdAt: { gte: fromDate, lte: toDate } },
+        where: { createdAt: period.instants }, // a credit is a real instant (SA-1057 F-2)
         include: { customer: { select: { id: true, businessName: true } } },
       }),
       this.prisma.forTenant().invoicePayment.findMany({

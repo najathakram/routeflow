@@ -65,6 +65,7 @@ describeDb("accrual readers on the tenant's own day, real Postgres (SA-906)", ()
       });
     await credit(1, 10, LATE_OCT_31);
     await credit(2, 7, LATE_SEP_30);
+    const storeCreditNote = await credit(3, 11, LATE_OCT_31); // gross 11 = 10 net + 1 frozen tax (SA-840)
     const order = await prisma.order.create({
       data: {
         tenantId,
@@ -87,6 +88,41 @@ describeDb("accrual readers on the tenant's own day, real Postgres (SA-906)", ()
         kind: "INLINE",
         refundMethod: "EXTERNAL_REFUND",
         refundAmount: 3,
+        refundedAt: LATE_OCT_31,
+      } as any,
+    });
+    // SA-1057 F-3: the two frozen-split returns the SA-840 tax reads take back out, on the same late Oct 31 instant. Putting
+    // any of the four tax reads back on the raw (UTC) window moves the figures below.
+    await prisma.return.create({
+      data: {
+        tenantId,
+        customerId,
+        orderId: order.id,
+        returnNumber: `RET-TDAY-${RUN}-SC`,
+        reason: "DAMAGED",
+        status: "REFUNDED",
+        kind: "INLINE",
+        refundMethod: "CREDIT_NOTE",
+        creditNoteId: storeCreditNote.id,
+        refundAmount: 11,
+        creditTax: 0.7,
+        creditCategoryTax: 0.3,
+        refundedAt: LATE_OCT_31,
+      } as any,
+    });
+    await prisma.return.create({
+      data: {
+        tenantId,
+        customerId,
+        orderId: order.id,
+        returnNumber: `RET-TDAY-${RUN}-EX`,
+        reason: "DAMAGED",
+        status: "REFUNDED",
+        kind: "INLINE",
+        refundMethod: "EXTERNAL_REFUND",
+        refundAmount: 5.5,
+        creditSubtotal: 5,
+        creditTax: 0.5, // the frozen split: 5 net + 0.5 tax
         refundedAt: LATE_OCT_31,
       } as any,
     });
@@ -121,8 +157,9 @@ describeDb("accrual readers on the tenant's own day, real Postgres (SA-906)", ()
   const net = (w: typeof OCT, timeZone?: string | null) =>
     fetchAccrualNetSales(prisma as any, tenantId, w, { timeZone }).then((r) => r.net);
 
-  it("R1/R4: the 23:30 Chicago credit and refund on Oct 31 are OCTOBER's; the 22:00 Sep 30 credit is not", async () => {
-    expect(await net(OCT, CHICAGO)).toBe(-13);
+  // October for Chicago = credit 10 + store-credit note 11 less its frozen tax 1 + refund 3 + split refund 5.5 less its tax 0.5 = 28.
+  it("R1/R4: the 23:30 Chicago credits and refunds on Oct 31 are OCTOBER's, tax-adjusted; the 22:00 Sep 30 credit is not", async () => {
+    expect(await net(OCT, CHICAGO)).toBe(-28);
   });
 
   it("R2: the same events are NOT November's for a Chicago tenant", async () => {
@@ -131,14 +168,14 @@ describeDb("accrual readers on the tenant's own day, real Postgres (SA-906)", ()
 
   it("R9: a null zone keeps today's UTC windows (Oct = the Oct 1 03:00Z credit; Nov = the Nov 1 04:30Z pair)", async () => {
     expect(await net(OCT, null)).toBe(-7);
-    expect(await net(NOV, null)).toBe(-13);
+    expect(await net(NOV, null)).toBe(-28);
   });
 
   it("R8: the by-customer reader agrees with the total", async () => {
     const by = await fetchAccrualNetSalesByCustomer(prisma as any, tenantId, OCT, {
       timeZone: CHICAGO,
     });
-    expect(by.get(customerId)?.net).toBe(-13);
+    expect(by.get(customerId)?.net).toBe(-28);
   });
 
   it("R11 parity: with the tenant's zone the total reader (P&L) equals the row reader (dashboard), both months", async () => {

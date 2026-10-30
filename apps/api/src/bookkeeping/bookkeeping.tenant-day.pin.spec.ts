@@ -25,6 +25,12 @@ describe("bookkeeping.service windows (SA-906)", () => {
     expect(src).not.toMatch(re);
   });
 
+  // SA-1057 F-2: a real-instant `createdAt` is filtered on `period.instants`. Two calendar-stamp reads remain on purpose
+  // (estimates, a raw payment listing); the count only goes down.
+  it("keeps at most 2 `createdAt: { gte: fromDate` calendar-stamp reads", () => {
+    expect(src.split("createdAt: { gte: fromDate").length - 1).toBeLessThanOrEqual(2);
+  });
+
   it("routes every window through tenantPeriod / calendarDayRange", () => {
     expect(src).toMatch(/tenantPeriod\(/);
     expect(src).toMatch(/calendarDayRange\(/);
