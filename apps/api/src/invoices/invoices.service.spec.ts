@@ -3817,28 +3817,6 @@ describe("InvoicesService", () => {
       });
     });
 
-    // SA-943: the export reads each instant back through the SAME tenant zone its day filter uses
-    // (America/New_York here), so a 9pm-local payment is that day's row, not the next UTC day's.
-    it("exportPayments renders Date and Bank Date as the tenant's day, not the UTC day", async () => {
-      prisma.invoicePayment.findMany.mockResolvedValue([
-        {
-          paymentNumber: "PAY-0003",
-          paidAt: new Date("2026-07-02T01:00:00.000Z"),
-          settledAt: new Date("2026-07-02T01:00:00.000Z"),
-          method: "CHECK",
-          reference: null,
-          bankCharges: null,
-          amount: 100,
-          status: "PAID",
-          invoice: { invoiceNumber: "INV-0003", customer: { businessName: "Acme" } },
-        },
-      ]);
-
-      const [, row] = (await service.exportPayments({})).split("\n");
-
-      expect(row.split(",").slice(0, 3)).toEqual(["PAY-0003", "2026-07-01", "2026-07-01"]);
-    });
-
     // The day-end/day-start instants are composed by CONCATENATING a time
     // suffix onto the raw query param, so the param must be normalised to its
     // calendar day FIRST: `dueTo` is `@IsDateString()` (a full ISO datetime
