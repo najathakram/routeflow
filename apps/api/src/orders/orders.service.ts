@@ -2813,7 +2813,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // second writer wait; heldItems is then read post-lock and BEFORE any
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
-        const priorOrderTotal = await lockEditedOrder(tx, orderId); // FOR UPDATE; SA-944 recheck; SA-956 prior total
+        const priorOrderTotal = await lockEditedOrder(tx, orderId, this.prisma.getTenantId()); // Order row (+ invoices: walk-in); SA-944 recheck; SA-956 total
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only

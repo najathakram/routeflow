@@ -4,6 +4,8 @@ import { orderEditMode } from "./order-edit-restrictions";
 import { roundMoney } from "@routeflow/pricing";
 import { assertWalkInSaleEditable } from "./counter-sale/walk-in-sale-lock";
 import * as carrierGuard from "./order-carrier-guard";
+import { withOrderBillingLock } from "../invoices/order-billing-lock";
+import { lockOrderRow } from "../credit-notes/credit-note-locks";
 
 export { walkInSaleLocked } from "./counter-sale/walk-in-sale-lock";
 
@@ -59,16 +61,26 @@ export async function editGuards(
 }
 
 /**
- * The edit tx's first move (SA-944 §3, SA-956 Fix 1): lock the Order row, then re-check the paid walk-in refusal under
- * it (a payment can commit between `editGuards` and the lock; this read sees every one), and return the order's
- * total BEFORE this edit writes (NaN when the row cannot be read: the overpay fallback then fails closed).
+ * The edit tx's first move (SA-944 §3, SA-956 Fix 1, SA-1056 A-2): lock the Order row for every edit, then re-check the
+ * paid walk-in refusal under it. Office Record payment locks the INVOICE row and never the Order, so for a WALK-IN sale
+ * the Order row alone lets a payment commit between the recheck and this edit's commit (review-a read 1): its invoices
+ * are held too (the billing lock, SA-760 R-1), the payment waits, and the recheck sees every payment committed ahead of
+ * it. A named customer's order never reads a payment here (`walkInSaleLocked`), so it keeps row 586's NOWAIT at
+ * the revert. Returns the order's total BEFORE this edit writes (NaN when the row cannot be read: the overpay fallback
+ * then fails closed).
  */
-export async function lockEditedOrder(tx: any, orderId: string): Promise<number> {
-  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+export async function lockEditedOrder(
+  tx: any,
+  orderId: string,
+  tenantId: string | null = null,
+): Promise<number> {
+  await lockOrderRow(tx, tenantId, orderId); // every edit: the Order row
   const row = await tx.order.findUnique({
     where: { id: orderId },
     select: { total: true, ...WALK_IN_FLAG },
   });
+  // Only the walk-in recheck needs the payment writers held; a named customer keeps row 586's NOWAIT at the revert.
+  if (row?.customer?.isWalkIn === true) await withOrderBillingLock(tx, tenantId, orderId);
   await assertWalkInSaleEditable(tx, { id: orderId, customer: row?.customer });
   const n = Number(row?.total);
   return Number.isFinite(n) ? roundMoney(n) : Number.NaN;
