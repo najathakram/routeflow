@@ -1,7 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { lockRowsNoWait } from "../common/db-locks";
-import * as du from "./invoice-display-unit"; // SA-827 display units
 
 /**
  * #2178 — the ONE selection of the invoices an UNDELIVERED order edit reverts to DRAFT
@@ -81,6 +80,8 @@ export async function selectEditRevertedInvoices(
  * opt-in because only a caller already inside a transaction can hold it usefully, and because
  * the row is then held for the rest of that tx — the caller owns keeping Invoice last in the
  * lock order (`lockRowsNoWait`). Contention surfaces as a retryable 409 (NOWAIT), not a wait.
+ * The caller clears the display-unit snapshot of each returned id (SA-827 rule 5 / B1275: a DRAFT renders live): the
+ * display helpers are named only by the owning services (invoice-unit-display-only.spec.ts, G1).
  * `opts.preflightOnly` (row 586, SA-814a item 4): only the payment-block throw, nothing written, so a caller outside
  * a transaction can refuse a paid mirror early without committing a revert a later binding 409 cannot undo.
  */
@@ -122,7 +123,6 @@ export async function revertLinkedInvoicesToDraft(
         internalNotes: inv.internalNotes ? `${inv.internalNotes}\n${auditLine}` : auditLine,
       },
     });
-    await du.clearIssueDisplayUnits(db, inv.id); // SA-827 rule 5 / B1275: a DRAFT renders live
     reverted.push(inv.id);
   }
   return reverted;

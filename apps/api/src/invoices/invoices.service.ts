@@ -3981,7 +3981,10 @@ export class InvoicesService {
     tx?: any,
     opts?: { lockRows?: boolean; preflightOnly?: boolean },
   ): Promise<string[]> {
-    return revertLinkedInvoicesToDraft(tx ?? this.prisma.forTenant(), orderId, opts);
+    const db = tx ?? this.prisma.forTenant();
+    const reverted = await revertLinkedInvoicesToDraft(db, orderId, opts);
+    for (const id of reverted) await du.clearIssueDisplayUnits(db, id); // SA-827 rule 5 / B1275: a DRAFT renders live
+    return reverted;
   }
 
   async unvoidInvoice(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
