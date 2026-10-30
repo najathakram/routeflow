@@ -22,12 +22,17 @@ jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: { role } }),
 }));
 let mockSwitchOn = true;
+let mockSettingsFail = false;
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: {
     // the owner-only staff-orders switch the impact line reads (ON unless a test says otherwise)
     get: jest.fn((url: string) =>
-      Promise.resolve({ data: url === "/settings/restrictions" ? { enabled: mockSwitchOn } : [] }),
+      url === "/settings/restrictions" && mockSettingsFail
+        ? Promise.reject(new Error("settings read failed"))
+        : Promise.resolve({
+            data: url === "/settings/restrictions" ? { enabled: mockSwitchOn } : [],
+          }),
     ),
     post: (...a: unknown[]) => post(...a),
     put: (...a: unknown[]) => put(...a),
@@ -290,6 +295,20 @@ describe("EditRuleDialog", () => {
       expect(screen.queryByText(/Staff will be warned/)).toBeNull();
     } finally {
       mockSwitchOn = true;
+    }
+  });
+
+  it("W-751 L1: if the switch read fails, the impact line claims nothing about staff (never the OFF line)", async () => {
+    mockSettingsFail = true;
+    try {
+      post.mockResolvedValueOnce({ data: preview({ impact: { openOrders: 2, drafts: 1 } }) });
+      open();
+      addCA();
+      save();
+      expect(await screen.findByText(ruleEditImpactCopy(3, false, null))).toBeInTheDocument();
+      expect(screen.queryByText(/[Ss]taff/)).toBeNull();
+    } finally {
+      mockSettingsFail = false;
     }
   });
 });

@@ -346,20 +346,32 @@ export interface RuleEditCommitRequest extends RuleEditRequest {
 /** The most open orders + drafts (together) the edit preview counts; past it the impact is `capped` (a lower bound). */
 export const IMPACT_SCAN_MAX_DOCUMENTS = 2000;
 
+/** The label of the tenant's owner-only staff-orders switch (`selling_restrictions.enabled`); the OFF copy quotes it. */
+export const STAFF_ORDERS_SWITCH_LABEL =
+  "Also warn about restricted products on staff orders and invoices";
+
 /**
  * The ONE copy for the edit impact line, by the tenant's owner-only staff-orders switch (`selling_restrictions.enabled`).
- * ON (row 510): staff are WARNED (and may sell with a reason) and buyers are blocked. OFF: buyers are blocked and staff
- * orders are not checked, so it never says staff are warned. `capped`: the scan stopped at `IMPACT_SCAN_MAX_DOCUMENTS`, so
- * the count is a lower bound.
+ * ON (row 510): staff are WARNED when they next edit, promote or invoice the order (and may sell with a reason); buyers
+ * are blocked. OFF: buyers are blocked and staff orders are not checked. `null` (the switch is still loading or its read
+ * failed): buyers are blocked and nothing is claimed about staff. `capped`: the scan stopped at
+ * `IMPACT_SCAN_MAX_DOCUMENTS`, so the count is a lower bound.
  */
-export function ruleEditImpactCopy(count: number, capped: boolean, staffChecked: boolean): string {
+export function ruleEditImpactCopy(
+  count: number,
+  capped: boolean,
+  staffChecked: boolean | null,
+): string {
   const one = !capped && count === 1;
   const subject = capped
     ? `${IMPACT_SCAN_MAX_DOCUMENTS.toLocaleString("en-US")}+ open orders and drafts have`
     : `${count} open order${one ? " has" : "s have"}`;
   const them = one ? "it" : "them";
-  const tail = staffChecked
-    ? `Staff will be warned when they next edit or promote ${them}; buyers can't order ${them}.`
-    : `Buyers can't order ${them}. Staff orders and invoices aren't checked (turn on 'Also warn about restricted products on staff orders and invoices' to check them).`;
+  const tail =
+    staffChecked === null
+      ? `Buyers can't order ${them}.`
+      : staffChecked
+        ? `Staff will be warned when they next edit, promote or invoice ${them}; buyers can't order ${them}.`
+        : `Buyers can't order ${them}. Staff orders and invoices aren't checked (turn on '${STAFF_ORDERS_SWITCH_LABEL}' to check them).`;
   return `${subject} products this change now restricts. ${tail}`;
 }
