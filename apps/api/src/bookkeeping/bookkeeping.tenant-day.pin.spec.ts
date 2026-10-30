@@ -6,6 +6,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { eventWindowOf } from "../common/invoiced-sales";
+import { periodBucketOf } from "../regulated/period";
 
 const src = readFileSync(join(__dirname, "bookkeeping.service.ts"), "utf8")
   .split("\n")
@@ -56,5 +57,86 @@ describe("eventWindowOf: real-instant columns use the tenant's own days", () => 
   it("R3: Sydney is ahead of UTC: the window opens at local midnight, before the UTC day starts", () => {
     const w = eventWindowOf(win, "Australia/Sydney") as { gte: Date };
     expect(w.gte.getTime()).toBeLessThan(win.gte.getTime());
+  });
+});
+
+/**
+ * SA-1057 F-6: MUST 1's full ban list and call-site rule, as pure functions over a source string, with a self-test so the pin
+ * cannot rot into passing everything. The service has nine accrual reads; every one passes the tenant's zone.
+ */
+const BANNED: Array<[string, RegExp]> = [
+  ["new Date(y, m, d)", /new Date\(\s*[^()]*,[^()]*\)/],
+  ["getFullYear", /\.getFullYear\(/],
+  ["getMonth", /\.getMonth\(/],
+  ["setDate", /\.setDate\(/],
+  ["setHours", /\.setHours\(/],
+  ["hand-built end of day", /T23:59:59\.999Z/],
+];
+const bannedIn = (source: string) => BANNED.filter(([, re]) => re.test(source)).map(([n]) => n);
+
+/** The text of each `name(...)` call, balanced across lines; a longer name (`nameByCustomer(`) is not a match. */
+function callsOf(source: string, name: string): string[] {
+  const out: string[] = [];
+  const re = new RegExp(`(?<![A-Za-z0-9_])${name}\\(`, "g");
+  for (let m = re.exec(source); m; m = re.exec(source)) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < source.length && depth > 0; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")") depth--;
+    }
+    out.push(source.slice(m.index, i));
+  }
+  return out;
+}
+const ACCRUAL_READS = [
+  "fetchAccrualNetSales",
+  "fetchAccrualNetSalesByCustomer",
+  "fetchBadDebtExpense",
+];
+const zonelessCalls = (source: string) =>
+  ACCRUAL_READS.flatMap((n) => callsOf(source, n)).filter((c) => !/timeZone/.test(c));
+
+describe("SA-1057 F-6: MUST 1's ban list and the zone at every accrual read", () => {
+  it("bans every host-clock window construct MUST 1 names", () => {
+    expect(bannedIn(src)).toEqual([]);
+  });
+
+  it("every fetchAccrualNetSales / ByCustomer / fetchBadDebtExpense call passes the zone, and there are nine", () => {
+    const calls = ACCRUAL_READS.flatMap((n) => callsOf(src, n));
+    expect(calls).toHaveLength(9);
+    expect(zonelessCalls(src)).toEqual([]);
+  });
+
+  it("self-test: each banned sample and a zone-less call go red; a zoned multi-line call passes", () => {
+    for (const [sample, rule] of [
+      ["const d = new Date(y, m, 1);", "new Date(y, m, d)"],
+      ["now.getFullYear()", "getFullYear"],
+      ["now.getMonth()", "getMonth"],
+      ["d.setDate(1)", "setDate"],
+      ["d.setHours(0)", "setHours"],
+      ["new Date(`${to}T23:59:59.999Z`)", "hand-built end of day"],
+    ] as const) {
+      expect(bannedIn(sample)).toContain(rule);
+    }
+    expect(bannedIn("new Date(period.days.lt.getTime() - 1)")).toEqual([]);
+    expect(zonelessCalls("await fetchAccrualNetSales(db, tenantId, window);")).toHaveLength(1);
+    expect(
+      zonelessCalls(
+        "fetchBadDebtExpense(\n  db,\n  tenantId,\n  { gte },\n  { timeZone: zone },\n)",
+      ),
+    ).toEqual([]);
+    expect(callsOf("fetchAccrualNetSalesByCustomer(a)", "fetchAccrualNetSales")).toEqual([]);
+  });
+});
+
+describe("SA-1057 F-7: the regulated period bucket stays UTC and is not reached by the tenant-day helper (R12)", () => {
+  it("calendar-date.ts imports nothing from regulated/", () => {
+    const calendar = readFileSync(join(__dirname, "..", "common", "calendar-date.ts"), "utf8");
+    expect(calendar).not.toMatch(/from\s+["'][^"']*regulated\//);
+  });
+
+  it("R12: a Chicago-edge instant (23:30 CDT on Oct 31) is still the UTC month 2026-11 for the filing bucket", () => {
+    expect(periodBucketOf(new Date("2026-11-01T04:30:00Z"))).toBe("2026-11");
   });
 });

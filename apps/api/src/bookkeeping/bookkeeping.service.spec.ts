@@ -1580,10 +1580,7 @@ describe("BookkeepingService", () => {
       );
       expect(thisMonthCall).toBeDefined();
       const upperBound: Date = thisMonthCall.where.OR[0].settledAt.lte;
-      const endOfTodayUtc =
-        Date.UTC(nowInTest.getUTCFullYear(), nowInTest.getUTCMonth(), nowInTest.getUTCDate() + 1) -
-        1;
-      expect(upperBound.getTime()).toBeLessThanOrEqual(endOfTodayUtc);
+      expect(upperBound.getTime()).toBeLessThanOrEqual(nowInTest.getTime()); // SA-1057 F-5: capped at now, as on master
       // The uncapped month-end instant is always later than `now` (unless the
       // test happens to run in the month's final millisecond) — proves the
       // cap actually did something, not just that `lte` exists.
@@ -2448,6 +2445,91 @@ describe("BookkeepingService", () => {
       expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual({
         gte: new Date("2026-10-01T00:00:00.000Z"),
         lt: new Date("2026-11-01T00:00:00.000Z"),
+      });
+    });
+  });
+
+  // SA-1057 F-4 / SA-906 MUST 3: RECEIPTS (collected money) keep master's bounds: UTC days, `now` as the cap, whatever the tenant's
+  // zone. The head moved them to the tenant's today, which hid an evening payment (west of UTC) or today's morning payment (east)
+  // until local midnight. SA-943 PR-B moves receipts to the tenant's zone; until then these rows pin master.
+  describe("SA-1057 F-4: receipts keep master's bounds at every site (R13)", () => {
+    const settledOf = (where: any) => where.OR[0].settledAt as { gte: Date; lte: Date };
+    const setNow = (iso: string, zone: string | null) => {
+      jest.useFakeTimers({
+        now: new Date(iso),
+        doNotFake: ["nextTick", "setImmediate", "setTimeout"],
+      });
+      prisma.tenantConfig.findUnique.mockResolvedValue(zone ? { timezone: zone } : null);
+    };
+    afterEach(() => jest.useRealTimers());
+
+    it("R13a: Chicago, a manual payment dated 2026-10-01 (stored 00:00Z) stays in October's cash flow", async () => {
+      setNow("2026-11-05T15:00:00.000Z", "America/Chicago");
+      await service.getCashFlow("2026-10-01", "2026-10-31");
+      expect(settledOf(prisma.invoicePayment.findMany.mock.calls[0][0].where)).toEqual({
+        gte: new Date("2026-10-01T00:00:00.000Z"),
+        lte: new Date("2026-10-31T23:59:59.999Z"),
+      });
+    });
+
+    it("R13b: Chicago at 2026-10-31T01:00Z (Oct 30 20:00 CDT): the dashboard's today, month and monthly bucket end at now", async () => {
+      const NOW_ISO = "2026-10-31T01:00:00.000Z";
+      setNow(NOW_ISO, "America/Chicago");
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.getFinanceDashboard();
+      const bounds = prisma.invoicePayment.aggregate.mock.calls.map((c: any) =>
+        settledOf(c[0].where),
+      );
+      const now = new Date(NOW_ISO);
+      expect(bounds).toContainEqual({ gte: new Date("2026-10-31T00:00:00.000Z"), lte: now }); // today
+      expect(bounds).toContainEqual({ gte: new Date("2026-10-01T00:00:00.000Z"), lte: now }); // this month + October's bucket
+      expect(bounds.map((b) => b.lte.toISOString())).not.toContain("2026-10-30T23:59:59.999Z");
+    });
+
+    it("R13c: Sydney at 2026-10-31T23:30Z (Nov 1 10:30 AEDT): the dashboard's today still opens at the UTC day", async () => {
+      setNow("2026-10-31T23:30:00.000Z", "Australia/Sydney");
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.getFinanceDashboard();
+      const bounds = prisma.invoicePayment.aggregate.mock.calls.map((c: any) =>
+        settledOf(c[0].where),
+      );
+      expect(bounds).toContainEqual({
+        gte: new Date("2026-10-31T00:00:00.000Z"),
+        lte: new Date("2026-10-31T23:30:00.000Z"),
+      }); // the UTC day, not the tenant's own Sydney day (which would open at 2026-10-31T13:00Z)
+      expect(bounds.map((b) => b.gte.toISOString())).not.toContain("2026-10-31T13:00:00.000Z");
+    });
+
+    it("R13d: Chicago, no `to`: cash flow, payments received and time to get paid end at now; a named `to` ends its day", async () => {
+      const NOW_ISO = "2026-10-31T01:00:00.000Z";
+      setNow(NOW_ISO, "America/Chicago");
+      const now = new Date(NOW_ISO);
+      const endOf30 = new Date("2026-10-30T23:59:59.999Z");
+      const lteOfCall = (mock: jest.Mock, i: number) => settledOf(mock.mock.calls[i][0].where).lte;
+
+      await service.getCashFlow();
+      await service.getPaymentsReceivedReport();
+      await service.getTimeToGetPaid();
+      expect(lteOfCall(prisma.invoicePayment.findMany, 0)).toEqual(now); // cash flow
+      expect(lteOfCall(prisma.invoicePayment.findMany, 1)).toEqual(now); // payments received
+      expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(now); // time to get paid
+
+      await service.getCashFlow(undefined, "2026-10-30");
+      await service.getPaymentsReceivedReport(undefined, "2026-10-30");
+      await service.getTimeToGetPaid(undefined, "2026-10-30");
+      expect(lteOfCall(prisma.invoicePayment.findMany, 2)).toEqual(endOf30);
+      expect(lteOfCall(prisma.invoicePayment.findMany, 3)).toEqual(endOf30);
+      expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(endOf30);
+    });
+
+    it("R13e: the mobile year to date is master's UTC year to now", async () => {
+      const NOW_ISO = "2026-10-31T01:00:00.000Z";
+      setNow(NOW_ISO, "America/Chicago");
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.getMobileDashboard();
+      expect(settledOf(prisma.invoicePayment.aggregate.mock.calls[0][0].where)).toEqual({
+        gte: new Date("2026-01-01T00:00:00.000Z"),
+        lte: new Date(NOW_ISO),
       });
     });
   });

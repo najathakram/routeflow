@@ -17,6 +17,7 @@ import {
   overdueCutoff,
   startOfCalendarDay,
   tenantPeriod,
+  type PeriodRange,
   type TenantPeriod,
 } from "../common/calendar-date";
 import { computeDepositFields } from "../invoices/deposit-fields";
@@ -1167,7 +1168,12 @@ export class BookkeepingService implements OnModuleInit {
 
   // ── Cash Flow ──
   async getCashFlow(from?: string, to?: string) {
-    const { fromDate, toDate } = await this.reportPeriod(from, to);
+    // receipts keep master's bounds, and the report keeps one window for all four reads (SA-1057 F-4)
+    const { gte: fromDate, lte: toDate } = this.receiptsWindow(
+      { fromDay: from, toDay: to },
+      new Date(),
+      !!to,
+    );
 
     const CfPayStatus = PaymentStatus;
     const [payments, expenses, bills, supplierCredits] = await Promise.all([
@@ -1311,6 +1317,7 @@ export class BookkeepingService implements OnModuleInit {
     const year = tenantPeriod("year", tz);
     const startOfYear = year.days.gte;
     const window = this.windowOf(year);
+    const receipts = this.receiptsWindow("year", new Date()); // collected money: master's year to now (SA-1057 F-4)
     const tenantId = this.requireTenantId();
 
     const [invoiceAgg, paymentAgg, expenseAgg, outstandingInvoices, netSales, badDebtExpense] =
@@ -1335,7 +1342,7 @@ export class BookkeepingService implements OnModuleInit {
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            ...settledDateFilter(window),
+            ...settledDateFilter(receipts),
           },
           _sum: { amount: true },
         }),
@@ -1388,6 +1395,18 @@ export class BookkeepingService implements OnModuleInit {
     };
   }
 
+  /**
+   * SA-906 MUST 3 / SA-1057 F-4: RECEIPTS keep master's bounds exactly, at every site that reads collected money (the dashboards,
+   * the mobile year, cash flow, payments received, time to get paid): UTC days, with the host clock's `now` as the cap. `lte` is
+   * the end of the last day capped at `now`; a `to` the caller NAMED keeps the end of that day uncapped, as before. SA-943 PR-B
+   * moves receipts to the tenant's zone and replaces this one helper.
+   */
+  private receiptsWindow(range: PeriodRange, now: Date, toNamed = false) {
+    const { days } = tenantPeriod(range, "UTC", now);
+    const end = new Date(days.lt.getTime() - 1);
+    return { gte: days.gte, lte: toNamed || end <= now ? end : now };
+  }
+
   /** The period as the readers' calendar-day window (`gte` stamp .. last ms of the `to` day). */
   private windowOf(p: TenantPeriod) {
     return { gte: p.days.gte, lte: new Date(p.days.lt.getTime() - 1) };
@@ -1417,11 +1436,7 @@ export class BookkeepingService implements OnModuleInit {
   async getFinanceDashboard() {
     const now = new Date();
     const tz = await tenantTimeZone(this.prisma); // SA-488: the tenant's due day
-    // SA-906: today / week / month / quarter / year are the TENANT's own (zone, once per report)
-    const startOfToday = tenantPeriod("today", tz, now).days.gte;
-    const startOfWeek = tenantPeriod("week", tz, now).days.gte;
-    const startOfMonth = tenantPeriod("month", tz, now).days.gte;
-    const startOfQuarter = tenantPeriod("quarter", tz, now).days.gte;
+    // SA-906: the sales periods are the TENANT's own (zone, once per report); getPeriodSummary resolves each kind
     const yearPeriod = tenantPeriod("year", tz, now);
     const startOfYear = yearPeriod.days.gte;
     const todayEnd = this.windowOf(tenantPeriod("today", tz, now)).lte; // end of the tenant's today
@@ -1487,6 +1502,7 @@ export class BookkeepingService implements OnModuleInit {
       const mStart = monthPeriod.days.gte;
       const rawMEnd = this.windowOf(monthPeriod).lte;
       const mEnd = rawMEnd > todayEnd ? todayEnd : rawMEnd;
+      const receiptsBucket = this.receiptsWindow({ month: m }, now); // receipts: master's UTC month, capped at now
       const [netSales, receiptsAgg, expensesAgg] = await Promise.all([
         // B440: sales is accrual net sales, not the inline gross aggregate.
         fetchAccrualNetSales(
@@ -1503,7 +1519,7 @@ export class BookkeepingService implements OnModuleInit {
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            ...settledDateFilter({ gte: mStart, lte: mEnd }),
+            ...settledDateFilter(receiptsBucket),
           },
           _sum: { amount: true },
         }),
@@ -1540,7 +1556,9 @@ export class BookkeepingService implements OnModuleInit {
       .slice(0, 6)
       .map(([name, amount]) => ({ name, amount }));
 
-    const getPeriodSummary = async (from: Date) => {
+    const getPeriodSummary = async (kind: "today" | "week" | "month" | "quarter" | "year") => {
+      const from = tenantPeriod(kind, tz, now).days.gte; // sales and due: the tenant's period
+      const receiptsPeriod = this.receiptsWindow(kind, now); // receipts: master's bounds (SA-1057 F-4)
       const [netSales, r] = await Promise.all([
         // B440: sales is accrual net sales, not the inline gross aggregate —
         // same fix as the monthlySales loop above.
@@ -1557,7 +1575,7 @@ export class BookkeepingService implements OnModuleInit {
           where: {
             ...CONFIRMED_PAYMENT,
             method: RECEIVED_METHOD_FILTER,
-            ...settledDateFilter({ gte: from, lte: todayEnd }),
+            ...settledDateFilter(receiptsPeriod),
           },
           _sum: { amount: true },
         }),
@@ -1584,11 +1602,11 @@ export class BookkeepingService implements OnModuleInit {
       return { sales: netSales.net, receipts: Number(r._sum.amount ?? 0), due };
     };
     const [today, thisWeek, thisMonth, thisQuarter, thisYear] = await Promise.all([
-      getPeriodSummary(startOfToday),
-      getPeriodSummary(startOfWeek),
-      getPeriodSummary(startOfMonth),
-      getPeriodSummary(startOfQuarter),
-      getPeriodSummary(startOfYear),
+      getPeriodSummary("today"),
+      getPeriodSummary("week"),
+      getPeriodSummary("month"),
+      getPeriodSummary("quarter"),
+      getPeriodSummary("year"),
     ]);
 
     return {
@@ -1978,7 +1996,11 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getPaymentsReceivedReport(from?: string, to?: string) {
-    const { fromDate, toDate } = await this.reportPeriod(from, to);
+    const { gte: fromDate, lte: toDate } = this.receiptsWindow(
+      { fromDay: from, toDay: to },
+      new Date(),
+      !!to,
+    ); // receipts keep master's bounds (SA-1057 F-4)
     // B421: a "Payments Received" report — a CREDIT_NOTE application is not
     // a payment received (it's a credit extended), so it belongs in neither
     // the listed rows nor the total. ADVANCE stays (already-real cash).
@@ -2019,7 +2041,11 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   async getTimeToGetPaid(from?: string, to?: string) {
-    const { fromDate, toDate } = await this.reportPeriod(from, to);
+    const { gte: fromDate, lte: toDate } = this.receiptsWindow(
+      { fromDay: from, toDay: to },
+      new Date(),
+      !!to,
+    ); // paidAt is a receipts column: master's bounds (SA-1057 F-4)
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
       select: {
