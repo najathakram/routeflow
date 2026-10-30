@@ -588,6 +588,11 @@ export const API_ERROR_CODES = {
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /**
+   * Row 590 (SA-978a): PATCH /orders/:id/status to DELIVERED, 409: the order rides a run stop that is not COMPLETED. The stop is the
+   * one writer of a run order's delivery; complete it on the route, or take the order off the run first. Nothing written.
+   */
+  ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
+  /**
    * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
    * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
    * hand-over stands" (raised after the claim).
