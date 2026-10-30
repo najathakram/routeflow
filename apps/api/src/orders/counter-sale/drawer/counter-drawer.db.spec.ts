@@ -25,6 +25,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { calendarDayBounds } from "../../../common/calendar-date";
+import { waitUntilBlockedBy } from "../../../common/testing/blocked-wait";
 import { describeDb, requireLocalDatabaseUrl } from "../../../common/testing/db-spec";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { TenantContextService } from "../../../tenant/tenant-context.service";
@@ -473,14 +474,7 @@ describeDb("counter drawer event on real Postgres", () => {
     void recording.then(() => (settled = true));
     await new Promise((r) => setTimeout(r, 750));
     expect(settled).toBe(false); // B is queued behind the close, not already written into its window
-    for (let i = 0; i < 100; i++) {
-      const r = await pool.query(
-        `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-        [closerPid],
-      );
-      if (Number(r.rows[0].n) > 0) break;
-      await new Promise((res) => setTimeout(res, 50));
-    }
+    await waitUntilBlockedBy(pool, closerPid, { timeoutMs: 5_000, intervalMs: 50 });
     release();
     await closing;
 
