@@ -109,6 +109,30 @@ check(
   foreignQueuedRuns((a) => queued(/status=(\w+)/.exec(a[1])[1])),
   [2, 3],
 );
+check(
+  "Q2 a fork's run counts once it is in progress: its self-hosted job can still be queued",
+  foreignQueuedRuns((a) =>
+    JSON.stringify({
+      workflow_runs: a[1].includes("status=in_progress")
+        ? [{ id: 8, head_repository: { full_name: "someone/routeflow" } }]
+        : [],
+    }),
+  ),
+  [8],
+);
+check(
+  "Q3 a fork's run on the second page counts",
+  foreignQueuedRuns((a) => {
+    if (!a[1].includes("status=queued")) return JSON.stringify({ workflow_runs: [] });
+    const own = { id: 1, head_repository: { full_name: REPO } };
+    const fork = { id: 9, head_repository: { full_name: "someone/routeflow" } };
+    const page = /page=(\d+)$/.exec(a[1])?.[1];
+    return JSON.stringify({
+      workflow_runs: page === "2" ? [fork] : Array(100).fill(own),
+    });
+  }),
+  [9],
+);
 
 // ── The guard while the runner waits ─────────────────────────────────────────────────────────────
 const tick = (visibility, busy) =>
@@ -278,6 +302,30 @@ const end = (child, code = 0) => {
     "container",
     "seat released",
     "delete",
+  ]);
+}
+
+{
+  const order = [];
+  const { deps } = fakeDeps({
+    foreignQueuedRuns: () => {
+      order.push("outside runs");
+      return [];
+    },
+    visibility: () => {
+      order.push("visibility");
+      return "PRIVATE";
+    },
+    mintRunner: () => {
+      order.push("mint");
+      return { id: 7, jitConfig: "one-job" };
+    },
+  });
+  await launch(defaults, deps);
+  check("Q4 the PRIVATE reading comes last, right before the mint", order, [
+    "outside runs",
+    "visibility",
+    "mint",
   ]);
 }
 

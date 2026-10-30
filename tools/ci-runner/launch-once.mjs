@@ -60,14 +60,24 @@ function visibility() {
   return gh(["repo", "view", REPO, "--json", "visibility", "-q", ".visibility"]).trim();
 }
 
-/** A fork job queued in a public window stays queued for 24 h: the next runner must not take it. */
+function runsWithStatus(status, ghFn) {
+  const runs = [];
+  for (let page = 1; ; page++) {
+    const url = `repos/${REPO}/actions/runs?status=${status}&per_page=100&page=${page}`;
+    const batch = JSON.parse(ghFn(["api", url])).workflow_runs;
+    runs.push(...batch);
+    if (batch.length < 100) return runs;
+  }
+}
+
+/**
+ * A fork job queued in a public window stays queued for 24 h: the next runner must not take it. An
+ * in-progress run counts too, because one hosted job starting leaves its self-hosted job queued.
+ */
 export function foreignQueuedRuns(ghFn = gh) {
   const foreign = [];
-  for (const status of ["queued", "waiting", "requested", "pending"]) {
-    const page = JSON.parse(
-      ghFn(["api", `repos/${REPO}/actions/runs?status=${status}&per_page=100`]),
-    );
-    for (const run of page.workflow_runs) {
+  for (const status of ["queued", "waiting", "requested", "pending", "in_progress"]) {
+    for (const run of runsWithStatus(status, ghFn)) {
       if (run.head_repository?.full_name !== REPO) foreign.push(run.id);
     }
   }
@@ -260,15 +270,15 @@ export async function launch(flags, deps = REAL_DEPS) {
       deps.error("refusing: no heavy seat. The runner never runs beside one (CI or slot off?)");
       return EXIT_NO_SEAT;
     }
+    const foreign = deps.foreignQueuedRuns();
+    if (foreign.length > 0) {
+      deps.error(`refusing: runs from outside ${REPO} are active: ${foreign.join(", ")}`);
+      return EXIT_FOREIGN_QUEUED;
+    }
     const seen = deps.visibility();
     if (seen !== "PRIVATE") {
       deps.error(`refusing: ${REPO} is ${seen}, not PRIVATE`);
       return EXIT_NOT_PRIVATE;
-    }
-    const foreign = deps.foreignQueuedRuns();
-    if (foreign.length > 0) {
-      deps.error(`refusing: runs from outside ${REPO} are queued: ${foreign.join(", ")}`);
-      return EXIT_FOREIGN_QUEUED;
     }
 
     const name = `rf-ephemeral-${Date.now()}`;
