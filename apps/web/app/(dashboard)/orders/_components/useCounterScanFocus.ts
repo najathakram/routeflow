@@ -25,7 +25,10 @@ export function useCounterScanFocus(refs: {
   const armed = React.useMemo<React.RefObject<HTMLInputElement | null>>(
     () => ({
       get current() {
-        return awaitingCustomerRef.current ? customerFindRef.current : scanRef.current;
+        // Read when the timer fires. A touch-first till never hands the cursor to the scan field (the keyboard would rise over
+        // the camera), even if the customer it was waiting for arrived while the timer was pending: no target, no focus.
+        if (awaitingCustomerRef.current) return customerFindRef.current;
+        return isTouchFirst() ? null : scanRef.current;
       },
     }),
     [scanRef, customerFindRef, awaitingCustomerRef],
@@ -39,9 +42,15 @@ export function useCounterScanFocus(refs: {
     if (keyboardWouldRise()) return;
     scheduleScannerRefocus(armed, 0, { yieldFrom: [scanRef] });
   }, [armed, scanRef, keyboardWouldRise]);
-  // Enter finished the field the clerk is in (a typed quantity): the cursor may leave it for the armed field.
+  // Enter finished the field the clerk is in (a typed quantity): the cursor may leave it for the armed field. On a touch-first
+  // device there is no armed field to go to, so the field is let go of: the keyboard goes down and the camera's frames are
+  // no longer dropped as "the clerk is typing".
   const refocusFromActive = React.useCallback(() => {
-    if (keyboardWouldRise()) return;
+    if (keyboardWouldRise()) {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) active.blur();
+      return;
+    }
     scheduleScannerRefocus(armed, 0, {
       yieldFrom: [scanRef, { current: document.activeElement as HTMLElement | null }],
     });

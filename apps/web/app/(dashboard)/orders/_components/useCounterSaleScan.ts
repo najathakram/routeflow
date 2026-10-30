@@ -238,6 +238,10 @@ export function useCounterSaleScan(deps: Deps) {
     const qty = picker?.qty ?? 1;
     setPicker(null);
     const applied = depsRef.current.add(product, "BOX", qty); // a picker click is a whole selling unit, as in Create Order
+    // SA-1059: the camera scan waiting in the picker is counted now, and the clerk who was looking at the item hears it
+    // (the ambiguous outcome itself was cued "rejected": not counted until one is chosen).
+    const head = queueRef.current[0];
+    if (head) cue(head, applied === false ? "error" : "added");
     if (applied === false) clearAdded();
     else confirmAdded(product);
     setCarry(1);

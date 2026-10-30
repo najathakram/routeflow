@@ -128,13 +128,17 @@ const OUTSIDE = {
   bounds: { origin: { x: 5, y: 5 }, size: { width: 20, height: 20 } },
 };
 
-const setTouchFirst = (touch: boolean, reducedMotion = false) => {
+const setTouchFirst = (touch: boolean, reducedMotion = false, mdUp = false) => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
     value: (q: string) => ({
       matches:
-        q === TOUCH_FIRST_QUERY ? touch : q.includes("prefers-reduced-motion") && reducedMotion,
+        q === TOUCH_FIRST_QUERY
+          ? touch
+          : q.includes("min-width")
+            ? mdUp
+            : q.includes("prefers-reduced-motion") && reducedMotion,
       media: q,
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
@@ -405,6 +409,52 @@ describe("C8: the camera pauses while the till waits on the clerk, and a held co
     expect(barcodeCalls().filter((c) => c === "200000000001")).toHaveLength(2); // the scan and its one retry
   });
 
+  // MUST 3: the camera-off pause freezes the engine's clock until the FIRST ACCEPTED FRAME, not until the camera is back on:
+  // the frames take a moment to arrive after Retry or a choice, and that moment is no time at all to a code held in view.
+  it.each([700, 1500])(
+    "a failed lookup: the first frame %i ms after Retry is the held code again, not a new scan",
+    async (gap) => {
+      let healthy = false;
+      barcodeFor["200000000001"] = () =>
+        healthy ? COLA : Promise.reject({ response: { status: 503, data: {} } });
+      renderPhoneTill();
+      hold("200000000001", 3);
+      const alert = await screen.findByTestId("counter-scan-error");
+      healthy = true;
+      fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(lines()).toHaveLength(1));
+      clock += gap; // the camera takes this long to deliver its first frame again
+      hold("200000000001", 5);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      expect(lines()).toHaveLength(1);
+      expect(lines()[0]).toHaveTextContent("\u00d7 1");
+      expect(barcodeCalls().filter((c) => c === "200000000001")).toHaveLength(2); // the scan and its one retry
+    },
+  );
+
+  it.each([700, 1500])(
+    "an ambiguous pick: the first frame %i ms after the choice does not reopen the picker or look up again",
+    async (gap) => {
+      listFor["COLA"] = () => [COLA, CHIPS];
+      renderPhoneTill();
+      hold("COLA", 3);
+      const picker = await screen.findByTestId("counter-scan-picker");
+      fireEvent.click(within(picker).getByRole("button", { name: /Sample Chips/ }));
+      await waitFor(() => expect(lines()).toHaveLength(1));
+      clock += gap;
+      hold("COLA", 5);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      expect(screen.queryByTestId("counter-scan-picker")).toBeNull();
+      expect(lines()).toHaveLength(1);
+      expect(lines()[0]).toHaveTextContent("\u00d7 1");
+      expect(barcodeCalls().filter((c) => c === "COLA")).toHaveLength(1);
+    },
+  );
+
   it("the strip stays mounted through the pause (its engine state is what keeps the held code from recounting)", async () => {
     listFor["COLA"] = () => [COLA, CHIPS];
     renderPhoneTill();
@@ -479,6 +529,27 @@ describe("C9: a frozen sale takes no scan", () => {
   });
 });
 
+describe("MUST 3: the engine outlives the receipt", () => {
+  it("New sale with the last item still in front of the camera adds no line", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "$20" }));
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    await screen.findByTestId("counter-sale-receipt");
+    clock += 20_000; // the customer reads the receipt; the item never leaves the clerk's hand
+    fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+    await waitFor(() => expect(screen.getByTestId("counter-camera-strip")).toBeInTheDocument());
+    hold("200000000001", 5); // the camera is back, and the same item is still in front of it
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(lines()).toHaveLength(0);
+    expect(barcodeCalls()).toEqual(["200000000001"]);
+  });
+});
+
 describe("C10: a frame is dropped while the clerk is doing something else", () => {
   it("with the tender field focused, a new code adds no line and the total does not change", async () => {
     barcodeFor["200000000001"] = () => COLA;
@@ -547,6 +618,55 @@ describe("C10: a frame is dropped while the clerk is doing something else", () =
     expect(lines()).toHaveLength(1);
     expect(lines()[0]).toHaveTextContent("× 1");
     expect(barcodeCalls()).toEqual(["200000000001"]);
+  });
+});
+
+describe("C10 clock: only the time the code was in view is frozen", () => {
+  const addThenFocusTender = async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    const tender = screen.getByLabelText("Amount tendered") as HTMLInputElement;
+    tender.focus();
+    return tender;
+  };
+  const settle = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+  it("the 'Camera paused' note shows while frames are being dropped, and goes on the next accepted frame", async () => {
+    const tender = await addThenFocusTender();
+    expect(screen.queryByText("Camera paused")).toBeNull();
+    hold("200000000001", 1);
+    expect(screen.getByText("Camera paused")).toBeInTheDocument();
+    hold("200000000001", 10); // more dropped frames change nothing
+    expect(screen.getAllByText("Camera paused")).toHaveLength(1);
+    tender.blur();
+    expect(screen.getByText("Camera paused")).toBeInTheDocument(); // not until a frame is accepted
+    hold("200000000001", 1);
+    expect(screen.queryByText("Camera paused")).toBeNull();
+  });
+
+  it("held in view across a 3 s block, the code is still the same scan afterwards", async () => {
+    const tender = await addThenFocusTender();
+    hold("200000000001", 30); // 3 s of dropped frames, the code in front of the lens the whole time
+    tender.blur();
+    hold("200000000001", 5);
+    await settle();
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]).toHaveTextContent("\u00d7 1");
+  });
+
+  it("away for 5 s after a block (no frames at all), the same code is a new scan when it comes back", async () => {
+    const tender = await addThenFocusTender();
+    hold("200000000001", 3); // dropped, then the code leaves the view
+    tender.blur();
+    clock += 5000; // nothing is in front of the camera for 5 s
+    hold("200000000001", 5);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("\u00d7 2"));
+    expect(barcodeCalls()).toEqual(["200000000001", "200000000001"]);
   });
 });
 
@@ -628,6 +748,26 @@ describe("C11: on a touch-first device the keyboard is never raised for the cler
     scanField().blur();
     fireEvent.keyDown(document.body, { key: "7" });
     expect(document.activeElement).toBe(scanField());
+  });
+
+  it("Enter in a quantity field lets go of it: the keyboard goes down and the camera counts again", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    barcodeFor["200000000002"] = () => CHIPS;
+    renderPhoneTill();
+    hold("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    const qty = screen.getByLabelText("Set quantity of Sample Cola") as HTMLInputElement;
+    qty.focus();
+    fireEvent.change(qty, { target: { value: "3" } });
+    expect(document.activeElement).toBe(qty);
+    fireEvent.keyDown(qty, { key: "Enter" });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(document.activeElement).toBe(document.body);
+    expect(lines()[0]).toHaveTextContent("\u00d7 3");
+    hold("200000000002"); // a frame is no longer dropped as "the clerk is typing"
+    await waitFor(() => expect(lines()).toHaveLength(2));
   });
 
   it("the customer find still takes focus when the clerk asks for it (Ship this order instead)", async () => {
@@ -762,6 +902,57 @@ describe("MUST 10: opening the strip brings the scan bar to the top of the scrol
     renderTill(<CounterSaleScreen />);
     openCamera();
     expect(scrollTo).toHaveBeenCalledWith({ top: 500, behavior: "smooth" });
+  });
+
+  describe("coming back from a receipt, and a cart that changes", () => {
+    const sellOneAndFinish = async () => {
+      barcodeFor["200000000001"] = () => COLA;
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      hold("200000000001");
+      await waitFor(() => expect(lines()).toHaveLength(1));
+      fireEvent.click(screen.getByRole("button", { name: "$20" }));
+      fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+      await screen.findByTestId("counter-sale-receipt");
+    };
+
+    it("New sale scrolls the scan bar to the top again (the strip is open again)", async () => {
+      layout({ barTop: 505, scrollHeight: 3000 });
+      await sellOneAndFinish();
+      scrollTo.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "New sale" }));
+      await screen.findByTestId("counter-camera-strip");
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      // New sale had put the page back at the top (scrollTop 0), so the bar's 441 px offset is the whole target
+      expect(scrollTo).toHaveBeenCalledWith({ top: 441, behavior: "smooth" });
+    });
+
+    it("the room grows when a line goes away and the page gets shorter", async () => {
+      layout({ barTop: 505, scrollHeight: 1200 });
+      barcodeFor["200000000001"] = () => COLA;
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      hold("200000000001");
+      await waitFor(() => expect(lines()).toHaveLength(1));
+      const before = Number.parseInt(spacer()!.style.height, 10);
+      Object.defineProperty(main, "scrollHeight", { configurable: true, value: 1000 }); // the line's height is gone
+      scrollTo.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Remove Sample Cola" }));
+      await waitFor(() => expect(lines()).toHaveLength(0));
+      // target 641 + the 780 px viewport - 1000 px of page = 421 px short
+      expect(spacer()!.style.height).toBe("421px");
+      expect(Number.parseInt(spacer()!.style.height, 10)).toBeGreaterThan(before);
+      expect(scrollTo).not.toHaveBeenCalled(); // the page is not moved under the clerk's hand
+    });
+
+    it("at md and up the checkout bar is not floating: nothing scrolls and no room is added", () => {
+      setTouchFirst(true, false, true);
+      layout({ barTop: 505, scrollHeight: 1000 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(spacer()!.style.height).toBe(""); // never touched
+    });
   });
 
   it("without a scroll container (a test, an embedded view) opening still works and scrolls nothing", () => {

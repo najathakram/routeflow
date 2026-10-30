@@ -89,6 +89,48 @@ describe("the cue belongs to camera scans only", () => {
     expect(playScanCue).toHaveBeenLastCalledWith("rejected");
   });
 
+  it("a camera scan the clerk settles in the picker is 'accepted' when chosen (and 'rejected' when the add is refused)", async () => {
+    const CHIPS = { id: "p-chips", name: "Sample Chips", unitsPerBox: null };
+    mockResolve.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      ambiguous: true,
+      matches: [COLA, CHIPS],
+    });
+    const add = jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const { result } = setup({ add });
+    act(() => result.current.submitCamera("COLA"));
+    await waitFor(() => expect(result.current.picker).not.toBeNull());
+    expect(playScanCue).toHaveBeenCalledTimes(1);
+    expect(playScanCue).toHaveBeenLastCalledWith("rejected"); // not counted until one is chosen
+    act(() => result.current.choose(CHIPS));
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(playScanCue).toHaveBeenCalledTimes(2);
+    expect(playScanCue).toHaveBeenLastCalledWith("accepted");
+
+    act(() => result.current.submitCamera("COLA"));
+    await waitFor(() => expect(result.current.picker).not.toBeNull());
+    (playScanCue as jest.Mock).mockClear();
+    act(() => result.current.choose(CHIPS)); // the line is at its cap: refused
+    expect(playScanCue).toHaveBeenCalledTimes(1);
+    expect(playScanCue).toHaveBeenLastCalledWith("rejected");
+  });
+
+  it("a picker choice on a WEDGE scan makes no sound", async () => {
+    const CHIPS = { id: "p-chips", name: "Sample Chips", unitsPerBox: null };
+    mockResolve.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      ambiguous: true,
+      matches: [COLA, CHIPS],
+    });
+    const { result } = setup();
+    act(() => result.current.submit("COLA"));
+    await waitFor(() => expect(result.current.picker).not.toBeNull());
+    act(() => result.current.choose(CHIPS));
+    expect(playScanCue).not.toHaveBeenCalled();
+  });
+
   it("a wedge scan makes no sound, whatever it comes to", async () => {
     const { result, add } = setup();
     act(() => result.current.submit("200000000001"));

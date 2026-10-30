@@ -112,7 +112,8 @@ import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { unlockScanCue } from "@/lib/scan-cue";
 import { isTouchFirst } from "@/lib/touch-first";
 import { cameraFrameBlocked, counterDialogOpen } from "./counter-scan-guard";
-import { CounterCameraStrip } from "./CounterCameraStrip";
+import { fitCameraRoom, isMdUp } from "./counter-camera-room";
+import { CounterCameraStrip, useCameraScanEngine } from "./CounterCameraStrip";
 import { scrollPageToTop } from "@/lib/scroll-top";
 import { useCounterLiveCart } from "./useCounterLiveCart";
 import { liveCartKey } from "@/lib/counter-live-cart-keys";
@@ -253,6 +254,7 @@ export function CounterSaleScreen() {
   const [touchFirst] = React.useState(() => isTouchFirst());
   // The strip's OPEN state is the clerk's choice and survives every pause (receipt, locked cart, a picker or a retry waiting).
   const [cameraOpen, setCameraOpen] = React.useState(false);
+  const cameraEngine = useCameraScanEngine(); // the screen's, so it outlives the strip that a receipt unmounts
   const scanBarRef = React.useRef<HTMLDivElement>(null);
   const cameraRoomRef = React.useRef<HTMLDivElement>(null);
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
@@ -851,26 +853,36 @@ export function CounterSaleScreen() {
   // button and the cart pushed out of reach. Opening scrolls the scroller until the sticky scan bar rests at its top: the strip,
   // the field, the button and the feedback show, with the cart lines under them and above the checkout bar. A short page cannot
   // scroll that far, so a spacer (in flow, just above the checkout bar, so the bar stays the last thing in the scroll) adds the
-  // room that is missing while the strip is open. A bar already stuck at the top is already there: nothing moves.
+  // room that is missing while the strip is open. A bar already stuck at the top is already there: nothing moves. From md up the
+  // bar is not floating and none of this applies. Coming back from a receipt (the sale view, strip included, was gone) is an
+  // opening again; a cart that grows or shrinks only refits the room, it never moves the page under the clerk's hand.
   React.useLayoutEffect(() => {
-    if (!cameraOpen || !touchFirst) return;
+    if (!cameraOpen || !touchFirst || receipt || isMdUp()) return;
     const main = document.getElementById("main-content");
     const bar = scanBarRef.current;
     const room = cameraRoomRef.current;
     if (!main || !bar) return;
-    if (room) room.style.height = "0px";
-    const target =
-      main.scrollTop + (bar.getBoundingClientRect().top - main.getBoundingClientRect().top);
-    const short = target + main.clientHeight - main.scrollHeight;
-    if (room && short > 0) room.style.height = `${Math.ceil(short)}px`;
+    const target = fitCameraRoom(main, bar, room);
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
     main.scrollTo?.({ top: target, behavior: reduced ? "auto" : "smooth" });
     return () => {
       if (room) room.style.height = "0px";
     };
-  }, [cameraOpen, touchFirst]);
+  }, [cameraOpen, touchFirst, receipt]);
+  const lineCount = lines.length;
+  React.useLayoutEffect(() => {
+    if (!cameraOpen || !touchFirst || receipt || isMdUp()) return;
+    const main = document.getElementById("main-content");
+    const bar = scanBarRef.current;
+    if (main && bar) fitCameraRoom(main, bar, cameraRoomRef.current);
+  }, [cameraOpen, touchFirst, receipt, lineCount]);
   // MUST 3: the camera runs only while a scan could land. The strip stays mounted through a pause so its engine state survives.
   const cameraEnabled = cameraOpen && !receipt && !lineLocked && !scan.picker && !scan.failed;
+  // A receipt unmounts the strip, so nothing there can stop the engine's clock: the screen does. The first accepted frame of the
+  // next sale starts it, so an item still in front of the lens when the clerk taps New sale is the same item, not a new scan.
+  React.useEffect(() => {
+    if (receipt) cameraEngine.clock.block();
+  }, [receipt, cameraEngine]);
 
   const stepItem = (tempId: string, unit: StepUnit, dir: 1 | -1) => {
     if (lineLocked || saleInFlight()) return;
@@ -1516,6 +1528,7 @@ export function CounterSaleScreen() {
             {/* SA-1059: inline above the field, inside the sticky bar, so the strip never covers the cart */}
             {touchFirst && cameraOpen ? (
               <CounterCameraStrip
+                engine={cameraEngine}
                 enabled={cameraEnabled}
                 frameBlocked={() => cameraFrameBlocked(scanRef.current)}
                 onCode={onCameraCode}
