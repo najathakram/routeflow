@@ -30,8 +30,8 @@ import { toCounterOrderItem } from "./counter-sale-lines";
 import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
-import { staffMay } from "../../auth/permissions/staff-capabilities";
-import { operatorDeniedGroups } from "./till-permission.guard";
+import { operatorDeniedGroups } from "../../auth/permissions/operator-denied-groups";
+import { mayEditPrice } from "../../auth/permissions/price-edit-answer";
 import {
   buildCounterSaleResponse,
   isCounterTenderCashRow,
@@ -178,12 +178,9 @@ export class CounterSaleService {
         counterSale: true,
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        // W-870: over the OPERATOR's denied groups, read live (PRICING switched off = no price change at the till).
-        priceEditAllowed: staffMay(
-          user.role,
-          "EDIT_LINE_PRICE",
-          await operatorDeniedGroups(this.prisma, user),
-        ),
+        // W-870: over the OPERATOR's denied groups, read live (PRICING switched off = no price change at the till);
+        // the till is live by an owner-ruled slice, so it does not go through the mode-aware office answer (SA-1034 r8).
+        priceEditAllowed: mayEditPrice(user.role, await operatorDeniedGroups(this.prisma, user)),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)

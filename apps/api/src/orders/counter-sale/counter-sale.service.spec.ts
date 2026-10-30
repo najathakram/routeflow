@@ -1508,6 +1508,15 @@ describe("CounterSaleService.ring", () => {
       expect(sendOpts().priceEditAllowed).toBe(allowed);
     });
 
+    it("T-R1 (counter half): an OPERATOR denied PRICING is told priceEditAllowed = false, whatever the permissions mode", async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        deniedPermissionGroups: ["PRICING"],
+        permissionsVersion: 1,
+      });
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(sendOpts().priceEditAllowed).toBe(false);
+    });
+
     it("an OPERATOR rings a sale with a changed price: rung (not 403 PRICE_EDIT_NOT_PERMITTED), price applied, ONE price-edited audit row", async () => {
       // createSale stands in for create()'s own gate (pinned in orders.counter-price-edit.spec.ts): it refuses a
       // real price change exactly when the counter passed priceEditAllowed === false.

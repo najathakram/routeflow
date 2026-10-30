@@ -55,7 +55,10 @@ export class InvoicesController {
 
   @Post()
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
-    return this.invoicesService.create(dto, user, { warnSite: "invoices.manual" }); // SA-982 PR-2: a client write
+    return this.invoicesService.create(dto, user, {
+      source: "request",
+      warnSite: "invoices.manual",
+    }); // SA-982 PR-2: a client write
   }
 
   @Post("from-order/:orderId")

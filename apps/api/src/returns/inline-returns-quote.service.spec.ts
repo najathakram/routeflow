@@ -17,6 +17,18 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
+// SA-1034: quote() computes the price-edit capability from its principal (`priceEditAllowedFor`); these specs pin what
+// quote() DOES with each answer, so the helper is stubbed to the role-only answer (OPERATOR, TENANT_ADMIN) and a case
+// overrides it. The helper itself is pinned in auth/permissions/price-edit.spec.ts.
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn(
+    async (_prisma: unknown, user?: { role?: string } | null) =>
+      user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN",
+  ),
+}));
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+const capability = priceEditAllowedFor as jest.Mock;
+
 // PR-1c: priceInlineReturn's unreferenced-chunk tax fallback reads the tenant's current
 // rate (deferred PR-1b item) via SystemConfigService — 0% here so every pre-existing oracle
 // in this file (hand-derived before this reader existed) is unaffected; the fallback itself
@@ -1315,6 +1327,29 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
     expect(db.customer.findFirst).not.toHaveBeenCalled();
   });
 
+  it("SA-1034 RC-R1: an OPERATOR whose price-edit capability is denied ⇒ 400 FORBIDDEN on a credit price, before any read", async () => {
+    capability.mockResolvedValueOnce(false);
+    const r = await refusal(quote({ creditUnitPrice: 1, overrideReason: "x" }));
+    expect(r).toMatchObject({ status: 400, code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN });
+    expect(db.customer.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("SA-1034 RC-G1: an OPERATOR with the capability still gets the credit price (no behaviour change)", async () => {
+    const r = await refusal(quote({ creditUnitPrice: 1, overrideReason: "x" }));
+    expect(r).toBeNull();
+    expect(capability).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ role: "OPERATOR" }),
+      "InlineReturnsQuoteService.priceInlineReturn",
+    );
+  });
+
+  it("SA-1034: the capability governs the PRICE half only, a reason-only item with no price is not refused by it", async () => {
+    capability.mockResolvedValueOnce(false);
+    const r = await refusal(quote({ alreadyReturnedReason: "customer says so" }));
+    expect(r?.code).not.toBe(RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN);
+  });
+
   it("a CUSTOMER stays the existing 403 (refused before the override check)", async () => {
     await expect(quote({ creditUnitPrice: 1, overrideReason: "x" }, CUSTOMER)).rejects.toThrow(
       ForbiddenException,
@@ -1338,6 +1373,7 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
         creditOverridesOf(
           [{ productId: "p", boxes: 0, pieces: 1, creditUnitPrice, overrideReason: "x" }],
           OPERATOR,
+          true,
         );
       } catch {
         refused.push(creditUnitPrice);

@@ -54,6 +54,7 @@ import {
   staffPayload,
   type OverrideWorld,
 } from "../../test/restriction-override-fixture";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 const RUN = randomUUID().slice(0, 8);
 const REASON = "Licensed buyer, paperwork on file";
@@ -580,10 +581,13 @@ describeDb(
     describe("estimate -> invoice", () => {
       it("converting an ACCEPTED estimate with a restricted line warns, then stamps the invoice line", async () => {
         const est: any = await as(() =>
-          estimates.create({
-            customerId: w.caCustomerId,
-            items: [{ description: "Gummies", productId: w.banned, qty: 2, unitPrice: 10 }],
-          } as never),
+          estimates.create(
+            {
+              customerId: w.caCustomerId,
+              items: [{ description: "Gummies", productId: w.banned, qty: 2, unitPrice: 10 }],
+            } as never,
+            NO_PRICE_RIGHTS,
+          ),
         );
         await raw.estimate.update({ where: { id: est.id }, data: { status: "ACCEPTED" } });
         const convert = (ack?: object) =>

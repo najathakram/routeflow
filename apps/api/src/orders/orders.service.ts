@@ -59,7 +59,7 @@ import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
 import { judgeEditTail } from "./edit-overpay-judge";
-import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
+import { syncInvoicesAfterEdit } from "./order-edit-invoice-sync";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import {
@@ -80,7 +80,13 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
-import { assertPriceEditAllowed, decideTierOverride, staffMay } from "./staff-override";
+import {
+  assertCustomPricesAllowed,
+  assertPriceEditAllowed,
+  decideTierOverride,
+} from "./staff-override";
+import { assertEditAuthoredCustomPrices } from "./custom-line-authoring";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -1239,8 +1245,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    // SA-1034: the counter sale's own value, else the role's; denied groups arrive with the permissions rollout.
-    const priceEditAllowed = options.priceEditAllowed ?? staffMay(user.role, "EDIT_LINE_PRICE", []);
+    // SA-1034 (POS-5): the counter's own live answer (W-870), else the office's mode-aware one, once per request before any
+    // lock. A real staff price override (judged against the server's tier price) is refused 403 before anything is written.
+    const priceEditAllowed =
+      options.priceEditAllowed ??
+      (await priceEditAllowedFor(this.prisma, user, "OrdersService.create"));
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
     // appliedCreditNotes for non-staff callers — a buyer or driver token could
     // otherwise spend a customer's credit notes on create, a right the edit path
@@ -1479,6 +1488,9 @@ export class OrdersService implements OnApplicationBootstrap {
     if (user.role === UserRole.CUSTOMER && items.some((i) => !i.productId)) {
       throw new BadRequestException("Custom (unlisted) items can only be added by staff");
     }
+    // SA-1034 rule 4 (AUTHORING, covers the counter): a staff-typed custom line needs price rights, judged before any
+    // lock or write. A driver's unlisted line keeps today's behaviour.
+    if (isStaffRole) assertCustomPricesAllowed(items, priceEditAllowed);
 
     // Load any per-product tier overrides for this customer
     const customerPrices =
@@ -2613,6 +2625,13 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
+    // SA-1034: the price-edit capability, read once here, before the edit transaction opens; each line decision below
+    // still happens inside the lock against the held lines.
+    const priceEditAllowed = await priceEditAllowedFor(
+      this.prisma,
+      user,
+      "OrdersService.updateOrderItems",
+    );
     // #2565: a buyer's ownership is settled FIRST, unconditionally — before any status or shape
     // answer and before any side effect (the linked-invoice revert below commits on its own
     // connection). The later buyer checks were each conditional, so a non-owner's diff could revert
@@ -3182,8 +3201,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
-            // SA-1034: the operator's denied groups arrive with the permissions rollout.
-            priceEditAllowed: staffMay(user?.role, "EDIT_LINE_PRICE", []),
+            priceEditAllowed, // SA-1034: read once, before the transaction (top of this method)
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
@@ -3236,6 +3254,13 @@ export class OrdersService implements OnApplicationBootstrap {
               priceEditAllowed: uctx.priceEditAllowed,
               operatorReplaceCategoryMap,
             };
+
+            // SA-1034 rule 4: the custom lines this payload AUTHORES (new, or re-sent at another price) need price
+            // rights; the create auto-merge re-homes lines that were authored earlier (COPY), so it is not judged here.
+            if (isStaffEdit && !opts?.isCreateMerge) {
+              const lines = order.lineItems ?? [];
+              assertEditAuthoredCustomPrices(dto.items, heldItems, lines, uctx.priceEditAllowed);
+            }
 
             // SA-124i (non-blocking): validate every item's own pack against the live product
             // for ALL items BEFORE deleteMany runs, rather than interleaved with it per-item —
@@ -3361,6 +3386,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const name = (item.name as string).trim();
                 const qty = item.qty as number;
                 const unitPrice = Number(item.unitPrice);
+                if (isStaffEdit) assertCustomPricesAllowed([item], uctx.priceEditAllowed); // SA-1034 rule 4
                 await tx.orderItem.create({
                   data: {
                     orderId,
@@ -4154,10 +4180,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * case, since credits are payment-level and settling is convergent. The skip is explicit here
    * (the `!== undefined` guard below) rather than delegated to `syncOrderCreditSelections`'s own
    * `undefined` early-return, so the contract is readable at the call site that depends on it.
-   *
-   * `routing` is passed in rather than derived here: `skipInPlaceResync` depends on which line
-   * rows the caller can see (the fold holds the PRE-EDIT snapshot; a replay has only current
-   * rows), even though the RULE is shared — `shouldSkipInPlaceResync` in merge-idempotency.ts.
+   * `routing` is passed in, not derived here: see order-edit-invoice-sync.ts.
    */
   private async reconcileOrderAfterEdit(
     orderId: string,
@@ -4169,41 +4192,18 @@ export class OrdersService implements OnApplicationBootstrap {
   ): Promise<{
     issuedPartialsUnchanged: Array<{ invoiceId: string; invoiceNumber: string | null }>;
   }> {
-    let rebuilt = true; // did a rebuild path restate the invoices? (else the partials follow price edits)
-    // Keep the order's linked invoice(s) in lockstep with the edit.
-    //  - Undelivered edit: re-sync the open pending-mirror draft at order basis
-    //    (no-op when there's no open draft) — unchanged.
-    //  - Post-delivery edit (R1): the order may carry SENT / PAID / delivery-batch
-    //    invoices, not just an open draft. Rebuild each in place from the edited
-    //    lines at order basis, KEEP payments, recompute status/balance, and re-sync
-    //    the regulated ledger — so the invoice tracks the correction and simply shows
-    //    the new balance. Never blocks (bails on an unclean partition).
-    if (routing.postDeliveryEdit) {
-      if (!routing.skipInPlaceResync) {
-        const resynced = await (actor
-          ? this.invoicesService.resyncOrderInvoicesForEdit(orderId, undefined, undefined, actor)
-          : this.invoicesService.resyncOrderInvoicesForEdit(orderId));
-        rebuilt = resynced !== null; // null: nothing linked, or an unclean partition (bailed)
-      } else {
-        rebuilt = false; // partially invoiced: the in-place re-sync is skipped
-      }
-    } else {
-      const res = await this.invoicesService.reconcileOrderDraftInvoice(orderId, {
-        basis: "order",
-        ...(actor ? { actor } : {}),
-      });
-      rebuilt = res !== null && res !== RECONCILE_PARTIALS;
-    }
-    // SA-760 Q-760-1 (owner 10-10): where no rebuild restated the invoices, a staff edit's PRICE changes reach
-    // the order's DRAFT partials (price only, under the R-1 lock order); issued partials never change.
-    const followed =
-      staffEdit && !rebuilt ? await this.invoicesService.followPartialPrices(orderId) : null;
-
-    // Credit-note intents: sync operator selection changes, then settle (shrink or
-    // top-up) against the order's current invoices. Runs even when line-resync was
+    // The invoices follow the edit (order-edit-invoice-sync.ts), then the credit-note intents: sync operator selection
+    // changes and settle (shrink or top-up) against the order's current invoices. Runs even when line-resync was
     // skipped for partial billing — the credits are payment-level, not line-level.
+    const issuedPartialsUnchanged = await syncInvoicesAfterEdit(
+      this.invoicesService,
+      orderId,
+      routing,
+      actor,
+      staffEdit,
+    );
     await this.syncAndSettleOrderCredits(orderId, customerId, appliedCreditNotes);
-    return { issuedPartialsUnchanged: followed?.issuedPartialsUnchanged ?? [] };
+    return { issuedPartialsUnchanged };
   }
 
   private async syncCreateCredits(id: string, cId: string, n?: AppliedCreditNoteDto[]) {

@@ -45,6 +45,8 @@ import { storedPackBasis } from "../stored-pack-basis";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
+import { usePriceEditAllowed } from "@/lib/api/my-permissions";
+import { PRICE_RIGHTS_COPY } from "@/lib/price-rights-copy";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -727,6 +729,8 @@ export function EditableLineItems({
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   // Custom (unlisted) item inline form
   const [customFormOpen, setCustomFormOpen] = React.useState(false);
+  // SA-1034 rule 10: the server's answer decides whether a custom (typed-price) line may be added.
+  const priceEditAllowed = usePriceEditAllowed();
   const [customName, setCustomName] = React.useState("");
   const [customPrice, setCustomPrice] = React.useState("");
   const [customQty, setCustomQty] = React.useState("1");
@@ -1473,14 +1477,18 @@ export function EditableLineItems({
           {customError && <p className="text-xs text-danger">{customError}</p>}
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => setCustomFormOpen(true)}
-          className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
-        >
-          <Pencil className="h-4 w-4" />
-          Add custom item
-        </button>
+        <div>
+          <button
+            type="button"
+            onClick={() => setCustomFormOpen(true)}
+            disabled={!priceEditAllowed}
+            className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-brand-500"
+          >
+            <Pencil className="h-4 w-4" />
+            Add custom item
+          </button>
+          {!priceEditAllowed && <p className="mt-1 text-xs text-navy/60">{PRICE_RIGHTS_COPY}</p>}
+        </div>
       )}
 
       <InlineCreateProductModal

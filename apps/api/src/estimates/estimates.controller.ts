@@ -21,8 +21,8 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 export class EstimatesController {
   constructor(private readonly estimatesService: EstimatesService) {}
 
-  @Post() create(@Body() dto: CreateEstimateDto) {
-    return this.estimatesService.create(dto);
+  @Post() create(@Body() dto: CreateEstimateDto, @CurrentUser() user: JwtPayload) {
+    return this.estimatesService.create(dto, user);
   }
   @Get() findAll(
     @Query("customerId") cId?: string,
