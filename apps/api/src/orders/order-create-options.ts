@@ -62,7 +62,6 @@ export interface CreateOrderOptions {
    * REQUESTER's (SA ruling #3418). Never a DTO field.
    */
   lineAuthor?: OrderItemAuthorChannel;
-  priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
   creditPaidNow?: (total: number) => number;

@@ -19,7 +19,6 @@ export interface SaleOptions {
   fulfillPath?: FulfillPath;
   counterSale?: boolean;
   suppressInvoiceNotify?: boolean;
-  priceEditAllowed?: boolean;
   onReplay?: (order: ReplayedOrder, cart?: ReplayedCart) => void;
   /** B1209: create()'s `beforeWrite` (the server total, before anything is written). */
   beforeWrite?: (priced: { total: number }) => void | Promise<void>;
