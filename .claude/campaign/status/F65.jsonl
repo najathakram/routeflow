@@ -18,3 +18,4 @@
 {"id":"B1227","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1228","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1205","batch":"F65","tier":"T3","state":"already-fixed","pr":3287,"proof":null,"evidence":"fixed by #3287, landed on master in the W21a squash 1bf58be42541d212c4de9f2a114a391ca2f3896a (#3328): mobile treats ORDER_SAVED_CREDITS_PENDING as saved"}
+{"id":"B1275","batch":"F65","tier":"T2","state":"already-fixed","pr":3994,"proof":null,"evidence":"Fixed by #3994 (master 76c99fc2): clearIssueDisplayUnits now runs at all three revert-to-DRAFT writes, invoices.service.ts order-edit revert ~4044, unvoid ~4076 and reopen PAID ~4094; spec invoices.service.spec.ts SA-1029 A-2 / B1275. Re-verified on 2a8f10dd79."}
