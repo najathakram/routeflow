@@ -24,22 +24,34 @@ export interface PaymentListFilters {
   sortDir?: string;
 }
 
-/** Shared `where` + `orderBy` for the list and the CSV export (same filters, same sort whitelist). */
-async function buildPaymentListQuery(deps: PaymentListDeps, filters: PaymentListFilters) {
+/**
+ * Shared `where` + `orderBy` for the list and the CSV export (same filters, same sort whitelist).
+ * `timezone` is the tenant zone the day filter used (null when it was not read); the export asks for
+ * it with `needZone` so it prints each instant as the same tenant day its filter windows by.
+ */
+async function buildPaymentListQuery(
+  deps: PaymentListDeps,
+  filters: PaymentListFilters,
+  needZone = false,
+) {
   const { customerId, method, status, dateFrom, dateTo, search, sortBy, sortDir } = filters;
 
   const where: any = {};
+  let timezone: string | null = null;
   if (customerId) where.invoice = { customerId };
   if (method) where.method = method;
   if (status) where.status = status;
-  if (dateFrom || dateTo) {
+  if (dateFrom || dateTo || needZone) {
     // B89/L-047: paidAt is a REAL instant (not a UTC-midnight calendar
     // stamp), so its day-window bounds are evaluated in the TENANT's own
     // timezone — never the host clock's `setHours`.
     const tenantDefaults = await deps.resolveTenantInvoiceDefaults();
-    where.paidAt = {};
-    if (dateFrom) where.paidAt.gte = tenantCalendarDayStart(dateFrom, tenantDefaults.timezone);
-    if (dateTo) where.paidAt.lte = tenantCalendarDayEnd(dateTo, tenantDefaults.timezone);
+    timezone = tenantDefaults.timezone;
+    if (dateFrom || dateTo) {
+      where.paidAt = {};
+      if (dateFrom) where.paidAt.gte = tenantCalendarDayStart(dateFrom, timezone);
+      if (dateTo) where.paidAt.lte = tenantCalendarDayEnd(dateTo, timezone);
+    }
   }
   if (search) {
     where.OR = [
@@ -68,7 +80,7 @@ async function buildPaymentListQuery(deps: PaymentListDeps, filters: PaymentList
       ? validSortFields[sortBy]
       : [{ paidAt: "desc" }, { id: "desc" }];
 
-  return { where, orderBy };
+  return { where, orderBy, timezone };
 }
 
 export async function listAllPayments(
@@ -155,7 +167,7 @@ export async function exportPayments(
   deps: PaymentListDeps,
   params: PaymentListFilters,
 ): Promise<string> {
-  const { where, orderBy } = await buildPaymentListQuery(deps, params);
+  const { where, orderBy, timezone } = await buildPaymentListQuery(deps, params, true);
 
   const rows = await deps.prisma.forTenant().invoicePayment.findMany({
     where,
@@ -170,5 +182,5 @@ export async function exportPayments(
     },
   });
 
-  return buildPaymentsCsv(rows);
+  return buildPaymentsCsv(rows, timezone);
 }
