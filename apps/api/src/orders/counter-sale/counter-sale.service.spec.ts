@@ -111,6 +111,7 @@ describe("CounterSaleService.ring", () => {
     mockLockCalls.length = 0;
     mockLockFailure.error = null;
     prisma = createMockPrisma();
+    prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group
     invoices = [inv("inv-1", 37.25)];
     replay = false;
     storedTendered = null;
@@ -1855,6 +1856,10 @@ describe("CounterSaleService.ring: S1 credit gate sees only what stays owed", ()
   it("hands createSale a creditPaidNow that clears CASH/CARD at the server total and nothing for ON_ACCOUNT; a same-day CHECK counts like cash", async () => {
     const paidNow = async (payment: any) => {
       const prisma = createMockPrisma();
+      prisma.user.findFirst.mockResolvedValue({
+        deniedPermissionGroups: [],
+        permissionsVersion: 1,
+      }); // W-870: the operator holds every group
       const createSale = jest.fn(async () => ({ id: "inv-1", orderId: "ord-1" }));
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([{ id: "p1" }]);

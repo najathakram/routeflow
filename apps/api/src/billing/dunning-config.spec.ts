@@ -2,7 +2,8 @@ import {
   ADMIN_SET_REASON,
   billingPauseMode,
   DUNNING_D3_HOURS,
-  DUNNING_D6_HOURS,
+  DUNNING_D7_HOURS,
+  DUNNING_LAST_DAY_HOURS,
   DUNNING_FINAL_LEAD_HOURS,
   DUNNING_MILESTONES,
   dunningEmailsFor,
@@ -15,18 +16,21 @@ import {
 } from "./dunning-config";
 
 describe("dunning-config (SA-733r7 PR-B3)", () => {
-  it("names the thresholds the gate fixes: +72 h / +144 h / +168 h, a 24 h final-notice lead, 03:00 local", () => {
+  // SA-1037 r2 (the owner's "pause at 14 days", 05:21Z) SUPERSEDES the day-7 pause these pins held (168 / 144).
+  it("names the thresholds: +72 h / +168 h reminders, the last day at +312 h, the pause at +336 h, a 24 h final-notice lead, 03:00 local", () => {
     expect(DUNNING_D3_HOURS).toBe(72);
-    expect(DUNNING_D6_HOURS).toBe(144);
-    expect(DUNNING_PAUSE_HOURS).toBe(168);
+    expect(DUNNING_D7_HOURS).toBe(168);
+    expect(DUNNING_LAST_DAY_HOURS).toBe(312);
+    expect(DUNNING_PAUSE_HOURS).toBe(336);
     expect(DUNNING_FINAL_LEAD_HOURS).toBe(24);
     expect(PAUSE_LOCAL_HOUR).toBe(3);
   });
 
-  it("keys the reminders d0 / d3 / d6 plus the final, paused and paused-still-owed notices", () => {
+  it("keys the reminders d0 / d3 / d7 / d6 (the last day) plus the final, paused and paused-still-owed notices", () => {
     expect(DUNNING_MILESTONES).toEqual({
       D0: "DUNNING_D0",
       D3: "DUNNING_D3",
+      D7: "DUNNING_D7",
       D6: "DUNNING_D6",
       FINAL: "DUNNING_FINAL",
       PAUSED: "DUNNING_PAUSED",

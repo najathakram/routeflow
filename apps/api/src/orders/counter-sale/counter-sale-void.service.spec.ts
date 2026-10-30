@@ -21,6 +21,7 @@ const operator = {
   sub: "user-op",
   username: "operator",
   role: "OPERATOR" as const,
+  tenantId: "tenant-1", // W-870: the permission read is tenant-scoped
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -67,6 +68,7 @@ async function build(
           ...opts.order,
         };
   prisma.order.findFirst.mockResolvedValue(order);
+  prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group
   prisma.order.findUnique.mockImplementation(async (args: any) =>
     args?.select?.status ? { status: order?.status } : { ...order },
   );

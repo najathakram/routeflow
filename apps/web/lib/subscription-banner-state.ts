@@ -1,4 +1,4 @@
-import type { PaymentDueView, SubscriptionView } from "@routeflow/types";
+import { DUNNING_CLOCK, type PaymentDueView, type SubscriptionView } from "@routeflow/types";
 import { readOnlyCopyForView } from "./read-only-copy";
 
 /**
@@ -99,10 +99,9 @@ export interface BannerState {
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-/** Day 6 starts at +144 h (the server's d6 milestone); the pause waits for the first 03:00 after +168 h. */
-const FINAL_DAY_HOURS = 144;
-/** The grace window: the date the copy asks the admin to update by. */
-const GRACE_DAYS = 7;
+// SA-1037 r2 PR-6: the clock is the shared `DUNNING_CLOCK` (the server's literals are pinned equal to it): the last-day
+// strip starts at `lastDayHours` (+312 h, the server's last-day milestone); the pause waits for the first 03:00 after
+// `pauseHours` (+336 h, day 14); `graceDays` is the date the copy asks the admin to update by.
 const CARD_LINE_DAYS = 14;
 const CARD_STRIP_DAYS = 7;
 /** While a billing state shows, re-read the subscription at least this often so a payment clears the strip <= 60 s. */
@@ -313,8 +312,8 @@ export function subscriptionBannerState(
     if (view.billingState === "due" && !lockThreat) return NONE;
     const elapsedHours = sinceOk ? Math.max(0, (now.getTime() - sinceOk.getTime()) / HOUR_MS) : 0;
     // B2: the last-day escalation (amber, "read-only tomorrow") exists ONLY when the server really pauses
-    // (BILLING_PAUSE_MODE=enforced). In dark / off nothing will happen on day 7, so nothing is threatened.
-    if (lockThreat && elapsedHours >= FINAL_DAY_HOURS) {
+    // (BILLING_PAUSE_MODE=enforced). In dark / off nothing will happen on day 14, so nothing is threatened.
+    if (lockThreat && elapsedHours >= DUNNING_CLOCK.lastDayHours) {
       return {
         kind: "final-day",
         tone: "amber",
@@ -350,7 +349,7 @@ export function subscriptionBannerState(
     const forMonth = monthKnown ? ` for ${monthKnown}` : "";
     const dueBy =
       view.graceEndsLabel ??
-      (sinceOk ? utcDay(new Date(sinceOk.getTime() + GRACE_DAYS * DAY_MS)) : null);
+      (sinceOk ? utcDay(new Date(sinceOk.getTime() + DUNNING_CLOCK.graceDays * DAY_MS)) : null);
     // A deadline is only claimed when the pause is real AND we know the date; otherwise the neutral card-update copy.
     const adminCopy =
       lockThreat && dueBy
