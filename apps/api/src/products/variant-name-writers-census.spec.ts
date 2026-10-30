@@ -209,6 +209,11 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "test fixture: seeds a standalone product for the order-stock db specs (B284), never production",
     standalone: true,
   },
+  "src/orders/testing/units-fold-db-harness.ts": {
+    blocks: { "seedFoldTenant:create": 1 },
+    why: "test fixture: seeds standalone products for the D3 units-fold db specs (qa-ufold-* tenants), never production",
+    standalone: true,
+  },
   "src/import/variant-resolution.service.ts": {
     blocks: { "completeSetup:update": 1 },
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
