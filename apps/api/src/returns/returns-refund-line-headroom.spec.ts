@@ -129,14 +129,23 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("2+ creditable invoices keep today's lump-sum credit against the latest invoice (v1)", async () => {
-    withReturn(
-      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
-    );
+  // SA-1051: each invoice bills its OWN lines (distinct item ids), so the invoice the fill touched is unambiguous
+  const LINE_C = { id: "line-c", productId: "pc", qty: 1, subtotal: 100 };
+  const twoInvoices = () =>
+    order([invoice("inv-1"), { ...invoice("inv-2", [LINE_C]), createdAt: new Date("2026-02-01") }]);
+
+  it("2+ creditable invoices mint the lump-sum credit on the invoice the fill touched: A is billed on the OLDER one (SA-1051)", async () => {
+    withReturn(twoInvoices());
     await service.processRefund("ret-1");
     const arg = creditNotesCreate.mock.calls[0][0];
-    expect(arg.invoiceId).toBe("inv-2");
+    expect(arg.invoiceId).toBe("inv-1");
     expect(arg.items).toBeUndefined();
+  });
+
+  it("2+ creditable invoices: a product billed only on the LATEST invoice mints its lump there (SA-1051)", async () => {
+    withReturn(twoInvoices(), [{ productId: "pc", qty: 1 }]);
+    await service.processRefund("ret-1");
+    expect(creditNotesCreate.mock.calls[0][0].invoiceId).toBe("inv-2");
   });
 
   it("B947: 2+ creditable invoices: a refund whose product line on the OLDER invoice is already credited is REFUSED 409 before the claim, and nothing is minted", async () => {
@@ -158,17 +167,15 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     expect(prisma.return.updateMany).not.toHaveBeenCalled(); // before the RECEIVED->REFUNDED claim
   });
 
-  it("B947: a 2+ invoice refund that fits still mints the SAME lump sum on the latest invoice, and hands create() the returned products to re-check under its locks", async () => {
+  it("B947: a 2+ invoice refund that fits still mints the SAME lump sum (now on the invoice the fill touched, SA-1051), and hands create() the returned products to re-check under its locks", async () => {
     prisma.invoice.findMany.mockResolvedValue([
       { id: "inv-1", items: [LINE_A, LINE_B] },
       { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
     ]);
-    withReturn(
-      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
-    );
+    withReturn(twoInvoices());
     await service.processRefund("ret-1");
     const [arg, opts] = creditNotesCreate.mock.calls[0];
-    expect(arg.invoiceId).toBe("inv-2");
+    expect(arg.invoiceId).toBe("inv-1");
     expect(arg.items).toBeUndefined(); // the mint is unchanged: no items
     expect(opts).toEqual({
       ledgerReversedByReturn: true,

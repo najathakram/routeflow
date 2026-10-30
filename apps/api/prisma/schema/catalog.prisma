@@ -352,6 +352,7 @@ model StockMovement {
   @@index([effectiveAt])
   @@index([supplierId])
   @@index([tenantId])
+  @@index([tenantId, reference])
 }
 
 // ─── Purchase orders ────────────────────────────────────────────────

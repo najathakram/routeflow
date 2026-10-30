@@ -320,7 +320,14 @@ describe("CounterSaleTodayService: tenant scoping (test 7, unit half)", () => {
     const { prisma, call } = setup([]);
     await call({}, NOW);
     const where = prisma.return.findMany.mock.calls[0][0].where;
-    expect(where.order).toEqual({ tenantId: T, counterSale: true });
+    // W-829: counter sales, and Store pickup sales handed over at a till (stamped register)
+    expect(where.order).toEqual({
+      tenantId: T,
+      OR: [
+        { counterSale: true },
+        { counterSale: false, fulfillPath: "PICKUP", registerKey: { not: null } },
+      ],
+    });
     expect(where.order.createdAt).toBeUndefined();
     const start = iso("2026-10-07T04:00:00.000Z");
     const end = iso("2026-10-08T04:00:00.000Z");

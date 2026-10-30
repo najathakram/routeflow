@@ -50,7 +50,14 @@ const OPENER_ROW =
   "[&[data-last-opened=reset]>*:has([data-testid=units-v2-reset-panel])]:order-[10000]";
 
 /** Add a unit + Reset all to Auto, above the grid. */
-export function UnitStructureControls({ productId }: { productId: string }) {
+export function UnitStructureControls({
+  productId,
+  noPack = false,
+}: {
+  productId: string;
+  /** SA-984 D2: the product has no pack size (unitsPerBox null, 0 or 1). */
+  noPack?: boolean;
+}) {
   const draft = usePriceDraft();
   const gridQuery = usePriceGrid(productId);
   const served = gridQuery.data;
@@ -153,6 +160,7 @@ export function UnitStructureControls({ productId }: { productId: string }) {
           hintId={hintId}
           pieceMissing={pieceMissing}
           prefillPiece={prefillPiece}
+          noPack={noPack}
           validatePrice={cellPriceProblem}
           onOpen={() => {
             setNote("");

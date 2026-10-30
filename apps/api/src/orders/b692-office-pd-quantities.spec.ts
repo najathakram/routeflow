@@ -249,7 +249,7 @@ describe("(b) deliveries[] are the quantities: stamped from evidence rows, then 
       } as never),
     );
     const credits = prisma.product.update.mock.calls.map(
-      (c) => (c[0] as any).data.currentStock.increment,
+      (c) => Number((c[0] as any).data.currentStock) - 50,
     );
     expect(credits).toEqual([4]); // red on master: [10] (the stamp never happened)
   });

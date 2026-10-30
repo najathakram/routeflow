@@ -74,7 +74,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
-import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   basePriceText,
@@ -115,7 +115,12 @@ import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
-import { useTenantTimeZone } from "@/lib/tenant-timezone";
+import {
+  tenantDateOf,
+  tenantTodayIso,
+  useResyncOnZone,
+  useTenantTimeZone,
+} from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
@@ -380,11 +385,6 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** YYYY-MM-DD slice of a stored timestamp, for a native date input. */
-function dateInputValue(iso?: string | null): string {
-  return iso ? new Date(iso).toISOString().slice(0, 10) : "";
-}
-
 function RecordPaymentModal({
   isOpen,
   onClose,
@@ -401,14 +401,18 @@ function RecordPaymentModal({
   /** SA-824: the unknown-outcome "Check payment status" state (Record is off while it is unknown). */
   statusCheck: PaymentStatusCheckState;
 }) {
+  const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
-    paidAt: todayIso(),
+    paidAt: tenantTodayIso(zone),
     settledAt: "",
     reference: "",
     notes: "",
   });
+  useResyncOnZone(zone, tenantTodayIso, form.paidAt, (paidAt) =>
+    setForm((f) => ({ ...f, paidAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const [file, setFile] = React.useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -418,7 +422,7 @@ function RecordPaymentModal({
       setForm({
         method: "ACH",
         amount: balanceDue > 0 ? balanceDue.toFixed(2) : "",
-        paidAt: todayIso(),
+        paidAt: tenantTodayIso(zone),
         settledAt: "",
         reference: "",
         notes: "",
@@ -426,6 +430,7 @@ function RecordPaymentModal({
       setAmountError("");
       setFile(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SA-943: the zone arriving mid-open must not wipe what was typed
   }, [isOpen, balanceDue]);
 
   function handleSubmit(e: React.FormEvent) {
@@ -703,14 +708,28 @@ function EditPaymentModal({
   isPending: boolean;
 }) {
   const { toast } = useToast();
+  const zone = useTenantTimeZone(); // SA-943: the edit box shows the stored instant's TENANT-local day
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
-    paidAt: todayIso(),
+    paidAt: tenantTodayIso(zone),
     settledAt: "",
     reference: "",
     notes: "",
   });
+  // The edit box shows the stored instants in the zone that arrives after the modal opened.
+  useResyncOnZone(
+    zone,
+    (z) => (payment ? tenantDateOf(payment.paidAt ?? payment.createdAt, z) : tenantTodayIso(z)),
+    form.paidAt,
+    (paidAt) => setForm((f) => ({ ...f, paidAt })),
+  );
+  useResyncOnZone(
+    zone,
+    (z) => tenantDateOf(payment?.settledAt, z),
+    form.settledAt,
+    (settledAt) => setForm((f) => ({ ...f, settledAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const imageFileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPaymentImage = useUploadPaymentImage();
@@ -722,13 +741,14 @@ function EditPaymentModal({
       setForm({
         method: payment.method as PaymentFormState["method"],
         amount: Number(payment.amount).toFixed(2),
-        paidAt: dateInputValue(payment.paidAt ?? payment.createdAt),
-        settledAt: dateInputValue(payment.settledAt),
+        paidAt: tenantDateOf(payment.paidAt ?? payment.createdAt, zone),
+        settledAt: tenantDateOf(payment.settledAt, zone),
         reference: payment.reference ?? "",
         notes: payment.notes ?? "",
       });
       setAmountError("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SA-943: the zone arriving mid-open must not wipe what was typed
   }, [isOpen, payment]);
 
   function handleViewImage() {

@@ -25,6 +25,8 @@ export const CUSTOMER_ORDER_FIELDS = [
   "id",
   "orderNumber",
   "status",
+  // Row 380: the edit revision a buyer edit sends back (a 409 ORDER_REVISION_STALE when it is behind).
+  "revisionNumber",
   "createdAt",
   "requestedDeliveryDate",
   "deliveredAt",

@@ -19,6 +19,7 @@ import { AddonService } from "../billing/addon.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 const user = (role: string, sub = "u1"): JwtPayload =>
   ({ sub, role, tenantId: "t1", tenantSlug: "acme", status: "ACTIVE" }) as JwtPayload;
@@ -67,6 +68,7 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     tx = prisma; // the mock client doubles as the tx client
     quote = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {
