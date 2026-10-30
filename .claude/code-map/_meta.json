@@ -1,6 +1,6 @@
 {
-  "mappedSha": "f732d6209f3e1346607dcabb7b0bb4b222eaedc9",
-  "generatedAt": "2026-10-30T15:09:41.273Z",
+  "mappedSha": "69f92c761e6305937e568c4d5b8dcb6d29b9b13e",
+  "generatedAt": "2026-10-30T17:18:39.042Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "**2026-10-30 — Bookkeeping catch-up for 75f433f56..f732d6209f (trains W26r, W27, W28b + #3989 #3982 #3895 #3988; docs-only).** See CHANGELOG.md for the full history; never accumulate it here."
+  "notes": "2026-10-30 W29c (merge 69f92c761e): api/web/packages landing notes + TOC rows; see CHANGELOG.md."
 }
