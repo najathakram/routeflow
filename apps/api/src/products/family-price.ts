@@ -86,6 +86,19 @@ export function variantPriceWriteDecision(input: {
   return { allow: want.every((value, i) => value === got[i]) };
 }
 
+/**
+ * The family that owns a governed product's price: its parent, else the family its recipe links to
+ * (SA-1041 A-2). Never the product itself; a "family" verdict without either is a broken invariant.
+ */
+export function familyOwnerIdOf(p: {
+  parentProductId?: string | null;
+  recipeFamilyId?: string | null;
+}): string {
+  const id = p.parentProductId ?? p.recipeFamilyId;
+  if (!id) throw new Error("price authority is family but the product has no owning family");
+  return id;
+}
+
 export function familyPriceAuthorityError(familyId: string): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.FAMILY_PRICE_AUTHORITY,
@@ -111,6 +124,20 @@ export async function readFamilyPriceMode(
   } catch {
     return "off";
   }
+}
+
+/** The family a RECIPE product's latest recipe links to, or null when it has no recipe. */
+export async function recipeFamilyIdOf(
+  db: Pick<CatalogTx, "recipe">,
+  tenantId: string,
+  productId: string,
+): Promise<string | null> {
+  const recipe: { familyProductId: string } | null = await db.recipe.findFirst({
+    where: { productId, tenantId },
+    orderBy: { version: "desc" },
+    select: { familyProductId: true },
+  });
+  return recipe?.familyProductId ?? null;
 }
 
 /** `SELECT … FOR UPDATE` on the family Product row: every family-price writer takes it first. */
@@ -287,15 +314,11 @@ export async function applyFamilyPriceBeforeUpdate(
 
   if (existing.kind === "RECIPE") {
     if (existing.familyPriceOverride) return { propagate: false };
-    const recipe: { familyProductId: string } | null = await tx.recipe.findFirst({
-      where: { productId: id, tenantId },
-      orderBy: { version: "desc" },
-      select: { familyProductId: true },
-    });
-    if (!recipe) return { propagate: false };
-    const family = await loadLockedFamilyPrices(tx, tenantId, recipe.familyProductId);
+    const recipeFamilyId = await recipeFamilyIdOf(tx, tenantId, id);
+    if (!recipeFamilyId) return { propagate: false };
+    const family = await loadLockedFamilyPrices(tx, tenantId, recipeFamilyId);
     if (!variantPriceWriteDecision({ mode: "on", governed: true, dto, family }).allow) {
-      throw familyPriceAuthorityError(recipe.familyProductId);
+      throw familyPriceAuthorityError(recipeFamilyId);
     }
     dropPriceKeys();
     return { propagate: false };

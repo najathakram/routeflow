@@ -47,6 +47,8 @@ Run the two verifiers **in parallel** — independent review is the one place fa
 Run builders **one per file set**, and for anything touching money math or tenant scoping, one
 agent at a time. Parallel implementation is how two agents editing the same DTO drift apart.
 
+A feature with more than one slice gets a `docs/plans/<slug>.plan.json` (format and checker: `docs/plans/README.md`, `node scripts/plan.mjs`); the lane brief cites slice ids, not prose.
+
 ## Commands
 
 ```bash

@@ -7,7 +7,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
  * (an internal caller) the service judges nothing, so the controller must always pass `user.sub`.
  */
 describe("InvoicesController — the acting user reaches create/update (H3b)", () => {
-  const service = { create: jest.fn(), update: jest.fn() };
+  const service = { create: jest.fn(), update: jest.fn(), voidInvoice: jest.fn() };
   const controller = new InvoicesController(service as never, {} as never);
   const user = { sub: "user-1" } as JwtPayload;
 
@@ -18,6 +18,11 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
     await controller.create(dto, user);
     // SA-982 PR-2: POST /invoices alone names the invoices.manual census site (a recurring run passes none)
     expect(service.create).toHaveBeenCalledWith(dto, user, { warnSite: "invoices.manual" });
+  });
+
+  it("void passes the id and the acting user (W-870: VOID_SALE needs the principal)", async () => {
+    await controller.void("inv-1", user);
+    expect(service.voidInvoice).toHaveBeenCalledWith("inv-1", user);
   });
 
   it("update passes the id, the body and the whole actor (row 510 override needs the role)", async () => {

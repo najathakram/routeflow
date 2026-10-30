@@ -160,6 +160,9 @@ const NON_WRITERS = new Set([
   // SA-841 (B207): a read-only live-pack MAP for foldMergeItems; it writes no line, and the stored-line merge reads it
   // only for a line with no pack of its own (SA-104a(4)). Kept out of orders.service.ts so that file's count stays 15.
   "orders/live-pack-map.ts",
+  // SA-1027: the catalog-copy script READS a source product's pack columns (unitsPerBox among them) into the pure plan,
+  // which hands them whole to ProductsService.create; it builds no order or invoice line and derives no factor/price.
+  "catalog-copy/catalog-copy.service.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

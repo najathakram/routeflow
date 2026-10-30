@@ -184,20 +184,20 @@ describe("DunningService.discover (daily open-invoice discovery)", () => {
   });
 
   describe("a 40-day-old never-attempted invoice gets a FULL runway (a REAL hourly sweep decides)", () => {
-    it("discovery stamps the STAMP time; the sweep does NOT pause at +167 h and DOES at +168 h", async () => {
+    it("discovery stamps the STAMP time; the sweep does NOT pause at +335 h and DOES at +336 h", async () => {
       process.env.BILLING_PAUSE_MODE = "enforced";
       const d = make({ rows: [subRow("t1")], invoices: { sub_t1: [inv("in_old", 40 * 24)] } });
       await d.svc.discover(NOW);
       const stamped = d.tx.tenantSubscription.updateMany.mock.calls[0][0].data;
       expect(stamped).toEqual({ pastDueSince: NOW, pastDueInvoiceId: "in_old" });
 
-      // this episode's final notice went out at +144 h; NOW is 04:00 UTC so the pause hour is reached at both checks
-      const finalAt = new Date(NOW.getTime() + 144 * H);
+      // this episode's final notice went out at +312 h; NOW is 04:00 UTC so the pause hour is reached at both checks
+      const finalAt = new Date(NOW.getTime() + 312 * H);
       const early = sweepWorld(stamped, finalAt);
-      expect((await early.svc.sweep(new Date(NOW.getTime() + 167 * H))).paused).toBe(0);
+      expect((await early.svc.sweep(new Date(NOW.getTime() + 335 * H))).paused).toBe(0);
       expect(early.transition).not.toHaveBeenCalled();
       const due = sweepWorld(stamped, finalAt);
-      expect((await due.svc.sweep(new Date(NOW.getTime() + 168 * H))).paused).toBe(1);
+      expect((await due.svc.sweep(new Date(NOW.getTime() + 336 * H))).paused).toBe(1);
     });
   });
 

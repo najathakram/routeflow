@@ -968,7 +968,7 @@ export default function DashboardPage() {
             {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
             {quickCreate.storeOnly &&
             counterGate.permsKnown &&
-            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups) ? (
+            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups ?? []) ? (
               <WriteButton
                 href="/orders?action=new&builder=1"
                 size="sm"
@@ -1190,11 +1190,12 @@ export default function DashboardPage() {
           aria-busy={ordersLoading}
           aria-hidden={ordersLoading ? true : undefined}
           className={cn(
-            "overflow-x-auto rounded-lg border border-surface-border bg-white shadow-card",
+            "overflow-hidden rounded-lg border border-surface-border bg-white shadow-card",
             ordersLoading && "animate-pulse [&_span]:invisible",
           )}
         >
-          <div className="grid min-w-[624px] grid-cols-6 divide-x divide-surface-border">
+          {/* W-1016: three by two on a phone (no inner scroll, so no tile starts half-hidden), six across from sm up */}
+          <div className="grid grid-cols-3 sm:grid-cols-6">
             {PIPELINE_STATUSES.map((key) => {
               const tile = PIPELINE_TILES[key];
               const { color, bg } = tile;
@@ -1205,7 +1206,8 @@ export default function DashboardPage() {
                   href={`/orders?status=${key}`}
                   tabIndex={ordersLoading ? -1 : undefined}
                   className={cn(
-                    "flex flex-col gap-1 whitespace-nowrap px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
+                    "flex flex-col gap-1 border-surface-border px-3 py-[13px] transition-colors hover:bg-surface-raised sm:whitespace-nowrap sm:px-[18px]",
+                    "max-sm:[&:not(:nth-child(3n+1))]:border-l max-sm:[&:nth-child(n+4)]:border-t sm:[&:not(:first-child)]:border-l",
                     bg && (orderPipeline[key] ?? 0) > 0 && bg,
                   )}
                 >

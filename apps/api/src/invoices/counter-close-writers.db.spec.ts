@@ -53,6 +53,7 @@ import { counterCloseKeyOf } from "../returns/counter-close-lock";
 import { _resetLockPoolForTests, withAdvisoryLock } from "../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { TILL_ADMIN } from "../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -274,12 +275,12 @@ describeDb("the end-of-day close and every writer of till money, real Postgres (
   }
 
   const paths = {
-    void: (t: string, inv: string, p: string) => invoices.voidPayment(inv, p),
-    delete: (t: string, inv: string, p: string) => invoices.deletePayment(inv, p),
+    void: (t: string, inv: string, p: string) => invoices.voidPayment(inv, p, TILL_ADMIN),
+    delete: (t: string, inv: string, p: string) => invoices.deletePayment(inv, p, TILL_ADMIN),
     edit: (t: string, inv: string, p: string) =>
-      invoices.updatePayment(inv, p, { amount: 40, method: "CASH" } as any),
+      invoices.updatePayment(inv, p, { amount: 40, method: "CASH" } as any, { user: TILL_ADMIN }),
     bounced: (t: string, inv: string, p: string) =>
-      invoices.setCheckStatus(inv, p, { status: "BOUNCED", nsfFeeAmount: 25 } as any),
+      invoices.setCheckStatus(inv, p, { status: "BOUNCED", nsfFeeAmount: 25 } as any, TILL_ADMIN),
   } as const;
   const methodOf = (path: keyof typeof paths) => (path === "bounced" ? "CHECK" : "CASH");
 
@@ -365,11 +366,16 @@ describeDb("the end-of-day close and every writer of till money, real Postgres (
 
       const err: any = await tenantCtx
         .run(s.tenantId, () =>
-          invoices.updatePayment(s.invoiceId, p.id, {
-            amount: 30,
-            method: "CASH",
-            paidAt: new Date(Date.now() - 60 * MIN).toISOString(),
-          } as any),
+          invoices.updatePayment(
+            s.invoiceId,
+            p.id,
+            {
+              amount: 30,
+              method: "CASH",
+              paidAt: new Date(Date.now() - 60 * MIN).toISOString(),
+            } as any,
+            { user: TILL_ADMIN },
+          ),
         )
         .catch((e: unknown) => e);
 
