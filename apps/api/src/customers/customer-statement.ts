@@ -8,6 +8,7 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { KPI_SUMMARY_EXCLUDED, LIFETIME_INVOICED_EXCLUDED } from "../invoices/invoice-status-sets";
+import { sweepableCredits } from "../credit-notes/auto-apply-candidates";
 import { loadCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import {
   classifyInvoiceBalance,
@@ -282,6 +283,7 @@ export async function buildOperatorStatement(
     lifetimeInvoicedAgg,
     lifetimeReceivedAgg,
     exposure,
+    sweepable,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
       // DRAFT is excluded with the settled/dead/forgiven statuses: a
@@ -352,6 +354,15 @@ export async function buildOperatorStatement(
     // D6 / B462: operator-only exposure (the credit block's own derivation); null = not asked.
     opts?.includeExposure
       ? loadCreditExposure(prisma.forTenant(), customerId)
+      : Promise.resolve(null),
+    // SA-998: operator-only, the credit the send-time sweep would apply (0 when the tenant's sweep is off); the
+    // counter's check/card part-pay cap reads it. availableCredit above stays the display wallet.
+    opts?.includeExposure
+      ? sweepableCredits(prisma.forTenant(), {
+          tenantId: prisma.getTenantId(),
+          customerId,
+          now: new Date(),
+        })
       : Promise.resolve(null),
   ]);
 
@@ -474,6 +485,12 @@ export async function buildOperatorStatement(
       ? {
           creditExposure: roundMoney(exposure.counted),
           pendingExposure: roundMoney(exposure.pendingExposure),
+          autoApplyCredit: roundMoney(
+            (sweepable ?? []).reduce(
+              (sum: number, n: any) => sum + (Number(n.amount) - Number(n.amountUsed)),
+              0,
+            ),
+          ),
         }
       : {}),
     // SA-1026 (staff only, same flag as the exposure): the buyer's read of this builder never gets the key
