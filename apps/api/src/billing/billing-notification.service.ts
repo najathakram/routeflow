@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { accountAdminsOf } from "./account-admins";
 import { resolveZone } from "../common/tenant-time-zone";
 import { EmailService } from "../email/email.service";
 import {
@@ -98,14 +99,8 @@ export class BillingNotificationService {
   /** Fix round (finding 8): every ACTIVE tenant admin, not just the first — a tenant can have
    *  more than one, and all of them should hear about a billing-lifecycle event. */
   private async adminsOf(tenantId: string): Promise<AdminContact[]> {
-    const admins = await this.prisma.user.findMany({
-      where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
-      select: { email: true, username: true },
-      orderBy: { createdAt: "asc" },
-    });
-    return admins
-      .filter((a) => !!a.email)
-      .map((a) => ({ email: a.email, name: a.username ?? a.email }));
+    const admins = await accountAdminsOf(this.prisma, tenantId);
+    return admins.map((a) => ({ email: a.email, name: a.username ?? a.email }));
   }
 
   private async businessNameOf(tenantId: string): Promise<string> {
