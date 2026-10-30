@@ -1091,7 +1091,9 @@ export class PlatformAdminController {
 
   @Patch("ai-config")
   @ApiOperation({ summary: "Update platform-wide Claude AI configuration" })
-  updateAiConfig(@Body() dto: { apiKey?: string; model?: string; maxTokens?: number }) {
+  updateAiConfig(
+    @Body() dto: { apiKey?: string; model?: string; scanModel?: string; maxTokens?: number },
+  ) {
     return this.platformConfig.updateAiConfig(dto);
   }
 

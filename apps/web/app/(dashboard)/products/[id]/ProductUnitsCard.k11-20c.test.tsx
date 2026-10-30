@@ -386,11 +386,10 @@ describe("K11-20c card: flag off and governed products are unchanged", () => {
     expect(screen.queryByRole("button", { name: "Edit prices" })).toBeNull();
   });
 
-  it("a variant keeps its price inputs and Price field even with the host (the window cannot edit it)", () => {
+  it("SA-1041: a variant gets the host's price window like any product (its units are its own)", () => {
     render(<Page product={{ ...PRODUCT, parentProductId: "fam-1" }} />);
     openTiers();
-    expect(priceInputs().length).toBeGreaterThanOrEqual(5);
-    expect(screen.queryByRole("button", { name: "Edit Retail Box price" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit prices" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit Retail Box price" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit prices" })).toBeInTheDocument();
   });
 });
