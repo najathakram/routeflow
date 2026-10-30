@@ -36,16 +36,6 @@ export interface ProductCountResult {
   movementId: string | null;
 }
 
-/** Labels shared by web and mobile, in picker order. */
-export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReason, string> = {
-  COUNT_CORRECTION: "Count correction",
-  DAMAGED: "Damaged",
-  EXPIRED: "Expired",
-  THEFT: "Theft or loss",
-  SAMPLE: "Sample",
-  OTHER: "Other",
-};
-
 /** OTHER needs a note of this length (SA-804(3)). */
 export const ADJUSTMENT_REASON_NOTE_MIN = 3;
 export const ADJUSTMENT_REASON_NOTE_MAX = 200;

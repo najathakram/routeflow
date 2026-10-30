@@ -355,6 +355,16 @@ export const ADJUSTMENT_REASON_VALUES = [
 ] as const;
 export type AdjustmentReason = (typeof ADJUSTMENT_REASON_VALUES)[number];
 
+/** Labels shared by web and mobile, in picker order. */
+export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReason, string> = {
+  COUNT_CORRECTION: "Count correction",
+  DAMAGED: "Damaged",
+  EXPIRED: "Expired",
+  THEFT: "Theft or loss",
+  SAMPLE: "Sample",
+  OTHER: "Other",
+};
+
 export const CRM_CONNECTION_STATUS_VALUES = [
   "CONNECTED",
   "NEEDS_ATTENTION",
