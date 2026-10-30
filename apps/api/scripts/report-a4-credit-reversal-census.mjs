@@ -93,12 +93,15 @@ export async function runReadOnly(pool, db, census) {
   if (session !== "on") throw notReadOnly("on the session", session);
   let result;
   try {
-    await db.$transaction(async (tx) => {
-      const flag = readOnlyFlag(await tx.$queryRawUnsafe(SHOW_READ_ONLY));
-      if (flag !== "on") throw notReadOnly("in the transaction", flag);
-      result = await census(tx);
-      throw ROLLBACK;
-    });
+    await db.$transaction(
+      async (tx) => {
+        const flag = readOnlyFlag(await tx.$queryRawUnsafe(SHOW_READ_ONLY));
+        if (flag !== "on") throw notReadOnly("in the transaction", flag);
+        result = await census(tx);
+        throw ROLLBACK;
+      },
+      { timeout: 120_000 },
+    ); // Prisma's 5 s default would fail safe but waste an owner run on production-sized tables
   } catch (e) {
     if (e !== ROLLBACK) throw e;
   }
