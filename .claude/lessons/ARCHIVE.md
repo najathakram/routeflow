@@ -4483,3 +4483,19 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Before replacing a fetch-all with a narrower read, list every consumer of that data on the page and name what each needs (distinct values, a few rows, the full set). Swap only where the narrow read serves all of them; keep a deliberate fetch-all with a comment naming the consumer, and give each swap its own revert-able commit.**
 - **Guard:** none automatic; the remaining fetch-alls carry a DELIBERATE comment naming their consumer (products, promotions, purchase-orders, suppliers pages). Cf. [[L-167]].
 
+## Archived 2026-10-30 — zero outside citations; headroom for L-359, L-360 (bookkeeping for W29c)
+
+### L-336 · 2026-10-22 · testing · a layout change to a cell or control is proven in a browser hit-test at every width; jsdom cannot see an overlap
+
+- **Symptom:** row 688's invoice-edit Boxes + Pieces inputs passed every unit test, but in the browser Pieces sat UNDER Unit Price at 1440, 768 and 390 (`elementFromPoint` at its centre returned Unit Price), so loose pieces could not be reached by mouse. #3564 merged without UI captures; the proof of #3570 found it.
+- **Root cause:** jsdom computes no layout, so a control squeezed out of a 70 px grid column renders "fine" there; the unit tests checked values and labels, never geometry.
+- **Lesson:** **Any change that adds or resizes controls in a fixed-width cell, row or bar ships with a browser proof at 1440/768/390: a hit-test that the centre of each control resolves to that control, 44 px targets, and no horizontal overflow, kept as a permanent e2e spec on the local lane. Capture before merge, not after.**
+- **Guard:** `apps/web/e2e/78-invoice-edit-boxed-qty-hit.spec.ts` (project `invoice-edit-boxed-qty-hit`, on the `local:e2e` allow-list). Cf. [[L-334]].
+
+### L-341 · 2026-10-24 · domain · a price read gates on error and paused states, not only loading, through one shared gate (#3658, #3665, #3670)
+
+- **Symptom:** when the customer-prices read failed, or paused offline, scan and search stayed open and every pick was priced at LIST, or at the tier with per-product overrides dropped.
+- **Root cause:** the gates checked `isLoading` only (in TanStack Query v5 a paused or failed query is not loading), and each web and mobile screen hand-rolled its own `?? tier ?? 1` fallback chain.
+- **Lesson:** **A money read fails closed on error, paused and missing data, not just loading: the pick and the save are blocked until the read confirms. One shared gate decides it; no screen keeps its own tier fallback.**
+- **Guard:** `packages/pricing/src/customer-pricing-gate.spec.ts`, `apps/mobile/__tests__/customer-tier-fallback-pin.test.ts`, web `page.pricing-gate-w725.test.tsx`.
+

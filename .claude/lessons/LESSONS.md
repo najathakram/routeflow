@@ -12,6 +12,13 @@
 
 ## process
 
+### L-359 · 2026-10-30 · process · a train is pushed only after the CI-equivalent verify; type-checks plus one test file is not a gate, and CI is read by its closing Failed line
+
+- **Symptom:** a 13-member train pushed after clean merges, api and web type-checks and one test file went red in CI in three members (a web suite pinning an older unit rule, an api spec expecting another warning code, a writer-inventory spec). The first read of the log took one lane's "passed" counts for the whole api.
+- **Root cause:** each member's PASS was read at its own head; master-wide pins only fail on the merged tree, and the pre-push verify was skipped. A workspace's log holds several test lanes, so one lane's counts are not its result.
+- **Lesson:** **Run the CI Verify equivalent in the train tree (`FULL_VERIFY=1 npm run verify`) through the heavy slot and read it to the end before pushing a train; with a T1 member add the full DB lanes. Read CI by the closing `Failed:` line, never by one lane's counts.**
+- **Guard:** the train PR body states the command and the counts. Cf. [[L-353]].
+
 ### L-355 · 2026-10-30 · process · a train built on an older master proves carry-over by the old-to-new delta being only master files, byte-identical, not by a patch-id against a moved master
 
 - **Symptom:** a re-pinned train showed a "different" patch-id from the gated sha; the comparison had been run against the wrong master, so a safe update looked like drift.
@@ -198,13 +205,6 @@
 - **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
 - **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335.
 
-### L-336 · 2026-10-22 · testing · a layout change to a cell or control is proven in a browser hit-test at every width; jsdom cannot see an overlap
-
-- **Symptom:** row 688's invoice-edit Boxes + Pieces inputs passed every unit test, but in the browser Pieces sat UNDER Unit Price at 1440, 768 and 390 (`elementFromPoint` at its centre returned Unit Price), so loose pieces could not be reached by mouse. #3564 merged without UI captures; the proof of #3570 found it.
-- **Root cause:** jsdom computes no layout, so a control squeezed out of a 70 px grid column renders "fine" there; the unit tests checked values and labels, never geometry.
-- **Lesson:** **Any change that adds or resizes controls in a fixed-width cell, row or bar ships with a browser proof at 1440/768/390: a hit-test that the centre of each control resolves to that control, 44 px targets, and no horizontal overflow, kept as a permanent e2e spec on the local lane. Capture before merge, not after.**
-- **Guard:** `apps/web/e2e/78-invoice-edit-boxed-qty-hit.spec.ts` (project `invoice-edit-boxed-qty-hit`, on the `local:e2e` allow-list). Cf. [[L-334]].
-
 ### L-322 · 2026-10-20 · testing · a move-only extraction re-runs the static source-pin specs, and the pin reads the moved files too
 
 - **Symptom:** a refactor that only moved code into new files passed a move-only review and its unit tests, then failed the pre-push run: specs that read a source file's text and assert on it no longer found the code.
@@ -334,13 +334,6 @@
 - **Lesson:** **An update contract needs three states: a value sets, `null` clears, an absent key leaves alone. Type update DTOs as `string | null` and convert an emptied input to `null`. A cleared identifier carries no dedupe identity.**
 - **Guard:** `apps/mobile/lib/clearable-field.ts`, `UpdateInvoicePaymentDto` `reference`/`notes: string | null`, `payment-edit-ref.db.spec.ts`.
 
-### L-341 · 2026-10-24 · domain · a price read gates on error and paused states, not only loading, through one shared gate (#3658, #3665, #3670)
-
-- **Symptom:** when the customer-prices read failed, or paused offline, scan and search stayed open and every pick was priced at LIST, or at the tier with per-product overrides dropped.
-- **Root cause:** the gates checked `isLoading` only (in TanStack Query v5 a paused or failed query is not loading), and each web and mobile screen hand-rolled its own `?? tier ?? 1` fallback chain.
-- **Lesson:** **A money read fails closed on error, paused and missing data, not just loading: the pick and the save are blocked until the read confirms. One shared gate decides it; no screen keeps its own tier fallback.**
-- **Guard:** `packages/pricing/src/customer-pricing-gate.spec.ts`, `apps/mobile/__tests__/customer-tier-fallback-pin.test.ts`, web `page.pricing-gate-w725.test.tsx`.
-
 ### L-340 · 2026-10-24 · domain · one declared row-lock order, a pin that classifies every lock site, and no exception map that grows (#3680, #3697)
 
 - **Symptom:** customer merge, refund, credit-note create and credit restore deadlocked 20 of 20 times in barrier specs. A retry wrapper hid it, and the second path surfaced as a 500.
@@ -453,6 +446,13 @@
   named query params on any new route.
 
 ## deploy
+
+### L-360 · 2026-10-30 · deploy · a landing is deployed only when every service status on the merge commit is SUCCESS; the repo has more than api and web
+
+- **Symptom:** a train merge showed api and web SUCCESS while the mobile service failed. A gate that named "both services" would have called the landing done.
+- **Root cause:** the deploy gate counted two services, but the commit carries one status per Railway service (api, web, mobile and the root), and mobile builds from the same packages and lockfile.
+- **Lesson:** **Read every status context on the merge commit (`gh api repos/<owner>/<repo>/commits/<sha>/status`). A landing is done when none is failure or pending, and a failed one is read before anything else ships.**
+- **Guard:** the window script prints every context and stops on any failure; the runbook wording is owed.
 
 ### L-357 · 2026-10-30 · deploy · size a public window as merges plus deploys; start every CI run when the window opens
 
