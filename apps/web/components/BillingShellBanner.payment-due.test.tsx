@@ -136,7 +136,9 @@ describe("BillingShellBanner - payment due slot", () => {
   });
 
   it("the final day keeps the strip", async () => {
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(6)} userRole="TENANT_ADMIN" />);
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={view(13)} userRole="TENANT_ADMIN" />,
+    );
     expect(await screen.findByTestId("subscription-strip")).toHaveAttribute(
       "data-state",
       "final-day",
@@ -219,7 +221,9 @@ describe("BillingShellBanner - card reminder slot", () => {
 
   it("the final day keeps the strip", async () => {
     mockDue = REMINDER;
-    renderWithProviders(<BillingShellBanner scope="acme" view={view(6)} userRole="TENANT_ADMIN" />);
+    renderWithProviders(
+      <BillingShellBanner scope="acme" view={view(13)} userRole="TENANT_ADMIN" />,
+    );
     expect(await screen.findByTestId("subscription-strip")).toHaveAttribute(
       "data-state",
       "final-day",
