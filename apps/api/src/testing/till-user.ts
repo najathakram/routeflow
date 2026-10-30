@@ -38,17 +38,3 @@ export function tillCalls<S extends TillPaymentService>(get: () => S) {
       get().updatePayment(inv, pay, dto as never, { user: TILL_ADMIN }),
   };
 }
-
-/**
- * W-870: the module mock for `till-permission.guard` in a spec that is not about the permission check. The real
- * `operatorDeniedGroups` reads the user's permissions row; a mocked Prisma has none, so a fail-closed read would deny
- * every group to an OPERATOR. Use as
- * `jest.mock("<rel>/orders/counter-sale/till-permission.guard", () => require("<rel>/testing/till-user").tillGuardMock())`;
- * pass the groups to deny for a spec that is about a denial.
- */
-export function tillGuardMock(denied: readonly string[] = []) {
-  return {
-    ...jest.requireActual("../orders/counter-sale/till-permission.guard"),
-    operatorDeniedGroups: async () => [...denied],
-  };
-}

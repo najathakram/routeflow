@@ -1,7 +1,3 @@
-// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
-jest.mock("../orders/counter-sale/till-permission.guard", () =>
-  require("../testing/till-user").tillGuardMock(),
-);
 /**
  * Units S19 (flag.units_prices_v2): a manual invoice line is judged against the customer's TYPED unit price, not the
  * tier price. Flag off, or no typed row: master's baseline, no entitlement lookup for the new flag.

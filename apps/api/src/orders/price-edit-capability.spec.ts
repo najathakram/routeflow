@@ -1,7 +1,3 @@
-// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
-jest.mock("./counter-sale/till-permission.guard", () =>
-  require("../testing/till-user").tillGuardMock(),
-);
 /**
  * SA-1034: the price-edit capability is checked at every override site (staff-override.ts
  * `assertPriceEditAllowed`, sites pinned in price-edit-sites.pin.spec.ts). Each site's value comes from

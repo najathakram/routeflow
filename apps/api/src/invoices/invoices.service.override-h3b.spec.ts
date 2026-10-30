@@ -1,7 +1,3 @@
-// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
-jest.mock("../orders/counter-sale/till-permission.guard", () =>
-  require("../testing/till-user").tillGuardMock(),
-);
 /**
  * H3b — InvoicesService.create / update judge a typed price against the customer's TIER price and stamp
  * the line (priceType, originalPrice, overrideReason, overriddenBy), exactly as POST /orders/sell does.

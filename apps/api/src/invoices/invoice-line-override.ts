@@ -1,5 +1,4 @@
 import { BadRequestException } from "@nestjs/common";
-import { UserRole } from "@prisma/client";
 import {
   InvalidTierError,
   UnknownUnitError,
@@ -15,8 +14,6 @@ import {
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { staffMay } from "../auth/permissions/staff-capabilities";
-import type { PrismaService } from "../prisma/prisma.service";
-import { operatorDeniedGroups } from "../orders/counter-sale/till-permission.guard";
 import {
   assertPriceEditAllowed,
   decideTierOverride,
@@ -130,20 +127,11 @@ export async function loadOverride(
     items,
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
   ladders: ReadonlyMap<string, readonly LadderUnit[]>,
-  actor: { sub?: string; tenantId?: string | null; role?: string | null } | undefined,
+  actor: { sub?: string; role?: string | null } | undefined,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
 ): Promise<LineOverrideCtx | undefined> {
   const actorId = actor?.sub;
   if (!actorId) return undefined;
-  // W-870: the OPERATOR's live denied groups, read once here before any transaction or lock (nobody else is read for).
-  const deniedGroups =
-    actor?.role === UserRole.OPERATOR
-      ? await operatorDeniedGroups(prisma as unknown as PrismaService, {
-          sub: actorId,
-          tenantId: actor.tenantId ?? null,
-          role: UserRole.OPERATOR,
-        })
-      : [];
   const db = prisma.forTenant();
   const ids = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const customer = await db.customer.findFirst({
@@ -161,7 +149,8 @@ export async function loadOverride(
   const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
   return {
     actorId,
-    priceEditAllowed: staffMay(actor?.role, "EDIT_LINE_PRICE", deniedGroups),
+    // SA-1034: the operator's denied groups arrive with the permissions rollout.
+    priceEditAllowed: staffMay(actor?.role, "EDIT_LINE_PRICE", []),
     ladders,
     tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
     layerOf: pc.layer,
