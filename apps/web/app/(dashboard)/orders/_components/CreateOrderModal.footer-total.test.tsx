@@ -80,7 +80,7 @@ describe("CreateOrderModal footer total (O3, P01/P02)", () => {
     await addBigLine();
     const total = await screen.findByTestId("create-order-footer-total");
     // The whole string in ONE text node, no truncation.
-    expect(within(total).getByText("$12345.67")).toBeInTheDocument();
+    expect(within(total).getByText("$12,345.67")).toBeInTheDocument();
     const footerRow = screen.getByTestId("create-order-footer");
     expect(footerRow).toContainElement(total);
     expect(footerRow).toContainElement(screen.getByRole("button", { name: /^create order$/i }));
@@ -109,7 +109,7 @@ describe("CreateOrderModal footer total (O3, P01/P02)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await addBigLine();
     await waitFor(() =>
-      expect(screen.getByTestId("create-order-footer-total")).toHaveTextContent("$12345.67"),
+      expect(screen.getByTestId("create-order-footer-total")).toHaveTextContent("$12,345.67"),
     );
   });
 });

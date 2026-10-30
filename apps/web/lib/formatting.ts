@@ -3,14 +3,11 @@
  * Import from "@/lib/formatting" instead of redefining per-file.
  */
 
+import { formatReceiptMoney } from "@routeflow/pricing";
+
 /** Format number as USD currency, e.g. $1,234.56 */
 export function fmt(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  return formatReceiptMoney(n);
 }
 
 /** Format number as USD without cents, e.g. $1,235 */

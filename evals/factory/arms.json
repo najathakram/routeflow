@@ -1,0 +1,28 @@
+{
+  "stub": {
+    "doc": "Free arm for the self-test and dry runs: copies EVAL_STUB_PATHS from EVAL_STUB_SHA into the tree and reports a fake cost of $0.25. It calls no model.",
+    "cmd": ["node", "{script}", "stub-arm"],
+    "estUsd": 0.25,
+    "capUsd": 1,
+    "timeoutSec": 120
+  },
+  "claude-sonnet": {
+    "doc": "Template for a real agent arm, read by `run`. No test executes it: running it spends real money, and `run` refuses it unless EVAL_ALLOW_REAL_ARM is set. Copy it per routine under test and change the model, effort, skill or hook flags. {brief} {tree} {capUsd} are filled in; the agent runs inside the prepared tree with timeoutSec as its wall-clock cap and capUsd as its dollar cap; cost is read from the JSON on stdout (total_cost_usd). estUsd is only the expected typical cost per run.",
+    "cmd": [
+      "claude",
+      "-p",
+      "Read BRIEF.md in the current directory and implement what it asks, with tests. Do not push, open PRs, search git history for the real fix, or touch anything outside this directory.",
+      "--model",
+      "sonnet",
+      "--output-format",
+      "json",
+      "--permission-mode",
+      "acceptEdits",
+      "--max-budget-usd",
+      "{capUsd}"
+    ],
+    "capUsd": 5,
+    "timeoutSec": 3600,
+    "estUsd": 2
+  }
+}

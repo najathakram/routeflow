@@ -122,6 +122,7 @@ export async function findActiveOrderImpl(
           stored,
           audience: mergeAs.audience,
           role: mergeAs.role,
+          deniedGroups: mergeAs.deniedGroups,
         }),
       )
     : undefined;

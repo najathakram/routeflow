@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { FamilyRowConflict } from "@routeflow/types";
-import { roundMoney, roundUnitCost } from "@routeflow/pricing";
+import { priceAuthority, roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertSafeProductNames } from "../common/text-cell-guards";
 import { AuditService } from "../audit/audit.service";
@@ -529,7 +529,14 @@ export class ProductFamiliesService {
     // M2 price authority: while mixed_packs is ON the family owns the variants' price, so a price EDIT is a 409 and an
     // added variant takes the family's five columns (never a price of its own).
     const authority = (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on";
-    if (authority && update.some((u) => u.pricePerUnit !== undefined)) {
+    if (
+      priceAuthority(
+        { kind: "VARIANT", parentProductId: familyId },
+        authority ? "on" : "off",
+        "base",
+      ) === "family" &&
+      update.some((u) => u.pricePerUnit !== undefined)
+    ) {
       throw familyPriceAuthorityError(familyId);
     }
     // Range-check every price / cost BEFORE the transaction (a rounding overflow is a 400, never after locks + writes).

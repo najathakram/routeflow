@@ -25,7 +25,7 @@ import { buildOrdersService } from "./testing/orders-service-harness";
  * (the post-commit sweeps, the standing-order templates, the hourly sweep) and `forceConsolidateCustomer`.
  */
 /** An OPERATOR: staff audience, a role (SA-763r M1 makes both part of every `mergeAs`). */
-const STAFF = { audience: "staff", role: "OPERATOR" } as const;
+const STAFF = { audience: "staff", role: "OPERATOR", deniedGroups: [] } as const;
 const line = (id: string) => ({
   id,
   productId: "prod-1",
@@ -197,7 +197,7 @@ describe("OrdersService merge entry points", () => {
     // a buyer cart in the same tenant: the portal default
     await h.service.findActiveOrder("cust-1", {
       forMerge: true,
-      mergeAs: { audience: "buyer", role: "CUSTOMER" },
+      mergeAs: { audience: "buyer", role: "CUSTOMER", deniedGroups: [] },
     });
     expect(h.prisma.order.findFirst.mock.calls[1][0].where).toMatchObject({ fulfillPath: "SHIP" });
   });
