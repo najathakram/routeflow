@@ -43,6 +43,7 @@ import { tenantTodayDay } from "../common/calendar-date";
 import { _resetLockPoolForTests } from "../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { TILL_ADMIN } from "../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -275,12 +276,17 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
 
     // The edit form resends the date it shows (the tenant-local date of the stored instant) with a new reference.
     await tenantCtx.run(s.tenantId, () =>
-      invoices.updatePayment(s.invoiceId, before.id, {
-        amount: 20,
-        method: "ACH",
-        reference: "REF-NEW",
-        paidAt: "2026-10-21",
-      } as any),
+      invoices.updatePayment(
+        s.invoiceId,
+        before.id,
+        {
+          amount: 20,
+          method: "ACH",
+          reference: "REF-NEW",
+          paidAt: "2026-10-21",
+        } as any,
+        { user: TILL_ADMIN },
+      ),
     );
 
     const [after] = await stored(s.invoiceId);
@@ -316,12 +322,17 @@ describeDb("a date-only paid date for a Chicago tenant, real Postgres (SA-943)",
     try {
       // The edit box sends the business's today by the app clock; the stored instant must come from the DB.
       await tenantCtx.run(s.tenantId, () =>
-        invoices.updatePayment(s.invoiceId, before.id, {
-          amount: 20,
-          method: "ACH",
-          paidAt: "2020-01-15",
-          settledAt: "2020-01-15",
-        } as any),
+        invoices.updatePayment(
+          s.invoiceId,
+          before.id,
+          {
+            amount: 20,
+            method: "ACH",
+            paidAt: "2020-01-15",
+            settledAt: "2020-01-15",
+          } as any,
+          { user: TILL_ADMIN },
+        ),
       );
     } finally {
       jest.useRealTimers();
