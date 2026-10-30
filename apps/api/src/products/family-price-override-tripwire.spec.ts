@@ -36,10 +36,10 @@ export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
       "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
   },
   "src/inventory/inventory.service.ts": {
-    count: 3,
+    count: 1,
     reason:
-      "createVariantRowInTx spreads the family's five price columns and a cost-basis `data`; " +
-      "neither names familyPriceOverride (the flag has no writer in M2, SA-584a).",
+      "createVariantRowInTx spreads the family's five price columns (the cost-basis write moved to " +
+      "inventory/stock-movements.ts, SA-927); it never names familyPriceOverride (the flag has no writer in M2, SA-584a).",
   },
   "src/products/product-families.service.ts": {
     count: 3,

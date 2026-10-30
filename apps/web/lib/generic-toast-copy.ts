@@ -2,6 +2,7 @@ import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
   FILING_STALE_COPY,
+  ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
   STOCK_COUNT_SEEDING_COPY,
@@ -41,6 +42,10 @@ import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
  * (see mutation-error-toast.ts).
  */
 
+/** SA-1032: promotions turned off for the business in the back office (page notice + refusal toast). */
+export const PROMOTIONS_OFF_COPY =
+  "Promotions are turned off for this business. Customers don't see them, and new orders don't use them. Past orders keep their promotion prices.";
+
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
   // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
@@ -48,6 +53,7 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:
@@ -90,6 +96,8 @@ const CODE_COPY: Record<string, string> = {
   QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
   // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
   ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  // Row 590 (SA-978a): an office DELIVERED on an order whose run stop has not completed; nothing was written.
+  [API_ERROR_CODES.ORDER_DELIVERED_ON_ROUTE_STOP]: ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",

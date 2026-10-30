@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Prisma, UserRole } from "@prisma/client";
 import { decrementStockForSale, settleStockForEdit, type OrderStockDeps } from "./order-stock";
+import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
  * SA-606c lock-order pin: the oversell policy is read BEFORE any `FOR UPDATE`; the locked stock
@@ -63,7 +65,11 @@ function spyTx(stock: number) {
       return {};
     },
   });
-  return { tx, policyAccesses, wasLocked: () => locked };
+  // the stock helper answers its locked read from this one product (other raw queries still hit the spy)
+  const stockHelper = wireStockHelper(createMockPrisma(), {
+    stateOf: (ids) => ids.map((id) => ({ id, currentStock: stock })),
+  });
+  return { tx: stockHelper.wrapTx(tx), policyAccesses, wasLocked: () => locked };
 }
 
 describe("stock paths issue zero policy queries (behavioural)", () => {

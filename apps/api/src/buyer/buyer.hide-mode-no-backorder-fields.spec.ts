@@ -23,6 +23,7 @@ import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -85,6 +86,7 @@ async function boot() {
           }),
         },
       },
+      { provide: FeatureConfigService, useValue: { getEffectiveMode: async () => "on" } },
       ...[
         BuyerService,
         BuyerCatalogService,

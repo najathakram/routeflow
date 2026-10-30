@@ -18,6 +18,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { CostingMethod, MovementType, Prisma, StockAlertStatus } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
@@ -2224,7 +2225,7 @@ export class ProductsService {
                 category: item.category ?? null,
                 description: item.description ?? null,
                 isActive: item.isActive ?? true,
-                currentStock: openingStock,
+                // currentStock keeps its default 0; the helper books the opening row (SA-927).
                 averageCost: openingCost,
                 reorderPoint: item.reorderPoint ?? null,
               },
@@ -2233,17 +2234,23 @@ export class ProductsService {
             mapBarcodeUniqueViolation(e, item.barcode ?? "");
           }
           if (!openingStock.isZero()) {
-            await tx.stockMovement.create({
-              data: {
-                productId: created.id,
-                type: MovementType.PURCHASE,
-                quantity: openingStock,
-                unitCost: openingCost,
-                avgCostAfter: openingCost,
-                stockAfter: openingStock,
-                notes: "Opening stock (bulk import)",
-              },
-            });
+            // SA-927: the opening PURCHASE row goes through the one writer (stockAfter = openingStock);
+            // the average is SET to the opening cost so avgCostAfter and Product.averageCost match it.
+            await applyStockMovements(
+              tx,
+              tenantIdForBulk,
+              [
+                {
+                  productId: created.id,
+                  type: MovementType.PURCHASE,
+                  quantity: openingStock,
+                  unitCost: openingCost,
+                  average: openingCost ? { set: openingCost } : "keep",
+                  notes: "Opening stock (bulk import)",
+                },
+              ],
+              { productIds: [created.id] },
+            );
           }
           await syncProductBarcodesFromLegacy(tx, {
             tenantId: tenantIdForBulk,

@@ -19,8 +19,8 @@ const rows = FEATURE_REGISTRY;
 const nature = (f: FeatureDef) => f.nature;
 
 describe("FEATURE_REGISTRY nature (SA-950 A1)", () => {
-  it("covers all 41 rows (a new row must be classified, not skipped)", () => {
-    expect(rows).toHaveLength(41);
+  it("covers all 42 rows (a new row must be classified, not skipped)", () => {
+    expect(rows).toHaveLength(42);
   });
 
   it("every row has a purpose from the shared list", () => {

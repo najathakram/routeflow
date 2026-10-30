@@ -25,6 +25,7 @@ const operator = {
   sub: "user-op",
   username: "operator",
   role: "OPERATOR" as const,
+  tenantId: "tenant-1", // W-870: the permission read is tenant-scoped
   status: "ACTIVE" as const,
   forcePasswordChange: false,
 };
@@ -51,6 +52,7 @@ async function build(payments: unknown[]) {
     createdAt: new Date(), // today in any tenant zone
   };
   prisma.order.findFirst.mockResolvedValue(order);
+  prisma.user.findFirst.mockResolvedValue({ deniedPermissionGroups: [], permissionsVersion: 1 }); // W-870: the operator holds every group
   prisma.order.findUnique.mockImplementation(async (args: any) =>
     args?.select?.status ? { status: order.status } : { ...order },
   );
@@ -102,7 +104,8 @@ async function build(payments: unknown[]) {
   const tx = {
     ...prisma,
     $executeRaw: jest.fn().mockResolvedValue(0),
-    $queryRaw: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
+    // the invoice lock answers [{ id }]; the stock helper's locked read is answered by the wiring
+    $queryRaw: h.stock.queryRaw(jest.fn().mockResolvedValue([{ id: "inv-1" }])),
   };
   prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
   const invoices = h.module.get(InvoicesService) as unknown as Record<string, jest.Mock>;

@@ -1,5 +1,5 @@
-import { invoiceDisplayLines } from "@routeflow/pricing";
-import { pdfItemDisplay, pieceUnitPriceText } from "./invoice-pdf-item";
+import { basePriceText, invoiceDisplayLines } from "@routeflow/pricing";
+import { pdfItemDisplay } from "./invoice-pdf-item";
 
 // SA-827 (T3): the PDF row mapper. The template is jest-mocked, so the row shape is proved here.
 const PIECES = { kind: "pieces", label: "Piece" } as const;
@@ -33,10 +33,10 @@ const comps = [
   },
 ];
 
-describe("pieceUnitPriceText", () => {
-  it("prints 4 dp", () => {
-    expect(pieceUnitPriceText(2.0005)).toBe("$2.0005");
-    expect(pieceUnitPriceText(2)).toBe("$2.0000");
+describe("basePriceText", () => {
+  it("prints cents, up to 4 dp when needed", () => {
+    expect(basePriceText(2.0005)).toBe("$2.0005");
+    expect(basePriceText(2)).toBe("$2.00");
   });
 });
 
@@ -72,7 +72,7 @@ describe("pdfItemDisplay", () => {
           barcodeText: "123",
           barcodeDataUri: "data:image/png;base64,AA",
           qtyText: "10 Piece",
-          priceText: "$2.0010",
+          priceText: "$2.001",
           amountText: "$20.01",
         },
         {
@@ -93,5 +93,17 @@ describe("pdfItemDisplay", () => {
   it("components layout without a levy has null categoryTax", () => {
     const d = pdfItemDisplay(invoiceDisplayLines(item, comps, PIECES));
     expect(d.layout === "components" && d.categoryTax).toBeNull();
+  });
+});
+
+// SA-1029 (RED first): the pieces view prints on the shared min-2 / max-4 decimal formatter.
+describe("SA-1029 basePriceText on the shared formatter", () => {
+  it.each([
+    [2, "$2.00"],
+    [0.7875, "$0.7875"],
+    [0.125, "$0.125"],
+    [1.2504, "$1.2504"],
+  ])("%s -> %s", (n, text) => {
+    expect(basePriceText(n)).toBe(text);
   });
 });

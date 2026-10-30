@@ -1,5 +1,5 @@
 import * as React from "react";
-import { plural, type InvoiceDisplayLines } from "@routeflow/pricing";
+import { basePriceText, plural, type InvoiceDisplayLines } from "@routeflow/pricing";
 
 /** SA-827: the component rows (and category-tax row) of a composed box line. Every figure comes from
  * invoiceDisplayLines (packages/pricing); this only formats and lays them out. The box line's OWN
@@ -16,15 +16,8 @@ interface Props {
   /** The page's own money formatter (amounts). */
   fmt: (n: number) => string;
   variant: "staff" | "buyer";
-}
-
-export function formatUnitPrice4(n: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  }).format(n);
+  /** SA-1029: the invoice shows a Per piece column; component rows leave their cell empty so columns align. */
+  perPieceCol?: boolean;
 }
 
 /** "30 Pieces" / "1 Piece" via the repo's unit-word plural helper. */
@@ -53,7 +46,7 @@ const CELL = {
 
 const LABELS = { qty: "Qty", price: "Unit Price", amount: "Subtotal" } as const;
 
-export function InvoiceDisplayRows({ lines, itemId, fmt, variant, children }: Props) {
+export function InvoiceDisplayRows({ lines, itemId, fmt, variant, perPieceCol, children }: Props) {
   const c = CELL[variant];
   const lab = (k: keyof typeof LABELS) => (variant === "buyer" ? LABELS[k] : undefined);
   return (
@@ -76,8 +69,11 @@ export function InvoiceDisplayRows({ lines, itemId, fmt, variant, children }: Pr
             {displayQtyText(r.qty, r.unitLabel)}
           </td>
           <td className={c.price} data-label={lab("price")}>
-            {formatUnitPrice4(r.unitPrice)}
+            {basePriceText(r.unitPrice)}
           </td>
+          {perPieceCol && (
+            <td className={variant === "buyer" ? "hidden sm:table-cell" : "px-4 py-3"} />
+          )}
           <td className={c.amount} data-label={lab("amount")}>
             {fmt(r.amount)}
           </td>
@@ -89,6 +85,9 @@ export function InvoiceDisplayRows({ lines, itemId, fmt, variant, children }: Pr
           <td className={c.first}>{lines.categoryTax.label}</td>
           <td className={c.qty} />
           <td className={c.price} />
+          {perPieceCol && (
+            <td className={variant === "buyer" ? "hidden sm:table-cell" : "px-4 py-3"} />
+          )}
           <td className={c.amount} data-label={lab("amount")}>
             {fmt(lines.categoryTax.amount)}
           </td>

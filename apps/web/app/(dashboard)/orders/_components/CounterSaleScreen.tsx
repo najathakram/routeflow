@@ -200,7 +200,7 @@ export function CounterSaleScreen() {
   const createDraft = useCreateDraft();
   const authUser = useOptionalAuth()?.user;
   // POS-5 / SA-762r: the ONE price-edit gate (operator + admin). False = no price control exists on the screen.
-  const mayEditPrices = staffMay(authUser?.role, "EDIT_LINE_PRICE");
+  const mayEditPrices = staffMay(authUser?.role, "EDIT_LINE_PRICE", gate.deniedGroups ?? []);
   // A held attempt is scoped to the signed-in tenant + user: it never stores or restores for anyone else (or when unknown).
   const heldKey = heldAttemptKey(authUser?.tenantSlug, authUser?.id);
   const liveKey = liveCartKey(authUser?.tenantSlug, authUser?.id);

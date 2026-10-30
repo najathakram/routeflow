@@ -15,6 +15,7 @@ jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERAT
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
 }));
+jest.mock("@/lib/tenant-features", () => ({ useTenantFeatures: () => ({ data: undefined }) }));
 jest.mock("@/lib/i18n", () => ({ useI18n: () => ({ t: (k: string) => k }) }));
 jest.mock("@/lib/api/addons", () => ({
   useRoutesAccess: () => ({ enabled: true }),

@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -31,8 +33,7 @@ function fakeTx(products: P[], rows: Row[]) {
       })),
       update: jest.fn(async ({ where, data }: any) => {
         const p = products.find((x) => x.id === where.id)!;
-        p.currentStock += Number(data.currentStock.increment ?? 0);
-        p.currentStock -= Number(data.currentStock.decrement ?? 0);
+        p.currentStock = Number(data.currentStock);
         return { ...p, currentStock: new Prisma.Decimal(p.currentStock) };
       }),
     },
@@ -50,7 +51,13 @@ function fakeTx(products: P[], rows: Row[]) {
     stockLot: { findMany: jest.fn().mockResolvedValue([]) },
     stockMovement: { create: jest.fn(async () => ({ id: "m" })) },
   };
-  return { tx, writes };
+  const stock = wireStockHelper(createMockPrisma(), {
+    stateOf: (ids: string[]) =>
+      products
+        .filter((p) => ids.includes(p.id))
+        .map((p) => ({ id: p.id, currentStock: p.currentStock, averageCost: 2 })),
+  });
+  return { tx: stock.wrapTx(tx), writes };
 }
 
 const prod = (stock: number): P => ({

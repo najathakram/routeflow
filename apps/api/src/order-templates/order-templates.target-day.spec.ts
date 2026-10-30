@@ -42,6 +42,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { AuditService } from "../audit/audit.service";
 import * as orderStock from "../orders/order-stock";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 describe("OrderTemplatesService — requestedDeliveryDate is the target day (B326)", () => {
   let service: OrderTemplatesService;
@@ -96,6 +97,7 @@ describe("OrderTemplatesService — requestedDeliveryDate is the target day (B32
   beforeEach(async () => {
     jest.clearAllMocks();
     prisma = createMockPrisma();
+    wireStockHelper(prisma, { ample: true });
     prisma.getTenantId.mockReturnValue("test-tenant");
     restrictions.assertLinesSellable.mockResolvedValue(undefined);
     restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
