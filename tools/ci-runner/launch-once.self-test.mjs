@@ -7,7 +7,9 @@ import {
   REPO,
   dockerArgs,
   foreignQueuedRuns,
+  gh,
   launch,
+  noteRunnerLine,
   parseFlags,
   pollOnce,
 } from "./launch-once.mjs";
@@ -96,13 +98,8 @@ check(
 // ── The guard while the runner waits ─────────────────────────────────────────────────────────────
 const tick = (visibility, busy) =>
   pollOnce(
-    { deadline: 2_000 },
-    {
-      now: 1_000,
-      readVisibility: () => visibility,
-      readBusy: () => busy,
-      log: () => {},
-    },
+    { deadline: 2_000, lastPrivateAt: 1_000, jobRunning: busy },
+    { now: 1_000, readVisibility: () => visibility, log: () => {} },
   );
 check("P1 PRIVATE and idle: keep waiting", tick("PRIVATE", false), "wait");
 check("P2 PUBLIC and idle: remove the runner", tick("PUBLIC", false), "remove");
@@ -110,11 +107,64 @@ check("P3 PUBLIC with a job running: let the job finish", tick("PUBLIC", true), 
 check(
   "P4 past the deadline: stop",
   pollOnce(
-    { deadline: 500 },
-    { now: 1_000, readVisibility: () => "PRIVATE", readBusy: () => false, log: () => {} },
+    { deadline: 500, lastPrivateAt: 1_000, jobRunning: false },
+    { now: 1_000, readVisibility: () => "PRIVATE", log: () => {} },
   ),
   "stop",
 );
+
+// ── A failed check is not a safe reading ─────────────────────────────────────────────────────────
+const lastSeen = 100_000;
+const blind = (now, jobRunning = false) =>
+  pollOnce(
+    { deadline: 9_000_000, lastPrivateAt: lastSeen, jobRunning },
+    {
+      now,
+      readVisibility: () => {
+        throw new Error("TLS handshake timeout");
+      },
+      log: () => {},
+    },
+  );
+check("U1 one failed check is a blip: keep waiting", blind(lastSeen + 15_000), "wait");
+check(
+  "U2 45 s with no PRIVATE reading: remove the idle runner",
+  blind(lastSeen + 45_000),
+  "remove",
+);
+check("U3 a running job is left alone, even blind", blind(lastSeen + 45_000, true), "wait");
+check(
+  "U4 PUBLIC with a job running stays up when the busy read fails",
+  pollOnce(
+    { deadline: 9_000_000, lastPrivateAt: lastSeen, jobRunning: true },
+    { now: lastSeen, readVisibility: () => "PUBLIC", log: () => {} },
+  ),
+  "wait",
+);
+{
+  const state = { deadline: 9_000_000, lastPrivateAt: 0, jobRunning: false };
+  pollOnce(state, { now: 90_000, readVisibility: () => "PRIVATE", log: () => {} });
+  check("U5 a PRIVATE reading restarts the clock", state.lastPrivateAt, 90_000);
+}
+{
+  let options;
+  gh(["repo", "view"], undefined, (_cmd, _args, opts) => {
+    options = opts;
+    return "";
+  });
+  check("U6 a hung gh cannot freeze the guard", options.timeout, 20_000);
+}
+
+// ── The runner's own output says when a job is running ───────────────────────────────────────────
+{
+  const state = { jobRunning: false };
+  noteRunnerLine(state, "2026-10-30 19:16:37Z: Listening for Jobs");
+  check("J1 the runner listening is not a job", state.jobRunning, false);
+  noteRunnerLine(state, "2026-10-30 19:16:43Z: Running job: Verify");
+  check("J2 a job starting marks the runner busy", state.jobRunning, true);
+  noteRunnerLine(state, "2026-10-30 19:54:34Z: Job Verify completed with result: Succeeded");
+  check("J3 a finished job stays marked: this runner takes no other", state.jobRunning, true);
+}
 
 // ── Refusals mint nothing ────────────────────────────────────────────────────────────────────────
 {

@@ -7,6 +7,7 @@
 //   node tools/ci-runner/launch-once.mjs [--cpus 0-3] [--memory 16g] [--max-minutes 60]
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 export const REPO = "najathakram/routeflow";
@@ -16,6 +17,12 @@ const IMAGE = "routeflow-ci-runner:2.338.2";
 const NETWORK = "routeflow-ci-runner";
 const LABELS = ["self-hosted", "Linux", "X64", "routeflow-ephemeral"];
 const POLL_MS = 15_000;
+/** gh has no deadline of its own: a stalled TLS handshake would freeze the poll that guards the repo. */
+export const GH_TIMEOUT_MS = 20_000;
+/** An idle runner with no PRIVATE reading this recent counts as being on a public repo. */
+export const UNSAFE_AFTER_MS = 45_000;
+/** The runner's own line for a job starting. It comes from the container, so an outage can't hide it. */
+export const JOB_STARTED = /: Running job: /;
 
 export function parseFlags(argv) {
   const flag = (name, fallback) => {
@@ -30,7 +37,12 @@ export function parseFlags(argv) {
 }
 
 export function gh(args, input, exec = execFileSync) {
-  return exec("gh", args, { encoding: "utf8", input, stdio: ["pipe", "pipe", "pipe"] });
+  return exec("gh", args, {
+    encoding: "utf8",
+    input,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: GH_TIMEOUT_MS,
+  });
 }
 
 function visibility() {
@@ -66,14 +78,6 @@ function deleteRunner(id) {
     gh(["api", "-X", "DELETE", `repos/${REPO}/actions/runners/${id}`]);
   } catch {
     // Already gone: an ephemeral runner deregisters itself after its job.
-  }
-}
-
-function runnerIsBusy(id) {
-  try {
-    return JSON.parse(gh(["api", `repos/${REPO}/actions/runners/${id}`])).busy === true;
-  } catch {
-    return false;
   }
 }
 
@@ -115,43 +119,65 @@ export function dockerArgs(name, flags) {
   ];
 }
 
-/** One guard tick: "stop" at the deadline, "remove" an idle runner on a repo that left PRIVATE. */
-export function pollOnce(state, { now, readVisibility, readBusy, log }) {
+/**
+ * One guard tick. "stop" at the deadline. "remove" an idle runner unless the repo reads PRIVATE: a
+ * repo that left PRIVATE, or no good reading for UNSAFE_AFTER_MS, fails closed. A running job is
+ * left alone: a one-job runner cannot take a second job, whatever the repo's visibility.
+ */
+export function pollOnce(state, { now, readVisibility, log }) {
+  if (now > state.deadline) return "stop";
+  if (state.jobRunning) return "wait";
+  let seen = null;
   try {
-    if (now > state.deadline) return "stop";
-    if (readVisibility() !== "PRIVATE" && !readBusy()) return "remove";
+    seen = readVisibility();
   } catch (e) {
-    log(`poll failed, will retry: ${e instanceof Error ? e.message : e}`);
+    log(`visibility check failed: ${e instanceof Error ? e.message : e}`);
   }
-  return "wait";
+  if (seen === "PRIVATE") {
+    state.lastPrivateAt = now;
+    return "wait";
+  }
+  if (seen !== null) return "remove";
+  return now - state.lastPrivateAt >= UNSAFE_AFTER_MS ? "remove" : "wait";
+}
+
+export function noteRunnerLine(state, line) {
+  if (JOB_STARTED.test(line)) state.jobRunning = true;
 }
 
 function runContainer({ name, jitConfig, runnerId, flags }) {
   const container = spawn("docker", dockerArgs(name, flags), {
-    stdio: ["pipe", "inherit", "inherit"],
+    stdio: ["pipe", "pipe", "inherit"],
   });
   container.stdin.end(`${jitConfig}\n`);
+  const state = {
+    deadline: Date.now() + flags.maxMinutes * 60_000,
+    lastPrivateAt: Date.now(),
+    jobRunning: false,
+  };
+  createInterface({ input: container.stdout }).on("line", (line) => {
+    console.log(line);
+    noteRunnerLine(state, line);
+  });
 
   const stop = () => {
     try {
-      execFileSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+      execFileSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: GH_TIMEOUT_MS });
     } catch {
       // Already removed by --rm.
     }
   };
-  const state = { deadline: Date.now() + flags.maxMinutes * 60_000 };
   const poll = setInterval(() => {
     const action = pollOnce(state, {
       now: Date.now(),
       readVisibility: visibility,
-      readBusy: () => runnerIsBusy(runnerId),
       log: console.error,
     });
     if (action === "stop") {
       console.error("max-minutes reached: stopping the runner");
       stop();
     } else if (action === "remove") {
-      console.error("repo left PRIVATE with this runner idle: removing it");
+      console.error("repo not confirmed PRIVATE with this runner idle: removing it");
       deleteRunner(runnerId);
       stop();
     }
