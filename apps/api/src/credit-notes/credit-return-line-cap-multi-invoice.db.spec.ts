@@ -1,11 +1,12 @@
 /**
  * B947 (HIGH money, interim fix; real Postgres): a return refund on an order with 2+ creditable invoices is headroom-checked
- * against the order's invoice TOTALS and the LATEST invoice's room only, then minted as a lump sum on the latest invoice. The
+ * against the order's invoice TOTALS and the LATEST invoice's room only, then minted as a lump sum on the latest invoice (SA-1051: now
+ * on the invoice the fill touched last; every case below says which). The
  * per-line refund-mode check B946 (SA-628) added runs for a single creditable invoice only, so a line on an OLDER invoice can
- * be credited past its value: a credit note item on X's line A, then a return refund of A (lump sum on Y), totals 2 x A.
+ * be credited past its value: a credit note item on X's line A, then a return refund of A (lump sum on Y at the time; on X since SA-1051), totals 2 x A.
  *
  * The fix under test: the SAME refund-mode check across ALL creditable invoices' lines (a 409 RETURN_REFUND_OVER_LINE_HEADROOM,
- * refused BEFORE the claim, never clipped), the mint UNCHANGED (still a lump sum on the latest invoice, no items).
+ * refused BEFORE the claim, never clipped), the mint a lump sum with no items (SA-1051: on the invoice the fill touched last, X for a refund of A or B, Y for C).
  *
  * Runs only under `npm run local:test:db`. Every tenant is a throwaway `qa-b947-<run>-<n>` slug approved by `assertTestTenant`.
  */
@@ -250,7 +251,7 @@ describeDb(
         select: { amount: true, invoiceId: true, items: { select: { id: true } } },
       });
 
-    it("1. RED REPRO: a $100 credit note item on X's line A, then a FULL return refund of A (lump sum on the latest invoice Y) is REFUSED 409 and nothing is minted", async () => {
+    it("1. RED REPRO: a $100 credit note item on X's line A, then a FULL return refund of A (it would be a lump sum on X, where A is billed) is REFUSED 409 and nothing is minted", async () => {
       const s = await seed("cn-then-return");
       await creditItemOnX(s, s.lineA, 100);
       const ret = await receivedReturn(s, s.pA.id);
@@ -261,20 +262,23 @@ describeDb(
       expect(await mintedNotes(s)).toHaveLength(1); // only the credit note item; the refund minted nothing
     }, 60_000);
 
-    it("2. a refund the lines CAN absorb mints exactly what it minted before: ONE lump-sum credit note (no items) on the LATEST invoice", async () => {
+    it("2. a refund the lines CAN absorb mints ONE lump-sum credit note (no items) on X, the invoice the fill took B from (SA-1051; it was the LATEST invoice Y)", async () => {
       const s = await seed("fits");
       await creditItemOnX(s, s.lineA, 40); // A has $60 left
       const ret = await receivedReturn(s, s.pB.id); // B is untouched
       await refund(s, ret.id);
       expect(await status(ret.id)).toBe("REFUNDED");
       const notes = await mintedNotes(s);
-      const refundNote = notes.find((n) => n.invoiceId === s.Y.id);
+      console.info(
+        `SA1051 OBSERVED ${JSON.stringify({ case: 2, X: s.X.id, Y: s.Y.id, notes: notes.map((n) => [n.invoiceId, Number(n.amount), n.items.length]) })}`,
+      );
+      const refundNote = notes.find((n) => n.invoiceId === s.X.id && n.items.length === 0);
       expect(refundNote).toBeDefined();
       expect(Number(refundNote!.amount)).toBe(100);
       expect(refundNote!.items).toHaveLength(0); // the mint is UNCHANGED: a lump sum, never itemised for 2+ invoices
     }, 60_000);
 
-    it("3. two refunds of the SAME product in a row: the second is REFUSED (the first's lump sum on Y counts against A's line on X)", async () => {
+    it("3. two refunds of the SAME product in a row: the second is REFUSED (the first's lump sum on X counts against A's line there)", async () => {
       const s = await seed("twice");
       const r1 = await receivedReturn(s, s.pA.id);
       await refund(s, r1.id);
@@ -310,7 +314,7 @@ describeDb(
       expect(await mintedNotes(s)).toHaveLength(0);
     }, 60_000);
 
-    it("7. THE OTHER DIRECTION: a return refund of A first (a lump sum on the latest invoice Y), then a credit note item on A on X is REFUSED (400 CREDIT_NOTE_OVER_HEADROOM) and nothing is minted", async () => {
+    it("7. THE OTHER DIRECTION: a return refund of A first (a lump sum on X, where A is billed, SA-1051), then a credit note item on A on X is REFUSED (400 CREDIT_NOTE_OVER_HEADROOM) and nothing is minted", async () => {
       const s = await seed("refund-then-cn");
       const ret = await receivedReturn(s, s.pA.id);
       await refund(s, ret.id);
@@ -321,7 +325,7 @@ describeDb(
       expect(await mintedNotes(s)).toHaveLength(before);
     }, 60_000);
 
-    it("8. the headroom RE-OPENS when the refund's lump note is VOID: the credit note item on A then succeeds", async () => {
+    it("8. the headroom RE-OPENS when the refund's lump note (on X, SA-1051) is VOID: the credit note item on A then succeeds", async () => {
       // A refund's note backs a REFUNDED return, so voidWithReversal refuses it (CREDIT_NOTE_RETURN_BACKED: cancel the return
       // instead, and a REFUNDED return cannot be cancelled). This case tests the pool's VOID filter, so the note is set VOID
       // directly (the state an invoice-destroying or legacy void leaves).
@@ -329,7 +333,7 @@ describeDb(
       const ret = await receivedReturn(s, s.pA.id);
       await refund(s, ret.id);
       const refundNote = (await prisma.creditNote.findFirst({
-        where: { tenantId: s.tenantId, invoiceId: s.Y.id },
+        where: { tenantId: s.tenantId, invoiceId: s.X.id, items: { none: {} } },
       }))!;
       await expect(creditItemOnX(s, s.lineA, 100)).rejects.toMatchObject({
         response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
@@ -414,10 +418,10 @@ describeDb(
       );
     }
 
-    it("11. THIRD DOOR reaches the POOL: A billed x2 on X only, a refund of 1 (lump on Y), a $100 credit note item on X's A line, then an INLINE return of the last piece is REFUSED by the pool's own check (the per-invoice check cannot see the lump on Y)", async () => {
-      // The inline quote sources the piece to X's A line (A is billed on X only), where the PER-INVOICE check sees only the $100
-      // credit note item ($100 of $200: it fits). The $100 refund lump sits on Y, invisible there. Only the ORDER POOL
-      // ($100 lump + $100 item + $100 take = $300 of $200) refuses, with its OWN message ("order's invoice lines").
+    it("11. THIRD DOOR: A billed x2 on X only, a refund of 1 (lump on X, SA-1051), a $100 credit note item on X's A line, then an INLINE return of the last piece is REFUSED by the per-line check (the lump now sits on X where A is billed, so X's own check sees it)", async () => {
+      // The inline quote sources the piece to X's A line (A is billed on X only). Before SA-1051 the $100 refund lump sat on Y,
+      // invisible to the per-invoice check, and only the ORDER POOL ($100 lump + $100 item + $100 take = $300 of $200) refused it
+      // ("order's invoice lines"). The lump is now minted on X, so the per-line check on X refuses first, with its own message.
       const s = await seed("refund-then-inline");
       await prisma.invoiceItem.update({
         where: { id: s.lineA.id },
@@ -425,15 +429,22 @@ describeDb(
       });
       await prisma.invoice.update({ where: { id: s.X.id }, data: { subtotal: 300, total: 300 } });
       const ret = await receivedReturn(s, s.pA.id, 1);
-      await refund(s, ret.id); // 1 of 2 pieces: the pooled price is $100, a lump on the latest invoice Y
+      await refund(s, ret.id); // 1 of 2 pieces: the pooled price is $100, a lump on X
       expect(await status(ret.id)).toBe("REFUNDED");
+      expect((await mintedNotes(s)).map((n) => [n.invoiceId, Number(n.amount)])).toEqual([
+        [s.X.id, 100],
+      ]);
       await creditItemOnX(s, s.lineA, 100); // fits: $100 + $100 of the $200 line
       const err: any = await inlineReturnOfA(s).catch((e) => e);
       expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
-      expect(err.getResponse().message).toMatch(/order's invoice lines/);
+      console.info(
+        `SA1051 OBSERVED ${JSON.stringify({ case: 11, message: err.getResponse().message })}`,
+      );
+      expect(err.getResponse().message).toMatch(/more than the invoice line is worth/);
+      expect(err.getResponse().message).not.toMatch(/order's invoice lines/);
     }, 60_000);
 
-    it("12. B960 one headroom: A billed on BOTH invoices, a $100 refund lump of A on Y, then a $100 credit note item on Y's own A line is ALLOWED ($200 of $200 across the pool); a further $100 anywhere is REFUSED", async () => {
+    it("12. B960 one headroom: A billed on BOTH invoices, a $100 refund lump of A (on X, where the fill takes it first, SA-1051), then a $100 credit note item on Y's own A line is ALLOWED ($200 of $200 across the pool); a further $100 anywhere is REFUSED", async () => {
       const s = await seed("own-line-vs-pool");
       const yA = await prisma.invoiceItem.create({
         data: {
@@ -448,7 +459,7 @@ describeDb(
       });
       await prisma.invoice.update({ where: { id: s.Y.id }, data: { subtotal: 200, total: 200 } });
       const ret = await receivedReturn(s, s.pA.id);
-      await refund(s, ret.id); // a lump on the latest invoice Y
+      await refund(s, ret.id); // a lump on X: the fill takes A's piece from the older invoice's line first
       expect(await status(ret.id)).toBe("REFUNDED");
       const onY = (amount: number) =>
         inTenant(s, () =>

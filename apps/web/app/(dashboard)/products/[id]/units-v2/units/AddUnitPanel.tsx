@@ -27,8 +27,9 @@ function AddUnitForm({
   productId,
   baseLabel,
   ofUnits,
-  pieceMissing,
+  pieceMissing: pieceMissingRaw,
   prefillPiece,
+  noPack = false,
   validatePrice,
   onDone,
   onCancel,
@@ -38,10 +39,13 @@ function AddUnitForm({
   ofUnits: AddUnitOf[];
   pieceMissing: boolean;
   prefillPiece: boolean;
+  /** SA-984 D2: the product has no pack size, so a 1-of-base Piece is refused by the server: offer no such unit. */
+  noPack?: boolean;
   validatePrice?: (text: string) => string | null;
   onDone: (added: AddedUnit) => void;
   onCancel: () => void;
 }) {
+  const pieceMissing = pieceMissingRaw && !noPack;
   const create = useCreateProductUnit(productId);
   const uid = React.useId();
   const nameRef = React.useRef<HTMLInputElement>(null);
@@ -177,6 +181,11 @@ function AddUnitForm({
               ))}
             </select>
           </div>
+          {noPack && (
+            <p data-testid="units-v2-add-nopack" className="mt-1 text-xs text-navy/70">
+              Set a pack size to sell single pieces.
+            </p>
+          )}
         </div>
       </div>
       {validatePrice && (
@@ -240,6 +249,7 @@ export function AddUnitPanel({
   disabled = false,
   pieceMissing = false,
   prefillPiece = false,
+  noPack = false,
   validatePrice,
   onOpen,
   onAdded,
@@ -261,6 +271,8 @@ export function AddUnitPanel({
   pieceMissing?: boolean;
   /** With `pieceMissing`: open the form as that Piece (Contains 1, base name) instead of blank. */
   prefillPiece?: boolean;
+  /** SA-984 D2: no pack size, so no 1-of-base Piece is offered. */
+  noPack?: boolean;
   /**
    * Adds an optional "Price (optional)" box. Return the message to refuse a typed price with, or null to accept it
    * (blank is always fine: Auto). The panel never writes the price: it hands the text to `onAdded`.
@@ -315,6 +327,7 @@ export function AddUnitPanel({
           ofUnits={ofUnits}
           pieceMissing={pieceMissing}
           prefillPiece={prefillPiece}
+          noPack={noPack}
           validatePrice={validatePrice}
           onCancel={close}
           onDone={(added) => {

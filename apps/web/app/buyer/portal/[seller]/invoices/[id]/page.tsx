@@ -471,13 +471,13 @@ export default function BuyerInvoiceDetailPage() {
 
       {/* Payment history */}
       {invoice.payments && invoice.payments.length > 0 && (
-        <div className="rounded-xl border border-surface-border bg-white overflow-hidden mb-6">
+        <div className="rounded-xl border border-surface-border bg-white overflow-x-auto mb-6">
           <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
             <h2 className="text-sm font-semibold text-navy">
               Payment history ({invoice.payments.length})
             </h2>
           </div>
-          <table className="w-full">
+          <table className="min-w-[480px] w-full">
             <thead>
               <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
                 <th className="px-4 py-2.5 text-left">Date</th>

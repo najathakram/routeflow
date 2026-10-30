@@ -245,8 +245,8 @@ export function RecordSupplierPaymentModal({
             {eligibleBills.length === 0 ? (
               <p className="text-sm text-navy/70 italic">No outstanding bills for this supplier.</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-surface-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-surface-border">
+                <table className="min-w-[480px] w-full text-sm">
                   <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                     <tr>
                       <th className="px-3 py-2 text-left">Bill #</th>
