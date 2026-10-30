@@ -14,6 +14,7 @@ import {
   type StoredInvoiceItem,
 } from "@routeflow/pricing";
 import {
+  compareInvoiceFillOrder,
   planProductRefund,
   toHeadroomLine,
   type HeadroomLine,
@@ -70,11 +71,7 @@ export type CreditableInvoice = Omit<StoredInvoice, "items"> & {
 export function billedLinesOf(creditable: readonly CreditableInvoice[], productId: string) {
   const lines: HeadroomLine[] = [];
   const invoiceOfLine = new Map<string, RefundableInvoice>();
-  const ordered = [...creditable].sort(
-    (a, b) =>
-      new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime() ||
-      String(a.id).localeCompare(String(b.id)),
-  );
+  const ordered = [...creditable].sort(compareInvoiceFillOrder);
   ordered.forEach((inv, n) => {
     const items = inv.items ?? [];
     const ids = items.map((it, i) => it.id ?? `${n}:${i}`);

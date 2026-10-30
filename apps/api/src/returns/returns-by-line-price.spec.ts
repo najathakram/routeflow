@@ -87,7 +87,7 @@ beforeEach(async () => {
   service = mod.get(ReturnsService);
 });
 
-const price = (items: any[], o: any) => service.priceReturn(items, o, bases);
+const price = (items: any[], o: any) => service.priceReturn(items, o, bases, new Map());
 const lineItem = (orderItemId: string, qty: number) => ({
   productId: "P",
   qty,
@@ -162,13 +162,26 @@ describe("itemiseRefund: the credit note item lands on the line's own invoice it
     },
   };
   const invoice = inv("inv-1", [iiA, iiB]);
+  // SA-840 A-2: the mint prices against what `creditsForPricing` read, and passes it to the itemiser
+  const creditedOf = async () =>
+    (await service.creditsForPricing({ id: "ord-1", invoices: [invoice] }, db)).credited;
 
   it("R-r1: 200 pieces off A is one item on A's invoice item, 45.00", async () => {
-    const items = await service.itemiseRefund([lineItem("A", 200)], invoice, bases, db);
+    const items = await service.itemiseRefund(
+      [lineItem("A", 200)],
+      invoice,
+      bases,
+      await creditedOf(),
+    );
     expect(items.map((i: any) => [i.invoiceItemId, i.amount])).toEqual([["iA", 45]]);
   });
   it("G-r7 (pooled, KEPT): the pooled 200 fills lines in line order, 46.00 in all", async () => {
-    const items = await service.itemiseRefund([{ productId: "P", qty: 200 }], invoice, bases, db);
+    const items = await service.itemiseRefund(
+      [{ productId: "P", qty: 200 }],
+      invoice,
+      bases,
+      await creditedOf(),
+    );
     expect(items.reduce((t: number, i: any) => t + i.amount, 0)).toBeCloseTo(46, 2);
   });
   it("G-r17: line A's own headroom is the cap: 1 Case off a line with only 40.00 left refuses RETURN_REFUND_OVER_LINE_HEADROOM", async () => {
@@ -176,7 +189,7 @@ describe("itemiseRefund: the credit note item lands on the line's own invoice it
       { invoiceItemId: "iA", amount: 50, qty: 222.222 },
     ]);
     const err = await service
-      .itemiseRefund([lineItem("A", 200)], invoice, bases, db)
+      .itemiseRefund([lineItem("A", 200)], invoice, bases, await creditedOf())
       .catch((e: any) => e);
     expect(err.getResponse()).toMatchObject({
       code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,

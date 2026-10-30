@@ -306,7 +306,9 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       expect.objectContaining({ amount: 75 }),
       expect.anything(),
     );
-    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(75);
+    expect((service as any).priceReturn(ret.items, ret.order, new Map(), new Map()).amount).toBe(
+      75,
+    );
   });
 
   describe("SA-970: the gross twins of the SA-628b cases, priced over the product pool on the invoice", () => {
@@ -367,7 +369,8 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         { ledgerReversedByReturn: true, refundTax: 6, refundCategoryTax: [] },
       );
       expect(
-        (service as any).priceReturn([{ productId: "pa", qty: 1 }], ord, new Map()).amount,
+        (service as any).priceReturn([{ productId: "pa", qty: 1 }], ord, new Map(), new Map())
+          .amount,
       ).toBe(81);
     });
 

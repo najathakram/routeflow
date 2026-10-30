@@ -229,6 +229,51 @@ describe("CounterSaleService.ring", () => {
       );
     });
 
+    describe("W-863: an inline return rides the sale (SA-945 PR-1)", () => {
+      const inlineReturn = {
+        returnKey: "rk-1",
+        items: [{ productId: "p1", qty: 1, boxes: 0, pieces: 1 }],
+      };
+
+      it("hands the return to createSale unchanged: create() is the one return writer, there is no counter-side capture", async () => {
+        await service.ring(named({ method: "CASH" }, { inlineReturn }) as never, staff, "k-ret");
+        expect(createSale.mock.calls[0][0].inlineReturn).toBe(inlineReturn);
+      });
+
+      it("a sale with no return hands createSale no inlineReturn key at all", async () => {
+        await service.ring(named({ method: "CASH" }) as never, staff, "k-noret");
+        expect(createSale.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
+      });
+
+      it("a walk-in sale with a return is refused 409 WALK_IN_STORE_CREDIT_REFUSED before ANY write (SA-932: never credited)", async () => {
+        const body = {
+          walkIn: true,
+          items: [item],
+          payment: { method: "CASH", amount: 50 },
+          inlineReturn,
+        };
+        expect(await codeOf(service.ring(body as never, staff, "k-wi"))).toBe(
+          "WALK_IN_STORE_CREDIT_REFUSED",
+        );
+        expect(createSale).not.toHaveBeenCalled();
+        expect(walkIn.getOrCreateWalkIn).not.toHaveBeenCalled();
+      });
+
+      it("the kept walk-in RECORD named by customerId is a walk-in too: same refusal, nothing created", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-walk", isWalkIn: true });
+        expect(
+          await codeOf(
+            service.ring(
+              named({ method: "CASH", amount: 50 }, { inlineReturn }) as never,
+              staff,
+              "k-wi2",
+            ),
+          ),
+        ).toBe("WALK_IN_STORE_CREDIT_REFUSED");
+        expect(createSale).not.toHaveBeenCalled();
+      });
+    });
+
     // Row 510: the till's acknowledgement of a 409 RESTRICTION_WARNING rides the SAME request, with the SAME key.
     describe("restriction ack (row 510)", () => {
       const ackFields = {
@@ -547,6 +592,7 @@ describe("CounterSaleService.ring", () => {
         lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
+        invoiceIds: ["inv-1"],
         invoiceNumber: "N-inv-1",
         total: 37.25,
         paid: 37.25,
@@ -556,6 +602,7 @@ describe("CounterSaleService.ring", () => {
         paymentId: "pay-inv-1",
         method: "CASH",
         paymentRecorded: true,
+        toCollect: "NONE", // SA-1026: every sale reads its state back, NONE unless marked
       });
     });
 
@@ -1090,6 +1137,7 @@ describe("CounterSaleService.ring", () => {
         lines: [],
         orderNumber: "ORD-1",
         invoiceId: "inv-1",
+        invoiceIds: ["inv-1"],
         invoiceNumber: "N-inv-1",
         total: 37.25,
         paid: 37.25,
@@ -1098,6 +1146,7 @@ describe("CounterSaleService.ring", () => {
         method: "CASH",
         paymentRecorded: true,
         replayed: true,
+        toCollect: "NONE", // SA-1026
       });
       expect(findReplayCandidateByKey).toHaveBeenCalledWith("k1", expect.any(String));
       expect(createSale).not.toHaveBeenCalled();
