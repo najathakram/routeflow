@@ -77,6 +77,22 @@ describe("counting a return by line (SA-1042 B9c)", () => {
     expect(lineCountProblem(caseLine, blank)).toBeNull();
   });
 
+  it("a legacy line takes blank or a number above 0, a fraction included: the server decides", () => {
+    const fractional = { qty: 2.5 };
+    expect(lineCountProblem(fractional, { ...blank, qty: "1.5" })).toBeNull();
+    expect(lineCountFields(fractional, { ...blank, qty: "1.5" })).toEqual({ qty: 1.5 });
+    expect(lineCountProblem(fractional, blank)).toBeNull();
+    expect(lineCountProblem(fractional, { ...blank, qty: "0" })).toBe("Enter a number above 0.");
+    expect(lineCountProblem(fractional, { ...blank, qty: "-1" })).toBe("Enter a number above 0.");
+    expect(lineCountProblem(fractional, { ...blank, qty: "3" })).toMatch(/Cannot exceed/);
+  });
+
+  it("a loose-piece return says its pieces once", () => {
+    expect(returnedItemQtyText({ qty: 5, line: packLine })).toBe("5 pcs");
+    expect(returnedItemQtyText({ qty: 5, line: caseLine })).toBe("5 pcs");
+    expect(returnLineQtyText({ qty: 5, boxes: 0, pieces: 5 })).toBe("5 pcs");
+  });
+
   it("reads a returned item and its ordered side back in the line's unit", () => {
     expect(returnedItemQtyText({ qty: 200, line: caseLine })).toBe("200 pcs (1 Case)");
     expect(returnedItemQtyText({ qty: 250, line: caseLine })).toBe("250 pcs (1 Case + 50 pcs)");

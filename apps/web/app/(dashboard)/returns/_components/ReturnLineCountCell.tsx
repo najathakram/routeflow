@@ -32,13 +32,13 @@ export function ReturnLineCountCell({
 }) {
   const mode = lineCountMode(line);
   const words = lineUnitWords(line);
-  const field = (key: keyof LineCountInput, word: string) => (
+  const field = (key: keyof LineCountInput, word: string, fraction = false) => (
     <label className="flex items-center gap-1.5 text-xs text-navy/70">
       <input
         type="number"
-        inputMode="numeric"
+        inputMode={fraction ? "decimal" : "numeric"}
         min="0"
-        step="1"
+        step={fraction ? "any" : "1"}
         placeholder="0"
         aria-label={`${word} to return, ${productName}`}
         value={value[key]}
@@ -51,7 +51,7 @@ export function ReturnLineCountCell({
   if (mode === "legacy")
     return (
       <div className="flex flex-col gap-1">
-        {field("qty", Number(line.unitsPerBox ?? 0) > 1 ? words.many : "pcs")}
+        {field("qty", Number(line.unitsPerBox ?? 0) > 1 ? words.many : "pcs", true)}
       </div>
     );
   if (mode === "unit")

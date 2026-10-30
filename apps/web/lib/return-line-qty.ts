@@ -18,7 +18,8 @@ export function returnLineQtyText(line: ReturnLineQtyInput): string {
   const pcs = Number(line.qty);
   const pieces = Number.isFinite(pcs) ? String(parseFloat(pcs.toFixed(3))) : String(line.qty);
   if (line.boxes == null && line.pieces == null) return `${pieces} pcs`;
-  return `${pieces} pcs (${invoiceLineQtyText(line)})`;
+  const words = invoiceLineQtyText(line);
+  return words === `${pieces} pcs` ? words : `${pieces} pcs (${words})`;
 }
 
 // ─── B9c: counting a return by line, and reading it back ───────────────────────────────────────────────────────────────
@@ -77,9 +78,15 @@ export function lineCountFields(
 /** A message for a count that cannot be right. The server decides; this only saves the trip. */
 export function lineCountProblem(line: ReturnLineSnapshot, v: LineCountInput): string | null {
   const mode = lineCountMode(line);
-  const parts = mode === "legacy" ? [v.qty] : mode === "unit" ? [v.boxes] : [v.boxes, v.pieces];
-  if (parts.some((p) => p.trim() !== "" && !(Number.isInteger(Number(p)) && Number(p) >= 0)))
-    return "Use whole numbers.";
+  if (mode === "legacy") {
+    // A box-unaware line can hold a fraction, and the server takes one.
+    const n = Number(v.qty);
+    if (v.qty.trim() !== "" && !(Number.isFinite(n) && n > 0)) return "Enter a number above 0.";
+  } else {
+    const parts = mode === "unit" ? [v.boxes] : [v.boxes, v.pieces];
+    if (parts.some((p) => p.trim() !== "" && !(Number.isInteger(Number(p)) && Number(p) >= 0)))
+      return "Use whole numbers.";
+  }
   const f = lineCountFields(line, v);
   if (!f) return null;
   const ordered = Number(line.qty);

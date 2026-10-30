@@ -10,14 +10,19 @@
  * rows (server truth) as well as the screen.
  *
  * Role: OPERATOR. Tenant: the approved e2e-routeflow seed, with flag.units_v1 granted by e2e-seed.js. It CREATES a
- * product, a customer, an invoice and a credit note with no cleanup, so the project is local lane only.
+ * product, a customer, an invoice and a credit note with no cleanup, so the project is local lane only. The local-target
+ * guard (local web + API + DB, not GitHub Actions, approved test tenant) and assertTestTenant run before the first write.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
 import { apiBase, operatorAccessToken } from "./helpers/api";
+import { assertLocalFulfilmentTarget } from "../lib/local-fulfilment-guard";
+import { localTarget } from "./helpers/local-fulfilment-profile";
 
-const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
+
+const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
 const RUN = Date.now();
 const PRODUCT_NAME = `E2E Return Case ${RUN}`;
 const CUSTOMER_NAME = `E2E Return Customer ${RUN}`;
@@ -37,6 +42,9 @@ test.describe("SA-1042 B9c: a return counted by line", () => {
     page,
     request,
   }) => {
+    assertLocalFulfilmentTarget(localTarget(apiBase(BASE)));
+    assertTestTenant(TENANT_SLUG, "spec 77 throwaway fixtures");
+
     await page.goto("/returns");
     await expect(page.getByRole("button", { name: "New Return" })).toBeVisible({ timeout: 15_000 });
     const headers = await headersOf(page);

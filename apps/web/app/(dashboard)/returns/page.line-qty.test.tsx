@@ -42,6 +42,7 @@ const ORDER = {
     line({ id: "li-a", qty: 400, boxes: 2, pieces: 0, unitsPerBox: 200, unitLabel: "Case" }),
     line({ id: "li-b", qty: 100, boxes: 10, pieces: 0, unitsPerBox: 10 }),
     line({ id: "li-c", productId: "p-2", product: { name: "Chips" }, qty: 12 }),
+    line({ id: "li-d", productId: "p-3", product: { name: "Bulk Rice" }, qty: 2.5 }),
   ],
 };
 jest.mock("@/lib/api/orders", () => ({
@@ -128,6 +129,22 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     fireEvent.change(rowInput(chips, /^pcs to return/), { target: { value: "5" } });
     submit();
     expect(sent()).toEqual([{ productId: "p-2", orderItemId: "li-c", qty: 5 }]);
+  });
+
+  it("a 2.5 legacy line returns 1.5: no problem shown, qty 1.5 sent, and only that cell takes a fraction", async () => {
+    await openOrder();
+    await screen.findAllByRole("row");
+    const rice = screen.getAllByRole("row").find((r) => r.textContent?.startsWith("Bulk Rice"))!;
+    const count = rowInput(rice, /^pcs to return/);
+    expect(count).toHaveAttribute("inputmode", "decimal");
+    expect(count).toHaveAttribute("step", "any");
+    expect(rowInput(colaRow(0), /^Cases to return/)).toHaveAttribute("inputmode", "numeric");
+    expect(rowInput(colaRow(0), /^Cases to return/)).toHaveAttribute("step", "1");
+    fireEvent.change(count, { target: { value: "1.5" } });
+    submit();
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(screen.queryByText("Use whole numbers.")).toBeNull();
+    expect(sent()).toEqual([{ productId: "p-3", orderItemId: "li-d", qty: 1.5 }]);
   });
 
   it("the Return header no longer says pcs, and an over-cap count shows the line's own words and sends nothing", async () => {
