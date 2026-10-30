@@ -85,7 +85,13 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
-import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import {
+  dbClockNow,
+  lockCounterClose,
+  tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
+} from "./counter-close-lock";
+import { refundBusy } from "./standard-refund-claim";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import {
   refundTenderColumn,
@@ -1411,10 +1417,10 @@ export class InlineReturnsService {
     // SA-740r2 item 6: a COUNTER order's refund counts in the day's drawer, so the transaction's FIRST statement is the shared
     // counter-close lock on the carrying order's register (it is immutable, so this unlocked read is safe); the close waits
     // for refunds in flight and a refund's `refundedAt` (the database clock, dbClockNow) can never land behind a close's cutoff.
-    const registerKey = registerKeyOfOrder(
+    const registerKey = tillRegisterOfSale(
       await this.prisma.forTenant().order.findFirst({
         where: { id: pre.orderId },
-        select: { counterSale: true, registerKey: true },
+        select: { counterSale: true, registerKey: true, fulfillPath: true },
       }),
     );
 
@@ -1455,6 +1461,8 @@ export class InlineReturnsService {
         fresh.orderId,
         ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
       ]);
+      // W-829: a pickup stamped by a hand-over while this waited for the Order lock needs the close lock first: retry
+      if (await tillRegisterStampedUnderLock(tx, fresh.orderId, registerKey)) throw refundBusy();
 
       // M2: the SERVER's figure (exactly what the credit mint would issue); the client only confirms it
       const amount = inlineReturnAmount(fresh);

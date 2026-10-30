@@ -142,6 +142,7 @@ describeDb("counter day close: POS-mode pickup hand-overs on real Postgres", () 
   }, 120_000);
 
   afterAll(async () => {
+    await raw.return.deleteMany({ where: { tenantId } });
     await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
     await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
@@ -236,5 +237,49 @@ describeDb("counter day close: POS-mode pickup hand-overs on real Postgres", () 
       ),
     );
     expect(salesSince).toBe(2);
+  }, 60_000);
+
+  it("(6) W-829: a cash refund of a stamped Store pickup sale leaves the drawer; an unstamped pickup and a route order refund do not", async () => {
+    const REG = "w829";
+    const stamped = await order({
+      counterSale: false,
+      registerKey: REG,
+      payments: [{ amount: 50, group: "v5" }],
+    });
+    const unstamped = await order({ counterSale: false, payments: [{ amount: 20, group: "v5" }] });
+    const route = await order({
+      counterSale: false,
+      fulfillPath: "ROUTE",
+      registerKey: REG,
+      payments: [{ amount: 20, group: "other" }],
+    });
+    const refund = async (orderId: string, amount: number) => {
+      seq += 1;
+      return raw.return.create({
+        data: {
+          returnNumber: `HR${run}-${seq}`,
+          orderId,
+          customerId,
+          tenantId,
+          reason: "DAMAGED",
+          status: "REFUNDED",
+          refundMethod: "EXTERNAL_REFUND",
+          refundAmount: amount,
+          refundedAt: new Date("2026-10-08T16:00:00.000Z"),
+          refundTender: "CASH" as never,
+        },
+      });
+    };
+    await refund(stamped, 12);
+    await refund(unstamped, 7);
+    await refund(route, 9);
+
+    const state = await as(() => service.state(REG, NOW));
+    expect(state.preview.tillCash).toBe(50);
+    expect(state.preview.cashRefunds).toBe(12); // master: 0, so the expected drawer is overstated by the refund
+    expect(state.preview.totals.refunds).toMatchObject({ count: 1, cash: 12, total: 12 });
+    // 'main' (the unstamped pickup's register) does not see the route order's or the other register's refund
+    const main = await as(() => service.state("main", NOW));
+    expect(main.preview.cashRefunds).toBe(0);
   }, 60_000);
 });

@@ -321,8 +321,8 @@ type Harness = Awaited<ReturnType<typeof buildHarness>>;
  *          B 50 passed the refusal and was paid: 150 pcs refunded for more than the 39.38 the lines are worth. After: 409
  *          RETURN_REFUND_OVER_LINE_HEADROOM, no second credit note, the return stays RECEIVED.
  *   G-F2b  the id order matches createdAt (B older, B has the smaller id): refused before and after.
- *   G-F2c  B on the NEWER invoice (A older, smaller id): "B 50" is refused 400 by the latest invoice's room (2.25 left of B's 27.00
- *          after the pooled lump landed there), before and after A-2 (SA-840 A-3 keeps the refusal). See the case's comment.
+ *   R-M1   (SA-1051, was G-F2c) B on the NEWER invoice (A older, smaller id): the pooled lump is minted on A, the invoice it was
+ *          priced on, so "B 50" is paid 13.50 on B (38.25 in all, two notes). Before SA-1051 the lump sat on B and B's 2.25 of room refused it.
  *
  * Each case logs its OBSERVED figures (`SA840 OBSERVED {...}`) so a run at the pre-fix base reports today's values.
  * Run with `npm run local:test:db` (fresh `rf_dbspec_*` database).
@@ -375,20 +375,28 @@ describeDb(
       expect(row.status).toBe("RECEIVED");
     });
 
-    // GUARD (SA-840 A-3: the refusal is KEPT). With B on the NEWER invoice the pooled 100 (24.75, priced on A, the older invoice's
-    // line) is minted as ONE lump on the LATEST invoice, B's (27.00), leaving 2.25 of room there, so "B 50" (13.50) is refused 400 by
-    // the latest-invoice room check, before and after A-2. The 400 (invoice room) versus the 409 (line headroom, R-F2) is what tells
-    // the two gates apart. Which invoice a lump is minted on is an owner question, out of #3800.
-    it("G-F2c (guard): B on the NEWER invoice — 'B 50' is refused 400 naming the LATEST invoice's remaining room 2.25, before and after; one credit note, the return stays RECEIVED", async () => {
+    // R-M1 (SA-1051, was G-F2c): with B on the NEWER invoice the pooled 100 (24.75) was priced on A, the OLDER invoice's line. The
+    // lump is now minted on the invoice the fill touched last, A's, not on the order's newest invoice (B's), so B keeps its whole
+    // 27.00 of room and "B 50" (13.50) is paid on B. Observed: 24.75 on A, 13.50 on B, 38.25 in all, two notes, REFUNDED.
+    it("R-M1 (SA-1051): B on the NEWER invoice — the pooled 100 (24.75) is minted on A, the invoice it was priced on, so 'B 50' is paid 13.50 on B; two credit notes, 38.25 in all, the return is REFUNDED", async () => {
       const { first, out, row, s } = await pooledThenLineB("gf2c", "A", "A");
       expect(first).toMatchObject({ amount: 24.75 });
-      expect(out).toMatchObject({
-        refused: { status: 400, message: expect.stringMatching(/remaining room 2\.25/) },
+      expect(out).toMatchObject({ amount: 13.5 });
+      expect(h.round2(24.75 + 13.5)).toBe(38.25);
+      expect(row.status).toBe("REFUNDED");
+      expect(await h.creditNoteCount(s)).toBe(2);
+      const notes = await h.prisma.creditNote.findMany({
+        where: { tenantId: s.tenantId, status: { not: "VOID" } },
+        orderBy: { createdAt: "asc" },
+        select: { invoiceId: true, amount: true },
       });
-      expect(out).not.toMatchObject({ refused: { code: OVER_HEADROOM } }); // the invoice-room 400, not the line-headroom 409
-      expect(row.status).toBe("RECEIVED");
-      expect(row.creditNoteId).toBeNull();
-      expect(await h.creditNoteCount(s)).toBe(1);
+      console.info(
+        `SA840 OBSERVED ${JSON.stringify({ case: "rm1-invoices", invA: s.invA.id, invB: s.invB.id, notes: notes.map((n) => [n.invoiceId, Number(n.amount)]) })}`,
+      );
+      expect(notes.map((n) => [n.invoiceId, Number(n.amount)])).toEqual([
+        [s.invA.id, 24.75],
+        [s.invB.id, 13.5],
+      ]);
     });
   },
 );

@@ -377,6 +377,14 @@ export const API_ERROR_CODES = {
   COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
   DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
   DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
+  /** 409 from POST /orders/counter-sale/drawer/opening-float: this window's opening float was already counted with a different amount (an identical amount replays the existing row). Only an admin can correct it (PATCH). */
+  COUNTER_FLOAT_ALREADY_COUNTED: "COUNTER_FLOAT_ALREADY_COUNTED",
+  /** 404 from PATCH /orders/counter-sale/drawer/opening-float: no opening float was counted for that register and window. */
+  COUNTER_FLOAT_NOT_COUNTED: "COUNTER_FLOAT_NOT_COUNTED",
+  /** 409 from PATCH /orders/counter-sale/drawer/opening-float: the float is no longer the amount the admin's screen showed (expectedAmount), so another correction landed first. Reload and retry. */
+  COUNTER_FLOAT_CHANGED: "COUNTER_FLOAT_CHANGED",
+  /** 409 from POST /orders/counter-sale/drawer/opening-float: windowStart is not the register's open window (a close already covers it, or it is not the window DayCloseState.preview.windowStart names). Reload the day-close state. */
+  COUNTER_FLOAT_WINDOW_NOT_OPEN: "COUNTER_FLOAT_WINDOW_NOT_OPEN",
   /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
   PARK_LIMIT: "PARK_LIMIT",
   /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
