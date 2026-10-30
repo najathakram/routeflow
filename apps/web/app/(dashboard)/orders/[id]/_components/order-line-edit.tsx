@@ -82,6 +82,8 @@ export interface EditItemState {
   originalBoxSplit?: boolean;
   /** Row 630: the named unit the line was STORED on (a unit line); absent = a stored pack line, whose own price and size price its derived Piece. */
   originalUnitLabel?: string;
+  /** SA-1044 A-2: the stored line's raw `unitsPerBox` (the held level's factor; null = unknown), never the pack fallback. */
+  heldUnitsPerBox?: number | null;
   /** The line's own price, restored alongside the denomination when a
    *  substitution is undone — otherwise the original product would save at the
    *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
@@ -319,6 +321,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
     originalUnitLabel: li.unitLabel ?? undefined,
+    heldUnitsPerBox: li.unitsPerBox ?? null,
     // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
     promoFreeUnits: li.promoFreeUnits ?? null,
     // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
@@ -1108,6 +1111,17 @@ export function EditableLineItems({
                   }}
                   tier={tierForProductId(item.productId)}
                   layer={layerOf?.(item.productId)}
+                  held={
+                    // SA-1044 A-2: the stored snapshot, only while the line still sells its own product
+                    item.originalUnitLabel && item.productId === item.originalProductId
+                      ? {
+                          unitLabel: item.originalUnitLabel,
+                          unitsPerBox: item.heldUnitsPerBox ?? null,
+                          unitPrice: item.originalUnitPrice ?? item.unitPrice,
+                          listPrice: item.originalBasePrice ?? item.basePrice,
+                        }
+                      : null
+                  }
                   startOnDefaultUnit={item.startOnDefaultUnit}
                   disabled={!pricingReady}
                   onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}

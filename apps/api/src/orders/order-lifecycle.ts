@@ -34,7 +34,7 @@ import * as rGate from "./order-restriction-gate";
 import { resolveShipmentText } from "./shipment-text";
 import { assertFulfilPathOffered } from "./fulfil-path-resolver";
 import { fulfillPathLocked } from "./fulfil-path-lock";
-import { mayUseTill } from "./counter-sale/till-permission.guard";
+import { mayUseTill, posModeDeniedGroups } from "./counter-sale/till-permission.guard";
 
 const switchLogger = new Logger("OrderFulfilPathSwitch");
 
@@ -222,6 +222,7 @@ export async function updateFulfillPathImpl(
     },
     dto.fulfillPath,
     user?.role ?? null,
+    user ? await posModeDeniedGroups(self.prisma, user, dto.fulfillPath) : [],
   );
   // `findFirst`, NOT `findUnique`: forTenant()'s findUnique can only POST-filter
   // on the returned row's `tenantId`, and an exclusive `select` that omits it
