@@ -62,7 +62,8 @@ import { ToCollectChip } from "@/components/ToCollectChip";
 import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
-import { dayClosedCopy, isDayClosedRefusal } from "@/lib/day-closed-copy";
+import { dayClosedCopy } from "@/lib/day-closed-copy";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { useAuth } from "@/lib/auth-context";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
@@ -1989,8 +1990,8 @@ function LedgerReport() {
   const [payAmount, setPayAmount] = React.useState("");
   const [payMethod, setPayMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [payRef, setPayRef] = React.useState("");
-  // Row 348: this report toasts a closed-day refusal itself, so the global toast stays quiet for it (one toast).
-  const recordPayment = useRecordPayment({ localErrorToast: isDayClosedRefusal });
+  // Rows 348 / 353: this report toasts every failure itself, so the global toast stays quiet (one toast).
+  const recordPayment = useRecordPayment({ localErrorToast: true });
   const { toast } = React.useContext(ToastContext);
   const { user } = useAuth();
 
@@ -2035,7 +2036,12 @@ function LedgerReport() {
       )
         return;
       // The global toast is quiet for a closed-day refusal (the hook's option): this one says why, once.
-      toast({ title: dayClosedCopy(err) ?? "Failed to record payment", variant: "error" });
+      const closedDay = dayClosedCopy(err);
+      // The page's toast has no description line, and the global one is quiet: the fixed reason rides the title.
+      toast({
+        title: closedDay ?? `Failed to record payment. ${genericToastCopy(err)}`,
+        variant: "error",
+      });
     }
   };
 
