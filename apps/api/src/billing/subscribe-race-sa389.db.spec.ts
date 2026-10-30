@@ -11,6 +11,7 @@ import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool, Client } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { waitUntilBlockedBy } from "../common/testing/blocked-wait";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
@@ -140,15 +141,7 @@ describeDb("SA-389 — subscribe() re-checks under the tenant lock (two real con
         (v) => ({ ok: true as const, v }),
         (e) => ({ ok: false as const, e }),
       );
-      let blocked = false;
-      for (let i = 0; i < 100 && !blocked; i++) {
-        const r = await pool.query(
-          `SELECT count(*)::int n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-          [t2pid],
-        );
-        blocked = r.rows[0].n > 0;
-        if (!blocked) await new Promise((res) => setTimeout(res, 50));
-      }
+      const blocked = await waitUntilBlockedBy(pool, t2pid, { timeoutMs: 5_000, intervalMs: 50 });
       expect(blocked).toBe(true); // T1 really is waiting on T2's lock (after its pre-read)
       await between(t2);
       await t2.query("COMMIT");

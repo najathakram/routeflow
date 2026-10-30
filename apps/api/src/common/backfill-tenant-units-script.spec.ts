@@ -29,6 +29,10 @@ function helpers(): Record<string, unknown> {
     import * as m from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
     const tryIt = (f) => { try { f(); return "ok"; } catch (e) { return e.message; } };
     const a = { liveOverride: false, backupTaken: false };
+    import { createRequire } from "node:module";
+    const { planTenantUnits } = createRequire(${JSON.stringify(pathToFileURL(SCRIPT).href)})("./lib/tenant-units-plan.cjs");
+    const Z = { tenantUnitsCreated: 0, tenantUnitsExisting: 0, tenantUnitsOverflow: 0, productUnitsUnlinkedOverflow: 0, productUnitsLinked: 0, productUnitsParentFilled: 0, skippedTooLong: 0, skippedSynonyms: 0, skippedParent: 0, explicitPieceParent: 0 };
+    const ez = (c) => typeof m.expectZeroResult === "function" ? m.expectZeroResult(c) : "expectZeroResult is not exported";
     console.log(JSON.stringify({
       testTenant: tryIt(() => m.assertLiveApplyAllowed(a, true)),
       liveBare: tryIt(() => m.assertLiveApplyAllowed(a, false)),
@@ -43,6 +47,42 @@ function helpers(): Record<string, unknown> {
       skips: m.parentSkipLines([{ reason: "b" }, { reason: "a" }, { reason: "b" }]),
       pieceRows: m.explicitPieceLines([{ label: "Case" }, { label: " Box " }, { label: "Case" }]),
       pieceNone: m.explicitPieceLines([]),
+      expectZeroDefault: m.parseArgs(["--tenant", ${JSON.stringify(ID)}]).expectZero,
+      expectZeroFlag: m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--local", "--expect-zero"]).expectZero,
+      expectZeroApply: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--apply", "--expect-zero"])),
+      zeroAll: ez({ ...Z }),
+      zeroCreated: ez({ ...Z, tenantUnitsCreated: 2 }),
+      zeroLinked: ez({ ...Z, productUnitsLinked: 5 }),
+      zeroParent: ez({ ...Z, productUnitsParentFilled: 7 }),
+      zeroMissing: ez({}),
+      residueCap: ez({ ...Z, tenantUnitsOverflow: 3, productUnitsUnlinkedOverflow: 7 }),
+      residueTooLong: ez({ ...Z, skippedTooLong: 1 }),
+      residueParent: ez({ ...Z, skippedParent: 4 }),
+      pendingAndResidue: ez({ ...Z, tenantUnitsCreated: 2, tenantUnitsOverflow: 3, productUnitsUnlinkedOverflow: 7 }),
+      synonymsOnly: ez({ ...Z, skippedSynonyms: 2, tenantUnitsExisting: 9, explicitPieceParent: 3 }),
+      unlinkedOnly: ez({ ...Z, productUnitsUnlinkedOverflow: 4 }),
+      missingParentSkip: ez((({ skippedParent, ...rest }) => rest)(Z)),
+      malformed: ez({ ...Z, skippedTooLong: -1 }),
+      nanCount: ez({ ...Z, tenantUnitsOverflow: Number.NaN }),
+      stringCount: ez({ ...Z, skippedParent: "0" }),
+      planKeys: Object.keys(planTenantUnits({ productUnits: [], products: [], existingUnits: [] }).counts).sort(),
+      gatedKeys: [...(m.PENDING_COUNTS ?? []), ...(m.RESIDUE_COUNTS ?? [])].sort(),
+      byDesignKeys: [...(m.BY_DESIGN_COUNTS ?? [])].sort(),
+      accepted: m.ACCEPTED_FLAGS ?? "ACCEPTED_FLAGS is not exported",
+      usage: m.USAGE ?? "USAGE is not exported",
+      table: Object.fromEntries(
+        ["--apply", "--local", "--live-tenant-override", "--backup-taken", "--expect-zero"].map((f) => [
+          f,
+          tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, f])),
+        ]),
+      ),
+      allowProtected: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--allow-protected", ${JSON.stringify(ID)}, "--backup-taken", "--local"])),
+      allowProtectedFirst: tryIt(() => m.parseArgs(["--allow-protected", ${JSON.stringify(ID)}, "--tenant", ${JSON.stringify(ID)}, "--apply"])),
+      allowProtectedBare: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--allow-protected"])),
+      allowProtectedFlag: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--allow-protected", "--backup-taken"])),
+      unknownEquals: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--expectzero=acme-wholesale"])),
+      stray: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "acme-wholesale"])),
+      retiredFirst: tryIt(() => m.parseArgs(["--tenant", ${JSON.stringify(ID)}, "--bogus", "--allow-paying-tenant"])),
     }));`;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", src], { encoding: "utf8" });
   if (r.status !== 0) throw new Error(r.stderr);
@@ -85,6 +125,260 @@ describe("backfill-tenant-units.mjs gates (U-6, SA M3)", () => {
     const r = run(["--tenant", ID], { DATABASE_URL: "postgresql://u:p@localhost:5432/db" });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("Missing Railway proxy variables");
+  });
+
+  it("--expect-zero with --apply is refused before any connection (exit 1)", () => {
+    for (const args of [
+      ["--tenant", ID, "--local", "--apply", "--expect-zero"],
+      ["--tenant", ID, "--expect-zero", "--apply"],
+    ]) {
+      const r = run(args);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(
+        "--expect-zero is a read-only check; do not combine it with --apply",
+      );
+    }
+  });
+
+  it("--expect-zero alone passes the argument gate (it stops later, at the target decision)", () => {
+    const r = run(["--tenant", ID, "--local", "--expect-zero"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("--local requires DATABASE_URL");
+  });
+
+  describe("unknown arguments are refused before any connection (exit 1, names the flag, one usage line)", () => {
+    const USAGE_LINE =
+      "Usage: backfill-tenant-units.mjs --tenant <tenantId> [--local] [--apply] [--expect-zero] " +
+      "[--live-tenant-override] [--backup-taken] [--allow-protected <tenantId>]";
+
+    it("`--expectzero` (a typo of --expect-zero) is refused, not run as an OK dry run", () => {
+      for (const args of [
+        ["--tenant", ID, "--local", "--expectzero"],
+        ["--tenant", ID, "--expectzero"],
+      ]) {
+        const r = run(args); // no DATABASE_URL and no Railway variables: any connection step would say so
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("unknown flag: --expectzero");
+        expect(r.stderr).toContain(USAGE_LINE);
+        expect(r.stderr).not.toContain("DATABASE_URL");
+        expect(r.stderr).not.toContain("Railway");
+        expect(r.stdout).toBe("");
+      }
+    });
+
+    it("a typo next to valid flags is refused, and the valid flags do not excuse it", () => {
+      const r = run([
+        "--tenant",
+        ID,
+        "--local",
+        "--apply",
+        "--backup-taken",
+        "--live-tenant-overide",
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("unknown flag: --live-tenant-overide");
+      expect(r.stderr).toContain(USAGE_LINE);
+      expect(r.stderr).not.toContain("DATABASE_URL");
+    });
+
+    it("a stray positional is refused without echoing it; `--flag=value` names only the flag", () => {
+      const stray = run(["--tenant", ID, "--local", "acme-wholesale"]);
+      expect(stray.status).toBe(1);
+      expect(stray.stderr).toContain("unexpected argument");
+      expect(stray.stderr).not.toContain("acme-wholesale");
+      const eq = run(["--tenant", ID, "--local", "--expectzero=acme-wholesale"]);
+      expect(eq.status).toBe(1);
+      expect(eq.stderr).toContain("unknown flag: --expectzero.");
+      expect(eq.stderr).not.toContain("acme-wholesale");
+    });
+
+    it("the retired-flag refusal keeps its wording and comes first", () => {
+      const r = run(["--tenant", ID, "--bogus", "--allow-paying-tenant"]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("retired");
+      expect(r.stderr).not.toContain("unknown flag");
+    });
+
+    describe("the accepted set", () => {
+      const h = helpers();
+
+      it("is exactly the flags the script and its guards read", () => {
+        expect(h.accepted).toEqual({
+          boolean: [
+            "--apply",
+            "--local",
+            "--live-tenant-override",
+            "--backup-taken",
+            "--expect-zero",
+          ],
+          value: ["--tenant", "--allow-protected"],
+        });
+        expect(h.usage).toBe(USAGE_LINE);
+      });
+
+      it("each accepted flag still parses (table over the real flag set)", () => {
+        expect(h.table).toEqual({
+          "--apply": "ok",
+          "--local": "ok",
+          "--live-tenant-override": "ok",
+          "--backup-taken": "ok",
+          "--expect-zero": "ok",
+        });
+      });
+
+      it("--allow-protected <id> takes its value (never a stray positional), in any position", () => {
+        expect(h.allowProtected).toBe("ok");
+        expect(h.allowProtectedFirst).toBe("ok");
+      });
+
+      it("--allow-protected without a value is refused with the usage line", () => {
+        for (const m of [h.allowProtectedBare, h.allowProtectedFlag]) {
+          expect(m).toContain("--allow-protected requires a value");
+          expect(m).toContain(USAGE_LINE);
+        }
+      });
+
+      it("parseArgs itself names the flag, never the value after an equals sign or a stray word", () => {
+        expect(h.unknownEquals).toContain("unknown flag: --expectzero.");
+        expect(h.unknownEquals).not.toContain("acme-wholesale");
+        expect(h.stray).toContain("unexpected argument");
+        expect(h.stray).not.toContain("acme-wholesale");
+        expect(String(h.retiredFirst)).toContain("retired");
+      });
+    });
+  });
+
+  describe("--expect-zero (SA-984 §3, amended by SA-986)", () => {
+    const h = helpers();
+
+    it("parseArgs returns expectZero true only when the flag is given", () => {
+      expect(h.expectZeroDefault).toBe(false);
+      expect(h.expectZeroFlag).toBe(true);
+    });
+
+    it("parseArgs refuses --expect-zero together with --apply", () => {
+      expect(h.expectZeroApply).toBe(
+        "--expect-zero is a read-only check; do not combine it with --apply",
+      );
+    });
+
+    it("all six gated counts 0: ok, exit 0, the OK line names the six zeros", () => {
+      expect(h.zeroAll).toEqual({
+        ok: true,
+        line: "Expect-zero: OK created=0 linked=0 parentFilled=0 overflow=0 tooLong=0 parentSkipped=0",
+        exitCode: 0,
+      });
+    });
+
+    it("created > 0 alone: exit 3 with the counts", () => {
+      expect(h.zeroCreated).toEqual({
+        ok: false,
+        line: "Expect-zero: FAIL created=2 linked=0 parentFilled=0 (a re-run still plans rows)",
+        exitCode: 3,
+      });
+    });
+
+    it("linked > 0 alone: exit 3 with the counts", () => {
+      expect(h.zeroLinked).toEqual({
+        ok: false,
+        line: "Expect-zero: FAIL created=0 linked=5 parentFilled=0 (a re-run still plans rows)",
+        exitCode: 3,
+      });
+    });
+
+    it("parentFilled > 0 alone: exit 3 with the counts", () => {
+      expect(h.zeroParent).toEqual({
+        ok: false,
+        line: "Expect-zero: FAIL created=0 linked=0 parentFilled=7 (a re-run still plans rows)",
+        exitCode: 3,
+      });
+    });
+
+    it("a missing count never reads as zero (fails closed)", () => {
+      expect((h.zeroMissing as { exitCode: number }).exitCode).toBe(3);
+    });
+
+    it("exit 3 is set after the dry-run output and is never overwritten to 0; a real error stays 1", () => {
+      const src = readFileSync(SCRIPT, "utf8");
+      const set = src.indexOf("process.exitCode = check.exitCode");
+      expect(set).toBeGreaterThan(src.indexOf('"Dry run only; pass --apply to write."'));
+      expect(src.match(/process\.exitCode = 0/g)).toBeNull();
+      expect(src).toContain("process.exitCode = 1;");
+    });
+  });
+
+  describe("--expect-zero residue, exit 4 (SA-986)", () => {
+    const h = helpers();
+    const noRerun = "(no re-run clears this; send the counts to the SA)";
+
+    it("a capped tenant (overflow 3, unlinkedOverflow 7) is residue, exit 4, naming overflow=3", () => {
+      expect(h.residueCap).toEqual({
+        ok: false,
+        line: `Expect-zero: RESIDUE overflow=3 unlinkedOverflow=7 tooLong=0 parentSkipped=0 ${noRerun}`,
+        exitCode: 4,
+      });
+    });
+
+    it("a too-long unit name is residue, exit 4", () => {
+      expect(h.residueTooLong).toMatchObject({ ok: false, exitCode: 4 });
+      expect((h.residueTooLong as { line: string }).line).toContain("tooLong=1");
+    });
+
+    it("a skipped parent fill is residue, exit 4", () => {
+      expect(h.residueParent).toMatchObject({ ok: false, exitCode: 4 });
+      expect((h.residueParent as { line: string }).line).toContain("parentSkipped=4");
+    });
+
+    it("unlinkedOverflow alone is not gated (it is gated through the overflow name count)", () => {
+      expect((h.unlinkedOnly as { exitCode: number }).exitCode).toBe(0);
+    });
+
+    it("pending plus residue: exit 3 (pending first) and the line names both", () => {
+      const r = h.pendingAndResidue as { ok: boolean; line: string; exitCode: number };
+      expect(r.exitCode).toBe(3);
+      expect(r.line).toContain("FAIL created=2 linked=0 parentFilled=0");
+      expect(r.line).toContain("RESIDUE overflow=3 unlinkedOverflow=7 tooLong=0 parentSkipped=0");
+    });
+
+    it("counts by design alone (synonyms, existing, explicit Piece parents) stay exit 0", () => {
+      expect((h.synonymsOnly as { exitCode: number }).exitCode).toBe(0);
+    });
+
+    it("a missing, negative, NaN or string count fails closed as pending, exit 3", () => {
+      expect(h.missingParentSkip).toMatchObject({ ok: false, exitCode: 3 });
+      expect((h.missingParentSkip as { line: string }).line).toContain("malformed: skippedParent");
+      for (const k of ["malformed", "nanCount", "stringCount"]) {
+        expect((h[k] as { exitCode: number }).exitCode).toBe(3);
+      }
+    });
+
+    it("PIN: every count the plan returns is classed gated or by design, exactly", () => {
+      expect(h.gatedKeys).toEqual([
+        "productUnitsLinked",
+        "productUnitsParentFilled",
+        "skippedParent",
+        "skippedTooLong",
+        "tenantUnitsCreated",
+        "tenantUnitsOverflow",
+      ]);
+      expect(h.byDesignKeys).toEqual([
+        "explicitPieceParent",
+        "productUnitsUnlinkedOverflow",
+        "skippedSynonyms",
+        "tenantUnitsExisting",
+      ]);
+      expect(h.planKeys).toEqual(
+        [...(h.gatedKeys as string[]), ...(h.byDesignKeys as string[])].sort(),
+      );
+    });
+
+    it("the header lists exit codes 0, 1, 3 and 4", () => {
+      const head = readFileSync(SCRIPT, "utf8").split("import {")[0];
+      expect(head).toContain(
+        "4 = --expect-zero found residue no re-run clears (overflow, too-long names, skipped parent fills)",
+      );
+      expect(head).toContain("3 = --expect-zero found a re-run still plans rows");
+    });
   });
 
   describe("dry run is the default (SA-810 c)", () => {

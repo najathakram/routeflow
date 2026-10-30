@@ -202,6 +202,17 @@ describe("#2190 invoice importer: a bad money cell skips the invoice, never impo
     expect(created[0].items.create[0].subtotal).toBe(95);
   });
 
+  it("W-924: a stated Item Total of 0.00 imports the line at 0.00; an empty cell keeps the qty*price fallback", async () => {
+    // qty 2 x 5.00: master re-prices the stated 0.00 to 10.00 (and a 100.00 line total here)
+    const stated = await run(csv({ Quantity: "2", "Item Price": "5.00", "Item Total": "0.00" }));
+    expect(stated.errors).toEqual([]);
+    expect(created[0].items.create[0].subtotal).toBe(0);
+    created.length = 0;
+    const absent = await run(csv({ Quantity: "2", "Item Price": "5.00", "Item Total": "" }));
+    expect(absent.errors).toEqual([]);
+    expect(created[0].items.create[0].subtotal).toBe(10);
+  });
+
   it("(b) blank Balance Due stays absent: status follows the label, no synthetic payment", async () => {
     const r = await run(csv({ "Balance Due": "", "Invoice Status": "Paid" }));
     expect(r.imported).toBe(1);

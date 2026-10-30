@@ -357,6 +357,28 @@ describeDb("SA-764 — the stored cash tendered, real Postgres", () => {
     expect(res.data.find((d) => d.orderId === first.orderId)!.change).toBe(18.73);
   }, 60_000);
 
+  it("(6b) row 638: a crashed CASH attempt retried as CARD on the same key clears the stored figure, so no read serves it", async () => {
+    const key = `cs-crash-card-${randomUUID()}`;
+    failNextPayment = true;
+    const first = await ring({ method: "CASH", amount: 50 }, key);
+    expect(first.paymentRecorded).toBe(false);
+    expect(Number(await stored(first.orderId))).toBe(50);
+    const retry = await ring({ method: "CARD" }, key);
+    expect(retry.orderId).toBe(first.orderId);
+    expect(retry.paymentRecorded).toBe(true);
+    expect(retry.method).toBe("CARD");
+    expect(retry.cashTendered).toBeUndefined();
+    expect(retry.change).toBeUndefined();
+    expect(await stored(first.orderId)).toBeNull();
+    const byKey = await tenantCtx.run(tenantId, () => service.byKey(key));
+    expect(byKey.cashTendered).toBeUndefined();
+    expect(byKey.change).toBeUndefined();
+    const res = await tenantCtx.run(tenantId, () => today.today({} as never));
+    const row = res.data.find((d) => d.orderId === first.orderId)!;
+    expect(row.cashTendered).toBeNull();
+    expect(row.change).toBeNull();
+  }, 60_000);
+
   it("(7) another tenant's cash sale is absent from this tenant's Today rows and its key is a 404 here", async () => {
     const mine = { tenantId, productId, customerId, operatorId, customerUserId };
     const otherSlug = assertTestTenant(

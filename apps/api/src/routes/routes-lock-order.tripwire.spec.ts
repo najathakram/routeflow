@@ -9,8 +9,10 @@
  *   (ii)  completeStop and completeWithPayment touch NO RouteRun (read or write) inside their
  *         transaction before claimStopCompletion, and re-check the run with assertRunStillInProgress
  *         right after it, before any order write;
- *   (iii) reopenStop and deleteRoute (Order-first, SA-214) run under retryOnTxConflict, so their
- *         reopen × cancel / delete × cancel races retry instead of surfacing a 500.
+ *   (iii) reopenStop, deleteRoute and deleteRun (Order-first, SA-214) run under retryOnTxConflict, so
+ *         their reopen × cancel / delete × cancel races retry instead of surfacing a 500;
+ *   (vii) SA-842: deleteRoute / deleteRun open their tx with lockRunsForDelete (Route → Orders → stop
+ *         rows → RouteRun, delete strength) and ask routeHasDeliveryEvidence BEFORE their first write.
  *
  * Comments are stripped first (a call in a comment is not a call). A reorder that breaks one of these
  * is a red build; changing the rule means changing this file on purpose.
@@ -92,6 +94,7 @@ describe("routes lock order: Orders → STOP rows → RouteRun (#2631, SA-550, S
   it.each([
     ["reopenStop", "routes.reopenStop"],
     ["deleteRoute", "routes.deleteRoute"],
+    ["deleteRun", "routes.deleteRun"],
   ])("(iii) %s runs its transaction under retryOnTxConflict", (name, label) => {
     const body = methodBody(name);
     expect(body).toMatch(
@@ -153,6 +156,56 @@ describe("routes lock order: Orders → STOP rows → RouteRun (#2631, SA-550, S
       expect(body).not.toMatch(/await this\.prisma\.\$transaction\((\[|ops\))/);
     },
   );
+
+  // SA-842 (B209 / #1402): lock, THEN check, THEN write. The Route lock (serializes createRun) is the
+  // helper's first statement for a route delete; a run delete takes no Route lock. Orders come before
+  // the stop rows and the run row (SA-706f), and the delete locks are FOR UPDATE, never the weaker
+  // terminal-status helper (#2723 item 2 may weaken that one).
+  it.each(["deleteRoute", "deleteRun"])(
+    "(vii) %s: the tx opens with lockRunsForDelete and checks routeHasDeliveryEvidence before any write",
+    (name) => {
+      const cb = firstTxCallback(methodBody(name));
+      expect(
+        cb.slice(1).trim().startsWith("const { runIds, runStopIds } = await lockRunsForDelete(tx,"),
+      ).toBe(true);
+      const lock = at(cb, /lockRunsForDelete\(/);
+      const check = at(cb, /routeHasDeliveryEvidence\(tx, /);
+      expect(check).toBeGreaterThan(lock);
+      for (const write of [
+        /tx\.order\./,
+        /tx\.deliveryMutation\./,
+        /tx\.routeRunStop\./,
+        /tx\.routeRun\./,
+        /tx\.route\./,
+        /tx\.routeStop\./,
+        /tx\.routeCustomer\./,
+      ]) {
+        const w = at(cb, write);
+        if (w >= 0) expect(check).toBeLessThan(w);
+      }
+    },
+  );
+
+  it("(vii) lockRunsForDelete: Route FOR UPDATE first, then per run Orders -> stop rows -> run row, all FOR UPDATE", () => {
+    const file = readFileSync(join(__dirname, "delivery-evidence.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/\/\/.*$/gm, (m) => " ".repeat(m.length));
+    const start = file.indexOf("function lockRunsForDelete(");
+    expect(start).toBeGreaterThan(-1);
+    const next = file.indexOf("\nexport ", start + 1);
+    const body = file.slice(start, next === -1 ? undefined : next);
+    const route = at(body, /FROM "Route" WHERE id = \$\{[^}]+\} FOR UPDATE/);
+    const orders = at(body, /lockRunOrdersForTerminalStatus\(/);
+    const stops = at(
+      body,
+      /FROM "RouteRunStop" WHERE "routeRunId" = \$\{[^}]+\} ORDER BY id FOR UPDATE/,
+    );
+    const runRow = at(body, /FROM "RouteRun" WHERE id = \$\{[^}]+\} FOR UPDATE/);
+    expect(route).toBeGreaterThan(-1);
+    expect([route < orders, orders < stops, stops < runRow]).toEqual([true, true, true]);
+    expect(body).not.toMatch(/lockRunStopsForTerminalStatus\(/);
+    expect(body).not.toMatch(/NO KEY/);
+  });
 
   it("(iii) reopenStop resets its outer `reopened` list at the top of each attempt (a retry never duplicates)", () => {
     const cb = firstTxCallback(methodBody("reopenStop"));

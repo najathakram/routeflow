@@ -19,6 +19,41 @@ import { buyerLineDiffVerdict } from "./unit-aware-guard";
  * is SA-407's per-line unit-count edit or a removal of this order's own line.
  */
 /**
+ * Is this payload an incremental DIFF (named lines / an action / a substitute / an explicit replaceAll:false)
+ * rather than a full item list? Pure and role-free, so the edit guard can ask the same question the service does.
+ */
+export function isDiffPayloadOf(dto: {
+  replaceAll?: boolean | null;
+  items?: ReadonlyArray<{ id?: unknown; action?: unknown; substituteProductId?: unknown }> | null;
+}): boolean {
+  return (
+    dto.replaceAll === false ||
+    (dto.items ?? []).some((i) => i.id != null || i.action != null || i.substituteProductId != null)
+  );
+}
+
+/**
+ * The CUSTOMER / DRIVER full-replace branch of `updateOrderItems` (`orderItem.deleteMany`, then re-create):
+ * taken by a buyer or driver whose payload is not a diff, EVEN when `items` is empty. The service's branch test
+ * and the filed-period edit guard both ask THIS, so they cannot disagree about which edits delete lines.
+ */
+export function takesBuyerDriverReplace(role: string | undefined, isDiffPayload: boolean): boolean {
+  return (role === UserRole.CUSTOMER || role === UserRole.DRIVER) && !isDiffPayload;
+}
+
+/**
+ * Will this edit delete (and re-create) the order's lines? Mirrors `updateOrderItems`: the buyer / driver
+ * full-replace branch above, or the staff branch's explicit `replaceAll: true` (a DRIVER never replaces-all there).
+ */
+export function editReplacesLines(
+  dto: Parameters<typeof isDiffPayloadOf>[0],
+  role: string | undefined,
+): boolean {
+  if (takesBuyerDriverReplace(role, isDiffPayloadOf(dto))) return true;
+  return role !== UserRole.DRIVER && dto.replaceAll === true;
+}
+
+/**
  * Mutates `dto.items` in place (the driver price-strip, when it applies) — matching the original
  * inline code's own behaviour exactly — and returns `isDiffPayload` for the two decisions the rest
  * of `updateOrderItems` still makes with it (restriction mode, the buyer/driver replace-branch test).
@@ -35,11 +70,7 @@ export function classifyEditPayload(
   dto: UpdateOrderItemsDto,
   user: { role?: string; sub?: string } | undefined,
 ): boolean {
-  const isDiffPayload =
-    dto.replaceAll === false ||
-    (dto.items ?? []).some(
-      (i) => i.id != null || i.action != null || i.substituteProductId != null,
-    );
+  const isDiffPayload = isDiffPayloadOf(dto);
   if (user?.role === UserRole.DRIVER && isDiffPayload) {
     // B13: non-staff never set prices. The merge branch honors per-line
     // unitPrice overrides for operators, so strip price fields from every

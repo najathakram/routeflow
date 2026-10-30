@@ -3,36 +3,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService, FeatureOverrideEffect } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { FEATURE_REGISTRY, FeatureDef } from "./feature-registry";
+import { FeatureConfigService } from "./feature-config.service";
+import { FEATURE_REGISTRY } from "./feature-registry";
 import { effectivePlanFlags, findPlanDefinition } from "./plan-catalog.constants";
 import { resolveOneKey, toEffectiveFeature, ResolveContext } from "./feature-resolver.service";
-import type {
-  FeaturePreviewRequest,
-  FeaturePreviewResponse,
-  FeatureModeState,
-} from "@routeflow/types";
-
-/**
- * Opus review of 9923b87c, item 6: brief A ships no tenant-level mode provider (that's
- * brief C's TenantFeatureConfig) — there is no enforcement to preview yet. "Applying"
- * `request.modes` here means reflecting the REQUESTED value back in the response (source
- * "TENANT") rather than silently dropping it, so the preview UI shows what the admin is
- * about to set even though it can't yet change any gate. Mirrors
- * EntitlementAuthority.config()'s REGISTRY_DEFAULT shape for the un-requested case.
- */
-function modeStateFor(
-  feature: FeatureDef,
-  requestedModes: Record<string, string> | undefined,
-): FeatureModeState | undefined {
-  if (!feature.config) return undefined;
-  const allowed = Object.keys(feature.config.modes);
-  const requested = requestedModes?.[feature.key];
-  if (requested !== undefined) {
-    return { value: requested, effective: requested, source: "TENANT", allowed, blocked: [] };
-  }
-  const fallback = feature.config.fallbackMode;
-  return { value: fallback, effective: fallback, source: "REGISTRY_DEFAULT", allowed, blocked: [] };
-}
+import type { FeaturePreviewRequest, FeaturePreviewResponse } from "@routeflow/types";
 
 /**
  * Design 2026-09-17 §2 "Preview": before/after per key for a hypothetical plan/override change,
@@ -49,6 +24,8 @@ export class FeaturePreviewService {
     private readonly catalog: PlanCatalogService,
     // Direct Prisma, not AddonService — see FeatureResolverService's constructor comment.
     private readonly prisma: PrismaService,
+    // The tenant's stored mode, read through the SAME `getState` as the Feature Console row (B1132).
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   async preview(tenantId: string, request: FeaturePreviewRequest): Promise<FeaturePreviewResponse> {
@@ -122,16 +99,30 @@ export class FeaturePreviewService {
       activeSkuSet,
     };
 
-    const before = FEATURE_REGISTRY.map((f) => {
+    // The mode state of every config-bearing key: before = the tenant's stored mode; after = the
+    // requested mode, else the stored one carried over. Reads only; writes nothing.
+    const modes = await Promise.all(
+      FEATURE_REGISTRY.map(async (f) => {
+        if (!f.config) return undefined;
+        const stored = await this.featureConfig.getState(tenantId, f.key);
+        const requested = request.modes?.[f.key];
+        const hypothetical =
+          requested === undefined
+            ? stored
+            : await this.featureConfig.getState(tenantId, f.key, requested);
+        return { before: stored, after: hypothetical };
+      }),
+    );
+
+    const before = FEATURE_REGISTRY.map((f, i) => {
       const resolved = resolveOneKey(f, beforeCtx);
       return {
         ...toEffectiveFeature(resolved, resolved.effective, ent.planKey, version.id, true),
-        ...(modeStateFor(f, undefined) ? { mode: modeStateFor(f, undefined) } : {}),
+        ...(modes[i] ? { mode: modes[i].before } : {}),
       };
     });
-    const after = FEATURE_REGISTRY.map((f) => {
+    const after = FEATURE_REGISTRY.map((f, i) => {
       const resolved = resolveOneKey(f, afterCtx);
-      const mode = modeStateFor(f, request.modes);
       return {
         ...toEffectiveFeature(
           resolved,
@@ -140,7 +131,7 @@ export class FeaturePreviewService {
           afterCatalogVersionId,
           true,
         ),
-        ...(mode ? { mode } : {}),
+        ...(modes[i] ? { mode: modes[i].after } : {}),
       };
     });
 

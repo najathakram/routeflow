@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { fold } from "../lib/fold.mjs";
 import { loadConfig } from "../lib/config.mjs";
 import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
+import { makeRegisterRepo } from "./register-fixture.mjs";
 import {
   ageWords,
   etaWords,
@@ -520,7 +521,7 @@ function cliEnv(root) {
     RF_SPECS_DIR: specs,
     RF_SPECS_REMOTE: join(root, "no-remote.git"),
     RF_MACHINE: "testbox",
-    RF_REPO_ROOT: join(root, "no-such-repo"),
+    RF_REPO_ROOT: makeRegisterRepo(join(root, "product")),
     RF_NO_SYNC: "1",
     RF_ACTOR: "cli-test",
   };

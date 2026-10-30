@@ -123,7 +123,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
               id: "r-ca",
               states: ["CA"],
               legal: true,
-              reasonText: "This product is banned in CA by law.",
+              reasonText: "Restricted in CA: State ban.",
             },
           ],
         },
@@ -379,7 +379,7 @@ describe("SellingRestrictionsService: a STAFF write of a restricted product (row
       const e = await reject(args({ fulfilmentKind: "PICKUP" }));
       const body = e.getResponse() as any;
       expect(body.code).toBe("RESTRICTION_WARNING");
-      expect(body.lines[0].rules[0].reasonText).toBe("This product is banned in CA by law.");
+      expect(body.lines[0].rules[0].reasonText).toBe("Restricted in CA: State ban.");
     });
 
     it("the same customer on a DELIVERY is judged at their own address: TX is allowed, nothing to warn", async () => {

@@ -175,7 +175,7 @@ transaction as the state change, so MRR is a query rather than a spreadsheet.
       against a racing webhook) `Jest`
 - [ ] `POST /billing/webhook` with a missing or invalid signature returns 400 and never processes
       the body `manual`
-- [ ] `suspendOverdueTenants` suspends only on a genuine Stripe past_due/unpaid/canceled status
+- [ ] `reconcileCanceledSubscriptions` suspends only on a genuine Stripe past_due/unpaid/canceled status
       and emits exactly one negative-MRR delta `Jest`
 
 #### PLAN-M11

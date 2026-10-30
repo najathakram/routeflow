@@ -550,7 +550,8 @@ describe("the delete paths ask the same guards (a cash-refunded sale cannot be d
     expect(guard).toBeLessThan(body.indexOf("releaseOrderCreditsInTx(tx, id)"));
     expect(guard).toBeLessThan(body.indexOf("releaseWalletPaymentsInTx(tx, inv.id)"));
     expect(guard).toBeLessThan(body.indexOf("tx.invoicePayment.deleteMany"));
-    expect(guard).toBeLessThan(body.indexOf("tx.invoice.delete("));
+    // Row 259: the invoice delete is the order-invoice-delete helper (unlink the sourced credits, then delete).
+    expect(guard).toBeLessThan(body.indexOf("deleteOrderInvoice(tx, inv.id"));
   });
 });
 

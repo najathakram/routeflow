@@ -73,8 +73,6 @@ export const NULL_ALLOWED_MONEY_FIELDS: Readonly<Record<string, string>> = {
   "CreateInvoiceDto.depositPercent":
     "the shared source of the PATCH field: PATCH /invoices/:id writes dto.depositPercent when !== undefined, so null clears the deposit; create treats null as no deposit (`?? null`)",
   "UpdateInvoiceDto.depositPercent": "inherited via PartialType: null clears the deposit schedule",
-  "UpdateInvoiceSettingsDto.depositDefaultPercent":
-    "web settings sends null to clear the tenant default deposit (apps/web/lib/api/invoices.ts, settings page) — switch only with a client change",
   "UpdateCustomerDto.creditLimit": "null clears the customer's credit limit",
   "UpdateCustomerDto.defaultDepositPercent":
     "null clears the customer's default deposit (explicit ValidateIf)",

@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger"
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * Read-only enrichment endpoints for the platform-admin Buyers screen. Writes
@@ -12,6 +13,7 @@ import { PlatformAdminBuyersService } from "./platform-admin-buyers.service";
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class PlatformAdminBuyersController {
   constructor(private readonly svc: PlatformAdminBuyersService) {}

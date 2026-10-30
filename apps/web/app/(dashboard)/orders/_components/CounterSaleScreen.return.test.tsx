@@ -77,9 +77,10 @@ it("the receipt mounts the return action for the sale's order", async () => {
   const ret = order.indexOf("Return items for o1");
   const next = order.indexOf("New sale");
   expect(print).toBeGreaterThanOrEqual(0);
-  // SA-751r: Email receipt follows Print, then Return items, then New sale
+  // SA-751r: Email receipt follows Print, then Return items, then New sale. SA-1026 B: Print invoice sits right after Print.
+  expect(order.indexOf("Print invoice")).toBe(print + 1);
   const email = order.indexOf("Email receipt");
-  expect(email).toBe(print + 1);
+  expect(email).toBe(print + 2);
   expect(ret).toBe(email + 1);
   expect(next).toBe(ret + 1);
 });

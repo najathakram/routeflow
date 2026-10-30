@@ -52,7 +52,7 @@ export const coverageCount = (summary?: RuleTargetSummary): number =>
   summary ? summary.products + summary.categories : 0;
 
 /**
- * One line of what a rule does: the rules page's own sentence ("Banned in Texas and California · <surface>", one
+ * One line of what a rule does: the rules page's own sentence ("Restricted in Texas and California · <surface>", one
  * wording for both screens) plus what it covers and, for a scheduled rule, when it starts.
  */
 export function ruleLine(r: SellingRestrictionListItemDto): string {

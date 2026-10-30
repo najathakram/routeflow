@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { FulfillPath } from "@prisma/client";
 import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
+import { sumInlineReturnCredit } from "../../returns/inline-return-credit.util";
 import type { CounterSaleResponse } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
@@ -18,6 +19,7 @@ import { tenantTimeZone } from "../../common/tenant-time-zone";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InvoicesService } from "../../invoices/invoices.service";
 import { TILL_LOCK_HELD } from "../../invoices/counter-payment-guard";
+import { walkInStoreCreditRefusal } from "../../credit-notes/walk-in-credit-guard";
 import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import type { CounterSaleDto } from "./counter-sale.dto";
@@ -51,14 +53,10 @@ import {
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
-import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../../common/db-locks";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
+import { markOpenInvoicesToCollect } from "../../invoices/to-collect";
 import { WalkInCustomerService } from "./walk-in-customer";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
@@ -123,6 +121,8 @@ export class CounterSaleService {
       throw new BadRequestException("Choose a customer or mark the sale as a walk-in");
     }
     let walkIn = !!dto.walkIn;
+    // W-863 (SA-932): a walk-in return is refunded at the till, never credited to the shared walk-in account.
+    if (walkIn && dto.inlineReturn) throw walkInStoreCreditRefusal();
     assertPaymentShape(dto.payment, walkIn);
     // Interim till guard: judged on the TENANT's day, before any write.
     await assertCheckNotPostdatedForTenant(this.prisma, dto.payment);
@@ -132,9 +132,6 @@ export class CounterSaleService {
     let customerId: string;
     if (walkIn) {
       customerId = await this.walkIns.getOrCreateWalkIn();
-      // send() auto-applies the customer's oldest open credits: a walk-in has no business holding
-      // any, and the tender below would then be judged against a balance the clerk never saw.
-      await this.assertNoOpenCredit(customerId);
     } else {
       const customer = await this.prisma.forTenant().customer.findFirst({
         where: { id: dto.customerId, deletedAt: null },
@@ -145,9 +142,9 @@ export class CounterSaleService {
       // The kept walk-in RECORD (park/resume) is a walk-in however the request names it: same refusals,
       // same tender rule, before any write.
       if (customer.isWalkIn === true) {
+        if (dto.inlineReturn) throw walkInStoreCreditRefusal();
         walkIn = true;
         assertPaymentShape(dto.payment, true);
-        await this.assertNoOpenCredit(customerId); // the same guard as dto.walkIn: send() would auto-apply it
       }
     }
 
@@ -172,6 +169,8 @@ export class CounterSaleService {
         // (counterSale -> COUNTER -> sale-fulfilment.ts) and stamps for THIS user; it is not part of the replay's cart.
         restrictionOverrides: dto.restrictionOverrides,
         warningHash: dto.warningHash,
+        // W-863: create() captures the return and issues its credit in the sale's own transaction (the one return writer).
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       } as never,
       user,
       {
@@ -194,7 +193,7 @@ export class CounterSaleService {
         creditPaidNow: (total) => counterCreditPaidNow(tender, total, checkToday),
         // The walk-in has no mailbox: no INVOICE_SENT message (never sendEmail for them either).
         suppressInvoiceNotify: walkIn || undefined,
-        onReplay: (existing) => {
+        onReplay: (existing, cart) => {
           // The replay lookup does not filter on counterSale (keys are client UUIDs per tenant), so a
           // key that belongs to an ordinary staff/buyer order lands here. Refuse BEFORE any write.
           if (existing.counterSale !== true) {
@@ -205,7 +204,7 @@ export class CounterSaleService {
             });
           }
           // POS-5: a price that differs from the stored sale's is a changed cart, like any other.
-          assertReplaySamePrices(existing, dto.items);
+          assertReplaySamePrices(existing, cart ?? dto.items);
           replayed = true;
         },
       },
@@ -244,6 +243,13 @@ export class CounterSaleService {
     let duplicate: DuplicatePaymentRefExisting | undefined;
     if (method === "ON_ACCOUNT") {
       invoices = await this.readInvoices(orderId);
+      // SA-1026: "the check is not in hand yet": the invoice(s) of this sale are marked To collect right after the sale
+      // committed (createSale is several steps, so there is no one transaction to ride). Replay-safe: the first intent stays,
+      // and a retry of a half-finished first attempt completes the mark. The response reads the column back.
+      if (dto.payment.expectedMethod) {
+        await markOpenInvoicesToCollect(this.prisma, invoices as never, dto.payment.expectedMethod);
+        invoices = await this.readInvoices(orderId);
+      }
     } else {
       try {
         // SA-750r3: the SHARED end-of-day close lock rides this pinned connection (lock order: counter-tender -> counter-close
@@ -337,8 +343,15 @@ export class CounterSaleService {
     planError: string,
     user: JwtPayload | "read-only",
   ) {
-    const sum = Number(total ?? 0);
-    const netted = counterCreditPaidNow(tender, sum, checkToday);
+    const gross = Number(total ?? 0);
+    // W-863 (SA-945 MUST 6): the return credit stored on this sale (the SERVER's figure, read back, never the request's)
+    // pays the order down before the tender, so it is netted, not on account: judge what is left after it.
+    const credit = Math.min(
+      gross,
+      await sumInlineReturnCredit(this.prisma.forTenant(), orderId).catch(() => 0),
+    );
+    const sum = roundMoney(gross - credit);
+    const netted = roundMoney(counterCreditPaidNow(tender, sum, checkToday) + credit);
     const deps = {
       prisma: this.prisma,
       entitlements: this.orders.entitlements,
@@ -457,7 +470,12 @@ export class CounterSaleService {
     });
     if (plan.kind === "refuse") {
       // A refusal only stands when nothing was taken yet: a stored tender means a payment already went in.
-      if (!invoices.some((i) => (i.payments ?? []).some(isTender))) planError = plan.code;
+      if (!invoices.some((i) => (i.payments ?? []).some(isTender))) {
+        // Row 638: a refused retry must not leave a crashed cash attempt's figure standing as "cash handed over".
+        planError = (await this.clearStaleCashTendered(orderId))
+          ? plan.code
+          : API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
     } else if (plan.kind === "pay") {
       // The allocation is pure, so it is made first: the closed-day check below must run before ANY write.
       const writes = allocateOldestFirst(balances, plan.amount)
@@ -500,6 +518,13 @@ export class CounterSaleService {
           planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
         }
       }
+      // Row 638: a card / check tender states no cash figure, so one left by a crashed cash attempt (written before
+      // any row, see above) is cleared BEFORE any money moves, unless a tender row already stands (then it is
+      // frozen, as for cash). A clear that fails takes no money, like a cash figure that could not be stored.
+      if (method !== "CASH" && !invoices.some((i) => (i.payments ?? []).some(isTender))) {
+        if (!(await this.clearStaleCashTendered(orderId)))
+          planError = API_ERROR_CODES.COUNTER_PAYMENT_NOT_RECORDED;
+      }
       // A tender that could not be stored takes NO money: the payment loop is skipped entirely.
       if (!planError) {
         try {
@@ -538,6 +563,26 @@ export class CounterSaleService {
       invoices = await this.readInvoices(orderId);
     }
     return { invoices, planError, duplicate };
+  }
+
+  /**
+   * Row 638: NULL the sale's stored cash tendered. Only called while no tender row is stored and the request states no
+   * cash figure, so whatever is there came from a cash attempt that wrote it and crashed before its row. Filtered on a
+   * set figure, so the usual sale (nothing stored) matches nothing. Returns false (logged) when the write fails.
+   */
+  private async clearStaleCashTendered(orderId: string): Promise<boolean> {
+    try {
+      await this.prisma.forTenant().order.updateMany({
+        where: { id: orderId, counterCashTendered: { not: null } },
+        data: { counterCashTendered: null },
+      });
+      return true;
+    } catch (e) {
+      this.logger.warn(
+        `counter sale ${orderId}: stale cash tendered not cleared (${(e as Error)?.message ?? e})`,
+      );
+      return false;
+    }
   }
 
   /**
@@ -621,23 +666,6 @@ export class CounterSaleService {
     // The pack factor of a plain, label-less counter line, read the ONE sanctioned way (resolveLineUnits,
     // units_v1), never off the product.
     return new Map(found.map((row) => [row.id, resolveLineUnits(row, [], null).unitsPerBox]));
-  }
-
-  private async assertNoOpenCredit(customerId: string): Promise<void> {
-    // When the tenant's send-time sweep is OFF (the default) send() applies nothing, so nothing can leak.
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    // The SAME selection markSent's auto-apply uses (credit-notes/auto-apply-candidates), not just ISSUED.
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
-    });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
   }
 
   private async readInvoices(orderId: string): Promise<InvoiceRow[]> {

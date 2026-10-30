@@ -5,6 +5,8 @@
  * the per-row action flags the server's status machine allows.
  */
 
+import { displayLicenceStatus } from "@routeflow/types/licence-validity";
+
 export type AuthorizationStatus = "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
 export type AuthorizationSource = "RETAILER_SUBMITTED" | "WHOLESALER_ADDED";
 
@@ -18,9 +20,10 @@ export type PillVariant = "brand" | "green" | "orange" | "red" | "gray" | "purpl
 export function displayAuthStatus(
   a: { status: AuthorizationStatus; expiresAt: string | null },
   now: Date = new Date(),
+  zone?: string | null,
 ): AuthorizationStatus {
-  if (a.status === "VERIFIED" && a.expiresAt && new Date(a.expiresAt) < now) return "EXPIRED";
-  return a.status;
+  // B330: the one licence rule (`@routeflow/types/licence-validity`): good through the printed day in the business's zone.
+  return displayLicenceStatus(a, now, zone);
 }
 
 /** Status → Pill. Same vocabulary as web's authStatusBadge. */

@@ -367,6 +367,7 @@ describe("InvoicesService — #2175 realtime emits leave the transaction only af
         ["ord-1"],
         150,
         "CASH",
+        null,
       );
 
       expect(res.invoiceIds).toEqual(["inv-a", "inv-b"]);

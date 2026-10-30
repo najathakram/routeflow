@@ -28,7 +28,7 @@ export interface StaffCapabilityRule {
 }
 
 export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule> = {
-  // SUPER_ADMIN joins when the orders/invoices price paths move onto staffMay (perms PR7).
+  // SUPER_ADMIN never types a line price: in-tenant support runs as impersonation (TENANT_ADMIN), and a raw platform token is refused (SA-1034).
   EDIT_LINE_PRICE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "PRICING" },
   VOID_SALE: { roles: ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"], group: "ORDERS" },
   // POS mode (SA-763r): a staff order on the PICKUP path, whatever the tenant offers to buyers.
