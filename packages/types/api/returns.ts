@@ -14,6 +14,18 @@ export interface CreateReturnItemDto {
   restock?: boolean;
   /** Free-form condition note captured at intake (e.g. "DAMAGED_BOX"). */
   condition?: string;
+  /**
+   * SA-1042 B9b: the ORDER LINE this item returns. With it the item is a LINE item: it is capped on that line and credited
+   * at that line's own price. Without it the item is POOLED (every line of the product), exactly as before. The wire names a
+   * line, never a unit (SA-158 (a)).
+   */
+  orderItemId?: string;
+  /**
+   * A line item counted in the line's OWN unit: `boxes` of it plus loose `pieces` (so "1 Case" is `boxes: 1`). Accepted only
+   * on a line that stores a split or is a factor-1 unit; any other line takes `qty` in its own unit. Never with `qty`.
+   */
+  boxes?: number;
+  pieces?: number;
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   isRecordPaymentLocalRefusal,
   toastDuplicatePaymentRef,
 } from "./duplicate-payment-ref";
+import * as dupModule from "./duplicate-payment-ref";
 
 /** Row 498 (SA-837): the one reader and toast of 409 DUPLICATE_PAYMENT_REF for every web record-payment surface. */
 const dup = {
@@ -83,5 +84,18 @@ describe("duplicate payment reference (web)", () => {
     const toast = jest.fn();
     expect(toastDuplicatePaymentRef(new Error("x"), toast, "OPERATOR", jest.fn())).toBe(false);
     expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+describe("retryCanHelp: a duplicate reference is a deterministic refusal (SA-1026 D)", () => {
+  const retryCanHelp = (
+    dupModule as unknown as { retryCanHelp?: (o: { paymentCauseCode?: string }) => boolean }
+  ).retryCanHelp;
+
+  it("is false for DUPLICATE_PAYMENT_REF, true for every other cause and for none", () => {
+    expect(retryCanHelp?.({ paymentCauseCode: "DUPLICATE_PAYMENT_REF" })).toBe(false);
+    expect(retryCanHelp?.({ paymentCauseCode: "COUNTER_TENDER_SHORT" })).toBe(true);
+    expect(retryCanHelp?.({ paymentCauseCode: "SOMETHING_ELSE" })).toBe(true);
+    expect(retryCanHelp?.({})).toBe(true);
   });
 });

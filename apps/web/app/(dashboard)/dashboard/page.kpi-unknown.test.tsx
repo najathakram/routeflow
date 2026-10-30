@@ -30,11 +30,12 @@ jest.mock("@/lib/api-client", () => ({
 type Mode = "ok" | "loading" | "error" | "empty";
 const mockRefetch = jest.fn();
 let mode: Mode = "ok";
-// A tenant with 250 PENDING, 30 CONFIRMED and 5 OUT_FOR_DELIVERY orders: far past the old 100 cap.
+// A tenant with 250 PENDING, 30 CONFIRMED, 5 OUT_FOR_DELIVERY and 7 PARTIALLY_DELIVERED orders: far past the old 100 cap.
 const TOTALS: Record<string, number> = {
   PENDING: 250,
   CONFIRMED: 30,
   OUT_FOR_DELIVERY: 5,
+  PARTIALLY_DELIVERED: 7,
   DELIVERED: 400,
   CANCELLED: 12,
 };
@@ -104,8 +105,8 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
 
   it("counts orders exactly past 100: Active orders is the server totals, not a capped list", () => {
     renderWithProviders(<DashboardPage />);
-    // 250 + 30 + 5. The old code counted the newest 100 rows and read 100.
-    expect(tile("Active orders")).toHaveTextContent("285");
+    // 250 + 30 + 5 + 7. The old code counted the newest 100 rows and read 100.
+    expect(tile("Active orders")).toHaveTextContent("292");
     // the pipeline strip uses the same exact counts
     expect(screen.getByText("Out for delivery").previousSibling).toHaveTextContent("5");
     expect(screen.getByText("Delivered").previousSibling).toHaveTextContent("400");
@@ -193,19 +194,20 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
   });
 
   // Layout (jsdom has no layout engine, so the DOM contract is what is pinned; the pixels are re-shot on
-  // the PC): at 390 the strip's five cells clipped "Confirmed" / "Delivered" / "Cancelled", and a tile's
+  // the PC): at 390 the strip's cells clipped "Confirmed" / "Delivered" / "Cancelled", and a tile's
   // value ran under its icon with its label truncated.
-  it("the pipeline strip scrolls INSIDE itself instead of clipping its cells, with all five cells and the all-time label", () => {
+  it("the pipeline strip scrolls INSIDE itself instead of clipping its cells, with all six cells and the all-time label", () => {
     renderWithProviders(<DashboardPage />);
 
     const strip = screen.getByTestId("pipeline-strip");
     expect(strip.className).toContain("overflow-x-auto");
     const cells = strip.querySelectorAll("a");
-    expect(cells).toHaveLength(5);
+    expect(cells).toHaveLength(6);
     expect(Array.from(cells).map((a) => a.getAttribute("href"))).toEqual([
       "/orders?status=PENDING",
       "/orders?status=CONFIRMED",
       "/orders?status=OUT_FOR_DELIVERY",
+      "/orders?status=PARTIALLY_DELIVERED",
       "/orders?status=DELIVERED",
       "/orders?status=CANCELLED",
     ]);

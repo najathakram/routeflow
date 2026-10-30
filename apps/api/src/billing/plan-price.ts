@@ -8,11 +8,25 @@
  * pinned or the published catalog version) and the row's override columns.
  */
 
+import { roundMoney } from "@routeflow/pricing";
+
+/** Tenant-facing copy for the `PLAN_PRICE_INVALID` refusal: what happened, what to do. */
+export const PLAN_PRICE_INVALID_MESSAGE =
+  "This plan's price is not a valid number, so nothing was changed. Correct the monthly or annual fee, then try again.";
+
+/** The ONE annual-from-monthly rule: whole cents (33.33 x 10 is 333.29999999999995 unrounded). */
+export function annualFromMonthly(monthly: number): number {
+  return roundMoney(monthly * 10);
+}
+
 export type PlanPriceSource = "override" | "catalog";
 
 export type PlanPriceResolution =
   | { ok: true; monthly: number; annual: number; source: PlanPriceSource }
-  | { ok: false; reason: "annual_override_without_monthly" | "no_catalog_price" };
+  | {
+      ok: false;
+      reason: "annual_override_without_monthly" | "no_catalog_price" | "non_finite_price";
+    };
 
 export function resolvePlanPrice(
   definition: { monthlyPrice?: unknown; annualPrice?: unknown } | null | undefined,
@@ -23,13 +37,24 @@ export function resolvePlanPrice(
   const catalogMonthly = definition?.monthlyPrice != null ? Number(definition.monthlyPrice) : null;
   const catalogAnnual = definition?.annualPrice != null ? Number(definition.annualPrice) : null;
 
+  // roundMoney(NaN) is 0: an unparseable price must fail closed here, never become a $0 annual one.
+  const unusable = (v: unknown) => v != null && !Number.isFinite(Number(v));
+  if (
+    unusable(definition?.monthlyPrice) ||
+    unusable(definition?.annualPrice) ||
+    unusable(override?.monthly) ||
+    unusable(override?.annual)
+  ) {
+    return { ok: false, reason: "non_finite_price" };
+  }
+
   // Either override column on its own counts as a custom fee: an annual-only fee is a real
   // negotiated case, and ignoring it would bill the catalog price to a tenant already re-priced.
   if (override?.monthly != null || override?.annual != null) {
     const monthly = override.monthly != null ? Number(override.monthly) : catalogMonthly;
     if (monthly == null) return { ok: false, reason: "annual_override_without_monthly" };
-    // (annual = monthly x 10 is unrounded here; toCents rounds it to cents before any Stripe amount is built)
-    const annual = override.annual != null ? Number(override.annual) : monthly * 10;
+    // Row 280: annual = monthly x 10 is whole cents (33.33 x 10 is 333.29999999999995 unrounded).
+    const annual = override.annual != null ? Number(override.annual) : annualFromMonthly(monthly);
     return { ok: true, monthly, annual, source: "override" };
   }
 
@@ -37,7 +62,7 @@ export function resolvePlanPrice(
   return {
     ok: true,
     monthly: catalogMonthly,
-    annual: catalogAnnual != null ? catalogAnnual : catalogMonthly * 10,
+    annual: catalogAnnual != null ? catalogAnnual : annualFromMonthly(catalogMonthly), // row 280
     source: "catalog",
   };
 }

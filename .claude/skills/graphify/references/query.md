@@ -1,5 +1,7 @@
 # graphify reference: query, path, explain
 
+> RouteFlow: use `scripts/graph.mjs` or the graphify MCP tools. Never build or update a graph in a worktree. Never run `graphify claude install` (it re-adds the slow hook). Never natural-language `query`.
+
 Load this when the user asks a question against an existing graph, or runs `/graphify path` or `/graphify explain`. The core's query stub points here for the full traversal flow. These flows use the `graphify query` CLI when it is available and fall back to an inline NetworkX traversal otherwise.
 
 Two traversal modes - choose based on the question:

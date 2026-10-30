@@ -59,6 +59,8 @@ impossible instead of relying on discipline.
 
 ## 1. Consult — the default read path
 
+**Step 0 (RouteFlow, where a graphify graph exists): the graph for where and who calls; the map is for why.** Query the graph first (MCP `get_node` / `get_neighbors`, or `graph.mjs radius`), then INDEX, then one area file for invariants. On conflict the graph wins on where, the map wins on why, and the code wins over both. Design: `rf-specs-handoff/specs/graphify/DESIGN.md`.
+
 **The ladder: map → grep → agentic exploration.** Try the map first; fall back to a targeted
 `grep`/`Grep` across the tree only when the map doesn't cover the area or is stale there; reach
 for a broad agentic exploration (an `Explore` subagent reading widely) only when both come up

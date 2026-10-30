@@ -303,6 +303,7 @@ export default function ProductDetailPage() {
   const updateProduct = useUpdateProduct();
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
+  const variantSubmittingRef = React.useRef(false);
   const deleteFlow = useDeleteProductFlow({ onDeleted: () => router.push("/products") });
   // The header's Delete button opens DeleteProductConfirm: it stays open until the DELETE settles and hands
   // off to the family cascade prompt.
@@ -864,6 +865,10 @@ export default function ProductDetailPage() {
         },
       );
     } else {
+      // I-79: one create per attempt. `loading` disables the button only after a re-render, so a second click in the
+      // same frame would POST again and come back 409; the ref drops it until this attempt settles.
+      if (variantSubmittingRef.current) return;
+      variantSubmittingRef.current = true;
       createProduct.mutate(
         {
           // `name` stores only the variant name; parent context comes from
@@ -892,6 +897,9 @@ export default function ProductDetailPage() {
               description: codedToastCopy(e) ?? undefined,
               variant: "error",
             }),
+          onSettled: () => {
+            variantSubmittingRef.current = false;
+          },
         },
       );
     }

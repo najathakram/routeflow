@@ -106,27 +106,27 @@ describe("REG-B857: tenants list bulk Change Plan", () => {
   });
 });
 
-describe("Back office P2: the list row no longer carries Suspend or Impersonate", () => {
+describe("Back office P2: the list row no longer carries Suspend or Sign in as admin", () => {
   it.each(["TRIAL", "ACTIVE", "READ_ONLY"])(
-    "a %s tenant's row has View only: no Suspend, no Impersonate, no Delete, no Reactivate",
+    "a %s tenant's row has View only: no Suspend, no Sign in as admin, no Delete, no Reactivate",
     async (status) => {
       mockStatus = status;
       render(<AdminTenantsPage />);
       await screen.findByRole("link", { name: "View" });
       expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Sign in as admin" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Reactivate" })).toBeNull();
     },
   );
 
-  it("a SUSPENDED tenant's row keeps Reactivate and Delete, and still no Suspend or Impersonate", async () => {
+  it("a SUSPENDED tenant's row keeps Reactivate and Delete, and still no Suspend or Sign in as admin", async () => {
     mockStatus = "SUSPENDED";
     render(<AdminTenantsPage />);
     await screen.findByRole("button", { name: "Reactivate" });
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sign in as admin" })).toBeNull();
   });
 
   it("Reactivate sends one PATCH to ACTIVE; a failure shows fixed copy, not the server's text", async () => {
