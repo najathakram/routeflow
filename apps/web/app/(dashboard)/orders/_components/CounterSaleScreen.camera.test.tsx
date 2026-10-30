@@ -128,12 +128,13 @@ const OUTSIDE = {
   bounds: { origin: { x: 5, y: 5 }, size: { width: 20, height: 20 } },
 };
 
-const setTouchFirst = (touch: boolean) => {
+const setTouchFirst = (touch: boolean, reducedMotion = false) => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
     value: (q: string) => ({
-      matches: touch && q === TOUCH_FIRST_QUERY,
+      matches:
+        q === TOUCH_FIRST_QUERY ? touch : q.includes("prefers-reduced-motion") && reducedMotion,
       media: q,
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
@@ -676,5 +677,99 @@ describe("MUST 9/10 and C12: the camera button is for touch-first devices only",
     renderTill(<CounterSaleScreen />);
     expect(screen.queryByRole("button", { name: "Scan with camera" })).toBeNull();
     expect(document.activeElement).toBe(scanField());
+  });
+});
+
+/**
+ * MUST 10: the strip stays in view. The shell scrolls `#main-content` (under its header) and a floating checkout bar covers the
+ * bottom of it below md, so opening the strip scrolls that container until the sticky scan bar rests at its top. jsdom has no
+ * layout, so these rows prove the CALL (target, behaviour, the room added); the real capture measures the pixels:
+ * `[data-testid="counter-scan-bar"]` top === `#main-content` top, strip/field/feedback above `[data-testid="counter-checkout-bar"]`.
+ */
+describe("MUST 10: opening the strip brings the scan bar to the top of the scroller", () => {
+  const MAIN_TOP = 64;
+  let main: HTMLElement;
+  let scrollTo: jest.Mock;
+  let rectSpy: jest.SpyInstance;
+  const layout = (o: { barTop: number; scrollHeight: number; scrollTop?: number }) => {
+    Object.defineProperty(main, "scrollHeight", { configurable: true, value: o.scrollHeight });
+    main.scrollTop = o.scrollTop ?? 200;
+    rectSpy.mockImplementation(function (this: Element) {
+      const top =
+        this.id === "main-content"
+          ? MAIN_TOP
+          : this.getAttribute("data-testid") === "counter-scan-bar"
+            ? o.barTop
+            : 0;
+      return { top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top } as DOMRect;
+    });
+  };
+  beforeEach(() => {
+    main = document.createElement("main");
+    main.id = "main-content";
+    Object.defineProperty(main, "clientHeight", { configurable: true, value: 780 });
+    scrollTo = jest.fn();
+    main.scrollTo = scrollTo as unknown as typeof main.scrollTo;
+    document.body.appendChild(main);
+    rectSpy = jest.spyOn(Element.prototype, "getBoundingClientRect");
+  });
+  afterEach(() => {
+    rectSpy.mockRestore();
+    main.remove();
+  });
+  const spacer = () => screen.queryByTestId("counter-camera-room") as HTMLElement | null;
+
+  it("scrolls the container so the scan bar's top lands at the container's top, smoothly", () => {
+    layout({ barTop: 505, scrollHeight: 3000 });
+    renderTill(<CounterSaleScreen />);
+    expect(scrollTo).not.toHaveBeenCalled(); // nothing moves until the clerk taps
+    openCamera();
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 200 + (505 - MAIN_TOP), behavior: "smooth" });
+    expect(spacer()!.style.height).toBe("0px"); // the page is long enough: no room added
+  });
+
+  it("a page too short to scroll that far gets the missing room, in flow above the checkout bar", () => {
+    layout({ barTop: 505, scrollHeight: 1000 });
+    renderTill(<CounterSaleScreen />);
+    openCamera();
+    // target 641 + the 780 px viewport - 1000 px of page = 421 px short
+    expect(spacer()!.style.height).toBe("421px");
+    const bar = screen.getByTestId("counter-checkout-bar");
+    expect(spacer()!.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("closing the strip takes the room away", () => {
+    layout({ barTop: 505, scrollHeight: 1000 });
+    renderTill(<CounterSaleScreen />);
+    openCamera();
+    expect(spacer()).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+    expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
+    expect(spacer()).toBeNull();
+  });
+
+  it("with reduced motion the jump is instant", () => {
+    setTouchFirst(true, true);
+    layout({ barTop: 505, scrollHeight: 3000 });
+    renderTill(<CounterSaleScreen />);
+    openCamera();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 641, behavior: "auto" });
+  });
+
+  it("a scan bar already stuck at the top does not move the page", () => {
+    layout({ barTop: MAIN_TOP, scrollHeight: 3000, scrollTop: 500 });
+    renderTill(<CounterSaleScreen />);
+    openCamera();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 500, behavior: "smooth" });
+  });
+
+  it("without a scroll container (a test, an embedded view) opening still works and scrolls nothing", () => {
+    main.remove();
+    layout({ barTop: 505, scrollHeight: 3000 });
+    renderTill(<CounterSaleScreen />);
+    openCamera();
+    expect(screen.getByTestId("counter-camera-strip")).toBeInTheDocument();
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });

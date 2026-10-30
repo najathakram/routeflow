@@ -253,6 +253,8 @@ export function CounterSaleScreen() {
   const [touchFirst] = React.useState(() => isTouchFirst());
   // The strip's OPEN state is the clerk's choice and survives every pause (receipt, locked cart, a picker or a retry waiting).
   const [cameraOpen, setCameraOpen] = React.useState(false);
+  const scanBarRef = React.useRef<HTMLDivElement>(null);
+  const cameraRoomRef = React.useRef<HTMLDivElement>(null);
   const [method, setMethod] = React.useState<CounterSalePaymentMethod>("CASH");
   // SA-933: the customer's terms set the default tender until the tender is decided (the clerk, or any restored sale).
   const tenderDefault = useCounterTenderDefault({
@@ -844,6 +846,29 @@ export function CounterSaleScreen() {
     }
     setCameraOpen((o) => !o);
   };
+  // MUST 10: below md the floating checkout bar covers the bottom of the scroller (`#main-content`, under the shell's header), and
+  // the strip opens in normal flow wherever the scan bar happens to be, so it could open behind that bar with the field, the
+  // button and the cart pushed out of reach. Opening scrolls the scroller until the sticky scan bar rests at its top: the strip,
+  // the field, the button and the feedback show, with the cart lines under them and above the checkout bar. A short page cannot
+  // scroll that far, so a spacer (in flow, just above the checkout bar, so the bar stays the last thing in the scroll) adds the
+  // room that is missing while the strip is open. A bar already stuck at the top is already there: nothing moves.
+  React.useLayoutEffect(() => {
+    if (!cameraOpen || !touchFirst) return;
+    const main = document.getElementById("main-content");
+    const bar = scanBarRef.current;
+    const room = cameraRoomRef.current;
+    if (!main || !bar) return;
+    if (room) room.style.height = "0px";
+    const target =
+      main.scrollTop + (bar.getBoundingClientRect().top - main.getBoundingClientRect().top);
+    const short = target + main.clientHeight - main.scrollHeight;
+    if (room && short > 0) room.style.height = `${Math.ceil(short)}px`;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    main.scrollTo?.({ top: target, behavior: reduced ? "auto" : "smooth" });
+    return () => {
+      if (room) room.style.height = "0px";
+    };
+  }, [cameraOpen, touchFirst]);
   // MUST 3: the camera runs only while a scan could land. The strip stays mounted through a pause so its engine state survives.
   const cameraEnabled = cameraOpen && !receipt && !lineLocked && !scan.picker && !scan.failed;
 
@@ -1483,7 +1508,11 @@ export function CounterSaleScreen() {
           />
 
           {/* scan / search: always focused; a typed quantity multiplies the next scan */}
-          <div className="sticky top-0 z-20 bg-white" data-testid="counter-scan-bar">
+          <div
+            ref={scanBarRef}
+            className="sticky top-0 z-20 bg-white"
+            data-testid="counter-scan-bar"
+          >
             {/* SA-1059: inline above the field, inside the sticky bar, so the strip never covers the cart */}
             {touchFirst && cameraOpen ? (
               <CounterCameraStrip
@@ -1952,6 +1981,15 @@ export function CounterSaleScreen() {
 
           {/* SA-733r6: read-only keeps the cart; Charge is disabled and says why - above the bar, so the bar's box never moves. */}
           <ReadOnlyHint className="text-sm text-slate-700" />
+          {/* SA-1059: room to scroll the scan bar to the top while the camera strip is open (set by the layout effect above) */}
+          {touchFirst && cameraOpen ? (
+            <div
+              ref={cameraRoomRef}
+              aria-hidden
+              data-testid="counter-camera-room"
+              className="md:hidden"
+            />
+          ) : null}
           <div
             ref={barRef}
             className="sticky bottom-0 z-20 space-y-2 border-t bg-white pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 max-md:bottom-[calc(-1*var(--counter-main-pb,0px))] md:static md:border-t-0 md:py-0"
