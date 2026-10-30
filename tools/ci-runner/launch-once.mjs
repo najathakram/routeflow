@@ -4,7 +4,7 @@
 // repo lets fork PRs reach a self-hosted runner, and a job `if:` cannot stop that: a fork edits its
 // own copy of the workflow. See docs/runbooks/self-hosted-runner-trial.md.
 //
-//   node tools/ci-runner/launch-once.mjs [--cpus 0-5] [--memory 16g] [--max-minutes 60]
+//   node tools/ci-runner/launch-once.mjs [--cpus 0-3] [--memory 16g] [--max-minutes 60]
 import { execFileSync, spawn } from "node:child_process";
 
 const REPO = "najathakram/routeflow";
@@ -105,7 +105,7 @@ const container = spawn(
     "--sysctl",
     "net.ipv6.conf.all.disable_ipv6=1",
     "--cpuset-cpus",
-    flag("--cpus", "0-5"),
+    flag("--cpus", "0-3"),
     "--memory",
     flag("--memory", "16g"),
     "--memory-swap",
