@@ -32,6 +32,7 @@ import {
   returnLineQtyText,
   type ReturnLineSnapshot,
 } from "@/lib/return-line-qty";
+import { createReturnErrorText } from "@/lib/return-error-text";
 import { ReturnLineCountCell } from "./_components/ReturnLineCountCell";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
@@ -274,10 +275,10 @@ function CreateReturnModal({
           toast({ title: "Return request created", variant: "success" });
           onClose();
         },
-        onError: () => {
+        onError: (err) => {
           toast({
             title: "Failed to create return",
-            description: "Please try again.",
+            description: createReturnErrorText(err),
             variant: "error",
           });
         },
@@ -428,6 +429,7 @@ function CreateReturnModal({
                         {row.productName}
                       </td>
                       <td className="col-start-1 row-start-2 whitespace-nowrap text-navy/70 sm:px-3 sm:py-2 sm:text-center">
+                        <span className="block text-xs sm:hidden">Ordered</span>
                         {row.lineText}
                       </td>
                       <td className="col-start-2 row-span-2 row-start-1 sm:px-3 sm:py-2">

@@ -178,6 +178,26 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it("a refused return shows the server's own reason, not a retry that can never work", async () => {
+    const message = "Return qty exceeds what is left on this line: 100 pcs (10 boxes).";
+    mockCreate.mockImplementation((_body, opts) =>
+      opts.onError({ response: { status: 400, data: { message } } }),
+    );
+    await openOrder();
+    await screen.findAllByRole("row");
+    fireEvent.change(rowInput(colaRow(1), /^boxes to return/), { target: { value: "10" } });
+    submit();
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByText("Please try again.")).toBeNull();
+  });
+
+  it("a phone row keeps its Ordered word, because the header row is hidden there", async () => {
+    await openOrder();
+    await screen.findAllByRole("row");
+    expect(within(colaRow(0)).getByText("Ordered").className).toContain("sm:hidden");
+    expect(within(colaRow(0)).getByText("400 pcs (2 Cases)")).toBeInTheDocument();
+  });
+
   it("I-167: at phone width the table scrolls instead of clipping Notes, and the Ordered text does not wrap", async () => {
     await openOrder();
     await screen.findAllByRole("row");
