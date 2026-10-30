@@ -289,6 +289,8 @@ function CreateReturnModal({
     <Modal
       open={isOpen}
       onClose={onClose}
+      scroll
+      className="sm:max-w-2xl"
       title="Create Return"
       description="Create a return request for a delivered order."
       footer={
@@ -398,8 +400,9 @@ function CreateReturnModal({
               className="overflow-x-auto rounded-lg border border-surface-border"
               data-testid="return-lines-table"
             >
-              <table className="w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised">
+              {/* Below sm a row stacks, so the count and its unit words are on screen without a swipe. */}
+              <table className="block w-full text-sm sm:table">
+                <thead className="hidden border-b border-surface-border bg-surface-raised sm:table-header-group">
                   <tr>
                     <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
                       Product
@@ -415,14 +418,19 @@ function CreateReturnModal({
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-surface-border">
+                <tbody className="block divide-y divide-surface-border sm:table-row-group">
                   {returnItems.map((row, i) => (
-                    <tr key={row.lineId}>
-                      <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-center text-navy/70">
+                    <tr
+                      key={row.lineId}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 px-3 py-3 sm:table-row sm:p-0"
+                    >
+                      <td className="col-start-1 row-start-1 text-navy font-medium sm:px-3 sm:py-2">
+                        {row.productName}
+                      </td>
+                      <td className="col-start-1 row-start-2 whitespace-nowrap text-navy/70 sm:px-3 sm:py-2 sm:text-center">
                         {row.lineText}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="col-start-2 row-span-2 row-start-1 sm:px-3 sm:py-2">
                         <ReturnLineCountCell
                           line={row.line}
                           productName={row.productName}
@@ -431,16 +439,18 @@ function CreateReturnModal({
                           onChange={(field, next) => updateReturnItem(i, field, next)}
                         />
                         {errors[`qty_${row.lineId}`] && (
-                          <p className="mt-1 text-xs text-danger">{errors[`qty_${row.lineId}`]}</p>
+                          <p className="mt-1 w-0 min-w-full text-xs text-danger">
+                            {errors[`qty_${row.lineId}`]}
+                          </p>
                         )}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="col-span-2 sm:px-3 sm:py-2">
                         <input
                           type="text"
                           placeholder="Condition / notes…"
                           value={row.notes}
                           onChange={(e) => updateReturnItem(i, "notes", e.target.value)}
-                          className="h-8 w-full min-w-[9rem] rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          className="h-11 w-full min-w-[9rem] rounded border border-surface-border bg-white px-2 text-sm sm:h-8 text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       </td>
                     </tr>

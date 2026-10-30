@@ -751,11 +751,12 @@ export default function ReturnDetailPage() {
                     <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
                       Product
                     </th>
-                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
-                      Ordered Qty
-                    </th>
+                    {/* Return Qty first: at phone width it is the column on screen without a swipe. */}
                     <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
                       Return Qty
+                    </th>
+                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
+                      Ordered Qty
                     </th>
                     <th className="px-4 py-2.5 text-left text-xs font-medium text-navy/70">
                       Condition / Notes
@@ -768,11 +769,11 @@ export default function ReturnDetailPage() {
                       <td className="px-6 py-3 font-medium text-navy">
                         {item.product?.name ?? item.productId}
                       </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-center font-semibold text-navy">
+                        {returnedItemQtyText(item)}
+                      </td>
                       <td className="px-4 py-3 text-center text-navy/70">
                         {item.line ? orderedItemQtyText(item.line) : `${item.orderedQty} pcs`}
-                      </td>
-                      <td className="px-4 py-3 text-center font-semibold text-navy">
-                        {returnedItemQtyText(item)}
                       </td>
                       <td className="px-4 py-3 text-navy/70">
                         {item.condition && (

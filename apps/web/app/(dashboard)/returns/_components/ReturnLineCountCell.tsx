@@ -15,7 +15,7 @@ import {
  * pieces arithmetic is asked of them; the server converts, caps and prices.
  */
 const INPUT =
-  "h-8 w-16 rounded border bg-white px-2 text-center text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500";
+  "h-11 w-16 rounded border bg-white sm:h-8 px-2 text-center text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500";
 
 export function ReturnLineCountCell({
   line,

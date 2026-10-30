@@ -175,6 +175,12 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     );
   });
 
+  it("the line rows cannot push Create Return off the screen: the dialog is capped and its body scrolls", async () => {
+    await openOrder();
+    await screen.findAllByRole("row");
+    expect(screen.getByRole("dialog").className).toMatch(/max-h-\[92vh\]/);
+  });
+
   it("R-w2: two lines of one product raise no duplicate-key warning", async () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => {});
     await openOrder();
