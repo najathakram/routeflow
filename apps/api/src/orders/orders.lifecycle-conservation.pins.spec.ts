@@ -1,3 +1,7 @@
+// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
+jest.mock("./counter-sale/till-permission.guard", () =>
+  require("../testing/till-user").tillGuardMock(),
+);
 /**
  * F07 — order lifecycle: the adjacent behaviours the fix must NOT regress.
  *

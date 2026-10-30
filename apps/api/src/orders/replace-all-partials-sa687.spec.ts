@@ -1,3 +1,7 @@
+// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
+jest.mock("./counter-sale/till-permission.guard", () =>
+  require("../testing/till-user").tillGuardMock(),
+);
 /**
  * SA-687 M1 (found reviewing SA-681): the fall-through that bills "qty - invoicedQty" at Mark
  * Delivered trusts OrderItem.invoicedQty, but a REPLACE-ALL edit resets it. updateOrderItems

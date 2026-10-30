@@ -1,3 +1,7 @@
+// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
+jest.mock("./counter-sale/till-permission.guard", () =>
+  require("../testing/till-user").tillGuardMock(),
+);
 /**
  * units_v1 step 4b-2b — `OrdersService.create` sells by a unit of the product's ladder for STAFF
  * behind `flag.units_v1`; a pack-only request is byte-identical. The builder itself is proven in

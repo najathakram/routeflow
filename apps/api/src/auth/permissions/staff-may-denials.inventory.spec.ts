@@ -155,9 +155,11 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
       decideStaffWrite: callsOf("decideStaffWrite"),
     }).toEqual({
       staffMay: {
+        "invoices/invoice-line-override.ts": 1,
         "orders/counter-sale/counter-sale.service.ts": 1,
         "orders/counter-sale/till-permission.guard.ts": 2,
         "orders/fulfil-path-resolver.ts": 1,
+        "orders/orders.service.ts": 2,
         "selling-restrictions/restriction-warning.ts": 1,
       },
       mayUseTill: {

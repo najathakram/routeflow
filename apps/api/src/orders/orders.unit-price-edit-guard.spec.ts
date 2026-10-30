@@ -1,3 +1,7 @@
+// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
+jest.mock("./counter-sale/till-permission.guard", () =>
+  require("../testing/till-user").tillGuardMock(),
+);
 /**
  * H3 / POS-5 — the unit branch of `OrdersService.create` honours `options.priceEditAllowed` exactly like the
  * pack branch (counter-price-edit.spec.ts): `false` refuses a unit-line price that is a real change from the

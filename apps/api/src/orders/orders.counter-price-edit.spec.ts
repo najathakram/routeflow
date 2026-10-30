@@ -1,3 +1,7 @@
+// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
+jest.mock("./counter-sale/till-permission.guard", () =>
+  require("../testing/till-user").tillGuardMock(),
+);
 /**
  * POS-5: the counter sale's price-edit rule inside OrdersService.create (`options.priceEditAllowed`).
  *

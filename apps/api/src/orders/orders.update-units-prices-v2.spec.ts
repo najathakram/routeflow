@@ -1,3 +1,7 @@
+// W-870: not about the permission check; the live denied-groups read is mocked (a mocked Prisma has no permissions row).
+jest.mock("./counter-sale/till-permission.guard", () =>
+  require("../testing/till-user").tillGuardMock(),
+);
 /**
  * Units S19 — `updateOrderItems`. Harness copied from
  * `orders.unit-aware-guard.spec.ts` (same DI shape). Units S19 (flag.units_prices_v2): the staff edit paths price a NEW line
