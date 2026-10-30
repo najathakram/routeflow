@@ -43,6 +43,23 @@ const ORDER = {
     line({ id: "li-b", qty: 100, boxes: 10, pieces: 0, unitsPerBox: 10 }),
     line({ id: "li-c", productId: "p-2", product: { name: "Chips" }, qty: 12 }),
     line({ id: "li-d", productId: "p-3", product: { name: "Bulk Rice" }, qty: 2.5 }),
+    line({
+      id: "li-e",
+      productId: "p-4",
+      product: { name: "Tea" },
+      qty: 10,
+      unitLabel: "Case",
+      unitsPerBox: 1,
+    }),
+    line({ id: "li-f", productId: "p-5", product: { name: "Salt" }, qty: 10, unitsPerBox: 12 }),
+    line({
+      id: "li-g",
+      productId: "p-6",
+      product: { name: "Oil" },
+      qty: 10,
+      unitLabel: "Case",
+      unitsPerBox: 12,
+    }),
   ],
 };
 jest.mock("@/lib/api/orders", () => ({
@@ -85,7 +102,7 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     expect(colaRows).toHaveLength(2);
     expect(colaRows[0].textContent).toContain("400 pcs (2 Cases)");
     expect(colaRows[1].textContent).toContain("100 pcs (10 boxes)");
-    expect(text("Chips")).toContain("12 pcs");
+    expect(text("Chips")).not.toContain("pcs");
   });
 
   const colaRow = (n: number) =>
@@ -126,7 +143,7 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     await openOrder();
     await screen.findAllByRole("row");
     const chips = screen.getAllByRole("row").find((r) => r.textContent?.startsWith("Chips"))!;
-    fireEvent.change(rowInput(chips, /^pcs to return/), { target: { value: "5" } });
+    fireEvent.change(rowInput(chips, /^Quantity to return/), { target: { value: "5" } });
     submit();
     expect(sent()).toEqual([{ productId: "p-2", orderItemId: "li-c", qty: 5 }]);
   });
@@ -135,7 +152,7 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     await openOrder();
     await screen.findAllByRole("row");
     const rice = screen.getAllByRole("row").find((r) => r.textContent?.startsWith("Bulk Rice"))!;
-    const count = rowInput(rice, /^pcs to return/);
+    const count = rowInput(rice, /^Quantity to return/);
     expect(count).toHaveAttribute("inputmode", "decimal");
     expect(count).toHaveAttribute("step", "any");
     expect(rowInput(colaRow(0), /^Cases to return/)).toHaveAttribute("inputmode", "numeric");
@@ -196,6 +213,25 @@ describe("New Return form: what a line counts and how it is returned (SA-1042 B9
     await screen.findAllByRole("row");
     expect(within(colaRow(0)).getByText("Ordered").className).toContain("sm:hidden");
     expect(within(colaRow(0)).getByText("400 pcs (2 Cases)")).toBeInTheDocument();
+  });
+
+  it("A-8: a unit line says its word, a legacy line says the bare number with no word at the input", async () => {
+    await openOrder();
+    await screen.findAllByRole("row");
+    const row = (name: string) =>
+      screen.getAllByRole("row").find((r) => r.textContent?.startsWith(name))!;
+    expect(row("Tea").textContent).toContain("10 Cases");
+    expect(row("Salt").textContent).not.toMatch(/pcs|boxes/);
+    expect(row("Oil").textContent).not.toMatch(/pcs|boxes|Case/);
+
+    fireEvent.change(rowInput(row("Tea"), /^Cases to return/), { target: { value: "11" } });
+    fireEvent.change(rowInput(row("Salt"), /^Quantity to return/), { target: { value: "11" } });
+    submit();
+    expect(
+      await screen.findByText("Cannot exceed what was ordered (10 Cases)."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Cannot exceed what was ordered (10).")).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it("I-167: at phone width the table scrolls instead of clipping Notes, and the Ordered text does not wrap", async () => {

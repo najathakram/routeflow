@@ -9,10 +9,9 @@ export interface ReturnLineQtyInput {
 }
 
 /**
- * SA-1042 B9a: what a return line counts, in pieces with the line's own unit beside it: "400 pcs (2 Cases)",
- * "100 pcs (10 boxes)", "25 pcs (2 boxes + 5 pcs)" or just "12 pcs". A line with no stored split is plain pieces
- * (a factor-1 unit line included), so there is nothing to put in the brackets. The unit words come from the line's
- * snapshot through `invoiceLineQtyText`.
+ * SA-1042 B9a: a split count, in pieces with the line's own unit beside it: "400 pcs (2 Cases)", "100 pcs (10 boxes)",
+ * "25 pcs (2 boxes + 5 pcs)". With no split it is a pooled item, plain pieces. A line goes through `lineCountText`,
+ * which picks the text by the line's mode. The unit words come from the line's snapshot through `invoiceLineQtyText`.
  */
 export function returnLineQtyText(line: ReturnLineQtyInput): string {
   const pcs = Number(line.qty);
@@ -92,13 +91,13 @@ export function lineCountProblem(line: ReturnLineSnapshot, v: LineCountInput): s
   const ordered = Number(line.qty);
   const per = mode === "split" ? Number(line.unitsPerBox ?? 0) : 1;
   const count = "qty" in f ? f.qty : f.boxes * (per > 0 ? per : 1) + f.pieces;
-  return count > ordered ? `Cannot exceed what was ordered (${returnLineQtyText(line)}).` : null;
+  return count > ordered ? `Cannot exceed what was ordered (${orderedItemQtyText(line)}).` : null;
 }
 
-/** A line's quantity split into the line's own boxes and pieces, from its pieces. Only for a line that stores a split. */
+/** A split line's quantity in the line's own boxes and pieces, from its pieces. */
 function splitOf(pieces: number, line: ReturnLineSnapshot): ReturnLineQtyInput {
   const per = Number(line.unitsPerBox ?? 0);
-  if (line.boxes == null || !(per > 0)) return { qty: pieces };
+  if (!(per > 0)) return { qty: pieces };
   return {
     qty: pieces,
     boxes: Math.floor(pieces / per),
@@ -107,15 +106,29 @@ function splitOf(pieces: number, line: ReturnLineSnapshot): ReturnLineQtyInput {
   };
 }
 
-/** The ordered side of a returned item, from its order line's snapshot: "400 pcs (2 Cases)". */
-export function orderedItemQtyText(line: ReturnLineSnapshot): string {
-  return returnLineQtyText(splitOf(Number(line.qty), line));
+/**
+ * SA-1042 A-8: a count on a line, one text for every spot, by what the line knows: a split line "200 pcs (1 Case)", a
+ * factor-1 unit line its own word "2 Cases", and a legacy line the bare number the invoice prints. A legacy line can't
+ * say boxes or pcs: only the server holds that evidence, and a label on it is stale.
+ */
+function lineCountText(line: ReturnLineSnapshot, count: number): string {
+  const mode = lineCountMode(line);
+  if (mode === "split") return returnLineQtyText(splitOf(count, line));
+  if (mode === "legacy") return invoiceLineQtyText({ qty: count, unitLabel: null });
+  return Number.isInteger(count)
+    ? invoiceLineQtyText({ qty: count, boxes: count, pieces: 0, unitLabel: line.unitLabel })
+    : invoiceLineQtyText({ qty: count, unitLabel: line.unitLabel });
 }
 
-/** A returned item's quantity: a line item in its own unit ("200 pcs (1 Case)"), a pooled item (no line) in pcs. */
+/** What a line ordered: "400 pcs (2 Cases)", "10 Cases", "10". */
+export function orderedItemQtyText(line: ReturnLineSnapshot): string {
+  return lineCountText(line, Number(line.qty));
+}
+
+/** A returned item's quantity: a line item by its line, a pooled item (no line) in pcs. */
 export function returnedItemQtyText(item: {
   qty: number | string;
   line?: ReturnLineSnapshot | null;
 }): string {
-  return returnLineQtyText(item.line ? splitOf(Number(item.qty), item.line) : { qty: item.qty });
+  return item.line ? lineCountText(item.line, Number(item.qty)) : returnLineQtyText(item);
 }

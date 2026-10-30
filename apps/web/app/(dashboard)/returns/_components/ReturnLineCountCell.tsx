@@ -11,7 +11,7 @@ import {
 
 /**
  * SA-1042 B9c: the count cell of one return row. The person counts what was sold in the unit it was sold in: Cases and pcs
- * on a split line, one stepper with its word on a factor-1 unit line, one input in the line's unit on a legacy line. No
+ * on a split line, one stepper with its word on a factor-1 unit line, one input with no word on a legacy line. No
  * pieces arithmetic is asked of them; the server converts, caps and prices.
  */
 const INPUT =
@@ -32,7 +32,7 @@ export function ReturnLineCountCell({
 }) {
   const mode = lineCountMode(line);
   const words = lineUnitWords(line);
-  const field = (key: keyof LineCountInput, word: string, fraction = false) => (
+  const field = (key: keyof LineCountInput, word: string | null, fraction = false) => (
     <label className="flex items-center gap-1.5 text-xs text-navy/70">
       <input
         type="number"
@@ -40,20 +40,16 @@ export function ReturnLineCountCell({
         min="0"
         step={fraction ? "any" : "1"}
         placeholder="0"
-        aria-label={`${word} to return, ${productName}`}
+        aria-label={`${word ?? "Quantity"} to return, ${productName}`}
         value={value[key]}
         onChange={(e) => onChange(key, e.target.value)}
         className={cn(INPUT, invalid ? "border-danger" : "border-surface-border")}
       />
-      <span aria-hidden="true">{word}</span>
+      {word && <span aria-hidden="true">{word}</span>}
     </label>
   );
   if (mode === "legacy")
-    return (
-      <div className="flex flex-col gap-1">
-        {field("qty", Number(line.unitsPerBox ?? 0) > 1 ? words.many : "pcs", true)}
-      </div>
-    );
+    return <div className="flex flex-col gap-1">{field("qty", null, true)}</div>;
   if (mode === "unit")
     return <div className="flex flex-col gap-1">{field("boxes", words.many)}</div>;
   return (

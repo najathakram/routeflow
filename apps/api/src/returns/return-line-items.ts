@@ -125,9 +125,19 @@ export function resolveLineItems(
   return out;
 }
 
-/** What is left on a line, in pieces with the line's own unit beside it: "100 pcs (10 boxes)". Words from the line's snapshot. */
-export function lineLeftText(line: OrderLineForPieces, pieces: number): string {
-  if (line.boxes == null && line.pieces == null) return `${pieces} pcs`;
+/**
+ * What is left on a line, in the text the form shows (SA-1042 A-8), words from the line's snapshot: a split line "100 pcs
+ * (10 boxes)", a factor-1 unit line "5 Cases", a legacy line the bare count in its own unit, as the invoice prints it.
+ * `factor` turns the pieces back into the line's unit.
+ */
+export function lineLeftText(line: OrderLineForPieces, pieces: number, factor: number): string {
+  if (line.boxes == null && line.pieces == null) {
+    const count = parseFloat((pieces / factor).toFixed(3));
+    if (!takesSplit(line)) return invoiceLineQtyText({ qty: count, unitLabel: null });
+    return Number.isInteger(count)
+      ? invoiceLineQtyText({ qty: count, boxes: count, pieces: 0, unitLabel: line.unitLabel })
+      : invoiceLineQtyText({ qty: count, unitLabel: line.unitLabel });
+  }
   const per = Number(line.unitsPerBox ?? 0);
   if (!(per > 0)) return `${pieces} pcs`;
   const text = invoiceLineQtyText({
@@ -161,7 +171,7 @@ export function assertLineCaps(
     const left = Math.max(0, total - taken);
     if (r.pieces > left + 1e-9)
       throw new BadRequestException(
-        `Return qty exceeds what is left on this line: ${lineLeftText(line, left)}.`,
+        `Return qty exceeds what is left on this line: ${lineLeftText(line, left, factor)}.`,
       );
     used.set(r.orderItemId, (used.get(r.orderItemId) ?? 0) + r.pieces);
   }
@@ -231,6 +241,7 @@ export function lineOfItem(
   unitLabel: string | null;
   unitsPerBox: number | null;
   boxes: number | null;
+  pieces: number | null;
   qty: number;
 } | null {
   if (!item.sourceOrderItemId) return null;
@@ -240,6 +251,7 @@ export function lineOfItem(
     unitLabel: line.unitLabel ?? null,
     unitsPerBox: line.unitsPerBox != null ? Number(line.unitsPerBox) : null,
     boxes: line.boxes != null ? Number(line.boxes) : null,
+    pieces: line.pieces != null ? Number(line.pieces) : null,
     qty: Number(line.qty),
   };
 }

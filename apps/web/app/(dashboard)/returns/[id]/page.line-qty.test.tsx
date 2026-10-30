@@ -70,6 +70,54 @@ describe("return detail: what each returned line counts (SA-1042 B9c)", () => {
     expect(row("Chips").textContent).not.toContain("(");
   });
 
+  it("A-8: the detail page reads a unit line in its word, a legacy line bare, a pooled item in pcs", () => {
+    mockReturn = {
+      ...base,
+      status: "PENDING",
+      items: [
+        item({
+          id: "i1",
+          orderedQty: 10,
+          qty: 2,
+          line: { unitLabel: "Case", unitsPerBox: 1, boxes: null, pieces: null, qty: 10 },
+        }),
+        item({
+          id: "i2",
+          product: { id: "p-2", name: "Salt" },
+          orderedQty: 10,
+          qty: 2,
+          line: { unitLabel: null, unitsPerBox: 12, boxes: null, pieces: null, qty: 10 },
+        }),
+        item({
+          id: "i3",
+          product: { id: "p-3", name: "Chips" },
+          orderedQty: 10,
+          qty: 2,
+          line: null,
+        }),
+        item({
+          id: "i4",
+          product: { id: "p-4", name: "Nuts" },
+          orderedQty: 30,
+          qty: 14,
+          line: { unitLabel: null, unitsPerBox: 12, boxes: null, pieces: 30, qty: 30 },
+        }),
+      ],
+    } as unknown as Return;
+    renderWithProviders(<ReturnDetailPage />);
+    const cells = (name: string) =>
+      within(screen.getAllByRole("row").find((r) => within(r).queryByText(name))!)
+        .getAllByRole("cell")
+        .map((c) => c.textContent);
+    expect(cells("Cola").slice(1, 3)).toEqual(["2 Cases", "10 Cases"]);
+    expect(cells("Salt").slice(1, 3)).toEqual(["2", "10"]);
+    expect(cells("Chips").slice(1, 3)).toEqual(["2 pcs", "10 pcs"]);
+    expect(cells("Nuts").slice(1, 3)).toEqual([
+      "14 pcs (1 box + 2 pcs)",
+      "30 pcs (2 boxes + 6 pcs)",
+    ]);
+  });
+
   it("G-w5 (B976): a UNIT_UNRESOLVED preview shows the mixed-unit copy in the Resolve dialog", async () => {
     mockReturn = {
       ...base,

@@ -45,6 +45,7 @@ export interface ReturnItem {
     unitLabel: string | null;
     unitsPerBox: number | null;
     boxes: number | null;
+    pieces: number | null;
     qty: number;
   } | null;
   condition?: string;

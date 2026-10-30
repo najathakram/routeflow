@@ -36,6 +36,7 @@ describe("the wire's `line` (rule 8)", () => {
       unitLabel: "Case",
       unitsPerBox: 200,
       boxes: 2,
+      pieces: null,
       qty: 400,
     });
     expect(lineOfItem({ sourceOrderItemId: null }, order as any)).toBeNull();

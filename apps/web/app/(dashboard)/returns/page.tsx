@@ -29,7 +29,7 @@ import { useOrders, type Order } from "@/lib/api/orders";
 import {
   lineCountFields,
   lineCountProblem,
-  returnLineQtyText,
+  orderedItemQtyText,
   type ReturnLineSnapshot,
 } from "@/lib/return-line-qty";
 import { createReturnErrorText } from "@/lib/return-error-text";
@@ -90,7 +90,7 @@ interface ReturnItemRow {
   productName: string;
   /** The order line as it was sold (its own snapshot): what the count cell counts in. */
   line: ReturnLineSnapshot;
-  /** SA-1042 B9a: what the line counts, in pieces with its own unit beside it ("400 pcs (2 Cases)"). */
+  /** SA-1042 B9a, A-8: what the line ordered, by what the line knows ("400 pcs (2 Cases)", "10 Cases", "10"). */
   lineText: string;
   /** What the person typed, in the line's own unit: Cases/boxes and pcs, or one qty on a legacy line. */
   boxes: string;
@@ -210,7 +210,7 @@ function CreateReturnModal({
           productId: item.productId,
           productName: item.product?.name ?? item.name ?? item.productId,
           line: item,
-          lineText: returnLineQtyText(item),
+          lineText: orderedItemQtyText(item),
           boxes: "",
           pieces: "",
           qty: "",

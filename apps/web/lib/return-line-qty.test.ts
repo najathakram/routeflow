@@ -99,6 +99,50 @@ describe("counting a return by line (SA-1042 B9c)", () => {
     expect(returnedItemQtyText({ qty: 200, line: null })).toBe("200 pcs");
     expect(returnedItemQtyText({ qty: 200 })).toBe("200 pcs");
     expect(orderedItemQtyText(caseLine)).toBe("400 pcs (2 Cases)");
-    expect(orderedItemQtyText(legacy)).toBe("4 pcs");
+    expect(orderedItemQtyText(legacy)).toBe("4");
+  });
+});
+
+describe("a row says what the line knows, with one text on every spot (SA-1042 A-8)", () => {
+  const over = (line: Parameters<typeof lineCountProblem>[0], field: "boxes" | "qty") =>
+    lineCountProblem(line, { boxes: "", pieces: "", qty: "", [field]: "11" });
+
+  it("G-w-a8-1: a factor-1 unit line reads its own word, one or many by the count", () => {
+    const unit = { qty: 10, unitLabel: "Case", unitsPerBox: 1 };
+    expect(returnedItemQtyText({ qty: 2, line: unit })).toBe("2 Cases");
+    expect(returnedItemQtyText({ qty: 1, line: unit })).toBe("1 Case");
+    expect(orderedItemQtyText(unit)).toBe("10 Cases");
+    expect(over(unit, "boxes")).toBe("Cannot exceed what was ordered (10 Cases).");
+  });
+
+  it("G-w-a8-1: a part count on a unit line stays true, never truncated to a whole word", () => {
+    const unit = { qty: 10, unitLabel: "Case", unitsPerBox: 1 };
+    expect(returnedItemQtyText({ qty: 1.5, line: unit })).toBe("1.5 Case");
+  });
+
+  it.each([
+    ["G-w-a8-2, snapshot 12", { qty: 10, unitsPerBox: 12 }],
+    ["G-w-a8-3, null snapshot", { qty: 10, unitsPerBox: null }],
+    ["G-w-a8-4, stale label on snapshot 12", { qty: 10, unitLabel: "Case", unitsPerBox: 12 }],
+  ])("%s: a legacy line is the bare number, as the invoice prints it", (_name, line) => {
+    expect(returnedItemQtyText({ qty: 2, line })).toBe("2");
+    expect(orderedItemQtyText(line)).toBe("10");
+    expect(over(line, "qty")).toBe("Cannot exceed what was ordered (10).");
+  });
+
+  it("a legacy fraction keeps its fraction", () => {
+    expect(orderedItemQtyText({ qty: 2.5 })).toBe("2.5");
+  });
+
+  it("G-w-a8-5: a pooled item stays pcs", () => {
+    expect(returnedItemQtyText({ qty: 2, line: null })).toBe("2 pcs");
+    expect(returnedItemQtyText({ qty: 2 })).toBe("2 pcs");
+  });
+
+  it("a pieces-only split line takes its mode from lineCountMode, not from line.boxes", () => {
+    const piecesOnly = { qty: 30, pieces: 30, boxes: null, unitsPerBox: 12 };
+    expect(lineCountMode(piecesOnly)).toBe("split");
+    expect(orderedItemQtyText(piecesOnly)).toBe("30 pcs (2 boxes + 6 pcs)");
+    expect(returnedItemQtyText({ qty: 14, line: piecesOnly })).toBe("14 pcs (1 box + 2 pcs)");
   });
 });
