@@ -11,6 +11,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 import { decrementStockForSale } from "../orders/order-stock";
 import { UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -46,6 +47,7 @@ jest.mock("../common/db-locks", () => ({
 describe("OrderTemplatesService — stock decrement + regulated levy on generated orders", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   let ordersService: {
     mergeAllPendingForCustomer: jest.Mock;
     loadActivePromotions: jest.Mock;
@@ -56,6 +58,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     mockDecrementStockForSale.mockClear();
     ordersService = {
       mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
@@ -167,24 +170,26 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
     // the stockLines a generated order hands it. Call the REAL helper directly (not
     // through generateOrder — its own aggregation contract needs no service plumbing)
     // with a minimal fake tx, and assert the exact UPDATE it issues.
-    it("the real decrementStockForSale folds two lines of the same product into one UPDATE with the summed qty", async () => {
+    it("the real decrementStockForSale folds two lines of the same product into one counter write with the summed qty", async () => {
       const { decrementStockForSale: real } = jest.requireActual("../orders/order-stock");
       const executeRaw = jest.fn().mockResolvedValue(0);
-      // B562 PR-2: the decrement is `UPDATE … RETURNING` via $queryRaw; it returns the new counter.
-      const queryRaw = jest.fn().mockResolvedValue([{ id: "p1", currentStock: 94 }]);
+      const update = jest.fn().mockResolvedValue({ id: "p1" });
       const create = jest.fn().mockResolvedValue({ id: "mv-1" });
-      const fakeTx = {
+      // SA-927 §1: the decrement goes through applyStockMovements - the locked read is the helper's
+      // tenant-scoped $queryRaw (answered by the shared mock), the counter is one absolute product.update.
+      stock.setState(() => [{ id: "p1", currentStock: 100, averageCost: 2 }]);
+      const fakeTx = stock.wrapTx({
         $executeRaw: executeRaw,
-        $queryRaw: queryRaw,
         product: {
           findMany: jest.fn().mockResolvedValue([{ id: "p1", name: "Widget", currentStock: 100 }]),
           findFirst: jest.fn().mockResolvedValue({ costingMethod: "AVCO", averageCost: 2 }),
+          update,
         },
         stockMovement: { create },
-      };
+      });
       // Two template lines for the SAME product — this is exactly the shape
       // generateOrder's stockLines array can carry (one entry per template line,
-      // unfolded); decrementStockForSale must fold them into a single UPDATE row.
+      // unfolded); decrementStockForSale must fold them into a single counter write.
       await real(
         { logger: { warn: jest.fn() }, tenantId: "test-tenant" },
         fakeTx,
@@ -196,15 +201,12 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
         { orderId: "o1", notes: "TEMPLATE:t1", performedById: null },
       );
 
-      // $executeRaw = SET LOCAL lock_timeout, then the FOR UPDATE lock; $queryRaw = the aggregated UPDATE … RETURNING.
-      expect(executeRaw).toHaveBeenCalledTimes(2);
-      expect(queryRaw).toHaveBeenCalledTimes(1);
-      const updateValues = queryRaw.mock.calls[0][1]; // first interpolated value: the VALUES row
-      // Prisma.sql's join of a single-entry array yields ONE Sql fragment whose own
-      // `values` carries [productId, qty] — qty must be the SUM (6), proving the fold,
-      // never two separate rows of 2 and 4.
-      expect(updateValues.values).toEqual(["p1", 6]);
-      // B562 PR-2: ONE SALE row for the folded product, carrying the counter the UPDATE returned.
+      // ONE absolute counter write for the product, carrying the SUMMED result (100 - 6), never
+      // two writes (98 then 94) and never an increment.
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update.mock.calls[0][0].where).toEqual({ id: "p1" });
+      expect(update.mock.calls[0][0].data.currentStock.toString()).toBe("94");
+      // ONE SALE row for the folded product (quantity -6), carrying the counter the write left.
       expect(create).toHaveBeenCalledTimes(1);
       const row = create.mock.calls[0][0].data;
       expect(row).toMatchObject({

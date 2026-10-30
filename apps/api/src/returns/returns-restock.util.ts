@@ -14,7 +14,9 @@
  * and the credit still go through, only the stock waits for an operator to supply the split.
  */
 import { Logger } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { MovementType, Prisma } from "@prisma/client";
+import { lockProductsForStock } from "../common/product-locks";
+import { applyStockMovements } from "../inventory/stock-movements";
 
 const logger = new Logger("restockReturnItems");
 
@@ -38,6 +40,13 @@ export async function restockReturnItems(
   userId: string | null,
   resolvePieces?: (item: RestockableReturnItem) => Promise<RestockPieces>,
 ): Promise<void> {
+  // Two or more products: lock them all once, in lock-rank order, before the per-item writes. Each
+  // bookRestockMovement then re-locks a product this tx already holds (a no-op), so two returns (or a
+  // return and an order) over the same products cannot lock them in opposite orders.
+  const restockIds = [...new Set(ret.items.filter((i) => i.restock).map((i) => i.productId))];
+  if (restockIds.length > 1) {
+    await lockProductsForStock(tx, await currentTenantId(tx), restockIds);
+  }
   for (const item of ret.items) {
     if (!item.restock) continue;
     const resolved = resolvePieces ? await resolvePieces(item) : null;
@@ -79,26 +88,34 @@ export async function bookRestockMovement(
   tx: Prisma.TransactionClient,
   params: { returnId: string; productId: string; pieces: Prisma.Decimal; userId: string | null },
 ): Promise<string | null> {
-  const product = await (tx as any).product.findFirst({
-    where: { id: params.productId },
-    select: { currentStock: true, averageCost: true },
-  });
-  const qty = params.pieces;
-  const movement = await (tx as any).stockMovement.create({
-    data: {
-      productId: params.productId,
-      type: "RETURN",
-      quantity: qty,
-      unitCost: product?.averageCost ?? null,
-      avgCostAfter: product?.averageCost ?? null,
-      stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
-      performedById: params.userId,
-      reference: `RET-${params.returnId.slice(0, 8)}`,
-    },
-  });
-  await (tx as any).product.update({
-    where: { id: params.productId },
-    data: { currentStock: { increment: qty } },
-  });
+  const tenantId = await currentTenantId(tx);
+  // SA-927: through the one writer. It locks the product, reads the counter/average tenant-scoped (a
+  // foreign product id is a 404 before any write) and stamps stockAfter. The cost is the locked average.
+  const [movement] = await applyStockMovements(
+    tx,
+    tenantId,
+    (locked) => [
+      {
+        productId: params.productId,
+        type: MovementType.RETURN,
+        quantity: params.pieces,
+        unitCost: locked.get(params.productId)?.averageCost ?? null,
+        average: "keep",
+        performedById: params.userId,
+        reference: `RET-${params.returnId.slice(0, 8)}`,
+      },
+    ],
+    { productIds: [params.productId] },
+  );
   return movement?.id ?? null;
+}
+
+/** The tenant of the caller's transaction: `tenantTransaction` sets `app.current_tenant_id` for the tx. */
+async function currentTenantId(tx: Prisma.TransactionClient): Promise<string> {
+  const rows = await tx.$queryRaw<
+    Array<{ tenantId: string | null }>
+  >`SELECT current_setting('app.current_tenant_id', true) AS "tenantId"`;
+  const tenantId = rows?.[0]?.tenantId;
+  if (!tenantId) throw new Error("bookRestockMovement: no tenant on the transaction");
+  return tenantId;
 }

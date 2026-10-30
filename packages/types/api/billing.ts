@@ -77,7 +77,7 @@ export interface SubscriptionView<TDate = string> {
   paymentRequired: boolean;
   /** SA-733r6 (B4) - the dunning clock and the banner's facts. All optional/null: a tenant that never failed a
    *  payment (and any older server) simply omits them, and the banner then shows the autopay card only. */
-  /** When the first failed payment of the open invoice was stamped; day 0 of the 7-day grace. */
+  /** When the first failed payment of the open invoice was stamped; day 0 of the 14-day grace. */
   pastDueSince?: TDate | null;
   /** The Stripe invoice the tenant owes; the Pay action is shown whenever this is set. */
   pastDueInvoiceId?: string | null;

@@ -131,6 +131,7 @@ export class ReceiptService {
             unitsPerBox: true,
             boxes: true,
             pieces: true,
+            unitLabel: true,
             product: {
               select: {
                 name: true,
@@ -165,7 +166,13 @@ export class ReceiptService {
               orderBy: { createdAt: "asc" },
               // SA-838: the credit note each payment applied (a scalar column: no relation, no extra query for ANY order).
               // The invoice that NOTE was issued against comes from a counter sale's one credit-note read.
-              select: { method: true, amount: true, status: true, creditNoteId: true },
+              select: {
+                method: true,
+                amount: true,
+                status: true,
+                creditNoteId: true,
+                reference: true,
+              },
             },
           },
         },
@@ -274,6 +281,7 @@ export class ReceiptService {
         amount: p.amount,
         status: p.status,
         creditNoteId: p.creditNoteId,
+        reference: p.reference,
       })),
     );
     // A COUNTER sale prints the reprint's return lines (SA-838a): the same reads the Today's-sales page makes, for this one order.

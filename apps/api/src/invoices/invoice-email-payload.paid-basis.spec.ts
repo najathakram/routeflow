@@ -90,3 +90,44 @@ describe("emailPaidBasis (W-680)", () => {
     expect(body).not.toMatch(/CREDIT_NOTE_METHOD/);
   });
 });
+
+describe("SA-1029 email payload carries perBaseUnit", () => {
+  const ctx = {
+    recipientEmail: "b@example.com",
+    pdfUrl: undefined,
+    attachment: undefined,
+    hideOriginalPrice: false,
+  };
+  const item = (over: Record<string, unknown>) => ({
+    description: "Acme Pack",
+    qty: 48,
+    boxes: 2,
+    pieces: 0,
+    unitsPerBox: 24,
+    unitPrice: 48,
+    subtotal: 96,
+    productId: "p1",
+    compositionMode: null,
+    systemKind: null,
+    baseLabel: null,
+    ...over,
+  });
+
+  it("a boxed line with a product gets {price: 2, unit: 'pc'}", () => {
+    const out = buildInvoiceEmailPayload({ ...inv, items: [item({})] }, ctx);
+    expect((out.items[0] as any).perBaseUnit).toEqual({ price: 2, unit: "pc" });
+  });
+
+  it("the frozen baseLabel names the unit", () => {
+    const out = buildInvoiceEmailPayload(
+      { ...inv, items: [item({ baseLabel: "Bag", unitPrice: 1, subtotal: 2 })] },
+      ctx,
+    );
+    expect((out.items[0] as any).perBaseUnit).toEqual({ price: 0.0417, unit: "bag" });
+  });
+
+  it("G-1: a loose line is null", () => {
+    const out = buildInvoiceEmailPayload({ ...inv, items: [item({ unitsPerBox: 1 })] }, ctx);
+    expect((out.items[0] as any).perBaseUnit).toBeNull();
+  });
+});

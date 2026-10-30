@@ -19,6 +19,7 @@ import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
 import { attachPaymentCreditNotes, ORDER_INVOICES_SELECT } from "./order-payment-credit-notes";
 import { attachInvoicesNeedReview } from "./order-invoices-review";
+import { attachOrderToCollect } from "./order-to-collect";
 import { customerIsTaxExempt, editedOrderTotals, orderTotalsOf } from "./order-totals";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
@@ -79,7 +80,7 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
-import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
+import { assertPriceEditAllowed, decideTierOverride, staffMay } from "./staff-override";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -103,7 +104,7 @@ import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
-import { assertMayUseTill } from "./counter-sale/till-permission.guard";
+import { assertMayUseTill, posModeDeniedGroups } from "./counter-sale/till-permission.guard";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -115,6 +116,7 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./delivered-line-lock";
+import { lockEditedOrder, editGuards, walkInSaleLocked } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
@@ -247,10 +249,11 @@ import { collectUnlistedLoserItems } from "./merge-unlisted-lines";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
-import type { OrderCancelBlockedField, OrderFulfillPathLockField } from "@routeflow/types";
+import type { OrderReadGateFields } from "@routeflow/types";
 import { attachInvoiceStages } from "./order-invoice-stage";
 import { HANDOVER_SOLD_BY_SELECT, seesHandOverStamp, stampHandedOverBy } from "./handover-stamp";
 import { EDIT_REVISIONS, updateStatusWithShipMarker } from "./order-ship-state";
+import { assertStopDoneForOfficeDelivered } from "./office-delivered-route-stop";
 import {
   heldAtBookedFloor,
   markLinesRecreated,
@@ -509,13 +512,15 @@ export class OrdersService implements OnApplicationBootstrap {
     Object.assign(order, {
       cancelBlockedReason: await carrierGuard.carrierBlocked(this, order),
       fulfillPathLocked: fulfillPathLocked(order), // row 673: the PATCH's own predicate
-    } satisfies OrderCancelBlockedField & OrderFulfillPathLockField);
+      editItemsLocked: await walkInSaleLocked(this.prisma.forTenant(), order), // W-861: the edit's own predicate
+    } satisfies OrderReadGateFields);
     await attachInvoiceStages(this.featureConfig, order); // fold 4: each invoice's pdfVariant
     attachRevisionNumber(order); // row 372
     order.lineItems = withComponentViews(order.lineItems) as typeof order.lineItems; // #2717 M3
 
     await attachPaymentCreditNotes(this.prisma.forTenant(), order); // #2404
     await attachInvoicesNeedReview(this.prisma.forTenant(), order, user); // B1116 (staff only)
+    await attachOrderToCollect(this.prisma.forTenant(), order, user); // SA-1026 (staff only)
 
     stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
     return orderFor(user, order); // customer-facing fields only for the customer
@@ -1226,11 +1231,19 @@ export class OrdersService implements OnApplicationBootstrap {
     // routeRunId (resolved from the validated stop).
     let resolvedRouteRunId: string | null = null;
 
-    const orderDate = parseOrderDate(dto.orderDate, user.role);
+    // Row 751: a staff-supplied order date is judged on the tenant's calendar day (the zone is read only when one is sent).
+    const orderDate = parseOrderDate(dto.orderDate, user.role, {
+      zone:
+        dto.orderDate != null
+          ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
+          : null,
+    });
     // Sales agents & commissions: staff-gated per-order rate override.
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+    // SA-1034: the counter sale's own value, else the role's; denied groups arrive with the permissions rollout.
+    const priceEditAllowed = options.priceEditAllowed ?? staffMay(user.role, "EDIT_LINE_PRICE", []);
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
     // appliedCreditNotes for non-staff callers — a buyer or driver token could
     // otherwise spend a customer's credit notes on create, a right the edit path
@@ -1348,8 +1361,7 @@ export class OrdersService implements OnApplicationBootstrap {
           throw otherOrderConflict();
         }
         // R4 + BUG-A: a replay must be of the SAME cart and kind (replay-same-cart.ts).
-        await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
-        options.onReplay?.(existing);
+        await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto, options);
         const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
         return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
       }
@@ -1366,7 +1378,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (orderDate && !options.skipAutoMerge && !options.separateOnce) {
       await assertNoBackdatedMerge(this, customerId, {
         explicit: dto.fulfillPath,
-        ...fulfilCaller(user),
+        ...fulfilCaller(user, await posModeDeniedGroups(this.prisma, user, dto.fulfillPath)), // W-870
       });
     }
 
@@ -1410,7 +1422,7 @@ export class OrdersService implements OnApplicationBootstrap {
       (await resolveFulfilPath(this.fulfilDeps(), {
         explicit: dto.fulfillPath,
         stored: customerRecord?.fulfillPath,
-        ...fulfilCaller(user),
+        ...fulfilCaller(user, await posModeDeniedGroups(this.prisma, user, dto.fulfillPath)), // W-870
       }));
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
@@ -1565,12 +1577,10 @@ export class OrdersService implements OnApplicationBootstrap {
           taxFor: (qty, sub) => unitLines.categoryTaxForLine(category, qty, sub),
           position: index,
           tenantId: this.prisma.getTenantId(),
-          // buildUnitLine copies this onto the line ONLY when staff really changed the price; the EDIT_LINE_PRICE gate below keys on
-          // that stamp, so a ladder-priced line (customer layer MANUAL, no stamp) is never refused for a right the cashier lacks.
+          // stamped ONLY on a real staff price change, where buildUnitLine checks the capability (POS-5 / SA-1034)
           overriddenBy: user.sub,
+          priceEditAllowed,
         });
-        // POS-5, as the pack branch. A staff override carries the editor's stamp; a layer-MANUAL line (SA-811a R2) is priced by the ladder and has none.
-        if (unitLine.overriddenBy != null) assertPriceEditAllowed(options.priceEditAllowed);
         subtotal += unitLine.subtotal;
         return unitLine;
       }
@@ -1670,8 +1680,8 @@ export class OrdersService implements OnApplicationBootstrap {
             )
           : null;
       if (staff?.overridden) {
-        // POS-5: counter callers pass `priceEditAllowed`; judged vs the SERVER tier price, before any lock or write.
-        assertPriceEditAllowed(options.priceEditAllowed);
+        // POS-5 / SA-1034: judged vs the SERVER tier price, before any lock or write.
+        assertPriceEditAllowed(priceEditAllowed);
         ({ unitPrice, originalPrice } = staff);
         priceType = PriceType[staff.priceType];
         staffOverride = {
@@ -1819,6 +1829,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // structured 409 BEFORE the stock transaction, so nothing is half-committed.
     // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
     let restriction: rGate.Decision | undefined; // row 510: the staff override, stamped in the create tx
+    let returnCredit = 0; // W-863: the credit the B585 gate netted (a counter sale's server-priced preview)
     if (!isDraft) {
       await this.authGuard.assertAuthorizedOrThrow({
         customerId,
@@ -1830,7 +1841,13 @@ export class OrdersService implements OnApplicationBootstrap {
         ...rGate.create({ tenant, customerId, user, lineItemsData, fulfillPath, options, dto }),
         channel: restrictionChannelForPrincipal(user), // judged at ENTRY time, like the license guard
       });
-      const projectedTotal = creditProjectedTotal(total, options); // S1: net of the till tender
+      // S1: net of the till tender. W-863 (SA-945 MUST 6): the COUNTER sale also nets its SERVER-priced return credit
+      // (never a client figure); Create Order keeps SA-194 (an unapplied credit never loosens the gate), pinned in
+      // orders-inline-return-create.db.spec.ts.
+      returnCredit = options.counterSale
+        ? await inlineReturn.previewInlineReturnCredit(inlineRet, customerId, user)
+        : 0;
+      const projectedTotal = creditProjectedTotal(total, options, returnCredit);
       await this.creditGate({ customerId, projectedTotal, principal: user }); // B585: NEW order
     }
 
@@ -1953,6 +1970,8 @@ export class OrdersService implements OnApplicationBootstrap {
               user,
               orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
             });
+            // W-863 (SA-945 MUST 6, G5): the gate netted a preview; refuse (rolling back) when less was really issued
+            inlineReturn.assertIssuedCreditCoversPreview(inlineMinted, returnCredit, Number(total));
             return created;
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
@@ -1979,8 +1998,7 @@ export class OrdersService implements OnApplicationBootstrap {
               throw otherOrderConflict();
             }
             if (existing) {
-              await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto);
-              options.onReplay?.(existing);
+              await assertReplayOfCart(this.prisma.forTenant(), customerId, existing, dto, options);
               const replay = await replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
               return withCreditsPendingHint(this.prisma, replay, appliedCreditNotes);
             }
@@ -2063,7 +2081,7 @@ export class OrdersService implements OnApplicationBootstrap {
     dueStamp(dto.dueDate, "dueDate");
     // Row 735b: the picker's "today" is the tenant's day. The zone is read only when the picker sent a day.
     const saleZone =
-      dto.deliveredOn != null
+      dto.deliveredOn != null || dto.orderDate != null
         ? await tenantTimeZone(this.prisma, { tenantId: user.tenantId })
         : null;
     const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(
@@ -2093,6 +2111,8 @@ export class OrdersService implements OnApplicationBootstrap {
         ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
         restrictionOverrides: dto.restrictionOverrides, // row 510: the staff's acknowledgement rides the sale
         warningHash: dto.warningHash,
+        // W-863: the counter's return, captured and credited inside create()'s own transaction (one return writer)
+        ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
       },
       user,
       saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
@@ -2203,9 +2223,7 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
-    const noteAppend = dto.reason
-      ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
-      : undefined;
+    await assertStopDoneForOfficeDelivered(this.prisma, order, dto.status); // row 590 (SA-978a)
 
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
@@ -2247,7 +2265,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const statusUpdateData = buildStatusUpdateData(order, dto.status, {
       isDeliveredDemotion,
-      noteAppend,
+      reason: dto.reason,
     });
 
     const isDraftToPendingPromotion =
@@ -2680,6 +2698,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
+    const { carrier, postDeliveryEdit } = await editGuards(this, order, user, dto, isDiffPayload); // B1083 D2, B215, W-861, W-871
     // Lane R: a banned product added by this edit warns / refuses BEFORE the invoice revert and any write; a draft is
     // judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this edit copies the
     // order's lines onto that sent mirror. Re-judged under the row lock (order-edit-restrictions.ts).
@@ -2710,9 +2729,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
     // a paid one throws cleanly before any mutation so money never detaches from a sent
     // document. No-op when there's no such invoice.
-    // B1083 (D2): with the carrier, the shipment invoice is the bill: re-synced in place, never reverted
-    const carrier = await carrierGuard.carrierEditGuard(this, order);
-    const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier); // B215 + D2
     await inlineReturn.preflightInlineReturn(inlineRet, order, user, !postDeliveryEdit); // #2178
     if (!postDeliveryEdit && !carrier.billsShip) {
       // Row 586: read-only here (a paid mirror still refuses cleanly before any mutation); the revert itself runs in the
@@ -2809,7 +2825,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // second writer wait; heldItems is then read post-lock and BEFORE any
         // orderItem write below, so it is the true pre-edit state.
         await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
-        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
+        const priorOrderTotal = await lockEditedOrder(tx, orderId, this.prisma.getTenantId()); // Order row (+ invoices: walk-in); SA-944 recheck; SA-956 total
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
         let markerCarry: Map<string, number> | undefined; // SA-716 M2: the create-merge fold only
@@ -3165,6 +3181,8 @@ export class OrdersService implements OnApplicationBootstrap {
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
+            // SA-1034: the operator's denied groups arrive with the permissions rollout.
+            priceEditAllowed: staffMay(user?.role, "EDIT_LINE_PRICE", []),
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297
@@ -3214,6 +3232,7 @@ export class OrdersService implements OnApplicationBootstrap {
               isCreateMerge: opts?.isCreateMerge,
               buyerPromos,
               userId: user?.sub ?? null,
+              priceEditAllowed: uctx.priceEditAllowed,
               operatorReplaceCategoryMap,
             };
 
@@ -3419,6 +3438,7 @@ export class OrdersService implements OnApplicationBootstrap {
                       })
                     : null;
                 const isManualOverride = !!addDecision && isOverride(addDecision);
+                if (isManualOverride) assertPriceEditAllowed(uctx.priceEditAllowed); // SA-1034
                 const priced = addDecision
                   ? { ...addDecision, freeUnits: 0 }
                   : tierCaller
@@ -3554,24 +3574,16 @@ export class OrdersService implements OnApplicationBootstrap {
                     : null;
                 const qtyVal = split ? split.qty : (item.qty ?? Number(existingQty));
                 if (qtyVal <= 0) continue;
-                // B3: staff (OPERATOR/TENANT_ADMIN) may re-price the substitute line —
-                // same house override convention as create()'s operator-override ladder
-                // and the operator update branches above: net unitPrice, DISCOUNTED
-                // below the substitute's list price, MANUAL above it, originalPrice =
-                // the displaced list price. This branch is reached by staff and by a
-                // driver diff (A4: substituteProductId makes it a diff; buyers never
-                // get here), but the role check stays explicit so a
-                // driver/customer DTO can never buy price control here — B13, non-staff
-                // never set prices. No override (or one equal to the substitute's own
-                // tier price) keeps today's SPECIAL/STANDARD tier-priced behavior. B1036: a DRIVER substitute
-                // resolves the same tier (ruling 2026-10-03); only staff's typed price counts.
-                // B466: this branch never checked tier at all — a bare unitPrice on a
-                // substitute to a SPECIAL-tier product was compared only against LIST
-                // price, so a correctly-priced substitute (typed at this customer's real
-                // contract price) was silently stored as DISCOUNTED with no reason. Same
-                // tier resolution as the ADD/UPDATE branches above (reuse isSpecialTier(),
-                // operatorCpMap/operatorDefaultTier — operatorProductIds now also collects
-                // substituteProductId so the per-product CustomerPrice row is fetched).
+                // B3: staff (OPERATOR/TENANT_ADMIN) may re-price the substitute line — the house override
+                // convention: net unitPrice, DISCOUNTED below the substitute's list price, MANUAL above it,
+                // originalPrice = the displaced list price. Reached by staff and by a driver diff (A4:
+                // substituteProductId makes it a diff; buyers never get here), but the role check stays
+                // explicit — B13, non-staff never set prices. No override (or one equal to the substitute's
+                // own tier price) keeps SPECIAL/STANDARD tier pricing. B1036: a DRIVER substitute resolves
+                // the same tier (ruling 2026-10-03); only staff's typed price counts. B466: the tier is
+                // resolved like the ADD/UPDATE branches (operatorProductIds also collects
+                // substituteProductId so the per-product CustomerPrice row is fetched), never LIST alone.
+                // SA-1034: a real override checks the price-edit capability before the write.
                 const tierForProduct = tierCaller
                   ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
                   : 1;
@@ -3590,6 +3602,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   layerSub,
                 );
                 const { unitPrice, originalPrice, overridden: isOverridden } = decided;
+                if (isOverridden) assertPriceEditAllowed(uctx.priceEditAllowed); // SA-1034
                 const priceType: PriceType = PriceType[decided.priceType];
                 const subtotal = computeLineSubtotal({
                   unitPrice,
@@ -3802,6 +3815,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   productName: editProduct?.name ?? null,
                 });
                 const isManualOverride = !!repriced && isOverride(repriced);
+                if (isManualOverride) assertPriceEditAllowed(uctx.priceEditAllowed); // SA-1034
                 const unitPrice = repriced ? repriced.unitPrice : existingUnitPrice;
                 // This branch keeps the line's stored (agreed) price — it never re-runs
                 // applyBestPromotion for the UNIT PRICE. BUY_N_GET_M free units are a function of
@@ -4036,7 +4050,7 @@ export class OrdersService implements OnApplicationBootstrap {
           { invoices: this.invoicesService, tenantId: this.prisma.getTenantId() },
           tx,
           orderId,
-          { heldItems, postDeliveryEdit, role: user?.role },
+          { heldItems, postDeliveryEdit, role: user?.role, priorOrderTotal },
         );
         // B215: the merge's replay key commits in THIS transaction, atomically with the fold —
         // never a second, later commit that a crash or a post-commit throw can split off.
@@ -5025,6 +5039,10 @@ export class OrdersService implements OnApplicationBootstrap {
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */
   async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
     return updateShipmentImpl(this, orderId, dto, _user);
+  }
+
+  async staffSellable(p: rGate.Args) {
+    return await this.sellingRestrictions.assertLinesSellable({ ...p, channel: "STAFF" });
   }
 
   /** Extracted verbatim to `order-lifecycle.ts` (size-ratchet headroom move); thin delegator. */

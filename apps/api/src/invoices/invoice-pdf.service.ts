@@ -10,13 +10,19 @@ import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import type { InvoicePdfVariant } from "./invoice-pdf-variant";
 import { resolveInvoiceVariant } from "./invoice-stage";
 import { invoiceItemCode } from "./invoice-item-code";
-import { roundMoney } from "@routeflow/pricing";
+import { invoiceDisplayCategoryTax, invoiceDisplayLines, roundMoney } from "@routeflow/pricing";
 import { splitConfirmed } from "./payment-predicates";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { bcidFor } from "../common/barcode-bcid";
 import { toLineComponentViews } from "../orders/component-view";
 import { readFamilyPriceMode } from "../products/family-price";
-import { pdfSubLine } from "./invoice-pdf-item";
+import { pdfItemDisplay, pdfSubLine } from "./invoice-pdf-item";
+import {
+  resolveLiveDisplayUnits,
+  withItemDisplayUnits,
+  withPerBaseUnit,
+} from "./invoice-display-unit";
+import { EntitlementsService } from "../billing/entitlements.service";
 import { orderQrUrl } from "./invoice-qr";
 import { withoutOverrideStamp } from "../common/restriction-override-columns";
 
@@ -41,6 +47,8 @@ export class InvoicePdfService {
     private readonly systemConfig: SystemConfigService,
     // #2717 M3: the `mixed_packs` mode read (the order QR is gated on it); absent = off.
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    // SA-827: the strict `flag.units_prices_v2` read behind a DRAFT's live display unit; absent = legacy.
+    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
 
   async getOrGenerate(
@@ -181,6 +189,7 @@ export class InvoicePdfService {
         return { ...item, subLines };
       }),
     );
+    const itemsWithDisplay = await this.withDisplayLayouts(inv, itemsWithSubLines, invTenantId);
     const qrDataUri = await this.orderQr(inv as { orderId?: string | null }, invTenantId);
 
     // Deposit schedule (Tier 1): the dollar amount is derived from the CURRENT
@@ -206,7 +215,7 @@ export class InvoicePdfService {
 
     const invWithBarcodes = {
       ...inv,
-      items: itemsWithSubLines,
+      items: itemsWithDisplay,
       ...(qrDataUri ? { qrDataUri } : {}),
       tenant: tenantInfo,
       variant,
@@ -244,6 +253,86 @@ export class InvoicePdfService {
 
     this.logger.log(`Invoice PDF stored at key: ${key}`);
     return this.storage.presignedUrl(key);
+  }
+
+  /**
+   * SA-827: an item whose invoice display unit is "pieces" gains `display` (the pieces / components layout from
+   * `invoiceDisplayLines`). A legacy item is returned untouched, so today's props reach the template unchanged.
+   * A DRAFT follows the live preference; an issued invoice reads its own snapshot. Never throws.
+   */
+  private async withDisplayLayouts<T extends { id: string }>(
+    inv: any,
+    items: T[],
+    tenantId: string | null,
+  ): Promise<T[]> {
+    try {
+      const live =
+        inv.status === "DRAFT" && tenantId
+          ? await resolveLiveDisplayUnits(
+              this.prisma.forTenant(),
+              tenantId,
+              {
+                customerId: inv.customerId,
+                items: inv.items.map((i: any) => ({ id: i.id, productId: i.productId ?? null })),
+              },
+              this.entitlements,
+            )
+          : null;
+      const unitById = new Map(
+        withItemDisplayUnits(
+          { status: inv.status as string, items: items as any[] },
+          live,
+        ).items.map((i) => [i.id as string, i.displayUnit] as const),
+      );
+      // SA-1029: the per-piece price of a today-layout pack line (display only; null for any other line).
+      const perById = new Map(
+        (await withPerBaseUnit(this.prisma.forTenant(), tenantId, items as any[])).map(
+          (i) => [i.id as string, i.perBaseUnit] as const,
+        ),
+      );
+      return await Promise.all(
+        items.map(async (item: any) => {
+          const displayUnit = unitById.get(item.id);
+          if (!displayUnit || displayUnit.kind !== "pieces")
+            return perById.get(item.id) ? { ...item, perBaseUnit: perById.get(item.id) } : item;
+          const views = item.components?.length
+            ? toLineComponentViews(item.components as never)
+            : [];
+          const lines = invoiceDisplayLines(
+            {
+              description: item.description,
+              qty: Number(item.qty),
+              boxes: item.boxes ?? null,
+              pieces: item.pieces ?? null,
+              unitsPerBox: item.unitsPerBox ?? null,
+              unitLabel: item.unitLabel ?? null,
+              unitPrice: Number(item.unitPrice),
+              subtotal: Number(item.subtotal),
+              categoryTax: invoiceDisplayCategoryTax(item),
+            },
+            views,
+            displayUnit,
+          );
+          if (lines.layout === "today")
+            return perById.get(item.id) ? { ...item, perBaseUnit: perById.get(item.id) } : item;
+          const barcodes = new Map<string, string | null>();
+          if (lines.layout === "components") {
+            for (const v of views) barcodes.set(v.componentProductId, await this.subLineBarcode(v));
+          }
+          // the MSRP note names the line's word on this layout too; the template's `!item.display` guard keeps the cell empty
+          return {
+            ...item,
+            display: pdfItemDisplay(lines, barcodes),
+            ...(perById.get(item.id) ? { perBaseUnit: perById.get(item.id) } : {}),
+          };
+        }),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `display layout failed, rendering today's layout: ${(err as Error)?.message}`,
+      );
+      return items;
+    }
   }
 
   /** A sub-line's unit barcode as a PNG data URI (symbology by check digit), or null (never throws). */

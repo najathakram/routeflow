@@ -170,14 +170,14 @@ export function ImpersonateDialog({
     <AdminModal
       open={open}
       onClose={onClose}
-      title={`Impersonate ${label}?`}
+      title={`Sign in as admin for ${label}?`}
       footer={
         <>
           <button ref={cancelRef} type="button" onClick={onClose} className={CANCEL_CLASS}>
             Cancel
           </button>
           <button type="button" disabled={busy} onClick={onConfirm} className={PRIMARY_CLASS}>
-            Impersonate
+            Sign in as admin
           </button>
         </>
       }
@@ -188,7 +188,7 @@ export function ImpersonateDialog({
         access for up to 15 minutes. Changes you make are real.
       </p>
       <p className="mt-3 text-sm text-slate-400">
-        The audit log records that this session started. To leave, click Exit impersonation in the
+        The audit log records that this session started. To leave, click Exit support session in the
         red bar.
       </p>
     </AdminModal>

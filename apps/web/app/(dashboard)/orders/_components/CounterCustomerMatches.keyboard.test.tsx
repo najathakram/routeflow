@@ -57,6 +57,51 @@ describe("CounterCustomerMatches keyboard", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("names its keys while the list is open and drops the line when Escape closes it", () => {
+    render(<Harness onPick={jest.fn()} />);
+    expect(screen.getByTestId("counter-customer-keys")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText("Find customer"), { key: "Escape" });
+    expect(screen.queryByTestId("counter-customer-keys")).toBeNull();
+  });
+
+  it("the key hint is a described, large-screen-only line with hidden glyphs", () => {
+    render(<Harness onPick={jest.fn()} />);
+    const input = screen.getByLabelText("Find customer");
+    const hint = screen.getByTestId("counter-customer-keys");
+    expect(hint.id).not.toBe("");
+    expect(input.getAttribute("aria-describedby")).toBe(hint.id);
+    expect(hint.className).toContain("hidden");
+    expect(hint.className).toContain("lg:block");
+    expect(hint.querySelector("[aria-hidden='true']")).not.toBeNull();
+    expect(hint.querySelector(".sr-only")?.textContent).toBe(
+      "Up and down arrows to choose, Enter to pick",
+    );
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("no hint while the list is disabled", () => {
+    render(
+      <CounterCustomerMatches
+        search="acme"
+        matches={MATCHES}
+        answered
+        disabled
+        onPick={jest.fn()}
+        listbox={
+          {
+            id: "l",
+            keysId: "k",
+            open: true,
+            active: -1,
+            optionId: (i: number) => `o${i}`,
+          } as never
+        }
+      />,
+    );
+    expect(screen.queryByTestId("counter-customer-keys")).toBeNull();
+  });
+
   it("a click still picks a match", () => {
     const onPick = jest.fn();
     render(<Harness onPick={onPick} />);

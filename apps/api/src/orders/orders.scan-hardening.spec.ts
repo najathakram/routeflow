@@ -183,6 +183,9 @@ import { OrderTemplatesService } from "../order-templates/order-templates.servic
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const operatorPayload = {
   sub: "user-op",
@@ -336,6 +339,7 @@ async function buildOrdersService(
 describe("OrdersService.create — Idempotency-Key replay (T-B196c / R8 / REG-B196)", () => {
   it("same tenant + same key: one order row, second call returns the first, no duplicate side effects", async () => {
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const gateway = mockGateway();
     let currentTenantId = "tenant-a";
     prisma.getTenantId.mockImplementation(() => currentTenantId);
@@ -415,6 +419,7 @@ describe("OrdersService.create — Idempotency-Key replay (T-B196c / R8 / REG-B1
 
   it("persists the key and scopes it per tenant — a DIFFERENT tenant with the same key is a separate order", async () => {
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const gateway = mockGateway();
     let currentTenantId = "tenant-a";
     prisma.getTenantId.mockImplementation(() => currentTenantId);
@@ -506,6 +511,7 @@ describe("OrdersService.create — Idempotency-Key replay (T-B196c / R8 / REG-B1
 
   it("same tenant + same key but a DIFFERENT buyer: refuses, never replays the other buyer's order", async () => {
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const gateway = mockGateway();
     prisma.getTenantId.mockReturnValue("tenant-a");
 
@@ -567,6 +573,7 @@ describe("OrdersService.create — Idempotency-Key replay (T-B196c / R8 / REG-B1
 describe("OrdersService.updateOrderItems — diff-add is all-or-nothing (T-B197 / R9 / REG-B197)", () => {
   it("an unresolvable productId among two good adds aborts with a 400 naming it, and writes NOTHING", async () => {
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const gateway = mockGateway();
     const service = await buildOrdersService(prisma, gateway);
 
@@ -623,6 +630,7 @@ describe("OrdersService.updateOrderItems — diff-add is all-or-nothing (T-B197 
 describe("OrdersService.updateOrderItems — replaceAll is explicit-only (T-B198 / R10 / REG-B198)", () => {
   it("an id-less add-only payload with replaceAll OMITTED is an ADD (existing lines survive); replaceAll:true still replaces", async () => {
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const gateway = mockGateway();
     const service = await buildOrdersService(prisma, gateway);
 
@@ -1075,6 +1083,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
 
     // Now run that exact payload through the real service.
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const gateway = mockGateway();
     const service = await buildOrdersService(prisma, gateway);
     prisma.order.findUnique.mockResolvedValue({
@@ -1658,6 +1667,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     scopedProductFindMany = jest.fn().mockResolvedValue([]);
     // Same partition discipline as the idempotency block: the seller scoping is
     // bound to forTenant(), and the ROOT client is left unscoped — here it
@@ -1823,6 +1833,7 @@ describe("OrdersService.recordIdempotencyKey — first key wins (R1)", () => {
       idempotencyKey: null,
     };
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.order.updateMany.mockImplementation(async ({ where, data }: any) => {
       const matches =
         where.id === row.id &&

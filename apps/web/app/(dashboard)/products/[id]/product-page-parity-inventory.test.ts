@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { unitStructureGoverned } from "./units-v2/structure/unit-structure";
 
 /**
  * T38 (units v2, S11): a feature-parity inventory of today's product page. Every control the
@@ -32,15 +33,15 @@ describe("product page parity inventory (T38)", () => {
     expect(fs.existsSync(path.join(__dirname, file))).toBe(true);
   });
 
-  it("row 742 (owner: keep structure, drop prices): under v2 the old card is only on a variant or recipe, structure only", () => {
+  it("row 742 / SA-1041 R-a6: under v2 the old card is gone from every product; a variant or recipe adds units in the shell", () => {
     expect(page).not.toMatch(/const v2Family/);
     expect(page).not.toMatch(/cardRo/);
-    // K10d: the v2 flag also drops the old always-open Add form (the shell's Add a unit replaces it)
-    expect(page).toMatch(
-      /\{\(!v2 \|\| \(!isFamily && unitStructureGoverned\(product\)\)\) && \(\s*<ProductUnitsCard product=\{product\} hideAddForm=\{v2\} structureOnly=\{v2\} \/>\s*\)\}/,
-    );
-    // the gate cites the row that retires the card for good
-    expect(page).toMatch(/row 659 \(family ladder with variant inherit \/ override\)/);
+    expect(page).toMatch(/\{!v2 && <ProductUnitsCard product=\{product\} \/>\}/);
+    // a variant or recipe is not unit-structure governed, so the shell offers Add a unit
+    expect(unitStructureGoverned({ kind: "VARIANT", parentProductId: "f" })).toBe(false);
+    expect(unitStructureGoverned({ kind: "RECIPE" })).toBe(false);
+    // G-a6: a family stays governed
+    expect(unitStructureGoverned({ kind: "FAMILY" })).toBe(true);
   });
 
   it("with the flag on and a non-FAMILY product, the v2 grid renders and the old units card does not", () => {
@@ -49,11 +50,9 @@ describe("product page parity inventory (T38)", () => {
       /\{pricingSplit \? \(\s*<div[^>]*>\s*<ProductPricingRegion>\s*<ProductPricingV2 product=\{product\} \/>\s*<\/ProductPricingRegion>\s*<\/div>\s*\) : null\}/,
     );
     expect(page).toMatch(/const pricingSplit = v2 && product\.kind !== "FAMILY";/);
-    // under v2 the old card's gate keeps only a non-family governed product (variant or recipe)
+    // under v2 the old card is not mounted on any product
     const oldGate = page.match(/\{([^{}]*)<ProductUnitsCard/);
-    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe(
-      "(!v2 || (!isFamily && unitStructureGoverned(product))) && ( ",
-    );
+    expect(oldGate?.[1].replace(/\s+/g, " ")).toBe("!v2 && ");
   });
 
   it("the v2 shell is mounted exactly once, only behind the flag", () => {

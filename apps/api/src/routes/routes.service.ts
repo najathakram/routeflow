@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { createHash, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 import {
   assertStopNotSkipped,
@@ -18,6 +18,12 @@ import {
   lockRunStopsForTerminalStatus,
   lockStopsOrdersForRelease,
 } from "./delivery-lines.util";
+import {
+  deliveryEvidenceRefusal,
+  lockRunsForDelete,
+  routeHasDeliveryEvidence,
+  runHasCompletedStop,
+} from "./delivery-evidence";
 import { retryOnTxConflict, retryRouteTx } from "../common/tx-retry";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
@@ -103,6 +109,7 @@ import {
 import { withDeliveredSoFar } from "./run-delivered-so-far";
 import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
 import { withPayableInvoicesFlat } from "./run-projections";
+import { checkRouteIdempotencyKey, saveRouteIdempotencyKey } from "./route-idempotency";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 export {
@@ -538,28 +545,17 @@ export class RoutesService {
   async deleteRoute(id: string) {
     await this.findRouteOrThrow(id);
 
-    // Collect all run IDs and run-stop IDs for this route before deleting
-    const runs = await this.prisma.forTenant().routeRun.findMany({
-      where: { routeId: id },
-      include: { stops: { select: { id: true } } },
-    });
-    const runIds = runs.map((r) => r.id);
-    const runStopIds = runs.flatMap((r) => r.stops.map((s) => s.id));
-
-    // R3: any route — ADHOC or SCHEDULED — whose run has started or finished
-    // carries run stops with POD photos, signatures and arrival/completion
-    // timestamps. Deleting it would destroy that history with no way to
-    // rebuild it, so refuse regardless of route.kind. Drafts (and
-    // scheduled/cancelled runs, which recorded nothing) stay deletable.
-    if (runs.some((r) => r.status === "IN_PROGRESS" || r.status === "COMPLETED")) {
-      throw new BadRequestException(
-        "This trip has already been delivered on and cannot be deleted — its proof of delivery would be lost.",
-      );
-    }
-
+    // SA-842 (B209 / #1402): lock, then check, then write, all in ONE tx. Delivery EVIDENCE (POD,
+    // signatures, payments), not run status, decides; the runs are re-read under the locks, never from a
+    // read before the tx. A refusal throws before the first write, so nothing is written.
     // #2631 / SA-550: Order-first (SA-214) vs the stop-first run transition — a deadlock retries, never a 500.
     await retryOnTxConflict("routes.deleteRoute", () =>
       this.prisma.tenantTransaction(async (tx) => {
+        const { runIds, runStopIds } = await lockRunsForDelete(tx, {
+          routeId: id,
+          tenantId: this.prisma.getTenantId(),
+        });
+        if (await routeHasDeliveryEvidence(tx, id)) throw deliveryEvidenceRefusal();
         // 1. Unlink orders from runs/stops
         if (runIds.length > 0) {
           await tx.order.updateMany({
@@ -1359,47 +1355,46 @@ export class RoutesService {
   async deleteRun(id: string) {
     const run = await this.prisma.forTenant().routeRun.findUnique({
       where: { id },
-      include: { stops: { select: { id: true } } },
+      select: { id: true, routeId: true },
     });
     if (!run) throw new NotFoundException("Route run not found");
 
-    const stopIds = run.stops.map((s) => s.id);
-
-    if (stopIds.length > 0) {
-      const existingMutation = await this.prisma.forTenant().deliveryMutation.findFirst({
-        where: { routeRunStopId: { in: stopIds } },
-        select: { id: true },
-      });
-      if (existingMutation) {
-        throw new BadRequestException(
-          "This run has recorded deliveries; cancel it instead of deleting.",
-        );
-      }
-    }
-
-    await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Unlink orders from run and stops
-      await tx.order.updateMany({
-        where: { routeRunId: id },
-        data: { routeRunId: null, routeRunStopId: null },
-      });
-
-      if (stopIds.length > 0) {
-        // 2. Unlink delivery mutations referencing these stops
-        await tx.deliveryMutation.updateMany({
-          where: { routeRunStopId: { in: stopIds } },
-          data: { routeRunStopId: null },
+    // SA-842 / #2723 item 3: the same lock-check-write tx as deleteRoute, scoped to this run (Orders →
+    // stop rows → run, no Route lock), replacing the mutation-only guard that deleted a signed stop.
+    await retryOnTxConflict("routes.deleteRun", () =>
+      this.prisma.tenantTransaction(async (tx) => {
+        const { runIds, runStopIds } = await lockRunsForDelete(tx, {
+          routeId: run.routeId,
+          runId: id,
+          tenantId: this.prisma.getTenantId(),
         });
-
-        // 3. Delete the run stops
-        await tx.routeRunStop.deleteMany({
+        if (runIds.length === 0) throw new NotFoundException("Route run not found");
+        if (await routeHasDeliveryEvidence(tx, run.routeId, { runId: id })) {
+          throw deliveryEvidenceRefusal();
+        }
+        // 1. Unlink orders from run and stops
+        await tx.order.updateMany({
           where: { routeRunId: id },
+          data: { routeRunId: null, routeRunStopId: null },
         });
-      }
 
-      // 4. Delete the run itself
-      await tx.routeRun.delete({ where: { id } });
-    });
+        if (runStopIds.length > 0) {
+          // 2. Unlink delivery mutations referencing these stops
+          await tx.deliveryMutation.updateMany({
+            where: { routeRunStopId: { in: runStopIds } },
+            data: { routeRunStopId: null },
+          });
+
+          // 3. Delete the run stops
+          await tx.routeRunStop.deleteMany({
+            where: { routeRunId: id },
+          });
+        }
+
+        // 4. Delete the run itself
+        await tx.routeRun.delete({ where: { id } });
+      }),
+    );
 
     return { success: true };
   }
@@ -1440,7 +1435,9 @@ export class RoutesService {
     }
 
     // B72: from-state guard — see forbiddenRunTransition's doc for the matrix.
-    const denied = forbiddenRunTransition(run.status, dto.status);
+    const denied = forbiddenRunTransition(run.status, dto.status, {
+      hasCompletedStop: await runHasCompletedStop(this.prisma.forTenant(), run, dto.status),
+    });
     if (denied) throw new ConflictException(denied);
 
     // B72 (composite path): the matrix is edge-wise, so it cannot see
@@ -1969,47 +1966,6 @@ export class RoutesService {
     return updated;
   }
 
-  // ── RF-019: Idempotency helpers ───────────────────────────────────────────
-  // Uses raw SQL so the feature works before the IdempotencyKey table migration
-  // is applied — queries are wrapped in try/catch and fail silently if the table
-  // does not yet exist.
-
-  private makeKeyHash(key: string, scope: string): string {
-    return createHash("sha256").update(`${scope}:${key}`).digest("hex");
-  }
-
-  private async checkIdempotencyKey(key: string, scope: string): Promise<unknown> {
-    const hash = this.makeKeyHash(key, scope);
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    try {
-      const rows = await this.prisma.$queryRaw<{ response: string }[]>`
-        SELECT response FROM "IdempotencyKey"
-        WHERE "keyHash" = ${hash} AND "createdAt" >= ${cutoff}
-        LIMIT 1
-      `;
-      if (!rows || rows.length === 0) return null;
-      return JSON.parse(rows[0].response);
-    } catch {
-      return null; // table doesn't exist yet — degrade gracefully
-    }
-  }
-
-  private async saveIdempotencyKey(key: string, scope: string, response: unknown): Promise<void> {
-    const hash = this.makeKeyHash(key, scope);
-    try {
-      const responseJson = JSON.stringify(response);
-      await this.prisma.$executeRaw`
-        INSERT INTO "IdempotencyKey" ("id", "keyHash", "response", "createdAt")
-        VALUES (gen_random_uuid(), ${hash}, ${responseJson}, now())
-        ON CONFLICT ("keyHash") DO UPDATE
-          SET response   = EXCLUDED.response,
-              "createdAt" = now()
-      `;
-    } catch {
-      // best-effort — don't fail the request if idempotency storage errors
-    }
-  }
-
   // ── Durable proof-of-delivery artifacts ────────────────────────────────
   // POD photos/signatures arrive as data URLs inside plain JSON (never
   // multipart — FormData is excluded from the mobile offline queue) and are
@@ -2196,7 +2152,7 @@ export class RoutesService {
     // RF-019: Idempotency check (outside transaction for speed)
     if (dto.idempotencyKey) {
       const scope = `completeStop:${runId}:${stopId}`;
-      const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
+      const cached = await checkRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope);
       if (cached) return cached;
     }
 
@@ -2362,7 +2318,7 @@ export class RoutesService {
     // RF-019: persist idempotency key after successful write
     if (dto.idempotencyKey) {
       const scope = `completeStop:${runId}:${stopId}`;
-      await this.saveIdempotencyKey(dto.idempotencyKey, scope, result);
+      await saveRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope, result);
     }
 
     return result;
@@ -2422,13 +2378,15 @@ export class RoutesService {
     // RF-019: Idempotency check
     if (dto.idempotencyKey) {
       const scope = `completeWithPayment:${runId}:${stopId}`;
-      const cached = await this.checkIdempotencyKey(dto.idempotencyKey, scope);
+      const cached = await checkRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope);
       if (cached) return cached;
     }
 
     // Durable POD: rewrite data-URL artifacts to storage keys before the tx
     // (after the idempotency check so a cached replay never re-uploads).
     await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
+    const catalog = await this.invoicesService.loadUnitCatalog(stop); // SA-967: once, before the tx
+    const baseLabels = await this.invoicesService.loadBaseLabels(stop); // SA-1029: once, before the tx
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
@@ -2547,6 +2505,8 @@ export class RoutesService {
             deliveredOrderIds,
             dto.payment.amount,
             dto.payment.method,
+            catalog,
+            baseLabels,
             { runId, stopId },
           );
           paymentIds = recorded.paymentIds;
@@ -2662,7 +2622,7 @@ export class RoutesService {
     // RF-019: persist idempotency key
     if (dto.idempotencyKey) {
       const scope = `completeWithPayment:${runId}:${stopId}`;
-      await this.saveIdempotencyKey(dto.idempotencyKey, scope, response);
+      await saveRouteIdempotencyKey(this.prisma, dto.idempotencyKey, scope, response);
     }
 
     return response;

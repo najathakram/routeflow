@@ -34,10 +34,12 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { AuditService } from "../audit/audit.service";
 import * as orderStock from "../orders/order-stock";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   const restrictions = { assertLinesSellable: jest.fn(), checkLinesSellable: jest.fn() };
   const notifications = { sendToCustomer: jest.fn(), sendToUser: jest.fn() };
   const audit = { log: jest.fn() };
@@ -88,6 +90,7 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.getTenantId.mockReturnValue("test-tenant");
     restrictions.assertLinesSellable.mockResolvedValue(undefined);
     restrictions.checkLinesSellable.mockResolvedValue({ outcome: "ALLOW", reasons: [] });
@@ -550,6 +553,31 @@ describe("OrderTemplatesService — selling restrictions (F-05)", () => {
     it("the unattended run writes BUYER once a buyer edited the template (or the author is unknown)", async () => {
       await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "CUSTOMER" }));
       expect(markers()).toEqual(["BUYER", "BUYER"]);
+    });
+  });
+
+  describe("Row 478: Order.source follows the author's channel, never a hard-coded APP", () => {
+    const source = () => prisma.order.create.mock.calls[0][0].data.source;
+
+    it("a STAFF manual run records PHONE (staff-authored lines, recorded)", async () => {
+      await service.generateOrder("t1", true);
+      expect(source()).toBe("PHONE");
+      expect(prisma.order.create.mock.calls[0][0].data.sourceRecorded).toBe(true);
+    });
+
+    it("a buyer's manual run (reorder) records APP", async () => {
+      await service.generateOrder("t1", false);
+      expect(source()).toBe("APP");
+    });
+
+    it("the unattended run of a staff-only template records PHONE", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "OPERATOR" }));
+      expect(source()).toBe("PHONE");
+    });
+
+    it("the unattended run records APP once a buyer edited the template, or the author is unknown", async () => {
+      await run(template({ createdByRole: "OPERATOR", itemsEditedByRole: "CUSTOMER" }));
+      expect(source()).toBe("APP");
     });
   });
 

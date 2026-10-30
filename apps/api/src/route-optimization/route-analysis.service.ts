@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import { RouteOptimizationService, StopETA } from "./route-optimization.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -136,7 +137,7 @@ export class RouteAnalysisService {
 
       const response = await anthropic.messages.create({
         model,
-        max_tokens: 1024,
+        max_tokens: AI_SCAN_MAX_TOKENS,
         messages: [
           {
             role: "user",
@@ -175,8 +176,8 @@ Status guide:
         outputTokens: response.usage?.output_tokens ?? 0,
       });
 
-      const textBlock = response.content.find((b) => b.type === "text");
-      const rawText = textBlock?.type === "text" ? textBlock.text : "";
+      // The answer is the first text block (a thinking block may come first); none reads as unparseable below.
+      const rawText = firstText(response.content) ?? "";
 
       // Parse JSON — handle potential markdown fences
       const jsonStr = rawText
@@ -312,7 +313,7 @@ Status guide:
 
       const response = await anthropic.messages.create({
         model,
-        max_tokens: 1024,
+        max_tokens: AI_SCAN_MAX_TOKENS,
         messages: [
           {
             role: "user",
@@ -351,8 +352,8 @@ Status guide:
         outputTokens: response.usage?.output_tokens ?? 0,
       });
 
-      const textBlock = response.content.find((b) => b.type === "text");
-      const rawText = textBlock?.type === "text" ? textBlock.text : "";
+      // The answer is the first text block (a thinking block may come first); none reads as unparseable below.
+      const rawText = firstText(response.content) ?? "";
       const jsonStr = rawText
         .replace(/```(?:json)?\s*/g, "")
         .replace(/```/g, "")

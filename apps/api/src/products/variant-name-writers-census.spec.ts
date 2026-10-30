@@ -56,12 +56,16 @@ const GUARDED: Record<string, { calls: number; why: string }> = {
 
 /** Files that write ONLY through ProductsService.create / update (which are GUARDED above). */
 const ROUTED: Record<string, string> = {
+  "catalog-copy/catalog-copy.service.ts":
+    "SA-1027: readSource maps the source's variantName into the plan row and createProduct hands the input catalog-copy.plan.ts builds to ProductsService.create (reparentVia import); it writes no Product row of its own",
   "import/variant-resolution.service.ts":
     "createVariant hands the variant to ProductsService.create (the import and scan 'new variant' choice); it writes no variant label of its own",
 };
 
 /** Files that match the scan but never write a variant label, each with the reason. */
 const ALLOWED: Record<string, string> = {
+  "catalog-copy/catalog-copy.plan.ts":
+    "SA-1027: the pure plan builds ProductsService.create's input (a variant's bare label as name and variantName); it calls no writer and touches no database",
   "import/import.service.ts":
     "SA-823 PR-2: a Family row's new variant is built as a create() dto (name = variantName = the bare label from the planner) and handed to ProductsService.create; it writes no Product row itself",
   "buyer/buyer-catalog-where.ts": "a search filter on variantName (read)",
@@ -178,14 +182,9 @@ const BLOCKS: Record<string, BlockPin> = {
   },
   "src/inventory/inventory.service.ts": {
     blocks: {
-      "assignToVariants:update+": 1,
       "createVariantRowInTx:create+": 1,
-      "postPoReceipt:update": 1,
-      "recordPurchase:update": 1,
-      "reversePoReceipts:update": 1,
-      "setCostBasisInTx:update": 1,
     },
-    why: "the stock split's new variant is built from bareVariantLabel; recordPurchase / setCostBasisInTx write a cost-update variable (averageCost / standardCost columns only); assignToVariants, postPoReceipt and reversePoReceipts write stock / averageCost patches with a conditional spread (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); none names a label",
+    why: "the stock split's new variant is built from bareVariantLabel; the stock / cost writes moved to inventory/stock-movements.ts (SA-927, its own entry)",
   },
   "src/products/family-price.ts": {
     blocks: { "propagateFamilyPrice:updateMany": 2 },
@@ -210,13 +209,18 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "test fixture: seeds a standalone product for the order-stock db specs (B284), never production",
     standalone: true,
   },
+  "src/orders/testing/units-fold-db-harness.ts": {
+    blocks: { "seedFoldTenant:create": 1 },
+    why: "test fixture: seeds standalone products for the D3 units-fold db specs (qa-ufold-* tenants), never production",
+    standalone: true,
+  },
   "src/import/variant-resolution.service.ts": {
     blocks: { "completeSetup:update": 1 },
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
   },
-  "src/vendor-bills/vendor-bills.service.ts": {
-    blocks: { "receive:update": 1, "appendBillReversals:update": 1 },
-    why: "bill receive, and the one shared reversal revert and void both go through (SA-808), move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
+  "src/inventory/stock-movements.ts": {
+    blocks: { "applyStockMovements:update": 1 },
+    why: "SA-927: the one stock writer. Its single product.update writes currentStock (absolute) and, when a receipt or reversal moved it, averageCost and standardCost (conditional spreads, surfaced by the parenthesised-spread rule); it writes no name",
   },
   "prisma/seed.ts": {
     blocks: { "main:upsert": 1 },

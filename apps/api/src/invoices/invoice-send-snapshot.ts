@@ -37,7 +37,16 @@ export const SEND_SNAPSHOT_INCLUDE = {
   items: {
     orderBy: FINGERPRINT_ITEM_ORDER, // SA-874: the SAME order the live fingerprint reads
     include: {
-      product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
+      product: {
+        select: {
+          id: true,
+          name: true,
+          barcode: true,
+          sku: true,
+          unitSku: true,
+          baseUnitLabel: true,
+        },
+      },
       // CQ-03: the category row names the levy charge ("CRV deposit")
       trackedCategory: { select: { id: true, name: true, taxType: true } },
       // #2717 M3: the frozen sub-lines of a composed (FIXED) line; empty on a plain line.

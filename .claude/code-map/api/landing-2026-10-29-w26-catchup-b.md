@@ -1,0 +1,62 @@
+# Api landing 2026-10-29, W26 catch-up B (`4be950fdf9` exclusive .. `75f433f56` inclusive; trains W21 `7a0d4d290` #3965, W22 `77e90abc1` #3966, W23 `e98c63a3a` #3968, W24 `8f8fd846d` #3970, W25 `75f433f56` #3971)
+
+Paths under `apps/api/src/` unless noted; `pkg:` = `packages/`. Tests not indexed. Web part is a separate file. Web-only, hooks, registry, verify and ops-tooling PRs are skipped. Size-ratchet baseline changes in range: only `routes/routes.service.ts` 3119 -> 3103 (#3788).
+
+## #3890 `d65a1574f` SA-1026 A, "To collect" (a check not received yet on a counter or hand-over sale)
+- Migration `20261027120000_invoice_expected_payment_method` (additive): `Invoice.expectedPaymentMethod PaymentMethod?` + index `(tenantId, expectedPaymentMethod)` (`prisma/schema/finance.prisma`). Null = no intent; no backfill. "To collect" is never stored: derived on every read.
+- New `invoices/to-collect.ts`: `TO_COLLECT_METHOD_VALUES`, `ToCollectMethod`, `ToCollectState` (`TO_COLLECT|NONE|UNKNOWN`), `CLEARED_INVOICE_STATUSES`, `toCollectState`, `TO_COLLECT_WHERE`, `rollupToCollect`, `markToCollect` (the one writer), `markOpenInvoicesToCollect`, `toCollectByCustomer`, `toCollectSummary`. New `invoices/invoice-row-flags.ts` `listRowFlags` (paidAtSale + toCollect for list and detail). New `orders/order-to-collect.ts` `attachOrderToCollect` (staff-only, advisory).
+- `counter-sale-payment.ts` `CounterPayment.expectedMethod` + guard `COUNTER_EXPECTED_METHOD_NEEDS_ON_ACCOUNT` (400; only with ON_ACCOUNT); `counter-sale.service.ts` and `pickup-complete.service.ts` call `markOpenInvoicesToCollect` after commit; readback and `counter-sale-today.ts` return `toCollect`. `GET /invoices?toCollect=true` (`list-invoices.dto.ts`, `invoice-list-query.ts` ANDs `TO_COLLECT_WHERE`, buyer ignored); AR aging gains `toCollectByCustomer` (`bookkeeping.service.ts`); statement gets a staff-only `toCollect` tile. Shared: `pkg:types/api/enums.ts` `TO_COLLECT_METHOD_VALUES`, `TO_COLLECT_STATE_VALUES`.
+
+## #3891 `52b61ca9d` SA-1026 B, one Print invoice button
+- `counter-sale-readback.ts` and `pickup-complete.service.ts` add `invoiceIds: string[]` (every invoice of the sale in issue order, the list `total` sums) beside `invoiceId`. `pkg:types/api/counter-sale.ts` gains `invoiceIds`. No behaviour change otherwise.
+
+## #3743 `859468f97` counter receipt names the check, offers Void (W-783; with `72ba09272`, `9e4de5884`)
+- `counter-sale-readback.ts` `checkReferenceOf(payments)` (first CHECK tender's trimmed `Payment.reference`); readback, `counter-sale-today.ts` and `documents/receipt-model.ts` / `receipt.service.ts` (selects `reference`) return/print `checkReference`. `pkg:pricing/src/counter-tender-split.ts` `counterMethodLine(..., { checkReference })` renders "Check #1042 $25.00" on the CHECK leg only.
+
+## #3900 `d960391b0` a named customer's return rides the counter sale (W-863 PR-1, SA-945)
+- `counter-sale.dto.ts` takes Create Order's own `inlineReturn` (`InlineReturnLinesDto`); `dto/create-sale.dto.ts` declares it internal (`declare`, never body-sent). `counter-sale.service.ts` forwards it into `OrdersService.create` (one return writer); walk-in is refused via `walkInStoreCreditRefusal` (409); tender is judged on `total - sumInlineReturnCredit`.
+- `orders/order-inline-return.ts`: `previewInlineReturnCredit` (server-priced dry run, 0 on any refusal or DRIVER), `assertIssuedCreditCoversPreview` (G5, 409 `RETURN_CREDIT_CHANGED` rolls the sale back). `orders/credit-limit-guard.ts` `creditProjectedTotal(total, options, returnCredit = 0)` nets the credit before the tender. New code `RETURN_CREDIT_CHANGED` (api + `pkg:types/api/error-codes.ts`).
+
+## #3902 `2b2112b14` invoice display units: pieces layout and delivery freeze (SA-827 T1)
+- New `pkg:pricing/src/invoice-display-lines.ts`: `invoiceDisplayUnitFor`, `displayUnitSnapshotOf`, `displayUnitForItem`, `invoiceDisplayLines` (`today|pieces|components`), `invoiceDisplayCategoryTax`. New `invoices/invoice-display-unit.ts` (display-only, no money): `resolveLiveDisplayUnits`, `loadDisplayUnitCatalog`, `resolveFromCatalog`, `withItemDisplayUnits`, `itemsWithDisplayUnits`, `resolveIssueDisplayUnits`, `resolveDraftIssueUnits`, `freezeDraftIssueUnits`, `loadStopDisplayUnitCatalog`, `freezeIssueUnitsFromCatalog`, `writeIssueDisplayUnits`, `clearIssueDisplayUnits`.
+- Behaviour: first issue (DRAFT -> issued; in `invoices.service.ts`, the bookkeeping ledger-pay path, and delivery payment in `routes.service.ts` via `invoicesService.loadUnitCatalog(stop)` loaded once before its tx) freezes `InvoiceItem.invoiceUnitLabel/Factor`; revert to draft clears; reads add `displayUnit` (`{kind,label}`) to items. `Customer.invoiceUnitDefault` (LEGACY|PIECES|PACK) settable by staff in customer create/update DTOs, listed in `STAFF_ONLY_CUSTOMER_FIELDS`; buyer projection allows `displayUnit` and category name (`common/staff-only-fields.ts`).
+- PDF: new `invoices/invoice-pdf-item.ts` `pdfItemDisplay`, `qtyCellText`, `pieceUnitPriceText`, `PdfItemDisplay`; `invoice-pdf-template.tsx` renders pieces/components rows. Moved out of `InvoicesService` (size ratchet) into `invoices/manual-invoice-context.ts`: `orderDerivedTaxRate`, `applyOrderDerivedTaxRate` (foldCategoryTax now a free function). `pkg:types/api/invoices.ts` `InvoiceDisplayUnitView`.
+
+## #3946 `56a54f2ac` pin hand-typed Prisma enum mirrors (SA-1049 PR-2); with #3940 `eadc1542c`
+- New `common/no-hand-typed-enum-mirrors.allow.ts` (exact allow-list, `WHY` reasons; may only shrink). `invoices/invoice-display-unit.ts` now takes `InvoiceUnitDefault` from `@routeflow/types`. #3940 adds to `pkg:types/api/enums.ts`: `TENANT_STATUS_VALUES`, `TENANT_PLAN_VALUES`, `USER_STATUS_VALUES`, `BUYER_ACCOUNT_STATUS_VALUES`, `CUSTOMER_LINK_STATUS_VALUES` (derived types are `...Value`). Web consumers are in the web file.
+
+## #3941 `22ff8274e` SA-1042 B9b-1, a standard return names its order line
+- New `returns/return-line-items.ts`: `LineItemInput`, `ResolvedLineItem`, `isLineItem`, `resolveLineItems`, `lineLeftText`, `assertLineCaps`. `returns/returns-pieces.util.ts` adds `PACK_LINE_SELECT`, `OrderLineForPieces`, `capBasis`, `returnedPiecesByLine`, `standardReturnPieces`.
+- `CreateReturnItemDto` (`pkg:types/api/returns.ts`) gains `orderItemId`, `boxes`, `pieces`. A line item writes `ReturnItem.sourceOrderItemId` and a qty in the line's own unit; capped per line net of STANDARD + INLINE priors; pooled items unchanged. New codes `RETURN_LINE_NOT_ON_ORDER`, `RETURN_LINE_COUNT_SHAPE`, `RETURN_LINE_MIXED_WITH_POOLED` (api + types); copier registry carries `sourceOrderItemId`.
+
+## #3939 `86bada521` SA-1042 B9b-2, a line return is credited at its line's price (includes SA-1042 A-2)
+- `return-line-items.ts` adds `returnGroupKey`, `ReturnGroup`, `groupReturnItems`, `groupInvoiceItems`, `lineOfItem`, `withLines`; `returns/returns.service.ts` prices and itemises per group (product, plus order line when named). `credit-notes/line-credit-headroom.ts` adds `RefundGroup`, `ReturnedQty`, `groupLines`, `replayReturnedQty` (line groups fill their own line first, then pooled groups; no fall back to the pool), `HeadroomLine.orderItemId`.
+- `credit-notes.service.ts` and `returns/inline-returns.service.ts`: `pooledRefund` entries are `{ productId, orderItemId | null, qty }`, re-checked on the same lines the group was priced on. A single-unit item is still pooled (keeps no line). A line never billed on a creditable invoice is NOTHING_BILLED for that group.
+
+## #3800 `c7b0c685b` standard-return refund includes the invoice's tax (B704, SA-840 PR-1; SA-970, SA-980, SA-1042 A-3)
+- New `pkg:pricing/src/refundable-line-share.ts`: `refundableLineShare`, `refundableProductPoolShare`, `refundableInvoiceOf`, `taxRateMicros`, types `RefundableInvoice`, `StoredInvoice`, `StoredInvoiceItem`, `ProductPoolShare` (priced from the invoice as stored, boxed lines never re-derived). New `returns/standard-refund-pricing.ts`: `RefundSplit`, `NO_SPLIT`, `addSplit`, `splitTotal`, `splitOfItems`, `toRefundableInvoice`, `billedLinesOf`, `priceProductSlice` (shared by preview `priceReturn` and mint `itemiseRefund`), `refundTaxOpts`. A product-only item is sliced over the invoice's product pool (SA-970).
+- New `common/refund-net-terms.ts`: `CREDIT_NOTE_RETURN_FILTER`, `SPLIT_TAX_SUM`, `splitTax`, `refundNet`, `externalSplitWhere`, `noteReturnWhere`, `sumSplitTax`, `groupSplitTax`. `common/invoiced-sales.ts` and `sales-facts/sales-facts.service.ts` take the refund's returned tax back out of the credit terms (net sales stay pre-tax); the store-credit tax term keys on how the return settled (REFUNDED + CREDIT_NOTE), not its kind, and a cancelled one gives no tax back (SA-980).
+- SA-840 F1: `priceReturn` takes the `credited` map as a required argument (`creditsForPricing`: order pool for 2+ creditable invoices, line credits for one). F2: `compareInvoiceFillOrder` (createdAt, then id) shared by `billedLinesOf` and `loadOrderPool`. A-3: `pinnedTakeRefusal`, `TypedCreditRow`; the pool keeps pinned credit apart so a typed credit cannot reuse a line already refunded by a line-named return. Read-only owner script `scripts/report-standard-refund-tax-shortfall.mjs` (outside src).
+
+## #3967 `f5921a101` count a refund minted before the order was invoiced (SA-1053, I-192; with `0aad87a4b`)
+- `credit-notes/line-credit-headroom.ts`: `loadUnlinkedRefundReturns` (itemless, not VOID, no invoice, backing a non-INLINE return of the order; de-duplicated by note id); `loadLineCredits` and `loadOrderPool` replay them, and the line-level term runs only when the invoice is its order's sole creditable invoice (`countCreditableInvoices`). `credit-notes.service.ts`: a lump note without items is bounded by the creditable invoices' totals minus notes and those refunds (`CREDIT_NOTE_OVER_HEADROOM`, nothing written).
+
+## #3810 `2419cbcce` route and run delete key on delivery evidence, not run status (B209, SA-842)
+- New `routes/delivery-evidence.ts`: `deliveryEvidenceRefusal`, `routeHasDeliveryEvidence`, `lockRunsForDelete`, `runHasCompletedStop`. `routes.service.ts` `deleteRoute` / `deleteRun` lock, check and write in ONE tx (evidence: POD photos, signature, podHistory, arrival/completion, ID checks, rows pointing at the stop); refusal is 409 `ROUTE_HAS_DELIVERY_EVIDENCE` (api + types), clients offer Deactivate.
+- `routes/dto/update-run-status.dto.ts` `forbiddenRunTransition(from, to, ctx)`: IN_PROGRESS -> SCHEDULED refused once a stop is COMPLETED. Test support `testing/route-evidence-tx.ts` (`createEvidenceTx`, `emptyEvidenceDb`).
+
+## #3788 `20a3b12350` extract the RF-019 route idempotency guard (#3542 prefactor)
+- New `routes/route-idempotency.ts`: `makeRouteKeyHash`, `checkRouteIdempotencyKey`, `saveRouteIdempotencyKey` (moved verbatim from `RoutesService`). Size ratchet: `routes.service.ts` 3119 -> 3103.
+
+## #3842 `171e20170` a licence is valid through its printed expiry day in the tenant zone (B330)
+- New `authorizations/licence-validity.ts`: `licenceExpiryCutoff`, `isLicenceExpired`, `isLicenceLive`, `displayLicenceStatus`, `licenceZone` (the invoice due-date day-grace rule; null/unknown zone falls back to UTC; unparsable expiry is expired). Callers switched: authorization guard, expiry sweep (`expiresAt < licenceExpiryCutoff`), `authorizations.service.ts`, `buyer/regulated-visibility.service.ts`, `customers.service.ts` merge rank, `onboarding/onboarding-auto-checks.ts`. Api never value-imports types; twin rule in `pkg:types/licence-validity.ts` (exported from `pkg:types/index.ts`).
+
+## #3847 `37d005efb` bulk product delete returns softDeletedIds (row 493)
+- `products/product-delete-classify.ts` and `products.service.ts` bulk delete result gains `softDeletedIds: string[]` (the archived products, history kept).
+
+## #3843 `5c1a3fa77` commission NSF leg uses stored line subtotals (row 139, SA-982 3b)
+- `sales-agents/commission-engine.service.ts`: the NSF fee is taken out at the stored `InvoiceItem.subtotal`, not `qty * unitPrice`.
+
+## Scripts and test-only (one line each)
+- #3827 `3dfbbd98b` `scripts/report-640-restored-grants.mjs` reports unstamped partial restores, fails closed (exit 3 unless every billable SKU is priced). #3798 `80af07844` `scripts/report-b403-zero-rate-lines.mjs` read-only census of all-zero taxed invoices.
+- Test-only: #3814 (B208 buyer add keeps MANUAL price), #3948 / #3949 (units ladder 10/200/4800 rows for invoices and orders, I-101), #3950 (activation-void period edge).

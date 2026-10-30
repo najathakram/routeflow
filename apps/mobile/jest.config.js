@@ -64,6 +64,8 @@ module.exports = {
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
     "^@routeflow/types/regulated-auth-copy$":
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
+    // B330: the shared licence-validity rule (pure, Intl only), same subpath trick.
+    "^@routeflow/types/licence-validity$": "<rootDir>/../../packages/types/licence-validity.ts",
     // H5: the shared estimate tax-basis notice (pure), same subpath trick.
     "^@routeflow/types/estimate-tax-basis$": "<rootDir>/../../packages/types/estimate-tax-basis.ts",
     // Row 485: the pure sale-retry rule (definitive refusal, per-attempt key), same subpath trick.
@@ -87,6 +89,7 @@ module.exports = {
     // SA-817 A: the one persisted-submit-key rule for a draft (pure, no imports), same subpath trick.
     "^@routeflow/types/draft-submit-key$": "<rootDir>/../../packages/types/draft-submit-key.ts",
     // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
+    "^@routeflow/types/api/restrictions$": "<rootDir>/../../packages/types/api/restrictions.ts",
     "^@routeflow/types/api/fulfilment$": "<rootDir>/../../packages/types/api/fulfilment.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.

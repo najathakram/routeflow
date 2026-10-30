@@ -250,6 +250,8 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
         ["ord-1"],
         100,
         "CASH",
+        null,
+        null,
       );
       const b = booked();
       expect(b.invoices).not.toContain("inv-a");
@@ -268,6 +270,8 @@ describe("SA-404f — payment writers lock before they read (void-first)", () =>
         ["ord-1"],
         100,
         "CASH",
+        null,
+        null,
       );
       const b = booked();
       expect(b.invoices).toEqual(["inv-a", "inv-b"]);

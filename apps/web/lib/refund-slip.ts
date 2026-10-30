@@ -37,6 +37,8 @@ export interface RefundSlipModel {
   lines: RefundSlipLine[];
   total: number;
   payout: RefundSlipPayout;
+  /** Who made the refund: the stored refund actor from the API (row 257); null when it names nobody. */
+  refundedBy: string | null;
   /** Who PRINTED this copy (the viewer), not who made the refund: a later reprint names whoever prints it. */
   printedBy: string | null;
   footer: string | null;
@@ -46,7 +48,7 @@ const TENDER_LABEL: Record<string, string> = { CASH: "Cash", CARD: "Card", CHECK
 const clean = (s: string | null | undefined): string => (s ?? "").trim();
 
 export function buildRefundSlip(input: {
-  ret: Return & { refundTender?: string | null };
+  ret: Return & { refundTender?: string | null; refundedBy?: string | null };
   profile: RefundSlipProfile | null | undefined;
   printedBy?: string | null;
   now?: Date;
@@ -90,6 +92,7 @@ export function buildRefundSlip(input: {
     lines,
     total: amount,
     payout,
+    refundedBy: settled ? clean(ret.refundedBy) || null : null,
     printedBy: clean(input.printedBy) || null,
     footer: clean(profile?.receiptFooter) || null,
   };

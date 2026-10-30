@@ -1054,8 +1054,8 @@ export default function RouteTemplateDetailPage() {
                       Print
                     </button>
                   </div>
-                  <div className="overflow-hidden rounded-lg border border-surface-border">
-                    <table className="w-full text-sm">
+                  <div className="overflow-x-auto rounded-lg border border-surface-border">
+                    <table className="min-w-[400px] w-full text-sm">
                       <thead className="bg-surface-raised text-xs text-navy/70">
                         <tr>
                           <th className="px-3 py-2 text-left font-medium">Product</th>
@@ -1142,8 +1142,8 @@ export default function RouteTemplateDetailPage() {
                     )}
 
                     {/* ETA rows */}
-                    <div className="overflow-hidden rounded-lg border border-surface-border">
-                      <table className="w-full text-sm">
+                    <div className="overflow-x-auto rounded-lg border border-surface-border">
+                      <table className="min-w-[640px] w-full text-sm">
                         <thead className="bg-surface-raised text-xs text-navy/70">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">#</th>

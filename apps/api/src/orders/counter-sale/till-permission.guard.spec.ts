@@ -40,7 +40,7 @@ const request = require("supertest");
 const ID = "00000000-0000-4000-8000-000000000001";
 const IDEM = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 
-/** The 14 guarded till handlers, pinned: a counter handler added without the guard fails the census (L-202). */
+/** The 17 guarded till handlers, pinned: a counter handler added without the guard fails the census (L-202). */
 const GUARDED = [
   "CounterSaleController.today",
   "CounterSaleController.quickKeysGrid",
@@ -56,6 +56,9 @@ const GUARDED = [
   "CounterDayCloseController.close",
   "CounterDayCloseController.reopen",
   "CounterDayCloseController.report",
+  "CounterDrawerController.read",
+  "CounterDrawerController.record",
+  "CounterDrawerController.correct",
 ];
 /**
  * Exempt on purpose: the void stays on VOID_SALE, and byKey is the unknown-outcome settle path (a till that
@@ -75,7 +78,7 @@ describe("the till guard is on every counter handler (route metadata)", () => {
     expect(discovered.length).toBeGreaterThanOrEqual(GUARDED.length);
   });
 
-  it("the counter handlers are exactly the pinned fourteen plus the exempted byKey and void", () => {
+  it("the counter handlers are exactly the pinned seventeen plus the exempted byKey and void", () => {
     expect(discovered.map(keyOf).sort()).toEqual([...GUARDED, ...EXCLUDED].sort());
   });
 

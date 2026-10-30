@@ -53,7 +53,7 @@ import {
 } from "./buyer-template-view";
 import { assertPositiveTemplateQty } from "./template-qty";
 import * as tGate from "./template-restriction-gate";
-import { authorMarkerOf, withAuthor } from "../orders/line-author-channel";
+import { authorMarkerOf, orderSourceForChannel, withAuthor } from "../orders/line-author-channel";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 import { startOfCalendarDay } from "../common/calendar-date";
@@ -878,7 +878,7 @@ export class OrderTemplatesService {
         logger: this.logger,
       },
       // role null: a system caller never gets POS mode (SA-763r M1).
-      { stored: storedPath, audience: "staff", role: null },
+      { stored: storedPath, audience: "staff", role: null, deniedGroups: [] },
     );
     const fulfilmentKind = saleFulfilmentKind({ counterSale: false, fulfillPath });
     let live = template.items.filter((i) => !i.suspendedAt);
@@ -1236,9 +1236,9 @@ export class OrderTemplatesService {
             templateId: template.id,
             fulfillPath,
             orderNumber,
-            // Unattended run: no principal creates it, and the template's author is judged per line
-            // (leastPrivilegedAuthor), so the recorded source is the stricter, buyer side (the column default, explicit).
-            source: "APP",
+            // Row 478: the source follows the run's judged channel (the same one the lines' author marker takes), so
+            // a staff-authored template records PHONE and a buyer-authored (or unknown-author) one records APP.
+            source: orderSourceForChannel(channel),
             sourceRecorded: true, // F1(i): the source above is deliberate, not the column default
             subtotal,
             tax,

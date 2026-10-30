@@ -55,6 +55,7 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
   const recordPayment = jest.fn();
   const sent: string[] = [];
   let restricted = false;
+  let lastAck: unknown = null;
   const operator = () =>
     ({
       sub: userId,
@@ -132,10 +133,12 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     orders = buildDbOrdersService(prisma, tenantCtx, {
       pushes,
       events,
-      assertLinesSellable: async () => {
-        if (restricted)
+      // W-773: the judgement sees the request's acknowledgement; an acknowledged override passes
+      assertLinesSellable: (async (p?: { ack?: any }) => {
+        lastAck = p?.ack ?? null;
+        if (restricted && !p?.ack?.restrictionOverrides?.length)
           throw new ConflictException({ code: "SELLING_RESTRICTED", message: "restricted" });
-      },
+      }) as never,
       invoices: {
         send: async (id: string, opts?: { suppressNotify?: boolean }) => {
           sent.push(`${id}:${opts?.suppressNotify === true ? "quiet" : "notify"}`);
@@ -384,7 +387,71 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     email.mock.calls.filter((c: any[]) => c[0] === orderId).length;
 
   // Item 1: a closed day is refused BEFORE the first write (head: PICKUP / DELIVERED / SENT with no payment).
-  it("S1 a CLOSED window, a ROUTE order with CASH: 409 COUNTER_SALE_DAY_CLOSED, path ROUTE, status unchanged, nothing sent", async () => {
+  // W-776 (SA-925): the pre-check's refusal has its OWN code (head: COUNTER_SALE_DAY_CLOSED, which the clients read as "handed over").
+  for (const [from, path] of [
+    ["CONFIRMED", "ROUTE"],
+    ["PENDING", "PICKUP"],
+  ] as const)
+    it(`S1 a CLOSED window, a ${from} ${path} order with CASH: 409 COUNTER_COMPLETE_DAY_CLOSED, path and status unchanged, no claim, nothing sent`, async () => {
+      const now = new Date();
+      await raw.counterDayClose.create({
+        data: {
+          tenantId,
+          registerKey: "main",
+          day: now,
+          zone: "UTC",
+          windowStart: new Date(now.getTime() - 3_600_000),
+          windowEnd: new Date(now.getTime() + 3_600_000),
+          closedAt: now,
+          expectedCash: 0,
+          countedCash: 0,
+          variance: 0,
+          denominations: {},
+          totals: {},
+        },
+      });
+      try {
+        const { orderId, invoiceId } = await seed(from, path, { total: 10 });
+        const err: any = await as(() =>
+          engine().complete(
+            orderId,
+            { payment: { method: "CASH", amount: 10 } } as never,
+            operator(),
+            `key-${run}-s1-${from}`,
+          ),
+        ).catch((e) => e);
+        expect(err?.getStatus?.()).toBe(409);
+        expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
+        const after = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
+        expect({
+          path: after.fulfillPath,
+          status: after.status,
+          delivered: after.deliveredAt,
+        }).toEqual({
+          path,
+          status: from,
+          delivered: null,
+        });
+        expect(
+          await raw.auditLog.count({
+            where: { tenantId, entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
+          }),
+        ).toBe(0);
+        expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe(
+          "DRAFT",
+        );
+        expect(sent).toEqual([]);
+        expect(email).not.toHaveBeenCalled();
+      } finally {
+        await raw.counterDayClose.deleteMany({ where: { tenantId } });
+      }
+    }, 60_000);
+
+  // W-776 (SA-925): an order ALREADY handed over, then the day closes: the replay's tender is refused with the post-claim code
+  // (the hand-over stands), never the pre-check's "nothing changed".
+  it("S1r a handed-over order (balance due), the day then closes: the replay is COUNTER_SALE_DAY_CLOSED, still DELIVERED, invoice issued, no payment", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "PICKUP", { total: 10 });
+    await as(() => engine().complete(orderId, {} as never, operator(), `key-${run}-s1r-a`));
     const now = new Date();
     await raw.counterDayClose.create({
       data: {
@@ -403,27 +470,23 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       },
     });
     try {
-      const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE", { total: 10 });
       const err: any = await as(() =>
         engine().complete(
           orderId,
           { payment: { method: "CASH", amount: 10 } } as never,
           operator(),
-          `key-${run}-s1`,
+          `key-${run}-s1r-b`,
         ),
       ).catch((e) => e);
       expect(err?.getStatus?.()).toBe(409);
       expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
-      const after = await raw.order.findUniqueOrThrow({ where: { id: orderId } });
-      expect({ path: after.fulfillPath, status: after.status }).toEqual({
-        path: "ROUTE",
-        status: "CONFIRMED",
-      });
-      expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe(
+      expect((await raw.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe(
+        "DELIVERED",
+      );
+      expect((await raw.invoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).not.toBe(
         "DRAFT",
       );
-      expect(sent).toEqual([]);
-      expect(email).not.toHaveBeenCalled();
+      expect(await raw.invoicePayment.count({ where: { invoiceId } })).toBe(0);
     } finally {
       await raw.counterDayClose.deleteMany({ where: { tenantId } });
     }
@@ -787,6 +850,40 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
     }
   }, 60_000);
 
+  // W-774 (SA-922 amendment): the #3455 restriction is pre-judged READ-ONLY before the claim, like the credit gate, so its
+  // refusal writes nothing. Head: the take-off committed first, then the switch refused, leaving the order off its run.
+  it("R8+D7 a restricted store-state line on an on-run order: 409 SELLING_RESTRICTED, still linked to the run, stop untouched, no claim", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "ROUTE");
+    const { runId, stopId } = await onDriverRun([orderId]);
+    restricted = true;
+    const err: any = await withFlag(orderId, `key-${run}-r8d7`, true).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "SELLING_RESTRICTED" });
+    await expectUntouched(orderId, invoiceId, {
+      path: "ROUTE",
+      status: "CONFIRMED",
+      routeRunId: runId,
+      routeRunStopId: stopId,
+    });
+    expect((await stopOf(stopId)).status).toBe("PENDING");
+    expect(await takeOffRows(orderId)).toHaveLength(0);
+    expect(await claimCount(orderId)).toBe(0);
+  }, 60_000);
+
+  // W-773: the staff override travels with Complete at counter: the dto's acknowledgement reaches the switch's judgement
+  // (and the pre-judge), so an acknowledged restricted line completes. Head: the dto had no ack, so it was refused.
+  it("W-773 an acknowledged override on the request reaches the restriction judgement: the order completes", async () => {
+    const { orderId } = await seed("CONFIRMED", "ROUTE");
+    restricted = true;
+    const ack = {
+      restrictionOverrides: [{ lineKey: "n:0", reason: "Store manager approved" }],
+      warningHash: "h-w773",
+    };
+    await as(() => engine().complete(orderId, ack as never, operator(), `key-${run}-w773`));
+    expect(lastAck).toMatchObject(ack);
+    expect(await linkOf(orderId)).toEqual(delivered);
+  }, 60_000);
+
   it.each(["IN_PROGRESS", "COMPLETED"])(
     "R8c the driver has started the stop (%s): 409 COUNTER_COMPLETE_STOP_STARTED with or without the confirm, nothing written",
     async (stopStatus) => {
@@ -949,5 +1046,47 @@ describeDb("I-120 Complete at counter — real Postgres", () => {
       routeRunStopId: null,
     });
     expect(await claimCount(orderId)).toBe(0);
+  }, 60_000);
+
+  // ── Row 590 (SA-1000 §2): the office-DELIVERED refusal must not strand a counter completion ──
+  it("R10a a PICKUP order still linked to a FINISHED run's PENDING stop: DELIVERED on the first try, the link released, ONE claim", async () => {
+    const { orderId } = await seed("CONFIRMED", "PICKUP");
+    const { runId } = await onDriverRun([orderId], "PENDING");
+    await raw.routeRun.update({ where: { id: runId }, data: { status: "COMPLETED" } });
+    const key = `key-${run}-r10a`;
+    const first: any = await withFlag(orderId, key).catch((e) => e);
+    // red before: 409 ORDER_DELIVERED_ON_ROUTE_STOP on every try, the hand-over claim already written
+    expect(first?.getStatus?.()).toBeUndefined();
+    expect(await linkOf(orderId)).toEqual(delivered);
+    expect(await claimCount(orderId)).toBe(1);
+    const again: any = await withFlag(orderId, key).catch((e) => e);
+    expect(again?.getStatus?.()).toBeUndefined(); // the replay is not a refusal either
+    expect(await claimCount(orderId)).toBe(1);
+  }, 60_000);
+
+  it("R10b a CANCELLED run (finished too): its stale link on a PENDING stop is released the same way", async () => {
+    const { orderId } = await seed("CONFIRMED", "PICKUP");
+    const { runId } = await onDriverRun([orderId], "PENDING");
+    await raw.routeRun.update({ where: { id: runId }, data: { status: "CANCELLED" } });
+    await withFlag(orderId, `key-${run}-r10b`);
+    expect(await linkOf(orderId)).toEqual(delivered);
+    expect(await claimCount(orderId)).toBe(1);
+  }, 60_000);
+
+  it("R10c a link only by the stop id to an ACTIVE run (no routeRunId): refused ORDER_DELIVERED_ON_ROUTE_STOP BEFORE the claim, nothing written", async () => {
+    const { orderId, invoiceId } = await seed("CONFIRMED", "PICKUP");
+    const { stopId } = await onDriverRun([orderId], "PENDING");
+    await raw.order.update({ where: { id: orderId }, data: { routeRunId: null } });
+    const err: any = await withFlag(orderId, `key-${run}-r10c`, true).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "ORDER_DELIVERED_ON_ROUTE_STOP" });
+    // red before: the claim was written first (count 1) and the order stayed linked
+    expect(await claimCount(orderId)).toBe(0);
+    await expectUntouched(orderId, invoiceId, {
+      path: "PICKUP",
+      status: "CONFIRMED",
+      routeRunId: null,
+      routeRunStopId: stopId,
+    });
   }, 60_000);
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -14,7 +15,14 @@ import {
   CreditCard,
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
-import { resolveConfirmedAmounts } from "@routeflow/pricing";
+import {
+  basePriceText,
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
+  invoiceLineQtyText,
+  resolveConfirmedAmounts,
+} from "@routeflow/pricing";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
@@ -26,6 +34,7 @@ import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -205,6 +214,8 @@ export default function BuyerInvoiceDetailPage() {
       : null;
   const deposit = invoiceDepositFields(invoice);
 
+  const showPerPiece = showPerPieceColumn(invoice?.items);
+
   return (
     <div className="p-6 max-w-4xl">
       <button
@@ -341,16 +352,23 @@ export default function BuyerInvoiceDetailPage() {
               <th className="px-4 py-2.5 text-left">Description</th>
               <th className="px-4 py-2.5 text-right w-20">Qty</th>
               <th className="px-4 py-2.5 text-right w-28">Unit price</th>
+              {showPerPiece && <th className="px-4 py-2.5 text-right w-28">Per piece</th>}
               <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
             </tr>
           </thead>
           <tbody className="block divide-y divide-surface-border sm:table-row-group">
             {(invoice.items ?? []).map((item) => {
               const msrp = itemMsrp(item);
-              return (
+              // SA-827: pieces / components layouts come from pricing; everything else is today's row.
+              const display = invoiceItemDisplayLines(item);
+              const groupRow = (
                 <tr
                   key={item.id}
-                  data-testid={`invoice-line-${item.id}`}
+                  data-testid={
+                    display.layout === "components"
+                      ? `display-group-row-${item.id}`
+                      : `invoice-line-${item.id}`
+                  }
                   className="block space-y-1 px-4 py-3 hover:bg-surface-raised/50 sm:table-row sm:space-y-0 sm:p-0"
                 >
                   <td className="block text-sm font-medium text-navy sm:table-cell sm:px-4 sm:py-3">
@@ -360,6 +378,10 @@ export default function BuyerInvoiceDetailPage() {
                         {item.notes}
                       </p>
                     )}
+                    {/* Today and the pieces fallback (component sums mismatch) keep the "(included)" sub-lines. */}
+                    {display.layout !== "components" && (
+                      <ComponentSubLines components={item.components} />
+                    )}
                   </td>
                   <td
                     data-testid={`invoice-line-qty-${item.id}`}
@@ -367,7 +389,9 @@ export default function BuyerInvoiceDetailPage() {
                     className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy"
                   >
                     <span className="text-right">
-                      {Number(item.qty)}
+                      {display.layout === "pieces"
+                        ? displayQtyText(display.qty, display.unitLabel)
+                        : invoiceLineQtyText(item)}
                       {/* BUY_N_GET_M: name the free units, or the reduced subtotal
                         reads as a pricing error. */}
                       {Number(item.promoFreeUnits ?? 0) > 0 && (
@@ -383,15 +407,33 @@ export default function BuyerInvoiceDetailPage() {
                     className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
                   >
                     <span className="whitespace-nowrap text-right tabular-nums">
-                      {fmt(Number(item.unitPrice))}
+                      {display.layout === "pieces"
+                        ? basePriceText(display.unitPrice)
+                        : fmt(Number(item.unitPrice))}
                       {/* Suggested retail price, snapshotted at line creation. Keyed off
                         data presence, not the addon flag, so an issued invoice keeps
                         rendering it even if the seller later loses the MSRP addon. */}
                       {msrp != null && (
-                        <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                        <p className="mt-0.5 text-[10px] text-navy/50">
+                          MSRP {fmt(msrp)}/{baseUnitSuffix(item.perBaseUnit)}
+                        </p>
                       )}
                     </span>
                   </td>
+                  {showPerPiece &&
+                    (item.perBaseUnit && display.layout === "today" ? (
+                      <td
+                        data-testid={`invoice-line-per-piece-${item.id}`}
+                        data-label="Per piece"
+                        className="flex items-baseline justify-between gap-3 text-sm before:text-xs before:uppercase before:tracking-wider before:text-navy/70 before:content-[attr(data-label)] sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:before:hidden text-navy/70"
+                      >
+                        <span className="whitespace-nowrap text-right tabular-nums">
+                          {formatPerBaseUnitPrice(item.perBaseUnit)}
+                        </span>
+                      </td>
+                    ) : (
+                      <td className="hidden sm:table-cell" />
+                    ))}
                   <td
                     data-testid={`invoice-line-subtotal-${item.id}`}
                     data-label="Subtotal"
@@ -403,6 +445,21 @@ export default function BuyerInvoiceDetailPage() {
                   </td>
                 </tr>
               );
+              if (display.layout === "components") {
+                return (
+                  <InvoiceDisplayRows
+                    key={item.id}
+                    lines={display}
+                    itemId={item.id}
+                    fmt={fmt}
+                    variant="buyer"
+                    perPieceCol={showPerPiece}
+                  >
+                    {groupRow}
+                  </InvoiceDisplayRows>
+                );
+              }
+              return groupRow;
             })}
           </tbody>
         </table>
@@ -410,13 +467,13 @@ export default function BuyerInvoiceDetailPage() {
 
       {/* Payment history */}
       {invoice.payments && invoice.payments.length > 0 && (
-        <div className="rounded-xl border border-surface-border bg-white overflow-hidden mb-6">
+        <div className="rounded-xl border border-surface-border bg-white overflow-x-auto mb-6">
           <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
             <h2 className="text-sm font-semibold text-navy">
               Payment history ({invoice.payments.length})
             </h2>
           </div>
-          <table className="w-full">
+          <table className="min-w-[480px] w-full">
             <thead>
               <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
                 <th className="px-4 py-2.5 text-left">Date</th>

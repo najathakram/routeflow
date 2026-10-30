@@ -2,8 +2,10 @@ import {
   API_ERROR_CODES,
   CREDITS_PENDING_COPY,
   FILING_STALE_COPY,
+  ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   INVOICE_TAX_STATE_STALE_COPY,
   SHIPPED_ORDER_MESSAGE,
+  STOCK_COUNT_SEEDING_COPY,
   productInOpenCountCopy,
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
@@ -40,6 +42,10 @@ import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
  * (see mutation-error-toast.ts).
  */
 
+/** SA-1032: promotions turned off for the business in the back office (page notice + refusal toast). */
+export const PROMOTIONS_OFF_COPY =
+  "Promotions are turned off for this business. Customers don't see them, and new orders don't use them. Past orders keep their promotion prices.";
+
 /** Daily-work refusals, by `body.code`. The sentences name the cause and the next step. */
 const CODE_COPY: Record<string, string> = {
   // Row 509: selling-restriction rule targets and edits (fixed copy; the guided cases are rendered in place).
@@ -47,6 +53,7 @@ const CODE_COPY: Record<string, string> = {
   // a buyer write toward a paused seller: the seller-unavailable sentence, never "You don't have permission"
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:
@@ -89,6 +96,8 @@ const CODE_COPY: Record<string, string> = {
   QTY_SPLIT_MISMATCH: BUYER_QTY_SPLIT_MISMATCH_COPY,
   // B692: a partial delivery needs per-line quantities; a delivered order with none recorded is not cancelled blind.
   ORDER_PD_NEEDS_QUANTITIES: "Record what was delivered for each line first.",
+  // Row 590 (SA-978a): an office DELIVERED on an order whose run stop has not completed; nothing was written.
+  [API_ERROR_CODES.ORDER_DELIVERED_ON_ROUTE_STOP]: ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
@@ -116,6 +125,7 @@ const CODE_COPY: Record<string, string> = {
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
   [API_ERROR_CODES.STOCK_COUNT_COMMITTING]: "This count is being saved. Try again in a moment.",
+  [API_ERROR_CODES.STOCK_COUNT_SEEDING]: STOCK_COUNT_SEEDING_COPY,
   // SA-767 r-note 5 SA-3: the count screens name the other count themselves; this is the fallback.
   [API_ERROR_CODES.PRODUCT_IN_OPEN_COUNT]: productInOpenCountCopy(),
   [API_ERROR_CODES.ORDER_SAVED_CREDITS_PENDING]: CREDITS_PENDING_COPY,
@@ -230,6 +240,13 @@ const CODE_COPY: Record<string, string> = {
   // checkout already in progress blocks a second one. Fixed sentences; no ids.
   [API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP]:
     "Your account is invoiced directly. Your RouteFlow contact will send you a secure link to set up card payment.",
+  // SA-774 (card first, then active): a plan is picked at checkout; fixed sentences, no ids.
+  [API_ERROR_CODES.USE_PLAN_CHANGE]:
+    "Your plan is paid by card. Use Change plan to switch, and the new price is prorated.",
+  [API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING]:
+    "Your card payment is still being confirmed. This change is available once it clears.",
+  [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
+    "Choose your plan at checkout. Your plan starts once your payment clears.",
   [API_ERROR_CODES.CATCHUP_SESSION_OPEN]:
     "A card checkout is open for this account (October catch-up), so this change isn't available yet. Wait for it to complete or expire, then try again.",
   [API_ERROR_CODES.CATCHUP_PENDING]:
@@ -254,6 +271,9 @@ const CODE_COPY: Record<string, string> = {
   // Row 542c: the terms the banner showed no longer hold; the banner re-reads (the mutation invalidates it on error).
   [API_ERROR_CODES.PAYMENT_TERMS_CHANGED]:
     "The amount changed. We've refreshed it, please check and try again.",
+  // SA-862 (W-706): confirming an unconfirmed payment on an invoice a card payment already filled.
+  [API_ERROR_CODES.UNCONFIRMED_PAYMENT_SUPERSEDED]:
+    "This invoice is already paid. Void this unconfirmed payment, or move it to the customer's credit.",
   // SA-832 / 453: a subscribe / checkout on a workspace a payment may not reinstate. Fixed sentence, no cause named.
   [API_ERROR_CODES.TENANT_ADMIN_LOCKED]:
     "This workspace is locked and can't take a payment right now. Please contact support.",

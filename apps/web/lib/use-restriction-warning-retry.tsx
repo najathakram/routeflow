@@ -96,6 +96,17 @@ export function useRestrictionWarningRetry() {
         setListChanged(false);
         setView(null);
       }}
+      onRecheck={() => {
+        // Row 672: a missing state was just added; the same save goes again as a FRESH attempt (no ack, no old hash).
+        const retry = retryRef.current;
+        retryRef.current = null;
+        forgetReason();
+        sentHashRef.current = null;
+        ackRef.current = null;
+        setListChanged(false);
+        setView(null);
+        if (retry) void retry();
+      }}
       onConfirm={(ack, reason) => {
         const retry = retryRef.current;
         retryRef.current = null;
