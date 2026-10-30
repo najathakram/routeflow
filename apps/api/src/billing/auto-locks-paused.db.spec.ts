@@ -566,7 +566,7 @@ describeDb("SA-775 automatic locks pause (real Postgres)", () => {
 
   describe("dunning pause (BILLING_PAUSE_MODE=enforced)", () => {
     const SINCE = new Date("2099-11-01T00:00:00Z");
-    const NOW = new Date("2099-11-08T09:00:00Z");
+    const NOW = new Date("2099-11-15T09:00:00Z");
 
     async function overdueDunning(label: string, cls: TenantClass) {
       const t = await mkTenant(label, cls, TenantStatus.ACTIVE);

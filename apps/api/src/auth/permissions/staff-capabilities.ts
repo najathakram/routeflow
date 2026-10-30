@@ -2,7 +2,8 @@
 //
 // A literal duplicate of packages/types/api/staff-capabilities.ts: the API never value-imports @routeflow/types
 // (L-261), so staff-capabilities-parity.spec.ts pins this file deep-equal to the shared one (table, window policy and
-// both functions' behaviour). Edit BOTH or the spec goes red. Callers: `staffMay(user.role, "EDIT_LINE_PRICE")`.
+// both functions' behaviour). Edit BOTH or the spec goes red. Callers pass the caller's denied groups:
+// `staffMay(user.role, "EDIT_LINE_PRICE", await operatorDeniedGroups(prisma, user))`.
 
 export const STAFF_CAPABILITY_VALUES = [
   "EDIT_LINE_PRICE",
@@ -39,13 +40,14 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
 
 /**
  * May `role` do `action`? Pure. TENANT_ADMIN and SUPER_ADMIN ignore `deniedGroups`; an OPERATOR is refused
- * when the action's group is denied. Every call site passes an explicit `deniedGroups` list (empty today); the
- * permissions rollout passes the caller's effective denials, one argument per call site.
+ * when the action's group is denied. Every call site passes `deniedGroups` explicitly (W-870): a request-path caller
+ * the OPERATOR's live denials (`operatorDeniedGroups`), a caller with no principal `[]`. Pinned by
+ * staff-may-denials.inventory.spec.ts.
  */
 export function staffMay(
   role: string | null | undefined,
   action: StaffCapability,
-  deniedGroups: readonly string[] = [],
+  deniedGroups: readonly string[],
 ): boolean {
   const rule = STAFF_CAPABILITY_RULES[action];
   if (!role || !(rule.roles as readonly string[]).includes(role)) return false;

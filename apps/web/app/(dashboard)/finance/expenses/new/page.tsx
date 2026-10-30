@@ -14,6 +14,7 @@ import { useSuppliers } from "@/lib/api/suppliers";
 import { useCustomers } from "@/lib/api/customers";
 import { useOnTenantToday } from "@/lib/tenant-timezone";
 import { useToast } from "@routeflow/ui/web";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
@@ -55,7 +56,7 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
   const { data: categories } = useExpenseCategories();
   const { data: suppliersData } = useSuppliers();
   const { data: customersData } = useCustomers({ limit: 200 });
-  const createExpense = useCreateExpense();
+  const createExpense = useCreateExpense({ localErrorToast: true });
 
   const [isItemized, setIsItemized] = React.useState(false);
   const [form, setForm] = React.useState({
@@ -150,9 +151,12 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
       toast({ title: "Expense recorded", variant: "success" });
       onSaved();
     } catch (err: unknown) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      toast({ title: apiMessage ?? "Failed to record expense", variant: "error" });
+      // Rows 348 / 353: the global toast is quiet for this save (localErrorToast), so this is the only one; fixed copy, never raw.
+      toast({
+        title: "Failed to record expense",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -447,7 +451,7 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
   const { toast } = useToast();
   const { data: rates } = useMileageRates();
   const { data: customersData } = useCustomers({ limit: 200 });
-  const createExpense = useCreateExpense();
+  const createExpense = useCreateExpense({ localErrorToast: true });
 
   const [calcMode, setCalcMode] = React.useState<"distance" | "odometer">("distance");
   const [form, setForm] = React.useState({
@@ -519,9 +523,12 @@ function RecordMileageTab({ onSaved }: { onSaved: () => void }) {
       toast({ title: "Mileage expense recorded", variant: "success" });
       onSaved();
     } catch (err: unknown) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      toast({ title: apiMessage ?? "Failed to record mileage", variant: "error" });
+      // Rows 348 / 353: the global toast is quiet for this save (localErrorToast), so this is the only one; fixed copy, never raw.
+      toast({
+        title: "Failed to record mileage",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -717,7 +724,7 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
   const { toast } = useToast();
   const { data: categories } = useExpenseCategories();
   const { data: customersData } = useCustomers({ limit: 200 });
-  const bulkCreate = useBulkCreateExpenses();
+  const bulkCreate = useBulkCreateExpenses({ localErrorToast: true });
 
   // SA-964 §4: rows start with no date and take the tenant's day when the zone resolves (never the browser's).
   const emptyRow = (): BulkRow => ({
@@ -773,9 +780,12 @@ function BulkAddTab({ onSaved }: { onSaved: () => void }) {
         onSaved();
       }
     } catch (err: unknown) {
-      const apiMessage = (err as { response?: { data?: { message?: string } } })?.response?.data
-        ?.message;
-      toast({ title: apiMessage ?? "Failed to save expenses", variant: "error" });
+      // Rows 348 / 353: the global toast is quiet for this save (localErrorToast), so this is the only one; fixed copy, never raw.
+      toast({
+        title: "Failed to save expenses",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 

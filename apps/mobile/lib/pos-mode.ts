@@ -29,7 +29,7 @@ export const POS_MODE_PREF_KEY = PREF.ordersPosMode;
 
 /** Who may use POS mode: the shared `USE_POS_MODE` capability row. */
 export function canUsePosMode(role: string | null | undefined): boolean {
-  return staffMay(role, "USE_POS_MODE");
+  return staffMay(role, "USE_POS_MODE", []);
 }
 
 /** Unset = off; only the literal "true" turns the switch on. */

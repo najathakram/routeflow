@@ -45,7 +45,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
   const saved = process.env.BILLING_PAUSE_MODE;
 
   // 2099 keeps every instant far from real data; 09:00Z is past 03:00 in the UTC fallback zone.
-  const SINCE = new Date("2099-11-01T00:00:00Z");
+  const SINCE = new Date("2099-10-25T00:00:00Z");
   const NOW = new Date("2099-11-08T09:00:00Z");
   const H = 3_600_000;
 
@@ -104,7 +104,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
     stripeState.calls.length = 0;
   });
 
-  /** A paying tenant 177 h into an overdue clock whose final notice went out 30 h before NOW. */
+  /** A paying tenant 345 h into an overdue clock whose final notice went out 30 h before NOW. */
   async function overdueTenant(tag: string, sub: Record<string, unknown> = {}) {
     const slug = assertTestTenant(`qa-dun-${tag}-${run}`, "dunning.db.spec.ts");
     const t = await prisma.tenant.create({
@@ -132,6 +132,7 @@ describeDb("SA-733r7 PR-B3 dunning (real Postgres)", () => {
       data: [
         { tenantId: t.id, milestone: "DUNNING_D0", key: episode, sentAt: SINCE },
         { tenantId: t.id, milestone: "DUNNING_D3", key: episode, sentAt: SINCE },
+        { tenantId: t.id, milestone: "DUNNING_D7", key: episode, sentAt: SINCE },
         { tenantId: t.id, milestone: "DUNNING_D6", key: episode, sentAt: final },
         { tenantId: t.id, milestone: "DUNNING_FINAL", key: episode, sentAt: final },
       ],
