@@ -78,6 +78,16 @@ describe("SA-840 A-2 pin: priceReturn reads credits it is GIVEN", () => {
     expect(findAll).toMatch(/\bNO_CREDITS\b/);
   });
 
+  it("SA-1051: priceReturn's 2+ return takes its invoice from refundSourceInvoice, and no createdAt sort remains there", () => {
+    const body = src.slice(
+      src.indexOf("private priceReturn("),
+      src.indexOf("async processRefund("),
+    );
+    expect(body.match(/invoiceId: refundSourceInvoice\(creditable, touched\)/g)).toHaveLength(1);
+    expect(body.match(/\.sort\(/g)?.length ?? 0).toBe(0);
+    expect(body.match(/createdAt/g)?.length ?? 0).toBe(0);
+  });
+
   it("billedBasisFor, externalRefundBasis and findOne read the credits through the one reader", () => {
     expect(src.match(/this\.creditsForPricing\(/g)).toHaveLength(3);
   });
