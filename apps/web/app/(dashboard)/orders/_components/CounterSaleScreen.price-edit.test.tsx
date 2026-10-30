@@ -108,9 +108,12 @@ beforeEach(() => {
   mockUser = ADMIN;
   taxRatePercent = 0;
   get.mockImplementation((url: string) =>
-    url.startsWith("/customers/")
-      ? Promise.resolve({ data: [] })
-      : Promise.resolve({ data: { taxRate: taxRatePercent } }),
+    url.endsWith("/statement")
+      ? // the real statement carries the credit figures the till reads; without them the credit read counts as failed
+        Promise.resolve({ data: { outstandingAmount: 0, overdueAmount: 0, autoApplyCredit: 0 } })
+      : url.startsWith("/customers/")
+        ? Promise.resolve({ data: [] })
+        : Promise.resolve({ data: { taxRate: taxRatePercent } }),
   );
   mutateAsync.mockResolvedValue(saleResponse(9));
 });

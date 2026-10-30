@@ -2,6 +2,8 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { PlatformConfigService } from "./platform-config.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { BadRequestException } from "@nestjs/common";
 
 describe("PlatformConfigService — AI usage + test connection", () => {
   let service: PlatformConfigService;
@@ -88,6 +90,108 @@ describe("PlatformConfigService — AI usage + test connection", () => {
         estSpendUsd: 0,
         errorRate: 0,
       });
+    });
+  });
+
+  describe("AI models (SA-1035)", () => {
+    /** getValue's tagged-template call is ($queryRaw(strings, key)): answer by key. */
+    const rows = (stored: Record<string, string>) =>
+      prisma.$queryRaw.mockImplementation(async (_s: unknown, key: string) =>
+        key in stored ? [{ value: stored[key] }] : [],
+      );
+
+    it("M-R1: the pickers offer the four latest models, with labels", async () => {
+      rows({});
+      const cfg = await service.getAiConfig();
+      expect(cfg.availableModels).toEqual([
+        { id: "claude-fable-5-1", label: "Fable 5.1" },
+        { id: "claude-opus-5-5", label: "Opus 5.5" },
+        { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+        { id: "claude-haiku-5-5", label: "Haiku 5.5" },
+      ]);
+    });
+
+    it("M-R6: unset general and scan models read the 5.x fallbacks", async () => {
+      rows({});
+      expect(await service.resolveModelFor("general")).toBe("claude-sonnet-5-5");
+      expect(await service.resolveModelFor("bill_scan")).toBe("claude-haiku-5-5");
+      expect(await service.resolveModelFor("receipt_scan")).toBe("claude-opus-5-5");
+      const cfg = await service.getAiConfig();
+      expect(cfg.model).toBe("claude-sonnet-5-5");
+      expect(cfg.scanModel).toBe("claude-haiku-5-5");
+    });
+
+    it("a stored scan model is read for bill_scan only", async () => {
+      rows({ "claude.scanModel": "claude-sonnet-5-5", "claude.model": "claude-opus-5-5" });
+      expect(await service.resolveModelFor("bill_scan")).toBe("claude-sonnet-5-5");
+      expect(await service.resolveModelFor("general")).toBe("claude-opus-5-5");
+      // the receipt task has no picker: a stored row never reaches it
+      expect(await service.resolveModelFor("receipt_scan")).toBe("claude-opus-5-5");
+    });
+
+    it("M-G1: a stored older id resolves as stored and is reported as current", async () => {
+      rows({ "claude.model": "claude-sonnet-4-5", "claude.scanModel": "claude-haiku-4-5" });
+      expect(await service.resolveModelFor("general")).toBe("claude-sonnet-4-5");
+      expect(await service.resolveModelFor("bill_scan")).toBe("claude-haiku-4-5");
+      const cfg = await service.getAiConfig();
+      expect(cfg.model).toBe("claude-sonnet-4-5");
+      expect(cfg.scanModel).toBe("claude-haiku-4-5");
+    });
+
+    it("M-G2: resolveModel() is the general model and never reads the scan row", async () => {
+      rows({ "claude.model": "claude-opus-5-5", "claude.scanModel": "claude-haiku-5-5" });
+      expect(await service.resolveModel()).toBe("claude-opus-5-5");
+      const keysRead = prisma.$queryRaw.mock.calls.map((c: unknown[]) => c[1]);
+      expect(keysRead).not.toContain("claude.scanModel");
+    });
+
+    it.each([
+      ["model", "claude-3-opus-20240229"],
+      ["model", "nonsense"],
+      ["scanModel", "claude-haiku-4-5"],
+      ["scanModel", "nonsense"],
+    ])(
+      "M-R4: PATCH %s=%s is a coded 400 AI_MODEL_UNKNOWN and writes nothing",
+      async (field, id) => {
+        rows({});
+        const err = await service.updateAiConfig({ [field]: id } as never).catch((e) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: API_ERROR_CODES.AI_MODEL_UNKNOWN,
+        });
+        expect(prisma.$executeRaw).not.toHaveBeenCalled();
+      },
+    );
+
+    it("PATCH stores both models on their own keys", async () => {
+      rows({});
+      await service.updateAiConfig({ model: "claude-opus-5-5", scanModel: "claude-haiku-5-5" });
+      const written = prisma.$executeRaw.mock.calls.map((c: unknown[]) => c[1]);
+      expect(written).toEqual(expect.arrayContaining(["claude.model", "claude.scanModel"]));
+    });
+
+    it("prices a Fable id as Fable and a current Haiku as Haiku 5.5, not as Sonnet", async () => {
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          model: "claude-fable-5-1",
+          feature: "forecast",
+          calls: 1,
+          inTok: 1_000_000,
+          outTok: 1_000_000,
+          failures: 0,
+        },
+        {
+          model: "claude-haiku-5-5",
+          feature: "ocr.vendor_bill",
+          calls: 1,
+          inTok: 1_000_000,
+          outTok: 1_000_000,
+          failures: 0,
+        },
+      ]);
+      const u = await service.getAiUsage(30);
+      // fable $10 in / $50 out; haiku 5.5 $0.10 in / $0.50 out (rates from Anthropic's pricing page, 2026-10-28)
+      expect(u.estSpendUsd).toBeCloseTo(60.6, 2);
     });
   });
 

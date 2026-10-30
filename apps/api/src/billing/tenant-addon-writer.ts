@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { BillingEventService } from "./billing-event.service";
+import { currentImpersonatedBy } from "../tenant/impersonation-context";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 
 /**
@@ -8,8 +9,8 @@ import { BILLING_EVENTS } from "./plan-catalog.constants";
  * A `TenantAddon` row IS the tenant's entitlement, so every change to it must leave a trace. The MRR ledger
  * (`emitAddonDelta`) writes nothing for a $0 or comp change and nothing for a non-paying tenant, and a few writers
  * never called it at all, so the 10-12 deactivations went unseen. Every create, and every update that changes
- * `active`, `priceSnapshot`, `isComp` or `quantity`, now writes ONE `addon.state_changed` BillingEvent in the
- * writer's own transaction, ALWAYS (a $0 row, a comp, a non-paying tenant, a test class). The event carries
+ * field (SA-970 §2.1: a pointer-only change too, since Stripe bills by price id), now writes ONE
+ * `addon.state_changed` BillingEvent in the writer's own transaction, ALWAYS (a $0 row, a comp, a non-paying tenant, a test class). The event carries
  * `amountDelta: null`, so it is never part of MRR; the MRR events (`addon.enabled` / `addon.disabled`) are untouched.
  *
  * `actor` is a REQUIRED parameter: a caller cannot write a row without saying who acted and from which of a
@@ -47,11 +48,13 @@ export interface AddonActor {
   kind: AddonActorKind;
   id: string | null;
   source: AddonChangeSource;
+  /** The platform admin impersonating this request; defaults to the request context (SA-970 §2.3). */
+  impersonatedBy?: string | null;
 }
 
-/** The fields whose change is a record of its own. */
+/** The business fields: the list the unowned-change invariant (I4) reads. Every field here and below records. */
 export const TRACKED_ADDON_FIELDS = ["active", "priceSnapshot", "isComp", "quantity"] as const;
-/** Fields that ride in `changes` when they changed, but never trigger a record alone. */
+/** The pointer fields: recorded like any other (SA-970 §2.1), but not a business change for I4. */
 export const RIDER_ADDON_FIELDS = ["stripeItemId", "stripePriceId", "sku"] as const;
 
 type Field = (typeof TRACKED_ADDON_FIELDS)[number] | (typeof RIDER_ADDON_FIELDS)[number];
@@ -87,9 +90,6 @@ export function addonChanges(
   return out;
 }
 
-const triggers = (changes: Record<string, unknown>) =>
-  TRACKED_ADDON_FIELDS.some((f) => f in changes);
-
 async function record(
   tx: Prisma.TransactionClient,
   events: BillingEventService,
@@ -99,11 +99,9 @@ async function record(
   isCreate: boolean,
 ): Promise<void> {
   const changes = addonChanges(before, after);
-  // Two AUTOMATIC pointer-only writes are still recorded (the audit exists to see what no person did): the
-  // compensating revert pointer of a failed plan change, and the cancellation lock clearing dead Stripe items.
-  const always =
-    isCreate || actor.source === "plan_change.revert" || actor.source === "lock.cancel_clear_item";
-  if (!always && !triggers(changes)) return;
+  // Every diff records (SA-970 §2.1); a write that changes nothing records nothing, a create always does.
+  if (!isCreate && Object.keys(changes).length === 0) return;
+  const impersonatedBy = actor.impersonatedBy ?? currentImpersonatedBy();
   await events.emit(
     after.tenantId,
     BILLING_EVENTS.ADDON_STATE_CHANGED,
@@ -114,6 +112,7 @@ async function record(
       changes,
       actor: { kind: actor.kind, id: actor.id },
       source: actor.source,
+      ...(impersonatedBy ? { impersonatedBy } : {}),
     } as Prisma.InputJsonObject,
     { amountDelta: null, actorId: actor.kind === "SYSTEM" ? null : actor.id, tx },
   );
