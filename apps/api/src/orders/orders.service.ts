@@ -2222,9 +2222,6 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     await assertStopDoneForOfficeDelivered(this.prisma, order, dto.status); // row 590 (SA-978a)
-    const noteAppend = dto.reason
-      ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
-      : undefined;
 
     // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
     // re-run the license guard (drafts are created/edited without it — that's the
@@ -2266,7 +2263,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     const statusUpdateData = buildStatusUpdateData(order, dto.status, {
       isDeliveredDemotion,
-      noteAppend,
+      reason: dto.reason,
     });
 
     const isDraftToPendingPromotion =
