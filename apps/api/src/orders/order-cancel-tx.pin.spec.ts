@@ -78,10 +78,10 @@ describe("office cancel of a CONFIRMED order (pin: identical before/after the ca
     );
 
     // stock: the creation-time decrement comes back (+5), recorded as a CANCEL movement
-    expect(prisma.product.update).toHaveBeenCalledWith({
-      where: { id: "prod-1" },
-      data: { currentStock: { increment: 5 } },
-    });
+    const upd = prisma.product.update.mock.calls.map((c: any) => c[0]);
+    expect(upd).toHaveLength(1);
+    expect(upd[0].where).toEqual({ id: "prod-1" });
+    expect(Number(upd[0].data.currentStock)).toBe(15); // 10 on hand + the 5 that come back
     expect(prisma.stockMovement.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ notes: "CANCEL" }) }),
     );

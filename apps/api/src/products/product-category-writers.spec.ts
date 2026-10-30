@@ -35,7 +35,8 @@ const HOOKED: Record<string, { writes: number; syncs: number; via: string }> = {
     via: "createFamily: the family row's category (variants copy none); reactivateFamilyContainer writes isActive only (no category text moves, so no sync)",
   },
   "inventory/inventory.service.ts": {
-    writes: 12,
+    // SA-927: the stock/cost writes moved to inventory/stock-movements.ts (its own entry).
+    writes: 3,
     syncs: 1,
     via: "createVariantRowInTx: a new variant copies its parent's category",
   },
@@ -74,21 +75,15 @@ const EXEMPT: Record<string, { writes: number; reason: string }> = {
   "products/product-portal-visibility.service.ts": { writes: 1, reason: "sets portalVisible" },
   "products/product-family-cascade.ts": { writes: 1, reason: "sets isActive = false" },
   "products/product-delete-classify.ts": { writes: 1, reason: "sets isActive = false" },
-  "returns/returns-restock.util.ts": { writes: 1, reason: "increments currentStock" },
-  "returns/returns.service.ts": { writes: 1, reason: "decrements currentStock" },
-  "returns/inline-returns.service.ts": { writes: 1, reason: "decrements currentStock" },
-  "vendor-bills/vendor-bills.service.ts": {
-    writes: 2,
+  "inventory/stock-movements.ts": {
+    writes: 1,
     reason:
-      "moves currentStock and averageCost only: the receive, and the one shared reversal revertToDraft and voidBill both go through (SA-808); never category",
-  },
-  "orders/order-stock.ts": {
-    writes: 3,
-    reason: "moves currentStock (two product.update calls and one raw UPDATE of currentStock)",
+      "SA-927: the one stock writer. Sets currentStock (and the average it moves) with one absolute write per product; never category",
   },
   "import/import.service.ts": {
-    writes: 2,
-    reason: "Zoho stock sync: updates currentStock, creates a bare product with no category column",
+    writes: 1,
+    reason:
+      "Zoho import: creates a bare product with no category column and currentStock 0 (the opening stock goes through the SA-927 stock writer)",
   },
 };
 

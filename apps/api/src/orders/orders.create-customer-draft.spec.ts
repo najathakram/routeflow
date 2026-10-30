@@ -56,7 +56,7 @@ describe("OrdersService.create: a customer cannot create a DRAFT (F1 ii)", () =>
     (h.prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
       fn({
         ...h.prisma,
-        $queryRaw: jest.fn().mockResolvedValue([{ max: null }]),
+        $queryRaw: h.stock.queryRaw(jest.fn().mockResolvedValue([{ max: null }])),
         $executeRaw: jest.fn().mockResolvedValue(0),
       }),
     );

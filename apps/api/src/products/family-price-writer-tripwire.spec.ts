@@ -215,11 +215,11 @@ export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }
       "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
   },
   "inventory/inventory.service.ts": {
-    count: 3,
+    count: 1,
     reason:
       "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
-      "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
-      "cost-basis write with a ternary `data` names only cost columns.",
+      "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off (the " +
+      "cost-basis write moved to inventory/stock-movements.ts, SA-927).",
   },
   "products/product-families.service.ts": {
     count: 3,

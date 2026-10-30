@@ -26,6 +26,9 @@ import { NumberingService } from "../import/numbering.service";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { REQUIRE_ADDON_KEY } from "../billing/require-addon.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const RETURN_ID = "ret-12345678-abcd";
 const parked = (over: Record<string, unknown> = {}) => ({
@@ -53,6 +56,7 @@ describe("ParkedRestockResolutionService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     audit = { log: jest.fn().mockResolvedValue(undefined) };
     table = [parked()];
     const model: any = (prisma as any).returnParkedRestock;
@@ -71,9 +75,10 @@ describe("ParkedRestockResolutionService", () => {
       currentStock: new Prisma.Decimal(100),
       averageCost: new Prisma.Decimal(2),
     } as any);
+    stock.setState((ids) => ids.map((id) => ({ id, currentStock: 100, averageCost: 2 })));
     // The resolve path re-reads the return's status inside the transaction (a CANCELLED return is refused).
     prisma.return.findFirst.mockResolvedValue({ status: "RECEIVED" } as any);
-    prisma.stockMovement.create.mockImplementation(async (a: any) => ({ id: "mv-1", ...a.data }));
+    prisma.stockMovement.create.mockImplementation(async (a: any) => a.data);
     const mod = await Test.createTestingModule({
       providers: [
         ParkedRestockResolutionService,
@@ -106,8 +111,8 @@ describe("ParkedRestockResolutionService", () => {
     expect(Number(movement().stockAfter)).toBe(136);
     const inc = prisma.product.update.mock.calls[0][0];
     expect(inc.where).toEqual({ id: "p1" });
-    expect(Number(inc.data.currentStock.increment)).toBe(36);
-    expect(res).toEqual({ alreadyResolved: false, resolvedMovementId: "mv-1" });
+    expect(Number(inc.data.currentStock)).toBe(136); // absolute counter: 100 + 36
+    expect(res).toEqual({ alreadyResolved: false, resolvedMovementId: movement().id });
   });
 
   it("stamps resolvedAt / resolvedById / unitsPerBoxSupplied on a CONDITIONAL claim, and resolvedMovementId", async () => {
@@ -118,16 +123,17 @@ describe("ParkedRestockResolutionService", () => {
       data: { resolvedById: "u-op", unitsPerBoxSupplied: 12 },
     });
     expect(table[0].resolvedAt).toBeInstanceOf(Date);
-    expect(table[0].resolvedMovementId).toBe("mv-1");
+    expect(table[0].resolvedMovementId).toBe(movement().id); // the booked row's own id
   });
 
   it("a SECOND resolve is a no-op: no movement, no stock change, the first answer stands, no second audit", async () => {
     await service.resolve("pr-1", 12, actor);
+    const bookedId = movement().id;
     prisma.stockMovement.create.mockClear();
     prisma.product.update.mockClear();
     audit.log.mockClear();
     const again = await service.resolve("pr-1", 6, { id: "u-other" });
-    expect(again).toMatchObject({ alreadyResolved: true, resolvedMovementId: "mv-1" });
+    expect(again).toMatchObject({ alreadyResolved: true, resolvedMovementId: bookedId });
     expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     expect(prisma.product.update).not.toHaveBeenCalled();
     expect(table[0]).toMatchObject({ resolvedById: "u-op", unitsPerBoxSupplied: 12 });
@@ -192,8 +198,8 @@ describe("ParkedRestockResolutionService", () => {
     // Before this ruling @Min(2) made such a row permanently unresolvable — a 100% undercount.
     const res = await service.resolve("pr-1", 1, actor);
     expect(Number(movement().quantity)).toBe(3);
-    expect(Number(prisma.product.update.mock.calls[0][0].data.currentStock.increment)).toBe(3);
-    expect(res).toEqual({ alreadyResolved: false, resolvedMovementId: "mv-1" });
+    expect(Number(prisma.product.update.mock.calls[0][0].data.currentStock)).toBe(103); // 100 + 3
+    expect(res).toEqual({ alreadyResolved: false, resolvedMovementId: movement().id });
     expect(table[0].unitsPerBoxSupplied).toBe(1);
     expect(audit.log).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -227,7 +233,7 @@ describe("ParkedRestockResolutionService", () => {
           returnedQty: 3,
           unitsPerBoxSupplied: 12,
           pieces: 36,
-          resolvedMovementId: "mv-1",
+          resolvedMovementId: movement().id,
         }),
       }),
     );
@@ -269,6 +275,7 @@ describe("ParkedRestockResolutionService", () => {
 describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3)", () => {
   it("sums the resolver's RET-<id> movement and decrements it", async () => {
     const prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     const mod = await Test.createTestingModule({
       providers: [
         ReturnsService,
@@ -300,7 +307,7 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
     } as any);
     // resolve() re-reads the return's status inside its transaction; this return is live, not cancelled.
     prisma.return.findFirst.mockResolvedValue({ status: "RECEIVED" } as any);
-    prisma.stockMovement.create.mockImplementation(async (a: any) => ({ id: "mv-1", ...a.data }));
+    prisma.stockMovement.create.mockImplementation(async (a: any) => a.data);
     const resolver = new ParkedRestockResolutionService(prisma as any, { log: jest.fn() } as any);
     await resolver.resolve("pr-1", 12, { id: "u-op" });
     const booked = prisma.stockMovement.create.mock.calls[0][0].data;
@@ -333,7 +340,8 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
       regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
-    prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
+    prisma.tenantTransaction.mockImplementation((fn: any) => fn(stock.wrapTx(tx)));
+    stock.setState((ids) => ids.map((id) => ({ id, currentStock: 36, averageCost: null })));
     prisma.return.findUnique.mockResolvedValue({
       id: RETURN_ID,
       status: "APPROVED",
@@ -346,10 +354,10 @@ describe("cancel() undoes a RESOLVED restock exactly (36 pieces, not the typed 3
       where: { reference: booked.reference, type: booked.type },
       select: { productId: true, quantity: true },
     });
-    expect(tx.product.update).toHaveBeenCalledWith({
-      where: { id: "p1" },
-      data: { currentStock: { decrement: 36 } },
-    });
+    expect(tx.product.update).toHaveBeenCalledTimes(1);
+    const undo = tx.product.update.mock.calls[0][0];
+    expect(undo.where).toEqual({ id: "p1" });
+    expect(Number(undo.data.currentStock)).toBe(0); // 36 on hand - 36 undone
   });
 });
 

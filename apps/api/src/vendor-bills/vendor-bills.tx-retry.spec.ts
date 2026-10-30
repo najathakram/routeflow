@@ -10,6 +10,7 @@ import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn(() => ({})) }));
 jest.mock("sharp", () => ({ __esModule: true, default: jest.fn(() => ({})) }));
@@ -62,6 +63,7 @@ describe("vendor-bill stock txs retry on a conflict (SA-767 L-1)", () => {
     inventory.lockProducts.mockReset();
     inventory.fireStockAlerts.mockReset();
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     prisma.vendorBill.findUnique.mockImplementation(
       () =>
         prisma.vendorBill.findUnique.mock.results.filter((r) => r.type === "return").at(-1)?.value,
