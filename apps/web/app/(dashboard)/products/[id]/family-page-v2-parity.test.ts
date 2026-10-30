@@ -34,9 +34,7 @@ describe("family page with units v2 on: parity", () => {
   it("v2 never shows the old units card on a family (K14: `!(v2 && isFamily)`; rendered case in page.units-card-readonly.test.tsx) (K11-25: the create-an-order link is hidden on EVERY family, in FamilySalesCards)", () => {
     const uses = src.split("\n").filter((l) => l.includes("v2Family"));
     expect(uses).toHaveLength(0);
-    expect(src).toMatch(
-      /\{\(!v2 \|\| \(!isFamily && unitStructureGoverned\(product\)\)\) && \(\s*<ProductUnitsCard/,
-    );
+    expect(src).toMatch(/\{!v2 && <ProductUnitsCard/);
     const cards = fs.readFileSync(path.join(__dirname, "FamilySalesCards.tsx"), "utf8");
     expect(cards).toMatch(
       /<SalesHistoryCard productId=\{productId\} hideCreateOrder compactEmpty \/>/,
@@ -72,10 +70,8 @@ describe("family page with units v2 on: parity", () => {
       "<ProductHeaderLine product={product} currentStock={currentStock} pricesV2={v2} />",
       '{v2 && product.kind !== "FAMILY" ? <ProductJumpLinks reserveSpace /> : null}',
       "pricesV2={v2}",
-      // Row 742: under v2 the old Units card stays only on a variant or recipe (never a family), structure only
-      "{(!v2 || (!isFamily && unitStructureGoverned(product))) && (",
-      // K10d: the v2 flag drops the old Units card's always-open Add form; row 742: and its prices
-      "<ProductUnitsCard product={product} hideAddForm={v2} structureOnly={v2} />",
+      // Row 742 / SA-1041: the old Units card is the flag-off surface only
+      "{!v2 && <ProductUnitsCard product={product} />}",
     ]);
   });
 });

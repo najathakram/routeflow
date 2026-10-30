@@ -5,31 +5,37 @@ import type { AppLinks, AppLinksPatch } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { APP_LINK_FIELDS, APP_LINK_KEYS, isValidAppLinkUrl } from "./app-links";
+import {
+  AI_MODELS,
+  AI_TASKS,
+  aiModelFamily,
+  isAiModelId,
+  type AiModelFamily,
+  type AiTask,
+} from "./ai-models";
 
-const CLAUDE_MODELS = [
-  "claude-opus-4-5",
-  "claude-sonnet-4-5",
-  "claude-haiku-4-5",
-  "claude-3-5-sonnet-20241022",
-  "claude-3-5-haiku-20241022",
-  "claude-3-opus-20240229",
-];
+// Rough per-1M-token USD pricing (input, output) for the display-only "Est. spend" figure, not billing. Rates are
+// Anthropic's published API prices, refreshed 2026-10-28 (SA-1035): Fable 5.1 10/50, Opus 5.5 4/20, Sonnet 5.5 2/10,
+// Haiku 5.5 0.10/0.50 (the up-to-100k-token-prompt tier; a longer prompt is billed higher, so this under-reads it).
+// A model is priced by its family on the AI_MODELS list.
+const AI_MODEL_PRICING: Record<AiModelFamily, { in: number; out: number }> = {
+  fable: { in: 10, out: 50 },
+  opus: { in: 4, out: 20 },
+  sonnet: { in: 2, out: 10 },
+  haiku: { in: 0.1, out: 0.5 },
+};
 
-// Rough per-1M-token USD pricing (input, output) for the display-only "Est.
-// spend" figure — not billing. Refreshed 2026-08-29 to current Anthropic API
-// rates (Opus tier 5/25, Sonnet 5 2/10, Haiku 4.5 1/5) — the previous values
-// were one-to-three model generations stale and overstated Opus spend 3×.
-const AI_MODEL_PRICING: Record<string, { in: number; out: number }> = {
+// An older stored id (not on the list) keeps the rates it was priced at before SA-1035.
+const LEGACY_MODEL_PRICING: Partial<Record<AiModelFamily, { in: number; out: number }>> = {
   opus: { in: 5, out: 25 },
   sonnet: { in: 2, out: 10 },
   haiku: { in: 1, out: 5 },
 };
 
 function modelPrice(model: string): { in: number; out: number } {
-  const m = model.toLowerCase();
-  if (m.includes("opus")) return AI_MODEL_PRICING.opus;
-  if (m.includes("haiku")) return AI_MODEL_PRICING.haiku;
-  return AI_MODEL_PRICING.sonnet;
+  const family = aiModelFamily(model);
+  if (!isAiModelId(model)) return LEGACY_MODEL_PRICING[family] ?? AI_MODEL_PRICING[family];
+  return AI_MODEL_PRICING[family];
 }
 
 @Injectable()
@@ -68,12 +74,14 @@ export class PlatformConfigService {
   // ─── AI / Claude config ─────────────────────────────────────────────────────
 
   async getAiConfig() {
-    const [storedKey, storedModel, storedMaxTokens, verifiedAt] = await Promise.all([
-      this.getValue("claude.apiKey"),
-      this.getValue("claude.model"),
-      this.getValue("claude.maxTokens"),
-      this.getValue("claude.verifiedAt"),
-    ]);
+    const [storedKey, storedModel, storedScanModel, storedMaxTokens, verifiedAt] =
+      await Promise.all([
+        this.getValue("claude.apiKey"),
+        this.getValue(AI_TASKS.general.key as string),
+        this.getValue(AI_TASKS.bill_scan.key as string),
+        this.getValue("claude.maxTokens"),
+        this.getValue("claude.verifiedAt"),
+      ]);
 
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
     const effectiveKey = storedKey || envKey || null;
@@ -83,14 +91,31 @@ export class PlatformConfigService {
       configured,
       source: storedKey ? "database" : envKey ? "environment" : "none",
       keyPreview: effectiveKey ? `${effectiveKey.slice(0, 14)}...${effectiveKey.slice(-4)}` : null,
-      model: storedModel ?? "claude-sonnet-4-5",
+      // A stored older id is reported as stored (never switched silently); the picker marks it "(older model)".
+      model: storedModel ?? AI_TASKS.general.fallback,
+      scanModel: storedScanModel ?? AI_TASKS.bill_scan.fallback,
       maxTokens: storedMaxTokens ? parseInt(storedMaxTokens) : 4096,
       verifiedAt,
-      availableModels: CLAUDE_MODELS,
+      availableModels: AI_MODELS.map(({ id, label }) => ({ id, label })),
     };
   }
 
-  async updateAiConfig(dto: { apiKey?: string; model?: string; maxTokens?: number }) {
+  async updateAiConfig(dto: {
+    apiKey?: string;
+    model?: string;
+    scanModel?: string;
+    maxTokens?: number;
+  }) {
+    // Validate every model BEFORE any write, so a bad id never leaves a half-saved config.
+    for (const id of [dto.model, dto.scanModel]) {
+      if (id !== undefined && !isAiModelId(id)) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.AI_MODEL_UNKNOWN,
+          message: "That model is not one of the available models.",
+        });
+      }
+    }
+
     const tasks: Promise<void>[] = [];
 
     if (dto.apiKey !== undefined) {
@@ -101,11 +126,10 @@ export class PlatformConfigService {
       }
     }
 
-    if (dto.model !== undefined) {
-      if (!CLAUDE_MODELS.includes(dto.model)) {
-        throw new Error(`Unknown model: ${dto.model}`);
-      }
-      tasks.push(this.setValue("claude.model", dto.model));
+    if (dto.model !== undefined)
+      tasks.push(this.setValue(AI_TASKS.general.key as string, dto.model));
+    if (dto.scanModel !== undefined) {
+      tasks.push(this.setValue(AI_TASKS.bill_scan.key as string, dto.scanModel));
     }
 
     if (dto.maxTokens !== undefined) {
@@ -127,8 +151,15 @@ export class PlatformConfigService {
     return this.configService.get<string>("ANTHROPIC_API_KEY") ?? null;
   }
 
+  /** The model a task runs on: its stored setting (kept as stored, even an older id), else the task's fallback. */
+  async resolveModelFor(task: AiTask): Promise<string> {
+    const { key, fallback } = AI_TASKS[task];
+    return ((key ? await this.getValue(key) : null) ?? fallback) as string;
+  }
+
+  /** The general model (route analysis, the connection test). */
   async resolveModel(): Promise<string> {
-    return (await this.getValue("claude.model")) ?? "claude-sonnet-4-5";
+    return this.resolveModelFor("general");
   }
 
   async resolveMaxTokens(): Promise<number> {

@@ -2,7 +2,13 @@ import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import { invoiceTaxSplit, roundMoney } from "@routeflow/pricing";
-import { promoNote, qtyCellText, showOriginalPrice, type PdfSubLine } from "./invoice-pdf-item";
+import {
+  promoNote,
+  qtyCellText,
+  showOriginalPrice,
+  type PdfItemDisplay,
+  type PdfSubLine,
+} from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 import { pdfTermsView } from "./invoice-pdf-terms";
 
@@ -123,6 +129,8 @@ export interface InvoicePdfData {
     barcodeText?: string;
     /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line, "(included)": display only, never summed. */
     subLines?: PdfSubLine[];
+    /** SA-827: the pieces / components layout; absent = today's row. */
+    display?: PdfItemDisplay;
   }>;
   /** #2717 M3: PNG data URI of the order QR (order-linked invoice, mixed_packs on); absent = no QR. */
   qrDataUri?: string;
@@ -611,7 +619,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             };
             const itemPromoNote = promoNote(itemForDisplay);
             const itemShowOriginal = showOriginalPrice(itemForDisplay, hideOriginalPrice);
-            return (
+            // SA-827: a mixed-pack line shown in pieces: one row per component, then the box row
+            // carrying the stored amount, then the category-tax row. Every figure is pre-formatted by the mapper.
+            const d = item.display?.layout === "components" ? item.display : null;
+            // The box line's own row, unchanged; in the components view it is the group row.
+            const boxRow = (
               <View
                 key={item.id}
                 style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
@@ -637,38 +649,45 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                     </View>
                   ) : null}
                   {/* #2717 M3: the pieces inside a mixed pack; the box line above stays authoritative. */}
-                  {item.subLines?.map((sub, subIdx) => (
-                    <View key={`${item.id}-sub-${subIdx}`} style={{ marginTop: 3, marginLeft: 8 }}>
-                      <Text style={{ fontSize: 7, color: "#334155" }}>
-                        {[
-                          sub.name,
-                          sub.qtyText,
-                          sub.unitSku ? `SKU ${sub.unitSku}` : null,
-                          sub.priceText,
-                        ]
-                          .filter(Boolean)
-                          .join("  |  ")}
-                      </Text>
-                      {sub.barcodeDataUri ? (
-                        <Image
-                          src={sub.barcodeDataUri}
-                          style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
-                        />
-                      ) : null}
-                      {sub.barcodeText ? (
-                        <Text style={{ fontSize: 6, color: "#64748b" }}>{sub.barcodeText}</Text>
-                      ) : null}
-                    </View>
-                  ))}
+                  {(item.display?.layout === "components" ? undefined : item.subLines)?.map(
+                    (sub, subIdx) => (
+                      <View
+                        key={`${item.id}-sub-${subIdx}`}
+                        style={{ marginTop: 3, marginLeft: 8 }}
+                      >
+                        <Text style={{ fontSize: 7, color: "#334155" }}>
+                          {[
+                            sub.name,
+                            sub.qtyText,
+                            sub.unitSku ? `SKU ${sub.unitSku}` : null,
+                            sub.priceText,
+                          ]
+                            .filter(Boolean)
+                            .join("  |  ")}
+                        </Text>
+                        {sub.barcodeDataUri ? (
+                          <Image
+                            src={sub.barcodeDataUri}
+                            style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
+                          />
+                        ) : null}
+                        {sub.barcodeText ? (
+                          <Text style={{ fontSize: 6, color: "#64748b" }}>{sub.barcodeText}</Text>
+                        ) : null}
+                      </View>
+                    ),
+                  )}
                 </View>
                 <View style={styles.colQty}>
                   <Text style={styles.cellTextRight}>
-                    {qtyCellText({
-                      qty: item.qty,
-                      boxes: item.boxes,
-                      pieces: item.pieces,
-                      unitLabel: item.unitLabel,
-                    })}
+                    {item.display?.layout === "pieces"
+                      ? item.display.qtyText
+                      : qtyCellText({
+                          qty: item.qty,
+                          boxes: item.boxes,
+                          pieces: item.pieces,
+                          unitLabel: item.unitLabel,
+                        })}
                   </Text>
                   {/* BUY_N_GET_M: name the free units, or the reduced subtotal reads
                     as a pricing error (F03/R9, mirrors the web renderer). */}
@@ -687,7 +706,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   ) : null}
                 </View>
                 <View style={styles.colUnit}>
-                  {itemShowOriginal ? (
+                  {itemShowOriginal && item.display?.layout !== "pieces" ? (
                     <Text
                       style={{
                         fontSize: 7.5,
@@ -699,7 +718,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                       {fmt(item.originalPrice as DecimalLike)}
                     </Text>
                   ) : null}
-                  <Text style={styles.cellTextRight}>{fmt(item.unitPrice)}</Text>
+                  <Text style={styles.cellTextRight}>
+                    {item.display?.layout === "pieces"
+                      ? item.display.priceText
+                      : fmt(item.unitPrice)}
+                  </Text>
                   {item.msrp != null ? (
                     <Text style={{ fontSize: 6.5, color: GRAY, textAlign: "right", marginTop: 1 }}>
                       MSRP {fmt(item.msrp)}/pc
@@ -707,6 +730,53 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   ) : null}
                 </View>
                 <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
+              </View>
+            );
+            if (!d) return boxRow;
+            return (
+              <View key={item.id}>
+                {d.rows.map((row, rowIdx) => (
+                  <View
+                    key={`${item.id}-row-${rowIdx}`}
+                    style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
+                  >
+                    <View style={styles.colDescription}>
+                      <Text style={styles.cellText}>{row.name}</Text>
+                      {row.unitSku ? (
+                        <Text style={{ fontSize: 7, color: "#334155" }}>SKU {row.unitSku}</Text>
+                      ) : null}
+                      {row.barcodeDataUri ? (
+                        <Image
+                          src={row.barcodeDataUri}
+                          style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
+                        />
+                      ) : null}
+                      {row.barcodeText ? (
+                        <Text style={{ fontSize: 6, color: "#64748b" }}>{row.barcodeText}</Text>
+                      ) : null}
+                    </View>
+                    <View style={styles.colQty}>
+                      <Text style={styles.cellTextRight}>{row.qtyText}</Text>
+                    </View>
+                    <View style={styles.colUnit}>
+                      <Text style={styles.cellTextRight}>{row.priceText}</Text>
+                    </View>
+                    <Text style={[styles.cellTextRight, styles.colSubtotal]}>{row.amountText}</Text>
+                  </View>
+                ))}
+                {boxRow}
+                {d.categoryTax ? (
+                  <View style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
+                    <View style={styles.colDescription}>
+                      <Text style={styles.cellText}>{d.categoryTax.label}</Text>
+                    </View>
+                    <View style={styles.colQty} />
+                    <View style={styles.colUnit} />
+                    <Text style={[styles.cellTextRight, styles.colSubtotal]}>
+                      {d.categoryTax.amountText}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             );
           })}

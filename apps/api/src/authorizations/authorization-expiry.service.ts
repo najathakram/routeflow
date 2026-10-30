@@ -9,6 +9,7 @@ import { AuditService } from "../audit/audit.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate } from "../messaging/messaging.helpers";
 import { escapeHtml } from "../common/html-escape";
+import { licenceExpiryCutoff, licenceZone } from "./licence-validity";
 
 type WarnBucket = 30 | 7 | 1;
 
@@ -124,9 +125,14 @@ export class AuthorizationExpiryService {
       );
     }
 
-    // 1. Flip VERIFIED → EXPIRED (past expiresAt) + notify once.
+    // 1. Flip VERIFIED → EXPIRED (past the end of the printed expiry day, tenant zone) + notify once.
+    const zone = await licenceZone(this.prisma, tenantId);
     const toExpire = await this.prisma.forTenant().customerAuthorization.findMany({
-      where: { status: "VERIFIED", expiresAt: { lt: now }, customer: { deletedAt: null } },
+      where: {
+        status: "VERIFIED",
+        expiresAt: { lt: licenceExpiryCutoff(now, zone) },
+        customer: { deletedAt: null },
+      },
       include: { trackedCategory: { select: { name: true, requiresLicense: true } } },
     });
     let expired = 0;

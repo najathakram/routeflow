@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { displayLicenceStatus } from "@routeflow/types";
 import type { CustomerAuthorization, ExpiringAuthorization } from "@routeflow/types";
 export type { CustomerAuthorization, ExpiringAuthorization } from "@routeflow/types";
 
@@ -65,13 +66,13 @@ export function parseRegulatedAuthError(err: unknown): BlockedCategory[] | null 
  * as EXPIRED (matches the sale guard + buyer gate; the W7 cron flips the persisted
  * status separately).
  */
-export function displayAuthStatus(a: {
-  status: AuthorizationStatus;
-  expiresAt: string | null;
-}): AuthorizationStatus {
-  if (a.status === "VERIFIED" && a.expiresAt && new Date(a.expiresAt) < new Date())
-    return "EXPIRED";
-  return a.status;
+export function displayAuthStatus(
+  a: { status: AuthorizationStatus; expiresAt: string | null },
+  zone?: string | null,
+  now: Date = new Date(),
+): AuthorizationStatus {
+  // B330: the one licence rule (`@routeflow/types`): good through the printed day in the business's zone.
+  return displayLicenceStatus(a, now, zone);
 }
 
 export function authStatusBadge(status: AuthorizationStatus): {

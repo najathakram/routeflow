@@ -9,8 +9,19 @@ import {
   addCycle,
   periodMonths,
 } from "./billing-math";
+import { resolvePlanPrice } from "./plan-price";
 
 describe("billing-math — subscription money (regression lock)", () => {
+  describe("annualPrice is the plan-price rule, not a second copy (review-b N2 on row 280)", () => {
+    it.each([33.33, 19.99, 0.07, 99, 249])(
+      "annualPrice(%s) equals resolvePlanPrice's annual",
+      (m) => {
+        const r = resolvePlanPrice({ monthlyPrice: m }, null);
+        expect(r.ok && annualPrice(m)).toBe(r.ok && r.annual);
+      },
+    );
+  });
+
   describe("annualPrice = monthly × 10 (exact)", () => {
     it.each([
       [99, 990],

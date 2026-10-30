@@ -192,6 +192,23 @@ describe("toTodaysSaleRow: payments and state (test 8)", () => {
     );
   });
 
+  it("SA-1026 A-G8: a sale left To collect reads To collect, takes no money, and stays an ON_ACCOUNT balance", () => {
+    const rec = order({ invStatus: "SENT" });
+    (rec.invoices[0] as { expectedPaymentMethod?: string | null }).expectedPaymentMethod = "CHECK";
+    const row = toTodaysSaleRow(rec) as { toCollect?: string };
+    expect(row.toCollect).toBe("TO_COLLECT");
+    expect(toTodaysSaleRow(rec).paymentState).toBe("ON_ACCOUNT"); // the pin above, extended not replaced
+    expect(toTodaysSaleRow(rec).methods).toEqual([]); // money in is untouched (pin: on account is not money in)
+    expect(toTodaysSaleRow(rec).balanceDue).toBe(24.5);
+    // cleared by the status the payment writers move, never by this row
+    const paid = order({ invStatus: "PAID", payments: [pay("CHECK", "24.50")] });
+    (paid.invoices[0] as { expectedPaymentMethod?: string | null }).expectedPaymentMethod = "CHECK";
+    expect((toTodaysSaleRow(paid) as { toCollect?: string }).toCollect).toBe("NONE");
+    expect(
+      (toTodaysSaleRow(order({ invStatus: "SENT" })) as { toCollect?: string }).toCollect,
+    ).toBe("NONE");
+  });
+
   it("tender short of the total is PARTLY_PAID with the balance owing", () => {
     const row = toTodaysSaleRow(order({ payments: [pay("CASH", "10.00")], invStatus: "PARTIAL" }));
     expect(row.paymentState).toBe("PARTLY_PAID");

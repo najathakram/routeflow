@@ -101,6 +101,7 @@ import { assertProductIdNotFamily } from "../products/sellable-lines";
 import { AuditService } from "../audit/audit.service";
 import { recordCreditLimitChange, type CreditLimitActor } from "./credit-limit-audit";
 import { lockInvoiceRowsInOrder } from "../regulated/ledger-locks";
+import { isLicenceExpired, licenceZone } from "../authorizations/licence-validity";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -461,6 +462,9 @@ export class CustomersService {
           }),
           ...(dto.defaultDepositPercent !== undefined && {
             defaultDepositPercent: dto.defaultDepositPercent,
+          }),
+          ...(dto.invoiceUnitDefault !== undefined && {
+            invoiceUnitDefault: dto.invoiceUnitDefault,
           }),
         },
       });
@@ -1564,8 +1568,13 @@ export class CustomersService {
    * EXPIRED one. Higher wins. An explicit REJECTED outranks a default NONE so a
    * deliberate denial is never silently replaced by "never asked".
    */
-  private authRank(a: { status: string; expiresAt: Date | string | null }): number {
-    const expired = a.expiresAt ? new Date(a.expiresAt).getTime() <= Date.now() : false;
+  private authRank(
+    a: { status: string; expiresAt: Date | string | null },
+    now: Date,
+    zone: string | null,
+  ): number {
+    // B330: the one licence rule (valid through the printed day in the tenant zone), not an instant compare.
+    const expired = isLicenceExpired(a.expiresAt, now, zone);
     switch (a.status) {
       case "VERIFIED":
         return expired ? 2 : 4;
@@ -1585,9 +1594,11 @@ export class CustomersService {
   private authSecondaryWins(
     sec: { status: string; expiresAt: Date | string | null },
     pri: { status: string; expiresAt: Date | string | null },
+    now: Date = new Date(),
+    zone: string | null = null,
   ): boolean {
-    const rs = this.authRank(sec);
-    const rp = this.authRank(pri);
+    const rs = this.authRank(sec, now, zone);
+    const rp = this.authRank(pri, now, zone);
     if (rs !== rp) return rs > rp;
     const es = sec.expiresAt ? new Date(sec.expiresAt).getTime() : -Infinity;
     const ep = pri.expiresAt ? new Date(pri.expiresAt).getTime() : -Infinity;
@@ -1623,6 +1634,10 @@ export class CustomersService {
         message: "These customers can't be merged: they don't belong to the same business.",
       });
     }
+
+    // B330: rank a licence by the one validity rule (the printed day in THIS business's zone).
+    const licenceNow = new Date();
+    const zone = await licenceZone(this.prisma, primary.tenantId);
 
     try {
       return await this.prisma.tenantTransaction(
@@ -1778,7 +1793,7 @@ export class CustomersService {
                 where: { id: sec.id },
                 data: { customerId: primaryId },
               });
-            } else if (this.authSecondaryWins(sec, pri)) {
+            } else if (this.authSecondaryWins(sec, pri, licenceNow, zone)) {
               await tx.customerAuthorization.delete({ where: { id: pri.id } });
               await tx.customerAuthorization.update({
                 where: { id: sec.id },

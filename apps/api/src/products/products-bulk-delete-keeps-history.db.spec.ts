@@ -235,7 +235,7 @@ describeDb("product delete keeps order and invoice history (H1, M1) - real Postg
       const result = await inTenant(w, () => service.bulkDelete([p]));
 
       // M1: not refused as "active order items"; the outcome is the archive path.
-      expect(result).toEqual({ deleted: 0, softDeleted: 1, skipped: [] });
+      expect(result).toEqual({ deleted: 0, softDeleted: 1, softDeletedIds: [p], skipped: [] });
       expect(await row(p)).toEqual({ id: p, isActive: false });
       expect(await lineCounts(s.orderId, s.invoiceId)).toEqual({ orderLines: 1, invoiceLines: 1 });
     });
@@ -247,7 +247,7 @@ describeDb("product delete keeps order and invoice history (H1, M1) - real Postg
 
       const result = await inTenant(w, () => service.bulkDelete([p]));
 
-      expect(result).toEqual({ deleted: 0, softDeleted: 1, skipped: [] });
+      expect(result).toEqual({ deleted: 0, softDeleted: 1, softDeletedIds: [p], skipped: [] });
       expect(await lineCounts(s.orderId, null)).toEqual({ orderLines: 1, invoiceLines: 0 });
     });
 
@@ -276,7 +276,7 @@ describeDb("product delete keeps order and invoice history (H1, M1) - real Postg
 
       const result = await inTenant(w, () => service.bulkDelete([p]));
 
-      expect(result).toEqual({ deleted: 1, softDeleted: 0, skipped: [] });
+      expect(result).toEqual({ deleted: 1, softDeleted: 0, softDeletedIds: [], skipped: [] });
       expect(await row(p)).toBeNull();
     });
 
@@ -355,7 +355,12 @@ describeDb("product delete keeps order and invoice history (H1, M1) - real Postg
       expect(await row(p)).toEqual({ id: p, isActive: false });
       expect(outcome).toEqual({
         ok: true,
-        value: { deleted: 0, softDeleted: 2, skipped: [] },
+        value: {
+          deleted: 0,
+          softDeleted: 2,
+          softDeletedIds: expect.arrayContaining([p, q]),
+          skipped: [],
+        },
       });
     });
 
@@ -411,7 +416,7 @@ describeDb("product delete keeps order and invoice history (H1, M1) - real Postg
       await saleTx;
       const result = await bulk;
 
-      expect(result).toEqual({ deleted: 0, softDeleted: 1, skipped: [] });
+      expect(result).toEqual({ deleted: 0, softDeleted: 1, softDeletedIds: [p], skipped: [] });
       expect(await row(p)).toEqual({ id: p, isActive: false });
       expect((await lineCounts(orderId, null)).orderLines).toBe(1);
     });

@@ -18,6 +18,7 @@ import {
   COMPLETE_MODE_ERROR_COPY,
   counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
+  type ToCollectMethod,
   type FulfilmentCapability,
 } from "@routeflow/types";
 import { regulatedAuthErrorCopy } from "@routeflow/types/regulated-auth-copy";
@@ -226,14 +227,41 @@ export interface PaymentMethodOption {
   disabled: boolean;
 }
 
-/** Cash / Card / Check / On account; On account is disabled for a walk-in (no account to charge). */
-export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
-  return [
+/**
+ * Cash / Card / Check / On account; On account is disabled for a walk-in (no account to charge). `first` is the customer's
+ * default tender (SA-933): it is listed first so the default is the first thing the clerk sees and tabs to; the rest keep
+ * their order, and a disabled method is never promoted.
+ */
+export function paymentMethodOptions(
+  isWalkIn: boolean,
+  first?: CounterSalePaymentMethod | null,
+): PaymentMethodOption[] {
+  const all: PaymentMethodOption[] = [
     { method: "CASH", label: "Cash", disabled: false },
     { method: "CARD", label: "Card", disabled: false },
     { method: "CHECK", label: "Check", disabled: false },
     { method: "ON_ACCOUNT", label: "On account", disabled: isWalkIn },
   ];
+  const at = first ? all.findIndex((m) => m.method === first && !m.disabled) : -1;
+  return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
+}
+
+/** SA-1026 A: the one choice inside the Check tender for a named customer whose check is not in hand. */
+export const CHECK_NOT_RECEIVED_LABEL = "Check not received yet";
+
+/**
+ * What the screen's tender state sends. "Check not received yet" is not a fifth method: it is On account plus one typed
+ * intent (`expectedMethod: "CHECK"`), so the till and the hand-over share ONE mapping, and `validatePayment` judges it as
+ * On account (a walk-in is refused by the same rule, with no check number to enter). The flag belongs to Check only: a stale
+ * flag under any other method never rides along.
+ */
+export function resolveTender(
+  method: CounterSalePaymentMethod,
+  checkNotReceived: boolean,
+): { method: CounterSalePaymentMethod; expectedMethod?: ToCollectMethod } {
+  return method === "CHECK" && checkNotReceived
+    ? { method: "ON_ACCOUNT", expectedMethod: "CHECK" }
+    : { method };
 }
 
 export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
@@ -244,10 +272,16 @@ export function validatePayment(input: {
   tendered?: number;
   reference?: string;
   isWalkIn: boolean;
+  /** a surface that has not opened part payment (the store-pickup hand-over dialog): a short cash tender stays refused */
+  fullTenderOnly?: boolean;
 }): PaymentProblem | null {
   if (input.method === "ON_ACCOUNT" && input.isWalkIn) return "WALK_IN_ON_ACCOUNT";
-  if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total))
-    return "TENDER_SHORT";
+  if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total)) {
+    // SA-933 S4: an identified customer can pay part now (the rest goes on account); a walk-in pays the full total, and
+    // nothing tendered is not a payment at all.
+    if (input.isWalkIn || input.fullTenderOnly || !(roundMoney(Number(input.tendered ?? 0)) > 0))
+      return "TENDER_SHORT";
+  }
   if (input.method === "CHECK" && !(input.reference ?? "").trim()) return "CHECK_NUMBER_REQUIRED";
   return null;
 }
@@ -290,12 +324,26 @@ export function isPostdatedCheck(checkDate: string, today: string): boolean {
   return isCalendarDay(checkDate) && isCalendarDay(today) && checkDate > today;
 }
 
-/** The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; anything else is a code. */
+/**
+ * "2*code" / "2x code" / "2 x code": a 1-3 digit quantity, a star or an x, then the code. A star needs no space; an x needs one
+ * after it (or the x is part of the code: "2xCOLA", "12x100"). The code after the prefix has NO spaces (a barcode never does), so a typed name search ("2 x 4 stud", "6 x 330ml can") stays one whole search.
+ * Four digits are not a quantity, so "1000*A" stays one code.
+ */
+const QTY_PREFIX = /^(\d{1,3})\s*(?:\*|[x\u00d7](?=\s))\s*(\S+)$/i;
+
+/**
+ * The scan field: 1-3 digits are a QUANTITY to multiply the next scan by; "2*code" / "2x code" is that quantity AND the code
+ * in one entry (F01); anything else is a code.
+ */
 export function parseScanField(
   raw: string,
-): { kind: "qty"; qty: number } | { kind: "code"; code: string } {
+): { kind: "qty"; qty: number } | { kind: "code"; code: string; qty?: number } {
   const text = raw.trim();
   if (/^\d{1,3}$/.test(text) && Number(text) > 0) return { kind: "qty", qty: Number(text) };
+  const prefixed = QTY_PREFIX.exec(text);
+  if (prefixed && Number(prefixed[1]) > 0) {
+    return { kind: "code", code: prefixed[2].trim(), qty: Number(prefixed[1]) };
+  }
   return { kind: "code", code: text };
 }
 

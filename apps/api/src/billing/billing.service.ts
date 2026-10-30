@@ -41,6 +41,7 @@ import {
   prorationBehaviorFor,
   itemUnitAmount,
 } from "./price-override";
+import { accountAdminsOf } from "./account-admins";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
@@ -488,14 +489,13 @@ export class BillingService {
           });
           if (stored?.stripeCustomerId) return stored.stripeCustomerId;
 
-          // Find admin email for the Stripe customer record
-          const adminUser = await this.prisma.user.findFirst({
-            where: { tenantId, role: "TENANT_ADMIN", deletedAt: null },
-            select: { email: true },
-          });
+          // SA-1037 r3 PR-3: the NEW customer's email is the one account admin's (the same read billing
+          // notifications use), or none. The `tenant-<id>@routeflow.app` placeholder is never written: that
+          // domain is not verified as ours, so it must never be a delivery address for Stripe's emails.
+          const [accountAdmin] = await accountAdminsOf(this.prisma, tenantId);
 
           const customer = await this.stripe.createCustomer({
-            email: adminUser?.email ?? `tenant-${tenantId}@routeflow.app`,
+            email: accountAdmin?.email,
             name: sellerDisplayName(tenant.config, tenant, tenant.slug),
             metadata: { tenantId, slug: tenant.slug },
           });

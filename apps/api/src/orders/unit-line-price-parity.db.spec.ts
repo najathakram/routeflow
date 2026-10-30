@@ -57,6 +57,7 @@ describeDb("H3 unit-line price parity — orders/sell vs invoices, real Postgres
     const product = await productRow();
     const ladder = (await ladderRows()) as unknown as LadderUnit[];
     const built = buildUnitLine({
+      priceEditAllowed: true,
       product,
       units: ladder,
       resolved: resolveLineUnits(product, ladder, { unitLabel: "Case" }),

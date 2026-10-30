@@ -189,6 +189,40 @@ describe("SubscriptionService.getSubscription", () => {
     expect(s.monthlyPrice).not.toBe(149);
   });
 
+  it("a custom monthly fee with no annual fee shows the whole-cents annual Stripe bills (row 280)", async () => {
+    const catalog = {
+      getVersionForTenant: jest.fn().mockResolvedValue({ definitions: DEFS, addonSkus: [] }),
+    } as any;
+    const entitlements = {
+      resolve: jest.fn().mockResolvedValue({
+        planKey: "TEAM",
+        planName: "Team",
+        status: "ACTIVE",
+        planVersionId: "v7",
+        trialEndsAt: null,
+      }),
+    } as any;
+    const prisma = {
+      tenantSubscription: {
+        findUnique: jest.fn().mockResolvedValue({
+          cycle: "ANNUAL",
+          periodEnd: new Date("2027-07-08"),
+          cancelAtPeriodEnd: false,
+          priceOverrideMonthly: 33.33,
+          priceOverrideAnnual: null,
+        }),
+      },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const s = await new SubscriptionService(
+      prisma,
+      catalog,
+      entitlements,
+      {} as any,
+    ).getSubscription("t1");
+    expect(s.annualPrice).toBe(333.3); // 33.33 * 10 unrounded is 333.29999999999995
+  });
+
   // Row 350 / SA-693: a comp add-on (TenantAddon.isComp) is granted free and never billed, so the tenant's
   // add-on list must say so (`comp: true`) and never carry a price for it.
   describe("row 350: comp add-ons are labelled and never priced", () => {

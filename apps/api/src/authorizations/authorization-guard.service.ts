@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuthorizationOverridesService } from "./authorization-overrides.service";
 import { scopeApplies } from "./authorization-scope";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isLicenceExpired, licenceZone } from "./licence-validity";
 
 export interface BlockedCategory {
   trackedCategoryId: string;
@@ -26,7 +27,7 @@ export interface AuthCheckParams {
  * Warn-vs-block is driven ENTIRELY by `TrackedCategory.requiresLicense`: tobacco
  * seeds as `requiresLicense=false` and is therefore never gated here (its current
  * warn-only behavior is byte-identical). Enabling blocking is an explicit per-tenant
- * toggle, never an automatic flip. Expiry is evaluated LAZILY (expiresAt < now) so
+ * toggle, never an automatic flip. Expiry is evaluated LAZILY (past the end of the printed expiry day in the tenant zone) so
  * the guard is correct even before the W7 cron flips a persisted status to EXPIRED.
  * This method is READ-ONLY — it never writes.
  */
@@ -51,6 +52,7 @@ export class AuthorizationGuardService {
     if (gated.length === 0) return { blocked: [] }; // tobacco (requiresLicense=false) never blocks
 
     const now = new Date();
+    const zone = await licenceZone(this.prisma);
     const blocked: BlockedCategory[] = [];
     for (const c of gated) {
       // Out of geo-scope → this category doesn't gate this sale.
@@ -65,7 +67,11 @@ export class AuthorizationGuardService {
         },
       });
       const verified = auth?.status === "VERIFIED";
-      const expired = !!(verified && auth?.expiresAt && new Date(auth.expiresAt) < now);
+      const expired = !!(
+        verified &&
+        auth?.expiresAt &&
+        isLicenceExpired(auth.expiresAt, now, zone)
+      );
       if (verified && !expired) continue;
 
       // An active §8 override satisfies the guard for its scope.

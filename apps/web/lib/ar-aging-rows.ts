@@ -31,6 +31,18 @@ export function groupArAgingByCustomer(
   return out;
 }
 
+/**
+ * SA-1026 A-G11: the aging report's To collect column. The server sums each customer's To collect balance with the one rule
+ * (`toCollectByCustomer`); this only keys it by customer id. An older server (no list) marks nobody.
+ */
+export function toCollectLookup(
+  list?: readonly { customerId: string; count: number; balance: number }[] | null,
+): Record<string, { count: number; balance: number }> {
+  const out: Record<string, { count: number; balance: number }> = {};
+  for (const r of list ?? []) out[r.customerId] = { count: r.count, balance: r.balance };
+  return out;
+}
+
 /** #1529: the one summary line for the API's top-level `depositOverdue`, or null when there is none. */
 export function depositOverdueLine(
   summary: { count: number; outstanding: number } | undefined | null,
