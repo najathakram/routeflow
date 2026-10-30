@@ -118,6 +118,52 @@ describe("RouteAnalysisService — AI usage metering", () => {
     });
   });
 
+  const thinkingFirst = {
+    content: [
+      { type: "thinking", thinking: "" },
+      { type: "text", text: JSON.stringify({ summary: "ok", stops: [], suggestions: [] }) },
+    ],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  };
+
+  it("analyzeRoute: reads the text block after a thinking block and leaves room to think (max_tokens)", async () => {
+    mockAnthropicCreate.mockResolvedValue(thinkingFirst);
+    const result = await service.analyzeRoute("route-1");
+    expect(result.summary).toBe("ok");
+    expect(mockAnthropicCreate.mock.calls[0][0].max_tokens).toBe(8192);
+  });
+
+  it("analyzeRouteRun: reads the text block after a thinking block and leaves room to think (max_tokens)", async () => {
+    mockAnthropicCreate.mockResolvedValue(thinkingFirst);
+    prisma.routeRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      routeId: "route-1",
+      startTime: "07:30",
+      depotLat: 0.5,
+      depotLng: 1.5,
+      depotAddress: "Depot",
+      route: { id: "route-1", name: "North loop", depotAddress: "Depot" },
+      stops: [
+        {
+          id: "run-stop-1",
+          stopNumber: 1,
+          routeStop: {
+            customer: {
+              id: "cust-1",
+              businessName: "Acme",
+              deliveryWindowStart: null,
+              deliveryWindowEnd: null,
+            },
+            customerAddress: { lat: 1.5, lng: 2.5 },
+          },
+        },
+      ],
+    });
+    const result = await service.analyzeRouteRun("run-1");
+    expect(result.summary).toBe("ok");
+    expect(mockAnthropicCreate.mock.calls[0][0].max_tokens).toBe(8192);
+  });
+
   it("records a failed AiUsageEvent when the model call errors (and still returns ETAs)", async () => {
     mockAnthropicCreate.mockRejectedValue(new Error("overloaded"));
 

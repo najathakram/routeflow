@@ -348,6 +348,7 @@ function makeTableColumns(
           <div onClick={(e) => e.stopPropagation()}>
             <SectionEditCell
               productId={p.id}
+              productName={p.name}
               trackedCategoryId={p.trackedCategoryId ?? null}
               trackedSubcategoryId={p.trackedSubcategoryId ?? null}
               activeSections={activeSections}

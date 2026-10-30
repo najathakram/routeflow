@@ -43,6 +43,8 @@ async function build(session: string | null, rows: Array<ReturnType<typeof custo
     }),
     tenantTransaction: jest.fn((fn: (t: any) => unknown) => fn(tx)),
     getTenantId: () => session,
+    // B330: merge resolves the business zone before it ranks licences.
+    tenantConfig: { findUnique: async () => ({ timezone: "UTC" }) },
   };
   const module = await Test.createTestingModule({
     providers: [

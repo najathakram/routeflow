@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-10-27T08:00:00Z","message":{"content":"Review PR #101 at 2222bbb3c"}}
+{"type":"assistant","gitBranch":"master","timestamp":"2026-10-27T08:01:00Z","message":{"id":"s1","model":"claude-sonnet-5-5","usage":{"input_tokens":1000,"output_tokens":10000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}

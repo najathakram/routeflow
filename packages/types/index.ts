@@ -127,6 +127,7 @@ export * from "./trip-grouping";
 
 export * from "./internal-email";
 export * from "./stock-count-commit-copy";
+export * from "./api/stock-count";
 
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 
@@ -155,6 +156,7 @@ export * from "./api/payment-ref";
 export * from "./payment-ref-copy";
 export * from "./credit-over-limit-copy";
 export * from "./counter-copy";
+export * from "./counter-default-tender";
 export * from "./no-longer-fits-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
@@ -267,3 +269,12 @@ export const ORDER_DELIVERY_ADDON = "order_delivery";
  * Route insights are NOT covered by this key.
  */
 export const OCR_ADDON = "ocr";
+
+// ─── Licence validity (B330: the ONE "is this licence still good" rule) ───────
+
+export {
+  displayLicenceStatus,
+  isLicenceExpired,
+  isLicenceLive,
+  licenceExpiryCutoff,
+} from "./licence-validity";

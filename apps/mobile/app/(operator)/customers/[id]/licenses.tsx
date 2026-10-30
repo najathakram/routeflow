@@ -28,6 +28,7 @@ import {
   useRenewAuthorization,
   type CustomerAuthorization,
 } from "../../../../lib/api/authorizations";
+import { useBusinessSettings } from "../../../../lib/api/admin";
 import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
 import {
   authSourceLabel,
@@ -165,6 +166,7 @@ export default function CustomerLicensesScreen() {
   const { data, isLoading, isFetching, refetch, isError } = useCustomerAuthorizations(customerId);
   const approve = useApproveAuthorization(customerId);
   const reject = useRejectAuthorization(customerId);
+  const tenantZone = useBusinessSettings().data?.timezone;
 
   const [sheet, setSheet] = useState<{ renewOf: CustomerAuthorization | null } | null>(null);
 
@@ -219,7 +221,7 @@ export default function CustomerLicensesScreen() {
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24, paddingTop: 8 }}>
             {rows.map((a) => {
-              const status = displayAuthStatus(a);
+              const status = displayAuthStatus(a, new Date(), tenantZone);
               const pill = authStatusPill(status);
               const flags = authorizationActionFlags(status);
               const expiry = expiryPhrase(a.expiresAt);

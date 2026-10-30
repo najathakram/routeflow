@@ -11,7 +11,7 @@ protocol compares (the fourth, bug-pipeline, is dev-pipeline's own bugfix mode �
 never compared against the other three):
 
 - **`dev-pipeline`** — the house task-loop engine (`dev-pipeline/pipeline.js`), profile `lean` or
-  `standard`. Frame → tests → implement → review → fix loop, run by Fable/Sonnet/Opus/Haiku agents at
+  `standard`. Frame → tests → implement → review → fix loop, run by Opus/Sonnet/Haiku agents at
   explicit model+effort per the routing table. This is "the pipeline."
 - **`superpowers`** — the `superpowers` plugin's own skills (brainstorming, TDD, subagent-driven
   development, systematic debugging, etc.) driving the session instead of the house engine.

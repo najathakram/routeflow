@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
@@ -14,6 +15,7 @@ import {
   type ChainLevel,
   type ChainViolation,
 } from "@routeflow/pricing";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { isPieceSynonym, unitNameKey } from "../units/piece-words";
@@ -22,6 +24,7 @@ import { unitRoom } from "../units/unit-room";
 import { lockProductPack } from "../units/tenant-units-lock";
 import { MAX_UNIT_NAME_LENGTH } from "../units/units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
+import { readFamilyPriceMode, recipeFamilyIdOf } from "./family-price";
 import { assertUnitPriceWritable } from "./product-units-price-guard";
 
 interface PackInfo {
@@ -33,7 +36,13 @@ interface PackInfo {
   factor: number;
   regulated: boolean;
   /** What the price guard reads (row 749): variant / family / recipe prices are not set here. */
-  governed: { id: string; parentProductId: string | null; kind: string | null };
+  governed: {
+    id: string;
+    parentProductId: string | null;
+    kind: string | null;
+    familyPriceOverride: boolean;
+    recipeFamilyId: string | null;
+  };
 }
 
 interface LevelKey {
@@ -92,7 +101,10 @@ const isUniqueViolation = (e: unknown) => (e as { code?: string } | null)?.code 
  */
 @Injectable()
 export class ProductUnitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly featureConfig?: FeatureConfigService,
+  ) {}
 
   async list(productId: string) {
     await this.loadPack(this.prisma.forTenant(), productId);
@@ -106,7 +118,11 @@ export class ProductUnitsService {
   create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
-      assertUnitPriceWritable(pack.governed, dto, "create");
+      assertUnitPriceWritable(pack.governed, dto, {
+        mode: await this.priceMode(),
+        level: dto.factorToBase === 1 ? "base" : "other",
+        op: "create",
+      });
       const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
       const siblings = await this.siblings(tx, productId);
       this.assertLevelValid(pack, siblings, { label, factorToBase: dto.factorToBase });
@@ -151,9 +167,13 @@ export class ProductUnitsService {
   ) {
     return this.locked(productId, async (tx) => {
       const pack = await this.loadPack(tx, productId);
-      assertUnitPriceWritable(pack.governed, dto);
       const row = await tx.productUnit.findFirst({ where: { id: unitId, productId } });
       if (!row) throw new NotFoundException("Unit not found");
+      assertUnitPriceWritable(pack.governed, dto, {
+        mode: await this.priceMode(),
+        level: (dto.factorToBase ?? row.factorToBase) === 1 ? "base" : "other",
+        op: "update",
+      });
       const factorToBase = dto.factorToBase ?? row.factorToBase;
       const label = this.cleanLabel(dto.label ?? row.label, factorToBase, pack);
       const all = await this.siblings(tx, productId);
@@ -332,9 +352,16 @@ export class ProductUnitsService {
         trackedCategoryId: true,
         parentProductId: true,
         kind: true,
+        familyPriceOverride: true,
       },
     });
     if (!p) throw new NotFoundException("Product not found");
+    const mode = await this.priceMode();
+    const tenantId = this.prisma.getTenantId();
+    const recipeFamilyId =
+      mode === "on" && tenantId && p.kind === "RECIPE" && !p.familyPriceOverride
+        ? await recipeFamilyIdOf(db, tenantId, productId)
+        : null;
     const upb = Math.trunc(Number(p.unitsPerBox ?? 0));
     return {
       label: packLabelOf(p),
@@ -342,8 +369,18 @@ export class ProductUnitsService {
       baseLabel: baseLabelOf(p),
       factor: upb > 1 ? upb : 1,
       regulated: p.trackedCategoryId != null,
-      governed: { id: productId, parentProductId: p.parentProductId ?? null, kind: p.kind ?? null },
+      governed: {
+        id: productId,
+        parentProductId: p.parentProductId ?? null,
+        kind: p.kind ?? null,
+        familyPriceOverride: p.familyPriceOverride === true,
+        recipeFamilyId,
+      },
     };
+  }
+
+  private priceMode() {
+    return readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
   }
 
   private siblings(db: any, productId: string): Promise<Sibling[]> {

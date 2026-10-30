@@ -78,6 +78,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { bumpInvoiceLine, scanLevelForHit, seedLineQty } from "../invoice-scan-level";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { useTenantToday } from "@/lib/tenant-timezone";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   computeInvoiceLineTotal,
@@ -153,11 +154,6 @@ const TERMS_OPTIONS = [
   { value: "Net 45", label: "Net 45" },
   { value: "Net 60", label: "Net 60" },
 ];
-
-/** Current UTC calendar day — the bound the API applies to a backdated sale. */
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 // ─── Customer search dropdown ─────────────────────────────────────────────────
 
@@ -839,7 +835,15 @@ export default function NewInvoicePage() {
   // delivered semantics (deliveredAt = that date, backdated when before today);
   // future ⇒ scheduled deliver-later with that requested date. Defaults to today,
   // same as the "Yes, delivered today" starting state.
-  const [deliveredOn, setDeliveredOn] = React.useState(todayIso());
+  // Row 750 (SA-964 §6): "today" for this picker is the TENANT's day (the server judges it there). The hook's contract
+  // forbids the browser's day as a stand-in: until the zone resolves the date stays EMPTY (nothing shown, nothing sent),
+  // and the effect below seeds it once if nobody has picked a date yet.
+  const saleToday = useTenantToday();
+  const [deliveredOn, setDeliveredOn] = React.useState("");
+  const deliveredOnPicked = React.useRef(false);
+  React.useEffect(() => {
+    if (saleToday && !deliveredOnPicked.current) setDeliveredOn(saleToday);
+  }, [saleToday]);
 
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
@@ -886,11 +890,15 @@ export default function NewInvoicePage() {
   const [reference, setReference] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [terms, setTerms] = React.useState("");
-  const [issueDate, setIssueDate] = React.useState(todayIso);
-  // Provisional only — the seeding effect below replaces it with the tenant's
-  // configured default term as soon as /settings/invoice resolves, and submit
-  // refuses to post a due date that no term ever backed.
-  const [dueDate, setDueDate] = React.useState(() => addDaysIso(todayIso(), 30));
+  // Row 750 (class fold): the issue and due dates are the TENANT's days. Both start empty and are seeded when the zone
+  // resolves (the browser's day is never a stand-in); the due date follows the term, else the tenant default, else 30.
+  const [issueDate, setIssueDate] = React.useState("");
+  React.useEffect(() => {
+    if (saleToday) setIssueDate((cur) => cur || saleToday);
+  }, [saleToday]);
+  // Provisional only — the seeding effects below replace it with the tenant's configured default term as soon as
+  // /settings/invoice resolves, and submit refuses to post a due date that no term ever backed.
+  const [dueDate, setDueDate] = React.useState("");
   // Set when the operator types straight into the Due Date field: their exact
   // date then wins over the tenant-default seed and over an issue-date change.
   const dueDateEditedRef = React.useRef(false);
@@ -954,6 +962,12 @@ export default function NewInvoicePage() {
   // configured for Net 15 / Due on Receipt on every sale. Seeds once, and
   // never over a choice the operator already made.
   const { data: invoiceSettings } = useInvoiceSettings();
+  // Once the issue date is known (the zone resolved) and nothing has set a due date, derive it from the term in effect.
+  React.useEffect(() => {
+    if (!issueDate || dueDate || dueDateEditedRef.current) return;
+    const days = getDaysForTerms(terms || (invoiceSettings?.defaultTerms ?? "")) ?? 30;
+    setDueDate(addDaysIso(issueDate, days));
+  }, [issueDate, dueDate, terms, invoiceSettings]);
   const didSeedTermsRef = React.useRef(false);
   // Tracks WHO last auto-seeded `terms`, so a later, more specific seed can
   // still replace an earlier auto-seed (customer default beats tenant default,
@@ -968,7 +982,7 @@ export default function NewInvoicePage() {
     if (days === null) return; // a term this page can't price — leave it to the server
     termsSourceRef.current = "tenant";
     setTerms(configured);
-    setDueDate(addDaysIso(issueDate, days));
+    if (issueDate) setDueDate(addDaysIso(issueDate, days));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceSettings]);
 
@@ -988,7 +1002,7 @@ export default function NewInvoicePage() {
     if (days === null) return;
     termsSourceRef.current = "customer";
     setTerms(customerDefault);
-    setDueDate(addDaysIso(issueDate, days));
+    if (issueDate) setDueDate(addDaysIso(issueDate, days));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer]);
 
@@ -1287,12 +1301,14 @@ export default function NewInvoicePage() {
       setReference(s.reference);
       setSubject(s.subject);
       setTerms(s.terms);
-      setIssueDate(s.issueDate || todayIso());
-      setDueDate(s.dueDate || addDaysIso(s.issueDate || todayIso(), 30));
+      const restoredIssue = s.issueDate || saleToday || "";
+      setIssueDate(restoredIssue);
+      setDueDate(s.dueDate || (restoredIssue ? addDaysIso(restoredIssue, 30) : ""));
       setTermsText(s.termsText);
       setNotes(s.notes);
       setDeliveredNow(s.deliveredNow);
-      setDeliveredOn(s.deliveredOn || todayIso());
+      if (s.deliveredOn) deliveredOnPicked.current = true; // a restored draft keeps its own date
+      setDeliveredOn(s.deliveredOn || saleToday || "");
       setDepositOpen(s.depositOpen);
       setDepositPercent(s.depositPercent);
       setDepositDueDate(s.depositDueDate);
@@ -1657,8 +1673,10 @@ export default function NewInvoicePage() {
   function validate() {
     const errs: Record<string, string> = {};
     if (!customer) errs.customer = "Please select a customer.";
-    if (!issueDate) errs.issueDate = "Issue date is required.";
-    if (!dueDate) errs.dueDate = "Due date is required.";
+    // Empty only while the tenant's day is unknown (nothing was seeded): the server then dates the document on the
+    // tenant's own day, so that is not an error; a date the user cleared once the zone is known still is.
+    if (!issueDate && saleToday) errs.issueDate = "Issue date is required.";
+    if (!dueDate && saleToday) errs.dueDate = "Due date is required.";
     if (items.length === 0) errs.items = "Add at least one line item.";
     for (const it of items) {
       if (!it.description.trim()) {
@@ -1707,8 +1725,10 @@ export default function NewInvoicePage() {
   function validateForPreview() {
     const errs: Record<string, string> = {};
     if (!customer) errs.customer = "Please select a customer.";
-    if (!issueDate) errs.issueDate = "Issue date is required.";
-    if (!dueDate) errs.dueDate = "Due date is required.";
+    // Empty only while the tenant's day is unknown (nothing was seeded): the server then dates the document on the
+    // tenant's own day, so that is not an error; a date the user cleared once the zone is known still is.
+    if (!issueDate && saleToday) errs.issueDate = "Issue date is required.";
+    if (!dueDate && saleToday) errs.dueDate = "Due date is required.";
     // H3b: the preview saves a draft through the same server rule (a special price needs its reason).
     const needsReason = items.find((it) => Number(it.qty) > 0 && saleLineNeedsReason(it));
     if (needsReason) errs.items = reasonRequiredMessage(needsReason.description);
@@ -1942,7 +1962,7 @@ export default function NewInvoicePage() {
     // Only a genuinely backdated sale carries orderDate: on a deliveredNow sale the
     // server uses it as deliveredAt, so an untouched date must stay unsent to keep
     // deliveredAt at the full current timestamp rather than midnight UTC.
-    const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
+    const backdatedTo = issueDate && issueDate !== saleToday ? issueDate : undefined;
 
     const saleDto = {
       customerId: customer!.id,
@@ -1950,7 +1970,7 @@ export default function NewInvoicePage() {
       deliveredNow,
       // The delivery-date picker: replaces deliveredNow's binary on the server
       // (deliveredNow above is still sent for backward compat with older callers).
-      deliveredOn,
+      ...(deliveredOn ? { deliveredOn } : {}), // empty until the tenant's day is known: then nothing is sent
       notes: notes.trim() || undefined,
       ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
       ...(backdatedTo ? { orderDate: backdatedTo } : {}),
@@ -2163,11 +2183,13 @@ export default function NewInvoicePage() {
             <div>
               <p className="text-sm font-semibold text-navy">Going out today?</p>
               <p className="text-sm text-navy/70">
-                {deliveredOn > todayIso()
-                  ? `Scheduled — the order is created and delivers on ${fmtCalendarDate(deliveredOn)}.`
-                  : deliveredOn === todayIso()
-                    ? "Delivered today — the order is marked delivered and the invoice is issued now."
-                    : `Delivered — the order is marked delivered on ${fmtCalendarDate(deliveredOn)} and the invoice is issued now.`}
+                {!deliveredOn || !saleToday
+                  ? ""
+                  : deliveredOn > saleToday
+                    ? `Scheduled — the order is created and delivers on ${fmtCalendarDate(deliveredOn)}.`
+                    : deliveredOn === saleToday
+                      ? "Delivered today — the order is marked delivered and the invoice is issued now."
+                      : `Delivered — the order is marked delivered on ${fmtCalendarDate(deliveredOn)} and the invoice is issued now.`}
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-end gap-2">
@@ -2175,7 +2197,10 @@ export default function NewInvoicePage() {
                 type="button"
                 onClick={() => {
                   setDeliveredNow(true);
-                  setDeliveredOn(todayIso());
+                  if (saleToday) {
+                    deliveredOnPicked.current = true;
+                    setDeliveredOn(saleToday);
+                  }
                 }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
@@ -2192,7 +2217,10 @@ export default function NewInvoicePage() {
                   setDeliveredNow(false);
                   // Deliver-later defaults to tomorrow, but only if the field isn't
                   // already scheduled in the future — don't clobber a chosen date.
-                  setDeliveredOn((prev) => (prev > todayIso() ? prev : addDaysIso(todayIso(), 1)));
+                  if (saleToday) {
+                    setDeliveredOn((prev) => (prev > saleToday ? prev : addDaysIso(saleToday, 1)));
+                    deliveredOnPicked.current = true;
+                  }
                 }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
@@ -2217,8 +2245,9 @@ export default function NewInvoicePage() {
                     // deliver-later, and stepping it back to today/the past switches
                     // back to delivered (possibly backdated) — the two buttons above
                     // just reflect this, they don't independently gate it.
+                    deliveredOnPicked.current = true;
                     setDeliveredOn(value);
-                    setDeliveredNow(value <= todayIso());
+                    if (saleToday) setDeliveredNow(value <= saleToday);
                   }}
                   className="h-9 w-32 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
@@ -2281,7 +2310,7 @@ export default function NewInvoicePage() {
                     <input
                       type="date"
                       value={issueDate}
-                      max={isSale ? todayIso() : undefined}
+                      max={isSale ? saleToday : undefined}
                       onChange={(e) => handleIssueDateChange(e.target.value)}
                       className={cn(
                         "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
