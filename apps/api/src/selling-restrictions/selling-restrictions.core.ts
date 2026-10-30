@@ -137,7 +137,10 @@ export interface ChannelPrincipal {
    * someone else made, so the protocol hard-blocks it ("Ask the account admin").
    */
   impersonatedBy?: string | null;
-  /** The caller's effective denied staff groups (perms PR7 fills it; absent today = none denied). */
+  /**
+   * The caller's effective denied staff groups. Optional here (the channel only reads role/type); the override
+   * decision requires it (`DecideParams.principal`), and `SellingRestrictionsService` fills it from the live read.
+   */
   deniedGroups?: readonly string[];
 }
 

@@ -2,6 +2,7 @@ import type { PaymentMethod } from "@prisma/client";
 import { DEDUPE_STATUSES, roundMoney, toCents } from "@routeflow/pricing";
 import { withAfterCommit, type AfterCommit } from "../common/after-commit";
 import type { PrismaService } from "../prisma/prisma.service";
+import type { PermissionPrincipal } from "../auth/permissions/operator-permissions.service";
 import {
   createPaymentRefGuard,
   groupTotalForEdit,
@@ -81,6 +82,9 @@ export function editLockKey(key: EditKey | null): string | null {
 export interface RefOpts {
   refDedupe?: RefDedupeOpts;
 }
+
+/** updatePayment's context (W-870): its options plus the REQUIRED principal the till-payment VOID_SALE check judges. */
+export type RefCtx = RefOpts & { user: PermissionPrincipal };
 
 /** The edit's guard, opened under the Invoice lock: null when the edit gives the row no new identity. */
 export interface PaymentEditRef {

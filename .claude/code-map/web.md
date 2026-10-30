@@ -38,6 +38,8 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-25-train2.md](web/landing-2026-10-25-train2.md) | Landing 2026-10-25 train 2: `useOnTenantToday`, tenant-day dates at 7 sites (SA-964 §4), browser-clock pin, product-conflict toast copy |
 | [web/landing-2026-10-26-train4c.md](web/landing-2026-10-26-train4c.md) | Landing 2026-10-26 train 4c: dvh app shells (364), restriction copy names the business reason (W-806) |
 | [web/landing-2026-10-29-w26-catchup.md](web/landing-2026-10-29-w26-catchup.md) | Catch-up b1a2fc3d1..75f433f56 (incl. trains W21-W25): Settings regroup (376), counter dialogs and print invoice (W-783, SA-1026), tenant-day dates, 44px edit row, typed enum mirrors |
+| [web/landing-2026-10-30-w26r-w28b.md](web/landing-2026-10-30-w26r-w28b.md) | Trains W26r, W27, W28b + #3895 (75f433f56..f732d6209): settings search memory, model selects, counter default tender, one-time password on screen, mobile payments |
+| [web/landing-2026-10-30-w29c.md](web/landing-2026-10-30-w29c.md) | Train W29c (f732d6209..69f92c761): till gates, held unit, dunning, phone strip, money formatter, finance toasts, promotions off |
 | [web/landing-2026-10-22-w4.md](web/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: orders apple-ux r3/r4 train, buyer cart, import Family UI, counter till/returns, payment key dialogs |
 | [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |

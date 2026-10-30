@@ -26,7 +26,7 @@ const RECEIPT_BTN = "min-h-[44px] min-w-[44px] focus-visible:ring-2 focus-visibl
  * receipt early. A walk-in (`customer` null) opens the row empty; a named customer's address is the pre-fill, never an
  * auto-send.
  *
- * W-716: Void sale opens the same void dialog Today's sales uses, for THIS sale (same role gate: `staffMay(role, "VOID_SALE")`,
+ * W-716: Void sale opens the same void dialog Today's sales uses, for THIS sale (same role gate: `staffMay(role, "VOID_SALE", [])`,
  * disabled in a read-only workspace). After the void the receipt stays on screen and says so; the control reads Voided.
  * The dialog's methods line comes from the sale's own Today's-sales row (the order read carries no tender), worded as that sheet
  * words it ("Cash + Card", "On account" when nothing was paid); a passed `methodsText` wins. The same row says whether the sale is
@@ -68,7 +68,7 @@ export function CounterReceiptActions({
         : "On account"
       : undefined);
   // wait for the row (voided / returned / how it was paid) before offering Void; a failed read falls back to the order alone
-  const canVoid = !!order && staffMay(role, "VOID_SALE") && !rowPending;
+  const canVoid = !!order && staffMay(role, "VOID_SALE", []) && !rowPending;
   const printInvoice = usePrintInvoice();
   return (
     <>
