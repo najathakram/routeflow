@@ -80,8 +80,7 @@ import {
   type SaleOptions,
 } from "./sale-options";
 import { notifyOrderStatusChange, type ChangeStatusOpts } from "./order-status-notify";
-import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
-import { mayEditPrice } from "./price-edit-allowed";
+import { assertPriceEditAllowed, decideTierOverride, staffMay } from "./staff-override";
 import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
@@ -105,7 +104,11 @@ import { ListOrdersDto } from "./dto/list-orders.dto";
 import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
-import { assertMayUseTill, posModeDeniedGroups } from "./counter-sale/till-permission.guard";
+import {
+  assertMayUseTill,
+  operatorDeniedGroups,
+  posModeDeniedGroups,
+} from "./counter-sale/till-permission.guard";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -1240,7 +1243,10 @@ export class OrdersService implements OnApplicationBootstrap {
     const commissionRatePct = parseCommissionRatePct(dto.commissionRatePct, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    const priceEditAllowed = await mayEditPrice(this.prisma, user, options.priceEditAllowed); // W-870
+    // W-870: the counter sale's own value, else the role's over the OPERATOR's live denied groups.
+    const priceEditAllowed =
+      options.priceEditAllowed ??
+      staffMay(user.role, "EDIT_LINE_PRICE", await operatorDeniedGroups(this.prisma, user));
     // B318: the edit path (updateOrderItems' isStaffCreditEdit) already strips
     // appliedCreditNotes for non-staff callers — a buyer or driver token could
     // otherwise spend a customer's credit notes on create, a right the edit path
@@ -2770,7 +2776,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // own connection risks connection-pool starvation under concurrent edits.
     // Mirrors create(), which loads these before opening its transaction.
     const taxRate = await this.getTaxRate();
-    const priceEditAllowed = await mayEditPrice(this.prisma, user); // W-870: read before the tx below
+    // W-870: the OPERATOR's live denied groups, read here (not inside the tx) for the unit-line price gate below.
+    const priceEditDenied = user ? await operatorDeniedGroups(this.prisma, user) : [];
     const buyerPromos =
       user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER
         ? await this.loadActivePromotions(user.role)
@@ -3183,7 +3190,7 @@ export class OrdersService implements OnApplicationBootstrap {
             tier: (pid) => (atCustomerTier ? (operatorCpMap.get(pid) ?? operatorDefaultTier) : 1),
             layerOf: atCustomerTier ? operatorPc.layer : undefined,
             overriddenBy: user?.sub ?? null,
-            priceEditAllowed,
+            priceEditAllowed: staffMay(user?.role, "EDIT_LINE_PRICE", priceEditDenied), // W-870
             held: heldById,
             repriceTierOnQtyOnly: user?.role === UserRole.CUSTOMER,
             categoryMap: await loadCategoryMapForProducts(tx, unitCtx.products), // B297

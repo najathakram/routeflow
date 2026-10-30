@@ -98,8 +98,6 @@ describe("SA-1034: price-edit capability is checked at every override site", () 
       }
     }
     expect(bare).toEqual([]);
-    expect(total).toBeGreaterThanOrEqual(3); // price-edit-allowed.ts (create + updateOrderItems), the counter sale, invoice lines
-    // W-870: create() and updateOrderItems each ask mayEditPrice once, before any transaction.
-    expect(callCount(read("orders/orders.service.ts"), "mayEditPrice")).toBe(2);
+    expect(total).toBeGreaterThanOrEqual(4); // create, updateOrderItems, the counter sale, invoice lines
   });
 });
