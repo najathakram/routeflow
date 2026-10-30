@@ -67,7 +67,15 @@ gh run list --repo najathakram/routeflow --workflow ci.yml --branch <train-branc
 
 These four print a `refusing:` line and register no runner. The job stays queued for up to 24 hours, so a later launcher can still take it.
 
-With no `refusing:` line, the code comes from elsewhere. A failed `gh` call or a seat wait that timed out exits 1, 76 is the seat's hold cap, and anything else is the container's. Read the launcher's output, then check `docker ps` and the run.
+With no `refusing:` line, the code comes from elsewhere:
+
+- 1: a failed `gh` call, or a seat wait that timed out.
+- 76: the seat's hold cap.
+- 130 or 143: the launcher was interrupted.
+- 125: Docker couldn't start the container, for example because the image isn't built.
+- Anything else: the container's own code.
+
+Read the launcher's output, then check `docker ps` and the run.
 
 ## Stopping it
 
@@ -113,6 +121,8 @@ A public repo lets a fork PR reach a self-hosted runner, and the repo goes publi
 ```bash
 gh api repos/najathakram/routeflow/actions/runners --jq ".total_count"
 ```
+
+It should print 0. If it doesn't, finish or stop that runner before you open the window, as in [Stopping it](#stopping-it).
 
 A confirmed job keeps running if the repo goes public. A one-job runner can't take a second job, so that job is the only one exposed.
 

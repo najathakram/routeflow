@@ -2,6 +2,7 @@
 // Self-test for tools/ci-runner/launch-once.mjs. Plain node; exit 1 on failure. No gh, no Docker:
 // every outside call is a fake, so this runs anywhere `npm run verify` runs.
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import {
   EXIT_FOREIGN_QUEUED,
@@ -371,6 +372,16 @@ const end = (child, code = 0) => {
   child.emit("close", 0);
   await finished;
 }
+
+// bash gives a background command /dev/null unless told otherwise, and that ends the container at
+// once. The container test that caught this needs Docker, so the line itself is pinned here.
+check(
+  "C9 the watcher reads the launcher's stdin, not /dev/null",
+  /\bcat <&0 >\/dev\/null &/.test(
+    readFileSync(new URL("./entrypoint.sh", import.meta.url), "utf8"),
+  ),
+  true,
+);
 
 // ── Refusals mint nothing ────────────────────────────────────────────────────────────────────────
 {

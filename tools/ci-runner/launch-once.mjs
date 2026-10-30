@@ -30,9 +30,9 @@ export const GH_TIMEOUT_MS = 20_000;
 export const UNSAFE_AFTER_MS = 45_000;
 /** The runner's own line for a job starting. It comes from the container, so an outage can't hide it. */
 export const JOB_STARTED = /: Running job: /;
-/** 15 minutes of tries. The trial's killed runner took 5m22s to free up after its run was cancelled. */
 /** A started job is stopped if GitHub hasn't shown it to be ours by now. */
 const JOB_CHECK_MS = 120_000;
+/** 15 minutes of tries. The trial's killed runner took 5m22s to free up after its run was cancelled. */
 const REAP_WAIT_MS = 15_000;
 const REAP_ATTEMPTS = 60;
 

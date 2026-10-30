@@ -21,7 +21,7 @@ iptables -A OUTPUT -j REJECT
 exec setpriv --reuid=10001 --regid=10001 --clear-groups --bounding-set=-all --inh-caps=-all \
   bash -c '
     ./run.sh --jitconfig "$1" </dev/null &
-    cat >/dev/null &
+    cat <&0 >/dev/null &
     sleep 5400 &
     wait -n
   ' bash "$JIT_CONFIG"
