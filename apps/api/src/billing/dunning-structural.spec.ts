@@ -472,7 +472,9 @@ describe("SA-733r7 PR-B3 structural pins", () => {
       expect(script).toMatch(/from "\.\/lib\/pause-report-keys\.mjs"/);
       expect(script).toMatch(/new Client\(\{[^}]*\btypes:\s*utcTimestampTypes\(pgTypes\)/);
       // the remindersSent query must read the still-owed notice too, or those tenants show "none"
-      expect(script).toMatch(/milestone IN \([^)]*'DUNNING_PAUSED_STILL_OWED'[^)]*\)/);
+      // (the list is REPORT_MILESTONES, pinned to DUNNING_MILESTONES by dunning-clock-parity.spec.ts)
+      expect(script).toMatch(/milestone = ANY\(\$2::text\[\]\)/);
+      expect(script).toMatch(/REPORT_MILESTONES = \[[^\]]*"DUNNING_PAUSED_STILL_OWED"[^\]]*\]/);
       // the raw `new Date(since).toISOString()` key shifted on a non-UTC machine
       expect(sql).not.toMatch(/\$\{new Date\(since\)\.toISOString\(\)\}/);
       expect(sql).toMatch(/episodeKey\(/);
