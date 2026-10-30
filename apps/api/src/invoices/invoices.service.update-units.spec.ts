@@ -417,6 +417,71 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
         qty: 30,
       });
     });
+
+    it("(d) a changed price on the held Case row is judged against the row's own price, factor 12 kept", async () => {
+      scopedUnits.findMany.mockResolvedValue([{ ...ladder[0], factorToBase: 10, price: "30.00" }]);
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await service.update(
+        "inv-1",
+        {
+          items: [
+            caseLine({ id: "row-1", unitPrice: 22, overrideReason: "damaged outer cartons" }),
+          ],
+        } as never,
+        { sub: "user-1", role: "OPERATOR" } as never,
+      );
+      expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+        unitsPerBox: 12,
+        unitPrice: 22,
+        priceType: "DISCOUNTED",
+        originalPrice: 24,
+      });
+    });
+
+    it("(d-) the same held-Case price change by an actor with no role is PRICE_EDIT_NOT_PERMITTED, nothing written", async () => {
+      scopedUnits.findMany.mockResolvedValue([{ ...ladder[0], factorToBase: 10, price: "30.00" }]);
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      const call = service.update(
+        "inv-1",
+        {
+          items: [
+            caseLine({ id: "row-1", unitPrice: 22, overrideReason: "damaged outer cartons" }),
+          ],
+        } as never,
+        { sub: "user-1" } as never,
+      );
+      await expect(call).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(call).rejects.toMatchObject({
+        response: { code: "PRICE_EDIT_NOT_PERMITTED" },
+      });
+      expect(prisma.invoiceItem.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("held level gone: the Case level was removed after the draft was saved (R-1)", () => {
+    beforeEach(() => {
+      scopedUnits.findMany.mockResolvedValue([]);
+    });
+
+    it("a changed price on the held Case row is judged on the row's own snapshot, not refused", async () => {
+      prisma.invoiceItem.findMany.mockResolvedValue([storedCase()]);
+      await service.update(
+        "inv-1",
+        {
+          items: [
+            caseLine({ id: "row-1", unitPrice: 22, overrideReason: "damaged outer cartons" }),
+          ],
+        } as never,
+        { sub: "user-1", role: "OPERATOR" } as never,
+      );
+      expect(prisma.invoiceItem.update.mock.calls[0][0].data).toMatchObject({
+        unitLabel: "Case",
+        unitsPerBox: 12,
+        unitPrice: 22,
+        priceType: "DISCOUNTED",
+        originalPrice: 24,
+      });
+    });
   });
 
   describe("leaving a unit is judged on the RESOLVED unit, and an absent label keeps it (SA-070)", () => {

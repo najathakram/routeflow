@@ -41,6 +41,7 @@ import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { AI_SCAN_MAX_TOKENS, firstText } from "../platform-admin/ai-response";
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
@@ -62,13 +63,6 @@ import {
 } from "../invoices/payment-ref-dedupe";
 import { overdueInvoiceCount } from "../invoices/invoice-balance-sql";
 import { confirmedBalance, signedBalance } from "../invoices/invoice-balance-classify";
-
-/**
- * Receipt-extraction model. Receipts are small documents where a misread line
- * lands directly in the books, so this path pays for the most capable model;
- * kept as its own constant so it can diverge from the OCR scanners'.
- */
-const RECEIPT_MODEL = "claude-opus-4-5-20251101";
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -936,6 +930,9 @@ export class BookkeepingService implements OnModuleInit {
     const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey) throw new BadRequestException("Anthropic API key not configured");
 
+    // SA-1035: read once; the call and both usage records use this one value. Receipts are small documents where a
+    // misread line lands directly in the books, so this path runs the most capable model (no picker).
+    const model = await this.platformConfig.resolveModelFor("receipt_scan");
     const anthropic = new Anthropic({ apiKey });
     const base64 = receiptBuffer.toString("base64");
     const isPdf = mimeType === "application/pdf";
@@ -950,8 +947,8 @@ export class BookkeepingService implements OnModuleInit {
     let response: Anthropic.Message;
     try {
       response = await anthropic.messages.create({
-        model: RECEIPT_MODEL,
-        max_tokens: 2048,
+        model,
+        max_tokens: AI_SCAN_MAX_TOKENS,
         messages: [
           {
             role: "user",
@@ -969,7 +966,7 @@ export class BookkeepingService implements OnModuleInit {
       await this.platformConfig.recordAiUsage({
         tenantId: this.prisma.getTenantId(),
         feature: "ocr.expense_receipt",
-        model: RECEIPT_MODEL,
+        model,
         success: false,
       });
       throw err;
@@ -980,14 +977,17 @@ export class BookkeepingService implements OnModuleInit {
     await this.platformConfig.recordAiUsage({
       tenantId: this.prisma.getTenantId(),
       feature: "ocr.expense_receipt",
-      model: RECEIPT_MODEL,
+      model,
       inputTokens: response.usage?.input_tokens ?? 0,
       outputTokens: response.usage?.output_tokens ?? 0,
     });
 
     let parsed: any = {};
     try {
-      const text = (response.content[0] as any).text ?? "";
+      // The answer is the first text block (a thinking block may come first); none at all is a failed read, not an
+      // empty receipt.
+      const text = firstText(response.content);
+      if (text === null) throw new Error("no text block");
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
     } catch {

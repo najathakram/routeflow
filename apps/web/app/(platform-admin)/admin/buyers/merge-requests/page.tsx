@@ -139,7 +139,12 @@ export default function MergeRequestsPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 overflow-hidden">
+      <div
+        tabIndex={0}
+        role="region"
+        aria-label="Buyer merge requests"
+        className="rounded-xl border border-slate-700/50 bg-slate-800/40 overflow-x-auto"
+      >
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-400" />
@@ -147,7 +152,7 @@ export default function MergeRequestsPage() {
         ) : requests.length === 0 ? (
           <div className="py-16 text-center text-slate-400">No merge requests found.</div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="min-w-[640px] w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3 text-left">Primary Account</th>

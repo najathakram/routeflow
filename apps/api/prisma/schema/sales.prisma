@@ -1690,6 +1690,35 @@ model CounterDayClose {
   @@index([tenantId, day])
 }
 
+/// W-819 / SA-930 section 4: what a till's drawer held at a moment that matters, counted by a person. Today only OPENING_FLOAT:
+/// the cash counted into the drawer at the start of a close window, so the person who closes can no longer type the number that
+/// sets the expected cash. `windowStart` is the key CounterDayClose already uses (the last close's windowEnd, or the start of the
+/// tenant-zone day for the first window); stored as the same zoneless timestamp(3) instant. One row per
+/// (tenant, register, window, kind). `byId` is a plain id (no FK) so the model adds no back-relation to Tenant or User.
+/// The day-close fold reading this row is W-819 part 2; nothing reads it for money yet.
+model CounterDrawerEvent {
+  id            String                 @id @default(uuid())
+  tenantId      String
+  registerKey   String                 @default("main")
+  windowStart   DateTime
+  kind          CounterDrawerEventKind
+  amount        Decimal                @db.Decimal(10, 2)
+  denominations Json?
+  at            DateTime               @default(now())
+  byId          String
+  reason        String?
+
+  @@unique([tenantId, registerKey, windowStart, kind])
+  @@index([tenantId, windowStart])
+}
+
+/// SEAM (SA-930 section 4): this is where cash drops and paid-outs go later (the fold would subtract them), each an additive
+/// `ALTER TYPE ... ADD VALUE` migration. Only OPENING_FLOAT exists today. NOTE: the unique key allows ONE row per kind per window,
+/// which fits OPENING_FLOAT; a repeatable kind (a drop) needs a sequence column added to that key in its own migration.
+enum CounterDrawerEventKind {
+  OPENING_FLOAT
+}
+
 /// Sitting 3 (SA-741r2), schema only: a counter cart set aside ("parked") to serve another customer, resumable until
 /// `expiresAt`. `payload` is versioned by `payloadVersion`. Nothing reads or writes it yet.
 model CounterParkedCart {

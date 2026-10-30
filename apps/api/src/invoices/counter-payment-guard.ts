@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   COUNTER_DEFAULT_REGISTER,
@@ -12,6 +12,9 @@ import {
 } from "../returns/counter-close-window";
 import { isCounterTenderRow, type TenderRowShape } from "../orders/counter-sale/counter-tender-row";
 import { isTillCashRow } from "../orders/counter-sale/counter-till-cash";
+import { assertStaffMay } from "../orders/counter-sale/till-permission.guard";
+import type { PermissionPrincipal } from "../auth/permissions/operator-permissions.service";
+import type { PrismaService } from "../prisma/prisma.service";
 
 /**
  * SA-750r3 / SA-762r F7: the payment-edit paths (voidPayment, deletePayment, updatePayment, setCheckStatus(BOUNCED)) of a COUNTER
@@ -67,6 +70,26 @@ async function scope(
   if (!order || !(counterSale || order.fulfillPath === "PICKUP")) return null;
   const registerKey = order.registerKey ?? COUNTER_DEFAULT_REGISTER;
   return { tenantId, registerKey, counterSale, orderId: order.id ?? "" };
+}
+
+/**
+ * W-870: `scope` for every office payment path that unwinds or rewrites a TILL payment (void, delete, update, a check
+ * bounce). Each is the same act as the counter-sale void, so each asks the same VOID_SALE predicate over the operator's live
+ * denied groups (ORDERS switched off = 403, nothing read further). The principal is REQUIRED: a path that forgets it does
+ * not compile. An ordinary invoice (null scope) is never judged; `applies` false reads nothing.
+ */
+export type TillUser = PermissionPrincipal;
+async function voidScope(
+  prisma: PrismaService,
+  invoiceId: string,
+  user: TillUser | undefined,
+  applies = true,
+): Promise<CounterPaymentScope | null> {
+  const till = await scope(prisma, invoiceId, applies);
+  // Fail closed: a till invoice voided with no principal is refused, never waved through.
+  if (till && !user) throw new ForbiddenException("Voiding a counter sale needs a signed-in user");
+  if (till && user) await assertStaffMay(prisma, user, "VOID_SALE");
+  return till;
 }
 
 /**
@@ -250,6 +273,7 @@ async function assertEditDated(
 /** One namespace so the 5.9k-line invoices service imports it in a single line (size ratchet). */
 export const counterPay = {
   scope,
+  voidScope,
   lock,
   assertOpen,
   assertDatesOpen,

@@ -454,7 +454,9 @@ function make(opts: Opts = {}) {
       }),
     },
     tenantAddon,
-    user: { findFirst: jest.fn().mockResolvedValue({ email: "admin@acme.test" }) },
+    user: {
+      findMany: jest.fn().mockResolvedValue([{ email: "admin@acme.test", username: "admin" }]),
+    },
     auditLog: {
       // the APPLIED marker (flag-on redelivery) and the sticky DUPLICATE decision (the audit store)
       findFirst: jest.fn(async ({ where }: any = {}) => {

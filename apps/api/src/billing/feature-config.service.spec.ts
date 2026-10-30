@@ -7,6 +7,9 @@ import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigStore } from "./feature-config.store";
 import { FeatureConfigService } from "./feature-config.service";
+import { FeatureConfigController } from "./feature-config.controller";
+import { SuperAdminGuard } from "../tenant/super-admin.guard";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 
 /**
  * Feature grants v2 brief C (PR-4), oracle 3 — FeatureConfigService.set/clear/getState against
@@ -114,6 +117,39 @@ describe("FeatureConfigService", () => {
       await expect(
         service.set("tenant-a", "not_a_real_key", "scheduled", "r", "admin-1"),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("S-1 (SA-1032): the console sets promotions off with one audit row, refuses an invalid mode, and stays super-admin only", async () => {
+      prisma.tenantFeatureConfig.upsert.mockResolvedValue({});
+      await service.set("tenant-a", "promotions", "off", "owner asked", "sa-1");
+      expect(prisma.tenantFeatureConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { tenantId_featureKey: { tenantId: "tenant-a", featureKey: "promotions" } },
+          update: { mode: "off", reason: "owner asked", updatedById: "sa-1" },
+        }),
+      );
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "FEATURE_CONFIG_SET", tenantId: "tenant-a" }),
+      );
+      expect(store.invalidate).toHaveBeenCalledWith("tenant-a", "promotions");
+
+      prisma.tenantFeatureConfig.upsert.mockClear();
+      audit.log.mockClear();
+      await expect(
+        service.set("tenant-a", "promotions", "maybe", "r", "sa-1"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.tenantFeatureConfig.upsert).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
+
+      // The PUT route sits behind SuperAdminGuard (class level), which refuses every other role (403).
+      expect(Reflect.getMetadata(GUARDS_METADATA, FeatureConfigController)).toContain(
+        SuperAdminGuard,
+      );
+      const ctx = (role: string) =>
+        ({ switchToHttp: () => ({ getRequest: () => ({ user: { role } }) }) }) as never;
+      expect(new SuperAdminGuard().canActivate(ctx("TENANT_ADMIN"))).toBe(false);
+      expect(new SuperAdminGuard().canActivate(ctx("SUPER_ADMIN"))).toBe(true);
     });
 
     it("mixed requires BOTH recurring_routes and order_delivery — missing the second still 409s naming it", async () => {
