@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { invoiceDisplayLines } from "@routeflow/pricing";
-import { InvoiceDisplayRows, displayQtyText, formatUnitPrice4 } from "./InvoiceDisplayRows";
+import { basePriceText, invoiceDisplayLines } from "@routeflow/pricing";
+import { InvoiceDisplayRows, displayQtyText } from "./InvoiceDisplayRows";
 
 const fmt = (n: number) => `$${n.toFixed(2)}`;
 const item = {
@@ -51,7 +51,7 @@ describe("InvoiceDisplayRows (components layout)", () => {
       const a1 = screen.getByTestId("display-row-i1-a1");
       expect(a1).toHaveTextContent("Acme Alpha");
       expect(a1).toHaveTextContent("10 Pieces");
-      expect(a1).toHaveTextContent("$2.0010");
+      expect(a1).toHaveTextContent("$2.001");
       expect(a1).toHaveTextContent("$20.01");
       expect(screen.getByTestId("display-row-i1-a2")).toHaveTextContent("$2.0005");
       expect(screen.getByTestId("display-row-i1-a2")).toHaveTextContent("$40.01");
@@ -93,6 +93,7 @@ describe("display helpers", () => {
   it("pluralises the unit word and prints four decimals", () => {
     expect(displayQtyText(30, "Piece")).toBe("30 Pieces");
     expect(displayQtyText(1, "Piece")).toBe("1 Piece");
-    expect(formatUnitPrice4(2.0007)).toBe("$2.0007");
+    expect(basePriceText(2.0007)).toBe("$2.0007");
+    expect(basePriceText(2)).toBe("$2.00");
   });
 });

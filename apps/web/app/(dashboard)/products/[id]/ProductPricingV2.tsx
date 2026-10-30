@@ -74,7 +74,14 @@ function PricingSection({
           changePricesOpen={cp.open}
           changePricesRef={cp.opener}
           panel={<ChangePrices open={cp.open} onClose={cp.close} openerRef={cp.opener} />}
-          unitControls={structure ? <UnitStructureControls productId={product.id} /> : undefined}
+          unitControls={
+            structure ? (
+              <UnitStructureControls
+                productId={product.id}
+                noPack={!(Number(product.unitsPerBox) > 1)}
+              />
+            ) : undefined
+          }
           afterGrid={
             structure ? (
               <>

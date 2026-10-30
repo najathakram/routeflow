@@ -7,6 +7,7 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * SA-767 r-note Nit 5 + Nit 6: updatePurchaseOrder writes stock (the re-apply leg reverses the PO's
@@ -58,11 +59,17 @@ describe("updatePurchaseOrder retry (SA-767 Nit 5 / Nit 6)", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let alerts: jest.SpyInstance;
+  let stock: StockHelperMock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-927: the real stock helper runs; its locked read is the product the spec states below.
+    stock = wireStockHelper(prisma, {
+      stateOf: (ids) =>
+        ids.map((id) => ({ id, currentStock: D(10), averageCost: D(3), costingMethod: "AVCO" })),
+    });
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) }),
+      fn(stock.wrapTx({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) })),
     );
     prisma.purchaseOrder.findUnique.mockResolvedValue({ ...po, items: [poLine] });
     prisma.purchaseOrder.update.mockResolvedValue({});
@@ -92,7 +99,7 @@ describe("updatePurchaseOrder retry (SA-767 Nit 5 / Nit 6)", () => {
   });
 
   const writes = () => ({
-    movement: prisma.stockMovement.create.mock.calls.length,
+    movement: stock.written().length,
     lot: prisma.stockLot.create.mock.calls.length,
     product: prisma.product.update.mock.calls.length,
   });

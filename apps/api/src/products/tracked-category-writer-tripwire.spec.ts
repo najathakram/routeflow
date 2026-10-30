@@ -41,6 +41,14 @@ export const ALLOW: Record<string, { count: number; guard: string; reason: strin
       "createVariantRowInTx copies the parent's category onto a brand-new variant row; a row that " +
       "does not exist yet is in no recipe.",
   },
+  "src/orders/testing/units-fold-db-harness.ts": {
+    count: 1,
+    guard: "assertTestTenant",
+    reason:
+      "Test-only seeding fixture of the D3 units-fold DB specs (orders/testing, imported only by *.db.spec.ts): " +
+      "seedFoldTenant creates throwaway products, with a category it just created, in qa-ufold-* tenants " +
+      "that assertTestTenant approves; no recipe exists there and no live tenant is ever touched.",
+  },
   "scripts/lib/recipe-locked.mjs": {
     count: 1,
     guard: "partitionRecipeLocked",

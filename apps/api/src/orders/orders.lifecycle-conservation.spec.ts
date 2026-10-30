@@ -96,6 +96,12 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+/** Absolute counter write (SA-927: the helper writes currentStock = stockAfter, never an increment). */
+const stockIs = (n: number) => ({ asymmetricMatch: (v: unknown) => Number(v) === n });
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -146,6 +152,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.order.updateMany.mockResolvedValue({ count: 1 }); // SA-404f F2: cancel CAS claims
 
     const module: TestingModule = await Test.createTestingModule({
@@ -412,13 +419,13 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       expect(prisma.product.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "prod-1" },
-          data: { currentStock: { increment: 5 } },
+          data: { currentStock: stockIs(1_000_000_005) },
         }),
       );
       expect(prisma.product.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "prod-2" },
-          data: { currentStock: { increment: 3 } },
+          data: { currentStock: stockIs(1_000_000_003) },
         }),
       );
       // Both entries must EXIST before their order means anything: `indexOf`
@@ -457,7 +464,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       expect(prisma.product.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "prod-1" },
-          data: { currentStock: { decrement: 3 } },
+          data: { currentStock: stockIs(999_999_997) },
         }),
       );
     });
@@ -756,7 +763,7 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
         const tx = {
           ...(prisma as unknown as Record<string, any>),
           $executeRaw: txExecuteRaw,
-          $queryRaw: txExecuteRaw,
+          $queryRaw: stock.queryRaw(txExecuteRaw),
         };
         return fn(tx);
       });
@@ -797,44 +804,34 @@ describe("OrdersService — F07 lifecycle-conservation (TP-API)", () => {
       }
     });
 
-    it("REG-B116 (T20): three lines of two products decrement stock in exactly ONE aggregated statement, never via a per-line product.update", async () => {
+    it("REG-B116 (T20): three lines of two products decrement stock ONE write per PRODUCT (aggregated), never per line and never a raw UPDATE", async () => {
       primeCreate();
       const { getExecuteRaw } = captureTenantTransaction();
 
       await service.create(dto as any, operatorPayload);
 
-      // Today's per-line loop decrements via the ORM, once per line — the
-      // aggregated fix moves this entirely into the raw statement below.
-      expect(prisma.product.update).not.toHaveBeenCalled();
-
-      const rawCalls = getExecuteRaw().mock.calls;
-      // hand: exactly one call whose SQL text targets currentStock, distinct
-      // from the pre-existing `SELECT ... FOR UPDATE` lock call.
-      const decrementCalls = rawCalls.filter((call: any[]) => {
+      // SA-927: the stock helper folds the lines per product and writes the counter once, absolute.
+      // prod-1's two lines aggregate to 2 + 3 = 5 (1000 -> 995); prod-2's single line is 4 (1000 -> 996).
+      const updates = prisma.product.update.mock.calls.map((c: any[]) => c[0]);
+      expect(updates).toHaveLength(2);
+      expect(updates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            where: { id: "prod-1" },
+            data: { currentStock: stockIs(995) },
+          }),
+          expect.objectContaining({
+            where: { id: "prod-2" },
+            data: { currentStock: stockIs(996) },
+          }),
+        ]),
+      );
+      // no raw "UPDATE Product SET currentStock" statement any more
+      const rawUpdates = getExecuteRaw().mock.calls.filter((call: any[]) => {
         const text = sqlText(call[0]) + " " + sqlText(call.slice(1));
         return text.includes("currentStock") && text.toUpperCase().includes("UPDATE");
       });
-      expect(decrementCalls).toHaveLength(1);
-
-      // hand: the statement must SUBTRACT the bound qty from currentStock. The
-      // occurrence counts below prove the values were aggregated, but they say
-      // nothing about direction — without this a sign flip (`+ v.qty`) or a
-      // write to the wrong column keeps every other assertion in this test
-      // green while doubling stock on every order.
-      const decrementSql = sqlText(decrementCalls[0][0]).replace(/\s+/g, " ");
-      expect(decrementSql).toMatch(/UPDATE\s+"Product"/i);
-      expect(decrementSql).toMatch(/SET\s+"currentStock"\s*=\s*p\."currentStock"\s*-\s*v\.qty/i);
-
-      // hand: prod-1's two lines aggregate to 2 + 3 = 5; prod-2's single line
-      // is 4. Counting occurrences (rather than merely "5 appears somewhere")
-      // is what makes this an AGGREGATION oracle: a statement that carried the
-      // per-line 2 and 3 for prod-1 would name prod-1 twice and never bind 5.
-      const boundValues = callValues(decrementCalls[0] ?? []);
-      const qtys = boundValues.map(Number).filter((n) => Number.isFinite(n));
-      expect(qtys.filter((n) => n === 5)).toHaveLength(1);
-      expect(qtys.filter((n) => n === 4)).toHaveLength(1);
-      expect(boundValues.filter((v: any) => String(v) === "prod-1")).toHaveLength(1);
-      expect(boundValues.filter((v: any) => String(v) === "prod-2")).toHaveLength(1);
+      expect(rawUpdates).toHaveLength(0);
     });
   });
 });
