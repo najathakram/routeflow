@@ -6667,20 +6667,18 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a driver legacy full id-less list (old clients) still replaces", async () => {
+    it("W-871 (SA-948): a driver legacy full id-less list on OUT_FOR_DELIVERY is refused (was: replaces)", async () => {
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.product.findMany.mockResolvedValue([
         { id: "prod-A", pricePerUnit: 5, unitsPerBox: null },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+      const items = [{ productId: "prod-A", qty: 4 }];
+      await expect(
+        service.updateOrderItems("ord-1", { items }, driverPayload),
+      ).rejects.toMatchObject({ status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } });
 
-      await service.updateOrderItems(
-        "ord-1",
-        { items: [{ productId: "prod-A", qty: 4 }] },
-        driverPayload,
-      );
-
-      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
     });
 
     it("a buyer (CUSTOMER) diff-shaped payload is rejected with 400 before any mutation", async () => {

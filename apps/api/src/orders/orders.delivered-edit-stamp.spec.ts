@@ -19,6 +19,7 @@ import { buildOrdersService, operatorPayload } from "./testing/orders-service-ha
 const stockIs = (n: number) => ({ asymmetricMatch: (v: unknown) => Number(v) === n });
 
 const staff = { ...operatorPayload, tenantId: "t-1" } as never;
+const REPLACE_LOCKED = { status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } };
 const PRODUCT = {
   id: "prod-A",
   name: "Widget",
@@ -140,11 +141,14 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(d("li-A")).toBe(12);
   });
 
-  it("the same legacy line cut through a replace-all: no restock, d ends at max(d, old, new) = 12", async () => {
+  it("W-871: the same legacy line cut through a replace-all is refused 409 (was: no restock, d 12)", async () => {
+    // SA-948 §2 MUST 1: a replace on a post-delivery order is refused before any write.
     seed([lineA({ qty: 12, deliveredQty: 0 })]);
-    await edit([{ productId: "prod-A", qty: 10 }], true);
-    expect(h.prisma.product.update).not.toHaveBeenCalled(); // red on base: increment 2
-    expect(Number(store[0].deliveredQty)).toBe(12); // red on base: 10
+    await expect(edit([{ productId: "prod-A", qty: 10 }], true)).rejects.toMatchObject(
+      REPLACE_LOCKED,
+    );
+    expect(h.prisma.product.update).not.toHaveBeenCalled();
+    expect(store.map((l) => l.id)).toEqual(["li-A"]);
   });
 
   it("a route-stop order keeps today's settle: a cut restocks (its columns are never touched)", async () => {
@@ -189,33 +193,25 @@ describe("SA-763r: an edit of a DELIVERED order keeps the delivered quantities",
     expect(d("li-A")).toBe(6);
   });
 
-  it("replace-all carries the product's delivered sum onto the recreated row (M2)", async () => {
-    seed([lineA()]);
-    await edit([{ productId: "prod-A", qty: 12 }], true);
-    expect(store).toHaveLength(1);
-    expect(store[0].id).not.toBe("li-A"); // recreated
-    expect(Number(store[0].deliveredQty)).toBe(12); // red on base: 0
-  });
-
-  it("replace-all with a cut keeps the carried 10 (never lowered)", async () => {
-    seed([lineA()]);
-    await edit([{ productId: "prod-A", qty: 6 }], true);
-    expect(Number(store[0].deliveredQty)).toBe(10); // red on base: 0
-  });
-
-  it("replace-all of an order with route evidence is REFUSED 409 ORDER_EDIT_NEEDS_LINE_IDS, nothing written", async () => {
-    seed(
-      [lineA({ deliveredQty: 8 })],
+  // W-871 (SA-948 §2 MUST 1): a replace on this DELIVERED order is refused before any write, ahead of the M2 carry
+  // and the ORDER_EDIT_NEEDS_LINE_IDS evidence refusal it used to reach (was: the carry, and that 409).
+  it.each([
+    ["the same qty (was: the carried 12)", 12, []],
+    ["a cut (was: the carried 10 kept)", 6, []],
+    [
+      "route evidence (was: 409 ORDER_EDIT_NEEDS_LINE_IDS)",
+      12,
       [{ orderItemId: "li-A", type: "PARTIAL", quantityDelivered: 8 }],
+    ],
+  ])("replace-all with %s is refused 409, nothing written", async (_l, qty, evidence) => {
+    seed([lineA(evidence.length ? { deliveredQty: 8 } : {})], evidence as never);
+    await expect(edit([{ productId: "prod-A", qty: qty as number }], true)).rejects.toMatchObject(
+      REPLACE_LOCKED,
     );
-    await expect(edit([{ productId: "prod-A", qty: 12 }], true)).rejects.toMatchObject({
-      status: 409,
-      response: expect.objectContaining({ code: "ORDER_EDIT_NEEDS_LINE_IDS" }),
-    }); // red on base: the replace-all went through and orphaned the evidence
     expect(h.prisma.orderItem.deleteMany).not.toHaveBeenCalled();
     expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
     expect(store.map((l) => l.id)).toEqual(["li-A"]);
-    expect(d("li-A")).toBe(8);
+    expect(d("li-A")).toBe(evidence.length ? 8 : 10);
   });
 
   it("the same order edited with stable line ids succeeds and the evidence line is untouched", async () => {

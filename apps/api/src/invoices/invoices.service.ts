@@ -214,6 +214,7 @@ import {
   isSoleBillingDraftIn,
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
+import { loadReopenableInvoice } from "./invoice-reopen-guard";
 import {
   issueDateStamp,
   overdueCutoff,
@@ -4082,10 +4083,7 @@ export class InvoicesService {
   }
 
   async reopenInvoice(id: string) {
-    const inv = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
-    if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status !== InvoiceStatus.PAID)
-      throw new BadRequestException("Only PAID invoices can be reopened");
+    await loadReopenableInvoice(this.prisma.forTenant(), id); // PAID only; W-861: never a paid walk-in sale
 
     // Sales agents & commissions: PAID→DRAFT is the nastiest clawback path —
     // if commission was already claimed, sync emits the negative adjustment

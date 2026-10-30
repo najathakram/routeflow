@@ -38,3 +38,19 @@ export function InvoicedEditNotice({
     </p>
   );
 }
+
+/**
+ * W-861 (SA-944 §3): the order read's `editItemsLocked` (a paid walk-in sale) hides Edit Items; this line says what
+ * to do instead. The page passes the server's verdict; nothing here re-derives it.
+ */
+export function EditItemsLockedNote({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span
+      data-testid="edit-items-locked"
+      className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200"
+    >
+      This sale is paid. Ring up added items as a new sale, or use Return to take items back.
+    </span>
+  );
+}

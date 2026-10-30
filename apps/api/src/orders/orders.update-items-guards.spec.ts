@@ -801,7 +801,7 @@ describe("OrdersService — F06 guards (TP2)", () => {
   // ─── T9 (pin — green pre-fix): DRIVER post-dispatch edit is unaffected ──────
 
   describe("updateOrderItems — DRIVER post-dispatch edit (T9, pin — green pre-fix)", () => {
-    it("a DRIVER non-diff edit on an OUT_FOR_DELIVERY order still succeeds", async () => {
+    it("W-871 (SA-948): a DRIVER non-diff (full-list) save on an OUT_FOR_DELIVERY order is refused 409, nothing deleted", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "OUT_FOR_DELIVERY",
@@ -825,24 +825,16 @@ describe("OrdersService — F06 guards (TP2)", () => {
       ]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
 
+      // Was: resolves, deleting and re-creating every line. A replace on a post-delivery order loses the invoice's
+      // line provenance (SA-948 §2 MUST 1); current clients send per-line diffs (replaceAll: false).
       await expect(
         service.updateOrderItems(
           "ord-1",
           { items: [{ productId: "prod-A", qty: 4 }] },
           driverPayload,
         ),
-      ).resolves.toBeDefined();
-
-      // The DRIVER replace still deletes this order's lines. Asserted loosely on
-      // purpose: pinning the EXACT where-shape here (paired with T4's) would
-      // hard-code that the two branches must issue two DIFFERENT queries, so a
-      // reasonable implementation scoping the delete once for both non-diff
-      // branches would break a pin despite no observable DRIVER change. The
-      // observable claim — unlisted authoring survives, catalog lines replace —
-      // is carried by T6 and the resolves assertion above.
-      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ orderId: "ord-1" }) }),
-      );
+      ).rejects.toMatchObject({ status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } });
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
     });
   });
 

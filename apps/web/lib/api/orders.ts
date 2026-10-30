@@ -132,6 +132,8 @@ export interface Order {
   revisions?: OrderRevision[];
   /** B1083: the server says this order cannot be cancelled ("WITH_CARRIER": the parcel is out). */
   cancelBlockedReason?: OrderCancelBlockedReason | null;
+  /** W-861: the server refuses an items edit (a paid walk-in sale); Edit items is not offered. Never re-derived. */
+  editItemsLocked?: boolean;
   /** P5-08: whether the order can still be edited directly (closes on dispatch). */
   editWindow?: {
     editable: boolean;
