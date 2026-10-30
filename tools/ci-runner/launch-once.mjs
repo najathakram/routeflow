@@ -20,7 +20,7 @@ const EXIT_NO_SEAT = 5;
 const SEAT_LABEL = "ci-runner-verify";
 /** Under heavy-slot's 90-minute hold cap, which ends tracked children only: docker here isn't one. */
 const MAX_MINUTES = 80;
-const IMAGE = "routeflow-ci-runner:2.338.2";
+const IMAGE = "routeflow-ci-runner:2.338.2-r2";
 const NETWORK = "routeflow-ci-runner";
 const LABELS = ["self-hosted", "Linux", "X64", "routeflow-ephemeral"];
 const POLL_MS = 15_000;
@@ -171,53 +171,69 @@ export function noteRunnerLine(state, line) {
   if (JOB_STARTED.test(line)) state.jobRunning = true;
 }
 
-function runContainer({ name, jitConfig, runnerId, flags }) {
-  const container = spawn("docker", dockerArgs(name, flags), {
+function removeContainer(name) {
+  try {
+    execFileSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: GH_TIMEOUT_MS });
+  } catch {
+    // Already removed by --rm.
+  }
+}
+
+export function runContainer({ name, jitConfig, runnerId, flags }, io = REAL_IO) {
+  const container = io.spawn("docker", dockerArgs(name, flags), {
     stdio: ["pipe", "pipe", "inherit"],
   });
-  container.stdin.end(`${jitConfig}\n`);
+  // Left open on purpose. entrypoint.sh ends the container when stdin closes, so no way of killing
+  // this process leaves a runner with nothing watching it.
+  container.stdin.write(`${jitConfig}\n`);
   const state = {
     deadline: Date.now() + flags.maxMinutes * 60_000,
     lastPrivateAt: Date.now(),
     jobRunning: false,
   };
   createInterface({ input: container.stdout }).on("line", (line) => {
-    console.log(line);
+    io.log(line);
     noteRunnerLine(state, line);
   });
 
-  const stop = () => {
-    try {
-      execFileSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: GH_TIMEOUT_MS });
-    } catch {
-      // Already removed by --rm.
-    }
-  };
+  const stop = () => io.removeContainer(name);
   const poll = setInterval(() => {
     const action = pollOnce(state, {
       now: Date.now(),
-      readVisibility: visibility,
-      log: console.error,
+      readVisibility: io.readVisibility,
+      log: io.error,
     });
     if (action === "stop") {
-      console.error("max-minutes reached: stopping the runner");
+      io.error("max-minutes reached: stopping the runner");
       stop();
     } else if (action === "remove") {
-      console.error("repo not confirmed PRIVATE with this runner idle: removing it");
-      deleteRunner(runnerId);
+      io.error("repo not confirmed PRIVATE with this runner idle: removing it");
+      io.deleteRunner(runnerId);
       stop();
     }
-  }, POLL_MS);
+  }, io.pollMs);
 
   return new Promise((resolve) => {
+    // If only docker's CLI died, the container is still up. "close" waits for its last log lines.
     const done = (code) => {
       clearInterval(poll);
+      stop();
       resolve(code);
     };
     container.on("error", () => done(1));
-    container.on("exit", (code) => done(code ?? 1));
+    container.on("close", (code) => done(code ?? 1));
   });
 }
+
+const REAL_IO = {
+  spawn,
+  readVisibility: visibility,
+  deleteRunner,
+  removeContainer,
+  pollMs: POLL_MS,
+  log: console.log,
+  error: console.error,
+};
 
 const REAL_DEPS = {
   visibility,

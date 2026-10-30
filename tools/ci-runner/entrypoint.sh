@@ -15,5 +15,13 @@ iptables -A OUTPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -j REJECT
 
+# The container ends with the first of these three. The launcher holds stdin open for the
+# container's whole life, so if it dies, however it dies, `cat` ends and takes the runner with it.
+# The sleep is a backstop, past the launcher's own 80-minute limit.
 exec setpriv --reuid=10001 --regid=10001 --clear-groups --bounding-set=-all --inh-caps=-all \
-  ./run.sh --jitconfig "$JIT_CONFIG"
+  bash -c '
+    ./run.sh --jitconfig "$1" </dev/null &
+    cat >/dev/null &
+    sleep 5400 &
+    wait -n
+  ' bash "$JIT_CONFIG"

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Self-test for tools/ci-runner/launch-once.mjs. Plain node; exit 1 on failure. No gh, no Docker:
 // every outside call is a fake, so this runs anywhere `npm run verify` runs.
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   EXIT_FOREIGN_QUEUED,
   EXIT_NOT_PRIVATE,
@@ -13,6 +15,7 @@ import {
   noteRunnerLine,
   parseFlags,
   pollOnce,
+  runContainer,
 } from "./launch-once.mjs";
 import { withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
 
@@ -176,6 +179,78 @@ check(
   check("J2 a job starting marks the runner busy", state.jobRunning, true);
   noteRunnerLine(state, "2026-10-30 19:54:34Z: Job Verify completed with result: Succeeded");
   check("J3 a finished job stays marked: this runner takes no other", state.jobRunning, true);
+}
+
+// ── The container's whole life ───────────────────────────────────────────────────────────────────
+function fakeRun(over = {}) {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+  });
+  const calls = [];
+  let settled = false;
+  const finished = runContainer(
+    { name: "rf-ephemeral-1", jitConfig: "one-job", runnerId: 7, flags: defaults },
+    {
+      spawn: () => child,
+      readVisibility: () => "PRIVATE",
+      deleteRunner: (id) => calls.push(`delete ${id}`),
+      removeContainer: (name) => calls.push(`remove ${name}`),
+      pollMs: 1,
+      log: () => {},
+      error: () => {},
+      ...over,
+    },
+  ).then((code) => {
+    settled = true;
+    return code;
+  });
+  return { child, calls, finished, isSettled: () => settled };
+}
+const ticks = () => new Promise((resolve) => setTimeout(resolve, 25));
+const end = (child, code = 0) => {
+  child.emit("exit", code);
+  child.emit("close", code);
+};
+{
+  const { child, finished } = fakeRun();
+  check("C1 stdin stays open: it is the dead-man's switch", child.stdin.writableEnded, false);
+  end(child);
+  await finished;
+}
+{
+  const { child, calls, finished } = fakeRun({ readVisibility: () => "PUBLIC" });
+  await ticks();
+  check("C2 PUBLIC while idle: delete, then remove", calls.slice(0, 2), [
+    "delete 7",
+    "remove rf-ephemeral-1",
+  ]);
+  end(child);
+  await finished;
+}
+{
+  const { child, calls, finished } = fakeRun({ readVisibility: () => "PUBLIC" });
+  child.stdout.write("2026-10-30 19:16:43Z: Running job: Verify\n");
+  await new Promise((resolve) => setImmediate(resolve));
+  const before = calls.length;
+  await ticks();
+  check("C3 the runner's job line reaches the guard", calls.length, before);
+  end(child);
+  await finished;
+}
+{
+  const { child, calls, finished } = fakeRun();
+  end(child, 3);
+  check("C4 the exit code comes back", await finished, 3);
+  check("C5 docker's CLI died: the container is removed too", calls, ["remove rf-ephemeral-1"]);
+}
+{
+  const { child, finished, isSettled } = fakeRun();
+  child.emit("exit", 0);
+  await ticks();
+  check("C6 the last log lines come before the end", isSettled(), false);
+  child.emit("close", 0);
+  await finished;
 }
 
 // ── Refusals mint nothing ────────────────────────────────────────────────────────────────────────

@@ -27,10 +27,10 @@ The launcher takes its own heavy seat, so do not wrap it in `heavy-slot run`. Ru
 
 The branch needs this PR's `ci.yml`, because a dispatch reads the workflow from the branch.
 
-**One-time setup on the PC.** Both are already there from the trial. Rebuild the image when `tools/ci-runner/` changes.
+**One-time setup on the PC.** Both are done. When `Dockerfile` or `entrypoint.sh` changes, bump the tag here and in `launch-once.mjs`, then rebuild. A launcher that can't find its tag fails instead of running an old image.
 
 ```bash
-docker build -t routeflow-ci-runner:2.338.2 tools/ci-runner
+docker build -t routeflow-ci-runner:2.338.2-r2 tools/ci-runner
 ```
 
 ```bash
@@ -68,7 +68,7 @@ Any other code is the container's own. Exits 2 to 5 register no runner. The job 
 
 ## Stopping it
 
-Stop the container and cancel the run. Do not kill the launcher: if it dies, the container keeps running with nothing watching it.
+Stop the container and cancel the run, and leave the launcher running so it can clean up.
 
 ```bash
 docker ps --filter name=rf-ephemeral
@@ -84,7 +84,7 @@ gh run cancel <run-id> --repo najathakram/routeflow
 
 The launcher then frees its seat and retries deleting the runner for up to 15 minutes, because GitHub refuses to delete a runner until its run closes. If it gives up, it prints the command to finish the job.
 
-If the launcher has died anyway, run the same three commands, then delete the runner:
+If the launcher dies, its container ends within seconds, because the container stops when the launcher's end of stdin closes. The runner stays registered but offline, so it can't take a job. Cancel the run, then delete the runner:
 
 ```bash
 gh api repos/najathakram/routeflow/actions/runners --jq ".runners[] | {id, name, status, busy}"
