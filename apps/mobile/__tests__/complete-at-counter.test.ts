@@ -158,7 +158,7 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (mobile)", () => {
   // W-776 (SA-925): the pre-check's closed day says nothing changed; the post-claim code never claims that
   it("a closed day refused before any write says nothing changed", () => {
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_DAY_CLOSED" }))).toBe(
-      "Nothing changed. This register's day is closed. A manager or owner can reopen it.",
+      "Nothing changed. This register's day is closed. Ask a manager or owner to reopen it.",
     );
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_SALE_DAY_CLOSED" }))).not.toMatch(
       /Nothing changed/,
@@ -170,7 +170,7 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (mobile)", () => {
     );
     expect(
       pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_ON_RUN", driverName: "Sam" })),
-    ).toBe("Nothing changed. This order is on Sam's run. Completing it here takes it off the run.");
+    ).toBe("This order is on Sam's run. Completing it here takes it off the run.");
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_STOP_STARTED" }))).toBe(
       "Nothing changed. The driver has started this stop. Finish it on the route.",
     );

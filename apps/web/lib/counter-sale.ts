@@ -746,6 +746,26 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  // W-778: the Complete-at-counter refusals are the dialog's own copy too (one message per refusal, never also the generic 409 toast)
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+]);
+/**
+ * W-778: refusals no retry from this dialog can fix (nothing was written). The dialog shows only Close (or Reload) and locks
+ * the tender controls, so nothing looks ready to retry. COUNTER_COMPLETE_ON_RUN is not here: the clerk can confirm it.
+ */
+export const COMPLETE_HARD_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
 ]);
 /** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
 const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([
