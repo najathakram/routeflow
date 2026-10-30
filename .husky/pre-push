@@ -76,6 +76,16 @@ node scripts/size-ratchet-gate.mjs || exit 1
 # Never blocks: output only, any failure is ignored.
 node scripts/risk-class.mjs 2>/dev/null || true
 
+# DARK: report-only PR size (counted lines, scripts/pr-size.mjs; thresholds in scripts/lib/pr-size.mjs).
+# Never blocks: output only, any failure is ignored.
+node scripts/pr-size.mjs 2>/dev/null || true
+# DARK (R4): report-only test-tamper scan of this branch (scripts/test-tamper-check.mjs), then the
+# fix-revert probe, which RUNS tests, so only when PROBE=1 on a fix/* or bug/* branch. Never blocks.
+node scripts/test-tamper-check.mjs || true
+if [ "$PROBE" = "1" ]; then
+  case "$branch" in fix/* | bug/*) node scripts/fix-revert-probe.mjs || true ;; esac
+fi
+
 if [ "$SKIP_VERIFY" = "1" ]; then
   upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo origin/master)"
   changed="$(git diff --name-only "$upstream"...HEAD 2>/dev/null || git diff --name-only origin/master...HEAD)"

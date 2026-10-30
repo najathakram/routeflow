@@ -54,6 +54,7 @@ const EXCLUDES = [":!*.md", ":!.claude/pipeline", ":!.claude/campaign"];
 const CONTRACT = ["scripts/lib/registry-root.mjs"];
 // Tests and fixtures build register paths on purpose.
 const FIXTURES = [
+  ".claude/hooks/stop.gate4.spec.mjs",
   ".claude/hooks/stop.gate5.spec.mjs",
   "apps/api/src/auth/google-oauth.service.spec.ts",
   "apps/api/src/common/campaign-check-freshness.spec.ts",

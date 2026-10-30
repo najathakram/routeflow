@@ -227,14 +227,23 @@ export interface PaymentMethodOption {
   disabled: boolean;
 }
 
-/** Cash / Card / Check / On account; On account is disabled for a walk-in (no account to charge). */
-export function paymentMethodOptions(isWalkIn: boolean): PaymentMethodOption[] {
-  return [
+/**
+ * Cash / Card / Check / On account; On account is disabled for a walk-in (no account to charge). `first` is the customer's
+ * default tender (SA-933): it is listed first so the default is the first thing the clerk sees and tabs to; the rest keep
+ * their order, and a disabled method is never promoted.
+ */
+export function paymentMethodOptions(
+  isWalkIn: boolean,
+  first?: CounterSalePaymentMethod | null,
+): PaymentMethodOption[] {
+  const all: PaymentMethodOption[] = [
     { method: "CASH", label: "Cash", disabled: false },
     { method: "CARD", label: "Card", disabled: false },
     { method: "CHECK", label: "Check", disabled: false },
     { method: "ON_ACCOUNT", label: "On account", disabled: isWalkIn },
   ];
+  const at = first ? all.findIndex((m) => m.method === first && !m.disabled) : -1;
+  return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
 }
 
 /** Mirrors the API DTO: a payment amount is at most 1,000,000 and a reference at most 100 characters. */
@@ -272,10 +281,16 @@ export function validatePayment(input: {
   tendered?: number;
   reference?: string;
   isWalkIn: boolean;
+  /** a surface that has not opened part payment (the store-pickup hand-over dialog): a short cash tender stays refused */
+  fullTenderOnly?: boolean;
 }): PaymentProblem | null {
   if (input.method === "ON_ACCOUNT" && input.isWalkIn) return "WALK_IN_ON_ACCOUNT";
-  if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total))
-    return "TENDER_SHORT";
+  if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total)) {
+    // SA-933 S4: an identified customer can pay part now (the rest goes on account); a walk-in pays the full total, and
+    // nothing tendered is not a payment at all.
+    if (input.isWalkIn || input.fullTenderOnly || !(roundMoney(Number(input.tendered ?? 0)) > 0))
+      return "TENDER_SHORT";
+  }
   if (input.method === "CASH" && Number(input.tendered) > COUNTER_MAX_TENDER)
     return "TENDER_TOO_LARGE";
   if (input.method === "CHECK" && !(input.reference ?? "").trim()) return "CHECK_NUMBER_REQUIRED";

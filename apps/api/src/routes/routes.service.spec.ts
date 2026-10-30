@@ -500,7 +500,7 @@ describe("RoutesService", () => {
   // "plannedPolyline invalidation" tests in this file.
 
   describe("deleteRoute", () => {
-    it("REG-B96 / T-B96: refuses a SCHEDULED route with a COMPLETED run and deletes nothing", async () => {
+    it("REG-B209 R6 (flips REG-B96 / T-B96): refuses a SCHEDULED route with a COMPLETED run with a 409 + ROUTE_HAS_DELIVERY_EVIDENCE and deletes nothing", async () => {
       prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, kind: RouteKind.SCHEDULED });
       prisma.routeRun.findMany.mockResolvedValue([
         {
@@ -512,16 +512,22 @@ describe("RoutesService", () => {
         },
       ]);
 
-      // RED TODAY: the guard is gated on `route.kind === RouteKind.ADHOC`, so
-      // a SCHEDULED route sails straight through it and nothing is rejected.
-      await expect(service.deleteRoute("route-1")).rejects.toThrow(BadRequestException);
+      // RED TODAY: the refusal is a BadRequestException (400) with no code; SA-842 flips it on
+      // purpose to ConflictException (409) carrying ROUTE_HAS_DELIVERY_EVIDENCE.
+      const err: any = await service.deleteRoute("route-1").catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toEqual(
+        expect.objectContaining({ code: "ROUTE_HAS_DELIVERY_EVIDENCE" }),
+      );
 
       // Call-shape, not return value: a guard that throws AFTER already
-      // deleting would still pass a return-value-only check.
+      // deleting would still pass a return-value-only check. (The refusal now
+      // happens INSIDE the transaction, under the locks, so the tx is entered.)
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(prisma.deliveryMutation.updateMany).not.toHaveBeenCalled();
       expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
       expect(prisma.routeRun.deleteMany).not.toHaveBeenCalled();
       expect(prisma.route.delete).not.toHaveBeenCalled();
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
     });
   });
 

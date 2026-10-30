@@ -400,7 +400,12 @@ describe("CommissionEngineService", () => {
         subtotal: 1025,
         total: 1025,
         items: [
-          { description: `${NSF_FEE_DESCRIPTION_PREFIX} CHK-1001`, qty: 1, unitPrice: 25 },
+          {
+            description: `${NSF_FEE_DESCRIPTION_PREFIX} CHK-1001`,
+            qty: 1,
+            unitPrice: 25,
+            subtotal: 25,
+          },
           { description: "Widget line", qty: 2, unitPrice: 10 },
         ],
         payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
@@ -427,7 +432,13 @@ describe("CommissionEngineService", () => {
         subtotal: 1025,
         total: 1025,
         items: [
-          { description: "Returned check charge", systemKind: "NSF_FEE", qty: 1, unitPrice: 25 },
+          {
+            description: "Returned check charge",
+            systemKind: "NSF_FEE",
+            qty: 1,
+            unitPrice: 25,
+            subtotal: 25,
+          },
           { description: "Widget line", qty: 2, unitPrice: 10 },
         ],
         payments: [{ id: "p1", amount: 1025, method: "CASH", status: "PAID" }],
@@ -450,6 +461,7 @@ describe("CommissionEngineService", () => {
             systemKind: null,
             qty: 1,
             unitPrice: 25,
+            subtotal: 25,
           },
           { description: "Widget line", systemKind: null, qty: 2, unitPrice: 10 },
         ],
@@ -461,6 +473,49 @@ describe("CommissionEngineService", () => {
       await service.syncInvoiceCommission("inv-1", db);
       const created = db.commissionAccrual.create.mock.calls[0][0].data;
       expect(created.baseAmount).toBe(1000);
+    });
+
+    // Row 139 (SA-982 §3b): the fee leaves the base at what the invoice STORED for it (qty x unitPrice less the line
+    // discount), the figure that sits inside invoice.subtotal. Re-deriving qty x unitPrice took the pre-discount $25 out of
+    // a subtotal that held $20 and under-paid the agent.
+    describe("the NSF fee is taken out at the stored line subtotal, not qty x unitPrice (row 139)", () => {
+      const run = async (nsfItem: Record<string, unknown>) => {
+        const invoice = baseInvoice({
+          subtotal: 1020,
+          total: 1020,
+          items: [nsfItem, { description: "Widget line", systemKind: null, qty: 2, unitPrice: 10 }],
+          payments: [{ id: "p1", amount: 1020, method: "CASH", status: "PAID" }],
+        });
+        const agentRates = [{ ratePct: 10, effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }];
+        const { db } = buildFakeDb({ invoice, assignment: { agentId: "agent-1" }, agentRates });
+        await service.syncInvoiceCommission("inv-1", db);
+        return db.commissionAccrual.create.mock.calls[0][0].data;
+      };
+
+      it("a legacy (prefix-leg) NSF line with a $5 line discount: the $20 stored in the subtotal leaves, so the base is $1000", async () => {
+        const created = await run({
+          description: `${NSF_FEE_DESCRIPTION_PREFIX} CHK-1001`,
+          systemKind: null,
+          qty: 1,
+          unitPrice: 25,
+          discount: 5,
+          subtotal: 20,
+        });
+        expect(created.baseAmount).toBe(1000); // 1020 - 20; the old qty x unitPrice read gave 995
+        expect(created.accruedAmount).toBe(100);
+      });
+
+      it("a stamped NSF line with no discount is unchanged: its stored subtotal is its qty x unitPrice", async () => {
+        const created = await run({
+          description: "Returned check charge",
+          systemKind: "NSF_FEE",
+          qty: 1,
+          unitPrice: 20,
+          discount: 0,
+          subtotal: 20,
+        });
+        expect(created.baseAmount).toBe(1000);
+      });
     });
 
     it("a NULL-systemKind custom line WITHOUT the prefix is fully commissionable", async () => {

@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SOURCE = JSON.parse(readFileSync(new URL("./registry-source.json", import.meta.url), "utf8"));
 
 export const REGISTRY_MODE = "tracked";
@@ -39,6 +39,33 @@ export const REGISTRY_LOCK_WAIT_MS =
   ((REGISTRY_PUSH_RETRIES + 1) * REGISTRY_GIT_CALLS_PER_ATTEMPT + REGISTRY_GIT_CALLS_FIXED) *
     REGISTRY_GIT_TIMEOUT_MS +
   REGISTRY_LOCK_SLACK_MS;
+// The sync scan: the bounded window of a --rescan, the machine-local anchor, and the repo it reads.
+// BUGS_SYNC_REPO points a fixture at a throwaway repo and is honoured only under BUGS_SELF_TEST=1.
+export const FIRST_RUN_WINDOW = 400;
+export const syncStatePath = () =>
+  process.env.BUGS_SYNC_STATE || join(REPO_ROOT, ".campaign", "bugs-sync-state.json");
+export const syncRepoOverride = () =>
+  (process.env.BUGS_SELF_TEST === "1" && process.env.BUGS_SYNC_REPO) || null;
+// REGISTRY_LAND_CHECK_CMD (a script run instead of campaign-check.mjs by registry:land) is a test seam
+// with the same gate as BUGS_SYNC_REPO: honoured only under BUGS_SELF_TEST=1, and it says so (once
+// per process) when it is, like the other test hooks.
+let landCheckWarned = false;
+export const landCheckOverride = (env = process.env) => {
+  const cmd = (env.BUGS_SELF_TEST === "1" && env.REGISTRY_LAND_CHECK_CMD) || null;
+  if (cmd && !landCheckWarned) {
+    landCheckWarned = true;
+    console.error(
+      `WARNING: REGISTRY_LAND_CHECK_CMD is set — a test-only hook: running ${cmd} instead of campaign-check.mjs`,
+    );
+  }
+  return cmd;
+};
+// The campaign-check child of registry:land runs under the clone lock, so it is capped (10 min).
+// REGISTRY_LAND_CHECK_TIMEOUT_MS shortens it, under BUGS_SELF_TEST=1 only.
+export const LAND_CHECK_TIMEOUT_MS = 10 * 60 * 1000;
+export const landCheckTimeoutMs = (env = process.env) =>
+  (env.BUGS_SELF_TEST === "1" && Number(env.REGISTRY_LAND_CHECK_TIMEOUT_MS)) ||
+  LAND_CHECK_TIMEOUT_MS;
 export const REGISTRY_FIX_COMMAND = "npm run registry:clone";
 
 // Where the register sits inside the repo while the mode is "tracked".

@@ -236,6 +236,22 @@ describe("payment method chips", () => {
     expect(walk.find((m) => m.method === "ON_ACCOUNT")?.disabled).toBe(true);
     expect(paymentMethodOptions(false).every((m) => !m.disabled)).toBe(true);
   });
+  it("the default tender is listed first, the rest keep their order; a disabled default is not promoted", () => {
+    expect(paymentMethodOptions(false, "ON_ACCOUNT").map((m) => m.method)).toEqual([
+      "ON_ACCOUNT",
+      "CASH",
+      "CARD",
+      "CHECK",
+    ]);
+    expect(paymentMethodOptions(false, "CASH").map((m) => m.method)).toEqual([
+      "CASH",
+      "CARD",
+      "CHECK",
+      "ON_ACCOUNT",
+    ]);
+    expect(paymentMethodOptions(false, null).map((m) => m.method)[0]).toBe("CASH");
+    expect(paymentMethodOptions(true, "ON_ACCOUNT").map((m) => m.method)[0]).toBe("CASH");
+  });
   it("a short cash tender says what to enter, with the total in the shared money format", () => {
     expect(paymentProblemCopy("TENDER_SHORT", 18.94)).toBe("Enter at least $18.94.");
     expect(isTenderShortCopy(paymentProblemCopy("TENDER_SHORT", 3))).toBe(true);

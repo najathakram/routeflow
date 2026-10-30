@@ -1,4 +1,10 @@
-import { CheckoutPolicyViolation, withCheckoutPolicy } from "./checkout-session-params";
+import { Logger } from "@nestjs/common";
+import {
+  CHECKOUT_PAYMENT_METHODS_ENV,
+  CheckoutPolicyViolation,
+  checkoutPaymentMethodTypes,
+  withCheckoutPolicy,
+} from "./checkout-session-params";
 
 const BASE = {
   mode: "subscription" as const,
@@ -45,5 +51,78 @@ describe("withCheckoutPolicy (owner ruling 2026-10-06: Managed Payments off, no 
     expect(() => withCheckoutPolicy({ ...BASE, managed_payments: { enabled: true } })).toThrow(
       CheckoutPolicyViolation,
     );
+  });
+});
+
+describe("checkoutPaymentMethodTypes (SA-1037 r3 PR-1: payment methods by config, default = today)", () => {
+  const env = (v?: string) => ({ [CHECKOUT_PAYMENT_METHODS_ENV]: v });
+
+  it("unset, empty or blank: undefined, so the field is omitted and the Dashboard decides", () => {
+    expect(checkoutPaymentMethodTypes({})).toBeUndefined();
+    expect(checkoutPaymentMethodTypes(env(""))).toBeUndefined();
+    expect(checkoutPaymentMethodTypes(env("   "))).toBeUndefined();
+  });
+
+  it("card_and_bank: card and us_bank_account (case and spaces tolerated)", () => {
+    expect(checkoutPaymentMethodTypes(env("card_and_bank"))).toEqual(["card", "us_bank_account"]);
+    expect(checkoutPaymentMethodTypes(env("  Card_And_Bank "))).toEqual([
+      "card",
+      "us_bank_account",
+    ]);
+  });
+
+  it("an unknown value omits the field and warns once per value, never throws", () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    try {
+      expect(checkoutPaymentMethodTypes(env("ach_only_typo"))).toBeUndefined();
+      expect(checkoutPaymentMethodTypes(env("ach_only_typo"))).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(CHECKOUT_PAYMENT_METHODS_ENV);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("returns a fresh array each call (a caller cannot corrupt the set)", () => {
+    const a = checkoutPaymentMethodTypes(env("card_and_bank"))!;
+    a.push("link" as never);
+    expect(checkoutPaymentMethodTypes(env("card_and_bank"))).toEqual(["card", "us_bank_account"]);
+  });
+});
+
+describe("withCheckoutPolicy x BILLING_CHECKOUT_PAYMENT_METHODS (R1)", () => {
+  const prior = process.env[CHECKOUT_PAYMENT_METHODS_ENV];
+  afterEach(() => {
+    if (prior === undefined) delete process.env[CHECKOUT_PAYMENT_METHODS_ENV];
+    else process.env[CHECKOUT_PAYMENT_METHODS_ENV] = prior;
+  });
+
+  it("env unset: no payment_method_types key at all (today)", () => {
+    delete process.env[CHECKOUT_PAYMENT_METHODS_ENV];
+    expect(withCheckoutPolicy(BASE)).not.toHaveProperty("payment_method_types");
+  });
+
+  it("env card_and_bank: the session carries card + us_bank_account, every other param untouched", () => {
+    process.env[CHECKOUT_PAYMENT_METHODS_ENV] = "card_and_bank";
+    const out = withCheckoutPolicy(BASE);
+    expect(out).toHaveProperty("payment_method_types", ["card", "us_bank_account"]);
+    expect(out).toEqual({
+      ...BASE,
+      payment_method_types: ["card", "us_bank_account"],
+      managed_payments: { enabled: false },
+    });
+  });
+
+  it("a caller that names its own payment_method_types keeps them (the env is only the default)", () => {
+    process.env[CHECKOUT_PAYMENT_METHODS_ENV] = "card_and_bank";
+    expect(
+      withCheckoutPolicy({ ...BASE, payment_method_types: ["card"] }).payment_method_types,
+    ).toEqual(["card"]);
+  });
+
+  it("is idempotent with the env set", () => {
+    process.env[CHECKOUT_PAYMENT_METHODS_ENV] = "card_and_bank";
+    const once = withCheckoutPolicy(BASE);
+    expect(withCheckoutPolicy(once)).toEqual(once);
   });
 });

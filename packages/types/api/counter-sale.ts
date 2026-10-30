@@ -17,6 +17,8 @@ export interface CounterSaleItem {
   qty?: number;
   boxes?: number;
   pieces?: number;
+  /** SA-1040 B4a: sell by a unit of the product (a Case, a Pallet); `qty` then counts the unit and boxes/pieces are omitted. Blank = the pack. */
+  unitLabel?: string | null;
   /**
    * A one-time NET unit price for the line (a boxed line's is the BOX price). Only a caller who may edit prices
    * (account admins today, `canEditPrices`) may send a price that differs from the server's own for this customer:
@@ -98,6 +100,11 @@ export interface CounterSaleResponse {
    */
   change?: number;
   paymentId?: string;
+  /**
+   * The check number of the sale's first CHECK tender (`Payment.reference`), so the receipt reads "Check #1042". Only the FIRST check's number is served when there are several. Omitted when
+   * the sale has no check tender or the check carries no number, and by an older server (the receipt then reads "Check").
+   */
+  checkReference?: string | null;
   /**
    * The tender method, echoed on the POST and DERIVED from storage on GET .../by-key/:key (a stored CASH/CARD/CHECK
    * tender; none = "ON_ACCOUNT", since nothing marks "left on account" apart from "tender failed").
@@ -310,6 +317,8 @@ export interface TodaysSaleRow {
   returnCredit?: number;
   /** `methods` without the own-return credit */
   tenderMethods?: Array<{ method: TodaysSaleMethod; amount: number }>;
+  /** The check number of the sale's first CHECK tender (`Payment.reference`); omitted when none. Only the first check's number is served when there are several. Older servers omit it. */
+  checkReference?: string | null;
   /**
    * SA-838a, what THIS sale's own returns did on the paper (`@routeflow/pricing` `returnSettlement`, summed; the one home).
    * `applied` = credit applied to this sale's invoices: the only figure the balance subtracts (it is `returnCredit`, and the

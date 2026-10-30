@@ -18,6 +18,11 @@ const printPdfBlob = jest.fn();
 jest.mock("@/lib/print-pdf-blob", () => ({
   printPdfBlob: (...a: unknown[]) => printPdfBlob(...a),
 }));
+// W-783: the receipt reads the order and the sale row; this file is about the invoice PDF only, so neither goes through `get`.
+jest.mock("@/lib/api/orders", () => ({ useOrder: () => ({ data: undefined }) }));
+jest.mock("@/lib/api/counter-sale-today", () => ({
+  useCounterSaleRow: () => ({ row: undefined, isPending: false }),
+}));
 jest.mock("./CounterReturnAction", () => ({ CounterReturnAction: () => null }));
 jest.mock("./useEmailReceipt", () => ({
   useEmailReceipt: () => ({ open: false }),

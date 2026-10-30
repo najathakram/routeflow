@@ -57,7 +57,8 @@ export class StripeService implements OnModuleInit {
   // ─── Customer ──────────────────────────────────────────────────────────────
 
   async createCustomer(params: {
-    email: string;
+    /** Omitted when the business has no account admin on file: Stripe then holds no email for the customer. */
+    email?: string;
     name: string;
     metadata?: Record<string, string>;
   }): Promise<{ id: string; email: string; name: string }> {
