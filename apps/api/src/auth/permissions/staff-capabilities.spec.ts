@@ -11,19 +11,19 @@ import {
 describe("staffMay (SA-762r Ruling A): one table, one helper", () => {
   it("OPERATOR and TENANT_ADMIN may do both actions", () => {
     for (const role of ["OPERATOR", "TENANT_ADMIN"]) {
-      expect(staffMay(role, "EDIT_LINE_PRICE")).toBe(true);
-      expect(staffMay(role, "VOID_SALE")).toBe(true);
+      expect(staffMay(role, "EDIT_LINE_PRICE", [])).toBe(true);
+      expect(staffMay(role, "VOID_SALE", [])).toBe(true);
     }
   });
 
   it("SUPER_ADMIN may void a sale but may not edit a line price (F4)", () => {
-    expect(staffMay("SUPER_ADMIN", "VOID_SALE")).toBe(true);
-    expect(staffMay("SUPER_ADMIN", "EDIT_LINE_PRICE")).toBe(false);
+    expect(staffMay("SUPER_ADMIN", "VOID_SALE", [])).toBe(true);
+    expect(staffMay("SUPER_ADMIN", "EDIT_LINE_PRICE", [])).toBe(false);
   });
 
   it("DRIVER, CUSTOMER, an unknown role and no role may do neither", () => {
     for (const role of ["DRIVER", "CUSTOMER", "WIZARD", "", null, undefined]) {
-      for (const action of STAFF_CAPABILITY_VALUES) expect(staffMay(role, action)).toBe(false);
+      for (const action of STAFF_CAPABILITY_VALUES) expect(staffMay(role, action, [])).toBe(false);
     }
   });
 
@@ -54,9 +54,9 @@ describe("staffMay: the POS-mode rows (SA-763r)", () => {
       group: "ORDERS",
     });
     for (const role of ["OPERATOR", "TENANT_ADMIN"])
-      expect(staffMay(role, "USE_POS_MODE")).toBe(true);
+      expect(staffMay(role, "USE_POS_MODE", [])).toBe(true);
     for (const role of ["SUPER_ADMIN", "DRIVER", "CUSTOMER", null, undefined]) {
-      expect(staffMay(role, "USE_POS_MODE")).toBe(false);
+      expect(staffMay(role, "USE_POS_MODE", [])).toBe(false);
     }
   });
 
@@ -72,10 +72,10 @@ describe("staffMay: the POS-mode rows (SA-763r)", () => {
       group: "FINANCE",
     });
     for (const role of ["OPERATOR", "TENANT_ADMIN"]) {
-      expect(staffMay(role, "EDIT_AFTER_FINAL")).toBe(true);
+      expect(staffMay(role, "EDIT_AFTER_FINAL", [])).toBe(true);
     }
     for (const role of ["SUPER_ADMIN", "DRIVER", "CUSTOMER", null, undefined]) {
-      expect(staffMay(role, "EDIT_AFTER_FINAL")).toBe(false);
+      expect(staffMay(role, "EDIT_AFTER_FINAL", [])).toBe(false);
     }
   });
 
@@ -93,9 +93,9 @@ describe("staffMay: the restriction-override row (row 510)", () => {
       group: "ORDERS",
     });
     for (const role of ["OPERATOR", "TENANT_ADMIN"])
-      expect(staffMay(role, "OVERRIDE_SELLING_RESTRICTION")).toBe(true);
+      expect(staffMay(role, "OVERRIDE_SELLING_RESTRICTION", [])).toBe(true);
     for (const role of ["DRIVER", "SUPER_ADMIN", "CUSTOMER", "", null, undefined])
-      expect(staffMay(role, "OVERRIDE_SELLING_RESTRICTION")).toBe(false);
+      expect(staffMay(role, "OVERRIDE_SELLING_RESTRICTION", [])).toBe(false);
   });
 
   it("an OPERATOR denied ORDERS loses it; TENANT_ADMIN ignores the denial", () => {

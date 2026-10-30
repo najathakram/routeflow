@@ -62,24 +62,46 @@ export interface FulfilPathInput {
    * Required, so the compiler lists every caller that has to decide (SA-763r M1).
    */
   role: UserRole | null;
+  /**
+   * W-870: the caller's denied permission groups, for POS mode (`staffMay(role, "USE_POS_MODE", deniedGroups)`). A
+   * request caller passes the OPERATOR's live denials (`operatorDeniedGroups`) through `fulfilCaller`, whose argument
+   * is required; a system caller or a buyer passes `[]` explicitly (neither gets POS mode). REQUIRED, so a caller that
+   * forgets the operator's denials fails to compile instead of failing open.
+   */
+  deniedGroups: readonly string[];
 }
 
-/** Who is asking, for the resolver and the merge search: the audience plus the role (SA-763r M1). */
+/** Who is asking, for the resolver and the merge search: the audience, the role (SA-763r M1) and its denials (W-870). */
 export interface FulfilCaller {
   audience: "staff" | "buyer";
   role: UserRole | null;
+  deniedGroups: readonly string[];
 }
 
-/** A request principal as the resolver sees it: a CUSTOMER is the buyer audience, every other role is staff. */
-export function fulfilCaller(user: { role: UserRole }): FulfilCaller {
-  return { audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff", role: user.role };
+/**
+ * A request principal as the resolver sees it: a CUSTOMER is the buyer audience, every other role is staff.
+ * `deniedGroups`: the principal's `operatorDeniedGroups` (W-870).
+ */
+export function fulfilCaller(
+  user: { role: UserRole },
+  deniedGroups: readonly string[],
+): FulfilCaller {
+  return {
+    audience: user.role === UserRole.CUSTOMER ? "buyer" : "staff",
+    role: user.role,
+    deniedGroups,
+  };
 }
 
 const { ROUTE, SHIP, PICKUP } = FulfillPath;
 
 /** Staff POS mode: a staff caller whose role may use it. A system caller (`role: null`) and a buyer never may. */
-const staffPosMode = (input: FulfilPathInput): boolean =>
-  input.audience === "staff" && input.role !== null && staffMay(input.role, "USE_POS_MODE");
+const staffPosMode = (
+  input: Pick<FulfilPathInput, "audience" | "role" | "deniedGroups">,
+): boolean =>
+  input.audience === "staff" &&
+  input.role !== null &&
+  staffMay(input.role, "USE_POS_MODE", input.deniedGroups);
 
 const asFulfillPaths = (methods: readonly string[]): FulfillPath[] =>
   methods.filter((m): m is FulfillPath => m === ROUTE || m === SHIP || m === PICKUP);
@@ -203,8 +225,10 @@ export async function assertFulfilPathOffered(
   deps: FulfilPathDeps,
   requested: FulfillPath,
   role: UserRole | null,
+  /** W-870: the caller's denied groups (`operatorDeniedGroups`), as in `FulfilPathInput.deniedGroups`. */
+  deniedGroups: readonly string[],
 ): Promise<void> {
-  if (requested === PICKUP && staffPosMode({ audience: "staff", role })) return;
+  if (requested === PICKUP && staffPosMode({ audience: "staff", role, deniedGroups })) return;
   if (!deps.featureConfig || !deps.tenantId) {
     // Fail-open must be VISIBLE (a read that throws is logged by `readCapability`; this is the other case).
     deps.logger?.warn(

@@ -37,6 +37,7 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { pickupTenderGroupId } from "../orders/counter-sale/pickup-tender-group";
+import { TILL_ADMIN } from "../testing/till-user";
 
 const WINDOW = { start: new Date("2026-10-08T05:00:00Z"), end: new Date("2026-10-09T05:00:00Z") };
 const INSIDE = new Date("2026-10-08T17:30:00Z");
@@ -148,7 +149,7 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
         prisma.invoice.findUnique.mockResolvedValue(invoiceRow([payRow({ paidAt, ...over })]));
         prisma.invoice.update.mockResolvedValue({});
       },
-      act: () => service.voidPayment("inv-1", "pay-1"),
+      act: () => service.voidPayment("inv-1", "pay-1", TILL_ADMIN),
       writes: () => [prisma.invoicePayment.update, prisma.invoice.update],
     },
     {
@@ -158,7 +159,7 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
         prisma.invoicePayment.delete.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue(invoiceRow([]));
       },
-      act: () => service.deletePayment("inv-1", "pay-1"),
+      act: () => service.deletePayment("inv-1", "pay-1", TILL_ADMIN),
       writes: () => [prisma.invoicePayment.delete, prisma.invoice.update],
     },
     {
@@ -168,7 +169,10 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
         prisma.invoicePayment.update.mockResolvedValue({});
         prisma.invoice.update.mockResolvedValue(invoiceRow([]));
       },
-      act: () => service.updatePayment("inv-1", "pay-1", { amount: 40, method: "CASH" } as any),
+      act: () =>
+        service.updatePayment("inv-1", "pay-1", { amount: 40, method: "CASH" } as any, {
+          user: TILL_ADMIN,
+        }),
       writes: () => [prisma.invoicePayment.update, prisma.invoice.update],
     },
     {
@@ -183,7 +187,12 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
         prisma.invoice.update.mockResolvedValue({});
       },
       act: () =>
-        service.setCheckStatus("inv-1", "pay-1", { status: "BOUNCED", nsfFeeAmount: 25 } as any),
+        service.setCheckStatus(
+          "inv-1",
+          "pay-1",
+          { status: "BOUNCED", nsfFeeAmount: 25 } as any,
+          TILL_ADMIN,
+        ),
       writes: () => [
         prisma.invoicePayment.updateMany,
         prisma.invoiceItem.create,
@@ -260,7 +269,9 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
 
   describe("updatePayment changing paidAt checks BOTH the old and the new date", () => {
     const edit = (paidAt: string) =>
-      service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CASH", paidAt } as any);
+      service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CASH", paidAt } as any, {
+        user: TILL_ADMIN,
+      });
 
     it("moving an OPEN-dated payment INTO a closed window is refused", async () => {
       counterOrder();
@@ -291,7 +302,9 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
   describe("updatePayment turning a payment into a till-CASH row dated before the latest standing close", () => {
     const ANCIENT = new Date("2026-10-01T12:00:00Z"); // before the first closed window: assertOpen has nothing to say
     const editTo = (dto: Record<string, unknown>) =>
-      service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CASH", ...dto } as any);
+      service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CASH", ...dto } as any, {
+        user: TILL_ADMIN,
+      });
     const stored = (over: Record<string, unknown>) => {
       paths[2].arrange(AFTER);
       prisma.invoice.findUnique.mockResolvedValue(
@@ -463,7 +476,9 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
       it("updatePayment of an ACH row (stays ACH): allowed", async () => {
         counterOrder();
         paths[2].arrange(INSIDE, { method: "ACH" });
-        await service.updatePayment("inv-1", "pay-1", { amount: 40, method: "ACH" } as any);
+        await service.updatePayment("inv-1", "pay-1", { amount: 40, method: "ACH" } as any, {
+          user: TILL_ADMIN,
+        });
         expect(prisma.invoicePayment.update).toHaveBeenCalled();
       });
 
@@ -492,7 +507,9 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
 
     describe("updatePayment judges the row's NEW state too", () => {
       const editTo = (dto: Record<string, unknown>) =>
-        service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CHECK", ...dto } as any);
+        service.updatePayment("inv-1", "pay-1", { amount: 30, method: "CHECK", ...dto } as any, {
+          user: TILL_ADMIN,
+        });
 
       it("a stored non-tender hand-over-group row (ACH) edited INTO a check inside a closed window is refused", async () => {
         pickupOrder();
@@ -537,7 +554,7 @@ describe("InvoicesService — payment edits on a counter sale and the day close 
       );
       prisma.invoicePayment.update.mockResolvedValue({});
       prisma.invoice.findFirst.mockResolvedValue(invoiceRow([]));
-      await service.setCheckStatus("inv-1", "pay-1", { status: "DEPOSITED" } as any);
+      await service.setCheckStatus("inv-1", "pay-1", { status: "DEPOSITED" } as any, TILL_ADMIN);
       expect(prisma.order.findFirst).not.toHaveBeenCalled();
       expect(lockSql()).toHaveLength(1);
       expect(prisma.invoicePayment.update).toHaveBeenCalled();

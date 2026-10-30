@@ -42,6 +42,7 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { _resetLockPoolForTests } from "../common/db-locks";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { BookkeepingService } from "../bookkeeping/bookkeeping.service";
+import { TILL_ADMIN } from "../testing/till-user";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -327,7 +328,7 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     await s.asTenant(() => invoices.recordPayment(s.invs[0].id, cash(40)));
     const stamped = await paidAtOf(s.invs[0].id);
     expect(stamped).not.toBeNull();
-    await s.asTenant(() => invoices.voidPayment(s.invs[0].id, d.id));
+    await s.asTenant(() => invoices.voidPayment(s.invs[0].id, d.id, TILL_ADMIN));
     expect(await shape(s.invs[0].id)).toEqual(["PAID 60", "VOID 40", "PAID 40"]);
     expect(await invoiceStatus(s.invs[0].id)).toBe("PAID");
     expect(await paidAtOf(s.invs[0].id)).toEqual(stamped);
@@ -342,7 +343,9 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     expect(stamped).not.toBeNull();
     await new Promise((r) => setTimeout(r, 25));
     await s.asTenant(() =>
-      invoices.updatePayment(s.invs[0].id, d.id, cash(40, { status: "VOID" })),
+      invoices.updatePayment(s.invs[0].id, d.id, cash(40, { status: "VOID" }), {
+        user: TILL_ADMIN,
+      }),
     );
     expect(await shape(s.invs[0].id)).toEqual(["PAID 60", "VOID 40", "PAID 40"]);
     expect(await invoiceStatus(s.invs[0].id)).toBe("PAID");
@@ -415,7 +418,11 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     const d = await s.row(s.invs[0].id, 100, "DRAFT");
     await s.row(s.invs[0].id, 100, "PAID");
     const err = await s
-      .asTenant(() => invoices.updatePayment(s.invs[0].id, d.id, cash(100, { status: "PAID" })))
+      .asTenant(() =>
+        invoices.updatePayment(s.invs[0].id, d.id, cash(100, { status: "PAID" }), {
+          user: TILL_ADMIN,
+        }),
+      )
       .catch((e) => e);
     expect(status(err)).toBe(409);
     expect(err.getResponse()).toMatchObject({ code: "UNCONFIRMED_PAYMENT_SUPERSEDED" });
@@ -427,7 +434,11 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     await s.row(s.invs[0].id, 70, "PAID");
     const d = await s.row(s.invs[0].id, 50, "DRAFT");
     const err = await s
-      .asTenant(() => invoices.updatePayment(s.invs[0].id, d.id, cash(50, { status: "PAID" })))
+      .asTenant(() =>
+        invoices.updatePayment(s.invs[0].id, d.id, cash(50, { status: "PAID" }), {
+          user: TILL_ADMIN,
+        }),
+      )
       .catch((e) => e);
     expect(status(err)).toBe(400);
     expect(err.message).toBe("Payment exceeds remaining balance of 30.00");
@@ -439,7 +450,11 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     await s.row(s.invs[0].id, 100, "PAID");
     const v = await s.row(s.invs[0].id, 50, "VOID");
     const err = await s
-      .asTenant(() => invoices.updatePayment(s.invs[0].id, v.id, cash(50, { status: "PAID" })))
+      .asTenant(() =>
+        invoices.updatePayment(s.invs[0].id, v.id, cash(50, { status: "PAID" }), {
+          user: TILL_ADMIN,
+        }),
+      )
       .catch((e) => e);
     expect(status(err)).toBe(409);
     expect(err.getResponse()).toMatchObject({ code: "UNCONFIRMED_PAYMENT_SUPERSEDED" });
@@ -450,7 +465,9 @@ describeDb("row 2299 payment capacity — real Postgres", () => {
     const s = await seed("w769-c3");
     const d = await s.row(s.invs[0].id, 100, "DRAFT");
     await s.asTenant(() =>
-      invoices.updatePayment(s.invs[0].id, d.id, cash(100, { status: "PAID" })),
+      invoices.updatePayment(s.invs[0].id, d.id, cash(100, { status: "PAID" }), {
+        user: TILL_ADMIN,
+      }),
     );
     expect(await shape(s.invs[0].id)).toEqual(["PAID 100"]);
     expect(await invoiceStatus(s.invs[0].id)).toBe("PAID");
