@@ -105,7 +105,6 @@ import { nextOrderNumberFor } from "./order-number";
 import * as unitAware from "./unit-aware-guard";
 import { fulfilCaller, resolveFulfilPath } from "./fulfil-path-resolver";
 import { assertMayUseTill } from "./counter-sale/till-permission.guard";
-import { assertWalkInSaleNotReopened } from "./counter-sale/walk-in-sale-lock";
 import {
   assertNoBackdatedMerge,
   findActiveOrderImpl,
@@ -120,6 +119,7 @@ import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./del
 import { lockEditedOrder, editGuards, walkInSaleLocked } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
+import { assertDeliveredDemotionAllowed } from "./delivered-demotion.guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable, keepOrderOnInvoiceFailure, sendSale } from "./sale-replay-guard";
 import { assertReplayOfCart, isIdempotencyKeyViolation } from "./replay-cart-normalize";
@@ -2206,24 +2206,8 @@ export class OrdersService implements OnApplicationBootstrap {
       dto.status,
       dto.reason,
     );
-    // A paid walk-in sale stays closed: the walk-in holds no receivable, so a reopened order could never be collected.
-    if (isDeliveredDemotion) await assertWalkInSaleNotReopened(this.prisma.forTenant(), id);
-
-    // Reopening a route-delivered order from here would leave the run stop
-    // COMPLETED while the order says otherwise — the stop owns the stock and
-    // payment reversal, so send staff there instead. One extra lookup, and only
-    // on this transition.
-    if (isDeliveredDemotion && order.routeRunStopId) {
-      const stop = await this.prisma.forTenant().routeRunStop.findUnique({
-        where: { id: order.routeRunStopId },
-        select: { status: true },
-      });
-      if (stop?.status === "COMPLETED") {
-        throw new ConflictException(
-          "This order was delivered on a route run. Reopen its stop from the run instead — that reverses stock and payments correctly.",
-        );
-      }
-    }
+    // Paid walk-in sale / route-delivered stop refusals: delivered-demotion.guard.ts.
+    if (isDeliveredDemotion) await assertDeliveredDemotionAllowed(this.prisma.forTenant(), order);
 
     const noteAppend = dto.reason
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
