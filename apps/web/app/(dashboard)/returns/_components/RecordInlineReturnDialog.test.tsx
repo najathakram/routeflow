@@ -257,7 +257,7 @@ describe("RecordInlineReturnDialog — excess chunk (AC2)", () => {
     await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
 
     const captureReq = captureMutate.mock.calls[0][0];
@@ -296,9 +296,9 @@ describe("RecordInlineReturnDialog — returnKey stability across a retry (AC4)"
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
+    await screen.findByText(/take back items and give .* credit/i);
 
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     const firstKey = captureMutate.mock.calls[0][0].returnKey;
     expect(typeof firstKey).toBe("string");
@@ -311,8 +311,8 @@ describe("RecordInlineReturnDialog — returnKey stability across a retry (AC4)"
 
     // Retry: back to the quote step, confirm again.
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
     const secondKey = captureMutate.mock.calls[1][0].returnKey;
 
@@ -354,8 +354,8 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
 
     rejectNextCapture({
@@ -372,8 +372,8 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     const firstKey = captureMutate.mock.calls[0][0].returnKey;
 
@@ -396,7 +396,7 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     // Back lands on a FRESH draft: the section re-seeded (no quote, the typed qty cleared).
     fireEvent.click(screen.getByRole("button", { name: /back/i }));
     expect(
-      screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
+      screen.queryByRole("button", { name: /take back items and give .* credit/i }),
     ).toBeNull();
     expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).not.toBe("10");
     // and a new attempt is a NEW capture key (the old one was spent on the recorded return)
@@ -406,7 +406,7 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
     resolveNextQuote(quoteResponse([chunk()]));
     fireEvent.click(
-      await screen.findByRole("button", { name: /issue credit note and receive goods/i }),
+      await screen.findByRole("button", { name: /take back items and give .* credit/i }),
     );
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
     expect(captureMutate.mock.calls[1][0].returnKey).not.toBe(firstKey);
@@ -416,8 +416,8 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     rejectNextCapture({
       response: { status: 409, data: { code: "INLINE_RETURN_KEY_CONFLICT", message: "Taken" } },
@@ -519,7 +519,7 @@ describe("RecordInlineReturnDialog — SA-108: per-row identity for two lines of
     resolveNextQuote(quoteResponse([covered]));
     await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     const captureReq = captureMutate.mock.calls[0][0];
     // Exactly 5, once — never 10 (5+5, the pre-fix double-count from both rows getting the
@@ -556,8 +556,8 @@ describe("RecordInlineReturnDialog — office capture never sends routeRunStopId
     expect(quoteMutate.mock.calls[0][0]).not.toHaveProperty("routeRunStopId");
 
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0]).not.toHaveProperty("routeRunStopId");
 
@@ -602,8 +602,8 @@ describe("RecordInlineReturnDialog — SA-740: sourceOrderId rides on the quote 
     await enterQtyAndGetQuote("10");
     expect(quoteMutate.mock.calls[0][0]).toMatchObject({ sourceOrderId: "order-1" });
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0]).toMatchObject({
       orderId: "order-1",
@@ -616,8 +616,8 @@ describe("RecordInlineReturnDialog — SA-740: sourceOrderId rides on the quote 
     await enterQtyAndGetQuote("10");
     expect(quoteMutate.mock.calls[0][0]).not.toHaveProperty("sourceOrderId");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0]).not.toHaveProperty("sourceOrderId");
   });
@@ -640,9 +640,9 @@ async function captureWith(result: unknown) {
   await openToStep1();
   await enterQtyAndGetQuote("10");
   resolveNextQuote(quoteResponse([chunk()]));
-  await screen.findByText(/issue credit note and receive goods/i);
+  await screen.findByText(/take back items and give .* credit/i);
   fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+  fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
   await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
   resolveNextCapture(result);
   await screen.findByText(/return recorded/i);
@@ -734,7 +734,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     await screen.findByText(/not on any invoice/i);
     expect(screen.getByRole("radio", { name: /return only what was bought/i })).toBeChecked();
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].items).toEqual([
       expect.objectContaining({ productId: "prod-1", pieces: 10 }),
@@ -756,7 +756,7 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
 
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
     await screen.findByText("Quote failed");
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
@@ -769,20 +769,20 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
+    await screen.findByText(/take back items and give .* credit/i);
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     await screen.findByText(/what came back/i);
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "12" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    rejectNextQuote({ response: { status: 500, data: { message: "Quote failed" } } });
+    rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
     await screen.findByText("Quote failed");
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     await screen.findByText(/what came back/i);
     expect(
-      screen.queryByRole("button", { name: /issue credit note and receive goods/i }),
+      screen.queryByRole("button", { name: /take back items and give .* credit/i }),
     ).not.toBeInTheDocument();
   });
 });
@@ -792,8 +792,8 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     resolveNextCapture(response);
     await screen.findByText(/return recorded/i);
@@ -855,8 +855,8 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
 
     // First attempt: network failure AFTER the server actually committed and parked (the
@@ -864,8 +864,8 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     rejectNextCapture({ response: { status: 500, data: { message: "Network error" } } });
     await screen.findByText("Network error");
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    await screen.findByText(/issue credit note and receive goods/i);
-    fireEvent.click(screen.getByRole("button", { name: /issue credit note and receive goods/i }));
+    await screen.findByText(/take back items and give .* credit/i);
+    fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(2));
 
     // The retry replays the SAME returnKey — the server's fresh-DB-read design (B735) means
@@ -905,7 +905,7 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
 });
 
 describe("RecordInlineReturnDialog — a faded Return button says why (R7b 3.1)", () => {
-  it("a faded Return & refund says 'Choose a reason to continue'", async () => {
+  it("a faded confirm button says 'Choose a reason to continue'", async () => {
     await openToStep1();
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
@@ -913,9 +913,34 @@ describe("RecordInlineReturnDialog — a faded Return button says why (R7b 3.1)"
     resolveNextQuote(quoteResponse([chunk()]));
     const hint = await screen.findByText("Choose a reason to continue");
     expect(screen.getByLabelText(/^reason$/i)).toHaveAttribute("aria-describedby", hint.id);
-    expect(screen.getByRole("button", { name: /issue credit note|return &/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /take back items/i })).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
     expect(screen.queryByText("Choose a reason to continue")).toBeNull();
     expect(screen.getByLabelText(/^reason$/i)).not.toHaveAttribute("aria-describedby");
+  });
+});
+
+describe("RecordInlineReturnDialog — phone tap targets (W-890)", () => {
+  const small = (el: HTMLElement) => expect(el.className).toMatch(/max-lg:(min-)?h-11/);
+
+  it("every control on the lines step is 44 px below lg: close, Remove, fields, Reason, Get quote, Cancel", async () => {
+    await openToStep1();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-h-11");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-w-11");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("max-lg:min-h-11");
+    expect(screen.getByRole("button", { name: "Get quote" })).toHaveClass("max-lg:min-h-11");
+    const remove = screen.getByRole("button", { name: "Remove" });
+    small(remove);
+    expect(remove).toHaveClass("max-lg:min-w-11");
+    small(screen.getByLabelText(/Note \(optional\)/));
+    small(screen.getByLabelText(/Reason \(optional\)/));
+    small(screen.getByLabelText("Reason"));
+  });
+
+  it("the quote step's Back is 44 px below lg", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("1");
+    resolveNextQuote(quoteResponse([chunk({ sourceOrderId: "order-newest", pieces: 1 })]));
+    expect(await screen.findByRole("button", { name: "Back" })).toHaveClass("max-lg:min-h-11");
   });
 });

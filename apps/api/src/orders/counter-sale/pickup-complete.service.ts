@@ -21,11 +21,6 @@ import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { OrdersService } from "../orders.service";
 import { settleOrderInvoice } from "../order-status-invoicing";
 import {
-  autoApplyCandidateWhere,
-  creditAutoApplyOnSend,
-  hasOpenCreditBalance,
-} from "../../credit-notes/auto-apply-candidates";
-import {
   allocateOldestFirst,
   assertCheckNotPostdatedForTenant,
   counterCreditPaidNow,
@@ -35,6 +30,11 @@ import {
   type CounterPaymentInput,
 } from "./counter-sale-payment";
 import { isHandOverTender, tenderFigures, type InvoiceRow } from "./pickup-tender";
+import {
+  markOpenInvoicesToCollect,
+  rollupToCollect,
+  toCollectState,
+} from "../../invoices/to-collect";
 import { pickupTenderGroupId } from "./pickup-tender-group";
 import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
@@ -54,6 +54,7 @@ import {
   type RunOrder,
 } from "./complete-at-counter-run";
 import { retryOnTxConflict } from "../../common/tx-retry";
+import { judgeFulfilSwitch } from "../fulfil-path-restrictions";
 import { RouteRealtime } from "../../routes/route-realtime";
 import { RouteFlowGateway } from "../../gateways/routeflow.gateway";
 import {
@@ -79,6 +80,7 @@ type OrderRow = {
   customer: { isWalkIn: boolean | null } | null;
   counterSale?: boolean | null; // SA-750r3: a COUNTER order's tender is a till event (the day-close lock + window)
   registerKey?: string | null;
+  tenantId?: string | null; // W-774: the restriction pre-judge's tenant
   total?: unknown; // SA-849: what the B585 gate netted this hand-over's tender against
 };
 
@@ -175,7 +177,7 @@ export class PickupCompleteService {
       await assertCheckNotPostdatedForTenant(this.prisma, sent);
     } else if (!excused) assertPaymentShape({ method: "ON_ACCOUNT" }, walkIn);
     if (walkIn) {
-      // A walk-in leaves no partial on account and takes no credit: the counter sale's two guards.
+      // A walk-in leaves no partial on account (W-913: the sweep never takes credit off the walk-in account).
       if (
         sent &&
         sent.method !== "ON_ACCOUNT" &&
@@ -188,7 +190,6 @@ export class PickupCompleteService {
           message: "A walk-in customer must pay the full balance",
         });
       }
-      await this.assertNoOpenCredit(order.customerId);
     }
     // SA-905 MUST 1: the delivery credit gate the DELIVERED step runs (B585, netted), judged NOW through the same ONE entry,
     // read-only, so a refusal writes nothing (no claim, no switch, no silent CONFIRMED). The DELIVERED step's own gate stays
@@ -201,18 +202,39 @@ export class PickupCompleteService {
         await this.orders.assertDeliveryCreditGate(at, user, { creditPaidNow });
       }
     }
+    // W-774 (SA-922): the switch's #3455 restriction judgement at the store's state, READ-ONLY before the claim (the credit
+    // gate's shape), so a refusal leaves the order on its run with nothing written. W-773: the request's acknowledged
+    // override is judged here and again by the switch, which stays the authority (it writes the override stamps).
+    const ack = { restrictionOverrides: dto.restrictionOverrides, warningHash: dto.warningHash };
+    if (!alreadyPickedUp && order.fulfillPath !== "PICKUP" && order.customerId) {
+      const at = { ...order, customerId: order.customerId, tenantId: order.tenantId ?? null };
+      const sellable = (p: Parameters<OrdersService["staffSellable"]>[0]) =>
+        this.orders.staffSellable(p);
+      await judgeFulfilSwitch(this.orders, at, "PICKUP", user, sellable, ack);
+    }
     // SA-909 item 1: a tender this call would record is refused for a CLOSED day before the first write (the same
     // window check the tender runs under its lock, read-only, on the same register and the database clock), so a closed day
     // leaves the order as it was. The in-lock check stays the authority (the day closing in between: today's 409 after).
     // #3678 Opus NIT: nothing owed (the same excuse rule as above) records no tender, so a closed day does not refuse it
     const nothingOwed = preRows.length > 0 && preOwed <= 0;
     if (!alreadyPickedUp && sent && sent.method !== "ON_ACCOUNT" && !nothingOwed) {
-      await counterTenderPaidAt(
-        this.prisma,
-        this.prisma.getTenantId(),
-        order,
-        pickupRegisterOf(order, dto.registerKey),
-      );
+      // W-776 (SA-925): nothing is written yet, so this refusal has its OWN code; COUNTER_SALE_DAY_CLOSED from here on
+      // (the in-lock tender, a replay) means the hand-over stands.
+      try {
+        await counterTenderPaidAt(
+          this.prisma,
+          this.prisma.getTenantId(),
+          order,
+          pickupRegisterOf(order, dto.registerKey),
+        );
+      } catch (e) {
+        const body = (e as { getResponse?: () => { code?: string } })?.getResponse?.();
+        if (body?.code !== API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED) throw e;
+        throw new ConflictException({
+          ...body,
+          code: API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+        });
+      }
     }
     // SA-919: THIS completion's `completionAt`, the claim's stamp (never `deliveredAt`): its tender and its email key
     let handedOverAt: Date | null;
@@ -230,8 +252,9 @@ export class PickupCompleteService {
     // except the race loser's: a concurrent call that delivered it first makes this one the replay.
     if (!alreadyPickedUp) {
       // I-120 (SA-861 rules 4, 5, 9). Each step is skipped when the row already shows it done, so a crash between steps
-      // resumes. 4: the path becomes Store pickup first, through the ONE switch (it re-judges selling restrictions at the
-      // store's state and releases a finished run's link; its refusals propagate with nothing else written).
+      // resumes. 4: the path becomes Store pickup, through the ONE switch (it re-judges selling restrictions at the store's
+      // state, the authority, and releases a finished run's link). Its restriction refusal was pre-judged before the claim
+      // (W-774), so a refusal here means a line changed in between: it propagates AFTER the claim and any take-off below.
       // SA-913 R8: off the driver's run first, its own locked tx (Orders → stop → run; refused with nothing written when
       // the stop started or the link moved; a deadlock is retried in a fresh tx). A resume with no run link skips it.
       const link = activeRunLink(order as RunOrder);
@@ -250,7 +273,7 @@ export class PickupCompleteService {
       if (order.fulfillPath !== "PICKUP") {
         // SA-913 (c): the ONE caller-pinned option lets an OUT_FOR_DELIVERY order with no run link switch (no demotion);
         // its DELIVERED step then runs alreadyOut, ungated.
-        await this.orders.updateFulfillPath(id, { fulfillPath: "PICKUP" } as never, user, {
+        await this.orders.updateFulfillPath(id, { fulfillPath: "PICKUP", ...ack } as never, user, {
           fromOutForDelivery: true,
         });
         order = (await this.readOrder(id)) ?? order;
@@ -312,6 +335,14 @@ export class PickupCompleteService {
       }
     }
     if (issued) invoices = await this.readInvoices(id);
+
+    // SA-1026: "the check is not in hand yet": every invoice of the order that can still be owed after the send step is marked
+    // To collect (a settled sibling is not). No payment row. Replay-safe: the first intent stays, and the retry of a half-finished
+    // hand-over completes the mark. The response reads the column back from the re-read rows.
+    if (sent?.method === "ON_ACCOUNT" && sent.expectedMethod) {
+      await markOpenInvoicesToCollect(this.prisma, invoices as never, sent.expectedMethod);
+      invoices = await this.readInvoices(id);
+    }
 
     // 4. The tender, against what is STORED now. ON_ACCOUNT takes no money: no lock. Owed is re-judged on
     // the final invoices (a remainder / rebuild at DELIVERED can differ from before the hand-over).
@@ -623,23 +654,6 @@ export class PickupCompleteService {
     });
   }
 
-  /** The counter sale's guard: a walk-in must not receive an open credit that send() would auto-apply. */
-  private async assertNoOpenCredit(customerId: string | null): Promise<void> {
-    if (!customerId) return;
-    if (!(await creditAutoApplyOnSend(this.prisma.forTenant(), this.prisma.getTenantId()))) return;
-    const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
-      select: { amount: true, amountUsed: true },
-    });
-    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
-        message:
-          "The walk-in customer holds open credit, which would be applied to this sale. Resolve it first.",
-      });
-    }
-  }
-
   /**
    * The locked half of the tender. The plan is made against each invoice's balance BEFORE this hand-over's
    * tender (its total less every payment that is not this hand-over's), so a replay computes the SAME
@@ -797,6 +811,7 @@ export class PickupCompleteService {
         customer: { select: { isWalkIn: true } },
         counterSale: true,
         registerKey: true,
+        tenantId: true, // W-774: the restriction pre-judge's tenant
         total: true,
         // I-120 R8/R9: the run (through its stop, or a bare routeRunId), the stop's state, the carrier shipment
         shippedAt: true,
@@ -844,6 +859,7 @@ export class PickupCompleteService {
       orderId: order.id,
       orderNumber: order.orderNumber ?? "",
       invoiceId: first.id,
+      invoiceIds: invoices.map((i) => i.id), // SA-1026 B: the list tenderFigures totals, so Print invoice matches the screen
       invoiceNumber: first.invoiceNumber ?? "",
       ...tenderFigures(
         invoices,
@@ -851,6 +867,10 @@ export class PickupCompleteService {
         isHandOverTender(order.id, handedOverAt),
         planError,
         duplicate,
+      ),
+      // SA-1026: read back from the stored rows, staff only
+      toCollect: rollupToCollect(
+        invoices.map((i) => toCollectState({ ...i, status: i.status ?? "" })),
       ),
       ...(alreadyPickedUp ? { alreadyPickedUp: true } : {}),
     };

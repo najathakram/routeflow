@@ -62,7 +62,7 @@ export interface MrrOverview {
    * Reconciliation: Σ of the append-only BillingEvent.amountDelta ledger. Tracks `mrr` for
    * tenants managed through the plans-as-data lifecycle (subscribe / change / add-on / scheduled
    * cancellation all emit signed deltas). Legacy Stripe-only churn (billing.service
-   * onSubscriptionDeleted / suspendOverdueTenants) DOES emit a compensating delta too, via the
+   * onSubscriptionDeleted / reconcileCanceledSubscriptions) DOES emit a compensating delta too, via the
    * shared transitionAndEmit() helper — this comment used to say otherwise; that was stale and
    * pointed investigators at the wrong mechanism (B544).
    *

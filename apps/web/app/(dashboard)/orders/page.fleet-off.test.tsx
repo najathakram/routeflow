@@ -92,10 +92,10 @@ describe("Orders list — SHIP mode wording", () => {
 // the URL keeps them too, so it can still be cleared.
 describe("Orders list — delivery-date UI is fleet-only", () => {
   const realMatchMedia = window.matchMedia;
-  // below md (768px): jsdom has no matchMedia, which reads as the desktop layout
+  // below md (max-width: 767px): jsdom has no matchMedia, which reads as the desktop layout
   const narrowViewport = () => {
     window.matchMedia = ((q: string) => ({
-      matches: false,
+      matches: /max-width:\s*767px/.test(q),
       media: q,
       addEventListener: jest.fn(),
       removeEventListener: jest.fn(),

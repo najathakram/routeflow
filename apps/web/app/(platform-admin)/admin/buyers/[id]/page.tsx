@@ -197,7 +197,7 @@ export default function BuyerDetailPage() {
     if (
       !buyer ||
       !window.confirm(
-        `Impersonate ${buyer.name}? You'll act as this buyer for a short time. The buyer won't be notified.`,
+        `Sign in as ${buyer.name}? You'll act as this buyer for a short time. The buyer won't be notified.`,
       )
     )
       return;
@@ -368,7 +368,7 @@ export default function BuyerDetailPage() {
                 className="flex items-center gap-1.5 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 disabled:opacity-50"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
-                {impersonating ? "Opening…" : "Impersonate"}
+                {impersonating ? "Opening…" : "Sign in as buyer"}
               </button>
             )}
             {buyer.status === "ACTIVE" && (

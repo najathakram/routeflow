@@ -32,9 +32,12 @@ export const TERMINAL_REFUND_ERRORS: ReadonlySet<RefundErrorKind> = new Set([
 ]);
 
 export const REFUND_COPY = {
-  heading: "How do you want to give the money back?",
-  walkIn: "Walk-in sales can't hold store credit, so you'll give the money back.",
-  failed: "Return saved. Refund didn't go through. Try again.",
+  heading: "How should the money go back to the customer?",
+  walkIn: "Walk-in sales can't hold store credit, so refund the money.",
+  /** SA-959: a walk-in return never becomes a credit note (the shared walk-in row cannot hold it). When it cannot be
+   *  refunded here the dialog says so and offers no take-back; the server's cause replaces this once it sends one. */
+  walkInNoRefund: "This sale can't be refunded here. Ask office staff to refund it.",
+  failed: "Return recorded. Refund didn't go through. Try again.",
   changed: "The refund amount changed. Check it and confirm again.",
   resolved: "This return is already done. Nothing more was refunded.",
   resolvedAfterRetry:
@@ -43,25 +46,47 @@ export const REFUND_COPY = {
   /** A READ_ONLY workspace refused the refund: the permission is fine, the workspace is read-only (B4's line). */
   readOnly: readOnlyRefusalCopy(),
   needsPaid:
-    "Return saved. This sale isn't fully paid, so it can't be refunded. Issue store credit from the order instead.",
+    "Return recorded. This sale isn't fully paid, so it can't be refunded. Give store credit from the order instead.",
   refundedCash: "This return was already refunded. Nothing more was refunded.",
   notRefundable: "There's nothing to refund on this return.",
   /** F4: a sale paid (partly) with store credit goes back as store credit. */
   paidWithCredit: "Paid with store credit, so it goes back as store credit",
   /** SA-749r2 #9: the cash refund is more than the cash taken for the sale (less cash already refunded). Not terminal: switch the tender. */
   exceedsCash:
-    "Return saved. That's more cash than was taken for this sale. Refund the rest by card or check, or give store credit.",
+    "Return recorded. That's more cash than was taken for this sale. Refund the rest by card or check, or give store credit.",
+  /** SA-959: the same over-cash refusal for a walk-in, who can't hold store credit: only another tender is left. */
+  exceedsCashWalkIn:
+    "Return recorded. That's more cash than was taken for this sale. Refund the rest by card or check.",
   /** SA-750r3: the refund is dated inside a closed day (409 COUNTER_SALE_DAY_CLOSED). The return is saved; nothing was paid out. */
   dayClosed:
-    "Return saved. This day is closed, so the refund can't be paid out now. Give store credit instead, or record the refund on a later date.",
+    "Return recorded. This day is closed, so the refund can't be paid out now. Give store credit instead, or open the return and record the refund on a later date.",
   /** The same refusal for a walk-in, who can't hold store credit: only the later date is left. */
   dayClosedWalkIn:
-    "Return saved. This day is closed, so the refund can't be paid out now. Record the refund on a later date.",
-  /** W21b: the quote-step note when Refund is the chosen resolution (store credit keeps the credit-note line). */
-  quoteRefundNote: "This will be refunded to the customer, not added to their balance.",
+    "Return recorded. This day is closed, so the refund can't be paid out now. Open the return and record the refund on a later date.",
   /** SA-727b: a saved REFUND-intent return with no refund yet (shown on the receipt; no amount paid). */
   pendingReceipt: "Return — refund pending, nothing paid out",
 } as const;
+
+/**
+ * SA-972: what a WALK-IN reads for each refund refusal. Exhaustive (the compiler names a new kind), and no line names store
+ * credit: a walk-in cannot hold it (SA-959), so the two kinds whose copy points there (a sale not fully paid, a sale paid with
+ * store credit) read the one no-refund sentence, and the over-cash and closed-day lines have their own walk-in wording.
+ */
+const WALK_IN_NO_REFUND_LINE = `Return recorded. ${REFUND_COPY.walkInNoRefund}`;
+export const WALK_IN_REFUND_LINE: Record<RefundErrorKind, string> = {
+  changed: REFUND_COPY.changed,
+  resolved: REFUND_COPY.resolved,
+  resolvedAfterRetry: REFUND_COPY.resolvedAfterRetry,
+  forbidden: REFUND_COPY.forbidden,
+  readOnly: REFUND_COPY.readOnly,
+  needsPaid: WALK_IN_NO_REFUND_LINE,
+  refundedCash: REFUND_COPY.refundedCash,
+  notRefundable: REFUND_COPY.notRefundable,
+  paidWithCredit: WALK_IN_NO_REFUND_LINE,
+  exceedsCash: REFUND_COPY.exceedsCashWalkIn,
+  dayClosed: REFUND_COPY.dayClosedWalkIn,
+  failed: REFUND_COPY.failed,
+};
 
 export function refundErrorKind(err: unknown): RefundErrorKind {
   const res = (err as { response?: { status?: number; data?: { code?: string } } } | undefined)
@@ -102,6 +127,48 @@ export function handBackLine(tender: InlineRefundTender, amount: string): string
   return tender === "CARD"
     ? `Give ${amount} back on the customer's card at the terminal.`
     : `Hand ${amount} back to the customer.`;
+}
+
+/** Where a store-credit return's money lands, which decides how far the sentence can go:
+ *  - "nextOrder": the settled counter sale (no order of its own waits on the credit).
+ *  - "thisOrder": order create/edit, where the credit is held for the carrying order first.
+ *  - "account": the Returns page, which also asks which order the credit applies to. */
+export type CreditContext = "nextOrder" | "thisOrder" | "account";
+
+/** W-712: what the money does, in the cashier's words (the quote-step note under the Total). */
+export function creditOutcomeLine(
+  amount: string,
+  context: CreditContext,
+  customerName?: string,
+): string {
+  const who = customerName?.trim() || "the customer";
+  const base = `${amount} is given as store credit for ${who}`;
+  if (context === "nextOrder") return `${base}, to use on the next order.`;
+  if (context === "thisOrder") return `${base} and goes toward this order when you save.`;
+  return `${base}.`;
+}
+/** W-712: the confirm button names the action and the amount. */
+export function takeBackCreditLabel(amount: string): string {
+  return `Take back items and give ${amount} store credit`;
+}
+export function takeBackRefundLabel(amount: string): string {
+  return `Take back items and refund ${amount}`;
+}
+
+/** SA-929: after the submit, the words come from what the server recorded, not from what was chosen. */
+export function refundedLine(tender: InlineRefundTender | undefined, amount: string): string {
+  if (!tender) return `Refunded ${amount}.`;
+  const how = tender === "CARD" ? "to the card" : tender === "CHECK" ? "by check" : "in cash";
+  return `Refunded ${amount} ${how}.`;
+}
+export function storeCreditAddedLine(amount: string): string {
+  return `${amount} given as store credit.`;
+}
+/** The hand-over instruction that follows `refundedLine` (the amount is already stated there). */
+export function handOverLine(tender: InlineRefundTender): string {
+  return tender === "CARD"
+    ? "Give it back on the customer's card at the terminal."
+    : "Hand it back to the customer.";
 }
 
 export const TENDER_OPTIONS: { value: InlineRefundTender; label: string }[] = [

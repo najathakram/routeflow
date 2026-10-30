@@ -69,12 +69,12 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       // 3. Enter impersonation through the real UI (fallback: API + localStorage).
       // Back-office P2: Impersonate lives on the tenant page only (the list row no longer has it).
       await page.goto(`/admin/tenants/${tenant.id}`);
-      const impersonateBtn = page.getByRole("button", { name: "Impersonate" });
+      const impersonateBtn = page.getByRole("button", { name: "Sign in as admin" });
       if (await impersonateBtn.count()) {
         await impersonateBtn.click();
         // The button only opens a confirmation (cancel is focused first); the session starts here.
-        const confirm = page.getByRole("dialog", { name: /^Impersonate / });
-        await confirm.getByRole("button", { name: "Impersonate" }).click();
+        const confirm = page.getByRole("dialog", { name: /^Sign in as admin for / });
+        await confirm.getByRole("button", { name: "Sign in as admin" }).click();
       } else {
         const imp = await (
           await page.request.post(`${api}/platform-admin/tenants/${tenant.id}/impersonate`, {
@@ -99,7 +99,7 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
         await page.goto("/dashboard");
       }
       await page.waitForURL("**/dashboard", { timeout: 30_000 });
-      await expect(page.getByText(/Impersonating/)).toBeVisible();
+      await expect(page.getByText(/Support session on/)).toBeVisible();
       const impToken = await page.evaluate(() => localStorage.getItem("impersonationToken") ?? "");
       expect(impToken).not.toBe("");
       // platform-admin's impersonate() picks the tenant's TENANT_ADMIN with an
@@ -122,10 +122,10 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       ).length;
       expect(nBefore).toBeGreaterThanOrEqual(1);
 
-      // 4. The menu: no "Sign out"; "Exit impersonation" returns to the tenant it started from.
+      // 4. The menu: no "Sign out"; "Exit support session" returns to the tenant it started from.
       await page.getByRole("button", { name: "Open user menu" }).click();
       await expect(page.getByRole("menuitem", { name: "Sign out" })).toHaveCount(0);
-      const exitItem = page.getByRole("menuitem", { name: "Exit impersonation" });
+      const exitItem = page.getByRole("menuitem", { name: "Exit support session" });
       await expect(exitItem).toBeVisible();
       await exitItem.click();
       await page.waitForURL(`**/admin/tenants/${tenant.id}`, { timeout: 30_000 });
@@ -163,11 +163,11 @@ test.describe("Impersonation sign-out (F14 / B138)", () => {
       const matches = (list?.data ?? []).filter((t: { slug: string }) => t.slug === TENANT_SLUG);
       test.skip(matches.length !== 1, `e2e tenant not found by slug (${matches.length} matches)`);
       await page.goto(`/admin/tenants/${(matches[0] as { id: string }).id}`);
-      const impersonateBtn = page.getByRole("button", { name: "Impersonate" });
+      const impersonateBtn = page.getByRole("button", { name: "Sign in as admin" });
       test.skip((await impersonateBtn.count()) === 0, "e2e tenant page has no Impersonate action");
 
       await impersonateBtn.click();
-      const dialog = page.getByRole("dialog", { name: /^Impersonate / });
+      const dialog = page.getByRole("dialog", { name: /^Sign in as admin for / });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
 

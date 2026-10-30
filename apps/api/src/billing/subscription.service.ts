@@ -10,6 +10,7 @@ import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
 import { computeServedFlags } from "./plan-flag-policy";
+import { resolvePlanPrice } from "./plan-price";
 import { autoLockAllowed } from "./auto-lock-gate";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { billingPauseMode } from "./dunning-config";
@@ -28,6 +29,12 @@ import {
   projectSubscriptionForExport,
   projectUsageForExport,
 } from "./billing-export-fields";
+
+/** The annual price a custom monthly fee bills: the same rule checkout and the Stripe push read (row 280). */
+function annualOfOverride(def: unknown, monthly: unknown): number | null {
+  const price = resolvePlanPrice(def as { monthlyPrice?: unknown } | null, { monthly });
+  return price.ok ? price.annual : null;
+}
 
 /**
  * Tenant self-service READ surface for settings-billing + choose-plan: the current
@@ -155,7 +162,7 @@ export class SubscriptionService {
         sub?.priceOverrideAnnual != null
           ? Number(sub.priceOverrideAnnual)
           : sub?.priceOverrideMonthly != null
-            ? Number(sub.priceOverrideMonthly) * 10
+            ? annualOfOverride(def, sub.priceOverrideMonthly)
             : def?.annualPrice != null
               ? Number(def.annualPrice)
               : null,

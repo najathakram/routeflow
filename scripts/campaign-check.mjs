@@ -15,7 +15,7 @@
 // never as a silent pass.
 //
 // WHAT IT CHECKS
-// The register's ledger — `.claude/campaign/status/F##.jsonl`, one shard per
+// The register's ledger — `<register>/status/F##.jsonl`, one shard per
 // batch, seeded with all 179 open bug IDs at campaign kickoff — carries a
 // `state` per ID. Five states make an affirmative claim this script must verify;
 // two make no claim yet and are skipped:
@@ -76,6 +76,7 @@
 //   node scripts/campaign-check.mjs --batch F02 --pipeline-dir <dir># + explicit build-plan.md
 //   node scripts/campaign-check.mjs --runs-dir <dir>                # override .campaign/runs
 //   node scripts/campaign-check.mjs --print-stale                   # read-only: workspaces whose T1 report is missing/partial/stale (one per line)
+//   CAMPAIGN_CHECK_CODE_ROOT=<checkout> node scripts/campaign-check.mjs --landing   # registry:land: code paths under <checkout>, no ledger-commit freshness bound
 //
 // Exit 0: every affirmative claim in scope is backed by a real, passing,
 //         non-skipped/non-todo REG-B### proof (or legitimate evidence).
@@ -115,6 +116,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
+import { registryRoot } from "./lib/registry-root.mjs";
 import { isFastMode } from "./lib/verify-scope.mjs";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
@@ -135,22 +137,48 @@ function main() {
   }
   const onlyBatch = flag("batch"); // e.g. "F02" — undefined means "scan every shard"
   const explicitPipelineDir = flag("pipeline-dir");
-  const runsDir = path.resolve(REPO_ROOT, flag("runs-dir") || ".campaign/runs");
+  // LANDING MODE (B1-b2b, `registry:land` step 2): gated on BOTH `--landing` and
+  // CAMPAIGN_CHECK_CODE_ROOT — either alone changes nothing. The ledger then lives in the register
+  // clone (CAMPAIGN_CHECK_STATUS_DIR), no longer co-versioned with the code, so code-side paths (the
+  // runs dir, a row's buildPlan, the git root of the test-file freshness bound) resolve against the
+  // code root and the ledger-commit freshness term is dropped. Every other rule is unchanged, and
+  // landing mode is never FAST VERIFY (below).
+  const landing = args.includes("--landing") && Boolean(process.env.CAMPAIGN_CHECK_CODE_ROOT);
+  if (args.includes("--landing") && !landing) {
+    console.error("campaign-check: --landing ignored (CAMPAIGN_CHECK_CODE_ROOT is not set)");
+  }
+  const codeRoot = landing ? path.resolve(process.env.CAMPAIGN_CHECK_CODE_ROOT) : REPO_ROOT;
+  const runsDir = path.resolve(codeRoot, flag("runs-dir") || ".campaign/runs");
   // --freshness-only: R4's pre-step. Boolean, no value — checked by presence, not flag().
   const freshnessOnly = args.includes("--freshness-only");
-  // FAST VERIFY switch (see the header): explicit env only, never inferred from the reports.
-  const fastVerify = isFastMode(process.env);
+  // FAST VERIFY switch (see the header): explicit env only, never inferred from the reports. Landing
+  // mode is the gate before a register push and is never fast, whatever the environment says.
+  const fastVerify = !landing && isFastMode(process.env);
   if (process.env.RF_VERIFY_MODE === "fast" && !fastVerify) {
     console.error(
-      "campaign-check: RF_VERIFY_MODE=fast ignored (CI or FULL_VERIFY=1) — report coverage is enforced",
+      landing
+        ? "campaign-check: RF_VERIFY_MODE=fast ignored (landing mode) — report coverage is enforced"
+        : "campaign-check: RF_VERIFY_MODE=fast ignored (CI or FULL_VERIFY=1) — report coverage is enforced",
+    );
+  }
+  if (landing) {
+    // stderr: --print-stale's stdout is a machine-readable list
+    console.error(
+      `campaign-check: landing mode on, code root ${codeRoot}; ledger freshness skipped`,
     );
   }
   const REPORT_COVERAGE_DEFERRED = "campaign-check: report coverage deferred to CI (fast verify)";
   // Overridable via CAMPAIGN_CHECK_STATUS_DIR (mirrors bugs.mjs's BUGS_ROOT
   // seam) so a self-test can drive this REAL command against a throwaway
-  // fixture ledger instead of the repo's own .claude/campaign/status.
-  const statusDir =
-    process.env.CAMPAIGN_CHECK_STATUS_DIR || path.join(REPO_ROOT, ".claude", "campaign", "status");
+  // fixture ledger instead of the register's own status/ directory. The default comes from
+  // registryRoot(); a missing register is a hard stop, never an empty ledger.
+  let statusDir;
+  try {
+    statusDir = process.env.CAMPAIGN_CHECK_STATUS_DIR || path.join(registryRoot(), "status");
+  } catch (err) {
+    console.error(`campaign-check: ${err.message}`);
+    process.exit(2);
+  }
 
   const CLAIM_STATES = new Set([
     "proven",
@@ -470,12 +498,13 @@ function main() {
   // Git root for freshness lookups is derived from statusDir, not REPO_ROOT — REPO_ROOT is
   // this SCRIPT's own on-disk location (always the real monorepo), while statusDir may be a
   // throwaway fixture repo (CAMPAIGN_CHECK_STATUS_DIR); its commits are what freshness must
-  // be judged against. Resolved once, memoized.
+  // be judged against. Resolved once, memoized. In landing mode the tests live in the code root.
   let gitRootCache;
+  const gitDir = landing ? codeRoot : statusDir;
   function resolveGitRoot() {
     if (gitRootCache !== undefined) return gitRootCache;
     try {
-      const res = spawnSync("git", ["-C", statusDir, "rev-parse", "--show-toplevel"], {
+      const res = spawnSync("git", ["-C", gitDir, "rev-parse", "--show-toplevel"], {
         encoding: "utf8",
         shell: false,
         env: scrubGitEnv(),
@@ -709,7 +738,7 @@ function main() {
 
     const gitRoot = resolveGitRoot();
     let ledgerPathspec = null;
-    if (gitRoot) {
+    if (gitRoot && !landing) {
       const rel = path.relative(gitRoot, statusDir).split(path.sep).join("/");
       ledgerPathspec = rel || ".";
     }
@@ -911,7 +940,7 @@ function main() {
     if (!t1Needed) return;
     const gitRoot = resolveGitRoot();
     let ledgerPathspec = null;
-    if (gitRoot) {
+    if (gitRoot && !landing) {
       const rel = path.relative(gitRoot, statusDir).split(path.sep).join("/");
       ledgerPathspec = rel || ".";
     }
@@ -1146,7 +1175,7 @@ function main() {
         onlyBatch && row._shard === onlyBatch && explicitPipelineDir
           ? path.join(explicitPipelineDir, "build-plan.md")
           : row.buildPlan
-            ? path.resolve(REPO_ROOT, row.buildPlan)
+            ? path.resolve(codeRoot, row.buildPlan)
             : null;
       if (!buildPlanPath) {
         fail(
@@ -1166,7 +1195,7 @@ function main() {
         );
       } else {
         passes.push(
-          `${id}: manual verification row found in ${path.relative(REPO_ROOT, buildPlanPath)}`,
+          `${id}: manual verification row found in ${path.relative(codeRoot, buildPlanPath)}`,
         );
       }
     }

@@ -51,6 +51,7 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
   const slug = assertTestTenant(`qa-2094-inorder-${run}`, "inline-returns-in-order.db.spec.ts");
   let tenantId = "";
   const orderIds: string[] = [];
+  const invoiceIds: string[] = [];
   const customerIds: string[] = [];
   const productIds: string[] = [];
   const userIds: string[] = [];
@@ -132,7 +133,7 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
       prisma,
       gateway: { emitCreditNoteCreated: jest.fn() },
       ledger,
-      commissionEngine: {},
+      commissionEngine: { syncInvoiceCommissionSafe: async () => undefined }, // settle applies the credit to the invoice
       numbering,
       logger: new Logger(CreditNotesService.name),
     });
@@ -155,6 +156,8 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
   }, 120_000);
 
   afterAll(async () => {
+    await raw.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
     for (const orderId of orderIds) {
       await raw.orderCreditNote.deleteMany({ where: { orderId } });
       await raw.returnItem.deleteMany({ where: { return: { orderId } } });
@@ -196,6 +199,46 @@ describeDb("#2094 — inline return inside the order transaction, real Postgres"
     const intents = await raw.orderCreditNote.findMany({ where: { orderId: out.order.id } });
     expect(intents).toHaveLength(1);
     expect(Number(intents[0].amount)).toBeCloseTo(30, 2);
+  }, 30_000);
+
+  it("#3748: a return saved with an order edit settles against THIS order's invoice in the same transaction (a CREDIT_NOTE payment), and the order's own total is not touched", async () => {
+    const f = await seedCustomer("settle");
+    const number = await tenantCtx.run(tenantId, () => svc.reserveCreditNoteNumber());
+    const out = await inOrderTx(f.customerId, async (tx) => {
+      const order = await newOrder(tx, f.customerId, 100);
+      const invoice = await tx.invoice.create({
+        data: {
+          tenantId,
+          customerId: f.customerId,
+          orderId: order.id,
+          invoiceNumber: `INV-2094-${run}-settle`,
+          status: "SENT",
+          subtotal: "100.00",
+          total: "100.00",
+        },
+      });
+      invoiceIds.push(invoice.id);
+      await svc.captureAndIssueInTx(
+        tx,
+        {
+          ...lines(f.productId, 3, `k-settle-${run}`),
+          customerId: f.customerId,
+          orderId: order.id,
+        },
+        staff(),
+        { creditNoteNumber: number },
+      );
+      // captureAndIssueInTx settles the new credit against this order's invoice in the SAME tx (issueCreditInTx)
+      return { order, invoice };
+    });
+    const pays = await raw.invoicePayment.findMany({ where: { invoiceId: out.invoice.id } });
+    expect(pays.map((p) => [p.method, Number(p.amount)])).toEqual([["CREDIT_NOTE", 30]]);
+    const inv = await raw.invoice.findUniqueOrThrow({ where: { id: out.invoice.id } });
+    expect(inv.status).toBe("PARTIAL"); // $70 still owed on this order's invoice
+    expect(Number(inv.total)).toBe(100);
+    // "New total" and the saved order total never carry the credit: it settles on the invoice
+    const ord = await raw.order.findUniqueOrThrow({ where: { id: out.order.id } });
+    expect(Number(ord.total)).toBe(100);
   }, 30_000);
 
   it("atomic rollback: a failure after the capture leaves no order, no Return, no credit note and no intent; the reserved number is burned, never reused", async () => {
