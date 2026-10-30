@@ -27,7 +27,7 @@ jest.mock("./api-client", () => ({
 }));
 
 const globalToast = jest.fn();
-const wrapper = ({ children }: { children: React.ReactNode }) => {
+const Wrapper = ({ children }: { children: React.ReactNode }) => {
   const client = React.useRef(
     new QueryClient({
       mutationCache: new MutationCache({
@@ -40,7 +40,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => {
 };
 
 const run = async <T,>(useHook: () => { mutateAsync: (v: never) => Promise<T> }, vars: unknown) => {
-  const { result } = renderHook(useHook, { wrapper });
+  const { result } = renderHook(useHook, { wrapper: Wrapper });
   await act(async () => {
     await result.current.mutateAsync(vars as never).catch(() => undefined);
   });
