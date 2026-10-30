@@ -19,12 +19,7 @@ import {
 } from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
-import {
-  cartStrikesList,
-  editedLineFigures,
-  historyPriceEdit,
-  priceEditLineOf,
-} from "./counter-sale-price-edit";
+import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 import { PriceHistoryButton } from "@/components/PriceHistory";
 
 // A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
@@ -273,6 +268,7 @@ export function CounterLineRow({
   hideOriginalPrice?: boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const [historyPick, setHistoryPick] = React.useState<{ value: number } | null>(null);
   const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
   const closeNote = () => {
     setEditing(false);
@@ -327,10 +323,11 @@ export function CounterLineRow({
           customerName={customerName}
           locked={locked}
           onApply={(edit) => onPriceEdit?.(l.tempId, edit)}
+          openWith={historyPick}
           onReset={() => onPriceReset?.(l.tempId)}
           onClosed={onPriceClosed}
         />
-        {canEditPrices && historyCustomerId ? (
+        {canEditPrices && historyCustomerId && l.productId ? (
           <fieldset disabled={locked} className="contents">
             <PriceHistoryButton
               customerId={historyCustomerId}
@@ -339,12 +336,8 @@ export function CounterLineRow({
               productName={l.name}
               unitHint={isBoxedLine(l) ? "case" : l.unit}
               packHint={l.unitsPerBox ?? null}
-              onUsePrice={(price) => {
-                const edit = historyPriceEdit(l, priceTier, price);
-                if (edit) onPriceEdit?.(l.tempId, edit);
-                // the panel puts focus back on its own button one tick later: hand it to the scan field after that
-                setTimeout(() => setTimeout(() => onPriceClosed?.(), 0), 0);
-              }}
+              // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
+              onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
             />
           </fieldset>
         ) : null}

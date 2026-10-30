@@ -41,6 +41,11 @@ export interface CounterLinePriceEditProps {
   /** an unknown-outcome sale is held: the control is disabled like the stepper and remove button */
   locked?: boolean;
   onApply: (edit: CounterPriceEdit) => void;
+  /**
+   * W-853: ask the mounted dialog to open at a "Set price" value (a past price the clerk picked). A new object opens it again;
+   * absent, the dialog opens empty as before. It only fills the field: Apply is still the one write.
+   */
+  openWith?: { value: number } | null;
   onReset?: () => void;
   /** called when the dialog closes (Apply, Cancel, Escape): the screen refocuses its scan field here */
   onClosed?: () => void;
@@ -99,6 +104,7 @@ export function CounterLinePriceEdit({
   customerName,
   locked = false,
   onApply,
+  openWith = null,
   onReset,
   onClosed,
 }: CounterLinePriceEditProps) {
@@ -109,6 +115,15 @@ export function CounterLinePriceEdit({
   const [error, setError] = React.useState<string | null>(null);
   const valueRef = React.useRef<HTMLInputElement>(null);
   const errorId = React.useId();
+
+  React.useEffect(() => {
+    if (!openWith) return;
+    setMode("set");
+    setValue(openWith.value.toFixed(2));
+    setReason("");
+    setError(null);
+    setOpen(true);
+  }, [openWith]);
 
   if (!canEditPrices) return null;
 

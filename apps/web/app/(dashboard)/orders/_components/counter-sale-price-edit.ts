@@ -7,7 +7,6 @@ import {
 import {
   lineTotalAt,
   priceEditChip,
-  resolveCounterPriceEdit,
   typedPriceEditChip,
   type PriceEditLine,
 } from "@/lib/counter-price-edit";
@@ -38,21 +37,6 @@ export function priceEditLineOf(l: SaleLine, tier: number): PriceEditLine {
     pieces: l.pieces,
     unitsPerBox: l.unitsPerBox,
   };
-}
-
-/**
- * W-853: a price picked from the customer's history, as the "set" edit the dialog would hand over for that number (the same
- * resolver, so the rounding and the within-1/2-cent rule are not copied). The reason is NOT asked here: the resolver is told one
- * exists only so it does not refuse, and the edit carries none, so a special-price line still stops at Charge (`lineNeedingReason`).
- * null when the number is not a usable price.
- */
-export function historyPriceEdit(
-  l: SaleLine,
-  tier: number,
-  price: number,
-): CounterPriceEdit | null {
-  const r = resolveCounterPriceEdit("set", price, priceEditLineOf(l, tier), "history");
-  return r.ok ? { mode: "set", value: price, unitPrice: r.unitPrice, override: r.override } : null;
 }
 
 /** The line without any edited-price state (a plain line again, priced at `unitPrice`). */
