@@ -910,22 +910,17 @@ describeDb("SA-727 counter refund: a return resolution, real Postgres", () => {
     const poller = new Client({ connectionString: url });
     await holder.connect();
     await poller.connect();
-    /** True once `n` backends are queued behind the holder (a recursive walk of pg_blocking_pids). */
-    const waitForBlocked = async (pid: number, n: number) => {
-      for (let i = 0; i < 200; i++) {
-        const q = await poller.query(
-          `WITH RECURSIVE w(pid) AS (
-             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-             UNION
-             SELECT a.pid FROM pg_stat_activity a JOIN w ON w.pid = ANY(pg_blocking_pids(a.pid))
-           ) SELECT count(*)::int AS n FROM w`,
-          [pid],
-        );
-        if (Number(q.rows[0].n) >= n) return true;
-        await new Promise((res) => setTimeout(res, 50));
-      }
-      return false;
-    };
+    /** True once `n` backends are queued behind the holder (the helper walks the lock-wait chain). */
+    const waitForBlocked = async (pid: number, n: number) =>
+      (
+        await waitUntilBlocked(poller, {
+          holderPid: pid,
+          transitive: true,
+          atLeast: n,
+          timeoutMs: 10_000,
+          intervalMs: 50,
+        })
+      ).length >= n;
     try {
       // the hand-over: holds the Order row lock and stamps the register
       await holder.query("BEGIN");
