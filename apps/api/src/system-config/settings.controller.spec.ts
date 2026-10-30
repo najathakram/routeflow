@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { validate } from "class-validator";
+import { validate, validateSync } from "class-validator";
 import { plainToInstance } from "class-transformer";
 import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { ConfigService } from "@nestjs/config";
@@ -10,9 +10,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { plainToInstance } from "class-transformer";
-import { validateSync } from "class-validator";
-import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
 // apps/api/src/common/tax-rate.ts. A direct PATCH call can otherwise store an

@@ -22,7 +22,8 @@ export type InvoiceBarcodeSource = "line" | "pieces" | "none";
  *  5. no pack code and no piece barcode -> line (the item number), so the line keeps the one code it prints today.
  */
 export function invoiceBarcodeSource(
-  product: { unitSku?: string | null; barcode?: string | null } | null | undefined,
+  product:
+    { unitSku?: string | null; barcode?: string | null; sku?: string | null } | null | undefined,
   components: ReadonlyArray<{ unitBarcode?: string | null }> | null | undefined,
   showBarcodes: boolean,
 ): InvoiceBarcodeSource {
