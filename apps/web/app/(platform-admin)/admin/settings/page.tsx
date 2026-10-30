@@ -85,7 +85,7 @@ function StatusBadge({ configured, source }: { configured: boolean; source: stri
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-/** A model <select> that lists the API's labelled models and keeps a stored older id selectable, marked "(older model)". */
+/** A model dropdown that lists the API's labelled models and keeps a stored older id selectable, marked "(older model)". */
 function ModelSelect({
   label,
   hint,
@@ -108,6 +108,7 @@ function ModelSelect({
       </label>
       <select
         id={id}
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
