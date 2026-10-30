@@ -93,7 +93,7 @@ describe("CountAdjustModal (SA-957 M1 / SA-958: one quantity row per unit)", () 
     type("Case", "1.5");
     reason("DAMAGED");
     const problem = screen.getByTestId("count-row-error-Case");
-    expect(problem).toHaveTextContent("Count whole cases, or count the rest in Piece rows.");
+    expect(problem).toHaveTextContent("Count whole cases, or count the rest in pieces.");
     expect(row("Case")).toHaveAttribute("aria-describedby", expect.stringContaining(problem.id));
     expect(save()).toBeDisabled();
     type("Case", "");

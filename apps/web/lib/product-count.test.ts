@@ -175,9 +175,9 @@ describe("reasonHint / noteHint (each message sits under its own field)", () => 
 });
 
 describe("rowProblem (under its own row)", () => {
-  it("refuses a fractional packed unit and names the base word's row; allows fractional pieces", () => {
+  it("refuses a fractional packed unit and names the base word; allows fractional pieces", () => {
     expect(rowProblem(jugs[1], "1.5", jugs)).toBe(
-      "Count whole cases, or count the rest in Piece rows.",
+      "Count whole cases, or count the rest in pieces.",
     );
     expect(rowProblem(jugs[2], "1.5", jugs)).toBeNull();
   });

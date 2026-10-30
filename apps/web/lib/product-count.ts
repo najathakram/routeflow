@@ -2,6 +2,7 @@ import {
   buildLadderOptions,
   countFactorOf,
   countPieces,
+  plural,
   pluralize,
   type LadderProduct,
 } from "@routeflow/pricing";
@@ -105,7 +106,7 @@ export function baseWord(options: CountUnitOption[]): string {
 /** "10 bags", "1 Piece", "−8 Pieces": a number with the base word, pluralised unless it is exactly one. */
 export function stockWithWord(n: number, options: CountUnitOption[]): string {
   const word = baseWord(options);
-  return `${formatStockQty(n)} ${Math.abs(n) === 1 ? word : pluralize(word)}`;
+  return `${formatStockQty(n)} ${plural(word, Math.abs(n))}`;
 }
 
 function parseQuantity(text: string | undefined): number | null {
@@ -186,7 +187,7 @@ export function rowProblem(
   if (!Number.isFinite(n)) return "Enter a number.";
   if (n < 0) return "Enter zero or more. Use Remove to take stock off.";
   if (option.factor > 1 && !Number.isInteger(n))
-    return `Count whole ${pluralize(option.label).toLowerCase()}, or count the rest in ${baseWord(options)} rows.`;
+    return `Count whole ${pluralize(option.label).toLowerCase()}, or count the rest in ${pluralize(baseWord(options)).toLowerCase()}.`;
   return null;
 }
 
