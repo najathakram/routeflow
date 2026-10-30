@@ -24,6 +24,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { FeatureConfigStore } from "../billing/feature-config.store";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PromotionsService } from "./promotions.service";
+import { BuyerCatalogService } from "../buyer/buyer-catalog.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -51,6 +52,7 @@ describeDb("SA-1032 — promotions on/off per business (real Postgres)", () => {
       await prisma.promotion.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenantFeatureConfig.deleteMany({ where: { tenantId: { in: tenantIds } } });
+      await prisma.product.deleteMany({ where: { tenantId: { in: tenantIds } } });
       await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } });
     }
     await prisma?.$disconnect();
@@ -206,5 +208,37 @@ describeDb("SA-1032 — promotions on/off per business (real Postgres)", () => {
       result = e;
     }
     expect(result).toEqual([]);
+  });
+
+  it("P-G6: off → the Deals collection holds exactly the isDeal product (the merch flag is not a promotion)", async () => {
+    const t = await tenant("off");
+    await promo(t); // ALL scope: on, it would make every product a deal
+    const product = (name: string, isDeal: boolean) =>
+      prisma.product.create({
+        data: {
+          tenantId: t,
+          name,
+          sku: `${name}-${run}`,
+          unit: "unit",
+          pricePerUnit: "10",
+          isDeal,
+        },
+      });
+    const deal = await product("deal", true);
+    await product("plain", false);
+    const { promotions } = services();
+    // The catalog's own deals fragment over the real active read, as `collection: "deals"` and the rail count build it.
+    const catalog = Object.create(BuyerCatalogService.prototype) as {
+      dealsWhere: (promos: unknown[]) => Record<string, unknown>;
+    };
+    const where = {
+      AND: [
+        { tenantId: t },
+        catalog.dealsWhere(await inTenant(t, () => promotions.activeForCatalog())),
+      ],
+    };
+    const rows = await prisma.product.findMany({ where, select: { id: true } });
+    expect(rows.map((r) => r.id)).toEqual([deal.id]);
+    expect(await prisma.product.count({ where })).toBe(1);
   });
 });

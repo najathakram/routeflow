@@ -2,7 +2,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
 import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
-import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
+import { PROMOTIONS_OFF_COPY, codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
  * B980: the generic mutation toast shows FIXED copy chosen by code, then status. The raw server
@@ -671,6 +671,17 @@ describe("handleMutationError: opt-outs and handled codes are unchanged (B980)",
       variant: "error",
     });
     expect(JSON.stringify(toast.mock.calls)).not.toContain(RAW);
+  });
+
+  it("W-G2 (SA-1032): a 403 PROMOTIONS_OFF toasts the mapped sentence once, never the server text or the permission line", () => {
+    const toast = run(err(403, { code: API_ERROR_CODES.PROMOTIONS_OFF }), undefined);
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith({ title: PROMOTIONS_OFF_COPY, variant: "error" });
+    expect(PROMOTIONS_OFF_COPY).toBe(
+      "Promotions are turned off for this business. Customers don't see them, and new orders don't use them. Past orders keep their promotion prices.",
+    );
+    expect(JSON.stringify(toast.mock.calls)).not.toContain(RAW);
+    expect(JSON.stringify(toast.mock.calls)).not.toContain("You don't have permission");
   });
 });
 
