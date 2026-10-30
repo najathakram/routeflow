@@ -5,7 +5,9 @@ import Link from "next/link";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Download, FileText, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
+import { isLicenceExpired } from "@routeflow/types";
 import { useAuth } from "@/lib/auth-context";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -377,6 +379,7 @@ function PurchasesTab() {
 
 function SalesTab() {
   const range = useRangeState();
+  const zone = useTenantTimeZone();
   const { data: sales = [], isLoading } = useTobaccoSales({ from: range.from, to: range.to });
   return (
     <div>
@@ -404,9 +407,10 @@ function SalesTab() {
             </thead>
             <tbody className="divide-y divide-surface-border">
               {sales.map((s) => {
+                // B330: good through the END of the printed day in the business's zone.
                 const licenseExpired =
                   s.customer?.tobaccoLicenseExpiry != null &&
-                  new Date(s.customer.tobaccoLicenseExpiry) < new Date();
+                  isLicenceExpired(s.customer.tobaccoLicenseExpiry, new Date(), zone);
                 const noLicense = !s.customer?.tobaccoLicenseNo;
                 return (
                   <tr key={s.id} className="transition-colors hover:bg-surface-raised/50">

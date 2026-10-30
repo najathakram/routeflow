@@ -16,7 +16,7 @@ import { useApprovePaymentRequest, useRejectPaymentRequest } from "./payment-req
 import { useRecordPayment } from "./bookkeeping";
 
 /**
- * Row 348: the payment hooks behind the closed-day surfaces keep the app-wide error toast QUIET for a closed-day
+ * Row 348 (and 353 below): the payment hooks behind the closed-day surfaces keep the app-wide error toast QUIET for a closed-day
  * refusal (`meta.localErrorToast`), because every one of those pages toasts it itself. Both day-closed codes answer
  * true, any other 409 answers false (it still reaches the global toast, in fixed copy).
  */
@@ -56,9 +56,7 @@ async function metaOf(make: () => { mutate: (v: any, o?: any) => void }) {
 }
 
 const HOOKS: Array<[string, () => { mutate: (v: any, o?: any) => void }]> = [
-  ["useRecordPaymentStandalone", () => useRecordPaymentStandalone()],
   ["useVoidPayment", () => useVoidPayment()],
-  ["useApprovePaymentRequest", () => useApprovePaymentRequest()],
   [
     "useRecordPayment({ localErrorToast })",
     () => useRecordPayment({ localErrorToast: isDayClosedRefusal }),
@@ -115,7 +113,15 @@ describe("payment hooks: meta.localErrorToast answers a closed-day refusal (row 
     },
   );
 
-  it("useRejectPaymentRequest is untouched (a reject writes no money)", async () => {
-    expect(await metaOf(() => useRejectPaymentRequest())).toBeUndefined();
-  });
+  // Rows 348 / 353 (PK-9): these pages render EVERY failure in their own toast, so the global one is quiet for all.
+  it.each([
+    ["useRecordPaymentStandalone", () => useRecordPaymentStandalone()],
+    ["useApprovePaymentRequest", () => useApprovePaymentRequest()],
+    ["useRejectPaymentRequest", () => useRejectPaymentRequest()],
+  ] as Array<[string, () => { mutate: (v: any, o?: any) => void }]>)(
+    "%s owns every failure (localErrorToast: true)",
+    async (_name, make) => {
+      expect((await metaOf(make))?.localErrorToast).toBe(true);
+    },
+  );
 });

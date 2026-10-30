@@ -2,12 +2,13 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Building2, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Building2, CheckCircle, AlertCircle, Clock, Loader2 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { getInviteDetails, acceptInvite, getBuyerAccessToken } from "@/lib/buyer-auth";
 import { isInShell } from "@/lib/in-shell";
+import { isSellerUnavailableRefusal, sellerUnavailableCopy } from "@/lib/seller-unavailable";
 
 // ─── Inline Google icon (no external requests) ────────────────────────────────
 function GoogleIcon({ className }: { className?: string }) {
@@ -47,6 +48,9 @@ export default function BuyerInvitePage() {
 
   const [invite, setInvite] = React.useState<InviteDetails | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  // Row 397: the seller is paused (suspended / cancelled / read-only): not an "invalid" invite, a not-right-now one.
+  const [sellerPaused, setSellerPaused] = React.useState(false);
+  const [pausedSellerName, setPausedSellerName] = React.useState<string | null>(null);
   const [isLoadingInvite, setIsLoadingInvite] = React.useState(true);
   const [isAccepting, setIsAccepting] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
@@ -63,6 +67,14 @@ export default function BuyerInvitePage() {
         setInvite(data);
       })
       .catch((err) => {
+        if (isSellerUnavailableRefusal(err)) {
+          setSellerPaused(true);
+          const named = (err as { response?: { data?: { sellerName?: unknown } } })?.response?.data
+            ?.sellerName;
+          setPausedSellerName(typeof named === "string" && named.trim() ? named : null);
+          setLoadError(sellerUnavailableCopy(typeof named === "string" ? named : null));
+          return;
+        }
         const msg =
           (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           "This invite link is invalid or has expired.";
@@ -146,7 +158,11 @@ export default function BuyerInvitePage() {
     isLoadingInvite || authLoading
       ? "You're invited."
       : loadError
-        ? "Invalid invite"
+        ? sellerPaused
+          ? pausedSellerName
+            ? `${pausedSellerName} is not available right now`
+            : "Not available right now"
+          : "Invalid invite"
         : accepted
           ? "Invite accepted"
           : "You're invited.";
@@ -161,16 +177,29 @@ export default function BuyerInvitePage() {
   } else if (loadError) {
     content = (
       <div className="text-center">
-        <AlertCircle className="mx-auto mb-4 h-12 w-12 text-danger" />
-        <p className="text-sm text-navy/70 mb-6">{loadError}</p>
+        {sellerPaused ? (
+          // Row 397: a paused seller is a "not right now", not an error: a neutral pause icon, and the invite is still good.
+          <Clock className="mx-auto mb-4 h-12 w-12 text-navy/50" aria-hidden="true" />
+        ) : (
+          <AlertCircle className="mx-auto mb-4 h-12 w-12 text-danger" />
+        )}
+        <p className={`text-sm text-navy/70 ${sellerPaused ? "mb-2" : "mb-6"}`}>{loadError}</p>
+        {sellerPaused && (
+          <p className="text-sm text-navy/70 mb-6">
+            Your invite still works. Open this link again once they&apos;re back.
+          </p>
+        )}
         {/* Deliberate full-page navigation out of the invite flow into the buyer portal —
             it re-bootstraps the buyer auth context, so a soft <Link /> nav is not
             equivalent. `no-html-link-for-pages` only became app-router-aware in
             @next/eslint-plugin-next 15, which is why this line is newly flagged. */}
-        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-        <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline text-sm">
-          Go to your portal
-        </a>
+        {/* A paused seller's page offers the portal only to someone who is signed in. */}
+        {(!sellerPaused || isAuthenticated) && (
+          // eslint-disable-next-line @next/next/no-html-link-for-pages
+          <a href="/buyer/portal" className="text-[#0B6E6B] hover:underline text-sm">
+            Go to your portal
+          </a>
+        )}
       </div>
     );
   } else if (accepted) {

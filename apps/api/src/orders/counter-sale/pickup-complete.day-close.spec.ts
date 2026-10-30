@@ -133,6 +133,9 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec pins it)
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
@@ -197,14 +200,25 @@ describe("PickupCompleteService.complete — the day-close lock and window (SA-7
     expect(events.indexOf("lock:2")).toBeLessThan(events.indexOf("record"));
   });
 
-  it("a tender dated inside a closed window is 409 COUNTER_SALE_DAY_CLOSED and nothing is recorded", async () => {
+  it("a tender dated inside a closed window is refused 409 COUNTER_COMPLETE_DAY_CLOSED (the pre-check) and nothing is recorded", async () => {
     closedWindow();
+    const err: any = await run().catch((e) => e);
+    expect(err.getStatus?.()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
+    expect(recordPayment).not.toHaveBeenCalled();
+    expect(invoices[0].payments).toHaveLength(0);
+    expect(events.indexOf("lock:2")).toBeLessThan(events.indexOf("window-read"));
+  });
+
+  // W-776 (SA-925): one code per commit state. The day closing between the pre-check and the lock leaves the hand-over standing.
+  it("the day closing AFTER the pre-check is COUNTER_SALE_DAY_CLOSED (the hand-over stands), never the pre-check's code", async () => {
+    prisma.counterDayClose.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: "close-1" });
     const err: any = await run().catch((e) => e);
     expect(err.getStatus?.()).toBe(409);
     expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
     expect(recordPayment).not.toHaveBeenCalled();
-    expect(invoices[0].payments).toHaveLength(0);
-    expect(events.indexOf("lock:2")).toBeLessThan(events.indexOf("window-read"));
   });
 
   it("a tender after the window (a reopened or absent close) is recorded", async () => {
@@ -318,6 +332,9 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
         {
           provide: OrdersService,
           useValue: {
+            // W-774: the restriction pre-judge reads the order's lines (none here) through the orders service's prisma
+            prisma,
+            staffSellable: jest.fn(async () => undefined),
             assertDeliveryCreditGate: jest.fn(async () => undefined), // SA-905: the pre-judge (its own spec pins it)
             changeStatus: jest.fn(async () => {
               order = { ...order, status: "DELIVERED", deliveredAt: new Date(T_DELIVERED) };
@@ -406,11 +423,11 @@ describe("PickupCompleteService.complete — a POS-mode PICKUP order's cash coun
     expect(lockCalls[1].sharedAlso).toEqual({ family: "counter-close", key: "test-tenant:Till-B" });
   });
 
-  it("a hand-over into a closed window is 409 COUNTER_SALE_DAY_CLOSED: nothing stamped, nothing recorded", async () => {
+  it("a hand-over into a closed window is 409 COUNTER_COMPLETE_DAY_CLOSED: nothing stamped, nothing recorded", async () => {
     closedWindow();
     const err: any = await run(withKey("b")).catch((e) => e);
     expect(err.getStatus?.()).toBe(409);
-    expect(err.getResponse()).toMatchObject({ code: "COUNTER_SALE_DAY_CLOSED" });
+    expect(err.getResponse()).toMatchObject({ code: "COUNTER_COMPLETE_DAY_CLOSED" });
     expect(prisma.order.updateMany).not.toHaveBeenCalled();
     expect(recordPayment).not.toHaveBeenCalled();
     expect(invoices[0].payments).toHaveLength(0);

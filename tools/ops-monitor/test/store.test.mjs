@@ -20,6 +20,7 @@ import {
   syncSpecs,
   readAllEvents,
   loadBugIds,
+  RegistryUnavailable,
   appendEvents,
   validateAgainstState,
 } from "../lib/store.mjs";
@@ -403,7 +404,7 @@ test("validateAgainstState", () => {
 });
 
 test(
-  "loadBugIds reads origin/master's bug files; failure -> empty set",
+  "loadBugIds reads origin/master's bug files; a git failure throws RegistryUnavailable",
   { timeout: 240000 },
   async () => {
     const repo = join(tmp, "bugrepo");
@@ -419,10 +420,14 @@ test(
     git(repo, "update-ref", "refs/remotes/origin/master", "HEAD");
     const ids = await loadBugIds(repo);
     assert.deepEqual([...ids].sort(), ["B12", "B7"]);
-    const none = await loadBugIds(join(tmp, "not-a-repo-dir"));
-    assert.equal(none.size, 0);
+    // fail closed: an unreadable register is an error, never "0 bugs"
+    await assert.rejects(loadBugIds(join(tmp, "not-a-repo-dir")), RegistryUnavailable);
     mkdirSync(join(tmp, "plain"), { recursive: true });
-    assert.equal((await loadBugIds(join(tmp, "plain"))).size, 0);
+    await assert.rejects(loadBugIds(join(tmp, "plain")), (e) => {
+      assert.equal(e.name, "RegistryUnavailable");
+      assert.match(e.message, /bug register unavailable/);
+      return true;
+    });
   },
 );
 

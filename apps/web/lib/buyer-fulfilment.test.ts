@@ -1,6 +1,7 @@
 import type { BuyerSellerCapability } from "@routeflow/types";
 import {
   NO_FLEET_STEP_LABELS,
+  PICKUP_STEP_LABELS,
   SHIPMENT_STATE_LABEL,
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
@@ -8,6 +9,7 @@ import {
   isConfiguredSeller,
   noFleetStepIndex,
   orderTravelView,
+  pickupStepIndex,
   sellerShowsRouteWording,
   shipStepIndex,
   shipmentState,
@@ -50,6 +52,39 @@ describe("isConfiguredSeller / sellerShowsRouteWording", () => {
     expect(isConfiguredSeller(SHIP_ONLY)).toBe(true);
     expect(sellerShowsRouteWording(SHIP_ONLY)).toBe(false);
     expect(sellerShowsRouteWording(BOTH_FLEET)).toBe(true);
+  });
+});
+
+describe("a PICKUP order (counter / till) is a pickup for every seller", () => {
+  // The buyer collects it at the store: no driver, no route, no "Track your delivery" card.
+  it.each([
+    ["an unset seller", UNSET_FLEET, false],
+    ["a configured seller with a fleet", BOTH_FLEET, false],
+    ["a shipping-only seller", SHIP_ONLY, false],
+    ["an unreadable capability", undefined, false],
+    ["a capability still loading", undefined, true],
+  ])("%s", (_label, c, loading) => {
+    expect(orderTravelView("PICKUP", c, loading)).toBe("pickup");
+  });
+
+  it("the timeline is Pending → Confirmed → Ready for pickup → Picked up", () => {
+    expect(PICKUP_STEP_LABELS).toEqual(["Pending", "Confirmed", "Ready for pickup", "Picked up"]);
+    expect(
+      ["DRAFT", "PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"].map(
+        pickupStepIndex,
+      ),
+    ).toEqual([-1, 0, 1, 2, 2, 3]);
+    expect(pickupStepIndex("CANCELLED")).toBe(-1);
+  });
+
+  it("the badge never says delivery: Ready For Pickup, Partly Picked Up, Picked Up", () => {
+    const label = (status: string) =>
+      buyerOrderStatusLabel({ status, fulfillPath: "PICKUP" }, UNSET_FLEET, false);
+    expect(label("OUT_FOR_DELIVERY")).toBe("Ready For Pickup");
+    expect(label("PARTIALLY_DELIVERED")).toBe("Partly Picked Up");
+    expect(label("DELIVERED")).toBe("Picked Up");
+    expect(label("CONFIRMED")).toBeNull();
+    expect(label("CANCELLED")).toBeNull();
   });
 });
 
@@ -189,7 +224,7 @@ describe("buyerOrderStatusLabel — ONE per-order label for the detail page, the
   });
 
   it("is exactly the detail page's view + label", () => {
-    for (const fulfillPath of ["ROUTE", "SHIP", undefined]) {
+    for (const fulfillPath of ["ROUTE", "SHIP", "PICKUP", undefined]) {
       for (const status of ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"]) {
         for (const cap of [SHIP_ONLY, BOTH_FLEET, UNSET_NO_FLEET]) {
           const o = { status, fulfillPath };

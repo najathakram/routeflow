@@ -315,8 +315,10 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // label class renamed `.eyebrow-label` — it collided with Tailwind's `overline` utility; a
 // dashboard fix, not marketing leakage). Re-pinned again by the V12 --field token (the input-border
 // colour, mirrored in the Ledger token source) on the same #2080/#2497 precedent: a dashboard
-// control token, not marketing leakage.
-const GLOBALS_CSS_SHA256 = "955ab9f30ba3d352cc348d64275c219462b31ad022fc8716a5ac5eb3d3949b02";
+// control token, not marketing leakage. Re-pinned again by W-928 (the `prefers-reduced-motion` rule
+// that stops the Tailwind enter / exit animation on every overlay) on the same precedent: an
+// accessibility rule for the dashboard overlays, not marketing leakage.
+const GLOBALS_CSS_SHA256 = "2d154367dfa3ffa38a47f3aafdd1fa76ab27a36c3dbd3481a10384317d30df45";
 // tailwind.config.ts re-pinned by #2329: the preset now builds its values from the shared
 // Ledger token source (packages/ui/src/tokens/ledger.ts). Behaviour-preserving — the compiled
 // web CSS is byte-identical before and after — and unrelated to the marketing port.

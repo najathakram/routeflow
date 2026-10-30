@@ -155,18 +155,26 @@ describe("one open count per product (SA-767 r-note 5, SA-3)", () => {
       w.prisma.stockCountSession.create.mockResolvedValue({ id: "new-sess" });
     });
 
-    it("the amend tx (N sorted locks + N creates) has the same 15 s budget", async () => {
+    it("the seeding tx (one sorted lock statement + one createMany per batch) has the same 15 s budget", async () => {
       await amend();
 
       expect(w.prisma.tenantTransaction.mock.calls[0][1]).toMatchObject({ timeout: 15000 });
     });
 
-    it("locks every seeded product in SORTED order, then checks the overlap once", async () => {
+    it("locks every seeded product in ONE sorted statement; the overlap is read before it (pre-check) and again under it", async () => {
       await amend();
 
-      expect(w.events.filter((e) => e.startsWith("xlock:"))).toEqual([lockEvent(1), lockEvent(2)]);
-      expect(w.events.filter((e) => e === "overlap-read")).toHaveLength(1);
-      expect(w.prisma.stockCountLine.create).toHaveBeenCalledTimes(2);
+      // Row 562 S1: the batch's keys are one array in one statement, sorted (master: one statement per product).
+      expect(w.events.filter((e) => e.startsWith("xlock:"))).toEqual([
+        `xlock:stock-count-product|test-tenant:${pid(1)},test-tenant:${pid(2)}`,
+      ]);
+      const overlap = w.events.flatMap((e, i) => (e === "overlap-read" ? [i] : []));
+      const lock = w.events.findIndex((e) => e.startsWith("xlock:"));
+      expect(overlap).toHaveLength(2);
+      expect(overlap[0]).toBeLessThan(lock);
+      expect(overlap[1]).toBeGreaterThan(lock);
+      expect(w.prisma.stockCountLine.createMany).toHaveBeenCalledTimes(1);
+      expect(w.prisma.stockCountLine.createMany.mock.calls[0][0].data).toHaveLength(2);
     });
 
     it("seeds each line's countedQty through roundCountQty (a legacy unrounded value lands at 3 dp)", async () => {
@@ -186,9 +194,9 @@ describe("one open count per product (SA-767 r-note 5, SA-3)", () => {
 
       await amend();
 
-      expect(w.prisma.stockCountLine.create.mock.calls[0][0].data.countedQty.toString()).toBe(
-        "1.235",
-      );
+      expect(
+        w.prisma.stockCountLine.createMany.mock.calls[0][0].data[0].countedQty.toString(),
+      ).toBe("1.235");
     });
 
     it("refuses with 409 PRODUCT_IN_OPEN_COUNT when a seeded product is open in another count", async () => {
@@ -201,7 +209,7 @@ describe("one open count per product (SA-767 r-note 5, SA-3)", () => {
         code: "PRODUCT_IN_OPEN_COUNT",
         conflicts: [{ productId: pid(2), sessionId: "other-sess" }],
       });
-      expect(w.prisma.stockCountLine.create).not.toHaveBeenCalled();
+      expect(w.prisma.stockCountLine.createMany).not.toHaveBeenCalled();
     });
   });
 

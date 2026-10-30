@@ -28,7 +28,7 @@ export interface StaffCapabilityRule {
 }
 
 export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule> = {
-  // SUPER_ADMIN joins when the orders/invoices price paths move onto staffMay (perms PR7).
+  // SUPER_ADMIN never types a line price: in-tenant support runs as impersonation (TENANT_ADMIN), and a raw platform token is refused (SA-1034).
   EDIT_LINE_PRICE: { roles: ["OPERATOR", "TENANT_ADMIN"], group: "PRICING" },
   VOID_SALE: { roles: ["OPERATOR", "TENANT_ADMIN", "SUPER_ADMIN"], group: "ORDERS" },
   // POS mode (SA-763r): a staff order on the PICKUP path, whatever the tenant offers to buyers.
@@ -42,13 +42,13 @@ export const STAFF_CAPABILITY_RULES: Record<StaffCapability, StaffCapabilityRule
 
 /**
  * May `role` do `action`? Pure. TENANT_ADMIN and SUPER_ADMIN ignore `deniedGroups`; an OPERATOR is refused
- * when the action's group is denied. Every call site passes no `deniedGroups` today (shadow: no visible
- * change); perms PR7 passes the caller's effective denials, one argument per call site.
+ * when the action's group is denied. `deniedGroups` is required (no default), as in the API: a display-only
+ * caller (the server enforces) passes `[]` explicitly, so the choice is visible at the call site.
  */
 export function staffMay(
   role: string | null | undefined,
   action: StaffCapability,
-  deniedGroups: readonly string[] = [],
+  deniedGroups: readonly string[],
 ): boolean {
   const rule = STAFF_CAPABILITY_RULES[action];
   if (!role || !(rule.roles as readonly string[]).includes(role)) return false;

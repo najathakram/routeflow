@@ -33,6 +33,7 @@ import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
   InlineReturnRefundEligibility,
+  InlineReturnRefundResponse,
   InlineRefundTender,
   InlineReturnResolution,
 } from "@routeflow/types";
@@ -49,13 +50,22 @@ import {
 } from "@routeflow/returns";
 import {
   REFUND_COPY,
+  WALK_IN_REFUND_LINE,
   TENDER_OPTIONS,
+  creditOutcomeLine,
   handBackLine,
+  handOverLine,
+  refundedLine,
   refundErrorKind,
+  storeCreditAddedLine,
+  takeBackCreditLabel,
+  takeBackRefundLabel,
   tenderFromPaidMethods,
   TERMINAL_REFUND_ERRORS,
+  type CreditContext,
   type RefundErrorKind,
 } from "./refund-copy";
+import { confirmRefusal, walkInStoreCreditRefused } from "./quote-guards";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
 
 const REASON_HINT_ID = "return-reason-hint";
@@ -113,6 +123,17 @@ export interface RecordedInfo {
   amount?: number;
   /** SA-727b: the return is saved but its refund is still pending (nothing paid out). */
   pending?: boolean;
+}
+
+/** SA-929: what the SERVER recorded for a capture/store-credit answer. A return the server already refunded
+ *  (refundMethod EXTERNAL_REFUND with refundedAt) is a refund whatever was chosen; anything else is store credit.
+ *  The capture answer carries no tender, so a refund read from it names none. */
+function recordedFromServer(ret: InlineReturnRecord, fallbackAmount: number): RecordedInfo {
+  const amount = refundAmountOf(ret.refundAmount) ?? fallbackAmount;
+  if (ret.refundMethod === "EXTERNAL_REFUND" && ret.refundedAt) {
+    return { resolution: "REFUND", amount };
+  }
+  return { resolution: "STORE_CREDIT", amount };
 }
 
 type DialogPhase = "capture" | "success" | "refused";
@@ -178,6 +199,8 @@ export function RecordInlineReturnDialog({
     tender: InlineRefundTender;
     amount: number;
   } | null>(null);
+  // SA-929: the outcome as the server recorded it; the success screen's words come from here, not from the choice.
+  const [outcome, setOutcome] = React.useState<RecordedInfo | null>(null);
   const [requoteOverride, setRequoteOverride] = React.useState<InlineReturnQuoteResponse | null>(
     null,
   );
@@ -210,6 +233,7 @@ export function RecordInlineReturnDialog({
     setRefunding(false);
     setRefundError(null);
     setRefundDone(null);
+    setOutcome(null);
     setRequoteOverride(null);
     setServerAmount(null);
     setCrediting(false);
@@ -229,6 +253,11 @@ export function RecordInlineReturnDialog({
   const walkIn = showChoice && !!quoted?.canRefund && !!quoted?.customerIsWalkIn;
   const effResolution: InlineReturnResolution =
     !showChoice || paidWithCredit ? "STORE_CREDIT" : walkIn ? "REFUND" : resolution;
+  // SA-959: a walk-in return is never a credit note (the shared walk-in row cannot hold one). A walk-in that cannot be
+  // refunded here (not fully paid, a role, a host with no refund) is told so and offered no take-back.
+  const walkInNoRefund = !!quoted?.customerIsWalkIn && !walkIn;
+  // Which order the credit lands on decides how far the note can go: only the settled counter sale is "the next order".
+  const creditContext: CreditContext = sourceOrderId ? "nextOrder" : "account";
   const effTender: InlineRefundTender = tender ?? tenderFromPaidMethods(quoted?.paidMethods);
   const quotedAmount = quoted?.total ?? 0;
   const shownAmount = serverAmount ?? quotedAmount;
@@ -265,6 +294,7 @@ export function RecordInlineReturnDialog({
 
   // SA-727b: a saved REFUND-intent return whose refund is pending is credited instead (never re-captured).
   function doStoreCredit(ret: InlineReturnRecord) {
+    if (walkInStoreCreditRefused(quoted)) return; // SA-972 §2.2: a walk-in cannot hold store credit, whatever canRefund says
     if (busyRef.current) return;
     busyRef.current = true;
     retriedRef.current = true;
@@ -275,12 +305,11 @@ export function RecordInlineReturnDialog({
         busyRef.current = false;
         setCrediting(false);
         pendingReportedRef.current = true;
+        const info = recordedFromServer(rec, savedAmountOf(ret));
         setResult(rec);
+        setOutcome(info);
         setPhase("success");
-        onRecorded?.(rec, {
-          resolution: "STORE_CREDIT",
-          amount: refundAmountOf(rec.refundAmount) ?? savedAmountOf(ret),
-        });
+        onRecorded?.(rec, info);
       },
       (err: unknown) => {
         busyRef.current = false;
@@ -312,14 +341,24 @@ export function RecordInlineReturnDialog({
     const amount = savedAmountOf(ret);
     const used = effTender;
     refundReturn(ret.id, { tender: used, expectedAmount: amount }).then(
-      () => {
+      (answer) => {
         busyRef.current = false;
         setRefunding(false);
         pendingReportedRef.current = true;
-        setRefundDone({ tender: used, amount });
+        // SA-929: the words come from what the server recorded (its amount and tender), not from what was sent.
+        const recorded = answer as Partial<InlineReturnRefundResponse> | null | undefined;
+        const finalTender = recorded?.refundTender ?? used;
+        const finalAmount = refundAmountOf(recorded?.refundAmount) ?? amount;
+        const info: RecordedInfo = {
+          resolution: "REFUND",
+          tender: finalTender,
+          amount: finalAmount,
+        };
+        setRefundDone({ tender: finalTender, amount: finalAmount });
+        setOutcome(info);
         setResult(ret);
         setPhase("success");
-        onRecorded?.(ret, { resolution: "REFUND", tender: used, amount });
+        onRecorded?.(ret, info);
       },
       (err: unknown) => {
         busyRef.current = false;
@@ -352,10 +391,12 @@ export function RecordInlineReturnDialog({
   }
 
   function handleConfirm() {
-    if (!sectionState.captureReason) {
-      toast({ title: "Choose a reason before confirming", variant: "error" });
+    const refusal = confirmRefusal({ walkInNoRefund, hasReason: !!sectionState.captureReason });
+    if (refusal) {
+      toast({ title: refusal, variant: "error" });
       return;
     }
+    if (!sectionState.captureReason) return; // narrows the type; confirmRefusal has already said why
     if (showChoice) {
       if (busyRef.current) return;
       busyRef.current = true;
@@ -386,12 +427,11 @@ export function RecordInlineReturnDialog({
             return;
           }
           busyRef.current = false;
+          const info = recordedFromServer(data, quotedAmount);
           setResult(data);
+          setOutcome(info);
           setPhase("success");
-          onRecorded?.(data, {
-            resolution: "STORE_CREDIT",
-            amount: refundAmountOf(data.refundAmount) ?? quotedAmount,
-          });
+          onRecorded?.(data, info);
         },
         onError: (err) => {
           busyRef.current = false;
@@ -426,6 +466,7 @@ export function RecordInlineReturnDialog({
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
+      closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
       scroll
     >
       {/* The order picker is dialog-owned state (carryingOrderId) — safe to unmount/remount
@@ -435,6 +476,7 @@ export function RecordInlineReturnDialog({
       {phase === "capture" && !orderId && sectionState.step === "lines" && (
         <div className="mb-4">
           <Select
+            className="max-lg:h-11"
             label="Which order should this credit apply to?"
             value={carryingOrderId}
             onChange={(e) => setCarryingOrderId(e.target.value)}
@@ -459,13 +501,28 @@ export function RecordInlineReturnDialog({
         quoteOverride={serverQuote ?? requoteOverride}
         totalOnly={!!serverQuote}
         hideBack={!!saved}
+        refusal={walkInNoRefund ? REFUND_COPY.walkInNoRefund : undefined}
+        // The money sentence: under the Total only when there is no choice block (a walk-in's one sentence, or no refund
+        // offered); with the Store credit / Refund choice it sits with the radio and follows it (mm-ux 93.8%).
         quoteNote={
-          showChoice && effResolution === "REFUND" ? REFUND_COPY.quoteRefundNote : undefined
+          walkInNoRefund
+            ? null
+            : walkIn
+              ? REFUND_COPY.walkIn
+              : showChoice
+                ? null
+                : creditOutcomeLine(money(shownAmount), creditContext, customerName)
         }
         renderQuoteFooter={() =>
           showChoice ? (
             <RefundChoice
               amount={money(shownAmount)}
+              note={
+                effResolution === "REFUND"
+                  ? null // the hand-back line under Refund by already says it
+                  : creditOutcomeLine(money(shownAmount), creditContext, customerName)
+              }
+              returnHref={saved ? `/returns/${saved.id}` : undefined}
               walkIn={walkIn}
               refundUnavailable={paidWithCredit}
               resolution={effResolution}
@@ -486,15 +543,15 @@ export function RecordInlineReturnDialog({
           ) : null
         }
         renderLinesActions={() => (
-          <Button variant="ghost" onClick={onClose}>
+          <Button className="max-lg:min-h-11" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
         )}
         renderQuoteActions={() =>
-          showChoice &&
-          (refundError === "failed" ||
-            refundError === "exceedsCash" ||
-            (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
+          walkInNoRefund ? null : showChoice &&
+            (refundError === "failed" ||
+              refundError === "exceedsCash" ||
+              (refundError && TERMINAL_REFUND_ERRORS.has(refundError))) ? (
             saved &&
             (refundError === "failed" ||
               refundError === "exceedsCash" ||
@@ -502,16 +559,21 @@ export function RecordInlineReturnDialog({
                 // a walk-in can't hold store credit: a closed day leaves only the later date
                 !(refundError === "dayClosed" && walkIn))) ? (
               <>
-                <Button
-                  variant="secondary"
-                  disabled={refunding}
-                  loading={crediting}
-                  onClick={() => saved && doStoreCredit(saved)}
-                >
-                  Give store credit instead
-                </Button>
+                {/* SA-959: a walk-in cannot hold store credit, so it is never offered here */}
+                {!walkIn && (
+                  <Button
+                    className="max-lg:min-h-11"
+                    variant="secondary"
+                    disabled={refunding}
+                    loading={crediting}
+                    onClick={() => saved && doStoreCredit(saved)}
+                  >
+                    Give store credit instead
+                  </Button>
+                )}
                 {refundError === "failed" || refundError === "exceedsCash" ? (
                   <Button
+                    className="max-lg:min-h-11"
                     loading={refunding}
                     disabled={crediting}
                     onClick={() => saved && doRetry(saved)}
@@ -519,11 +581,15 @@ export function RecordInlineReturnDialog({
                     Retry refund
                   </Button>
                 ) : (
-                  <Button onClick={handleClose}>Close</Button>
+                  <Button className="max-lg:min-h-11" onClick={handleClose}>
+                    Close
+                  </Button>
                 )}
               </>
             ) : (
-              <Button onClick={handleClose}>Close</Button>
+              <Button className="max-lg:min-h-11" onClick={handleClose}>
+                Close
+              </Button>
             )
           ) : (
             <>
@@ -533,6 +599,7 @@ export function RecordInlineReturnDialog({
                 </p>
               ) : null}
               <Button
+                className="max-lg:min-h-11"
                 disabled={
                   refunding ||
                   requoting ||
@@ -547,13 +614,11 @@ export function RecordInlineReturnDialog({
                 loading={captureMutation.isPending}
                 onClick={handleConfirm}
               >
-                {!showChoice
-                  ? "Issue credit note and receive goods"
-                  : refunding
-                    ? "Refunding…"
-                    : effResolution === "REFUND"
-                      ? `Return & refund ${money(shownAmount)}`
-                      : "Return & issue store credit"}
+                {refunding
+                  ? "Refunding…"
+                  : showChoice && effResolution === "REFUND"
+                    ? takeBackRefundLabel(money(shownAmount))
+                    : takeBackCreditLabel(money(shownAmount))}
               </Button>
             </>
           )
@@ -572,7 +637,10 @@ export function RecordInlineReturnDialog({
               <div className="flex justify-between">
                 <dt className="text-navy/70">Return</dt>
                 <dd>
-                  <a className="text-brand-600 underline" href={`/returns/${result.id}`}>
+                  <a
+                    className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
+                    href={`/returns/${result.id}`}
+                  >
                     #{result.returnNumber}
                   </a>
                 </dd>
@@ -580,13 +648,13 @@ export function RecordInlineReturnDialog({
             )}
             {result.creditNoteId && (
               <div className="flex justify-between">
-                <dt className="text-navy/70">Credit note</dt>
+                <dt className="text-navy/70">Store credit</dt>
                 <dd>
                   <a
-                    className="text-brand-600 underline"
+                    className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
                     href={`/credit-notes/${result.creditNoteId}`}
                   >
-                    View credit note
+                    View store credit
                   </a>
                 </dd>
               </div>
@@ -600,17 +668,27 @@ export function RecordInlineReturnDialog({
             <div className="flex justify-between">
               <dt className="text-navy/70">Order</dt>
               <dd>
-                <a className="text-brand-600 underline" href={`/orders/${result.orderId}`}>
+                <a
+                  className="inline-flex items-center text-brand-600 underline max-lg:min-h-11"
+                  href={`/orders/${result.orderId}`}
+                >
                   View order
                 </a>
               </dd>
             </div>
           </dl>
-          {refundDone && (
+          {refundDone ? (
             <p role="status" className="text-sm text-navy">
-              Refund recorded. {handBackLine(refundDone.tender, money(refundDone.amount))}
+              {refundedLine(refundDone.tender, money(refundDone.amount))}{" "}
+              {handOverLine(refundDone.tender)}
             </p>
-          )}
+          ) : outcome ? (
+            <p role="status" className="text-sm text-navy">
+              {outcome.resolution === "REFUND"
+                ? refundedLine(outcome.tender, money(outcome.amount ?? 0))
+                : storeCreditAddedLine(money(outcome.amount ?? 0))}
+            </p>
+          ) : null}
           {(refundDone || result.creditNoteId) && (
             <RefundSlipAction returnId={result.id} autoPrint={readAutoPrint()} />
           )}
@@ -621,7 +699,7 @@ export function RecordInlineReturnDialog({
             >
               <p className="text-sm font-medium text-navy">Ledger reversal parked</p>
               <p className="text-xs text-navy/70">
-                The credit note and refund are recorded, but {result.parkedReversals.pieces}{" "}
+                The store credit and refund are recorded, but {result.parkedReversals.pieces}{" "}
                 piece(s) across {result.parkedReversals.count} line(s) were not taken off the
                 regulated sales ledger. The original sale&apos;s pack size is unknown, so the system
                 could not work out the reversal safely. The period cannot be filed until this is
@@ -631,7 +709,9 @@ export function RecordInlineReturnDialog({
             </div>
           )}
           <div className="flex justify-end">
-            <Button onClick={onClose}>Done</Button>
+            <Button className="max-lg:min-h-11" onClick={onClose}>
+              Done
+            </Button>
           </div>
         </div>
       )}
@@ -643,16 +723,17 @@ export function RecordInlineReturnDialog({
             <Link
               data-testid="inline-return-recorded-link"
               href={`/returns/${recordedReturn.returnId}`}
-              className="text-sm font-medium text-plum underline"
+              className="inline-flex items-center text-sm font-medium text-plum underline max-lg:min-h-11"
             >
               Open {recordedReturn.returnNumber ?? "the recorded return"}
             </Link>
           )}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Close
-            </Button>
-            <Button variant="secondary" onClick={() => setPhase("capture")}>
+            <Button
+              className="max-lg:min-h-11"
+              variant="secondary"
+              onClick={() => setPhase("capture")}
+            >
               Back
             </Button>
           </div>
@@ -664,6 +745,8 @@ export function RecordInlineReturnDialog({
 
 function RefundChoice({
   amount,
+  note,
+  returnHref,
   walkIn,
   refundUnavailable = false,
   resolution,
@@ -675,6 +758,10 @@ function RefundChoice({
   error,
 }: {
   amount: string;
+  /** What this choice does with the money (store credit: where it lands; refund: that it goes back). */
+  note: string | null;
+  /** The saved return's page: where a refund refused for a closed day is recorded on a later date. */
+  returnHref?: string;
   walkIn: boolean;
   refundUnavailable?: boolean;
   resolution: InlineReturnResolution;
@@ -687,50 +774,83 @@ function RefundChoice({
   error: RefundErrorKind | null;
 }) {
   const refund = resolution === "REFUND";
+  const errorText = error ? (walkIn ? WALK_IN_REFUND_LINE : REFUND_COPY)[error] : "";
+  // "Return recorded." is good news (the return exists), so only what went wrong is red.
+  const SAVED = "Return recorded.";
+  const startsSaved = errorText.startsWith(SAVED);
+  const errorLine = error ? (
+    <p role="alert" className="text-sm font-medium">
+      {startsSaved && <span className="text-navy">{SAVED} </span>}
+      <span className="text-danger">
+        {startsSaved ? errorText.slice(SAVED.length).trim() : errorText}
+      </span>
+      {error === "dayClosed" && returnHref && (
+        <>
+          {" "}
+          <Link href={returnHref} className="font-medium text-brand-600 underline">
+            Open the return
+          </Link>
+        </>
+      )}
+    </p>
+  ) : null;
+  const tenderSelect = (
+    <Select
+      label="Refund by"
+      value={tender}
+      disabled={locked && !tenderEditable}
+      onChange={(e) => onTender(e.target.value as InlineRefundTender)}
+      options={TENDER_OPTIONS}
+    />
+  );
+  // A walk-in has one way out, so there is no choice to make: the quote note already says why (one sentence), and
+  // this is only how to pay it back. No one-option radio, no hand-back line saying it a third time.
+  if (walkIn) {
+    return (
+      <div className="mt-4 space-y-2">
+        {tenderSelect}
+        {errorLine}
+      </div>
+    );
+  }
+  // The legend sits inside a borderless fieldset in its own bordered box: a legend on the fieldset's own border
+  // notches it, which reads as a browser default rather than the brand.
   return (
-    <fieldset className="mt-4 space-y-2 rounded-lg border border-surface-border p-3">
-      <legend className="px-1 text-sm font-medium text-navy">{REFUND_COPY.heading}</legend>
-      {!walkIn && (
-        <label className="flex items-center gap-2 text-sm text-navy">
+    <div className="mt-4 rounded-lg border border-surface-border p-3">
+      <fieldset className="m-0 min-w-0 space-y-2 border-0 p-0">
+        <legend className="mb-2 p-0 text-sm font-medium text-navy">{REFUND_COPY.heading}</legend>
+        <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
           <input
             type="radio"
             name="return-resolution"
+            className="h-4 w-4 accent-brand-600"
             checked={!refund}
             disabled={locked}
             onChange={() => onResolution("STORE_CREDIT")}
           />
           Store credit
         </label>
-      )}
-      <label className="flex items-center gap-2 text-sm text-navy">
-        <input
-          type="radio"
-          name="return-resolution"
-          checked={refund}
-          disabled={locked || refundUnavailable}
-          onChange={() => onResolution("REFUND")}
-        />
-        Refund {amount}
-      </label>
-      {walkIn && <p className="text-xs text-navy/70">{REFUND_COPY.walkIn}</p>}
-      {refundUnavailable && <p className="text-xs text-navy/70">{REFUND_COPY.paidWithCredit}</p>}
-      {refund && (
-        <>
-          <Select
-            label="Refund by"
-            value={tender}
-            disabled={locked && !tenderEditable}
-            onChange={(e) => onTender(e.target.value as InlineRefundTender)}
-            options={TENDER_OPTIONS}
+        <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
+          <input
+            type="radio"
+            name="return-resolution"
+            className="h-4 w-4 accent-brand-600"
+            checked={refund}
+            disabled={locked || refundUnavailable}
+            onChange={() => onResolution("REFUND")}
           />
-          <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>
-        </>
-      )}
-      {error && (
-        <p role="alert" className="text-sm font-medium text-danger">
-          {error === "dayClosed" && walkIn ? REFUND_COPY.dayClosedWalkIn : REFUND_COPY[error]}
-        </p>
-      )}
-    </fieldset>
+          Refund {amount}
+        </label>
+        {note && <p className="text-xs text-navy/70">{note}</p>}
+        {refundUnavailable && <p className="text-xs text-navy/70">{REFUND_COPY.paidWithCredit}</p>}
+        {refund && (
+          <>
+            {tenderSelect}
+            <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>
+          </>
+        )}
+        {errorLine}
+      </fieldset>
+    </div>
   );
 }

@@ -22,7 +22,7 @@ import {
 import { PriceType } from "@prisma/client";
 import { isSpecialPrice, type CustomerLayerPrice } from "@routeflow/pricing";
 import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
-import { decideTierOverride } from "./staff-override";
+import { assertPriceEditAllowed, decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { decideReplaceAllLinePrice } from "./staff-line-price";
 import { carriedCategory, type CarriedCategorySource } from "./carry-line-category";
@@ -152,7 +152,11 @@ export interface ReplaceAllLineBuildCtx {
   isCreateMerge?: boolean;
   buyerPromos: PromotionRule[];
   userId?: string | null;
+  /** SA-1034: the acting user's price-edit capability (`staffMay(role, "EDIT_LINE_PRICE", deniedGroups)`). */
+  priceEditAllowed: boolean;
   operatorReplaceCategoryMap: Map<string, TrackedCategoryRow>;
+  /** SA-982 PR-2b (warn only): the buildLine census of this line's RAW input, with the live pack (orders.replace-all). */
+  warnLine?: (item: UpdateOrderItemsDto["items"][number], upb: number | null | undefined) => void;
 }
 
 /**
@@ -176,12 +180,14 @@ export function buildReplaceAllLineData(
   let qty = item.qty ?? 0;
   let boxes: number | null = null;
   let pieces: number | null = null;
+  const livePack = product.unitsPerBox; // the ONE read here of the live pack for the split below (and the census)
+  ctx.warnLine?.(item, livePack);
   if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
     const split = normalizeBoxesPieces({
       boxes: item.boxes,
       pieces: item.pieces,
       qty,
-      unitsPerBox: product.unitsPerBox,
+      unitsPerBox: livePack,
     });
     qty = split.qty;
     boxes = split.boxes;
@@ -291,6 +297,7 @@ export function buildReplaceAllLineData(
   const isManualOverride = createMergeDecision
     ? !!createMergeOverride
     : !!replaceAllDecision?.repriced;
+  if (isManualOverride) assertPriceEditAllowed(ctx.priceEditAllowed); // SA-1034: a new override stamp
   // An echo of the stored counterpart keeps that line's own attribution (like the BOGO arm).
   const echoedExisting =
     replaceAllDecision &&

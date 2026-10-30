@@ -1,8 +1,12 @@
 /**
  * Row 317b: the ONE text of a receipt line's detail, shared by the live counter receipt, the Today's-sales reprint (apps/web)
  * and the emailed receipt (apps/api), so "3 × $2.50 each" reads the same on every surface. A plain line prints its quantity,
- * its price and the product's own selling unit; a boxed line prints boxes + pieces at the BOX price.
+ * its price and the product's own selling unit; a boxed line prints boxes + pieces at the BOX price; a UNIT line
+ * (SA-1040 B4a: a Case, a Pallet) prints its count and its own unit word at the unit price.
  */
+import { plural } from "./unit-words";
+
+import { roundMoney } from "./pricing";
 
 const RECEIPT_MONEY = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
@@ -13,8 +17,12 @@ const RECEIPT_MONEY = new Intl.NumberFormat("en-US", {
  * The ONE money text of a receipt, the Today's-sales list and the Z report, web and emailed alike: US grouping to two
  * places, "$2,097.00" like the Orders list (CQ-19). Sign first: a downward reprice reads "-$1.00", never "$-1.00".
  */
-export const formatReceiptMoney = (n: number): string =>
-  `${n < 0 ? "-" : ""}$${RECEIPT_MONEY.format(Math.abs(n))}`;
+export const formatReceiptMoney = (value: number | string | null | undefined): string => {
+  const raw = Number(value ?? 0);
+  // NaN and +-Infinity read $0.00; rounding to cents first folds -0 and -0.001 into a plain zero.
+  const n = roundMoney(Number.isFinite(raw) ? raw : 0) + 0;
+  return `${n < 0 ? "-" : ""}$${RECEIPT_MONEY.format(Math.abs(n))}`;
+};
 
 /** The word a price is quoted per: the unit the operator chose (lower-cased), else "unit". */
 export function priceUnitWord(unit: string | null | undefined): string {
@@ -31,8 +39,18 @@ export function receiptLineDetail(l: {
   pieces?: number | null;
   /** the product's own selling unit ("each", "lb"); printed after the price of a plain line. Absent/blank: no word. */
   unit?: string | null;
+  /**
+   * The line's stored selling unit ("Case"), null on a pack line. REQUIRED, so the compiler finds every caller (SA-1040 B4a).
+   * A unit line's count is its stored `boxes` (a live till line, which has none, passes the count as `qty`).
+   */
+  unitLabel: string | null;
 }): string {
   const price = formatReceiptMoney(l.unitPrice);
+  const label = (l.unitLabel ?? "").trim();
+  if (label) {
+    const count = l.boxes ?? l.qty;
+    return `${count} ${plural(label, count)} × ${price} per ${label}`;
+  }
   if ((l.unitsPerBox ?? 0) <= 1) {
     // "1 × $1.75 each": the unit follows the price in a sentence, never as "/ each"; another unit reads "per lb" like "per box"
     const unit = (l.unit ?? "").trim() ? priceUnitWord(l.unit) : "";

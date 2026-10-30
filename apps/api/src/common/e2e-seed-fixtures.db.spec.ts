@@ -271,4 +271,35 @@ describeDb("e2e-seed.js commerce fixtures (B566) — real Postgres", () => {
     // Never matched by 13-boxed-order-entry's "case" product search.
     expect(p.name.toLowerCase()).not.toContain("case");
   }, 300_000);
+
+  // Row 601: a price spec aborted mid-run must not leave drift for the next one. The reseed restores EVERY fixture price.
+  it("a reseed puts the units fixtures' prices, msrp and tiers back after a spec moved them (601)", async () => {
+    runSeed(dbUrl);
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { slug: TENANT_SLUG } });
+    for (const sku of ["E2E-FIX-UNITS", "E2E-FIX-CASEDEFAULT"]) {
+      const before = await prisma.product.findUniqueOrThrow({
+        where: { tenantId_sku: { tenantId: tenant.id, sku } },
+        include: { units: true },
+      });
+      await prisma.product.update({
+        where: { id: before.id },
+        data: { pricePerUnit: 9.99, msrp: 12.5, priceTier2: 8.88 },
+      });
+      await prisma.productUnit.updateMany({
+        where: { productId: before.id },
+        data: { price: 77.7, priceTier2: 66.6 },
+      });
+      runSeed(dbUrl);
+      const after = await prisma.product.findUniqueOrThrow({
+        where: { id: before.id },
+        include: { units: true },
+      });
+      expect(Number(after.pricePerUnit)).toBe(Number(before.pricePerUnit));
+      expect(after.msrp).toBeNull();
+      expect(Number(after.priceTier2)).toBe(0);
+      expect(after.units.map((u) => [u.label, Number(u.price), u.priceTier2])).toEqual(
+        before.units.map((u) => [u.label, Number(u.price), null]),
+      );
+    }
+  }, 300_000);
 });

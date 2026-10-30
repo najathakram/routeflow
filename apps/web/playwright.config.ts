@@ -510,6 +510,16 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // I-101 item 6: the 10 / 200 / 4800 ladder on two variants of one family, order -> invoice at Case and Pallet.
+    // Builds its own family through the API (leaves one family, two variants, and an order + invoice per level on
+    // e2e-routeflow; same no-cleanup tolerance as 53/54). WITHOUT THIS ENTRY THE SPEC NEVER RUNS.
+    {
+      name: "units-ladder-three-level",
+      testMatch: /55-units-ladder-three-level.spec.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
     // Same posture as order-edit-pricing above — a client-side requirement
     // with no web unit runner behind it, so this runs only against a live app
@@ -1095,6 +1105,16 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+    // ── W-694: SearchableProductPicker closes on Tab / Shift+Tab / outside click / Escape ──────────
+    // Real Chromium keyboard focus movement, which jsdom cannot see. Every /api/v1 call is mocked and
+    // auth is a locally-minted unsigned JWT, so no tenant is touched and no setup project is needed.
+    // Run with SKIP_E2E_SEED=true (globalSetup would otherwise try to seed a DB) against a `next dev`
+    // or built web. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "picker-tab-close",
+      testMatch: /w694-picker-tab-close\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
+    },
     // ── B1210: counter sale "Ship this order instead" parks the cart as an ORDER draft and resumes it (spec 71).
     // LAST in the list on purpose (it changes the tenant's fulfilment config for its duration). LOCAL LANE ONLY: it rewrites (then restores) the tenant's fulfilment config. ci.yml / post-deploy / nightly run
     // `npx playwright test` with no project filter, so the project is simply NOT REGISTERED unless the base URL is local
@@ -1152,6 +1172,18 @@ export default defineConfig({
           {
             name: "get-the-app",
             testMatch: /76-get-the-app\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // I-101: a Pallet of the 10/200/4800 ladder sold in the UI, order + invoice truth (spec 79). It CREATES a product, its
+          // units and a $19,200 invoice with no cleanup, so it is local lane only like 71-76 (never on prod's e2e-routeflow);
+          // observe-only; not on the local:e2e allow-list.
+          {
+            name: "units-pallet-ladder-sale",
+            testMatch: /79-units-pallet-ladder-sale\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

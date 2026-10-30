@@ -229,13 +229,15 @@ describe("SA-823: one family creator, one reparent path, units v2 untouched", ()
     expect(methodBody(ps, "unlinkFromParent")).toMatch(/this\.update\(/);
   });
 
-  it("T13 (PR-2): createFamilyContainer is called only by createFamily and the import's ensureFamily; the import family branch writes no productUnit and no Product row itself", () => {
+  it("T13 (PR-2): createFamilyContainer is called only by createFamily, the import's ensureFamily and the SA-1027 catalog copy; the import family branch writes no productUnit and no Product row itself", () => {
     const CALL = /createFamilyContainer\(/g;
     const callers = files
       .filter((f) => count(CALL, f.src) > 0)
       .map((f) => [f.rel, count(CALL, f.src)])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     expect(callers).toEqual([
+      // SA-1027: the catalog-copy script creates a FAMILY container through the app's own writer, after reserveFamilyName
+      ["catalog-copy/catalog-copy.service.ts", 1],
       ["import/product-family-import.service.ts", 1],
       ["products/product-families.service.ts", 2], // its definition and the createFamily call
     ]);

@@ -194,8 +194,12 @@ export function resolveLadderLevel(
   };
   if (!label) return { ...pack, row: null };
   if (namesBase(product, label)) {
-    const row = validRows(units).find((u) => u.factorToBase === 1 && namesBase(product, u.label));
-    return { label: baseLabelOf(product), factorToBase: 1, kind: "piece", row: row ?? null };
+    return {
+      label: baseLabelOf(product),
+      factorToBase: 1,
+      kind: "piece",
+      row: baseRow(product, units),
+    };
   }
   if (namesPack(product, label)) return { ...pack, row: null };
   const row = findUnitRow(units, label);
@@ -367,8 +371,9 @@ export interface BaseOptionInfo {
   fractionOf: { n: number; packPrice: number } | null;
 }
 
-function baseRow(product: LadderProduct, units: readonly LadderUnit[]): LadderUnit | null {
-  return validRows(units).find((u) => u.factorToBase === 1 && namesBase(product, u.label)) ?? null;
+/** Row 621 (SA-971): the base ROW is the factor-1 row, whatever it is named; the label only picks the level a line asks for (`namesBase`). */
+function baseRow(_product: LadderProduct, units: readonly LadderUnit[]): LadderUnit | null {
+  return validRows(units).find((u) => u.factorToBase === 1) ?? null;
 }
 
 /** Does the base have its OWN price for this customer tier (a tier price, or a tier-1 price it scales)? */

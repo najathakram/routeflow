@@ -110,7 +110,12 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
             findFirst: jest.fn().mockResolvedValue(FAMILY),
             findUnique: jest.fn().mockResolvedValue(FAMILY),
           },
-          stockCountSession: { findUnique: jest.fn().mockResolvedValue(session) },
+          // only "s1" is a saved count; the legacy one-shot sessionId "x" is not (B640 refuses a durable id)
+          stockCountSession: {
+            findUnique: jest.fn(({ where }: { where: { id: string } }) =>
+              Promise.resolve(where.id === "s1" ? session : null),
+            ),
+          },
         }),
         tenantTransaction,
       },
