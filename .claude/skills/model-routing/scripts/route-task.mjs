@@ -4,7 +4,7 @@
 // Scores a task description against ROUTING-PLAN.md §2 (breadth / risk /
 // boundedness / novelty / verifiability) and prints a routing recommendation:
 // which engine to use (light-loop / bug-pipeline / dev-pipeline / workflow),
-// whether "ultracode" (Fable ultrathink framing) is warranted, and a per-role
+// whether "ultracode" (Opus ultrathink framing) is warranted, and a per-role
 // model@effort assignment. Built for skills-build-brief-2026-09-10.md §1 as
 // the UserPromptSubmit hook's advisor.
 //
@@ -760,7 +760,7 @@ function decideApproach(scores, pin, state) {
   };
 }
 
-// G2: ultracode (Fable ultrathink framing) is a BREADTH decision, not a risk
+// G2: ultracode (Opus ultrathink framing) is a BREADTH decision, not a risk
 // one. It goes ON only for wide, unbounded work (audit/review/research/
 // migrate/design/compare/"all"/"thoroughly"/explicit "workflow"/"ultracode"
 // -- see BREADTH_WORDS) that isn't already scoped down to a bounded change.
@@ -809,7 +809,7 @@ function buildRoles(route, riskLevel, ultracodeOn) {
     case "bug-pipeline":
     case "dev-pipeline":
       return [
-        { role: "frame", model: "fable", effort: frameEffort },
+        { role: "frame", model: "opus", effort: frameEffort },
         { role: "pack", model: "sonnet", effort: "low" },
         { role: "build", model: "sonnet", effort: "medium" },
         { role: "verdict", model: verdict.model, effort: verdict.effort },
@@ -817,7 +817,7 @@ function buildRoles(route, riskLevel, ultracodeOn) {
       ];
     case "workflow":
       return [
-        { role: "frame", model: "fable", effort: frameEffort },
+        { role: "frame", model: "opus", effort: frameEffort },
         { role: "build", model: "sonnet", effort: "medium" },
         { role: "verdict", model: verdict.model, effort: verdict.effort },
         { role: "fix", model: fix.model, effort: fix.effort },

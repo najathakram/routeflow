@@ -41,6 +41,7 @@ import {
   UpdateOnboardingCaseDto,
   WaiveOnboardingStepDto,
 } from "./dto/onboarding.dto";
+import { PlatformScoped } from "../tenant/platform-scoped.decorator";
 
 /**
  * Back-office onboarding tracker (#2159 S1). Super-admin only; the shared contract is
@@ -49,6 +50,7 @@ import {
 @ApiTags("platform-admin")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
+@PlatformScoped()
 @Controller("platform-admin")
 export class OnboardingController {
   constructor(

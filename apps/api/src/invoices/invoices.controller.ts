@@ -57,7 +57,7 @@ export class InvoicesController {
 
   @Post()
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
-    return this.invoicesService.create(dto, user);
+    return this.invoicesService.create(dto, user, { warnSite: "invoices.manual" }); // SA-982 PR-2: a client write
   }
 
   @RequirePermission("FINANCE", "ORDERS")

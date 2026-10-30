@@ -872,10 +872,35 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       say(
         `register sync on: inside the specs pass (holds the specs lock already), first in ${REGISTER_SYNC_FIRST_MS / 1000} s, then every ${REGISTER_SYNC_MS / 60000} min`,
       );
+      // Statuses from the polled PR + deploy facts (merge -> shipping, in the latest deploy -> live, open PR ->
+      // review). Runs inside the same specs pass, after the register sync, so it reads the freshest events.
+      const { runAutoStatus } = await import("./lib/auto-status.mjs");
+      let lastAutoNote = "";
+      const autoStatusStep = makeSpecsPassStep({
+        firstMs: 90_000,
+        intervalMs: 300_000,
+        run: async () => {
+          const res = await runAutoStatus({
+            dir: specs,
+            home,
+            env,
+            lockHeld: true,
+            sources: withMergedDeploys(collector.sources, mergeDeploys),
+          });
+          const note = res?.capped ? `capped ${res.capped}` : "";
+          if (note && note !== lastAutoNote)
+            say(`auto-status capped: ${res.capped} left for the next pass`);
+          lastAutoNote = note;
+          return res;
+        },
+        onDone: (res) => say(`auto-status appended ${res.appended} status event(s)`),
+        log: (m) => say(m.replace("register sync", "auto-status")),
+      });
       pullHook = makeSpecsPassHook({
         steps: [
           { name: "status", run: statusStep },
           { name: "register", run: registerStep },
+          { name: "auto-status", run: autoStatusStep },
         ],
         log: say,
       });

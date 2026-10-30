@@ -14,7 +14,7 @@ import { ProductPriceWriteService } from "./product-price-write.service";
 
 import { PermissionBase, RequirePermission } from "../auth/permissions/permission.decorators";
 /**
- * Units and prices v2. The whole surface is plan-flag gated: a tenant without
+ * Prices by unit (the registry label for `flag.units_prices_v2`). The whole surface is plan-flag gated: a tenant without
  * `flag.units_prices_v2` gets the structured PLAN_GATE 403 (SA-796 R-5: enforced, not dark).
  * TENANT_ADMIN satisfies OPERATOR in RolesGuard.
  */

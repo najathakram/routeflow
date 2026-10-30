@@ -220,6 +220,8 @@ export async function lockProductsForDelete(
 export interface ProductDeleteOutcome {
   deleted: number;
   softDeleted: number;
+  /** Row 493: the products archived (deactivated, history kept), so a caller can say which. */
+  softDeletedIds: string[];
   skipped: BulkDeleteSkip[];
 }
 
@@ -272,6 +274,7 @@ export async function applyProductDelete(
   return {
     deleted: plan.hardIds.length,
     softDeleted: plan.softIds.length,
+    softDeletedIds: [...plan.softIds],
     skipped: plan.skipped,
   };
 }

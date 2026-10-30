@@ -157,6 +157,17 @@ export class SettingsController {
         "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 15, Net 30, Net 45, Net 60).",
       );
     }
+    // B1231: same story. The profile form sent these two and the save said "saved" while nothing changed.
+    if (dto.businessName !== undefined) {
+      throw new BadRequestException(
+        "businessName is not saved by PATCH /settings. A tenant admin changes the business name with PUT /tenants/me/config/branding.",
+      );
+    }
+    if (dto.email !== undefined) {
+      throw new BadRequestException(
+        "email is not saved by PATCH /settings. The account email is the account admin's sign-in email and is not editable here.",
+      );
+    }
     // taxRate is stored as a PERCENT (0-100); a direct API call can otherwise
     // bypass the web form's min(0).max(100) and store an out-of-range value
     // that later gets divided by 100 into a fraction (see common/tax-rate.ts).
@@ -253,7 +264,7 @@ export class SettingsController {
       }
     }
 
-    // businessName and email are NOT editable by tenant admin (set by super admin).
+    // businessName and email are refused above (B1231); the name saves via PUT /tenants/me/config/branding.
     // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet). They
     // are written LAST (SA-738): a 403/400 or a failed TenantConfig save leaves them untouched.
     const allowed = ["taxRate", "logoUrl"];
@@ -631,8 +642,8 @@ export class SettingsController {
     return {
       defaultTerms: defaultTerms ?? "Net 30",
       hideOriginalPrice: hideOriginalPriceRaw === "true",
-      // WP-D1: absent/unset -> null (no tenant deposit default) rather than 0, so the
-      // web settings form can tell "never configured" apart from "explicitly 0".
+      // WP-D1: absent/unset -> null (no tenant deposit default). Row 652: the web clears the field by sending 0, so a
+      // stored "0" is also "no tenant default" (every reader treats it as no deposit; the form shows both as blank).
       depositDefaultPercent:
         depositDefaultPercentRaw != null && depositDefaultPercentRaw !== ""
           ? Number(depositDefaultPercentRaw)
@@ -653,10 +664,7 @@ export class SettingsController {
       await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
     }
     if (dto.depositDefaultPercent !== undefined) {
-      await this.svc.set(
-        "invoice.depositDefaultPercent",
-        dto.depositDefaultPercent == null ? "" : String(dto.depositDefaultPercent),
-      );
+      await this.svc.set("invoice.depositDefaultPercent", String(dto.depositDefaultPercent));
     }
     if (dto.depositCollectAtOrder !== undefined) {
       await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));

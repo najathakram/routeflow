@@ -5,7 +5,7 @@
  * as the first statement of their transaction. The close will take the EXCLUSIVE form of the SAME key. This proves, against the
  * real lock manager, that:
  *   - a session holding `pg_advisory_xact_lock(hashtext('counter-close'), hashtext('<tenant>:main'))` BLOCKS a refund's lock
- *     (pg_blocking_pids shows it queued behind the holder) until the holder commits;
+ *     (Postgres shows it queued behind the holder) until the holder commits;
  *   - the same holder does NOT block another register of the tenant, or another tenant;
  *   - two refunds (shared form) never block each other.
  * `lockCounterClose` is the exact helper both `InlineReturnsService.refund` and `ReturnsService.recordExternalRefund` call (the
@@ -18,6 +18,7 @@ import { Client, Pool } from "pg";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { blockedPids } from "../common/testing/blocked-wait";
 import { lockCounterClose } from "./counter-close-lock";
 
 const RUN = randomUUID().slice(0, 8);
@@ -54,11 +55,7 @@ describeDb("counter-close lock key contract, real Postgres", () => {
     prisma.$transaction((tx) => lockCounterClose(tx as any, tenant, register), { timeout: 20_000 });
 
   async function blockedCount(holderPid: number): Promise<number> {
-    const r = await poller.query(
-      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
-      [holderPid],
-    );
-    return Number(r.rows[0].n);
+    return (await blockedPids(poller, { holderPid })).length;
   }
   const settleWithin = (p: Promise<unknown>, ms: number) =>
     Promise.race([

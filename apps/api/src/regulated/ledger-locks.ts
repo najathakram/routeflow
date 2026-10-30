@@ -7,6 +7,10 @@ import { Prisma } from "@prisma/client";
  * A void, delete and unvoid already take Order -> Invoice first; an undo now takes the same rows, each
  * set in id order, so a concurrent void and undo of the same invoice serialise instead of each netting
  * the line without the other (B705 R15).
+ *
+ * SA-995: the order gets "-> RegulatedFiling (share)" appended LAST. Every ledger writer's guard
+ * (`assertLedgerRowsNotLocked`) takes a FOR SHARE row lock on the covering filing rows after its other locks, and the
+ * filing claim (an exclusive UPDATE of that row) is the only thing that waits on it, so neither can sit in a cycle.
  */
 
 /** The Orders and Invoices a document's REVERSAL rows touch (read before the locks: a return's or a

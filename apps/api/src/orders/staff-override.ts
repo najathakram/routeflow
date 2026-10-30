@@ -54,15 +54,19 @@ export function decideTierOverride(
 }
 
 /**
- * POS-5: create()'s `priceEditAllowed` option (the counter sale passes `staffMay(role, "EDIT_LINE_PRICE")`).
- * `false` refuses a REAL price change on a line, pack or unit, with the one 403 — judged against the SERVER tier
- * price, before any lock or write. The pack and the unit branch of create() both call this, never their own copy.
+ * POS-5 / SA-1034: the price-edit capability is checked at every override site through this one helper. Each caller
+ * computes `priceEditAllowed` as `staffMay(role, "EDIT_LINE_PRICE", deniedGroups)` (create() also takes the counter
+ * sale's own value). `false` refuses a REAL price change on a line, pack or unit, with the one 403 — judged against
+ * the SERVER price, before the line is written. Sites: price-edit-sites.pin.spec.ts.
  */
-export function assertPriceEditAllowed(priceEditAllowed: boolean | undefined): void {
-  if (priceEditAllowed === false) {
+export function assertPriceEditAllowed(priceEditAllowed: boolean): void {
+  if (!priceEditAllowed) {
     throw new ForbiddenException({
       code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
       message: "You can't change prices. Ask your account admin.",
     });
   }
 }
+
+/** SA-1034: re-exported so an override site computes its capability next to the one helper that checks it. */
+export { staffMay } from "../auth/permissions/staff-capabilities";

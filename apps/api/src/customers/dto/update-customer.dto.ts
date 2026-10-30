@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
@@ -10,7 +11,7 @@ import {
   ValidateIf,
 } from "class-validator";
 import { Transform } from "class-transformer";
-import { FulfillPath } from "@prisma/client";
+import { FulfillPath, InvoiceUnitDefault } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { emptyToNull } from "../../common/dto-transforms";
@@ -68,6 +69,15 @@ export class UpdateCustomerDto {
     message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
   })
   defaultPaymentTerms?: string;
+  /**
+   * SA-827: the customer-wide invoice unit (staff only). LEGACY = not set, PIECES = mixed boxes list each item and boxes
+   * show their pieces, PACK = always the unit sold. Display only. Omitted leaves it unchanged (a new customer is LEGACY).
+   */
+  @ValidateIf((_o, v) => v !== undefined) // not IsOptional: null must 400, the column is NOT NULL
+  @IsEnum(InvoiceUnitDefault, {
+    message: "invoiceUnitDefault must be one of: " + Object.values(InvoiceUnitDefault).join(", "),
+  })
+  invoiceUnitDefault?: InvoiceUnitDefault;
   /**
    * Per-customer default deposit percent ("50% upfront, remainder on terms").
    * `null` clears the default back to "no deposit"; a number sets/replaces it.

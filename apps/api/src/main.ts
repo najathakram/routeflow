@@ -1,7 +1,6 @@
 import "./instrument";
 
 import { NestFactory } from "@nestjs/core";
-import { ValidationPipe } from "@nestjs/common";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 
@@ -9,6 +8,7 @@ import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { registerGlobalExceptionFilters } from "./common/global-exception-filters";
+import { buildGlobalValidationPipe } from "./common/global-validation-pipe";
 import { schemelessLinkBaseVars } from "./common/html-escape";
 import { assertSecrets } from "./assert-secrets";
 import { assertWebBaseUrlAtBoot } from "./config/web-base-url";
@@ -112,13 +112,8 @@ async function bootstrap() {
   registerGlobalExceptionFilters(app);
 
   // ─── Validation ─────────────────────────────────────────────────────────────
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-      forbidNonWhitelisted: true,
-    }),
-  );
+  // The coded constraints (e.g. a reserved stock reference -> 400 STOCK_REFERENCE_RESERVED) live in the builder.
+  app.useGlobalPipes(buildGlobalValidationPipe());
 
   // ─── Swagger (dev / staging only) ───────────────────────────────────────────
   if (process.env.NODE_ENV !== "production") {

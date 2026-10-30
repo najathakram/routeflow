@@ -108,6 +108,20 @@ describe("AuthorizationsService", () => {
     expect(res.expiresAt).toEqual(new Date("2028-01-01T00:00:00Z"));
   });
 
+  it("REG-B330 renew stores the printed day, not the client's datetime, and 400s a non-date", async () => {
+    prisma.customerAuthorization.findUnique.mockResolvedValue({
+      id: "a1",
+      customerId: "c1",
+      status: "EXPIRED",
+    });
+    // 20:00 at -04:00 is already the 10th in UTC; the licence prints the 9th.
+    const res = await service.renew("c1", "a1", { expiresAt: "2026-03-09T20:00:00-04:00" }, user);
+    expect(res.expiresAt).toEqual(new Date("2026-03-09T00:00:00.000Z"));
+    await expect(
+      service.renew("c1", "a1", { expiresAt: "not-a-date" }, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it("getOwned rejects an authorization belonging to another customer", async () => {
     prisma.customerAuthorization.findUnique.mockResolvedValue({
       id: "a1",
