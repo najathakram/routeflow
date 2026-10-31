@@ -189,6 +189,22 @@ function runCampaignCheck(opts: {
   });
 }
 
+// A real turbo binary for the fixture, so the forced run goes through the real spawn: it writes a
+// report, as the jest reporter does on every run, and exits with `exitCode`.
+function writeFakeTurbo(dir: string, reportPath: string, exitCode = 1): void {
+  const binDir = path.join(dir, "node_modules", ".bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const script = path.join(binDir, "fake-turbo.cjs");
+  fs.writeFileSync(
+    script,
+    `require("fs").writeFileSync(${JSON.stringify(reportPath)}, "{}"); process.exit(${exitCode});\n`,
+  );
+  fs.writeFileSync(path.join(binDir, "turbo.cmd"), `@node "${script}" %*\r\n`);
+  fs.writeFileSync(path.join(binDir, "turbo"), `#!/bin/sh\nexec node "${script}" "$@"\n`, {
+    mode: 0o755,
+  });
+}
+
 function mkFixtureDir(): string {
   // realpath: on macOS os.tmpdir() is under /var, a symlink to /private/var, while `git
   // rev-parse --show-toplevel` (what campaign-check derives its git root from) returns the
@@ -990,6 +1006,105 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
       expect(out).toContain("did not produce it");
       expect(out).toContain("not a caching artifact");
       expect(out).toContain("cd apps/mobile && npx jest --maxWorkers=2");
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T21b: full mode refuses a forced run that fails, and the report it left is gone", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0 - 600);
+      writeLedgerCommit(dir, T0 - 100, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 600) });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0 + 600), tokens: [] });
+      const mobileJson = path.join(runsDir, "mobile.json");
+      writeFakeTurbo(dir, mobileJson);
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir });
+      const out = combined(res);
+
+      expect(out).toContain("did not produce it (turbo exited 1)");
+      expect(fs.existsSync(mobileJson)).toBe(false);
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T21c: --freshness-only refuses a failed forced run and leaves no report for the next check", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0 - 600);
+      writeLedgerCommit(dir, T0 - 100, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 600) });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0 + 600), tokens: [] });
+      const mobileJson = path.join(runsDir, "mobile.json");
+      writeFakeTurbo(dir, mobileJson);
+
+      const res = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--freshness-only"],
+        env: {
+          CAMPAIGN_CHECK_TURBO_DRY_RUN: writeTurboDryRunFile(dir, "HIT", "@routeflow/mobile"),
+        },
+      });
+
+      expect(combined(res)).toContain("not a caching artifact");
+      expect(fs.existsSync(mobileJson)).toBe(false);
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T21d: --reports-only forces a missing report and stops before the token scan", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0 - 600);
+      // B1's proof is in no report, so the token scan would refuse this tree.
+      writeLedgerCommit(dir, T0 - 100, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeFakeTurbo(dir, path.join(runsDir, "mobile.json"), 0);
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--reports-only"] });
+      const out = combined(res);
+
+      expect(out).toContain("mobile.json created by a forced real run");
+      expect(out).not.toContain("REG-B1");
+      expect(res.status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("T21e: --reports-only fails with a failed forced run, so verify stops inside the slot", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0 - 600);
+      writeLedgerCommit(dir, T0 - 100, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 600) });
+      writeReport(runsDir, "pricing", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeReport(runsDir, "web", { generatedAt: iso(T0 + 600), tokens: [] });
+      writeFakeTurbo(dir, path.join(runsDir, "mobile.json"));
+
+      const res = runCampaignCheck({ fixtureDir: dir, runsDir, args: ["--reports-only"] });
+
+      expect(combined(res)).toContain("did not produce it (turbo exited 1)");
       expect(res.status).toBe(1);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

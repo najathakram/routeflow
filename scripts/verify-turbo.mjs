@@ -416,6 +416,17 @@ export async function executePlan(calls, runCall) {
   return statuses.find((s) => s !== 0) ?? 0;
 }
 
+/**
+ * Whether this run settles its campaign reports inside the slot. campaign-check's pre-step predicts
+ * a cache miss before the queue, and the shared turbo cache can fill during the wait, so turbo
+ * replays the task and no report is written. The check at the end of the chain then forces those
+ * tests outside any slot, where the slot log can't see the load. A fast run enforces no reports,
+ * a failed plan has already lost, and CI holds no slot, so its end-of-chain check does this.
+ */
+export function settlesReports({ fast, status, env }) {
+  return status === 0 && !fast && !env.CI;
+}
+
 /** The last line of a fast run is the not-proof stamp; any other run prints nothing new. */
 export function finishRun({ fast, status, log = console.log }) {
   const stamp = fastStampLine(fast);
@@ -542,15 +553,22 @@ export async function main() {
   }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
-  const status = await withHeavySlot({ label: "verify" }, () =>
-    executePlan(plan.calls, (c) =>
+  const status = await withHeavySlot({ label: "verify" }, async () => {
+    const planned = await executePlan(plan.calls, (c) =>
       c.jest
         ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
         : c.pins
           ? pinJest(c)
           : turbo(c.args),
-    ),
-  );
+    );
+    if (!settlesReports({ fast: runMode.fast, status: planned, env: process.env })) return planned;
+    const settled = await spawnAsync(
+      process.execPath,
+      [join(ROOT, "scripts", "campaign-check.mjs"), "--reports-only"],
+      { cwd: ROOT, stdio: "inherit" },
+    );
+    return settled.status ?? 1;
+  });
   // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
   process.exit(finishRun({ fast: runMode.fast, status }));
 }

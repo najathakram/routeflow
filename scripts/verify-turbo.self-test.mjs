@@ -68,6 +68,7 @@ import {
   excludedLine,
   executePlan,
   finishRun,
+  settlesReports,
   jestPassthrough,
   jestWorkerBudget,
   LOW_MEM_THRESHOLD_BYTES,
@@ -975,6 +976,17 @@ check(
   ],
 );
 
+check(
+  "RS4 settlesReports: only a green, full-enforcement run off CI",
+  [
+    settlesReports({ fast: false, status: 0, env: {} }),
+    settlesReports({ fast: true, status: 0, env: {} }),
+    settlesReports({ fast: false, status: 1, env: {} }),
+    settlesReports({ fast: false, status: 0, env: { CI: "1" } }),
+  ],
+  [true, false, false, false],
+);
+
 // End to end: the REAL main() with a stub `npx` first on PATH that records its argv. CI=1 makes
 // the scope FULL without touching git; JEST_MAX_WORKERS selects the split path. POSIX only (the
 // stub is a shell script; Windows' npx is a .cmd and `shell: true`).
@@ -1137,6 +1149,19 @@ if (process.platform !== "win32") {
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
+        // The report step's stub: it records its argv and whether the slot is held, then exits with
+        // STUB_REPORTS_EXIT. The real script would force real test runs in this fixture.
+        put(
+          "scripts/campaign-check.mjs",
+          [
+            'import { appendFileSync } from "node:fs";',
+            'if (!process.argv.includes("--reports-only")) process.exit(0);',
+            "const held = process.env.RF_HEAVY_SLOT_TOKEN ? 'held' : 'free';",
+            "appendFileSync(process.env.STUB_REPORTS_LOG, `--reports-only ${held}\\n`);",
+            "process.exit(Number(process.env.STUB_REPORTS_EXIT || 0));",
+            "",
+          ].join("\n"),
+        );
         for (const [dir, name] of [
           ["apps/api", "@routeflow/api"],
           ["apps/control", "@routeflow/control"],
@@ -1168,12 +1193,36 @@ if (process.platform !== "win32") {
         put("apps/api/src/x.ts", "export const x = 1;\n");
         fgit("add", "-A");
         fgit("commit", "-q", "-m", "change");
+        const reportsLog = join(stubDir, "reports.log");
         const aff = (extraEnv) =>
-          runMain(extraEnv, {
-            ci: false,
-            cwd: fixDir,
-            script: join(fixDir, "scripts", "verify-turbo.mjs"),
-          });
+          runMain(
+            { STUB_REPORTS_LOG: reportsLog, ...extraEnv },
+            {
+              ci: false,
+              cwd: fixDir,
+              script: join(fixDir, "scripts", "verify-turbo.mjs"),
+            },
+          );
+        const reportRuns = (extraEnv) => {
+          writeFileSync(reportsLog, "");
+          const r = aff(extraEnv);
+          return [r.status, readFileSync(reportsLog, "utf8").split("\n").filter(Boolean)];
+        };
+        check(
+          "RS1 main(): a green plan settles its reports once, inside the slot",
+          reportRuns({ JEST_MAX_WORKERS: "" }),
+          [0, ["--reports-only held"]],
+        );
+        check(
+          "RS2 main(): a report step that fails fails the verify with its status",
+          reportRuns({ JEST_MAX_WORKERS: "", STUB_REPORTS_EXIT: "9" }),
+          [9, ["--reports-only held"]],
+        );
+        check(
+          "RS3 main(): a red plan forces no tests",
+          reportRuns({ JEST_MAX_WORKERS: "", STUB_EXIT_SEQ: "3" }),
+          [3, []],
+        );
         const affUnsplit = aff({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "" });
         check(
           "VX25 main() AFFECTED unsplit: the scope is really AFFECTED, 2 calls ran, first non-zero (3) wins",
