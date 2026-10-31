@@ -10,6 +10,9 @@
  * Role: OPERATOR (pre-authenticated). Tenant: the approved e2e seed (fixture customer
  * "E2E Fixture Deli Three"). READ-ONLY: nothing is submitted and a started order is never
  * dismissed (an explicit dismiss is what parks a draft), so the tenant gains no rows.
+ *
+ * W-854: Regular order from the New order menu leaves the page usable. The e2e tenant has its counter off, so that row
+ * turns the counter on in the browser only: the features read is patched, nothing reaches the server.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
@@ -41,6 +44,31 @@ for (const vp of [
 ]) {
   test.describe(`Create Order customer keyboard @${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
+
+    test("W-854: Regular order opens the builder, Esc closes it, and the page still clicks", async ({
+      page,
+    }) => {
+      await page.route("**/tenants/me/features*", async (route) => {
+        const response = await route.fetch();
+        const json = await response.json();
+        const features = json.data ?? json;
+        features.capabilities.fulfilment.counter = "optional";
+        await route.fulfill({ response, json });
+      });
+      await page.goto("/orders");
+      await waitForDataLoaded(page);
+      const newOrder = page.getByTestId("new-order-open");
+      await newOrder.click();
+      await page.getByRole("menuitem", { name: /regular order/i }).click();
+      const heading = page.getByRole("heading", { name: "Create Order" });
+      await expect(heading).toBeVisible({ timeout: 10_000 });
+      await expect(page.locator("[role=dialog] :focus")).toHaveCount(1);
+      await page.keyboard.press("Escape");
+      await expect(heading).toBeHidden();
+      await expect(page.locator("body")).not.toHaveCSS("pointer-events", "none");
+      await newOrder.click();
+      await expect(page.getByRole("menuitem", { name: /regular order/i })).toBeVisible();
+    });
 
     test("K5 keyboard-only pick: type, ArrowDown, Enter", async ({ page }) => {
       const search = await openBuilder(page);

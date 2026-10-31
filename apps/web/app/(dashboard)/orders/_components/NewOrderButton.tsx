@@ -52,11 +52,13 @@ export function NewOrderButton({
     const frame = requestAnimationFrame(() => firstItem.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [menuOpen]);
-  // A pick leaves this control behind, so focus doesn't go back to it.
+  // A pick leaves this control behind, so focus doesn't go back to it. Radix runs a menu item's select inside `flushSync`,
+  // so a dialog opened there mounts under the still-open modal menu: it never takes focus, and on close it restores the
+  // menu's `pointer-events: none` on body, which freezes the page. One tick later the menu is gone (#4034).
   const picked = React.useRef(false);
   const pick = (go: () => void) => () => {
     picked.current = true;
-    go();
+    setTimeout(go, 0);
   };
 
   const className = "max-sm:h-11";
