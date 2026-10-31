@@ -35,7 +35,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, UserRole } from "@prisma/client";
+import { MovementType, Prisma, UserRole } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
 import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -85,7 +86,13 @@ import {
   type RefundTender,
 } from "./inline-return-refund";
 import { assertCashRefundWithinCap, refundAmountsBySale } from "./cash-refund-cap";
-import { dbClockNow, lockCounterClose, registerKeyOfOrder } from "./counter-close-lock";
+import {
+  dbClockNow,
+  lockCounterClose,
+  tillRegisterOfSale,
+  tillRegisterStampedUnderLock,
+} from "./counter-close-lock";
+import { refundBusy } from "./standard-refund-claim";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import {
   refundTenderColumn,
@@ -1411,10 +1418,10 @@ export class InlineReturnsService {
     // SA-740r2 item 6: a COUNTER order's refund counts in the day's drawer, so the transaction's FIRST statement is the shared
     // counter-close lock on the carrying order's register (it is immutable, so this unlocked read is safe); the close waits
     // for refunds in flight and a refund's `refundedAt` (the database clock, dbClockNow) can never land behind a close's cutoff.
-    const registerKey = registerKeyOfOrder(
+    const registerKey = tillRegisterOfSale(
       await this.prisma.forTenant().order.findFirst({
         where: { id: pre.orderId },
-        select: { counterSale: true, registerKey: true },
+        select: { counterSale: true, registerKey: true, fulfillPath: true },
       }),
     );
 
@@ -1455,6 +1462,8 @@ export class InlineReturnsService {
         fresh.orderId,
         ...items.map((i) => i.sourceOrderId).filter((o): o is string => !!o),
       ]);
+      // W-829: a pickup stamped by a hand-over while this waited for the Order lock needs the close lock first: retry
+      if (await tillRegisterStampedUnderLock(tx, fresh.orderId, registerKey)) throw refundBusy();
 
       // M2: the SERVER's figure (exactly what the credit mint would issue); the client only confirms it
       const amount = inlineReturnAmount(fresh);
@@ -1878,35 +1887,27 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
       let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
-        for (const item of fresh.items as any[]) {
-          if (!item.restock) continue;
-          const product = await tx.product.findFirst({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          const qty = new Prisma.Decimal(item.qty);
-          const currentStock = product?.currentStock ?? new Prisma.Decimal(0);
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { currentStock: { decrement: qty } },
-          });
-          // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
-          // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
-          // audit trail (a delete erased history; the prefix match also risks colliding
-          // across two returns whose ids happen to share their first 8 characters).
-          await tx.stockMovement.create({
-            data: {
-              productId: item.productId,
-              type: "RETURN",
-              quantity: qty.neg(),
-              unitCost: product?.averageCost ?? null,
-              avgCostAfter: product?.averageCost ?? null,
-              stockAfter: currentStock.sub(qty),
+        // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
+        // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
+        // audit trail (a delete erased history; the prefix match also risks colliding
+        // across two returns whose ids happen to share their first 8 characters).
+        // SA-927: through the one writer (lock, tenant-scoped counter read, stockAfter, one insert).
+        const restocked = (fresh.items as any[]).filter((item) => item.restock);
+        await applyStockMovements(
+          tx,
+          this.prisma.getTenantId() as string,
+          (locked) =>
+            restocked.map((item) => ({
+              productId: item.productId as string,
+              type: MovementType.RETURN,
+              quantity: new Prisma.Decimal(item.qty).neg(),
+              unitCost: locked.get(item.productId)?.averageCost ?? null,
+              average: "keep" as const,
               performedById: user.sub,
               reference: `RET-CANCEL-${fresh.id.slice(0, 8)}`,
-            },
-          });
-        }
+            })),
+          { productIds: restocked.map((item) => item.productId as string) },
+        );
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.
         const settled = await this.ledger.settleRegulatedLedger(tx, {

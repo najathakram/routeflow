@@ -25,6 +25,8 @@ export const CUSTOMER_ORDER_FIELDS = [
   "id",
   "orderNumber",
   "status",
+  // Row 380: the edit revision a buyer edit sends back (a 409 ORDER_REVISION_STALE when it is behind).
+  "revisionNumber",
   "createdAt",
   "requestedDeliveryDate",
   "deliveredAt",
@@ -119,6 +121,7 @@ export const CUSTOMER_INVOICE_ITEM_FIELDS = [
   "notes",
   "categoryTaxAmount",
   "displayUnit", // SA-827: derived { kind, label } of the unit the line is shown in (never a stored column)
+  "perBaseUnit", // SA-1029: derived { price, unit } per base piece of a pack line (the raw baseLabel stays off the wire)
 ] as const;
 
 /** Invoice payment scalars a buyer screen reads (no memo, image key, bank charge, bounce reason or replaced-payment link). */

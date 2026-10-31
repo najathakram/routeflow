@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import {
   PAYMENT_PHOTO_LATER_COPY,
@@ -109,7 +110,9 @@ export function CustomerRecordPaymentModal({
   });
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
-  const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
+  const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
+  const [paidAt, setPaidAt] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, paidAt, setPaidAt);
   const [settledAt, setSettledAt] = React.useState("");
   const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
@@ -396,8 +399,8 @@ export function CustomerRecordPaymentModal({
             {openInvoices.length === 0 ? (
               <p className="text-sm text-navy/70 italic">No unpaid invoices for this customer.</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-surface-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-surface-border">
+                <table className="min-w-[420px] w-full text-sm">
                   <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                     <tr>
                       <th className="px-3 py-2 text-left">Invoice #</th>

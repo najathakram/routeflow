@@ -421,6 +421,16 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /**
+   * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
+   * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
+   */
+  LINES_REPLACE_AFTER_DELIVERY: "LINES_REPLACE_AFTER_DELIVERY",
+  /**
+   * W-861 (SA-944): a walk-in sale with a live payment on its invoice cannot be edited (the shared Walk-in customer
+   * cannot owe). Ring up added items as a new sale, or take items back with a Return. 409, nothing written.
+   */
+  WALK_IN_SALE_PAID: "WALK_IN_SALE_PAID",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
@@ -604,6 +614,14 @@ export const API_ERROR_CODES = {
   DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
   /** 409 from POST /orders/counter-sale/day-close: this window was closed by another request first (a first-close race). */
   DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
+  /** 409 from POST /orders/counter-sale/drawer/opening-float: this window's opening float was already counted with a different amount (an identical amount replays the existing row). Only an admin can correct it (PATCH). */
+  COUNTER_FLOAT_ALREADY_COUNTED: "COUNTER_FLOAT_ALREADY_COUNTED",
+  /** 404 from PATCH /orders/counter-sale/drawer/opening-float: no opening float was counted for that register and window. */
+  COUNTER_FLOAT_NOT_COUNTED: "COUNTER_FLOAT_NOT_COUNTED",
+  /** 409 from PATCH /orders/counter-sale/drawer/opening-float: the float is no longer the amount the admin's screen showed (expectedAmount), so another correction landed first. Reload and retry. */
+  COUNTER_FLOAT_CHANGED: "COUNTER_FLOAT_CHANGED",
+  /** 409 from POST or PATCH /orders/counter-sale/drawer/opening-float: windowStart is not the register's open window (a close already covers it, or it is not the window DayCloseState.preview.windowStart names). Reload the day-close state. */
+  COUNTER_FLOAT_WINDOW_NOT_OPEN: "COUNTER_FLOAT_WINDOW_NOT_OPEN",
   /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
   PARK_LIMIT: "PARK_LIMIT",
   /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
@@ -806,6 +824,11 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
   COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
+  /**
+   * Row 590 (SA-978a): PATCH /orders/:id/status to DELIVERED, 409: the order rides a run stop that is not COMPLETED. The stop is the
+   * one writer of a run order's delivery; complete it on the route, or take the order off the run first. Nothing written.
+   */
+  ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.

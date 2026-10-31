@@ -34,7 +34,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
-import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
@@ -95,7 +95,8 @@ import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { OrderStaffFlags } from "./_components/OrderStaffFlags";
-import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
+import { EditClosedChip } from "./_components/EditClosedChip";
+import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
@@ -105,7 +106,7 @@ import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authori
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -169,7 +170,6 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
-  const statusLabel = useOrderStatusLabel();
   const staffFulfilment = useStaffFulfilment();
   // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
   // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
@@ -768,13 +768,13 @@ export default function OrderDetailPage() {
       {
         // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
         onError: guardError(() => handleDeliver()),
-        onSuccess: () => {
+        onSuccess: (done: unknown) => {
           setLocalStatus("DELIVERED");
-          // #2089 (owner ruling): "automatically open the invoice, then ask if you
-          // want to send it" — offline is checked FIRST and unconditionally
-          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
-          // network call below, since a dropped connection right after delivery
-          // must read as "try again once synced," never as "no invoice."
+          routeHeldNotice(done, order.lineItems, toast); // row 590: lines the driver's figure holds
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you want to
+          // send it" — offline is checked FIRST and unconditionally (postDeliveryInvoicePrompt's
+          // own contract), before ever attempting the network call below, since a dropped
+          // connection right after delivery must read as "try again once synced," not "no invoice."
           if (
             postDeliveryInvoicePrompt({
               invoice: undefined,
@@ -1040,7 +1040,7 @@ export default function OrderDetailPage() {
           className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:[&>:not([data-tier])]:order-5"
         >
           {/* Edit Items button */}
-          {canEdit && access.editItems && !isEditing && (
+          {canEdit && !order?.editItemsLocked && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
               <WriteButton
                 size="sm"
@@ -1081,17 +1081,9 @@ export default function OrderDetailPage() {
               </ActionTier>
             ))}
 
-          {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
-              ("STATUS"); the buyer-facing window instead closes once dispatched
-              ("DISPATCHED") — see the canEdit comment above. Either reason shows here. */}
-          {!canEdit && order?.editWindow?.closedReason && !isEditing && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              {order.editWindow.closedReason === "DISPATCHED"
-                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
-                : "Order cancelled — editing closed"}
-            </span>
-          )}
+          <EditClosedChip show={!canEdit && !isEditing} order={order} />
 
+          <EditItemsLockedNote show={!!order?.editItemsLocked && access.editItems && !isEditing} />
           {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
           {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 

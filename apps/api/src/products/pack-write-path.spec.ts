@@ -47,6 +47,7 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/src/invoices/invoice-edit-plan.ts",
   "apps/api/src/invoices/invoice-restriction-lines.ts",
   "apps/api/src/orders/orders.service.ts",
+  "apps/api/src/orders/testing/units-fold-db-harness.ts", // a test fixture that seeds units-fold tenants (qa-ufold-*), never production
   "apps/api/src/products/family-price.ts",
   "apps/api/src/products/product-families.service.ts",
   "apps/api/src/products/product-units.service.ts",

@@ -27,10 +27,17 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 jest.mock("../invoices/invoice-display-unit", () => ({
   resolveIssueDisplayUnits: jest.fn(),
   writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+  writeIssueBaseLabels: jest.fn().mockResolvedValue(undefined),
+  loadDraftBaseLabels: jest.fn(),
 }));
 
 import { BookkeepingService } from "./bookkeeping.service";
-import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
+import {
+  loadDraftBaseLabels,
+  resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
+  writeIssueDisplayUnits,
+} from "../invoices/invoice-display-unit";
 import { InvoiceService } from "./invoice.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
@@ -283,10 +290,13 @@ describe("BookkeepingService", () => {
 
   describe("recordPayment — SA-827: a DRAFT paid through the ledger freezes its display unit once", () => {
     const UNITS = new Map([["it-1", { kind: "pieces" as const, label: "Piece" }]]);
+    const WORDS = new Map([["p-1", "Bag"]]); // SA-1029: the pre-tx base words
 
     function arm(status: string) {
       (resolveIssueDisplayUnits as jest.Mock).mockReset().mockResolvedValue(UNITS);
+      (loadDraftBaseLabels as jest.Mock).mockReset().mockResolvedValue(WORDS);
       (writeIssueDisplayUnits as jest.Mock).mockClear();
+      (writeIssueBaseLabels as jest.Mock).mockClear();
       prisma.invoice.findUnique.mockResolvedValue({ status, tenantId: "tenant-acme-1" });
       const txClient = {
         $executeRaw: jest.fn(),
@@ -294,6 +304,7 @@ describe("BookkeepingService", () => {
           findMany: jest.fn(async () => []),
           findUnique: jest.fn().mockResolvedValue({
             id: "inv-827",
+            tenantId: "tenant-acme-1",
             status,
             total: 100,
             payments: [],
@@ -325,6 +336,34 @@ describe("BookkeepingService", () => {
       expect((resolveIssueDisplayUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
         prisma.tenantTransaction.mock.invocationCallOrder[0],
       );
+      // SA-1029 A-1: the words are read off-tx too, then handed to the in-tx writer
+      const [wdb, wtenant, winv] = (loadDraftBaseLabels as jest.Mock).mock.calls[0];
+      expect(wdb).toBe(prisma.forTenant());
+      expect(wtenant).toBe("tenant-acme-1");
+      expect(winv).toBe("inv-827");
+      expect((loadDraftBaseLabels as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.tenantTransaction.mock.invocationCallOrder[0],
+      );
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+        WORDS,
+      ]);
+    });
+
+    it("D-R2: a DRAFT whose resolve found NO pieces line (null units) still freezes the base labels in the tx", async () => {
+      const tx = arm("DRAFT");
+      (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(null);
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+        WORDS,
+      ]);
     });
 
     it("an already issued (SENT) invoice makes zero resolve calls and no write", async () => {
@@ -332,6 +371,8 @@ describe("BookkeepingService", () => {
       await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
       expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
       expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).not.toHaveBeenCalled();
+      expect(loadDraftBaseLabels).not.toHaveBeenCalled(); // no extra read on an issued invoice
     });
   });
 
