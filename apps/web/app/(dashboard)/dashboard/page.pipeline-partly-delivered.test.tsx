@@ -8,6 +8,7 @@ import DashboardPage from "./page";
 // order, and Active orders adds the partly delivered count. A DRAFT is not a placed order: it is
 // neither a tile nor part of Active orders (G-5).
 
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

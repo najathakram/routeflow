@@ -49,6 +49,8 @@ import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GetTheAppStrip } from "./GetTheAppStrip";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { BRAND_MARK_SRC } from "@/components/brand";
 import { GettingStartedBanner } from "./GettingStartedBanner";
 import { useTenantOnboarding } from "@/lib/api/onboarding";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -916,6 +918,10 @@ export default function DashboardPage() {
 
       {/* ── Install-the-app nudge (row 559; never for drivers, who get the banner above) ── */}
       <GetTheAppStrip isDriver={baseIsDriver} />
+
+      {/* ── Install banner (SA-1069 A-2 P-1): staff home only, never the shell — it is fixed
+          bottom-4 and covered the till's Complete buttons on an iPhone when mounted on every screen ── */}
+      <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* ── Driver with neither the routes nor the delivery add-on (#2254) ── */}
       {driverWithoutRuns && (

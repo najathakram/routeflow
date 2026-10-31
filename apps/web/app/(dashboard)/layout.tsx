@@ -35,7 +35,6 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
-import { BRAND_MARK_SRC } from "@/components/brand";
 import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
@@ -59,7 +58,6 @@ import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api/authorizations";
 import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
-import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useGuardedSignOut } from "@/components/SignOutUnsentGuard";
 import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
@@ -1426,13 +1424,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             showCounterPref={isStaff && counterEnabled}
           />
         )}
-        {/* pb-24 reserves 96px of clearance below page content so the
-            floating PwaInstallPrompt (fixed bottom-4) and similar
-            bottom-anchored UI never sit on top of bottom-aligned form
-            actions like Save Defaults / Save Changes. Without this, the
-            install prompt covers the Save button on Settings →
-            Invoicing → Invoice Defaults and on the Business Profile
-            tab, making the form look like it has no save action. */}
+        {/* pb-24 reserves 96px of clearance below page content so bottom-anchored UI
+            (the parked-draft dock and similar) never sits on top of bottom-aligned form
+            actions like Save Defaults / Save Changes. The install banner is NOT mounted
+            here: it is fixed bottom-4, so a shell mount covered every staff screen with a
+            bottom action (the till's Complete buttons on an iPhone). Install is offered on
+            the staff home (dashboard/page.tsx) and /get-the-app instead (SA-1069 A-2 P-1). */}
         <main
           id="main-content"
           tabIndex={-1}
@@ -1458,7 +1455,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       >
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       </ReadOnlyGateProvider>
-      <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}
       {shortcutHelpOpen && (
