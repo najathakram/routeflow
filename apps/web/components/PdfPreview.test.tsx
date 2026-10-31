@@ -110,6 +110,19 @@ describe("PdfPreview on touch", () => {
     expect(second.destroy).not.toHaveBeenCalled();
   });
 
+  it("P13: a bad PDF, then a good one: the new src draws", async () => {
+    mockGetDocument.mockReturnValue({
+      promise: Promise.reject(new Error("bad pdf")),
+      destroy: jest.fn(),
+    });
+    const view = render(preview());
+    expect(await screen.findByText("Preview isn't available here.")).toBeInTheDocument();
+    pdf(2);
+    view.rerender(preview({ src: "blob:two" }));
+    await waitFor(() => expect(canvases()).toHaveLength(2));
+    expect(screen.queryByText("Preview isn't available here.")).toBeNull();
+  });
+
   it("the scroller scrolls and keeps pinch zoom", async () => {
     pdf(1);
     render(preview());

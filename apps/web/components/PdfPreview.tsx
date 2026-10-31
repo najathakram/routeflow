@@ -38,8 +38,10 @@ export interface PdfPreviewProps {
 export function PdfPreview({ src, title, className, getBytes, fallback }: PdfPreviewProps) {
   const [touch] = React.useState(isTouch);
   if (!touch) return <iframe src={src} title={title} className={className} />;
+  // A new `src` is a new preview, keyed so a failed one starts over: the scan modal's ◀ ▶ swaps it while the modal stays open.
   return (
     <PdfCanvases
+      key={src}
       src={src}
       title={title}
       className={className}
@@ -56,15 +58,12 @@ function PdfCanvases({ src, title, className, getBytes, fallback }: PdfPreviewPr
   const getBytesRef = React.useRef(getBytes);
   getBytesRef.current = getBytes;
 
-  // `src` is the only dependency: the scan modal's ◀ ▶ swaps it while the modal stays open.
+  // `src` is the only dependency: `getBytes` is read through its ref, and each `src` gets its own instance.
   React.useEffect(() => {
     const pages = pagesRef.current;
     if (!pages) return;
     let stopped = false;
     let destroy: (() => unknown) | null = null;
-    pages.replaceChildren();
-    setFailed(false);
-    setOverCap(null);
 
     void (async () => {
       try {
