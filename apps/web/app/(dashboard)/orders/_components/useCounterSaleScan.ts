@@ -59,7 +59,13 @@ export function useCounterSaleScan(deps: Deps) {
   const epochRef = React.useRef(0);
   const aliveRef = React.useRef(true);
   const [pendingQty, setPendingQty] = React.useState(1); // display only
-  const [message, setMessage] = React.useState("");
+  // W-1042: `code` is set only on a final not-found (after the category browse): the miss line offers Create item for it.
+  const [miss, setMiss] = React.useState({ message: "", code: "" });
+  const message = miss.message;
+  const setMessage = React.useCallback(
+    (text: string, code = "") => setMiss({ message: text, code }),
+    [],
+  );
   // F05: "Added <name>" for the latest scan that landed; it fades by itself and goes at once on a miss.
   const [added, setAdded] = React.useState("");
   const addedTimerRef = React.useRef<number | null>(null);
@@ -153,7 +159,7 @@ export function useCounterSaleScan(deps: Deps) {
             return; // the item stays at the head until one is chosen
           }
           clearAdded();
-          setMessage(noProductCopy(item.code));
+          setMessage(noProductCopy(item.code), item.code);
           setCarry(1);
         } else if (result.archived) {
           clearAdded();
@@ -182,7 +188,7 @@ export function useCounterSaleScan(deps: Deps) {
       if (aliveRef.current && !pausedRef.current && queueRef.current.length > 0) void drain();
       else depsRef.current.refocus();
     }
-  }, [clearAdded, confirmAdded]);
+  }, [clearAdded, confirmAdded, setMessage]);
 
   const resume = () => {
     pausedRef.current = false;
@@ -286,6 +292,7 @@ export function useCounterSaleScan(deps: Deps) {
   return {
     pendingQty,
     message,
+    missCode: miss.code,
     added,
     dismissMessage,
     picker,
