@@ -75,6 +75,8 @@ import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
+import { createInvoiceVariant } from "./_components/create-invoice-variant";
+import { creditSelectionsFromOrder, formatDateOnly } from "./order-detail-helpers";
 import { ActionTier } from "./_components/ActionTier";
 import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useScrollAfterSave } from "./_components/use-scroll-after-save";
@@ -140,29 +142,6 @@ import {
 } from "./_components/order-line-edit";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-
-/**
- * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
- * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
- */
-function formatDateOnly(iso: string): string {
-  const [y, m, d] = iso.split("T")[0].split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-/** Map the order's stored credit-note intents into the picker's selection shape. */
-function creditSelectionsFromOrder(o: {
-  orderCreditNotes?: Array<{ creditNoteId: string; amount?: number | string | null }>;
-}): CreditSelection[] {
-  return (o.orderCreditNotes ?? []).map((oc) => ({
-    creditNoteId: oc.creditNoteId,
-    amount: oc.amount != null ? Number(oc.amount) : undefined,
-  }));
-}
 
 export default function OrderDetailPage() {
   const params = useParams();
@@ -2057,16 +2036,7 @@ export default function OrderDetailPage() {
                         </p>
                         <Button
                           size="sm"
-                          // One filled primary leads the page: while PENDING that is Confirm Order
-                          // (apple-ux r3 Q16), so invoicing is secondary until the order is confirmed.
-                          // SA-1066 M2: a Ready POS order's one primary is Hand over; Create invoice is secondary.
-                          variant={
-                            localStatus === "PENDING" ||
-                            isEditing ||
-                            (isPos && localStatus === "OUT_FOR_DELIVERY")
-                              ? "secondary"
-                              : "primary"
-                          }
+                          variant={createInvoiceVariant(localStatus, isEditing, isPos)}
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
                           disabled={isEditing}
