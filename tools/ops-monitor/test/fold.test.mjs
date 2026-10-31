@@ -538,3 +538,17 @@ test("a merge pr event moves an in-flight item to shipping once every linked PR 
   s = fold([...evs.slice(0, 5), ev("pr", "10", { number: 300, action: "create" }, { min: 11 })]);
   assert.equal(s.items.get("10").status, "building");
 });
+
+test("blockedBy: defaults empty, an edit replaces it, a rename follows the blocker", () => {
+  const s = fold([
+    newItem("70", {}, { min: 0 }),
+    newItem("71", { blockedBy: ["70"] }, { min: 1 }),
+    newItem("72", {}, { min: 2 }),
+    ev("item.edit", "72", { fields: { blockedBy: ["70", "71"] } }, { min: 3 }),
+    ev("item.rename", "70", { to: "OQ-N7" }, { min: 4 }),
+    ev("item.edit", "71", { fields: { blockedBy: [] } }, { min: 5 }),
+  ]);
+  assert.deepEqual(s.items.get("OQ-N7").blockedBy, []);
+  assert.deepEqual(s.items.get("71").blockedBy, []);
+  assert.deepEqual(s.items.get("72").blockedBy, ["OQ-N7", "71"]);
+});
