@@ -663,6 +663,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "PublicTenantsController.getLogo": "UNGUARDED",
   "PublicTenantsController.register": "UNGUARDED",
   "PublicTenantsController.resendVerification": "UNGUARDED",
+  "ReadyForPickupController.markReady": "ORDERS|DISPATCH",
   "ReceiptController.send": "ORDERS|FINANCE",
   "RecipesController.activate": "CATALOG",
   "RecipesController.create": "CATALOG",
