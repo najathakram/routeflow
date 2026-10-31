@@ -29,12 +29,13 @@ jest.mock("@/lib/auth-context", () => {
     useAuth: () => ({ ...actual.useAuth(), user: { id: "u1", role: "OPERATOR" } }),
   };
 });
+let mockMethods = ["ROUTE", "SHIP"];
 jest.mock("@/lib/tenant-features", () => ({
   useTenantFeatures: () => ({
     data: {
       capabilities: {
         fulfilment: {
-          methods: ["ROUTE", "SHIP"],
+          methods: mockMethods,
           staffDefault: "ROUTE",
           portalMethods: [],
           portalDefault: null,
@@ -81,6 +82,15 @@ jest.mock("@/lib/api/drafts", () => ({
   useUpdateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
   useDeleteDraft: () => ({ mutate: jest.fn() }),
   useDraft: () => ({ data: undefined, isFetching: false }),
+}));
+jest.mock("@/lib/api/counter-sale", () => ({
+  ...jest.requireActual("@/lib/api/counter-sale"),
+  useCounterSaleGate: () => ({
+    deniedGroups: [],
+    permsKnown: true,
+    mayUseTill: true,
+    loading: false,
+  }),
 }));
 jest.mock("@/lib/api/margin", () => ({
   useMarginConfig: () => ({ data: undefined }),
@@ -130,6 +140,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockCustomers = { data: { data: [] } };
   mockRefuse = false;
+  mockMethods = ["ROUTE", "SHIP"];
   (apiClient.get as jest.Mock).mockImplementation((url: string) =>
     Promise.resolve({ data: url === "/users/me/preferences" ? {} : { taxRate: 0 } }),
   );
@@ -165,6 +176,27 @@ describe("CreateOrderModal: a new customer in the builder (W-1041)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
     await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
     expect(createCustomer.mock.calls[0][0].addresses).toBeUndefined();
+  });
+
+  it("MUST 6: Store pickup on a regular order saves on the name alone and stays Store pickup", async () => {
+    mockMethods = ["ROUTE", "SHIP", "PICKUP"];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Store pickup" }));
+    await openDoor();
+    fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
+    expect(createCustomer.mock.calls[0][0].addresses).toBeUndefined();
+    expect(await screen.findByLabelText("Change customer")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Store pickup" }).className).toContain("bg-navy");
+  });
+
+  it("MUST 6: with Store pickup offered, Delivery route still asks for the address", async () => {
+    mockMethods = ["ROUTE", "SHIP", "PICKUP"];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await openDoor();
+    fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    await waitFor(() => expect(screen.getAllByText("Required").length).toBeGreaterThan(0));
+    expect(createCustomer).not.toHaveBeenCalled();
   });
 
   it("P1: a good save on an empty order raises no order error behind the window", async () => {

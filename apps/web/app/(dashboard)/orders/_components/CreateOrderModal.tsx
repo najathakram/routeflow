@@ -793,7 +793,7 @@ export function CreateOrderModal({
   // W-1041: a pickup (POS) order needs no address; a delivery or shipped one does.
   const newCustomerDoor = useNewCustomerDoor<SelectedCustomer>(
     (c) => pickCustomer(c, true),
-    !posMode,
+    !isPickup,
   );
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
