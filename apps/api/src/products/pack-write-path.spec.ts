@@ -43,6 +43,7 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/src/inventory/inventory.service.ts",
   "apps/api/src/inventory/testing/count-db-harness.ts",
   "apps/api/src/inventory/testing/order-stock-world.ts", // a test fixture that seeds stock worlds, never production
+  "apps/api/src/inventory/testing/sa802-world.ts", // SA-802 / SA-828 DB-spec fixture (qa-sa802-* tenants), never production
   "apps/api/src/invoices/invoice-display-unit.ts", // SA-827/SA-1029: display snapshot writes only; its tier-price selects trip the text scan
   "apps/api/src/invoices/invoice-edit-plan.ts",
   "apps/api/src/invoices/invoice-restriction-lines.ts",

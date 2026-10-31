@@ -490,3 +490,6 @@ Catch-up (2026-10-30, train W28a): [packages/landing-2026-10-30-w28a.md](package
 Catch-up (2026-10-30, train W30a): [packages/landing-2026-10-30-w30a.md](packages/landing-2026-10-30-w30a.md): `perBaseUnitPrice`, walk-in lock codes.
 Catch-up (2026-10-31, train W30b): [packages/landing-2026-10-31-w30b.md](packages/landing-2026-10-31-w30b.md): `stock-level.ts` low-stock rule, `LOW_STOCK_TOO_MANY`, counter refusal copy.
 Catch-up (2026-10-31, train W31): [packages/landing-2026-10-31-w31.md](packages/landing-2026-10-31-w31.md): `ready-for-pickup.ts`, `ORDER_NOT_READYABLE`.
+Catch-up (2026-10-31, train W32): [packages/landing-2026-10-31-w32.md](packages/landing-2026-10-31-w32.md): money-rounding pin spec and `turbo.json` inputs, staff order email types and settings-registry rows.
+Catch-up (2026-10-31, train W33): [packages/landing-2026-10-31-w33.md](packages/landing-2026-10-31-w33.md): `CreateReturnLineItemDto`.
+Catch-up (2026-10-31, train U): [packages/landing-2026-10-31-u.md](packages/landing-2026-10-31-u.md): `MAX_UNIT_PRICE`, `createPausableClock` in `@routeflow/scanning`, toast viewport z-index.

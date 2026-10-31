@@ -37,6 +37,7 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { DuplicateInvoiceDto } from "./dto/duplicate-invoice.dto";
+import { UnvoidInvoiceDto } from "./dto/unvoid-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
@@ -253,8 +254,8 @@ export class InvoicesController {
 
   @Post(":id/unvoid")
   @Roles(UserRole.OPERATOR)
-  unvoid(@Param("id") id: string) {
-    return this.invoicesService.unvoidInvoice(id);
+  unvoid(@Param("id") id: string, @Body() dto: UnvoidInvoiceDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.unvoidInvoice(id, user, dto);
   }
 
   @Post(":id/reopen") reopenInvoice(@Param("id") id: string) {

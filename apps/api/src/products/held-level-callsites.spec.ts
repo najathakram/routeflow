@@ -17,6 +17,8 @@ const API_RESOLVE_CALLERS = ["invoices/invoice-line-override.ts", "orders/unit-l
 
 const WEB_LADDER_READERS = [
   "app/(dashboard)/invoices/new/page.tsx",
+  // SA-828: a stock count's unit rows. It holds no sale line, so there is no held level to offer.
+  "app/(dashboard)/products/[id]/CountAdjustModal.tsx",
   "app/(dashboard)/products/[id]/ProductUnitsCard.tsx",
   "app/(dashboard)/products/[id]/units-v2/structure/UnitsBesideGrid.tsx",
   "components/OrderLineUnitPicker.tsx",

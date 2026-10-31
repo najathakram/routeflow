@@ -349,6 +349,14 @@ export function CounterLineRow({
             {edited.chip}
           </span>
         ) : null}
+        {l.remembered && !l.override ? (
+          <span
+            className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"
+            data-testid="line-last-price-chip"
+          >
+            Last price
+          </span>
+        ) : null}
         <button
           type="button"
           className={LINE_BTN}

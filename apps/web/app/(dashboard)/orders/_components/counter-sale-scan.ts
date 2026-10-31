@@ -2,6 +2,7 @@ import {
   customerLinePrice,
   normalizeBoxesPieces,
   type CustomerLayerUnit,
+  type CustomerLinePrice,
   type SellLevel,
 } from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
@@ -33,12 +34,14 @@ export interface SaleLine {
    */
   listPrice?: number;
   unit?: string;
-  priceType?: "STANDARD" | "SPECIAL";
+  priceType?: CustomerLinePrice["priceType"];
   /**
    * S19b: set ONLY while the customer's price layer prices this line (flag on): the layer's `isSpecial`, which the edit-reason
    * gate reads in place of the tier. Absent otherwise, so the gate keeps master's tier rule.
    */
   special?: boolean;
+  /** SA-1068: set ONLY while the line sits at the customer's remembered above-list price (the till says "Last price"). */
+  remembered?: true;
   category?: string;
   /** The product's regulated category when the line was added: the estimate adds its levy (excise / deposit). */
   trackedCategoryId?: string | null;
@@ -73,6 +76,8 @@ export function addScannedProduct(
   tier: number,
   /** S19b: the customer's price layer for this product (flag on); omitted = master's tier price. */
   layer?: readonly CustomerLayerUnit[],
+  /** SA-1068: the customer's remembered price for this product (the server's sticky upsell); omitted = none. */
+  remembered?: number | null,
 ): SaleLine[] {
   const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
   const unitScan = level === "UNIT" && (upb ?? 0) > 1;
@@ -84,7 +89,7 @@ export function addScannedProduct(
     return prev.map((l, i) => (i === idx ? merged : l));
   }
   // A UNIT multiplier at or over the pack size (x30 on a 24-pack) rolls into boxes: 1 box + 6 pcs, never 0 boxes + 30 pcs.
-  const lp = customerLinePrice({ product, tier, layer });
+  const lp = customerLinePrice({ product, tier, layer, remembered });
   const born = newLineQtyForLevel(upb, level, n);
   if (born.qty > COUNTER_MAX_LINE_QTY) return prev;
   const qty = unitScan && upb ? normalizeBoxesPieces({ qty: born.qty, unitsPerBox: upb }) : null;
@@ -98,8 +103,9 @@ export function addScannedProduct(
       unitsPerBox: upb,
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
-      priceType: lp.isSpecial ? "SPECIAL" : "STANDARD",
+      priceType: lp.priceType,
       ...(lp.layered ? { special: lp.isSpecial } : {}),
+      ...(lp.remembered ? { remembered: true as const } : {}),
       ...(product.category ? { category: String(product.category) } : {}),
       ...(product.trackedCategoryId
         ? { trackedCategoryId: String(product.trackedCategoryId) }
