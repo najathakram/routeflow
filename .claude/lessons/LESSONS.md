@@ -372,19 +372,14 @@
 - **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
 - **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit. Fixed in `apps/control` (`Referrer-Policy: same-origin`; `originOk` accepts `Origin: null` only with `Sec-Fetch-Site: same-origin`), pinned by `apps/control/test/login-origin.spec.ts`.
 
-### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
-
-- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
-  ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
-- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
-  also the least private transport HTTP offers.
-- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
-  a URL query string — use a fragment (`#`, never sent to the server) for a client-side handoff,
-  or a POST body for a server-side one.**
-- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
-  named query params on any new route.
-
 ## deploy
+
+### L-367 · 2026-10-31 · deploy · a hosted job's timeout is sized from its measured stages with headroom; a cancelled run is read by its annotation, and a local verify red mid-chain hides every later step
+
+- **Symptom:** train Y's hosted CI run was `cancelled` after 30 minutes. Turbo's 32 tasks had finished in 25m23s and the script self-tests that run after them were cut off at the job's limit. No test was red. The two trains before it had taken about 24 and 28 minutes in the same job. A cancelled run is not green, so the first public window was spent and a second one was needed. In the same train the local verify exited 1 on one self-test in the middle of the `&&` chain, so every step after it, including the final campaign-check, had never run.
+- **Root cause:** the Verify job's `timeout-minutes: 30` was set when the suite was smaller; each landing grew it, the earlier trains sat a few minutes under the limit, and the next, larger train crossed it. `cancelled` looks like a manual or concurrency cancel; only the check-run annotation ("exceeded the maximum execution time") says it was the limit. For the local chain, `&&` stops at the first non-zero exit, so a load flake in the middle silently skips the tail.
+- **Lesson:** **Size a hosted job's `timeout-minutes` from the measured duration of its slowest stage chain plus about 50% headroom, and re-measure when a train grows the suite. Read a `cancelled` job by its annotations before calling it red: a timeout is a one-line CI config fix, not a code defect. Read a failed local verify by which step stopped the chain, and run every step after it by hand before accepting the verify.**
+- **Guard:** Verify timeout raised 30 to 45 in `ci.yml` (train Y); no automatic check yet. Cf. [[L-357]], [[L-363]].
 
 ### L-361 · 2026-10-31 · deploy · a window script reads the watchdog deadline from the log line of the pid it started, and reads that log with `grep -a`
 
