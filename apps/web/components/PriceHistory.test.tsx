@@ -134,13 +134,15 @@ describe("PriceHistoryButton — availability", () => {
 });
 
 describe("PriceHistoryButton — popover behaviour", () => {
-  it("the reference column truncates with a full-reference tooltip so the table never widens the popover", async () => {
+  it("the reference column caps its width and truncates the number with a full-reference tooltip so the table never widens the popover", async () => {
     renderButton();
     await openPanel();
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     const cell = (await within(dialog).findAllByTitle(/\S/)).find((e) => e.tagName === "TD")!;
-    expect(cell).toHaveClass("truncate");
+    // SA-1066 F4: the cell keeps its width cap; the order number inside truncates, so a chip beside it never does
+    expect(cell).not.toHaveClass("truncate");
     expect(cell.className).toMatch(/max-w-/);
+    expect(cell.querySelector(".truncate")).not.toBeNull();
   });
 
   it("opens and closes (Esc, outside click, toggle) without changing the price, returning focus to the input", async () => {
@@ -193,7 +195,10 @@ describe("PriceHistoryButton — popover behaviour", () => {
     expect(within(dialog).getByText("Customer: Acme Foods")).toBeInTheDocument();
     for (const label of ["Last", "Low", "High", "Qty invoiced"])
       expect(within(dialog).getByText(label)).toBeInTheDocument();
-    expect(within(dialog).getByText("$12.90", { selector: "div" })).toBeInTheDocument(); // low
+    // low: a usable row carries it, so the figure is a button (SA-1066 F08)
+    expect(
+      within(dialog).getByRole("button", { name: "Use the low price ($12.90)" }),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText("not invoiced yet")).toBeInTheDocument();
     expect(within(dialog).getByText("INV-0002")).toBeInTheDocument();
     expect(within(dialog).getByText("Discount")).toBeInTheDocument();
@@ -416,7 +421,10 @@ describe("LineItemRow wiring", () => {
 });
 
 describe("PriceHistoryButton — narrow screens and keyboard", () => {
-  it("caps the popover to the viewport and stacks/wraps each row's action", async () => {
+  // What this guards: a row cannot be wider than its panel, because the order column has a 0 minimum (minmax(0,1fr)) and
+  // is the one that truncates, while Use keeps its 44 px target at the right edge. (It used to pin `flex-nowrap`, which
+  // is the very thing that pushed Use past the panel edge; the phone grid itself is pinned in the next test.)
+  it("caps the popover to the viewport; a row cannot outgrow it, the order column giving way (SA-1066 P01)", async () => {
     renderButton();
     await openPanel();
     const panel = await screen.findByRole("dialog", { name: "Price history" });
@@ -424,7 +432,48 @@ describe("PriceHistoryButton — narrow screens and keyboard", () => {
     const use = await within(panel).findByRole("button", { name: /Use this price \(\$14\.00\)/ });
     expect(use.className).toMatch(/min-h-\[44px\]/);
     const row = use.closest("tr")!;
-    expect(row.className).toMatch(/flex-wrap/);
+    expect(row.className).not.toMatch(/flex-wrap/);
+    expect(row.className).toContain("minmax(0,1fr)");
+    // the Use cell never shrinks and sits at the right edge; the order cell is the one that truncates
+    expect(use.closest("td")!.className).toMatch(/(^|\s)ml-auto(\s|$)/);
+    expect(use.closest("td")!.className).toMatch(/(^|\s)shrink-0(\s|$)/);
+    expect(row.querySelector("td.max-w-\\[7rem\\]")!.className).toMatch(/(^|\s)min-w-0(\s|$)/);
+  });
+
+  it("lays each row out as a phone grid so the tag drops under the price and Use stays inside the panel (SA-1066 P01b)", async () => {
+    renderButton();
+    await openPanel();
+    const panel = await screen.findByRole("dialog", { name: "Price history" });
+    // the DISCOUNTED row carries a tag next to its price
+    const tag = await within(panel).findByText("Discount");
+    const row = tag.closest("tr")!;
+    // a flex-nowrap row is as wide as its widest content and pushes Use past the panel edge on a phone
+    expect(row.className).not.toMatch(/(^|\s)flex(\s|$)/);
+    expect(row.className).not.toMatch(/flex-nowrap/);
+    expect(row.className).toMatch(/(^|\s)grid(\s|$)/);
+    expect(row.className).toContain("grid-cols-[auto_auto_minmax(0,1fr)_auto]");
+    expect(row.className).toMatch(/(^|\s)sm:table-row(\s|$)/); // sm and up is still a table row
+    // the tag sits on its own line under the price at EVERY width (no inline form at sm)
+    expect(tag.className).toMatch(/(^|\s)block(\s|$)/);
+    expect(tag.className).toMatch(/(^|\s)w-fit(\s|$)/);
+    expect(tag.className).not.toMatch(/sm:inline/);
+    expect(tag.className).not.toMatch(/ml-1/);
+    // the order cell and Use span both lines; Use keeps its phone tap target; the chip never truncates
+    const orderTd = row.querySelector("td.max-w-\\[7rem\\]")!;
+    expect(orderTd.className).toMatch(/(^|\s)row-span-2(\s|$)/);
+    expect(orderTd.className).toMatch(/(^|\s)min-w-0(\s|$)/);
+    const use = within(row as HTMLElement).getByRole("button", { name: /Use this price/ });
+    expect(use.closest("td")!.className).toMatch(/(^|\s)row-span-2(\s|$)/);
+    expect(use.className).toMatch(/min-h-\[44px\]/);
+    expect(use.className).toMatch(/min-w-\[44px\]/);
+    // the unit wraps inside a 5rem cell at every width (and a single long word breaks) but never truncates
+    const qtyTd = within(row as HTMLElement)
+      .getByText(/case$/)
+      .closest("td")!;
+    expect(qtyTd.className).not.toMatch(/truncate/);
+    expect(qtyTd.className).not.toMatch(/whitespace-nowrap/);
+    expect(qtyTd.className).toMatch(/(^|\s)max-w-\[5rem\](\s|$)/);
+    expect(qtyTd.className).toMatch(/(^|\s)break-words(\s|$)/);
   });
 
   it("moves focus into the popover so Tab reaches every enabled action; Esc refocuses", async () => {

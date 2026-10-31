@@ -8,6 +8,7 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { z } from "zod";
 import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
+import { Building2, User } from "lucide-react";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -229,6 +230,9 @@ export function CustomerFormModal({
   // customer starts on the account default (ROUTE for an account with no fulfilment mode).
   const staffFulfilment = useStaffFulfilment();
   const newCustomerPath = staffFulfilment.formDefault;
+  // A customer stored as PICKUP keeps the picker, and its Pickup option, for the whole session: read once from the data the
+  // form opened with, never from the live value (picking Ship would otherwise unmount the control at the moment of choosing).
+  const openedOnPickup = formFulfillPath(initialData?.fulfillPath) === "PICKUP";
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -377,7 +381,12 @@ export function CustomerFormModal({
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: creditLimitForSubmit(data.creditLimit, "create", false),
           currency: data.currency || "USD",
-          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
+          fulfillPath: payloadFulfillPath(
+            data.fulfillPath,
+            staffFulfilment.pickForm,
+            staffFulfilment.staffDefault,
+            newCustomerPath,
+          ),
           notes: data.notes,
           addresses,
           ...(salesAgentId ? { salesAgentId } : {}),
@@ -422,7 +431,12 @@ export function CustomerFormModal({
             initialData.creditLimit != null,
           ),
           currency: data.currency || "USD",
-          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
+          fulfillPath: payloadFulfillPath(
+            data.fulfillPath,
+            staffFulfilment.pickForm,
+            staffFulfilment.staffDefault,
+            formFulfillPath(initialData.fulfillPath),
+          ),
           notes: data.notes,
         },
         {
@@ -455,7 +469,7 @@ export function CustomerFormModal({
           ? "Fill in the details to create a new customer account."
           : "Update the customer's information below."
       }
-      className="max-w-2xl"
+      className="max-w-2xl max-md:[&_input]:text-base max-md:[&_select]:text-base max-md:[&_textarea]:text-base"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -498,13 +512,18 @@ export function CustomerFormModal({
                   type="button"
                   onClick={() => setValue("customerType", t, { shouldValidate: false })}
                   className={cn(
-                    "flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
+                    "inline-flex flex-1 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                     customerType === t
                       ? "border-brand-500 bg-brand-50 text-brand-600"
                       : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
                   )}
                 >
-                  {t === "BUSINESS" ? "🏢 Business" : "👤 Individual"}
+                  {t === "BUSINESS" ? (
+                    <Building2 className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <User className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {t === "BUSINESS" ? "Business" : "Individual"}
                 </button>
               ))}
             </div>
@@ -664,7 +683,7 @@ export function CustomerFormModal({
                 </label>
               </div>
             </div>
-            {(staffFulfilment.choice || watch("fulfillPath") === "PICKUP") && (
+            {(staffFulfilment.choice || openedOnPickup) && (
               <div className="space-y-1">
                 <Select
                   label="Default fulfillment"
@@ -674,9 +693,7 @@ export function CustomerFormModal({
                       label: m === "ROUTE" ? "Delivery route" : "Ship via carrier",
                     })),
                     // Shown only for a customer that already has it: the API does not let a form set PICKUP.
-                    ...(watch("fulfillPath") === "PICKUP"
-                      ? [{ value: "PICKUP", label: "Pickup (counter)" }]
-                      : []),
+                    ...(openedOnPickup ? [{ value: "PICKUP", label: "Pickup (counter)" }] : []),
                   ]}
                   register={register("fulfillPath")}
                 />
