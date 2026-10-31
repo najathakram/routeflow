@@ -239,6 +239,15 @@ touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces t
   `paths-ignore` (`**.md`, `.claude/**`), no CI or Migration replay check ever appears, so the gate is
   not a green check: it is the posted PASS at the exact head sha, base `master`, `MERGEABLE` and
   `CLEAN`. Then squash with `gh pr merge --squash --match-head-commit <sha>` (no trailer).
+- **`Migration replay` is path-filtered, so it may never exist for a train.** The workflow
+  (`db-migrations.yml`) runs only when a PR touches its `paths:` (`apps/api/prisma/**`, the DB-spec
+  helpers and the other files it lists). A train that changes none of them has no such run, and a
+  window script must not wait for one: list the checks that exist at the head sha (L-337) and wait
+  for those.
+- **An unattended wait-then-go wrapper for public, push or merge is refused.** The auto-mode
+  classifier blocks a script that waits on a condition and then flips visibility, pushes or merges
+  by itself. Run the window script with the Lead's explicit go already in hand, so each step is an
+  authorized action and not a deferred one.
 
 > **Owner authorization (2026-07-31):** the assistant IS authorized to perform the visibility
 > flips as part of this routine — a brief public window for CI is an accepted trade-off.
