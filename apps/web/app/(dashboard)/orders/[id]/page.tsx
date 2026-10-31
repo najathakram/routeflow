@@ -96,6 +96,7 @@ import {
   posMoveOptions,
 } from "./_components/PosOrderActions";
 import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
+import { ReadyEmailLine } from "./_components/ReadyEmailLine";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { ReopenDeliveredTier } from "./_components/ReopenDeliveredTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
@@ -1159,6 +1160,15 @@ export default function OrderDetailPage() {
               readyPending={updateStatus.isPending || ready.pending}
               moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
               onMove={setPendingPath}
+            />
+          )}
+          {/* W-1060: what the customer was last emailed (or what marking ready would do), once and with Send again. */}
+          {isPos && access.staff && !isEditing && order.fulfillPath === "PICKUP" && (
+            <ReadyEmailLine
+              orderId={order.id}
+              status={localStatus}
+              customerName={order.customer?.businessName}
+              onError={(err) => guardError(() => ready.resend())(err)}
             />
           )}
 

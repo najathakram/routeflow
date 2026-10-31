@@ -53,6 +53,21 @@ describe("ReadyForPickupController", () => {
     const controller = new ReadyForPickupController(service as never);
     const user = { sub: "op-1" } as never;
     await expect(controller.markReady("ord-1", user)).resolves.toEqual({ notice: "SENT" });
-    expect(service.markReady).toHaveBeenCalledWith("ord-1", user);
+    expect(service.markReady).toHaveBeenCalledWith("ord-1", user, {});
+  });
+
+  it("threads Send again (resend) to the service", async () => {
+    const service = { markReady: jest.fn().mockResolvedValue({ notice: "SENT" }) };
+    const controller = new ReadyForPickupController(service as never);
+    const user = { sub: "op-1" } as never;
+    await controller.markReady("ord-1", user, { resend: true });
+    expect(service.markReady).toHaveBeenCalledWith("ord-1", user, { resend: true });
+  });
+
+  it("has a staff-only GET /orders/:id/ready-for-pickup beside the POST (W-1060)", () => {
+    const get = ReadyForPickupController.prototype.getRecord;
+    expect(Reflect.getMetadata("path", get)).toBe(":id/ready-for-pickup");
+    expect(Reflect.getMetadata("method", get)).toBe(0); // RequestMethod.GET
+    expect(Reflect.getMetadata("__guards__", get)).toContain(RolesGuard);
   });
 });

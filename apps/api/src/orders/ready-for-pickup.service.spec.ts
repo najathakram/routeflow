@@ -1,6 +1,6 @@
 jest.mock("./orders.service", () => ({ OrdersService: class OrdersService {} }));
 
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { NotificationEvent } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
@@ -37,6 +37,8 @@ describe("ReadyForPickupService.markReady", () => {
       state: "NY",
       zip: "12345",
     },
+    /** What the order.ready_for_pickup audit rows already say, newest first (SA-1070 rule 2). */
+    record: Array<{ meta: Record<string, unknown>; createdAt: Date }> = [],
   ) {
     const orders = {
       findOneOrThrow: jest.fn().mockResolvedValue(order),
@@ -45,13 +47,17 @@ describe("ReadyForPickupService.markReady", () => {
     const db = {
       customer: { findFirst: jest.fn().mockResolvedValue(customer) },
       systemConfig: { findMany: jest.fn().mockResolvedValue([]) },
+      auditLog: { findMany: jest.fn().mockResolvedValue(record) },
     };
     const prisma = {
       forTenant: () => db,
       getTenantId: () => "t-1",
       tenantConfig: { findUnique: jest.fn().mockResolvedValue(address) },
     };
-    const messaging = { notify: jest.fn().mockResolvedValue(outcomes) };
+    const messaging = {
+      notify: jest.fn().mockResolvedValue(outcomes),
+      sendChannels: jest.fn().mockResolvedValue(["EMAIL"]),
+    };
     const notifications = { sendToCustomer: jest.fn().mockResolvedValue(undefined) };
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
     const moduleRef = await Test.createTestingModule({
@@ -70,6 +76,7 @@ describe("ReadyForPickupService.markReady", () => {
       messaging,
       notifications,
       audit,
+      db,
     };
   }
 
@@ -215,6 +222,178 @@ describe("ReadyForPickupService.markReady", () => {
     expect(none.messaging.notify.mock.calls[0][1].vars.pickupLine).toBe("");
   });
 
+  describe("SA-1070: the customer is told once (W-1060, F13)", () => {
+    const at = new Date("2026-10-31T14:14:00.000Z");
+    const sentRow = { meta: { notice: "SENT", email: "buyer@acme.test" }, createdAt: at };
+
+    it("R20: a SENT row on the record: the status moves, no email, no push, no new row, toldOnce", async () => {
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [sentRow]);
+      await expect(h.service.markReady("ord-1", user)).resolves.toEqual({
+        toldOnce: true,
+        email: "buyer@acme.test",
+        at: at.toISOString(),
+      });
+      expect(h.orders.changeStatus).toHaveBeenCalledTimes(1);
+      expect(h.messaging.notify).not.toHaveBeenCalled();
+      expect(h.notifications.sendToCustomer).not.toHaveBeenCalled();
+      expect(h.audit.log).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["FAILED", { notice: "FAILED" }],
+      ["NO_EMAIL", { notice: "NO_EMAIL" }],
+      ["OPTED_OUT", { notice: "OPTED_OUT" }],
+      ["OFF", { notice: "OFF" }],
+    ])("R24: only SENT latches: after %s the next press tries again", async (_n, meta) => {
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [
+        { meta, createdAt: at },
+      ]);
+      await expect(h.service.markReady("ord-1", user)).resolves.toEqual({
+        notice: "SENT",
+        email: "buyer@acme.test",
+      });
+      expect(h.messaging.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("R25: a record that cannot be read answers no record: one email, the move never fails", async () => {
+      const h = await build();
+      h.db.auditLog.findMany.mockRejectedValue(new Error("db down"));
+      await expect(h.service.markReady("ord-1", user)).resolves.toEqual({
+        notice: "SENT",
+        email: "buyer@acme.test",
+      });
+      expect(h.orders.changeStatus).toHaveBeenCalledTimes(1);
+      expect(h.messaging.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("the SENT row wins over a later failed resend", async () => {
+      const failed = {
+        meta: { notice: "FAILED", resend: true },
+        createdAt: new Date(at.getTime() + 60_000),
+      };
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [failed, sentRow]);
+      await expect(h.service.markReady("ord-1", user)).resolves.toMatchObject({ toldOnce: true });
+      expect(h.messaging.notify).not.toHaveBeenCalled();
+    });
+
+    it("R28: Send again at OUT_FOR_DELIVERY emails once, moves nothing, writes a resend row", async () => {
+      const h = await build(
+        { ...baseOrder, status: "OUT_FOR_DELIVERY" },
+        goodCustomer,
+        undefined,
+        undefined,
+        [sentRow],
+      );
+      await expect(h.service.markReady("ord-1", user, { resend: true })).resolves.toEqual({
+        notice: "SENT",
+        email: "buyer@acme.test",
+      });
+      expect(h.orders.changeStatus).not.toHaveBeenCalled();
+      expect(h.messaging.notify).toHaveBeenCalledTimes(1);
+      expect(h.notifications.sendToCustomer).not.toHaveBeenCalled();
+      expect(h.audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "order.ready_for_pickup",
+          entityType: "order",
+          meta: expect.objectContaining({ notice: "SENT", resend: true }),
+        }),
+      );
+    });
+
+    it("R29: Send again before the order is Ready is refused, nothing sent", async () => {
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [sentRow]);
+      const err = await h.service
+        .markReady("ord-1", user, { resend: true })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toMatchObject({
+        code: "ORDER_NOT_READYABLE",
+      });
+      expect(h.orders.changeStatus).not.toHaveBeenCalled();
+      expect(h.messaging.notify).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("SA-1070 rule 5: GET the record (W-1060)", () => {
+    const at = new Date("2026-10-31T14:14:00.000Z");
+    const sentRow = { meta: { notice: "SENT", email: "buyer@acme.test" }, createdAt: at };
+    const failedRow = {
+      meta: { notice: "FAILED", resend: true },
+      createdAt: new Date(at.getTime() + 60_000),
+    };
+
+    it("answers what a press would do and the last send, with its address and time", async () => {
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [sentRow]);
+      await expect(h.service.getRecord("ord-1", user)).resolves.toEqual({
+        preview: { notice: "SENT", email: "buyer@acme.test" },
+        last: { notice: "SENT", email: "buyer@acme.test", at: at.toISOString() },
+      });
+      expect(h.messaging.sendChannels).toHaveBeenCalledWith("READY_FOR_PICKUP");
+    });
+
+    it("no record yet: last is null and the preview says what a press would do", async () => {
+      const h = await build();
+      await expect(h.service.getRecord("ord-1", user)).resolves.toEqual({
+        preview: { notice: "SENT", email: "buyer@acme.test" },
+        last: null,
+      });
+    });
+
+    it("R31: SENT, then a failed resend: last is the SENT row, not the newer FAILED one", async () => {
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [failedRow, sentRow]);
+      const rec = await h.service.getRecord("ord-1", user);
+      expect(rec.last).toEqual({
+        notice: "SENT",
+        email: "buyer@acme.test",
+        at: at.toISOString(),
+      });
+    });
+
+    it("only a failed send on the record: last is that FAILED row", async () => {
+      const h = await build(baseOrder, goodCustomer, undefined, undefined, [failedRow]);
+      const rec = await h.service.getRecord("ord-1", user);
+      expect(rec.last).toMatchObject({ notice: "FAILED" });
+    });
+
+    it('reads the row by tenant, the lowercase "order" entity, this order and this action', async () => {
+      const h = await build();
+      await h.service.getRecord("ord-1", user);
+      expect(h.db.auditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId: "t-1",
+            entityType: "order",
+            entityId: "ord-1",
+            action: "order.ready_for_pickup",
+          },
+        }),
+      );
+    });
+
+    it("R30: an order that is not this tenant's answers 404 and reads no record", async () => {
+      const h = await build();
+      h.orders.findOneOrThrow.mockRejectedValue(new NotFoundException("Order not found"));
+      await expect(h.service.getRecord("ord-other", user)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(h.db.auditLog.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["no email on file", { ...goodCustomer, email: null }, "NO_EMAIL"],
+      ["opted out", { ...goodCustomer, orderStatusEmails: false }, "OPTED_OUT"],
+    ])("preview for a customer with %s reads %s", async (_n, customer, notice) => {
+      const h = await build(baseOrder, customer);
+      expect((await h.service.getRecord("ord-1", user)).preview.notice).toBe(notice);
+    });
+
+    it("preview is OFF when the Ready email is switched off", async () => {
+      const h = await build();
+      h.messaging.sendChannels.mockResolvedValue([]);
+      expect((await h.service.getRecord("ord-1", user)).preview).toEqual({ notice: "OFF" });
+    });
+  });
+
   it("writes the order.ready_for_pickup audit row carrying the notice", async () => {
     const h = await build();
     await h.service.markReady("ord-1", user);
@@ -223,6 +402,7 @@ describe("ReadyForPickupService.markReady", () => {
         tenantId: "t-1",
         userId: "op-1",
         action: "order.ready_for_pickup",
+        entityType: "order", // lowercase: the counter-complete claim row beside it says "Order"
         entityId: "ord-1",
         meta: expect.objectContaining({ notice: "SENT" }),
       }),
