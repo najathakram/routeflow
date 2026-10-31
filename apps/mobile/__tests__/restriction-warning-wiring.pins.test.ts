@@ -16,6 +16,7 @@ const STAFF_WRITE_HOOKS = [
   "useChangeOrderStatus",
   "useReopenOrder",
   "useSwitchOrderToDelivery",
+  "usePickupComplete",
   "useCreateInvoice",
   "useUpdateInvoice",
   "useDuplicateInvoice",
