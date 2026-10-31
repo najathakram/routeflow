@@ -3,8 +3,10 @@ import {
   isSpecialTier,
   roundMoney,
   showOriginalPrice,
+  unitWords,
 } from "@routeflow/pricing";
 import {
+  isBoxedLine,
   lineTotalAt,
   priceEditChip,
   typedPriceEditChip,
@@ -13,6 +15,8 @@ import {
 import { priceUnitWord } from "@/lib/product-unit-label";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
 import type { SaleLine } from "./counter-sale-scan";
+
+const UW = unitWords();
 
 /**
  * POS-5: pure cart operations for an edited price. The server stores ONE net unit price per line, so an edit is
@@ -23,6 +27,11 @@ import type { SaleLine } from "./counter-sale-scan";
 /** The system price for this customer on a line: the stored `tierPrice` when edited, else its own `unitPrice`. */
 export const lineTierPrice = (l: SaleLine): number =>
   l.override ? (l.tierPrice ?? l.unitPrice) : l.unitPrice;
+
+/** The word the till quotes a line's price per, for the price field's label: the pack word for a boxed line, else its own unit. */
+export function priceEditUnitWord(l: Pick<SaleLine, "unit" | "unitsPerBox">): string {
+  return isBoxedLine({ unitsPerBox: l.unitsPerBox }) ? UW.pack.lower : priceUnitWord(l.unit);
+}
 
 /** What the price dialog needs to know about a line. `tier` is the customer's tier for this product. */
 export function priceEditLineOf(l: SaleLine, tier: number): PriceEditLine {
@@ -37,8 +46,8 @@ export function priceEditLineOf(l: SaleLine, tier: number): PriceEditLine {
     boxes: l.boxes,
     pieces: l.pieces,
     unitsPerBox: l.unitsPerBox,
-    // the word the register row quotes the price per (label only)
-    ...(l.unit ? { unitWord: priceUnitWord(l.unit) } : {}),
+    // the word the register row quotes the price per (label only): the pack word for a boxed line, else its own unit
+    unitWord: priceEditUnitWord(l),
   };
 }
 

@@ -13,6 +13,7 @@ const plain = (tierPrice: number, over: Partial<PriceEditLine> = {}): PriceEditL
   listPrice: tierPrice,
   tier: 1,
   qty: 1,
+  unitWord: "each",
   ...over,
 });
 /** a 12-pack, box price 24.00, 2 boxes + 3 pieces (qty 27 pieces) */
@@ -24,6 +25,7 @@ const boxed: PriceEditLine = {
   boxes: 2,
   pieces: 3,
   unitsPerBox: 12,
+  unitWord: "box",
 };
 
 describe("resolveCounterPriceEdit (POS-5 money, golden)", () => {
