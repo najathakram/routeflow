@@ -66,7 +66,10 @@ export class PackingSlipService {
             },
           },
           lineItems: {
-            orderBy: { createdAt: "asc" },
+            // SA-1067 C3: the order the lines were scanned in (position), then when they were added; legacy rows with no
+            // position sort last (Postgres puts NULLs last on ASC). Lines made in one write share a createdAt, so
+            // createdAt alone left their order to chance.
+            orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
             select: PACKING_SLIP_LINE_SELECT,
           },
         },
