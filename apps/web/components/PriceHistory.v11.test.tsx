@@ -205,7 +205,7 @@ describe("references, compare, margin, markers", () => {
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     expect(await within(dialog).findByText(/List \$14\.00/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Their tier price \$12\.50/)).toBeInTheDocument();
-    expect(within(dialog).getByText("+3% since last order")).toBeInTheDocument();
+    expect(within(dialog).getByText("Up 3% from the order before")).toBeInTheDocument();
   });
 
   it("Compare: the base request has no compare; the panel asks with ?compare=all on open and All customers shows low / typical / high, never names", async () => {

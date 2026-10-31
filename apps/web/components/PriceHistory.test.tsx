@@ -134,13 +134,15 @@ describe("PriceHistoryButton — availability", () => {
 });
 
 describe("PriceHistoryButton — popover behaviour", () => {
-  it("the reference column truncates with a full-reference tooltip so the table never widens the popover", async () => {
+  it("the reference column caps its width and truncates the number with a full-reference tooltip so the table never widens the popover", async () => {
     renderButton();
     await openPanel();
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     const cell = (await within(dialog).findAllByTitle(/\S/)).find((e) => e.tagName === "TD")!;
-    expect(cell).toHaveClass("truncate");
+    // SA-1066 F4: the cell keeps its width cap; the order number inside truncates, so a chip beside it never does
+    expect(cell).not.toHaveClass("truncate");
     expect(cell.className).toMatch(/max-w-/);
+    expect(cell.querySelector(".truncate")).not.toBeNull();
   });
 
   it("opens and closes (Esc, outside click, toggle) without changing the price, returning focus to the input", async () => {
