@@ -1,6 +1,7 @@
 import * as React from "react";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { isTouchFirst } from "@/lib/touch-first";
+import { scanPauseHeld } from "./counter-scan-guard";
 
 /**
  * SA-762r (Web-1 #8): the counter's ONE scan-focus owner. Every "put the cursor back in the scan field" on the register goes
@@ -27,6 +28,7 @@ export function useCounterScanFocus(refs: {
       get current() {
         // Read when the timer fires. A touch-first till never hands the cursor to the scan field (the keyboard would rise over
         // the camera), even if the customer it was waiting for arrived while the timer was pending: no target, no focus.
+        if (scanPauseHeld()) return null; // W-1042: a window holds the scan; a re-arm already pending finds no target
         if (awaitingCustomerRef.current) return customerFindRef.current;
         return isTouchFirst() ? null : scanRef.current;
       },
@@ -39,13 +41,14 @@ export function useCounterScanFocus(refs: {
     [awaitingCustomerRef],
   );
   const refocus = React.useCallback(() => {
-    if (keyboardWouldRise()) return;
+    if (keyboardWouldRise() || scanPauseHeld()) return;
     scheduleScannerRefocus(armed, 0, { yieldFrom: [scanRef] });
   }, [armed, scanRef, keyboardWouldRise]);
   // Enter finished the field the clerk is in (a typed quantity): the cursor may leave it for the armed field. On a touch-first
   // device there is no armed field to go to, so the field is let go of: the keyboard goes down and the camera's frames are
   // no longer dropped as "the clerk is typing".
   const refocusFromActive = React.useCallback(() => {
+    if (scanPauseHeld()) return;
     if (keyboardWouldRise()) {
       const active = document.activeElement;
       if (active instanceof HTMLElement && active !== document.body) active.blur();

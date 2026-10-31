@@ -71,6 +71,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
+import { newProductPrefill } from "@/lib/product-prefill";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
@@ -1205,9 +1206,9 @@ export function CreateOrderModal({
   const createProductRowIndex = productNavRows.length;
   productNavRows.push({ kind: "create" });
   const openCreateProduct = () => {
-    const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-    setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-    setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
+    const prefill = newProductPrefill(debouncedProductSearch);
+    setCreateProductInitialName(prefill.name);
+    setCreateProductInitialSku(prefill.sku);
     setCreateProductOpen(true);
     setProductSearch("");
     setDebouncedProductSearch("");

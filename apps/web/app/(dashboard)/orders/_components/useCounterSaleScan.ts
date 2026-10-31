@@ -63,7 +63,13 @@ export function useCounterSaleScan(deps: Deps) {
   const epochRef = React.useRef(0);
   const aliveRef = React.useRef(true);
   const [pendingQty, setPendingQty] = React.useState(1); // display only
-  const [message, setMessage] = React.useState("");
+  // W-1042: `code` is set only on a final not-found (after the category browse): the miss line offers Create item for it.
+  const [miss, setMiss] = React.useState({ message: "", code: "", camera: false });
+  const message = miss.message;
+  const setMessage = React.useCallback(
+    (text: string, code = "", camera = false) => setMiss({ message: text, code, camera }),
+    [],
+  );
   // F05: "Added <name>" for the latest scan that landed; it fades by itself and goes at once on a miss.
   const [added, setAdded] = React.useState("");
   const addedTimerRef = React.useRef<number | null>(null);
@@ -167,7 +173,7 @@ export function useCounterSaleScan(deps: Deps) {
           }
           cue(item, "error");
           clearAdded();
-          setMessage(noProductCopy(item.code));
+          setMessage(noProductCopy(item.code), item.code, item.kind === "code" && !!item.camera);
           setCarry(1);
         } else if (result.archived) {
           cue(item, "error");
@@ -199,7 +205,7 @@ export function useCounterSaleScan(deps: Deps) {
       if (aliveRef.current && !pausedRef.current && queueRef.current.length > 0) void drain();
       else depsRef.current.refocus();
     }
-  }, [clearAdded, confirmAdded]);
+  }, [clearAdded, confirmAdded, setMessage]);
 
   const resume = () => {
     pausedRef.current = false;
@@ -320,6 +326,8 @@ export function useCounterSaleScan(deps: Deps) {
   return {
     pendingQty,
     message,
+    missCode: miss.code,
+    missCamera: miss.camera,
     added,
     dismissMessage,
     picker,

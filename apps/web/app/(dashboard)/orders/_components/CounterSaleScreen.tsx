@@ -111,7 +111,7 @@ import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { unlockScanCue } from "@/lib/scan-cue";
 import { isTouchFirst } from "@/lib/touch-first";
-import { cameraFrameBlocked, counterDialogOpen } from "./counter-scan-guard";
+import { cameraFrameBlocked, counterDialogOpen, scanPauseHeld } from "./counter-scan-guard";
 import { fitCameraRoom, isMdUp } from "./counter-camera-room";
 import { CounterCameraStrip, useCameraScanEngine } from "./CounterCameraStrip";
 import { scrollPageToTop } from "@/lib/scroll-top";
@@ -138,6 +138,7 @@ import {
 } from "./counter-sale-line-edit";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterScanFeedback } from "./CounterScanFeedback";
+import { useCounterNewItem } from "./CounterNewItem";
 import { CounterBuyerChoice } from "./CounterBuyerChoice";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
@@ -833,10 +834,23 @@ export function CounterSaleScreen() {
     refocus();
   };
   const live = useCounterLiveMatches({ text: scanText, enabled: !lineLocked, onPick: pickLive });
+  const newItem = useCounterNewItem({
+    allowed: mayEditPrices && !lineLocked,
+    add: addProduct,
+    refocus,
+    onAdded: () => {
+      scan.dismissMessage();
+      setScanText("");
+    },
+  });
   function onScanSubmit(e: React.FormEvent) {
     e.preventDefault();
     lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
+    if (scanPauseHeld()) {
+      setScanText(""); // a window has the scan, and the box is cleared so the next scan doesn't join onto this one
+      return;
+    }
     const text = scanText;
     setScanText("");
     scan.submit(text);
@@ -1616,12 +1630,22 @@ export function CounterSaleScreen() {
             </form>
           </div>
           {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
-          <CounterLiveMatches live={live} onPick={pickLive} />
+          <CounterLiveMatches live={live} onPick={pickLive} onCreate={newItem.open} />
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
           </p>
-          <CounterScanFeedback miss={scan.message} cue={scanCue} added={scan.added} />
+          <CounterScanFeedback
+            miss={scan.message}
+            cue={scanCue}
+            added={scan.added}
+            onCreate={
+              newItem.open && scan.missCode
+                ? () => newItem.open?.(scan.missCode, scan.missCamera ? "camera" : "scanBox")
+                : undefined
+            }
+          />
+          {newItem.modal}
           {scan.failed ? (
             <div
               role="alert"
