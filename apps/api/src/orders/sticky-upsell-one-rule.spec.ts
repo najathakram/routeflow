@@ -23,7 +23,11 @@ describe("SA-1068 M4: one remembered-price rule", () => {
   );
 });
 
-/** B16 (SA-1072): `lastPrice` is what the screen shows as "Last:". Nothing on the server may price a line from it. */
+/**
+ * B16 (SA-1072): `lastPrice` is what the screen shows as "Last:". Nothing on the server may price a line from it, however
+ * it's spelled: the one file that writes it is the only one that may name it. The web's side is
+ * `apps/web/lib/remembered-price-readers.pin.test.ts`.
+ */
 describe("SA-1072: no server read prices a line from lastPrice", () => {
   const sources = (dir: string): string[] =>
     fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -32,10 +36,11 @@ describe("SA-1072: no server read prices a line from lastPrice", () => {
       return e.name.endsWith(".ts") && !e.name.endsWith(".spec.ts") ? [full] : [];
     });
 
-  it("walks non-spec sources for ?.lastPrice", () => {
-    const hits = sources(SRC).filter((f) =>
-      /\?\.lastPrice\b/.test(strip(fs.readFileSync(f, "utf8"))),
-    );
-    expect(hits.map((f) => path.relative(SRC, f))).toEqual([]);
+  it("walks non-spec sources for the name, in any spelling", () => {
+    const hits = sources(SRC)
+      .map((f) => path.relative(SRC, f))
+      .filter((f) => f !== path.join("orders", "customer-price-history-query.ts"))
+      .filter((f) => /lastPrice/.test(strip(fs.readFileSync(path.join(SRC, f), "utf8"))));
+    expect(hits).toEqual([]);
   });
 });

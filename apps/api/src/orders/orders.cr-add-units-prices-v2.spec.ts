@@ -317,4 +317,12 @@ describe("S19: a door ADD_ITEM change request prices the new line from the custo
     expect(await approve()).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
     expect(hasFlagMock).toHaveBeenCalledWith(expect.anything(), V2);
   });
+
+  it("SA-1072: a price remembered from a line staff didn't choose doesn't price a change request's new line", async () => {
+    v2On = false;
+    jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
+      "prod-a": { lastPrice: 15, stickyPrice: null, listPriceAtTime: 12 },
+    });
+    expect(await approve()).toMatchObject({ unitPrice: 12, priceType: "STANDARD" });
+  });
 });

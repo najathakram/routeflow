@@ -302,4 +302,13 @@ describe("S19: a BUYER replace-all prices a pack line from the customer layer (p
     expect(created()[0]).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
     expect(hasFlagMock).toHaveBeenCalledWith(expect.anything(), V2);
   });
+
+  it("SA-1072: a price remembered from a line staff didn't choose doesn't price a buyer's edit", async () => {
+    v2On = false;
+    jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
+      "prod-a": { lastPrice: 15, stickyPrice: null, listPriceAtTime: 12 },
+    });
+    await replace();
+    expect(created()[0]).toMatchObject({ unitPrice: 12, priceType: "STANDARD" });
+  });
 });
