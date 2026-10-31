@@ -57,6 +57,7 @@ import {
 import {
   customerLinePrice,
   computeLineSubtotal,
+  isStickyUpsell,
   pendingScanDecision,
   undoPendingTap,
   type DerivedBaseMarker,
@@ -1011,7 +1012,7 @@ export function CreateOrderModal({
     const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistUpsell = !permanentPrice && isStickyUpsell(histEntry?.stickyPrice, listPrice);
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;

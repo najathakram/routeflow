@@ -38,7 +38,18 @@ describe("assertBuyerCartPricesCurrent", () => {
   it("compares against the customer's TIER price, and a remembered above-list price is their effective price", () => {
     expect(() => check({ defaultTier: 2 }, [{ productId: "p1", unitPrice: 9 }])).not.toThrow();
     expect(() =>
-      check({ priceHistory: { p1: { lastPrice: 11 } } }, [{ productId: "p1", unitPrice: 11 }]),
+      check({ priceHistory: { p1: { lastPrice: 11, stickyPrice: 11 } } }, [
+        { productId: "p1", unitPrice: 11 },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("B1 (SA-1072): a tier price that came back through history is not the buyer's price", () => {
+    // The tier is Retail now, the cart is at 10, and the newest line was SPECIAL at 12, so it was never a chosen price.
+    expect(() =>
+      check({ priceHistory: { p1: { lastPrice: 12, stickyPrice: null } } }, [
+        { productId: "p1", unitPrice: 10 },
+      ]),
     ).not.toThrow();
   });
 

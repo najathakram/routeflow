@@ -23,7 +23,7 @@ import {
   scanPromotionZeroPrice,
   zeroPriceWarning,
   ZERO_PRICE_EXAMPLE_LIMIT,
-  isUpsellLine,
+  isAboveListLine,
   effectiveBuyerPrice,
   formatQtySplit,
   invoiceLineQtyText,
@@ -1422,28 +1422,33 @@ describe("promotion zero-price guard (2026-08-20 $0.00 incident)", () => {
 });
 
 describe("pricing — upsell direction & sticky effective price", () => {
-  describe("isUpsellLine", () => {
-    it("true only for a MANUAL line priced ABOVE its catalog base", () => {
-      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: 10 })).toBe(true);
+  describe("isAboveListLine", () => {
+    it("true for a MANUAL upsell and for a tier above Retail", () => {
+      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: 10 })).toBe(true);
+      expect(isAboveListLine({ priceType: "SPECIAL", unitPrice: 12, originalPrice: 10 })).toBe(
+        true,
+      );
     });
 
-    it("false for a MANUAL discount (net below base)", () => {
-      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 8, originalPrice: 10 })).toBe(false);
+    it("false for any line at or below its base", () => {
+      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 8, originalPrice: 10 })).toBe(false);
+      expect(isAboveListLine({ priceType: "SPECIAL", unitPrice: 8, originalPrice: 10 })).toBe(
+        false,
+      );
+      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 10, originalPrice: 10 })).toBe(
+        false,
+      );
     });
 
-    it("false for non-MANUAL types even when net > original (e.g. a premium SPECIAL tier)", () => {
-      expect(isUpsellLine({ priceType: "SPECIAL", unitPrice: 12, originalPrice: 10 })).toBe(false);
-      expect(isUpsellLine({ priceType: "PROMO", unitPrice: 12, originalPrice: 10 })).toBe(false);
-    });
-
-    it("false when originalPrice is null or equal to unitPrice", () => {
-      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: null })).toBe(false);
-      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 10, originalPrice: 10 })).toBe(false);
+    it("false when no original price is stored", () => {
+      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: null })).toBe(
+        false,
+      );
     });
 
     it("coerces Decimal-like string fields", () => {
       expect(
-        isUpsellLine({ priceType: "MANUAL", unitPrice: "12.50", originalPrice: "10.00" }),
+        isAboveListLine({ priceType: "SPECIAL", unitPrice: "12.50", originalPrice: "10.00" }),
       ).toBe(true);
     });
   });

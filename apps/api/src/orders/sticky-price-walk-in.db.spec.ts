@@ -98,6 +98,8 @@ describeDb(
     const slug = assertTestTenant(`qa-sticky-${run}`, "sticky-price-walk-in.db.spec.ts");
     let tenantId = "";
     let product: { id: string };
+    let premium: { id: string };
+    let promotions: { activeForCatalog: jest.Mock };
     let n = 0;
 
     beforeAll(async () => {
@@ -199,6 +201,7 @@ describeDb(
         ],
       }).compile();
       svc = module.get(OrdersService);
+      promotions = module.get(PromotionsService) as never;
 
       tenantId = (await raw.tenant.create({ data: { slug, name: `ovr2696 ${slug}` } })).id;
       const op = await raw.user.create({
@@ -219,6 +222,18 @@ describeDb(
           unit: "each",
           pricePerUnit: "10",
           priceTier3: "8",
+          currentStock: 1000,
+        },
+      });
+      // SA-1072: list $10, tier-3 $12, a tier above Retail
+      premium = await raw.product.create({
+        data: {
+          tenantId,
+          name: `Premium Widget ${run}`,
+          sku: `pw-${run}`,
+          unit: "each",
+          pricePerUnit: "10",
+          priceTier3: "12",
           currentStock: 1000,
         },
       });
@@ -383,6 +398,108 @@ describeDb(
       await clerkUpsell(named.id);
       expect(await sources(walkIn.id)).not.toContain("history");
       expect(await sources(named.id)).toContain("history");
+    });
+
+    describe("SA-1072 B316: a tier price above Retail stays a tier price", () => {
+      /** A sale of the $10 list, $12 tier-3 product. No price on the line unless told. */
+      const sale = (customerId: string, item: Record<string, unknown> = {}, user = staff()) =>
+        tenantCtx.run(tenantId, () =>
+          svc.create(
+            { customerId, items: [{ productId: premium.id, qty: 1, ...item }] } as never,
+            user,
+            { skipAutoMerge: true } as never,
+          ),
+        ) as Promise<any>;
+      const line = async (order: { id: string }) =>
+        cols(
+          await raw.orderItem.findFirstOrThrow({
+            where: { orderId: order.id, productId: premium.id },
+          }),
+        );
+
+      it("B2: a second line for a tier customer stays SPECIAL", async () => {
+        const c = await customer({ tier: 3 });
+        expect(await line(await sale(c.id))).toMatchObject({
+          unitPrice: 12,
+          priceType: "SPECIAL",
+          originalPrice: 10,
+        });
+        expect(await line(await sale(c.id))).toMatchObject({ unitPrice: 12, priceType: "SPECIAL" });
+      });
+
+      it("B19 guard: staff still read the tier line as SPECIAL over list", async () => {
+        const c = await customer({ tier: 3 });
+        const order = await sale(c.id);
+        const read = (await tenantCtx.run(tenantId, () => svc.findOne(order.id, staff()))) as any;
+        const seen = read.lineItems.find((l: any) => l.productId === premium.id);
+        expect(seen.priceType).toBe("SPECIAL");
+        expect(Number(seen.originalPrice)).toBe(10);
+      });
+
+      it("B3: a customer moved to Retail gets Retail on the next line", async () => {
+        const c = await customer({ tier: 3 });
+        await sale(c.id);
+        await raw.customer.update({ where: { id: c.id }, data: { pricingTier: 1 } });
+        expect(await line(await sale(c.id))).toMatchObject({
+          unitPrice: 10,
+          priceType: "STANDARD",
+        });
+      });
+
+      it("B4: a live promotion reaches a tier customer's own order", async () => {
+        const c = await customer({ tier: 3 });
+        await sale(c.id);
+        const user = await raw.customer.findUniqueOrThrow({
+          where: { id: c.id },
+          select: { userId: true },
+        });
+        const buyer = { ...operatorPayload, role: "CUSTOMER", sub: user.userId, tenantId } as never;
+        promotions.activeForCatalog.mockResolvedValue([
+          {
+            id: "b4-promo",
+            type: "PERCENT",
+            value: 10,
+            minQty: null,
+            scope: "ALL",
+            category: null,
+            productIds: [],
+          },
+        ]);
+        try {
+          expect(await line(await sale(c.id, {}, buyer))).toMatchObject({
+            unitPrice: 10.8,
+            priceType: "PROMO",
+          });
+        } finally {
+          promotions.activeForCatalog.mockResolvedValue([]);
+        }
+      });
+
+      it("B5 guard: a price staff typed above list keeps sticking", async () => {
+        const c = await customer();
+        await sale(c.id, { unitPrice: 15 });
+        expect(await line(await sale(c.id))).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+      });
+
+      it("B6 guard: a newer SPECIAL line ends an upsell, and an older MANUAL line never comes back", async () => {
+        const c = await customer();
+        await sale(c.id, { unitPrice: 15 });
+        const newer = await sale(c.id);
+        await raw.orderItem.updateMany({
+          where: { orderId: newer.id, productId: premium.id },
+          data: { unitPrice: "8", priceType: "SPECIAL", originalPrice: "10" },
+        });
+        expect(await line(await sale(c.id))).toMatchObject({
+          unitPrice: 10,
+          priceType: "STANDARD",
+        });
+      });
+
+      it("B7 guard: a price staff typed for a tier customer sticks", async () => {
+        const c = await customer({ tier: 3 });
+        await sale(c.id, { unitPrice: 11 });
+        expect(await line(await sale(c.id))).toMatchObject({ unitPrice: 11, priceType: "MANUAL" });
+      });
     });
   },
 );
