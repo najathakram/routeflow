@@ -22,6 +22,7 @@ import path from "node:path";
 import { afterRun, main as cliMain } from "./heavy-slot.mjs";
 import {
   DEFAULT_SLOTS,
+  GRANT_RULE,
   bareNpmReason,
   HISTORY_MAX_LINES,
   HOLD_CAP_EXIT_CODE,
@@ -1630,6 +1631,130 @@ check(
   );
   gates[1]();
   await Promise.all([V1, V2, DB, V3]);
+}
+
+{
+  // N: ticket grant-rule version. Two old-rule main-checkout waiters once sat behind capped verifies while 3 of 5 slots
+  // were idle: a fresh waiter treated the older ticket as first in line although that ticket could not take a free
+  // slot. A ticket carries the rule it was written under; a ticket with an older (or no) rule is not first in line.
+  const stale = new Set(["old"]);
+  check(
+    "N1 nextGrant: a stale-rule head does not block a fresh waiter while a slot is free; no free slot, no grant",
+    [
+      nextGrant({ order: ["old", "me"], myName: "me", freeSlots: 1, stale }).grant,
+      nextGrant({ order: ["old", "me"], myName: "me", freeSlots: 0, stale }).grant,
+      nextGrant({ order: ["me", "old"], myName: "me", freeSlots: 1, stale }).grant,
+      nextGrant({ order: ["old", "me"], myName: "me", freeSlots: 1 }).grant,
+    ],
+    [true, false, true, false],
+  );
+  check(
+    "N2 the position a stale ticket holds is still counted (the wait line stays truthful)",
+    nextGrant({ order: ["old", "me"], myName: "me", freeSlots: 0, stale }).position,
+    2,
+  );
+  check(
+    "N3 the rule version is a positive integer",
+    Number.isInteger(GRANT_RULE) && GRANT_RULE >= 1,
+    true,
+  );
+
+  // N4: the exact stall, on disk. 3 slots all free; a live ticket with NO rule version sits ahead of a fresh waiter.
+  const dir = mkTmp();
+  mkdirSync(path.join(dir, "queue"), { recursive: true });
+  const oldTicket = path.join(dir, "queue", ticketName(Date.now() - 60_000, process.pid, "000old"));
+  const writeOld = (extra = {}) =>
+    writeFileSync(
+      oldTicket,
+      JSON.stringify({
+        pid: process.pid,
+        host: HOST,
+        label: "wt-main",
+        branch: "master",
+        cwd: dir,
+        queuedAt: Date.now() - 60_000,
+        heartbeatAt: Date.now(),
+        ...extra,
+      }),
+    );
+  writeOld();
+  let ran = false;
+  const W = withHeavySlot(
+    { label: "wt-db-1", branch: "b", dir, env: {}, slots: 3, ...FAST, ...NO_LOG },
+    async () => void (ran = true),
+  );
+  const ranBehindStale = await until(() => ran, 3000);
+  rmSync(oldTicket, { force: true }); // lets the waiter finish if the rule did not
+  await W;
+  check(
+    "N4 a fresh waiter takes a free slot although a live rule-less ticket is ahead of it",
+    ranBehindStale,
+    true,
+  );
+
+  // N5: a waiter's own ticket records the rule it was queued under.
+  const dir5 = mkTmp();
+  ghost(dir5, {}, 0);
+  const W5 = withHeavySlot(
+    { label: "wt-db-2", branch: "b", dir: dir5, env: {}, slots: 1, ...FAST, ...NO_LOG },
+    async () => {},
+  );
+  await until(() => queued(dir5).length === 1);
+  const rule = (() => {
+    try {
+      return JSON.parse(readFileSync(path.join(dir5, "queue", queued(dir5)[0]), "utf8")).rule;
+    } catch {
+      return undefined;
+    }
+  })();
+  rmSync(lockFile(dir5, 0), { force: true });
+  await W5;
+  check(
+    "N5 a queued ticket carries the current grant-rule version",
+    Number.isInteger(rule) && rule === GRANT_RULE,
+    true,
+  );
+
+  // N6-N7: status flags old/missing versions and idle slots with a waiting queue, in bold.
+  const dir6 = mkTmp();
+  mkdirSync(path.join(dir6, "queue"), { recursive: true });
+  ghost(dir6, {}, 0);
+  const t6 = path.join(dir6, "queue", ticketName(Date.now() - 5000, process.pid, "000six"));
+  const body6 = {
+    pid: process.pid,
+    host: HOST,
+    label: "wt-main",
+    branch: "master",
+    cwd: dir6,
+    queuedAt: Date.now() - 5000,
+    heartbeatAt: Date.now(),
+  };
+  writeFileSync(t6, JSON.stringify(body6));
+  const s6 = formatStatus(dir6, { slots: 3 }).split("\n");
+  check(
+    "N6 status flags a rule-less ticket in bold",
+    s6.some((l) => /^queue 1 of 1:.*\*\*[^*]*old grant rule[^*]*\*\*/i.test(l)),
+    true,
+  );
+  check(
+    "N7 status flags free slots with a non-empty queue in bold, with the counts",
+    s6.some((l) => /^\*\*[^*]*2 of 3 slots free[^*]*1 waiting[^*]*\*\*$/i.test(l)),
+    true,
+  );
+  writeFileSync(t6, JSON.stringify({ ...body6, rule: GRANT_RULE }));
+  const s7 = formatStatus(dir6, { slots: 1 }).split("\n");
+  check(
+    "N8 a current-rule ticket behind a full house raises neither flag",
+    s7.some((l) => l.includes("**")),
+    false,
+  );
+  rmSync(t6, { force: true });
+  rmSync(lockFile(dir6, 0), { force: true });
+  check(
+    "N9 free slots with an EMPTY queue raise no flag",
+    formatStatus(dir6, { slots: 3 }).includes("**"),
+    false,
+  );
 }
 
 {
