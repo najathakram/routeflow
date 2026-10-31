@@ -6622,61 +6622,39 @@ cmds["self-test"] = () => {
   // one bug entirely — catalogue row, ledger row and record — leaving a state
   // so self-consistent that neither gate could see anything was missing.
   // Driven through the REAL CLI in two REAL child processes, overlapped
-  // deterministically by the (self-test-gated) stall seam inside the ledger
+  // deterministically by the (self-test-gated) hold seam inside the ledger
   // write, which sits exactly in the allocate→commit window.
   {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
     try {
-      const orchestrator = join(tmp, "concurrent-file.mjs");
-      writeFileSync(
-        orchestrator,
-        [
-          'import { spawn } from "node:child_process";',
-          "const [script, root, stall] = process.argv.slice(2);",
-          "const run = (title) =>",
-          "  new Promise((res) => {",
-          "    const p = spawn(",
-          "      process.execPath,",
-          "      [",
-          "        script,",
-          '        "file",',
-          "        title,",
-          '        "--location",',
-          "        `apps/api/src/${title}.ts`,",
-          '        "--severity",',
-          '        "low",',
-          '        "--batch",',
-          '        "F01",',
-          '        "--tier",',
-          '        "T1",',
-          "      ],",
-          "      {",
-          "        env: {",
-          "          ...process.env,",
-          "          BUGS_ROOT: root,",
-          '          BUGS_SELF_TEST: "1",',
-          "          BUGS_TEST_STALL_MS: stall,",
-          "        },",
-          '        stdio: ["ignore", "pipe", "pipe"],',
-          "      },",
-          "    );",
-          '    let out = "";',
-          '    p.stdout.on("data", (d) => (out += d));',
-          '    p.stderr.on("data", (d) => (out += d));',
-          '    p.on("close", (code) => res({ code, out }));',
-          "  });",
-          'const results = await Promise.all([run("sessionone"), run("sessiontwo")]);',
-          "console.log(JSON.stringify(results));",
-        ].join("\n"),
+      // B588 shape (gatedRaceArgv): the first filer HOLDS the catalogue lock inside its critical
+      // section until released; the second starts once that hold is on disk and must announce it is
+      // blocked behind a LIVE holder before the first is released. The overlap is guaranteed however
+      // loaded the host is; a fixed stall plus two cold node starts hoped for it, and passed without it.
+      const fileArgs = (title) => [
+        "file",
+        title,
+        "--location",
+        `apps/api/src/${title}.ts`,
+        "--severity",
+        "low",
+        "--batch",
+        "F01",
+        "--tier",
+        "T1",
+      ];
+      const race = gatedRaceArgv(
+        tmp,
+        { args: fileArgs("sessionone") },
+        { args: fileArgs("sessiontwo") },
       );
-      const argv = [orchestrator, SCRIPT_PATH, tmp, "500"].map((a) => JSON.stringify(a)).join(" ");
       let raced = { code: 0, out: "" };
       try {
         raced = {
           code: 0,
-          out: execSync(`node ${argv}`, {
+          out: execSync("node " + race.argv, {
             encoding: "utf8",
             stdio: ["ignore", "pipe", "pipe"],
             timeout: 240000,
@@ -6686,6 +6664,11 @@ cmds["self-test"] = () => {
         raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
       }
       check("concurrent file: the orchestrator exited 0", raced.code, 0);
+      check(
+        "concurrent file: the second filer was provably BLOCKED behind the first (the overlap happened)",
+        blockedBehind(race),
+        race.lockPath,
+      );
       const kids = JSON.parse(raced.out.trim().split("\n").pop());
       check(
         "concurrent file: BOTH child processes exited 0",
