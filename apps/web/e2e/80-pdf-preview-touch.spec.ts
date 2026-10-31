@@ -138,6 +138,9 @@ const pointInvoicePdfAtFixture = (page: Page) =>
     await route.fulfill({ response, json: { ...json, url: `${BASE}${PDF_PATH}` } });
   });
 
+// On a built stack `public/sw.js` answers first, so `page.route` never sees the request.
+test.use({ serviceWorkers: "block" });
+
 test.beforeEach(async ({ context }) => {
   await setTenantCookie(context, BASE);
 });
@@ -258,6 +261,26 @@ test.describe("touch", () => {
     });
     expect(warnings.filter((w) => /unable to decode image/i.test(w))).toEqual([]);
     expect(errors).toEqual([]);
+  });
+
+  test("R13: the scan modal's Next draws the next invoice's own file", async ({ page }) => {
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], subtotal: 0, tax: 0, total: 0 }),
+      }),
+    );
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "three-pages.pdf", mimeType: "application/pdf", buffer: threePagePdf() },
+      { name: "one-page.pdf", mimeType: "application/pdf", buffer: jbig2Pdf() },
+    ]);
+    const canvases = page.getByLabel("Invoice PDF").locator("canvas");
+    await expect(canvases).toHaveCount(3, { timeout: 20_000 });
+    await page.getByTitle("Next invoice").click();
+    await expect(canvases).toHaveCount(1, { timeout: 20_000 });
   });
 
   test("R11: the scan modal draws a PDF on canvas", async ({ page }) => {

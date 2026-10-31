@@ -110,6 +110,16 @@ describe("PdfPreview on touch", () => {
     expect(second.destroy).not.toHaveBeenCalled();
   });
 
+  it("P14 guard: a parent render with a new getBytes doesn't draw again", async () => {
+    pdf(2);
+    const view = render(preview());
+    await waitFor(() => expect(canvases()).toHaveLength(2));
+    view.rerender(preview({ getBytes: async () => blob }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGetDocument).toHaveBeenCalledTimes(1);
+    expect(canvases()).toHaveLength(2);
+  });
+
   it("P13: a bad PDF, then a good one: the new src draws", async () => {
     mockGetDocument.mockReturnValue({
       promise: Promise.reject(new Error("bad pdf")),
