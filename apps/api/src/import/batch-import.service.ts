@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ImportFileStatus } from "@prisma/client";
+import { roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { DuplicateMatchService, formatSupplierInvoiceNote } from "./duplicate-match.service";
@@ -225,7 +226,7 @@ export class BatchImportService {
         supplierName: extracted.supplier ?? null,
         supplierMatchId: matchedSupplier?.id ?? null,
         invoiceNumber,
-        total: total.toFixed(2),
+        total: roundMoney(total).toFixed(2),
         unmatchedLines: unmatched,
         confidence: overallConfidence != null ? overallConfidence.toFixed(4) : null,
         // Denormalized pointer, no FK (see the model's schema comment) — now

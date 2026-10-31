@@ -354,7 +354,7 @@ export class CommissionStatementsService {
       if (amount <= 0) throw new BadRequestException("Payout amount must be positive.");
       if (amount > remaining + COMMISSION_EPS) {
         throw new BadRequestException(
-          `Payout of ${amount.toFixed(2)} exceeds the remaining balance of ${remaining.toFixed(2)}.`,
+          `Payout of ${roundMoney(amount).toFixed(2)} exceeds the remaining balance of ${roundMoney(remaining).toFixed(2)}.`,
         );
       }
 

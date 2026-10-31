@@ -84,10 +84,10 @@ export async function assertNoUnspentSourcedCredits(
   throw new ConflictException({
     code: API_ERROR_CODES.INVOICE_HAS_UNSPENT_CREDIT,
     message: opts?.afterRelease
-      ? `Deleting this order would hand credit ${numbers} (${unspent.toFixed(2)} unspent) back ` +
+      ? `Deleting this order would hand credit ${numbers} (${roundMoney(unspent).toFixed(2)} unspent) back ` +
         `to the customer. Void the invoice instead.`
       : `This invoice issued credit ${numbers} ` +
-        `with ${unspent.toFixed(2)} still unspent. Void the invoice instead — voiding retires the ` +
+        `with ${roundMoney(unspent).toFixed(2)} still unspent. Void the invoice instead — voiding retires the ` +
         `unspent credit and keeps the audit trail.`,
     creditNotes: open.map((cn: any) => ({
       id: cn.id,
