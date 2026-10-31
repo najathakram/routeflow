@@ -6,7 +6,7 @@ import type { SellLevel } from "@routeflow/pricing";
 import { Button } from "@routeflow/ui/web";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
-import { newProductPrefill } from "@/lib/product-prefill";
+import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { scanLevelForHit } from "./scan/useScanCodeHandler";
 
 /**
@@ -32,11 +32,16 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
   // Unknown (still loading, or the read failed) asks: regulated goods must not slip through on a slow read.
   const asks =
     !isSuccess || (Array.isArray(categoryRows) && categoryRows.some((c) => c.active !== false));
-  const [request, setRequest] = React.useState<{ text: string; step: Step } | null>(null);
+  const [request, setRequest] = React.useState<{
+    text: string;
+    from: PrefillDoor;
+    step: Step;
+  } | null>(null);
   const allowedRef = React.useRef(allowed);
   allowedRef.current = allowed;
 
-  const open = (text: string) => setRequest({ text, step: asks ? "ask" : "form" });
+  const open = (text: string, from: PrefillDoor = "typed") =>
+    setRequest({ text, from, step: asks ? "ask" : "form" });
   const close = () => setRequest(null);
   // The cursor goes back once the window is really gone: `refocus` waits while a scan pause is held.
   const wasOpenRef = React.useRef(false);
@@ -53,7 +58,7 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
     onAdded();
   };
 
-  const prefill = request ? newProductPrefill(request.text) : null;
+  const prefill = request ? newProductPrefill(request.text, request.from) : null;
   const modal = request ? (
     request.step === "form" ? (
       <InlineCreateProductModal

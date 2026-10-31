@@ -1624,7 +1624,9 @@ export function CounterSaleScreen() {
             cue={scanCue}
             added={scan.added}
             onCreate={
-              newItem.open && scan.missCode ? () => newItem.open?.(scan.missCode) : undefined
+              newItem.open && scan.missCode
+                ? () => newItem.open?.(scan.missCode, scan.missCamera ? "camera" : "scanBox")
+                : undefined
             }
           />
           {newItem.modal}
