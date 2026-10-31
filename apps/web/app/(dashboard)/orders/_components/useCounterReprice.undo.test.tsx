@@ -12,14 +12,14 @@ type Hist = {
   isSuccess: boolean;
   isError: boolean;
   isFetching: boolean;
-  data?: Record<string, { lastPrice: number; listPriceAtTime: number }>;
+  data?: Record<string, { lastPrice: number; stickyPrice: number | null; listPriceAtTime: number }>;
   refetch: jest.Mock;
 };
 const answered: Hist = {
   isSuccess: true,
   isError: false,
   isFetching: false,
-  data: { "p-1": { lastPrice: 15, listPriceAtTime: 10 } },
+  data: { "p-1": { lastPrice: 15, stickyPrice: 15, listPriceAtTime: 10 } },
   refetch: jest.fn(),
 };
 const noRead: Hist = { isSuccess: false, isError: false, isFetching: false, refetch: jest.fn() };
