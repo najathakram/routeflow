@@ -160,8 +160,8 @@ describe("jest config split: main lane ignores the repo-truth specs, repo-truth 
     for (const spec of REPO_TRUTH_SPECS) {
       expect(regex.test(`src/common/${spec}.spec.ts`)).toBe(true);
     }
-    // and nothing else in this same directory
-    expect(regex.test("src/common/turbo-inputs.spec.ts")).toBe(false);
+    // and nothing else in this same directory. (turbo-inputs.spec.ts itself reads outside apps/api, so the
+    // derived cross-workspace list puts it on the lane: see cross-workspace-lane.spec.ts.)
     expect(regex.test("src/common/db-locks.spec.ts")).toBe(false);
   });
 
