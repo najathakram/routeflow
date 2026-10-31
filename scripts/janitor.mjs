@@ -65,6 +65,12 @@
 //                                               origin or in master. Removal is a PLAIN
 //                                               `git worktree remove` after the junction unlink +
 //                                               rescan-to-0: never --force, never a recursive delete.
+//   node scripts/janitor.mjs --paths <file> --modules-only [--apply]   clear ONLY the real node_modules
+//                                               (root, apps/*, packages/*) of each listed tree, whatever its
+//                                               git state; never source, local-assets or the registration.
+//                                               Refuses a tree another tree links into, a locked tree, one a
+//                                               running process names, or one whose HEAD/index moved in 72h.
+//                                               Report-first (per-tree GB); --apply clears tree by tree.
 //
 // Preflight threshold guidance (document, not enforced by this tool):
 //   > 10 GB  normal — proceed with anything
@@ -2151,6 +2157,305 @@ export function unlinkLinksWithin(dir) {
 }
 
 // ---------------------------------------------------------------------------
+// --paths <file> --modules-only [--apply] (owner 2026-10-31: C: is full of regenerable node_modules).
+// For each LISTED tree it removes the REAL node_modules dirs (root, apps/*, packages/*) and nothing
+// else: never source, uncommitted work, local-assets, the worktree registration or `.git`. The
+// tree's git state does not matter (node_modules is regenerable); what matters is that nothing is
+// using it and nothing else leans on it. A node_modules that is itself a link is left alone.
+// Links INSIDE a node_modules are unlinked and proven gone, never followed (findJunctions +
+// unlinkJunctionsVerified: rescan-to-0). Every refusal is fail-closed (an unknown is a no).
+// ---------------------------------------------------------------------------
+
+/** A tree whose index or HEAD moved this recently is somebody's live work, even to a node_modules clear. */
+export const MODULES_ONLY_IDLE_HOURS = 72;
+
+/**
+ * The refusal reason for clearing a listed tree's node_modules, or null. Dirty is NOT a reason.
+ * info: { name, isMainCheckout, isLocked, linkedFrom (array | null = scan failed),
+ *         inUseBy (array | null = process scan failed), headMs, indexMs, nowMs }
+ */
+export function modulesOnlyRefusal(info) {
+  if (info.isMainCheckout) return "main checkout";
+  if (isProtectedWorktreeName(info.name)) return "protected worktree";
+  if (info.isLocked) return "locked worktree";
+  if (info.linkedFrom == null) return "the link scan failed, so another tree may lean on it";
+  if (info.linkedFrom.length > 0) {
+    return `${info.linkedFrom.length} link(s) from other trees point into it (e.g. ${info.linkedFrom[0]})`;
+  }
+  if (info.inUseBy == null) return "the process scan failed, so something may be using it";
+  if (info.inUseBy.length > 0) return `a running process uses it (${info.inUseBy[0]})`;
+  if (
+    isRecentlyActive(info.headMs, info.nowMs, MODULES_ONLY_IDLE_HOURS) ||
+    isRecentlyActive(info.indexMs, info.nowMs, MODULES_ONLY_IDLE_HOURS)
+  ) {
+    return `HEAD or index touched in the last ${MODULES_ONLY_IDLE_HOURS}h (or unknown)`;
+  }
+  return null;
+}
+
+/**
+ * Does `text` (a command line, an exe path or a cwd) name `tree` or anything inside it? Case-folded
+ * and slash-normalised; a match must end at a path boundary (C:\wt\u6 is not C:\wt\u60).
+ */
+export function mentionsTree(text, tree) {
+  const norm = (s) =>
+    String(s)
+      .replace(/^\\\\\?\\/, "")
+      .replace(/\//g, "\\")
+      .toLowerCase();
+  const hay = norm(text);
+  const needle = norm(tree).replace(/\\+$/, "");
+  if (!needle) return false;
+  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + 1)) {
+    const next = hay[at + needle.length];
+    if (next === undefined || !/[a-z0-9._-]/.test(next)) return true;
+  }
+  return false;
+}
+
+/**
+ * The node_modules dirs of one tree (root, apps/*, packages/*), split into REAL directories (to
+ * remove) and links (left alone). Any error other than "not there" lands in `unknown` and the
+ * caller refuses the tree.
+ */
+export function findModulesDirs(tree, { lstat = lstatSync, readdir = readdirSync } = {}) {
+  const dirs = [];
+  const links = [];
+  const unknown = [];
+  for (const nm of nodeModulesCandidates(tree, unknown, readdir)) {
+    let st;
+    try {
+      st = lstat(nm);
+    } catch (e) {
+      if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") unknown.push(`${nm}: ${e?.code}`);
+      continue;
+    }
+    if (st.isSymbolicLink()) links.push(nm);
+    else if (st.isDirectory()) dirs.push(nm);
+  }
+  return { dirs, links, unknown };
+}
+
+/** Apparent size in bytes of a tree, never following a link. Best effort: unreadable parts count 0. */
+export function treeSizeBytes(dir, { readdir = readdirSync, lstat = lstatSync } = {}) {
+  let bytes = 0;
+  const pending = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    let entries;
+    try {
+      entries = readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) pending.push(full);
+      else {
+        try {
+          bytes += lstat(full).size;
+        } catch {
+          /* gone or unreadable */
+        }
+      }
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Paths (cwds, executables, command lines) of every running process, for the in-use check; null
+ * when they cannot be read, which refuses every tree. Windows exposes no cwd, so a process counts
+ * when its command line or executable path names the tree.
+ */
+export function listProcessPaths() {
+  if (isWindows()) {
+    const out = trySh(
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process | ForEach-Object { $_.ExecutablePath; $_.CommandLine }",
+      ],
+      { maxBuffer: 256 * 1024 * 1024 },
+    );
+    return out == null ? null : out.split(/\r?\n/).filter(Boolean);
+  }
+  const out = trySh("lsof", ["-a", "-d", "cwd", "-Fn"], { maxBuffer: 256 * 1024 * 1024 });
+  return out == null
+    ? null
+    : out
+        .split("\n")
+        .filter((l) => l.startsWith("n"))
+        .map((l) => l.slice(1));
+}
+
+/**
+ * Evaluate ONE listed path. Returns { refused: reason } or { tree: { path, name, dirs, links } }.
+ * Reads only; `ops` is { worktrees, linkScan, procPaths, headMs, indexMs, findDirs, nowMs }.
+ */
+export function planModulesOnlyTree(listed, mainCheckoutPath, ops, caseInsensitive = false) {
+  const key = (p) => (caseInsensitive ? resolve(p).toLowerCase() : resolve(p));
+  const wt = ops.worktrees.find((w) => key(w.path) === key(listed));
+  if (!wt) return { refused: "not a registered worktree" };
+  const name = wt.path.split(/[\\/]/).pop();
+  const isMainCheckout = samePath(wt.path, mainCheckoutPath, caseInsensitive);
+  const linkedFrom = linkedIntoBy(
+    wt.path,
+    ops.worktrees.map((w) => w.path),
+    ops.linkScan,
+  );
+  const inUseBy =
+    ops.procPaths == null ? null : ops.procPaths.filter((p) => mentionsTree(p, wt.path));
+  const why = modulesOnlyRefusal({
+    name,
+    isMainCheckout,
+    isLocked: !!wt.locked,
+    linkedFrom,
+    inUseBy,
+    headMs: ops.headMs(wt.path),
+    indexMs: ops.indexMs(wt.path),
+    nowMs: ops.nowMs,
+  });
+  if (why) return { refused: why };
+  const found = ops.findDirs(wt.path);
+  if (found.unknown.length > 0) {
+    return {
+      refused: `could not read ${found.unknown.length} node_modules path(s): ${found.unknown[0]}`,
+    };
+  }
+  return { tree: { path: wt.path, name, dirs: found.dirs, links: found.links } };
+}
+
+/**
+ * Remove the real node_modules dirs of one planned tree. Each dir passes the B815 containment guard
+ * (it must resolve inside its OWN worktree), then goes through removeTree (links unlinked and
+ * proven gone first, never followed), then must be gone. Every dir is tried; any failure throws once
+ * at the end, so one stuck dir never hides the others. Returns the number of dirs removed.
+ */
+export function removeModulesOnlyTree(tree, { refuseDelete: refuse, removeTree, exists }) {
+  const errors = [];
+  let removed = 0;
+  for (const dir of tree.dirs) {
+    try {
+      const why = refuse(dir, { kind: "node_modules", worktreePath: tree.path });
+      if (why) throw new Error(`REFUSED ${dir}: ${why}`);
+      removeTree(dir);
+      if (exists(dir)) throw new Error(`${dir} survived its removal`);
+      removed++;
+    } catch (err) {
+      errors.push(err.message);
+    }
+  }
+  if (errors.length > 0) throw new Error(errors.join("; "));
+  return removed;
+}
+
+const gbOf = (bytes) => bytes / 1024 ** 3;
+
+/**
+ * The --modules-only run. Report-first: without --apply it sizes every tree and removes nothing.
+ * With --apply each tree is evaluated and cleared in turn (earliest relief), printing progress as it
+ * goes, and one failed tree never stops the rest. `io` is for tests.
+ */
+export function runModulesOnly(
+  paths,
+  { repoRoot, mainCheckoutPath },
+  { apply = false, io = {} } = {},
+) {
+  const log = io.log ?? ((m) => console.log(m));
+  const now = io.now ?? (() => Date.now());
+  const clock = io.clock ?? (() => performance.now());
+  const caseInsensitive = io.caseInsensitive ?? isWindows();
+  const worktrees = (io.listWorktrees ?? listWorktrees)(repoRoot);
+  const t0 = clock();
+  const linkScan = (io.scanLinkTargets ?? scanLinkTargets)(worktrees.map((w) => w.path));
+  const procPaths = (io.listProcessPaths ?? listProcessPaths)();
+  log(
+    `scanned ${worktrees.length} worktree(s) for links in ${((clock() - t0) / 1000).toFixed(1)} s; ` +
+      `process list ${procPaths == null ? "UNREADABLE (every tree will be refused)" : `${procPaths.length} path(s)`}`,
+  );
+  const ops = {
+    worktrees,
+    linkScan,
+    procPaths,
+    headMs: io.headMs ?? lastActivityMs,
+    indexMs: io.indexMs ?? indexMtimeMs,
+    findDirs: io.findDirs ?? ((tree) => findModulesDirs(tree)),
+    nowMs: now(),
+  };
+  const sizeOf = io.sizeOf ?? ((dirs) => dirs.reduce((sum, d) => sum + treeSizeBytes(d), 0));
+  const remove =
+    io.removeTree ??
+    ((tree) =>
+      removeModulesOnlyTree(tree, {
+        refuseDelete: (target, opts) => refuseDelete(target, resolveRepoContext(), opts),
+        removeTree: (d) => safeRemoveTree(d),
+        exists: pathPresent,
+      }));
+  const freeGb = io.freeGb ?? getFreeSpaceGb;
+
+  const unique = [
+    ...new Set(paths.map((p) => (caseInsensitive ? resolve(p).toLowerCase() : resolve(p)))),
+  ];
+  const summary = { trees: 0, refused: [], failed: [], bytes: 0, dirs: 0 };
+  const freeBefore = apply ? freeGb() : null;
+  unique.forEach((listed, i) => {
+    const label = `[${i + 1}/${unique.length}]`;
+    const tStart = clock();
+    const secs = () => ((clock() - tStart) / 1000).toFixed(1);
+    const planned = planModulesOnlyTree(listed, mainCheckoutPath, ops, caseInsensitive);
+    if (planned.refused) {
+      log(`${label} REFUSED ${listed}: ${planned.refused} (${secs()} s)`);
+      summary.refused.push({ worktree: listed, reason: planned.refused });
+      return;
+    }
+    const tree = planned.tree;
+    if (tree.dirs.length === 0) {
+      log(
+        `${label} ${tree.name}: no real node_modules (${tree.links.length} link(s) left alone) (${secs()} s)`,
+      );
+      return;
+    }
+    if (!apply) {
+      const bytes = sizeOf(tree.dirs);
+      summary.trees++;
+      summary.dirs += tree.dirs.length;
+      summary.bytes += bytes;
+      log(
+        `${label} ${tree.name}: would clear ${tree.dirs.length} node_modules dir(s), ${gbOf(bytes).toFixed(2)} GB (${secs()} s)`,
+      );
+      return;
+    }
+    const before = freeGb();
+    try {
+      const removed = remove(tree);
+      const freed = freeGb() - before;
+      summary.trees++;
+      summary.dirs += tree.dirs.length;
+      summary.bytes += Math.max(0, freed) * 1024 ** 3;
+      log(
+        `${label} ${tree.name}: cleared ${removed ?? tree.dirs.length} dir(s), freed ${freed.toFixed(2)} GB in ${secs()} s`,
+      );
+    } catch (err) {
+      log(`${label} FAILED ${tree.name}: ${err.message} (${secs()} s)`);
+      summary.failed.push({ worktree: tree.path, message: err.message });
+    }
+  });
+  log(
+    `\n${apply ? "Cleared" : "Would clear"} node_modules in ${summary.trees} tree(s) (${summary.dirs} dir(s)): ` +
+      `${gbOf(summary.bytes).toFixed(1)} GB${apply ? " freed" : ""}. ` +
+      `Refused ${summary.refused.length}. ${apply ? `Failed ${summary.failed.length}. ` : ""}` +
+      `Total ${((clock() - t0) / 1000).toFixed(0)} s.`,
+  );
+  if (apply) log(`free space: ${freeBefore.toFixed(1)} GB before, ${freeGb().toFixed(1)} GB after`);
+  else log("Report-only run (pass --apply to clear). Nothing was changed.");
+  return summary;
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -2214,6 +2519,17 @@ function main() {
   const paths = pathsFile
     ? resolveListedPaths(parseAllowList(readFileSync(pathsFile, "utf8")), repoRoot)
     : null;
+  if (argv.includes("--modules-only")) {
+    if (!paths) {
+      console.error(
+        "janitor: --modules-only needs --paths <file> (the trees whose node_modules to clear)",
+      );
+      process.exit(2);
+    }
+    const { failed } = runModulesOnly(paths, { repoRoot, mainCheckoutPath }, { apply });
+    if (failed.length) process.exit(1);
+    return;
+  }
   const scoped = worktreesOnly || !!paths;
   // A scoped run is not a free-space run: no target unless one is given, so every eligible tree
   // is acted on (a 10 GB default would stop it before the first tree on a roomy disk).

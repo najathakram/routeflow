@@ -24,7 +24,7 @@ import {
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   isProtectedWorktreeName,
   isProtectedBranch,
@@ -74,6 +74,13 @@ import {
   removeWorktreePlain,
   resolveListedPaths,
   findJunctions,
+  MODULES_ONLY_IDLE_HOURS,
+  modulesOnlyRefusal,
+  mentionsTree,
+  findModulesDirs,
+  planModulesOnlyTree,
+  removeModulesOnlyTree,
+  runModulesOnly,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -1351,7 +1358,7 @@ t(
     const callRe =
       /(function\s+)?\b(execFileSync|execFile|execSync|spawnSync|spawn|exec|trySh|sh|run)\(\s*([^,)]+),?\s*(\S*)/g;
     const calls = [...src.matchAll(callRe)].filter((m) => !m[1]); // not the sh/trySh definitions
-    const exes = new Set(["git", "gh", "powershell", "df", "cmd", "docker", "npm"]);
+    const exes = new Set(["git", "gh", "powershell", "df", "lsof", "cmd", "docker", "npm"]);
     let passThroughs = 0;
     let cmdCalls = 0;
     for (const [text, , fn, first, next] of calls) {
@@ -2786,6 +2793,409 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }
+}
+
+// --modules-only: clears ONLY real node_modules of listed trees; every refusal fails closed.
+{
+  const HOUR = 60 * 60 * 1000;
+  const NOW = Date.UTC(2026, 9, 31, 12, 0, 0);
+  const idle = { headMs: NOW - 100 * HOUR, indexMs: NOW - 100 * HOUR, nowMs: NOW };
+  const okInfo = {
+    name: "lane-a",
+    isMainCheckout: false,
+    isLocked: false,
+    linkedFrom: [],
+    inUseBy: [],
+    ...idle,
+  };
+  const ci = process.platform === "win32";
+
+  t(
+    "MO1: an idle, unlinked, unlocked, unused tree is cleared even though its git state is dirty",
+    () => {
+      assert.equal(modulesOnlyRefusal(okInfo), null);
+    },
+  );
+  t("MO2: a tree another tree links into is refused, and so is an unknown link scan", () => {
+    assert.match(modulesOnlyRefusal({ ...okInfo, linkedFrom: ["C:/wt/b/node_modules/x"] }), /link/);
+    assert.match(modulesOnlyRefusal({ ...okInfo, linkedFrom: null }), /link scan failed/);
+  });
+  t(
+    "MO3: a tree whose HEAD or index moved in the last 72h is refused; unknown counts as recent",
+    () => {
+      assert.equal(MODULES_ONLY_IDLE_HOURS, 72);
+      const recent = (over) => modulesOnlyRefusal({ ...okInfo, ...over });
+      assert.match(recent({ headMs: NOW - 71 * HOUR }), /72h/);
+      assert.match(recent({ indexMs: NOW - 71 * HOUR }), /72h/);
+      assert.match(recent({ headMs: null }), /72h/);
+      assert.match(recent({ indexMs: null }), /72h/);
+      assert.equal(recent({ headMs: NOW - 73 * HOUR, indexMs: NOW - 73 * HOUR }), null);
+    },
+  );
+  t(
+    "MO4: main checkout, protected name, locked tree, unreadable or hit process list are refused",
+    () => {
+      assert.match(modulesOnlyRefusal({ ...okInfo, isMainCheckout: true }), /main checkout/);
+      assert.match(modulesOnlyRefusal({ ...okInfo, name: "rf-migrate" }), /protected/);
+      assert.match(modulesOnlyRefusal({ ...okInfo, isLocked: true }), /locked/);
+      assert.match(modulesOnlyRefusal({ ...okInfo, inUseBy: null }), /process scan failed/);
+      assert.match(modulesOnlyRefusal({ ...okInfo, inUseBy: ["node dev.js"] }), /running process/);
+    },
+  );
+  t("MO5: a process is matched by a path at a boundary, not by a longer sibling name", () => {
+    assert.ok(mentionsTree("C:\\wt\\u6\\node_modules\\.bin\\next dev", "C:\\wt\\u6"));
+    assert.ok(mentionsTree("node C:/WT/U6/scripts/a.mjs", "C:\\wt\\u6"));
+    assert.ok(mentionsTree("C:\\wt\\u6", "C:\\wt\\u6"));
+    assert.ok(!mentionsTree("C:\\wt\\u60\\x", "C:\\wt\\u6"));
+    assert.ok(!mentionsTree("C:\\wt\\u6-old\\x", "C:\\wt\\u6"));
+    assert.ok(!mentionsTree("C:\\other", "C:\\wt\\u6"));
+  });
+
+  const mk = () => {
+    const root = mkdtempSync(join(tmpdir(), "janitor-mo-"));
+    return {
+      root,
+      rm: () => {
+        // links first, so the recursive rm can never follow one out of the fixture
+        for (const l of findJunctions(root) ?? []) {
+          try {
+            unlinkSync(l);
+          } catch {
+            try {
+              rmdirSync(l);
+            } catch {
+              /* best effort */
+            }
+          }
+        }
+        rmSync(root, { recursive: true, force: true });
+      },
+    };
+  };
+  const put = (file, text = "x") => {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  };
+  // The B815 guard as execute() applies it, with the main checkout out of the picture.
+  const guard = (target, { worktreePath }) =>
+    deleteRefusal({
+      targetReal: join(realpathSync(dirname(target)), basename(target)),
+      mainReal: join(tmpdir(), "janitor-mo-no-such-main"),
+      worktreeReal: realpathSync(worktreePath),
+      kind: "node_modules",
+      caseInsensitive: ci,
+    });
+  const realOps = {
+    refuseDelete: guard,
+    removeTree: (d) => safeRemoveTree(d),
+    exists: pathPresent,
+  };
+
+  t("MO6: findModulesDirs splits real dirs from links and reports unreadable paths", () => {
+    const f = mk();
+    try {
+      put(join(f.root, "node_modules", "a", "i.js"));
+      put(join(f.root, "apps", "web", "node_modules", "b.js"));
+      put(join(f.root, "elsewhere", "c.js"));
+      mkdirSync(join(f.root, "packages", "ui"), { recursive: true });
+      symlinkSync(
+        join(f.root, "elsewhere"),
+        join(f.root, "packages", "ui", "node_modules"),
+        "junction",
+      );
+      const r = findModulesDirs(f.root);
+      assert.deepEqual(
+        r.dirs.sort(),
+        [join(f.root, "apps", "web", "node_modules"), join(f.root, "node_modules")].sort(),
+      );
+      assert.deepEqual(r.links, [join(f.root, "packages", "ui", "node_modules")]);
+      assert.deepEqual(r.unknown, []);
+      const bad = findModulesDirs(f.root, {
+        lstat: () => {
+          throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+        },
+      });
+      assert.ok(bad.unknown.length > 0);
+    } finally {
+      f.rm();
+    }
+  });
+
+  t(
+    "MO7: a link inside node_modules is unlinked, never followed: its target keeps every file",
+    () => {
+      const f = mk();
+      try {
+        const tree = join(f.root, "lane");
+        const outside = join(f.root, "outside");
+        put(join(outside, "keep.txt"), "do not delete");
+        put(join(outside, "deep", "keep2.txt"), "nor this");
+        put(join(tree, "node_modules", "real", "i.js"));
+        symlinkSync(outside, join(tree, "node_modules", "linked"), "junction");
+        put(join(tree, "apps", "web", "node_modules", "z", "i.js"));
+        symlinkSync(outside, join(tree, "apps", "web", "node_modules", "z", "back"), "junction");
+        const dirs = findModulesDirs(tree).dirs;
+        assert.equal(removeModulesOnlyTree({ path: tree, dirs }, realOps), 2);
+        assert.ok(!existsSync(join(tree, "node_modules")));
+        assert.ok(!existsSync(join(tree, "apps", "web", "node_modules")));
+        assert.equal(readFileSync(join(outside, "keep.txt"), "utf8"), "do not delete");
+        assert.equal(readFileSync(join(outside, "deep", "keep2.txt"), "utf8"), "nor this");
+      } finally {
+        f.rm();
+      }
+    },
+  );
+
+  t(
+    "MO8: a dirty tree keeps every source, uncommitted and local-assets file, byte for byte",
+    () => {
+      const f = mk();
+      try {
+        const tree = join(f.root, "dirty-lane");
+        const keep = {
+          [join(tree, "src", "tracked.ts")]: "export const a = 1;\n",
+          [join(tree, "src", "uncommitted.ts")]: "// work in progress\n",
+          [join(tree, "local-assets", "proofs", "shot.txt")]: "proof",
+          [join(tree, ".env")]: "SECRET=1\n",
+          [join(tree, "apps", "web", "page.tsx")]: "page",
+          [join(tree, ".git")]: "gitdir: elsewhere\n",
+        };
+        for (const [p, text] of Object.entries(keep)) put(p, text);
+        put(join(tree, "node_modules", "p", "index.js"));
+        put(join(tree, "apps", "web", "node_modules", "q", "index.js"));
+        put(join(tree, "packages", "ui", "node_modules", "r.js"));
+        mkdirSync(join(tree, "packages", "ui", "src"), { recursive: true });
+        const log = [];
+        const summary = runModulesOnly(
+          [tree],
+          { repoRoot: f.root, mainCheckoutPath: join(f.root, "main") },
+          {
+            apply: true,
+            io: {
+              log: (m) => log.push(m),
+              listWorktrees: () => [{ path: tree, branch: "lane", locked: false }],
+              scanLinkTargets: (trees) => scanLinkTargets(trees),
+              listProcessPaths: () => [],
+              headMs: () => NOW - 100 * HOUR,
+              indexMs: () => NOW - 100 * HOUR,
+              now: () => NOW,
+              freeGb: () => 5,
+              removeTree: (planned) => removeModulesOnlyTree(planned, realOps),
+            },
+          },
+        );
+        assert.equal(summary.failed.length, 0, JSON.stringify(log));
+        assert.equal(summary.trees, 1);
+        for (const [p, text] of Object.entries(keep))
+          assert.equal(readFileSync(p, "utf8"), text, p);
+        assert.ok(existsSync(join(tree, "packages", "ui", "src")));
+        assert.deepEqual(findModulesDirs(tree).dirs, []);
+      } finally {
+        f.rm();
+      }
+    },
+  );
+
+  t("MO9: a node_modules that is itself a link is left alone, with its target intact", () => {
+    const f = mk();
+    try {
+      const tree = join(f.root, "lane");
+      const target = join(f.root, "main-modules");
+      put(join(target, "pkg", "i.js"), "shared");
+      mkdirSync(tree, { recursive: true });
+      symlinkSync(target, join(tree, "node_modules"), "junction");
+      const found = findModulesDirs(tree);
+      assert.deepEqual(found.dirs, []);
+      assert.equal(found.links.length, 1);
+      const log = [];
+      const summary = runModulesOnly(
+        [tree],
+        { repoRoot: f.root, mainCheckoutPath: join(f.root, "main") },
+        {
+          apply: true,
+          io: {
+            log: (m) => log.push(m),
+            listWorktrees: () => [{ path: tree, branch: "lane", locked: false }],
+            scanLinkTargets: (trees) => scanLinkTargets(trees),
+            listProcessPaths: () => [],
+            headMs: () => NOW - 100 * HOUR,
+            indexMs: () => NOW - 100 * HOUR,
+            now: () => NOW,
+            freeGb: () => 5,
+            removeTree: () => assert.fail("nothing real to remove"),
+          },
+        },
+      );
+      assert.equal(summary.trees, 0);
+      assert.ok(
+        log.some((l) => /no real node_modules/.test(l)),
+        JSON.stringify(log),
+      );
+      assert.equal(readFileSync(join(target, "pkg", "i.js"), "utf8"), "shared");
+      assert.ok(lstatSync(join(tree, "node_modules")).isSymbolicLink());
+    } finally {
+      f.rm();
+    }
+  });
+
+  t(
+    "MO10: a tree that another tree's node_modules links into is refused, the linking tree is not",
+    () => {
+      const f = mk();
+      try {
+        const a = join(f.root, "a");
+        const b = join(f.root, "b");
+        put(join(a, "node_modules", "pkg", "i.js"));
+        put(join(a, "packages", "shared", "index.ts"));
+        put(join(b, "node_modules", "real", "i.js"));
+        mkdirSync(join(b, "node_modules", "@routeflow"), { recursive: true });
+        symlinkSync(
+          join(a, "packages", "shared"),
+          join(b, "node_modules", "@routeflow", "shared"),
+          "junction",
+        );
+        const worktrees = [
+          { path: a, locked: false },
+          { path: b, locked: false },
+        ];
+        const ops = {
+          worktrees,
+          linkScan: scanLinkTargets([a, b]),
+          procPaths: [],
+          headMs: () => NOW - 100 * HOUR,
+          indexMs: () => NOW - 100 * HOUR,
+          findDirs: (tree) => findModulesDirs(tree),
+          nowMs: NOW,
+        };
+        const main = join(f.root, "main");
+        assert.match(planModulesOnlyTree(a, main, ops, ci).refused, /link\(s\) from other trees/);
+        assert.ok(
+          planModulesOnlyTree(b, main, ops, ci).tree,
+          "the linking tree itself may be cleared",
+        );
+      } finally {
+        f.rm();
+      }
+    },
+  );
+
+  t(
+    "MO11: a recent tree, a tree a process names, and an unlisted path are refused with their reasons",
+    () => {
+      const worktrees = [
+        { path: "C:/wt/recent", locked: false },
+        { path: "C:/wt/busy", locked: false },
+        { path: "C:/wt/ok", locked: false },
+      ];
+      const base = {
+        worktrees,
+        linkScan: { links: [], unknown: {} },
+        procPaths: ["node C:\\wt\\busy\\node_modules\\.bin\\next dev"],
+        headMs: (p) => (/recent/.test(p) ? NOW - HOUR : NOW - 100 * HOUR),
+        indexMs: () => NOW - 100 * HOUR,
+        findDirs: () => ({ dirs: ["x"], links: [], unknown: [] }),
+        nowMs: NOW,
+      };
+      const plan = (p, ops = base) => planModulesOnlyTree(p, "C:/wt/main", ops, true);
+      assert.match(plan("C:/wt/recent").refused, /72h/);
+      assert.match(plan("C:/wt/busy").refused, /running process/);
+      assert.match(plan("C:/wt/nowhere").refused, /not a registered worktree/);
+      assert.ok(plan("C:/wt/ok").tree);
+      assert.match(plan("C:/wt/ok", { ...base, procPaths: null }).refused, /process scan failed/);
+      assert.match(
+        plan("C:/wt/ok", {
+          ...base,
+          findDirs: () => ({ dirs: [], links: [], unknown: ["x: EPERM"] }),
+        }).refused,
+        /could not read/,
+      );
+    },
+  );
+
+  t(
+    "MO12: report-only sizes each tree and removes nothing; one failed tree does not stop the next",
+    () => {
+      const f = mk();
+      try {
+        const a = join(f.root, "a");
+        const b = join(f.root, "b");
+        put(join(a, "node_modules", "p", "i.js"), "x".repeat(1000));
+        put(join(a, "node_modules", "p", "j.js"), "y".repeat(2000));
+        put(join(b, "node_modules", "p", "i.js"), "z");
+        const io = (log, extra = {}) => ({
+          log: (m) => log.push(m),
+          listWorktrees: () => [
+            { path: a, locked: false },
+            { path: b, locked: false },
+          ],
+          scanLinkTargets: (trees) => scanLinkTargets(trees),
+          listProcessPaths: () => [],
+          headMs: () => NOW - 100 * HOUR,
+          indexMs: () => NOW - 100 * HOUR,
+          now: () => NOW,
+          freeGb: () => 5,
+          ...extra,
+        });
+        const ctx = { repoRoot: f.root, mainCheckoutPath: join(f.root, "main") };
+        const log = [];
+        const report = runModulesOnly([a, b], ctx, { io: io(log) });
+        assert.equal(report.trees, 2);
+        assert.equal(report.bytes, 3001);
+        assert.ok(existsSync(join(a, "node_modules")) && existsSync(join(b, "node_modules")));
+        assert.ok(
+          log.some((l) => /would clear 1 node_modules dir\(s\), \d+\.\d\d GB/.test(l)),
+          JSON.stringify(log),
+        );
+        assert.ok(log.some((l) => /Report-only run/.test(l)));
+        const log2 = [];
+        const applied = runModulesOnly([a, b], ctx, {
+          apply: true,
+          io: io(log2, {
+            removeTree: (planned) => {
+              if (planned.path === a) throw new Error("file in use");
+              return removeModulesOnlyTree(planned, realOps);
+            },
+          }),
+        });
+        assert.equal(applied.failed.length, 1);
+        assert.equal(applied.trees, 1);
+        assert.ok(existsSync(join(a, "node_modules")), "the failed tree is left whole");
+        assert.ok(!existsSync(join(b, "node_modules")), "the next tree was still cleared");
+        assert.ok(
+          log2.some((l) => /FAILED a: file in use/.test(l)),
+          JSON.stringify(log2),
+        );
+      } finally {
+        f.rm();
+      }
+    },
+  );
+
+  t(
+    "MO13: a node_modules reached through a linked apps/ folder is refused by the containment guard",
+    () => {
+      const f = mk();
+      try {
+        const tree = join(f.root, "lane");
+        const outside = join(f.root, "outside-apps");
+        put(join(outside, "web", "node_modules", "keep.js"), "not yours");
+        mkdirSync(tree, { recursive: true });
+        symlinkSync(outside, join(tree, "apps"), "junction");
+        const dirs = findModulesDirs(tree).dirs;
+        assert.equal(dirs.length, 1);
+        assert.throws(
+          () => removeModulesOnlyTree({ path: tree, dirs }, realOps),
+          /outside its own worktree/,
+        );
+        assert.equal(
+          readFileSync(join(outside, "web", "node_modules", "keep.js"), "utf8"),
+          "not yours",
+        );
+      } finally {
+        f.rm();
+      }
+    },
+  );
 }
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
