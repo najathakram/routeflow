@@ -243,12 +243,19 @@ export function OrderLineItemsTable({
                   </span>
                 )}
               </td>
-              <td role="cell" data-label="Status" className={cn("px-6 py-3", CARD_CELL)}>
-                {(() => {
-                  const status = displayLineStatus(li, orderStatus, fulfillPath);
-                  return status ? <Badge status={status} /> : null;
-                })()}
-              </td>
+              {(() => {
+                const status = displayLineStatus(li, orderStatus, fulfillPath);
+                // SA-1066 F15: no status = no Status label on a phone; the cell stays in the row from md up (column alignment)
+                return (
+                  <td
+                    role="cell"
+                    data-label="Status"
+                    className={cn("px-6 py-3", status ? CARD_CELL : "max-md:hidden")}
+                  >
+                    {status ? <Badge status={status} /> : null}
+                  </td>
+                );
+              })()}
             </tr>
           ))}
         </tbody>
