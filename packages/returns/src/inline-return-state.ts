@@ -444,10 +444,10 @@ export function notBoughtBeforeNames(
 }
 
 /**
- * R-1 (SA-1069 M8): "Return only what was bought" for ONE product. Sets that product's FIRST row to the
- * pieces the quote matched to an invoice line and zeroes any sibling row (the same first-row rule as
- * {@link applyCoveredPiecesToLines}, so two rows of one product can never double the credit). Every other
- * product's rows are untouched, and nothing is removed: the operator can type the number back. With nothing
+ * R-1 (SA-1069 M8): "Return only what was bought" for ONE product. Sets that product's RULING row (the first row with a
+ * quantity, see {@link rulingLineIndex}) to the pieces the quote matched to an invoice line and zeroes any sibling row, so two
+ * rows of one product can never double the credit and the row whose reason and stock outcome capture keeps stays the same row.
+ * Every other product's rows are untouched, and nothing is removed: the operator can type the number back. With nothing
  * covered for the product the lines come back as they were (the host disables the choice and says why).
  */
 export function applyCoveredToProduct<L extends InlineReturnLineDraft>(
@@ -457,13 +457,12 @@ export function applyCoveredToProduct<L extends InlineReturnLineDraft>(
 ): L[] {
   const covered = coveredPiecesByProduct(quote).get(productId) ?? 0;
   if (covered <= 0) return lines;
-  let seen = false;
-  return lines.map((l) => {
-    if (l.productId !== productId) return l;
-    const isFirst = !seen;
-    seen = true;
-    return { ...l, boxes: "0", pieces: String(isFirst ? covered : 0) };
-  });
+  const ruling = rulingLineIndex(lines, productId);
+  return lines.map((l, i) =>
+    l.productId !== productId
+      ? l
+      : { ...l, boxes: "0", pieces: String(i === ruling ? covered : 0) },
+  );
 }
 
 /**

@@ -326,7 +326,7 @@ export function InlineReturnSection({
     const rows = lines
       .filter((l) => l.productId === productId)
       .map((l) => ({ lineKey: l.lineKey, boxes: l.boxes, pieces: l.pieces }));
-    const applied = next.find((l) => l.productId === productId)?.pieces ?? "";
+    const applied = next[rulingLineIndex(next, productId)]?.pieces ?? "";
     setTrimmed((t) => ({ ...t, [productId]: { rows, applied } }));
     setLines(next);
   }
@@ -343,8 +343,8 @@ export function InlineReturnSection({
   }
   const onlyBoughtActive = (productId: string) => {
     const trim = trimmed[productId];
-    const first = lines.find((l) => l.productId === productId);
-    return !!trim && !!first && first.boxes === "0" && first.pieces === trim.applied;
+    const ruling = lines[rulingLineIndex(lines, productId)];
+    return !!trim && !!ruling && ruling.boxes === "0" && ruling.pieces === trim.applied;
   };
 
   const boxedIds = boxedProductIds(lines);
@@ -797,7 +797,7 @@ function ReturnLine({
               followsFirst
                 ? rulingIsFirst
                   ? "Reason (same as the first row)"
-                  : "Reason (same as the first row with a count)"
+                  : "Reason (same as the first row with a quantity)"
                 : "Reason (optional)"
             }
             value={followsFirst ? firstReason : line.reason}

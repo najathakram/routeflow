@@ -977,6 +977,35 @@ describe("R-1 M8: applyCoveredToProduct, 'return only what was bought' for ONE l
     expect(result.map((l: InlineReturnLineDraft) => l.pieces)).toEqual(["4", "0"]);
   });
 
+  it("review-b FAIL 2: with a blank first row the row that counts takes the covered pieces and the blank row stays blank of count", () => {
+    const lines = [
+      line({ productId: "prod-1", pieces: "" }),
+      line({ productId: "prod-1", pieces: "6", reason: "DAMAGED" }),
+    ];
+    const result = pkg.applyCoveredToProduct(
+      lines,
+      quoteResponse([covered("prod-1", 2)]),
+      "prod-1",
+    );
+    expect(result.map((l: InlineReturnLineDraft) => l.pieces)).toEqual(["0", "2"]);
+    // the row that ruled before still rules after, so its reason (and the stock outcome) is the one sent
+    expect(pkg.rulingLineIndex(result, "prod-1")).toBe(1);
+    expect(result[1].reason).toBe("DAMAGED");
+  });
+
+  it("review-b FAIL 2: a boxes-only row counts, so it rules and takes the covered pieces", () => {
+    const lines = [
+      line({ productId: "prod-1", boxes: "", pieces: "" }),
+      line({ productId: "prod-1", boxes: "2", pieces: "" }),
+    ];
+    const result = pkg.applyCoveredToProduct(
+      lines,
+      quoteResponse([covered("prod-1", 4)]),
+      "prod-1",
+    );
+    expect(result.map((l: InlineReturnLineDraft) => l.pieces)).toEqual(["0", "4"]);
+  });
+
   it("nothing covered: the lines come back as they were, so the host can disable the choice", () => {
     const lines = [line({ productId: "prod-1", pieces: "6" })];
     const result = pkg.applyCoveredToProduct(lines, quoteResponse([excess("prod-1", 6)]), "prod-1");

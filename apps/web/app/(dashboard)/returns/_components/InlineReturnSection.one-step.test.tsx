@@ -843,7 +843,9 @@ describe("review-c on #4036 at 852bb08fce", () => {
     });
     setQty("3", 1);
     // row 1 has no quantity, so the capture drops it: it neither rules nor reads DAMAGED
-    const first = within(rows()[0]).getByLabelText("Reason (same as the first row with a count)");
+    const first = within(rows()[0]).getByLabelText(
+      "Reason (same as the first row with a quantity)",
+    );
     expect(first).toBeDisabled();
     expect((first as HTMLSelectElement).value).toBe("");
     const second = within(rows()[1]).getByLabelText("Reason (optional)");
@@ -942,5 +944,43 @@ describe("review-c on #4036 at d2d62cf335: the already-returned reason follows t
         reason: "EXCESS_ORDER",
       }).items[0]?.alreadyReturnedReason,
     ).toBe("Customer returned a second batch");
+  });
+});
+
+describe("review-b on #4036 at d2d62cf335: 'Return only what was bought' keeps the ruling row", () => {
+  it("count and DAMAGED on row 2: the tap trims row 2 and the reason and stock outcome stay", async () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+    const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("6", 1);
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    fireEvent.change(within(rows()[1]).getByLabelText("Reason (optional)"), {
+      target: { value: "DAMAGED" },
+    });
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 2 }), noSale({ pieces: 4, subtotal: 8, taxAmount: 0 })]));
+    fireEvent.click(within(rows()[1]).getByRole("radio", { name: /return only what was bought/i }));
+    expect(qtyInputs()[1].value).toBe("2");
+    expect(qtyInputs()[0].value).not.toBe("2");
+    for (const r of rows()) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Not added to stock",
+      );
+    }
+    const sent = buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines: last().lines,
+      returnKey: "k",
+      reason: "EXCESS_ORDER",
+    }).items[0];
+    expect(sent?.reason).toBe("DAMAGED");
+    expect(sent?.pieces).toBe(2);
   });
 });
