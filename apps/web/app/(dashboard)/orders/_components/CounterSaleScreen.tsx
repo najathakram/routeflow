@@ -143,7 +143,8 @@ import {
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterNewItem } from "./CounterNewItem";
-import { CounterBuyerChoice, CounterBuyerLine } from "./CounterBuyerChoice";
+import { CounterBuyerChoice } from "./CounterBuyerChoice";
+import { CounterRunningTotal } from "./CounterRunningTotal";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useNewCustomerDoor } from "./useNewCustomerDoor";
@@ -1562,17 +1563,15 @@ export function CounterSaleScreen() {
           >
             {/* SA-1059: inline above the field, inside the sticky bar, so the strip never covers the cart */}
             {touchFirst && cameraOpen ? (
-              <>
-                <CounterBuyerLine kind={buyerChoice.kind} customerName={customer?.businessName} />
-                <CounterCameraStrip
-                  engine={cameraEngine}
-                  enabled={cameraEnabled}
-                  frameBlocked={() => cameraFrameBlocked(scanRef.current)}
-                  onCode={onCameraCode}
-                  added={scan.message ? "" : scanCue || scan.added}
-                  onClose={toggleCamera}
-                />
-              </>
+              <CounterCameraStrip
+                engine={cameraEngine}
+                enabled={cameraEnabled}
+                frameBlocked={() => cameraFrameBlocked(scanRef.current)}
+                onCode={onCameraCode}
+                added={scan.message ? "" : scanCue || scan.added}
+                onClose={toggleCamera}
+                buyer={{ kind: buyerChoice.kind, name: customer?.businessName }}
+              />
             ) : null}
             <form onSubmit={onScanSubmit} className="flex items-center gap-2 py-2">
               <input
@@ -2104,30 +2103,11 @@ export function CounterSaleScreen() {
                 <span>{money(c.amount)}</span>
               </div>
             ))}
-            {/* R7b ruling: for cash, "Amount due" below already reads the total; the row hides while the two are equal to
-                the cent (a tender in progress, a card sale or a differing figure shows it as before). The figure stays in
-                the DOM, visually hidden, for assistive tech and for the tests that read it. */}
-            {method === "CASH" &&
-            roundMoney(totals.total) === roundMoney(amountDue(payTotal, tenderedNum)) ? (
-              <span className="sr-only" data-testid="running-total">
-                Total {money(totals.total)}
-              </span>
-            ) : (
-              <div data-testid="estimated-total-row">
-                {/* F7: small above cash's big Amount due; on other methods it IS the big bottom figure */}
-                <div
-                  className={
-                    method === "CASH"
-                      ? "flex justify-between text-lg font-semibold"
-                      : "flex justify-between text-3xl font-bold"
-                  }
-                  data-testid="running-total"
-                >
-                  <span>Total</span>
-                  <span>{money(totals.total)}</span>
-                </div>
-              </div>
-            )}
+            <CounterRunningTotal
+              total={totals.total}
+              cash={method === "CASH"}
+              due={amountDue(payTotal, tenderedNum)}
+            />
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">

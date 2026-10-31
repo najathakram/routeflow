@@ -97,7 +97,7 @@ describe("price history header change line (M6)", () => {
 
 describe("price history rows at 390 (F4, F5)", () => {
   const pending = row({
-    source: "ORDER",
+    source: "OPEN_ORDER",
     invoiceId: null,
     invoiceNumber: null,
     orderNumber: "ORD-2026-0000123456",

@@ -8,6 +8,8 @@ import {
   scanSettled,
   type ContinuousScanState,
 } from "@routeflow/scanning";
+import { CounterBuyerLine } from "./CounterBuyerChoice";
+import type { BuyerKind } from "./counter-buyer-choice";
 import { ScanViewfinder } from "./scan/ScanViewfinder";
 import { useContinuousScanCamera, type ScanFrame } from "./scan/useContinuousScanCamera";
 
@@ -79,6 +81,7 @@ export function CounterCameraStrip({
   onCode,
   added,
   onClose,
+  buyer,
 }: {
   engine: CameraScanEngine;
   enabled: boolean;
@@ -88,6 +91,8 @@ export function CounterCameraStrip({
   added?: string;
   /** Close camera (bottom-left): the screen's own toggle. */
   onClose?: () => void;
+  /** Who is buying, as one line above the picture (below md only); omitted before the question is answered. */
+  buyer?: { kind: BuyerKind; name?: string };
 }) {
   const { clock } = engine;
   // Paused while frames are dropped as well as while the camera is off, so the clerk sees why a code does nothing. Set only
@@ -143,6 +148,7 @@ export function CounterCameraStrip({
 
   return (
     <div data-testid="counter-camera-strip" className="pb-1">
+      {buyer ? <CounterBuyerLine kind={buyer.kind} customerName={buyer.name} /> : null}
       <ScanViewfinder camera={camera}>
         {!enabled || dropping ? (
           <p

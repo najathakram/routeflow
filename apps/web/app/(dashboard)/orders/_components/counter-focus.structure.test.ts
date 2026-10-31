@@ -16,6 +16,10 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
     count: 3,
     why: "the receipt heading takes focus when the receipt appears (POS-1); the digit redirect (row 237) focuses the scan box SYNCHRONOUSLY so the very keystroke lands in it (a scheduled refocus would lose it); and focusPaymentControl, the one place the payment area takes focus (Enter in an empty scan box, the tender radiogroup arrows; R7b 1.2)",
   },
+  "CounterNewItem.tsx": {
+    count: 1,
+    why: "SA-1066 F10: the regulated-item question box takes focus (preventScroll) when it opens, so the keyboard lands on its own Cancel and the page does not jump; it is a dialog's own box, never the scan field",
+  },
   "CounterReturnAction.tsx": {
     count: 1,
     why: "returns focus to its own opener button when its dialog closes",

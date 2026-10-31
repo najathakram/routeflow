@@ -7,16 +7,9 @@ import { CustomerFormModal } from "./CustomerFormModal";
  * dialog's root only: no global rule, and the shared Input is unchanged.
  */
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
-jest.mock("@routeflow/ui/web", () => ({
-  ...jest.requireActual("@routeflow/ui/web"),
-  useToast: () => ({ toast: (...a: unknown[]) => toastFn(...a) }),
-}));
 jest.mock("@/lib/api/customers", () => ({
   useCreateCustomer: () => ({
-    mutate: (payload: unknown, opts?: { onSuccess?: (d: unknown) => void }) => {
-      createMutate(payload);
-      opts?.onSuccess?.(CREATED);
-    },
+    mutate: jest.fn(),
     isPending: false,
     error: null,
     reset: jest.fn(),
