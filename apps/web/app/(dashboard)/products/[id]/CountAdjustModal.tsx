@@ -38,7 +38,9 @@ export interface CountTarget {
 
 // Every control is at least 44 px tall below `sm` (staff use the web at 390 px).
 const TALL = "min-h-[44px] sm:min-h-0";
-const INPUT = `w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 ${TALL}`;
+const INPUT =
+  "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 " +
+  TALL;
 
 /** A labelled two-option control (tabs, Add | Remove): a sunken track, the selected segment raised. */
 function Segmented<T extends string>({
