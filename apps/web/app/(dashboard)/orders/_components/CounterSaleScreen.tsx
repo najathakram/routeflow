@@ -111,6 +111,7 @@ import { useCounterLineUndo } from "./useCounterLineUndo";
 import { CounterReturnsMount, useCounterInlineReturn } from "./useCounterInlineReturn";
 import { COUNTER_SCAN_FAILED_COPY } from "./useCounterSaleScan";
 import { useCounterReprice } from "./useCounterReprice";
+import { useElementOffScreen } from "./useElementOffScreen";
 import { repriceLines } from "./counter-sale-reprice";
 import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
 import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
@@ -637,6 +638,14 @@ export function CounterSaleScreen() {
   linesRef.current = lines;
   // An add past the per-line cap leaves the cart as it was (addScannedProduct returns the same array), says why once, and
   // returns false so the scan confirmation does not claim "Added".
+  // SA-1071 K3: what the latest add did, so the camera's Undo can take that one read back.
+  const [lastRead, setLastRead] = React.useState<{
+    tempId: string;
+    created: boolean;
+    n: number;
+    level: SellLevel;
+    qtyAfter: number;
+  } | null>(null);
   const addCapped = (product: any, level: SellLevel, n: number): boolean => {
     const prev = linesRef.current;
     const next = addScannedProduct(
@@ -654,6 +663,18 @@ export function CounterSaleScreen() {
     }
     linesRef.current = next;
     setLines(next);
+    const hit = next.find((l) => l.productId === product.id);
+    setLastRead(
+      hit
+        ? {
+            tempId: hit.tempId,
+            created: !prev.some((l) => l.productId === product.id),
+            n,
+            level,
+            qtyAfter: hit.qty,
+          }
+        : null,
+    );
     return true;
   };
 
@@ -847,7 +868,10 @@ export function CounterSaleScreen() {
               : "On account",
     },
   ];
-  const paymentRef = React.useRef<HTMLElement>(null);
+  const paymentRef = React.useRef<HTMLElement | null>(null);
+  // SA-1071 K2: below md the bar names the tender only while the Payment section itself is out of sight.
+  const [paymentEl, setPaymentEl] = React.useState<HTMLElement | null>(null);
+  const paymentOffScreen = useElementOffScreen(paymentEl, barHeight);
   const bringPaymentIntoView = () => {
     const section = paymentRef.current;
     if (!section) return;
@@ -886,6 +910,7 @@ export function CounterSaleScreen() {
     }
     const text = scanText;
     setScanText("");
+    setCameraOffNote(false);
     scan.submit(text);
   }
   // SA-1059: a code the camera decoded. The same guard as onScanSubmit (a mid-POST scan would miss the sale), and the same
@@ -897,11 +922,14 @@ export function CounterSaleScreen() {
   };
   // The tap that opens the strip is what grants the camera and unlocks the sound; it also takes the cursor out of the scan
   // field, so a keyboard that is already up goes down. The strip is open or closed by the clerk only.
+  // SA-1071 K4: closing the camera says what happened; the line clears at the next scan or when the camera opens.
+  const [cameraOffNote, setCameraOffNote] = React.useState(false);
   const toggleCamera = () => {
     if (!cameraOpen) {
       unlockScanCue();
       scanRef.current?.blur();
     }
+    setCameraOffNote(cameraOpen);
     setCameraOpen((o) => !o);
   };
   // MUST 10: below md the floating checkout bar covers the bottom of the scroller (`#main-content`, under the shell's header), and
@@ -971,6 +999,33 @@ export function CounterSaleScreen() {
     refocus();
   };
 
+  // SA-1071 K3: the camera's Undo takes the latest read back by the builder's rule (`undoScan`): the line goes only when that
+  // read made it and nothing has changed it since; otherwise the quantity steps down by what the read added.
+  const undoRead = () => {
+    const read = lastRead;
+    if (!read || lineLocked || saleInFlight()) return;
+    setLastRead(null);
+    const line = linesRef.current.find((l) => l.tempId === read.tempId);
+    if (!line) return;
+    if (scanCueTimerRef.current !== null) window.clearTimeout(scanCueTimerRef.current);
+    scanCueTimerRef.current = null;
+    setScanCue(null);
+    if (read.created && line.qty === read.qtyAfter) {
+      setLines((prev) => prev.filter((l) => l.tempId !== read.tempId));
+    } else {
+      const unit: StepUnit = read.level === "BOX" && (line.unitsPerBox ?? 0) > 1 ? "box" : "piece";
+      setLines((prev) =>
+        prev.map((l) => {
+          if (l.tempId !== read.tempId) return l;
+          let stepped = l;
+          for (let i = 0; i < read.n; i += 1) stepped = stepLine(stepped, unit, -1);
+          return stepped;
+        }),
+      );
+    }
+    refocus();
+  };
+
   const undoRemove = () => {
     if (!undo || lineLocked || saleInFlight()) return;
     // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
@@ -1024,6 +1079,8 @@ export function CounterSaleScreen() {
     setCustomerSearch("");
     setLines([]);
     setScanText("");
+    setLastRead(null);
+    setCameraOffNote(false);
     scan.reset();
     resetTenderDefault();
     setMethod("CASH");
@@ -1648,7 +1705,8 @@ export function CounterSaleScreen() {
                 enabled={cameraEnabled}
                 frameBlocked={() => cameraFrameBlocked(scanRef.current)}
                 onCode={onCameraCode}
-                added={scan.message ? "" : scanCue || scan.added}
+                added={lastRead && !scan.message ? scanCue || scan.added : ""}
+                onUndo={undoRead}
                 onClose={toggleCamera}
                 buyer={{ kind: buyerChoice.kind, name: customer?.businessName }}
               />
@@ -1721,6 +1779,15 @@ export function CounterSaleScreen() {
                 </span>
               ) : null}
             </form>
+            {cameraOffNote && !cameraOpen ? (
+              <p
+                role="status"
+                className="pb-1 text-xs text-navy/70"
+                data-testid="counter-camera-off"
+              >
+                Camera off. Tap Scan with camera to turn it back on.
+              </p>
+            ) : null}
           </div>
           {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
           <CounterLiveMatches live={live} onPick={pickLive} onCreate={newItem.open} />
@@ -1883,7 +1950,14 @@ export function CounterSaleScreen() {
           data-testid="counter-payment-column"
         >
           {/* payment on the same screen */}
-          <section ref={paymentRef} aria-label="Payment" className="space-y-3">
+          <section
+            ref={(el) => {
+              paymentRef.current = el;
+              setPaymentEl(el);
+            }}
+            aria-label="Payment"
+            className="space-y-3"
+          >
             {licenseNeeded ? (
               <p className="text-sm text-amber-800" data-testid="counter-license-note">
                 {COUNTER_LICENSE_NOTE}
@@ -2146,21 +2220,23 @@ export function CounterSaleScreen() {
           >
             {/* R7b 1.3: below md the Payment section sits above the bar, out of sight: the bar names the chosen tender, from a
                 LIST of tenders (one today; the split-tender seam), and "Change payment" brings the section back. */}
-            <button
-              type="button"
-              className={cn(
-                TAP_TARGET,
-                "flex w-full items-center justify-between gap-2 rounded border px-3 text-left text-sm md:hidden",
-              )}
-              data-testid="counter-bar-tender"
-              disabled={locked}
-              onClick={bringPaymentIntoView}
-            >
-              <span className="min-w-0 truncate font-medium">
-                {barTenders.map((t) => t.text).join(" + ")}
-              </span>
-              <span className="shrink-0 text-brand-700 underline">Change payment</span>
-            </button>
+            {paymentOffScreen ? (
+              <button
+                type="button"
+                className={cn(
+                  TAP_TARGET,
+                  "flex w-full items-center justify-between gap-2 rounded border px-3 text-left text-sm md:hidden",
+                )}
+                data-testid="counter-bar-tender"
+                disabled={locked}
+                onClick={bringPaymentIntoView}
+              >
+                <span className="min-w-0 truncate font-medium">
+                  {barTenders.map((t) => t.text).join(" + ")}
+                </span>
+                <span className="shrink-0 text-brand-700 underline">Change payment</span>
+              </button>
+            ) : null}
             {/* CQ-08: the number explains itself, in the receipt's order: Subtotal at the system prices, Discounts, Tax,
                 each named regulated charge, then the total. Every figure is the one the receipt prints. */}
             <div className="flex justify-between text-sm" data-testid="running-subtotal">
