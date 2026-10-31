@@ -294,7 +294,7 @@ export function PriceEditor({
               <span className="text-sm text-navy/40">$</span>
               <MoneyInput
                 min={0}
-                placeholder={(li.specialPrice ?? li.listPrice).toFixed(2)}
+                placeholder={li.unitPrice.toFixed(2)}
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
                 aria-label="Price"
