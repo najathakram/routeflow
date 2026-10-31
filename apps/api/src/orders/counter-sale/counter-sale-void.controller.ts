@@ -9,6 +9,7 @@ import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { CounterSaleVoidDto } from "./counter-sale-void.dto";
 import { CounterSaleVoidService } from "./counter-sale-void.service";
 
+import { RequirePermission } from "../../auth/permissions/permission.decorators";
 /**
  * POST /orders/counter-sale/:orderId/void (SA-762r): void a counter sale rung today: its counter tender, invoices and
  * order in one transaction (counter-sale-void.service.ts). 200 either way: a repeat answers `replayed: true` with the
@@ -16,6 +17,7 @@ import { CounterSaleVoidService } from "./counter-sale-void.service";
  * VOID_SALE) is judged again in the service. Its own controller so the register's controller keeps its shape; the
  * path has two segments after `counter-sale`, so no `orders/:id` route can take it.
  */
+@RequirePermission("ORDERS")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)

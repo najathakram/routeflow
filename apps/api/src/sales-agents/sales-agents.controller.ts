@@ -38,6 +38,7 @@ import { MAX_LIST_LIMIT } from "../common/pagination";
 import { SalesAgentsService } from "./sales-agents.service";
 import { IsOptionalNotNull } from "../common/validators/optional-not-null";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // ─── DTOs ────────────────────────────────────────────────────────────────────
 // House convention keeps request DTOs in their own dto/*.ts file (see
 // create-customer.dto.ts). This work package's file allowlist has no dto/
@@ -126,6 +127,7 @@ export class CurrentAssignmentQueryDto {
  * tenant lacks the addon (guard reads class-level metadata via
  * getAllAndOverride, so one @RequirePlanFlag here covers every route).
  */
+@RequirePermission("FINANCE")
 @Controller("sales-agents")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)

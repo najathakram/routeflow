@@ -6,6 +6,7 @@ import { RolesGuard } from "../../../auth/guards/roles.guard";
 import { Roles } from "../../../auth/decorators/roles.decorator";
 import { CurrentUser } from "../../../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../../../auth/jwt-payload.interface";
+import { RequirePermission } from "../../../auth/permissions/permission.decorators";
 import { TillPermissionGuard } from "../till-permission.guard";
 import {
   CorrectOpeningFloatDto,
@@ -19,6 +20,7 @@ import { CounterDrawerService } from "./counter-drawer.service";
  * `GET orders/:id` can never take them. Record and read: OPERATOR behind the till guard (TENANT_ADMIN passes through the role
  * hierarchy). Correct: TENANT_ADMIN only (the till guard is on it too: the census pins every counter handler, and an admin always passes it).
  */
+@RequirePermission("ORDERS") // SA ruling (#3799): ORDERS alone on read/record; correct stays TENANT_ADMIN, so the map reads ADMIN
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)

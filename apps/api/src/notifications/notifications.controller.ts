@@ -7,6 +7,7 @@ import { UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { NotificationsService } from "./notifications.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 @Controller("notifications")
 @UseGuards(JwtAuthGuard)
 export class NotificationsController {
@@ -30,6 +31,7 @@ export class NotificationsController {
     return this.notificationsService.sendTestNotification(user.sub);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

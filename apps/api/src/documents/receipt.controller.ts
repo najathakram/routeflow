@@ -8,11 +8,13 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { ReceiptService } from "./receipt.service";
 import { SendReceiptDto } from "./send-receipt.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * POST /orders/:id/receipt (SA-751r): send a receipt for any order with a live invoice (counter, delivered or picked up).
  * OPERATOR admits TENANT_ADMIN through RolesGuard's hierarchy. The audit trail is the global interceptor's row (who, when)
  * plus the EmailDelivery row (to, status) the send writes.
  */
+@RequirePermission("ORDERS", "FINANCE")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)

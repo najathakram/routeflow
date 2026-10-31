@@ -55,6 +55,8 @@ import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
 import { toCustomerOrder } from "../common/staff-only-fields";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+@RequirePermission("ORDERS")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -501,6 +503,7 @@ export class OrdersController {
   }
 
   /** #3168: mark several carrier orders shipped in one request (per-order outcomes, never all-or-nothing). */
+  @RequirePermission("ORDERS", "DISPATCH")
   @Post("batch-ship")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
@@ -516,6 +519,7 @@ export class OrdersController {
   }
 
   /** #3168: one PDF with a packing slip page per carrier order (no prices). */
+  @RequirePermission("ORDERS", "DISPATCH")
   @Post("packing-slips")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
@@ -528,6 +532,7 @@ export class OrdersController {
    * The operator UI calls this when a customer is picked so it can prompt
    * "Merge into existing order or create separate?"
    */
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("active")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
@@ -562,6 +567,7 @@ export class OrdersController {
     };
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("price-history")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
@@ -596,6 +602,7 @@ export class OrdersController {
   // and PENDING → DRAFT) are gated by role INSIDE changeStatus — TENANT_ADMIN
   // must be allowed through here too, or the RolesGuard 403s before the service
   // ever gets a chance to allow it.
+  @RequirePermission("ORDERS", "DISPATCH")
   @Patch(":id/status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.DRIVER)
@@ -679,6 +686,7 @@ export class OrdersController {
 
   // Set/clear carrier shipment tracking on an order shipped via a carrier (not
   // delivered on our own route). Mirrors the values onto its non-void invoices.
+  @RequirePermission("ORDERS", "DISPATCH")
   @Patch(":id/shipment")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
@@ -692,6 +700,7 @@ export class OrdersController {
 
   // Ad-hoc trips + fulfillment mode: staff-only ROUTE/SHIP switch. Locked once
   // the order has left the "open" states (service enforces the 400).
+  @RequirePermission("ORDERS", "DISPATCH")
   @Patch(":id/fulfill-path")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
@@ -720,6 +729,7 @@ export class OrdersController {
   // (0 = exempt, null = clear). Body kept as an inline type — no dedicated DTO
   // file — mirroring the toggleUrgent precedent above; validated in the
   // service (setCommissionRate), same gate as parseOrderDate.
+  @RequirePermission("ORDERS", "FINANCE")
   @Patch(":id/commission-rate")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

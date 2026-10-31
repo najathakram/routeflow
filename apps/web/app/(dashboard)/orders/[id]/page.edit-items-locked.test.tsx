@@ -77,4 +77,14 @@ describe("W-861: a paid walk-in sale on the order page", () => {
     expect(screen.getByRole("button", { name: /^Edit Items$/ })).toBeInTheDocument();
     expect(screen.queryByTestId("edit-items-locked")).toBeNull();
   });
+
+  it("editItemsLocked: no Reopen order either (the server refuses the reopen with the same 409)", async () => {
+    await open({ editItemsLocked: true });
+    expect(screen.queryByRole("button", { name: /^Reopen order$/ })).toBeNull();
+  });
+
+  it("not locked: Reopen order is offered on a delivered order", async () => {
+    await open({ editItemsLocked: false });
+    expect(screen.getByRole("button", { name: /^Reopen order$/ })).toBeInTheDocument();
+  });
 });

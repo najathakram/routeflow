@@ -20,12 +20,14 @@ import type { JwtPayload } from "../../../auth/jwt-payload.interface";
 import { DayCloseDto, DayCloseQueryDto } from "./day-close.dto";
 import { CounterDayCloseService } from "./day-close.service";
 
+import { RequirePermission } from "../../../auth/permissions/permission.decorators";
 /**
  * Counter DAY CLOSE + Z REPORT (SA-750r3). Same `orders` base as the counter-sale controller, two or more segments deep so
  * `GET orders/:id` can never take them. Every route is OPERATOR (RolesGuard admits TENANT_ADMIN through the hierarchy, which is
  * exactly "OPERATOR or TENANT_ADMIN" for reopen and the report resend) and is refused COUNTER_SALES_DISABLED by the service for a
  * tenant with counter sales off.
  */
+@RequirePermission("ORDERS", "FINANCE")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)

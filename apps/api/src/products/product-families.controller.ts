@@ -8,15 +8,18 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { ProductFamiliesService } from "./product-families.service";
 import { CreateFamilyDto, UpdateFamilyVariantsDto } from "./dto/family.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * WS8 families API. Registered BEFORE ProductsController (products.module.ts; pinned in products-route-order.spec) so
  * `GET /products/sku-available` is never captured by `GET /products/:id`.
  */
+@RequirePermission("CATALOG")
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ProductFamiliesController {
   constructor(private readonly families: ProductFamiliesService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("sku-available")
   @Roles(UserRole.OPERATOR)
   skuAvailable(@Query("code") code: string, @Query("excludeProductId") excludeProductId?: string) {
