@@ -391,7 +391,7 @@ export class MessagingService {
       channels?: MessageChannel[];
       exceptChannels?: MessageChannel[];
     },
-  ): Promise<void> {
+  ): Promise<SendOutcome[] | void> {
     try {
       const senderId =
         args.senderId ?? (await this.resolveSystemSenderId(this.prisma.getTenantId()));
@@ -407,7 +407,7 @@ export class MessagingService {
         });
         vars = { ...vars, customerName: customer?.businessName ?? "Customer" };
       }
-      await this.notify(eventKey, {
+      return await this.notify(eventKey, {
         customerId: args.customerId,
         senderId,
         vars,
