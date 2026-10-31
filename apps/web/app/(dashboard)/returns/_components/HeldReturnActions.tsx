@@ -17,14 +17,14 @@ const REASON_MAX = 200;
 
 /**
  * Fixed copy for a refusal, chosen by status. The server's own text is never shown (the B986 ratchet: no raw server message in the
- * UI). A 409 on approve is a walk-in return, which is refunded at the till and never turned into credit.
+ * UI). A 409 on approve is a return captured for a refund, which is never turned into credit.
  */
 function refusalText(err: unknown, action: "approve" | "reject"): string {
   const status = (err as { response?: { status?: number } } | null)?.response?.status;
   if (status === 404) return "This return isn't here anymore. Refresh the page.";
   if (status === 400) return "This return isn't waiting for approval anymore. Refresh the page.";
   if (status === 409 && action === "approve")
-    return "This return can't be approved. A walk-in return is refunded at the till, not credited.";
+    return "This return can't be approved. It was captured for a refund, not for credit.";
   return "Please try again.";
 }
 

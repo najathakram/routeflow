@@ -99,11 +99,11 @@ describe("HeldReturnActions: a refusal shows fixed copy, never the server's text
     approveMutate.mock.calls[0][1].onError({ response });
   };
 
-  it("a 409 says a walk-in return is refunded at the till", async () => {
+  it("a 409 says the return was captured for a refund, not for credit", async () => {
     refuse({ status: 409, data: { message: "server text that must not show" } });
     expect(
       await screen.findByText(
-        "This return can't be approved. A walk-in return is refunded at the till, not credited.",
+        "This return can't be approved. It was captured for a refund, not for credit.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/must not show/)).toBeNull();
