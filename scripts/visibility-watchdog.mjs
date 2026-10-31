@@ -64,16 +64,21 @@
 //
 // SINGLE INSTANCE (#2076)
 // A lock file beside the log (`local-assets/visibility-watchdog.lock`) records the running watchdog's
-// pid, repo and deadline. A second start finds the live pid, prints it and its deadline, logs a
-// `refused` line and exits 3. `--replace` stops the recorded pid first (SIGTERM, only after the pid's
+// pid, repo and deadline. A second start finds the live pid and reads the visibility of the repo that
+// watchdog guards. PRIVATE, with this start's deadline later than the old one's: there is no window for
+// the old one to guard, so it is stopped and the new start takes over, with a `takeover` log line
+// (a lock left by a finished window cost 15 minutes on 2026-10-30). PUBLIC or unknown, or an earlier
+// deadline (a window its opener has still to open would lose its cover): the start prints the pid and
+// deadline, logs a `refused` line naming the read and exits 3. `--replace` skips the read and stops the
+// recorded pid first (SIGTERM, only after the pid's
 // command line is confirmed to name this script: `ps` on POSIX, Win32_Process on Windows, so a
 // recycled pid is never killed) and then takes the lock. A lock is STALE, and simply taken over
 // without killing anything, when its pid is dead, when the pid now belongs to ANOTHER process, or
 // when its deadline plus the ~16 min retry budget has passed: a watchdog killed by Stop-Process or a
 // reboot leaves its lock behind, and refusing then would open the public window with no watchdog.
 // The one exception is an "unknown" identity (the `ps` / CIM check itself could not run): that is NOT
-// stale. It is treated as a live watchdog and REFUSES (exit 3, a `refused` log line, `--replace` never
-// kills it) until the deadline plus the retry budget has passed, so the operator investigates instead
+// stale. It is treated as a live watchdog and REFUSES (exit 3, a `refused` log line, neither a takeover
+// nor `--replace` kills it) until the deadline plus the retry budget has passed, so the operator investigates instead
 // of the script guessing. Only a positive "other" or "gone" answer, or an overdue lock, is taken over.
 //
 // The lock is removed on exit and on SIGINT/SIGTERM. Two watchdogs must never coexist: the OLDER one's earlier deadline would flip the
@@ -474,6 +479,19 @@ function createLock(file, content) {
   }
 }
 
+/**
+ * Whether a start may stop a confirmed live watchdog without --replace, and what it read. Only a
+ * PRIVATE read with a later deadline: anything else is a window that watchdog may still be guarding.
+ */
+function takeoverDecision({ held, repo, deadline }) {
+  const visibility = readVisibility(held.repo ?? repo) ?? "unknown";
+  if (visibility !== "PRIVATE") return { takeover: false, read: `visibility=${visibility}` };
+  if (!(Date.parse(deadline) > Date.parse(held.deadline ?? ""))) {
+    return { takeover: false, read: `visibility=${visibility}, but it holds a later deadline` };
+  }
+  return { takeover: true, read: `visibility=${visibility}` };
+}
+
 /** Take the lock, or report who holds it. {ok:true} | {ok:false, message}. */
 async function acquireLock({ repo, deadline, replace }) {
   const file = lockFile();
@@ -506,10 +524,17 @@ async function acquireLock({ repo, deadline, replace }) {
       const stale = who2 === "other" || who2 === "gone" || overdue;
       if (!stale) {
         if (!replace) {
-          return {
-            ok: false,
-            message: `already running: ${who}. Pass --replace to stop it and take over.`,
-          };
+          const { takeover, read } =
+            who2 === "watchdog"
+              ? takeoverDecision({ held, repo, deadline })
+              : { takeover: false, read: "visibility=not read, its identity is unconfirmed" };
+          if (!takeover) {
+            return {
+              ok: false,
+              message: `already running: ${who}, ${read}. Pass --replace to stop it and take over.`,
+            };
+          }
+          log("takeover", `stopping ${who}: ${read}`);
         }
         if (who2 !== "watchdog") {
           return {
@@ -583,7 +608,8 @@ async function main({ minutes, repo, replace, windowMarker }) {
   const openedAt = new Date().toISOString();
   const deadline = new Date(Date.now() + waitMs).toISOString();
 
-  // One watchdog at a time, decided BEFORE the first `gh` call or log line.
+  // One watchdog at a time, decided BEFORE the first `gh` call or log line. Only a live holder
+  // makes one of each, for the takeover decision.
   const lock = await acquireLock({ repo, deadline, replace });
   if (!lock.ok) {
     // Written to the log too: the runbook launches discard stderr, so a refusal that only reaches

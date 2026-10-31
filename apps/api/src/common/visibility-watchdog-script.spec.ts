@@ -90,6 +90,10 @@ beforeAll(() => {
       "  writeState(state);",
       "  process.exit(0);",
       "} else if (args[0] === 'repo' && args[1] === 'view') {",
+      "  if (mode === 'view-fail') {",
+      "    process.stderr.write('HTTP 502: Bad Gateway\\n');",
+      "    process.exit(1);",
+      "  }",
       "  const state = readState();",
       "  process.stdout.write(JSON.stringify({ visibility: state.visibility }));",
       "  process.exit(0);",
@@ -681,6 +685,107 @@ describe("visibility-watchdog.mjs: argument validation and single instance (#207
     // Load flake (row 272): passes alone, took 111 s on a saturated shared host (the replacer's
     // PowerShell process-identity check is slow under load). Timeout only; assertions unchanged.
   }, 240_000);
+
+  describe("a live watchdog holds the lock: the visibility read at start decides", () => {
+    const setVisibility = (logFile: string, visibility: string) =>
+      fs.writeFileSync(
+        logFile.replace(/\.log$/, ".state.json"),
+        JSON.stringify({ visibility, editCalls: 0 }),
+      );
+    const startNext = (logFile: string, minutes: string, env = fakeEnv("success", logFile)) =>
+      spawn(process.execPath, [SCRIPT, "--minutes", minutes, "--repo", "acme/test"], {
+        env,
+        stdio: "ignore",
+      });
+    /** Waits for the new start's own `start` line or for a refusal, whichever the log shows first. */
+    async function decided(logFile: string, pid: number | undefined) {
+      for (let i = 0; i < 4_000; i++) {
+        const text = readLog(logFile);
+        if (text.includes(` pid=${pid} `) || text.includes(" refused ")) return text;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error("the new start neither armed nor refused");
+    }
+
+    it("PRIVATE: the new start stops the old one, takes the lock and logs a takeover line", async () => {
+      const logFile = newLogPath("takeover-private");
+      const holder = await startHolder(logFile);
+      setVisibility(logFile, "PRIVATE");
+      // A later deadline than the holder's 5 minutes. Async: a blocked parent could not reap it.
+      const next = startNext(logFile, "6");
+      try {
+        const text = await decided(logFile, next.pid);
+        expect(text).not.toContain(" refused ");
+        expect(text).toMatch(new RegExp(` takeover .*pid ${holder.pid}.*visibility=PRIVATE`));
+        await exited(holder);
+        expect(JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid).toBe(next.pid);
+      } finally {
+        holder.kill("SIGKILL");
+        next.kill("SIGKILL");
+        await Promise.all([exited(holder), exited(next)]);
+      }
+    }, 240_000);
+
+    it("PRIVATE reads the repo the old watchdog guards, not the new start's", async () => {
+      const logFile = newLogPath("takeover-held-repo");
+      const holder = await startHolder(logFile);
+      const next = spawn(process.execPath, [SCRIPT, "--minutes", "6", "--repo", "acme/other"], {
+        env: recordingEnv(logFile),
+        stdio: "ignore",
+      });
+      try {
+        await decided(logFile, next.pid);
+        expect(fs.readFileSync(callsFile, "utf8").split(String.fromCharCode(10))[0]).toBe(
+          "repo view acme/test --json visibility",
+        );
+      } finally {
+        holder.kill("SIGKILL");
+        next.kill("SIGKILL");
+        await Promise.all([exited(holder), exited(next)]);
+      }
+    }, 240_000);
+
+    it("PRIVATE with an earlier deadline than the old one: refused, so a window it was armed for keeps its cover", async () => {
+      const logFile = newLogPath("takeover-earlier-deadline");
+      const holder = await startHolder(logFile);
+      setVisibility(logFile, "PRIVATE");
+      try {
+        const res = run(["--minutes", "1", "--repo", "acme/test"], fakeEnv("success", logFile));
+        expect(res.status).toBe(3);
+        expect(readLog(logFile)).toMatch(
+          new RegExp(` refused .*pid ${holder.pid}.*visibility=PRIVATE.*later deadline`),
+        );
+        expect(holder.exitCode).toBeNull();
+      } finally {
+        holder.kill("SIGKILL");
+        await exited(holder);
+      }
+    }, 240_000);
+
+    it.each([
+      ["PUBLIC", "success"],
+      ["unknown", "view-fail"],
+    ])(
+      "%s: refused, the old one keeps running, and the log says what was read",
+      async (read, mode) => {
+        const logFile = newLogPath(`takeover-${read}`);
+        const holder = await startHolder(logFile);
+        try {
+          const res = run(["--minutes", "6", "--repo", "acme/test"], fakeEnv(mode, logFile));
+          expect(res.status).toBe(3);
+          expect(readLog(logFile)).toMatch(
+            new RegExp(` refused .*pid ${holder.pid}.*visibility=${read}`),
+          );
+          expect(holder.exitCode).toBeNull();
+          expect(JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid).toBe(holder.pid);
+        } finally {
+          holder.kill("SIGKILL");
+          await exited(holder);
+        }
+      },
+      240_000,
+    );
+  });
 
   it("a lock left by a dead pid is stale: the new start just takes it", async () => {
     const logFile = newLogPath("stale-lock");
