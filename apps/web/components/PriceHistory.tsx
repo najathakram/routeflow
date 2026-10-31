@@ -393,15 +393,17 @@ function PanelBody({
                 aria-selected={i === active}
                 onMouseEnter={() => setActive(i)}
                 className={cn(
-                  "flex flex-nowrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
+                  "grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
                   i === active && "bg-brand-50/60",
                 )}
               >
-                <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
-                <td className="py-1 pr-2 font-mono text-navy">
+                <td className="col-start-1 row-start-1 whitespace-nowrap py-1 pr-0 text-navy/70 sm:pr-2">
+                  {fmtDate(r.date)}
+                </td>
+                <td className="col-start-2 row-span-2 row-start-1 py-1 pr-0 font-mono text-navy sm:pr-2">
                   {fmt(r.unitPrice)}
                   {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                    <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
+                    <span className="block w-fit rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
                       {PRICE_TYPE_TAG[r.priceType]}
                     </span>
                   )}
@@ -416,11 +418,11 @@ function PanelBody({
                     {marginCell(r)}
                   </td>
                 )}
-                <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
+                <td className="col-start-1 row-start-2 max-w-[5rem] break-words py-1 pl-0 pr-0 text-navy/70 sm:pl-2 sm:pr-2">
                   {r.qty} {r.unitLabel}
                 </td>
                 <td
-                  className="min-w-0 max-w-[7rem] py-1 pr-2 text-navy/70"
+                  className="col-start-3 row-span-2 row-start-1 min-w-0 max-w-[7rem] py-1 pr-0 text-navy/70 sm:pr-2"
                   title={
                     r.source === "INVOICE"
                       ? (r.invoiceNumber ?? r.orderNumber)
@@ -437,7 +439,7 @@ function PanelBody({
                     </span>
                   )}
                 </td>
-                <td className="ml-auto shrink-0 py-1 text-right">
+                <td className="col-start-4 row-span-2 row-start-1 ml-auto shrink-0 py-1 text-right">
                   <button
                     type="button"
                     disabled={!canUse(r)}

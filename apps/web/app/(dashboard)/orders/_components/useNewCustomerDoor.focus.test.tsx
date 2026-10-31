@@ -76,6 +76,19 @@ function Harness({ noMatch = false, picked }: { noMatch?: boolean; picked: () =>
   );
 }
 
+/** The same door with no `focusBack`, like the order builder: there the add window's own focus handling is all there is. */
+function HarnessNoFocusBack() {
+  const door = useNewCustomerDoor(jest.fn());
+  return (
+    <div>
+      <button type="button" onClick={(e) => door.open("", e.currentTarget)}>
+        Add customer
+      </button>
+      {door.modal}
+    </div>
+  );
+}
+
 const flush = () => act(() => new Promise<void>((r) => setTimeout(r, 20)));
 const open = async (name: string) => {
   const btn = screen.getByRole("button", { name });
@@ -124,6 +137,24 @@ describe("the counter's new-customer door hands focus back (F21)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await flush();
     expect(document.activeElement).toBe(screen.getByLabelText("Find a customer"));
+  });
+
+  it("with no focusBack passed, dismissing the window does not move focus at all", async () => {
+    render(<HarnessNoFocusBack />);
+    const btn = screen.getByRole("button", { name: "Add customer" });
+    btn.focus();
+    fireEvent.click(btn);
+    expect(screen.getByRole("dialog", { name: "Add Customer" })).toBeInTheDocument();
+    const focus = jest.spyOn(HTMLElement.prototype, "focus");
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await flush();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(focus).not.toHaveBeenCalled(); // not to the opener, not anywhere
+      expect(document.activeElement).not.toBe(btn);
+    } finally {
+      focus.mockRestore();
+    }
   });
 
   it("success path: creating a customer leaves focus where the screen put it (the scan box)", async () => {
