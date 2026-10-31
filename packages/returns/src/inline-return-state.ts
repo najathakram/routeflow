@@ -201,6 +201,23 @@ function parseNonNegativeInt(raw: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/**
+ * The row of one product whose reason (and so its stock outcome) the capture applies. `buildCaptureRequest` drops rows with no
+ * quantity and THEN merges the rest, keeping the first merged row's reason, so the ruling row is the first row of the product
+ * WITH a quantity; with none yet, the first row. -1 when the product has no row. The screen reads this, never "first row".
+ */
+export function rulingLineIndex(
+  lines: Pick<InlineReturnLineDraft, "productId" | "boxes" | "pieces">[],
+  productId: string,
+): number {
+  const withQty = lines.findIndex(
+    (l) =>
+      l.productId === productId &&
+      (parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0),
+  );
+  return withQty >= 0 ? withQty : lines.findIndex((l) => l.productId === productId);
+}
+
 /** "Get quote" enables when any line has boxes > 0 or pieces > 0. */
 export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
   return lines.some((l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0);
@@ -376,6 +393,13 @@ export function coveredPiecesByProduct(quote: InlineReturnQuoteResponse): Map<st
  */
 export const NOTHING_BOUGHT_BEFORE_MESSAGE =
   "This customer hasn't bought these items before — there's no invoice to return them against.";
+
+/**
+ * The same disabled "Return only what was bought" on a line that WAS bought, every piece of it already returned or credited:
+ * "hasn't bought" would be false there, so it says what is true.
+ */
+export const ALREADY_RETURNED_NOTHING_LEFT_MESSAGE =
+  "What was bought was already returned or credited, so nothing is left to return against an invoice.";
 
 /**
  * #2693: option 3 is only possible when the quote matched at least one piece to an invoice line.

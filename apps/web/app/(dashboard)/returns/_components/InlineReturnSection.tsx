@@ -41,8 +41,10 @@ import {
   hasAnyQtyEntered,
   isBoxedProduct,
   lineQuoteFacts,
+  ALREADY_RETURNED_NOTHING_LEFT_MESSAGE,
   NOTHING_BOUGHT_BEFORE_MESSAGE,
   restocksForReason,
+  rulingLineIndex,
   sumChunkTotals,
   type InlineReturnLineDraft,
   type LineQuoteFacts,
@@ -386,9 +388,10 @@ export function InlineReturnSection({
           {lines.map((line, lineIndex) => {
             const firstIndex = lines.findIndex((l) => l.productId === line.productId);
             const firstOfProduct = firstIndex === lineIndex;
-            // buildCaptureRequest merges rows of one product and keeps the FIRST row's reason, so that is the reason the server
-            // applies (and the stock outcome that follows from it) to every row of the product
-            const ruling = lines[firstIndex];
+            // buildCaptureRequest drops rows with no quantity, merges the rest of one product and keeps the first merged row's
+            // reason, so that row's reason is what the server applies (and the stock outcome that follows) to the whole product
+            const rulingIndex = rulingLineIndex(lines, line.productId);
+            const ruling = lines[rulingIndex];
             const facts =
               firstOfProduct && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
             return (
@@ -405,7 +408,8 @@ export function InlineReturnSection({
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
                   stocks={restocksForReason(ruling.reason || captureReason)}
-                  followsFirst={!firstOfProduct}
+                  followsFirst={lineIndex !== rulingIndex}
+                  rulingIsFirst={rulingIndex === firstIndex}
                   firstReason={ruling.reason}
                   canOverrideCredit={canOverrideCredit}
                   needsAlreadyReturnedReason={
@@ -607,6 +611,7 @@ function ReturnLine({
   reasonLabel,
   stocks,
   followsFirst,
+  rulingIsFirst,
   firstReason,
   canOverrideCredit,
   needsAlreadyReturnedReason,
@@ -631,8 +636,10 @@ function ReturnLine({
   reasonOptions: Array<{ value: ReturnReason; label: string }>;
   reasonLabel: string;
   stocks: boolean;
-  /** A second row of a product the list already holds: its reason is the first row's, so it cannot take its own. */
+  /** A row of a product that is not the one whose reason rules (the first row with a quantity): it cannot take its own. */
   followsFirst: boolean;
+  /** the ruling row is the product's first row, so the label can say "the first row" */
+  rulingIsFirst: boolean;
   firstReason: ReturnReason | "";
   canOverrideCredit: boolean;
   needsAlreadyReturnedReason: boolean;
@@ -785,7 +792,13 @@ function ReturnLine({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Select
             className="max-lg:h-11"
-            label={followsFirst ? "Reason (same as the first row)" : "Reason (optional)"}
+            label={
+              followsFirst
+                ? rulingIsFirst
+                  ? "Reason (same as the first row)"
+                  : "Reason (same as the first row with a count)"
+                : "Reason (optional)"
+            }
             value={followsFirst ? firstReason : line.reason}
             disabled={locked || followsFirst}
             onChange={(e) => onChange({ reason: e.target.value as ReturnReason | "" })}
@@ -914,7 +927,9 @@ function ReturnLine({
             </label>
             {!onlyPossible && coveredPieces === 0 && (
               <p id={`excess-nothing-bought-${line.lineKey}`} className="text-xs text-navy/70">
-                {NOTHING_BOUGHT_BEFORE_MESSAGE}
+                {hasAlreadyReturned
+                  ? ALREADY_RETURNED_NOTHING_LEFT_MESSAGE
+                  : NOTHING_BOUGHT_BEFORE_MESSAGE}
               </p>
             )}
           </fieldset>

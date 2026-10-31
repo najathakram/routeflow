@@ -2,7 +2,11 @@ import * as React from "react";
 import { act } from "react";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
-import { NOTHING_BOUGHT_BEFORE_MESSAGE } from "@routeflow/returns";
+import {
+  ALREADY_RETURNED_NOTHING_LEFT_MESSAGE,
+  buildCaptureRequest,
+  NOTHING_BOUGHT_BEFORE_MESSAGE,
+} from "@routeflow/returns";
 import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routeflow/types";
 
 /**
@@ -804,5 +808,99 @@ describe("review-c on #4036 (T1, four MUSTs and the mutants they left)", () => {
         "Back to stock",
       );
     }
+  });
+});
+
+describe("review-c on #4036 at 852bb08fce", () => {
+  const twoRows = () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+  };
+  const sentReason = (lines: InlineReturnSectionState["lines"]) =>
+    buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      lines,
+      returnKey: "k",
+      reason: "EXCESS_ORDER",
+    }).items[0]?.reason;
+
+  it("MUST 4, blank first row: the row that counts rules, on screen and in what is sent", async () => {
+    twoRows();
+    const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    const toggles = screen.getAllByRole("button", { name: /options for widget/i });
+    fireEvent.click(toggles[0]);
+    fireEvent.click(toggles[1]);
+    // the clerk sets DAMAGED on row 1 (no counts yet, so it rules), then counts on row 2 and leaves row 1 blank
+    fireEvent.change(within(rows()[0]).getByLabelText("Reason (optional)"), {
+      target: { value: "DAMAGED" },
+    });
+    setQty("3", 1);
+    // row 1 has no quantity, so the capture drops it: it neither rules nor reads DAMAGED
+    const first = within(rows()[0]).getByLabelText("Reason (same as the first row with a count)");
+    expect(first).toBeDisabled();
+    expect((first as HTMLSelectElement).value).toBe("");
+    const second = within(rows()[1]).getByLabelText("Reason (optional)");
+    expect(second).toBeEnabled();
+    for (const r of rows()) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Back to stock",
+      );
+      expect(within(r).getByTestId("return-line-summary-prod-1")).not.toHaveTextContent(
+        "Not added to stock",
+      );
+    }
+    expect(sentReason(last().lines)).toBeUndefined();
+    // the reason set on the row that counts is the one both rows read and the one that is sent
+    fireEvent.change(second, { target: { value: "DAMAGED" } });
+    for (const r of rows()) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Not added to stock",
+      );
+    }
+    expect(sentReason(last().lines)).toBe("DAMAGED");
+  });
+
+  it("MUST 4, both rows counted: the first row still rules and says 'the first row'", async () => {
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    expect(within(rows()[1]).getByLabelText("Reason (same as the first row)")).toBeDisabled();
+  });
+
+  it("an already-returned line with nothing covered does not say the customer hasn't bought it", async () => {
+    authRole = "OPERATOR";
+    renderSection();
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([noSale({ pieces: 6, subtotal: 12, taxAmount: 0, alreadyReturned: true })]),
+    );
+    const line = within(row("prod-1"));
+    const only = line.getByRole("radio", { name: /return only what was bought/i });
+    expect(only).toBeDisabled();
+    expect(line.getByText(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE)).toBeInTheDocument();
+    expect(line.queryByText(NOTHING_BOUGHT_BEFORE_MESSAGE)).toBeNull();
+    expect(line.queryByText(/hasn't bought/i)).toBeNull();
+  });
+
+  it("a line that was never bought still says so, and not the already-returned sentence", async () => {
+    renderSection();
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([noSale({ pieces: 6, subtotal: 15, taxAmount: 0 })]));
+    fireEvent.click(optionsToggle("Widget"));
+    const line = within(row("prod-1"));
+    expect(line.getByText(NOTHING_BOUGHT_BEFORE_MESSAGE)).toBeInTheDocument();
+    expect(line.queryByText(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE)).toBeNull();
   });
 });

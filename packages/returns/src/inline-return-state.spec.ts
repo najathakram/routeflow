@@ -21,6 +21,9 @@ import {
   keyReusedReturnOf,
   INLINE_RETURN_KEY_REUSED_CODE,
   mintReturnKey,
+  rulingLineIndex,
+  ALREADY_RETURNED_NOTHING_LEFT_MESSAGE,
+  NOTHING_BOUGHT_BEFORE_MESSAGE,
   RETURNS_NOT_ENABLED_MESSAGE,
   sumChunkTotals,
   type InlineReturnLineDraft,
@@ -1076,5 +1079,59 @@ describe("R-7: the capture body is byte-equal to what master sent for the same l
     expect(JSON.stringify(req)).toBe(
       '{"customerId":"cust-1","orderId":"order-1","items":[{"productId":"prod-1","qty":1,"boxes":2,"pieces":3,"reason":"DAMAGED","condition":"dented"},{"productId":"prod-2","qty":1,"boxes":0,"pieces":4,"alreadyReturnedReason":"Second batch","creditUnitPrice":1.5,"overrideReason":"Scuffed"}],"returnKey":"key-1","reason":"EXCESS_ORDER","sourceOrderId":"sale-1"}',
     );
+  });
+});
+
+describe("rulingLineIndex — the row whose reason the capture keeps (review-c on #4036, MUST 4)", () => {
+  const rows = (...q: [string, string, string?][]) =>
+    q.map(([productId, pieces, reason]) =>
+      line({ productId, pieces, reason: (reason ?? "") as never }),
+    );
+
+  it("is the first row of the product WITH a quantity, not the first row", () => {
+    const lines = rows(["a", "", "DAMAGED"], ["a", "3"]);
+    expect(rulingLineIndex(lines, "a")).toBe(1);
+  });
+  it("is the first row when no row of the product has a quantity yet", () => {
+    expect(rulingLineIndex(rows(["a", ""], ["a", ""]), "a")).toBe(0);
+  });
+  it("counts a boxes-only row as having a quantity, and ignores other products' rows", () => {
+    const lines = [line({ productId: "b", pieces: "9" }), line({ productId: "a", boxes: "2" })];
+    expect(rulingLineIndex(lines, "a")).toBe(1);
+  });
+  it("is -1 for a product with no row", () => {
+    expect(rulingLineIndex(rows(["a", "1"]), "zzz")).toBe(-1);
+  });
+  it("agrees with the reason buildCaptureRequest sends, for every layout of two rows", () => {
+    const layouts: [string, string][] = [
+      ["", "3"],
+      ["3", ""],
+      ["2", "3"],
+      ["", ""],
+    ];
+    for (const [q1, q2] of layouts) {
+      const lines = [
+        line({ productId: "a", pieces: q1, reason: "DAMAGED" }),
+        line({ productId: "a", pieces: q2, reason: "QUALITY_ISSUE" }),
+      ];
+      const sent = buildCaptureRequest({
+        customerId: "c",
+        orderId: "o",
+        lines,
+        returnKey: "k",
+        reason: "EXCESS_ORDER",
+      }).items[0]?.reason;
+      const ruling = lines[rulingLineIndex(lines, "a")];
+      if (q1 === "" && q2 === "") expect(sent).toBeUndefined();
+      else expect(sent).toBe(ruling.reason);
+    }
+  });
+});
+
+describe("ALREADY_RETURNED_NOTHING_LEFT_MESSAGE — true for a line that WAS bought", () => {
+  it("does not say the customer hasn't bought it, and is not the nothing-bought sentence", () => {
+    expect(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE).not.toMatch(/hasn't bought/);
+    expect(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE).not.toBe(NOTHING_BOUGHT_BEFORE_MESSAGE);
+    expect(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE).toMatch(/already returned or credited/);
   });
 });
