@@ -29,14 +29,27 @@ const decide = (li: OverridableLine, price: number, hasReason: boolean) =>
  * #2696(c) — what a typed price does to a new order line, by @routeflow/pricing's
  * decideStaffOverride (the server's own rule A): within ½¢ of the tier price it is no override (the
  * line keeps its special / list price); otherwise DISCOUNTED below list, MANUAL at or above.
+ *
+ * SA-1068 M18: `memoryMayBook` means sending nothing could book a remembered price instead, so a typed price at the tier
+ * is still sent and the server books it. The caller says so when the line has a memory, or when memories are unknown.
  */
 export function applyTypedPrice<T extends OverridableLine>(
   li: T,
   typed: number,
+  opts?: { memoryMayBook?: boolean },
 ): T & { unitPrice: number; priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" } {
   const d = decide(li, Math.max(0, typed), true);
   if ("refused" in d) throw new Error("unreachable: a reason is assumed when classifying");
   const overridden = d.priceType === "DISCOUNTED" || d.priceType === "MANUAL";
+  if (!overridden && opts?.memoryMayBook && !li.isUnlisted) {
+    const price = Math.max(0, typed);
+    return {
+      ...li,
+      discountedPrice: price,
+      unitPrice: d.unitPrice,
+      priceType: price < li.listPrice ? "DISCOUNTED" : "MANUAL",
+    };
+  }
   return {
     ...li,
     discountedPrice: overridden ? Math.max(0, typed) : undefined,

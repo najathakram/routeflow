@@ -546,6 +546,8 @@ export function CreateOrderModal({
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const priceHistoryRead = useCustomerPriceHistory(selectedCustomer?.id);
   const priceHistory = priceHistoryRead.data;
+  // SA-1068 M17: the only memory read in this modal.
+  const rememberedOf = (productId: string) => priceHistory?.[productId]?.lastPrice;
   // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
   // This screen creates a new order, so there is no order of its own to exclude.
   const { data: priceSummary } = usePriceSummary(
@@ -851,11 +853,11 @@ export function CreateOrderModal({
           product: li.tierPrices as unknown as Record<string, unknown>,
           tier,
           layer: priceLayer.layerOf(li.productId),
-          remembered: priceHistory?.[li.productId]?.lastPrice, // SA-1068 M15: what the server books for this plain line
+          remembered: rememberedOf(li.productId), // SA-1068 M15: what the server books for this plain line
         });
         const tierPrice = lp.price;
         const priceType = lp.priceType;
-        const specialPrice = customerLineSpecial(lp);
+        const specialPrice = customerLineSpecial(lp, li.specialPrice);
         if (
           !fromOtherCustomer &&
           li.unitPrice === tierPrice &&
@@ -1015,6 +1017,14 @@ export function CreateOrderModal({
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
     const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
+    // SA-1068 M20: no pre-fill, but the server books the memory: the line starts there, sends nothing and keeps its tier.
+    const memory = hasHistOverride
+      ? undefined
+      : memoryOf({
+          productId: product.id as string,
+          listPrice,
+          tierPrices: product as LineItem["tierPrices"],
+        });
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
     const baseLine: LineItem = {
@@ -1030,7 +1040,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
-      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
+      prefillCustomerId: hasHistOverride || memory != null ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1044,12 +1054,13 @@ export function CreateOrderModal({
             effectiveTier,
           )
         : undefined,
-      unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
-      priceType: hasHistUpsell
-        ? ("MANUAL" as const)
-        : hasHistDiscount
-          ? ("DISCOUNTED" as const)
-          : priceType,
+      unitPrice: hasHistOverride ? histEntry!.lastPrice : (memory ?? tierPrice),
+      priceType:
+        hasHistUpsell || memory != null
+          ? ("MANUAL" as const)
+          : hasHistDiscount
+            ? ("DISCOUNTED" as const)
+            : priceType,
       ...(opts?.ordered ? opts.ordered.qty : newLineQtyForLevel(upb, level, n)),
       unitsPerBox: upb,
       startOnDefaultUnit: opts?.startOnDefaultUnit,
@@ -1351,6 +1362,20 @@ export function CreateOrderModal({
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+  // SA-1068 M17: the memory the server books for this line, by the same rule that prices it: pack only, no layer row.
+  const memoryOf = (li: Pick<LineItem, "productId" | "listPrice" | "unitLabel" | "tierPrices">) => {
+    const lp = customerLinePrice({
+      product: (li.tierPrices ?? { pricePerUnit: li.listPrice }) as unknown as Record<
+        string,
+        unknown
+      >,
+      tier: tierForProduct(li.productId),
+      layer: priceLayer.layerOf(li.productId),
+      unitLabel: li.unitLabel,
+      remembered: rememberedOf(li.productId),
+    });
+    return lp.remembered ? lp.price : undefined;
+  };
 
   // S19b (SA-811a R1): once the customer's layer has loaded, every auto-priced line (pack or unit, however it was added or
   // switched) takes the layer price. Idempotent (a settled line returns itself), so running it after every commit is safe;
@@ -1410,7 +1435,8 @@ export function CreateOrderModal({
       if (!target) return prev;
       const tier = tierForProduct(target.productId);
       const layer = priceLayer.layerOf(target.productId);
-      return applyUnitToLines(prev, tempId, option, refresh, tier, layer);
+      const remembered = rememberedOf(target.productId);
+      return applyUnitToLines(prev, tempId, option, refresh, tier, layer, remembered);
     });
   // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
   const { user: authUser } = useAuth();
@@ -1437,23 +1463,26 @@ export function CreateOrderModal({
         // logic, exactly like a quantity edit (the price controls are disabled while pending as well).
         if (refusesLineEdit(li, "price")) return li;
         if (value == null) {
-          // Clear override — revert to special or list price
-          const revertPrice = li.specialPrice ?? li.listPrice;
+          // Clear override — revert to the memory (SA-1068 M19), else to special or list price
+          const memory = memoryOf(li);
           return {
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
             prefillCustomerId: undefined,
             overrideReason: undefined,
-            unitPrice: revertPrice,
-            priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+            unitPrice: memory ?? li.specialPrice ?? li.listPrice,
+            priceType: memory != null ? "MANUAL" : li.specialPrice != null ? "SPECIAL" : "STANDARD",
             startOnDefaultUnit: false,
           };
         }
         // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
-        const next = applyTypedPrice(li, value);
+        // SA-1068 M18: unknown memories count, so a failed read and a driver are covered too.
+        const next = applyTypedPrice(li, value, {
+          memoryMayBook: priceHistory === undefined || memoryOf(li) != null,
+        });
         const consumed = {
           ...next,
           startOnDefaultUnit: false,
@@ -1790,7 +1819,6 @@ export function CreateOrderModal({
     const layerOf = priceLayer.enabled
       ? (productId: string) => priceLayer.layerOf(productId)
       : undefined;
-    const rememberedOf = (productId: string) => priceHistory?.[productId]?.lastPrice;
     void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
       apiClient.get(`/products/${id}`).then((r) => r.data),
     ).then((fresh) => {

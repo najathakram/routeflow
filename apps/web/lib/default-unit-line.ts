@@ -93,8 +93,10 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   tier: Tier,
   /** S19b: the customer's layer rows for the target product (flag on); omitted = master's tier restore. */
   layer?: readonly CustomerLayerUnit[] | null,
+  /** SA-1068 M22: the customer's remembered price, for a line back on its pack. */
+  remembered?: number | null,
 ): T[] {
-  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier, layer).lines;
+  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier, layer, remembered).lines;
 }
 
 export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
@@ -104,6 +106,7 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   refresh: boolean,
   tier: Tier,
   layer?: readonly CustomerLayerUnit[] | null,
+  remembered?: number | null,
 ): { lines: T[]; fold?: UnitFold<T> } {
   const target = prev.find((li) => li.tempId === tempId);
   if (!target) return { lines: prev };
@@ -112,7 +115,7 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   // Re-applying the unit the line ALREADY holds (a stale picker after the resolver ran) keeps its quantity (N2).
   const sameUnit = option.kind !== "pack" && target.unitLabel === option.value;
   const next = {
-    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit, layer }),
+    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit, layer, remembered }),
     startOnDefaultUnit: false,
     pendingTaps: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.

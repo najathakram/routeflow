@@ -31,6 +31,7 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
 const createOrderMutate = jest.fn();
 // Mutable so a test can put the mutation in its error state (the modal's inline API-error banner).
 let mockCreateOrderError: unknown = null;
+let mockPriceHistory: Record<string, unknown> | undefined; // what the customer's price read returned
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
 let mockCustomerPrices: Array<Record<string, unknown>> = [];
@@ -54,7 +55,7 @@ jest.mock("@/lib/api/orders", () => ({
     reset: jest.fn(),
   }),
   useActiveOrderForCustomer: (...args: unknown[]) => mockActiveOrderHook(...args),
-  useCustomerPriceHistory: () => ({ data: undefined }),
+  useCustomerPriceHistory: () => ({ data: mockPriceHistory }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
   useCreateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
@@ -1479,12 +1480,14 @@ describe("CreateOrderModal", () => {
     });
 
     it("(c) typing the special price back restores it: no reason, nothing overridden", async () => {
+      mockPriceHistory = {}; // memories known and none here (SA-1068 M18: unknown ones send the price)
       await setup(special, 2);
       const sheet = await openSheet();
       typePrice(sheet, "1.50");
       typePrice(sheet, "2.00");
       expect(screen.queryByLabelText("Reason (required)")).not.toBeInTheDocument();
       expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 1 }]);
+      mockPriceHistory = undefined;
     });
   });
 

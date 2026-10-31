@@ -30,6 +30,7 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
     // setLineUnit is the shared writer now (lib/default-unit-line.ts applyUnitToLines): that one function consumes the flag.
     const fn = src.slice(src.indexOf("const setLineUnit"), src.indexOf("const setDiscountedPrice"));
     expect(fn).toMatch(/applyUnitToLines\(prev, tempId, option, refresh,/);
+    expect(fn).toMatch(/tier, layer, remembered\)/); // SA-1068 M22: back on the pack, the memory
     const lib = readFileSync(
       join(__dirname, "..", "..", "..", "..", "lib", "default-unit-line.ts"),
       "utf8",

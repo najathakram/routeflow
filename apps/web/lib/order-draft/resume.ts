@@ -135,7 +135,7 @@ export function repriceResumedLines<T extends ResumeLine>(
       ...li,
       unitPrice: lp.price,
       priceType: lp.priceType,
-      specialPrice: customerLineSpecial(lp),
+      specialPrice: customerLineSpecial(lp, li.specialPrice),
       priceChangedFrom: li.priceChangedFrom ?? li.unitPrice,
     };
   });

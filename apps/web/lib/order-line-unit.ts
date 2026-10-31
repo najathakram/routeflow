@@ -77,14 +77,23 @@ const snapshot = (li: PackBase): PackBase => ({
 export function applyLineUnit<T extends UnitLine>(
   li: T,
   option: UnitOption,
-  ctx: { tier: number; keepQty?: boolean; layer?: readonly CustomerLayerUnit[] | null },
+  ctx: {
+    tier: number;
+    keepQty?: boolean;
+    layer?: readonly CustomerLayerUnit[] | null;
+    /** SA-1068 M22: the customer's remembered price, which the server books for a plain pack line. */
+    remembered?: number | null;
+  },
 ): T {
   // A derived-base line is the pack with a piece count: leave that shape first, so a snapshot or a restore
   // below always sees the PACK (never the pieces state).
   const line = li.derivedBase ? backToPack(li) : li;
   const base = line.packBase ?? snapshot(line);
   if (option.kind === "pack") {
-    if (!line.packBase) return line;
+    // SA-1068 M22: a derived Piece dropped the memory on the way out, so the pack takes it back here.
+    if (!line.packBase) {
+      return li.derivedBase && ctx.remembered != null ? restorePack(line, ctx, false) : line;
+    }
     const back = restorePack(line, ctx, false);
     // S19b: the picker's pack option carries the customer's layer price; a one-time price the operator typed stands.
     return option.layerLine && back.discountedPrice == null
@@ -148,7 +157,11 @@ export function applyLineUnit<T extends UnitLine>(
  */
 function restorePack<T extends UnitLine>(
   line: T,
-  ctx: { tier: number; layer?: readonly CustomerLayerUnit[] | null },
+  ctx: {
+    tier: number;
+    layer?: readonly CustomerLayerUnit[] | null;
+    remembered?: number | null;
+  },
   dropOneTime: boolean,
   /** The pack price the picker already shows at the customer's tier: the fallback when the line has no tier columns. */
   shownPackPrice?: number,
@@ -174,9 +187,13 @@ function restorePack<T extends UnitLine>(
       product: line.tierPrices as unknown as Record<string, unknown>,
       tier: ctx.tier,
       layer: ctx.layer,
+      // SA-1068 M22: not for the derived Piece's start, since a unit line doesn't book the memory
+      remembered: dropOneTime ? undefined : ctx.remembered,
     });
     restored.unitPrice = lp.price;
-    if (lp.layered) {
+    if (lp.remembered) {
+      restored.priceType = "MANUAL"; // at the memory, so the tier stays the snapshot's baseline
+    } else if (lp.layered) {
       restored.listPrice = lp.listPrice ?? restored.listPrice;
       restored.priceType = lp.priceType;
       restored.specialPrice = customerLineSpecial(lp);
@@ -188,9 +205,14 @@ function restorePack<T extends UnitLine>(
   return restored;
 }
 
-/** The special (baseline) price a layered line carries: the layer price, so a typed change is judged against it. */
-export const customerLineSpecial = (lp: CustomerLinePrice): number | undefined =>
-  lp.isSpecial || lp.priceType === "MANUAL" ? lp.price : undefined;
+/**
+ * The special (baseline) price a layered line carries: the layer price, so a typed change is judged against it.
+ * SA-1068 M21: a remembered price isn't a baseline, so a line moved to its memory keeps the one it had (`keep`).
+ */
+export const customerLineSpecial = (lp: CustomerLinePrice, keep?: number): number | undefined => {
+  if (lp.remembered) return keep;
+  return lp.isSpecial || lp.priceType === "MANUAL" ? lp.price : undefined;
+};
 
 function withLayerLine<T extends PackBase>(line: T, lp: CustomerLinePrice): T {
   return {

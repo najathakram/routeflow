@@ -349,6 +349,32 @@ describeDb(
       expect(Number(next.total)).toBe(30);
     });
 
+    it("T30 (SA-1068 A-5): a builder line with no price books the memory, and one sent at list books list for that order", async () => {
+      const c = await customer({ walkIn: false });
+      const order = (unitPrice?: number) =>
+        tenantCtx.run(tenantId, () =>
+          svc.create(
+            {
+              customerId: c.id,
+              items: [
+                { productId: product.id, qty: 2, ...(unitPrice == null ? {} : { unitPrice }) },
+              ],
+            } as never,
+            staff(),
+            { skipAutoMerge: true } as never,
+          ),
+        ) as Promise<any>;
+      await clerkUpsell(c.id);
+      const atMemory = await order();
+      expect(cols(await lineOf(atMemory.id))).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+      const atList = await order(10);
+      expect(cols(await lineOf(atList.id))).toMatchObject({ unitPrice: 10, priceType: "STANDARD" });
+      expect(Number(atList.total)).toBe(20);
+      // A list line carries no originalPrice, so it isn't a memory row: the upsell is still the newest one.
+      const after = await order();
+      expect(cols(await lineOf(after.id))).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+    });
+
     it("S5: the server's price history and a buyer's own order for a named customer still read the memory", async () => {
       const c = await customer();
       await clerkUpsell(c.id);

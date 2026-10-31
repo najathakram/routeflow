@@ -345,6 +345,141 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     expect(item.overrideReason).toBeUndefined();
   });
 
+  // SA-1068 A-5: what the line shows is what the request books. List $42, tier 3 $38, memory $45.
+  describe("SA-1068 A-5: a remembered price above list", () => {
+    const typePrice = (shown: string, value: string) => {
+      openEditor(shown);
+      fireEvent.change(screen.getByLabelText("Price"), { target: { value } });
+      closeEditor();
+    };
+
+    beforeEach(() => {
+      mockScanV2 = false;
+      history = { "prod-1": { lastPrice: 45 } };
+    });
+
+    it("T18: tier 1, typing list shows list and sends it", async () => {
+      cust.pricingTier = 1;
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "42");
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBe(42);
+    });
+
+    it("T19: tier 1, typing then clearing returns to the memory and sends nothing", async () => {
+      cust.pricingTier = 1;
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "43");
+      typePrice("$43.00 / each", "");
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    // The tier baseline it keeps is T21: the tier price needs no reason.
+    it("T20: tier 3, a new line starts at the memory and sends nothing", async () => {
+      await addWidgetForCustomer();
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T21: tier 3, typing the tier price shows it and sends it, with no reason asked", async () => {
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "38");
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+      const item = await saved();
+      expect(item.unitPrice).toBe(38);
+      expect(item.overrideReason).toBeUndefined();
+    });
+
+    it("T22: tier 3, typing then clearing returns to the memory and sends nothing", async () => {
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "43");
+      typePrice("$43.00 / each", "");
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T23: a failed history read, typing list still sends it", async () => {
+      cust.pricingTier = 1;
+      history = undefined;
+      await addWidgetForCustomer();
+      typePrice("$42.00 / each", "42");
+      expect((await saved()).unitPrice).toBe(42);
+    });
+
+    it("T24: a line moved to its memory keeps its baseline, so list needs no reason and is sent", async () => {
+      mockScanV2 = true;
+      cust.pricingTier = 1;
+      history = undefined;
+      const view = await addWidgetForCustomer();
+      history = { "prod-1": { lastPrice: 45 } };
+      rerenderModal(view);
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      typePrice("$45.00 / each", "42");
+      const item = await saved();
+      expect(item.unitPrice).toBe(42);
+      expect(item.overrideReason).toBeUndefined();
+    });
+
+    it("M21: the customer effect keeps the tier baseline, so list on a tier 3 line asks a reason", async () => {
+      mockScanV2 = true;
+      history = undefined;
+      const view = await addWidgetForCustomer();
+      history = { "prod-1": { lastPrice: 45 } };
+      rerenderModal(view);
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      openEditor("$45.00 / each");
+      fireEvent.change(screen.getByLabelText("Price"), { target: { value: "42" } });
+      expect(await screen.findByLabelText("Reason (required)")).toBeInTheDocument();
+    });
+
+    it("T26: a line at its memory has the memory as the box's placeholder", async () => {
+      await addWidgetForCustomer();
+      openEditor("$45.00 / each");
+      expect(screen.getByLabelText("Price")).toHaveAttribute("placeholder", "45.00");
+    });
+
+    it("T27 guard: no memory, typing list sends nothing and asks no reason", async () => {
+      cust.pricingTier = 1;
+      history = {};
+      await addWidgetForCustomer();
+      typePrice("$42.00 / each", "42");
+      openEditor("$42.00 / each");
+      expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
+      closeEditor();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T28 guard: a layer row beats the memory, typing its price then clearing sends nothing", async () => {
+      layer = layerReady([packRow({})]);
+      await addWidgetForCustomer();
+      typePrice("$33.00 / each", "33");
+      openEditor("$33.00 / each");
+      expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
+      closeEditor();
+      typePrice("$33.00 / each", "34");
+      typePrice("$34.00 / each", "");
+      expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T29 guard: a memory below list is no sticky price, clearing returns to list", async () => {
+      cust.pricingTier = 1;
+      history = { "prod-1": { lastPrice: 40 } };
+      await addWidgetForCustomer();
+      typePrice("$40.00 / each", "");
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("M20: a line at A's memory does not follow the order to B", async () => {
+      await addWidgetForCustomer();
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      await switchToBeta();
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    });
+  });
+
   it("B755 MUST 2: A's last price equal to B's tier price leaves a plain line (no stale stamp or override)", async () => {
     cust.pricingTier = 1;
     history = { "prod-1": { lastPrice: 38 } }; // A's last-given $38 == B's tier-3 price

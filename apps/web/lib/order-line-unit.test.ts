@@ -105,6 +105,20 @@ describe("applyLineUnit", () => {
       specialPrice: tier === 2 ? 21 : undefined,
     });
 
+    it("T25: a line at its memory comes back to the memory, not the tier", () => {
+      const atMemory = { ...autoPriced(2), unitPrice: 50, priceType: "MANUAL" as const };
+      const asCase = applyLineUnit(atMemory, by(options(2), "Case"), { tier: 2, remembered: 50 });
+      const back = applyLineUnit(asCase, by(options(2), ""), { tier: 2, remembered: 50 });
+      expect(back).toMatchObject({ unitPrice: 50, priceType: "MANUAL", specialPrice: 21 });
+      expect(back.discountedPrice).toBeUndefined();
+    });
+
+    it("a memory at or below list leaves the tier price on the way back", () => {
+      const asCase = applyLineUnit(autoPriced(2), by(options(2), "Case"), { tier: 2 });
+      const back = applyLineUnit(asCase, by(options(2), ""), { tier: 2, remembered: 40 });
+      expect(back).toMatchObject({ unitPrice: 21, priceType: "SPECIAL", specialPrice: 21 });
+    });
+
     it("re-derives the auto price at the CURRENT tier, not the snapshot's (tier 2 -> 1)", () => {
       const opts = options();
       const asCase = applyLineUnit(autoPriced(2), by(options(2), "Case"), { tier: 2 });
@@ -252,6 +266,19 @@ describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (previe
     const caseLine = applyLineUnit(one, by(opts, "Case"), { tier: 1 });
     const back = applyLineUnit(caseLine, by(opts, ""), { tier: 1 });
     expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
+  });
+
+  it("SA-1068 M22: a line at its memory, to a derived Piece and back, returns to the memory", () => {
+    const atMemory = {
+      ...line3,
+      tierPrices: { pricePerUnit: "10.00" },
+      unitPrice: 15,
+      priceType: "MANUAL" as const,
+    };
+    const piece = applyLineUnit(atMemory, by(opts, "Piece"), { tier: 1, remembered: 15 });
+    expect(piece.unitPrice).toBe(10); // a unit line doesn't book the memory
+    const back = applyLineUnit(piece, by(opts, ""), { tier: 1, remembered: 15 });
+    expect(back).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
   });
 });
 

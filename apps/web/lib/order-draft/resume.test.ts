@@ -233,6 +233,21 @@ describe("A5 - resume re-prices for display and flags what moved", () => {
       });
     });
 
+    it("M21: a line moved to its memory keeps its tier baseline, and a tier 1 line keeps none", () => {
+      const onTier = line({
+        unitPrice: 10,
+        priceType: "SPECIAL",
+        specialPrice: 10,
+        tierPrices: { pricePerUnit: 12, priceTier2: 10 },
+      });
+      const moved = repriceResumedLines([onTier], () => 2, undefined, memory(15)).lines[0];
+      expect(moved).toMatchObject({ unitPrice: 15, priceType: "MANUAL", specialPrice: 10 });
+      const atList = line({ unitPrice: 12, tierPrices: { pricePerUnit: 12 } });
+      const tier1Moved = repriceResumedLines([atList], tier1, undefined, memory(15)).lines[0];
+      expect(tier1Moved.unitPrice).toBe(15);
+      expect(tier1Moved.specialPrice).toBeUndefined();
+    });
+
     it("no memory, or one at or below list, prices from the tier", () => {
       for (const price of [null, 11, 12]) {
         const r = repriceResumedLines([atMemory()], tier1, undefined, memory(price));
