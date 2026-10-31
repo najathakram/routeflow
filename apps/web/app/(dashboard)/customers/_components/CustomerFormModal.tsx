@@ -378,7 +378,11 @@ export function CustomerFormModal({
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: creditLimitForSubmit(data.creditLimit, "create", false),
           currency: data.currency || "USD",
-          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
+          fulfillPath: payloadFulfillPath(
+            data.fulfillPath,
+            staffFulfilment.pickForm,
+            staffFulfilment.staffDefault,
+          ),
           notes: data.notes,
           addresses,
           ...(salesAgentId ? { salesAgentId } : {}),
@@ -423,7 +427,11 @@ export function CustomerFormModal({
             initialData.creditLimit != null,
           ),
           currency: data.currency || "USD",
-          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
+          fulfillPath: payloadFulfillPath(
+            data.fulfillPath,
+            staffFulfilment.pickForm,
+            staffFulfilment.staffDefault,
+          ),
           notes: data.notes,
         },
         {

@@ -20,14 +20,21 @@ export function writableFulfillPath(value: FulfillPath | undefined): "ROUTE" | "
 }
 
 /**
- * The create/update payload value: both rules at once. A PICKUP customer's save OMITS the field
- * (`writableFulfillPath`: the server keeps the stored value, never a silent rewrite or a 400); every
- * other value goes through the account's capability preselect (`pickForm`), so a path the account
- * does not offer is never submitted (a ROUTE on a ship-only account becomes SHIP).
+ * The create/update payload value: three rules at once.
+ *  - An account whose default is PICKUP (pickup, or pickup and ship) sends NO path at all (SA-1066 M9). The form can only
+ *    hold ROUTE | SHIP, so `pickForm` would turn PICKUP into SHIP, a path nobody chose (the picker is hidden there): a create is
+ *    then stored as ROUTE, which reads as no preference, and an update keeps what is stored. `staffDefault` is required so
+ *    every caller states it. If a picker is ever added for these accounts, this condition changes with it.
+ *  - A PICKUP customer's save OMITS the field (`writableFulfillPath`: the server keeps the stored value, never a silent
+ *    rewrite or a 400).
+ *  - Every other value goes through the account's capability preselect (`pickForm`), so a path the account does not offer
+ *    is never submitted (a ROUTE on a ship-only account becomes SHIP).
  */
 export function payloadFulfillPath(
   value: FulfillPath | undefined,
   pickForm: (customerPath?: string | null) => "ROUTE" | "SHIP",
+  staffDefault: string | null | undefined,
 ): "ROUTE" | "SHIP" | undefined {
+  if (staffDefault === "PICKUP") return undefined;
   return writableFulfillPath(value) === undefined ? undefined : pickForm(value);
 }
