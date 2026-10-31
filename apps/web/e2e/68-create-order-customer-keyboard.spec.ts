@@ -13,6 +13,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
+import { openRegularOrderBuilder } from "./helpers/new-order";
 import { assertNoOverflow, waitForDataLoaded } from "./helpers/overflow";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
@@ -25,13 +26,7 @@ test.beforeEach(async ({ context }) => {
 async function openBuilder(page: Page) {
   await page.goto("/orders");
   await waitForDataLoaded(page);
-  await page
-    .getByRole("button", { name: /new order/i })
-    .first()
-    .click();
-  await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
-    timeout: 10_000,
-  });
+  await openRegularOrderBuilder(page);
   return page.getByPlaceholder("Search by business name…");
 }
 
