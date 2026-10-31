@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Info, Pencil } from "lucide-react";
 import { Badge, Card, useToast } from "@routeflow/ui/web";
-import type { NotificationAudience } from "@routeflow/types";
+import { STAFF_ORDER_EMAIL_KIND_VALUES, type NotificationAudience } from "@routeflow/types";
 import {
   useToggleRule,
   type MatrixCell,
@@ -51,11 +51,7 @@ const AUDIENCE_LABEL: Record<NotificationAudience, string> = {
 };
 
 /** The events the Customer order emails card switches (SA-1063); the rules matrix never lists or promises them. */
-const CUSTOMER_ORDER_EMAIL_EVENTS: ReadonlySet<string> = new Set([
-  "STAFF_NEW_ORDER",
-  "BUYER_ORDER_EDITED",
-  "BUYER_ORDER_CANCELLED",
-]);
+const CUSTOMER_ORDER_EMAIL_EVENTS: ReadonlySet<string> = new Set(STAFF_ORDER_EMAIL_KIND_VALUES);
 
 const GROUP_TITLE: Record<NotificationAudience, string> = {
   CUSTOMER: "Emails to your customers",
