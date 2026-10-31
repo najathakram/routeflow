@@ -71,8 +71,10 @@ export interface PriceHistoryAveragePoint {
 
 /**
  * One plot unit's two reference lines (SA-954 D4), next to this customer's own line. `unitsPerBox` follows
- * `PriceHistoryRow`'s rule: pieces per unit, null = by the piece. A month backed by fewer than 3 distinct OTHER buyers
- * is left out of both lines (never bridged), and a line whose pack cannot be read is left out of `converted`.
+ * `PriceHistoryRow`'s rule: pieces per unit, null = by the piece. Only months that have a sale are sent, oldest first
+ * (nothing carried or filled in for an empty month), and the read has no date bound. A line whose pack cannot be read
+ * is left out of `converted`. An OPERATOR denied both ORDERS and FINANCE gets only months backed by 3 or more distinct
+ * OTHER buyers (W-1058 H-2.10).
  */
 export interface PriceHistoryComparisonLine {
   unitLabel: string;
@@ -84,17 +86,20 @@ export interface PriceHistoryComparisonLine {
 }
 
 /**
- * v1.1 `?compare=all`: anonymous aggregate of OTHER customers' invoiced sales of the product in the
- * last 180 days, in the most common unit. Never carries a customer name or id; null (on the
- * response) when fewer than 3 other customers bought it.
+ * `?compare=all`: anonymous aggregate of OTHER customers' invoiced sales of the product in the 180 days counted back
+ * from the NEWEST sale to another customer (not from today), in the most common unit. Never carries a customer name or
+ * id; null (on the response) when no other customer bought it. An OPERATOR denied both ORDERS and FINANCE still gets
+ * it only with 3 or more distinct other customers behind it (W-1058 H-2.10).
  */
 export interface PriceHistoryAggregate {
   low: number;
   median: number;
   high: number;
-  /** Count of distinct other customers behind the figures (always >= 3). */
+  /** Count of distinct other customers behind the figures. */
   customers: number;
   unitLabel: string;
+  /** The month ("YYYY-MM", UTC) of the newest sale to another customer: the window's end, so the panel says how old it is. */
+  newestMonth: string;
 }
 
 /** `GET /customers/:customerId/price-summary` refuses more than this many distinct product ids. */
@@ -135,7 +140,7 @@ export interface PriceHistoryResponse {
   summaries: PriceHistorySummary[];
   /** v1.1 */
   references: PriceHistoryReferences;
-  /** v1.1: present only with `?compare=all` (null = too few other customers). */
+  /** v1.1: present only with `?compare=all` (null = no other customer bought it, or fewer than the floor an OPERATOR denied ORDERS and FINANCE keeps). */
   aggregate?: PriceHistoryAggregate | null;
   /**
    * SA-954: present only with `?compare=all`, one entry per plot unit (this customer's units; with no history, the

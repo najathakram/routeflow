@@ -27,7 +27,7 @@ describe("CustomerPriceHistoryController", () => {
 
   it("passes ids, limit and the caller role to the service", async () => {
     const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
-    const controller = new CustomerPriceHistoryController(service as any);
+    const controller = new CustomerPriceHistoryController(service as any, {} as any);
     const out = await controller.getPriceHistory("c1", "p1", "40", undefined, {
       role: UserRole.TENANT_ADMIN,
     } as any);
@@ -60,13 +60,66 @@ describe("CustomerPriceHistoryController", () => {
 
   it("hunt2 F6: passes the edited order's id through as excludeOrderId", async () => {
     const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
-    const controller = new CustomerPriceHistoryController(service as any);
+    const controller = new CustomerPriceHistoryController(service as any, {} as any);
     const caller = { role: UserRole.OPERATOR } as any;
     await controller.getPriceHistory("c1", "p1", undefined, undefined, caller, "o9");
     expect(service.getHistory).toHaveBeenCalledWith("c1", "p1", {
       limit: undefined,
       role: UserRole.OPERATOR,
       excludeOrderId: "o9",
+    });
+  });
+
+  describe("W-1058 H-2.10: the compare floor's denials are read on the server and passed in", () => {
+    const userRow = (denied: string[]) => ({
+      user: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ deniedPermissionGroups: denied, permissionsVersion: 1 }),
+      },
+    });
+    const operator = { role: UserRole.OPERATOR, sub: "u1", tenantId: "t1" } as any;
+
+    it("?compare=all by an OPERATOR passes the groups the admin denied", async () => {
+      const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
+      const prisma = userRow(["ORDERS", "FINANCE"]);
+      const controller = new CustomerPriceHistoryController(service as any, prisma as any);
+      await controller.getPriceHistory("c1", "p1", undefined, "all", operator);
+      const opts = service.getHistory.mock.calls[0][2];
+      expect(opts.deniedGroups).toEqual(expect.arrayContaining(["ORDERS", "FINANCE"]));
+      expect(opts.deniedGroups).toHaveLength(2);
+    });
+
+    it("a TENANT_ADMIN passes none and costs no permissions read", async () => {
+      const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
+      const prisma = userRow(["ORDERS", "FINANCE"]);
+      const controller = new CustomerPriceHistoryController(service as any, prisma as any);
+      await controller.getPriceHistory("c1", "p1", undefined, "all", {
+        role: UserRole.TENANT_ADMIN,
+        sub: "u2",
+        tenantId: "t1",
+      } as any);
+      expect(service.getHistory.mock.calls[0][2].deniedGroups).toEqual([]);
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("without ?compare nothing is read and nothing is passed", async () => {
+      const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
+      const prisma = userRow(["ORDERS", "FINANCE"]);
+      const controller = new CustomerPriceHistoryController(service as any, prisma as any);
+      await controller.getPriceHistory("c1", "p1", undefined, undefined, operator);
+      expect(service.getHistory.mock.calls[0][2].deniedGroups).toBeUndefined();
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("an OPERATOR whose user row is gone is denied every group (fails closed)", async () => {
+      const service = { getHistory: jest.fn().mockResolvedValue({ rows: [] }) };
+      const prisma = { user: { findFirst: jest.fn().mockResolvedValue(null) } };
+      const controller = new CustomerPriceHistoryController(service as any, prisma as any);
+      await controller.getPriceHistory("c1", "p1", undefined, "all", operator);
+      expect(service.getHistory.mock.calls[0][2].deniedGroups).toEqual(
+        expect.arrayContaining(["ORDERS", "FINANCE"]),
+      );
     });
   });
 });

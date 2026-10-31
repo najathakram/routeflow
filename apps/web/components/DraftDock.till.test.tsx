@@ -98,14 +98,14 @@ describe("DraftDock on the till (SA-1066 A-3)", () => {
     expect(document.activeElement).toBe(btn);
   });
 
-  it("a mousedown outside folds the popover; one inside it does not", () => {
+  it("a pointerdown outside folds the popover; one inside it does not", () => {
     render(withSlot());
     fireEvent.click(screen.getByRole("button", { name: "Drafts (2)" }));
-    fireEvent.mouseDown(
+    fireEvent.pointerDown(
       within(popover() as HTMLElement).getAllByRole("button", { name: "Resume" })[0],
     );
     expect(popover()).not.toBeNull();
-    fireEvent.mouseDown(document.body);
+    fireEvent.pointerDown(document.body);
     expect(popover()).toBeNull();
   });
 
