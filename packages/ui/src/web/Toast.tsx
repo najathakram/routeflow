@@ -104,7 +104,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               >
                 {config.icon()}
               </span>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 <RadixToast.Title className="text-[13px] font-semibold text-ink-900">
                   {t.title}
                 </RadixToast.Title>

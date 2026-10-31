@@ -96,7 +96,11 @@ import { CounterCreditOverLimit } from "./CounterCreditOverLimit";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
-import { CounterCustomerMatches, useCustomerListbox } from "./CounterCustomerMatches";
+import {
+  CounterCustomerMatches,
+  noMatchAddShows,
+  useCustomerListbox,
+} from "./CounterCustomerMatches";
 import {
   CounterLastSale,
   lastSaleNoteFrom,
@@ -142,6 +146,7 @@ import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterNewItem } from "./CounterNewItem";
 import { CounterBuyerChoice } from "./CounterBuyerChoice";
+import { CounterRunningTotal } from "./CounterRunningTotal";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useNewCustomerDoor } from "./useNewCustomerDoor";
@@ -149,6 +154,7 @@ import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
+import { DraftDockSlot } from "@/components/DraftDockSlot";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import {
@@ -583,6 +589,7 @@ export function CounterSaleScreen() {
     search: customerSearch.trim() || undefined,
   });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
+  const customersAnswered = customersData !== undefined && !customersFetching;
   const pickCustomer = (c: PickedCustomer) => {
     if (lineLocked || saleInFlight()) return;
     setCustomer(c);
@@ -596,7 +603,7 @@ export function CounterSaleScreen() {
     customerSearch,
     pickCustomer,
   );
-  const door = useNewCustomerDoor(pickCustomer, shipIntent);
+  const door = useNewCustomerDoor(pickCustomer, shipIntent, () => customerFindRef.current);
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";
@@ -1463,6 +1470,7 @@ export function CounterSaleScreen() {
           onParked={resetSale}
           onRestore={restoreParked}
         />
+        <DraftDockSlot />
         {gate.offerShipInstead ? (
           <WriteButton
             className="min-h-[44px]"
@@ -1493,13 +1501,17 @@ export function CounterSaleScreen() {
                 setCustomer(null);
                 buyerChoice.chooseWalkIn();
               }}
-              onNewCustomer={() => door.open()}
+              onNewCustomer={
+                noMatchAddShows(matches.length, customerSearch, customersAnswered)
+                  ? undefined
+                  : (opener) => door.open("", opener)
+              }
             />
             <input
               {...customerListbox.inputProps}
               ref={customerFindRef}
               aria-label="Find a customer"
-              className="min-h-[44px] w-full rounded border px-3 py-2 text-sm"
+              className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
               placeholder="Find a customer"
               disabled={lineLocked}
               value={customerSearch}
@@ -1548,7 +1560,7 @@ export function CounterSaleScreen() {
               listbox={customerListbox.listbox}
               search={customerSearch}
               matches={matches as PickedCustomer[]}
-              answered={customersData !== undefined && !customersFetching}
+              answered={customersAnswered}
               disabled={lineLocked}
               onPick={pickCustomer}
               onCreateNew={door.open}
@@ -1579,6 +1591,9 @@ export function CounterSaleScreen() {
                 enabled={cameraEnabled}
                 frameBlocked={() => cameraFrameBlocked(scanRef.current)}
                 onCode={onCameraCode}
+                added={scan.message ? "" : scanCue || scan.added}
+                onClose={toggleCamera}
+                buyer={{ kind: buyerChoice.kind, name: customer?.businessName }}
               />
             ) : null}
             <form onSubmit={onScanSubmit} className="flex items-center gap-2 py-2">
@@ -2117,25 +2132,11 @@ export function CounterSaleScreen() {
                 <span>{money(c.amount)}</span>
               </div>
             ))}
-            {/* R7b ruling: for cash, "Amount due" below already reads the total; the row hides while the two are equal to
-                the cent (a tender in progress, a card sale or a differing figure shows it as before). The figure stays in
-                the DOM, visually hidden, for assistive tech and for the tests that read it. */}
-            {method === "CASH" &&
-            roundMoney(totals.total) === roundMoney(amountDue(payTotal, tenderedNum)) ? (
-              <span className="sr-only" data-testid="running-total">
-                Total {money(totals.total)}
-              </span>
-            ) : (
-              <div data-testid="estimated-total-row">
-                <div
-                  className="flex justify-between text-lg font-semibold"
-                  data-testid="running-total"
-                >
-                  <span>Estimated total</span>
-                  <span>{money(totals.total)}</span>
-                </div>
-              </div>
-            )}
+            <CounterRunningTotal
+              total={totals.total}
+              cash={method === "CASH"}
+              due={amountDue(payTotal, tenderedNum)}
+            />
 
             {method === "CASH" ? (
               <p className="text-3xl font-bold" data-testid="change-due" role="status">

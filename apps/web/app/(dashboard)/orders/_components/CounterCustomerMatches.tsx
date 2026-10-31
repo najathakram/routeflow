@@ -70,6 +70,13 @@ export function useCustomerListbox<C extends CustomerMatch>(
 export type CustomerListbox = ReturnType<typeof useCustomerListbox>["listbox"];
 
 /**
+ * Whether the no-match row (and its `Add "<typed>" as a new customer`) is drawn: a typed search that answered with nothing.
+ * ONE value: the screen also reads it to leave "New customer" out while that Add shows (SA-1066 F6), so they never differ.
+ */
+export const noMatchAddShows = (matchCount: number, search: string, answered: boolean) =>
+  matchCount === 0 && search.trim() !== "" && answered;
+
+/**
  * The counter's customer search results: up to six names to pick from, or, once a typed search has answered with nothing, a
  * plain "No customers found" (CQ-11) instead of an empty dropdown. Nothing shows before the first answer or for a blank search.
  */
@@ -91,8 +98,9 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   onPick: (customer: C) => void;
   /** keyboard state from `useCustomerListbox`; without it the list is click-only */
   listbox?: CustomerListbox;
-  /** W-1041: offers `Add "<typed>" as a new customer` under "No customers found"; without it the line stands alone. */
-  onCreateNew?: (name: string) => void;
+  /** W-1041: offers `Add "<typed>" as a new customer` under "No customers found"; without it the line stands alone. The
+   *  button is passed so the window can hand focus back to it (F21): a click does not focus a button in Safari. */
+  onCreateNew?: (name: string, opener: HTMLElement) => void;
 }) {
   if (matches.length > 0) {
     if (listbox && !listbox.open) return null;
@@ -138,7 +146,7 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
       </>
     );
   }
-  if (search.trim() && answered) {
+  if (noMatchAddShows(matches.length, search, answered)) {
     return (
       <>
         <p role="status" className="text-sm text-navy/70" data-testid="counter-customer-none">
@@ -150,7 +158,7 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
             variant="secondary"
             className="min-h-[44px] w-full sm:w-auto"
             disabled={disabled}
-            onClick={() => onCreateNew(search.trim())}
+            onClick={(e) => onCreateNew(search.trim(), e.currentTarget)}
           >
             Add &quot;{search.trim()}&quot; as a new customer
           </WriteButton>

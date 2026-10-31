@@ -69,6 +69,8 @@ export function createNavShortcutHandler(deps: NavShortcutDeps): (e: KeyboardEve
   };
 
   return (e: KeyboardEvent) => {
+    // Skip while a window holds the scan (SA-1066 F10): a barcode's letters are not shortcuts, and focus on a box is not "typing".
+    if (document.querySelector("[data-scan-pause]")) return;
     // Skip if the user is typing: the event target, or whatever holds focus.
     if (isEditableElement(e.target) || isEditableElement(document.activeElement)) {
       sequence = "";

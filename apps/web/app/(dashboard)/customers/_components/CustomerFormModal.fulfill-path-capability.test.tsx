@@ -21,12 +21,18 @@ const account = (over: Record<string, unknown>) => ({
   ...over,
 });
 const updateMutate = jest.fn();
+const createMutate = jest.fn();
 jest.mock("@/lib/tenant-features", () => ({
   useTenantFeatures: () => ({ data: caps ? { capabilities: { fulfilment: caps } } : undefined }),
 }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@/lib/api/customers", () => ({
-  useCreateCustomer: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
+  useCreateCustomer: () => ({
+    mutate: createMutate,
+    isPending: false,
+    error: null,
+    reset: jest.fn(),
+  }),
   useUpdateCustomer: () => ({
     mutate: updateMutate,
     isPending: false,
@@ -97,5 +103,67 @@ describe("CustomerFormModal — PICKUP omission AND capability preselect, togeth
   it("pickup + ship account: a PICKUP customer is still omitted, a SHIP customer stays SHIP", async () => {
     caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
     expect((await save("PICKUP")).fulfillPath).toBeUndefined();
+  });
+});
+
+/**
+ * SA-1066 M9 (A-1): a pickup, or pickup and ship, business defaults to PICKUP, which the form cannot hold, so every save used to
+ * turn it into SHIP, on a new customer and on an edit of a ROUTE one, with no picker to show it. The save now carries no path:
+ * a create is stored as ROUTE (no preference), an update keeps what is stored.
+ */
+describe("CustomerFormModal — a pickup-default account never saves SHIP by accident (M9)", () => {
+  const create = async () => {
+    renderWithProviders(
+      <CustomerFormModal
+        isOpen
+        onClose={jest.fn()}
+        mode="add"
+        onCreated={jest.fn()}
+        initialName="Acme Cafe"
+        addressRequired={false}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Create Customer" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    return createMutate.mock.calls[0][0];
+  };
+
+  it("R15: a new customer on a pickup and ship business: no fulfillPath in the body", async () => {
+    caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
+    const payload = await create();
+    expect(payload.fulfillPath).toBeUndefined();
+  });
+
+  it("R15a: a new customer on a pickup-only business: no fulfillPath in the body", async () => {
+    caps = account({ methods: ["PICKUP"], staffDefault: "PICKUP", counter: "always" });
+    expect((await create()).fulfillPath).toBeUndefined();
+  });
+
+  it("R15b: editing a ROUTE customer on a pickup and ship business: the PATCH carries no fulfillPath", async () => {
+    caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
+    expect((await save("ROUTE")).fulfillPath).toBeUndefined();
+  });
+
+  it("R15c: editing a SHIP customer on a pickup and ship business: no fulfillPath, so SHIP stays", async () => {
+    caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
+    expect((await save("SHIP")).fulfillPath).toBeUndefined();
+  });
+
+  it("R15f: a PICKUP customer's edit is omitted, as before", async () => {
+    caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
+    expect((await save("PICKUP")).fulfillPath).toBeUndefined();
+  });
+
+  it("R15e: a ship-only account is as before (a ROUTE customer saves SHIP)", async () => {
+    caps = account({});
+    expect((await save("ROUTE")).fulfillPath).toBe("SHIP");
+  });
+
+  it("R15e: a delivery + ship account is as before (a ROUTE customer saves ROUTE)", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP"], staffDefault: "ROUTE", fleet: true });
+    expect((await save("ROUTE")).fulfillPath).toBe("ROUTE");
   });
 });
