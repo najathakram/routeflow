@@ -11,6 +11,7 @@
  *   vibration themselves are per-platform side effects and stay in each app's `scan-cue`.
  * - `aim-box`: DEFAULT-ON center-aim-box containment check, ahead of the gate above.
  * - `steady-read`: DEFAULT-ON same-value-N-frames debounce, ahead of the gate above.
+ * - `pausable-clock`: a clock that stops while scanning is blocked, so a held code is not recounted on resume.
  * - `scan-mode`: OPTIONAL per-device Continuous/Hold-to-scan decode gate, ahead of both.
  */
 export * from "./scan-loop";
@@ -23,3 +24,4 @@ export * from "./scan-level";
 export * from "./aim-box";
 export * from "./steady-read";
 export * from "./scan-mode";
+export * from "./pausable-clock";

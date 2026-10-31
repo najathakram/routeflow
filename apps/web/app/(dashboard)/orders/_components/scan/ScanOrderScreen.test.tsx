@@ -1242,4 +1242,41 @@ describe("ScanOrderScreen", () => {
       await waitFor(() => expect(resolve).toHaveBeenCalledWith("999", expect.anything()));
     });
   });
+
+  // SA-1067 C2 (rows C-4, C-5): the camera is off while the price editor is open, so a code held in view through an edit must
+  // not look "absent" for the 0.6 s the engine counts as a new scan. The clock stops while the editor is open.
+  describe("the engine clock and the price editor", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+    const advance = async (ms: number) => {
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    it("C-4: a code in frame, the editor open for 1 s, then closed: the same code in frame does not count again", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValue(added("p1", "Widget"));
+      setup({ lines: [L()] }, resolve);
+      await scan("111");
+      expect(resolve).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByTestId("price-p1")); // editor open: the camera is off
+      await advance(1_000);
+      fireEvent.click(screen.getByRole("button", { name: "close-editor" }));
+      await scan("111"); // the same code, still in front of the lens
+      expect(resolve).toHaveBeenCalledTimes(1);
+    });
+
+    it("C-5 (guard): a code gone for 0.6 s with no editor open counts again", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValue(added("p1", "Widget"));
+      setup({ lines: [L()] }, resolve);
+      await scan("111");
+      await advance(1_000);
+      await scan("111");
+      expect(resolve).toHaveBeenCalledTimes(2);
+    });
+  });
 });
