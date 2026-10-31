@@ -8,6 +8,7 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  Optional,
   Param,
   Patch,
   Post,
@@ -18,6 +19,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import { FulfillPath, InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
+import { StaffOrderEmailService } from "../messaging/staff-order-email";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -147,6 +149,9 @@ export class BuyerController {
     private readonly systemConfigService: SystemConfigService,
     // WS9: reads the backorder policy for a buyer's standing-order "Reorder" (once, before the run).
     private readonly oversellReader: PolicyOversellReader,
+    // SA-1063: the office is told of a customer's order, edit or cancel. Last and optional so the
+    // controller's positional specs keep compiling; `staff-order-email-callers.spec.ts` pins the wiring.
+    @Optional() private readonly staffOrderEmail?: StaffOrderEmailService,
   ) {}
 
   // ─── Unscoped endpoints (no seller context needed) ────────────────────────────
@@ -821,6 +826,10 @@ export class BuyerController {
         const mergedOrderId = merged.orderId;
         // B1094: a replayed submit already had its sweep when it first landed.
         if (merged.replayed) {
+          void this.staffOrderEmail?.notifyBuyerOrderPlaced(mergedOrderId, {
+            merged: false,
+            pendingBefore: [],
+          });
           return toCustomerOrder(
             await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
           );
@@ -848,6 +857,11 @@ export class BuyerController {
           );
         }
 
+        // SA-1063: after the commit and the sweep, off the request path, for the surviving order.
+        void this.staffOrderEmail?.notifyBuyerOrderPlaced(mergedOrderId, {
+          merged: true,
+          pendingBefore: [],
+        });
         // Return the updated order
         return toCustomerOrder(
           await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
@@ -884,6 +898,10 @@ export class BuyerController {
       // order. A duplicate tap then met a changed cart in assertReplayOfCart (409 / cart mismatch). A
       // kept-apart order has nothing to consolidate; the pending order is untouched and the key stays on
       // THIS order, so a duplicate submit replays it (create()'s key replay).
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(created.id, {
+        merged: false,
+        pendingBefore: [],
+      });
       return toCustomerOrder(created);
     }
     // Newly-created order may share a customer with pre-existing PENDINGs —
@@ -893,6 +911,9 @@ export class BuyerController {
     // POST-COMMIT (see ../orders/merge-contention.ts): `created` exists already, so contention
     // must not become the response — the buyer would be told their order failed and would place
     // a second one. Return the unconsolidated order; the hourly sweep folds it later.
+    // SA-1063 A-1: the pending orders BEFORE the sweep. It keeps the newest order and deletes the folded ones, so
+    // this read is how the office email names them. It never rejects.
+    const pendingBefore = (await this.staffOrderEmail?.pendingOrdersOf(ctx.customerId)) ?? [];
     let merged: Awaited<ReturnType<OrdersService["mergeAllPendingForCustomer"]>> | null = null;
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
@@ -908,6 +929,13 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
+    // SA-1063: the surviving order. The sweep keeps the NEWEST order, so a fold usually makes this new order the
+    // survivor and deletes the older ones (`pendingBefore` names them). `merged` is the created order itself when
+    // nothing folded, so only a different id is a merge.
+    void this.staffOrderEmail?.notifyBuyerOrderPlaced((merged ?? created).id, {
+      merged: merged != null && merged.id !== created.id,
+      pendingBefore,
+    });
     return toCustomerOrder(merged ?? created);
   }
 
@@ -930,11 +958,11 @@ export class BuyerController {
       { orderId: id, customerId: ctx.customerId },
     );
     // B297 row 352: the entries name their lines (`orderItemId`), so a line keeps the rate it was sold at.
-    return toCustomerOrder(
-      await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
-        buyerLineIds: true,
-      }),
-    );
+    const edited = await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
+      buyerLineIds: true,
+    });
+    void this.staffOrderEmail?.notifyBuyerOrderEdited(id); // SA-1063
+    return toCustomerOrder(edited);
   }
 
   @Post("orders/:id/change-requests")
@@ -966,11 +994,14 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Cancel a DRAFT or PENDING order" })
   async cancelOrder(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // SA-1063: a draft cancel is no event for the office; read it before the cancel changes anything.
+    const wasDraft = await this.staffOrderEmail?.orderIsDraft(id);
     await this.ordersService.changeStatus(
       id,
       { status: OrderStatus.CANCELLED },
       makePseudoUser(ctx),
     );
+    void this.staffOrderEmail?.notifyBuyerOrderCancelled(id, { wasDraft: wasDraft ?? true });
     return { message: "Order cancelled" };
   }
 
@@ -1169,9 +1200,15 @@ export class BuyerController {
     // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row. Lines a
     // selling restriction hides from this buyer are left out and listed in `skipped` (BuyerReorderSkipped).
     const outcome: { skipped: BuyerReorderSkippedLine[] } = { skipped: [] };
-    const order = toCustomerOrder(
-      await this.templatesService.generateOrder(id, false, allowOversell, outcome),
-    );
+    // SA-1063 A-1: the pending orders BEFORE generating (the sweep inside folds older ones into the new order).
+    const pendingBefore = (await this.staffOrderEmail?.pendingOrdersOf(ctx.customerId)) ?? [];
+    const generated = await this.templatesService.generateOrder(id, false, allowOversell, outcome);
+    if (generated?.id)
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(generated.id, {
+        merged: false,
+        pendingBefore,
+      }); // SA-1063
+    const order = toCustomerOrder(generated);
     return order ? { ...order, skipped: outcome.skipped } : order;
   }
 

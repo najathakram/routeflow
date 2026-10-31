@@ -23,7 +23,7 @@ import type { PolicyScopeType } from "@prisma/client";
 
 export type { PolicyScopeType };
 
-export type PolicyArea = "orders" | "credit" | "invoicing";
+export type PolicyArea = "orders" | "credit" | "invoicing" | "notifications";
 export type PolicyKind = "enum" | "money" | "set";
 
 export interface PolicyEntry<T = unknown> {
@@ -63,6 +63,10 @@ export type AtDoorEditMode = (typeof AT_DOOR_EDIT_MODES)[number];
 
 export const PRICE_DISCLOSURE_FACTS = ["originalPrice", "discount", "msrp"] as const;
 export type PriceDisclosureFact = (typeof PRICE_DISCLOSURE_FACTS)[number];
+
+/** SA-1063: off = never, dark = record WOULD_SEND only (today), on = send. Env STAFF_ORDER_EMAIL is the ceiling. */
+export const STAFF_ORDER_EMAIL_POLICY_MODES = ["off", "dark", "on"] as const;
+export type StaffOrderEmailPolicyMode = (typeof STAFF_ORDER_EMAIL_POLICY_MODES)[number];
 
 export const BUYER_OVERSELL_MODES = ["off", "backorder"] as const;
 export type BuyerOversellMode = (typeof BUYER_OVERSELL_MODES)[number];
@@ -156,6 +160,21 @@ export const POLICY_REGISTRY = [
       "'hide' = the item looks in stock and nothing about backorders reaches a buyer. Staff always " +
       "see the real stock and the tag.",
     added: "2026-10-07",
+  }),
+  entry<StaffOrderEmailPolicyMode>({
+    key: "notifications.staffOrderEmail",
+    area: "notifications",
+    kind: "enum",
+    schema: z.enum(STAFF_ORDER_EMAIL_POLICY_MODES),
+    default: "dark",
+    scopes: ["TENANT"],
+    // The office's own switch; a buyer client never renders it.
+    clientVisible: false,
+    description:
+      "Whether the office is emailed when a customer places, edits or cancels an order: 'off' = " +
+      "never, 'dark' = only record that an email would have been sent (today), 'on' = send it. " +
+      "The platform setting STAFF_ORDER_EMAIL is the ceiling: nothing is sent until it is on too.",
+    added: "2026-10-31",
   }),
 ] as const;
 

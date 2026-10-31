@@ -49,6 +49,7 @@ import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
 import { PaymentRequestsModule } from "../payment-requests/payment-requests.module";
+import { MessagingModule } from "../messaging/messaging.module";
 import { BuyerPaymentsController } from "../payment-requests/buyer-payments.controller";
 
 @Module({
@@ -71,6 +72,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
     SystemConfigModule,
     GatewaysModule,
     PaymentRequestsModule,
+    MessagingModule, // SA-1063: StaffOrderEmailService for BuyerController
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
