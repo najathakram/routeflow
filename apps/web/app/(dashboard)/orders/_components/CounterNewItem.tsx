@@ -93,7 +93,12 @@ function RegulatedQuestion({
   onClose: () => void;
 }) {
   const titleId = React.useId();
-  // No focus move of its own (the counter has one focus owner): Esc is read at the window so it works wherever focus sits.
+  // Focus lands on the box itself on open and on the step change (never a button: a wedge's Enter would press it), so the
+  // keys that follow cannot reach the field behind. Esc is read at the window so it works wherever focus sits.
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    boxRef.current?.focus({ preventScroll: true });
+  }, [stopped]);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -108,9 +113,13 @@ function RegulatedQuestion({
       aria-labelledby={titleId}
       data-state="open"
       data-scan-pause
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[200] !mt-0 flex items-center justify-center bg-black/50 p-4"
     >
-      <div className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl">
+      <div
+        ref={boxRef}
+        tabIndex={-1}
+        className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl outline-none"
+      >
         {stopped ? (
           <>
             <h2 id={titleId} className="text-base font-semibold text-navy">
@@ -127,7 +136,7 @@ function RegulatedQuestion({
                 href="/products"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex min-h-[44px] items-center rounded-lg bg-brand-500 px-4 text-sm font-medium text-white"
+                className="inline-flex min-h-[44px] items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white"
               >
                 Open Products
               </Link>
@@ -139,6 +148,9 @@ function RegulatedQuestion({
               Is this a licensed or regulated item?
             </h2>
             <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" className="min-h-[44px]" onClick={onClose}>
+                Cancel
+              </Button>
               <Button variant="secondary" className="min-h-[44px]" onClick={onNo}>
                 No
               </Button>

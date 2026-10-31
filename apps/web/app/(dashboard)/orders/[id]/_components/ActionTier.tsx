@@ -45,7 +45,7 @@ const TIER_CLASSES: Record<ActionTierName, string> = {
 const PHONE_TIER_CLASSES: Record<ActionTierName, string> = {
   primary:
     "order-1 flex min-w-[9rem] flex-1 items-center [&>*]:flex-1 [&_button]:w-full [&_button]:min-h-11",
-  secondary: "order-2 flex shrink-0 items-center gap-2 [&_button]:min-h-11",
+  secondary: "order-2 flex max-w-full shrink-0 items-center gap-2 [&_button]:min-h-11",
   danger: "order-4 flex basis-full flex-wrap items-center gap-2 empty:hidden",
 };
 

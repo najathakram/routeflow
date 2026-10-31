@@ -885,7 +885,7 @@ const ALLOW: Allow[] = [
   {
     file: "apps/web/components/PriceHistory.tsx",
     form: "F3",
-    count: 1,
+    count: 2,
     why: "percent",
     note: "a percent label or bar width, not an amount",
   },

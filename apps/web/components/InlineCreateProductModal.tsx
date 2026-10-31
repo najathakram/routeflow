@@ -99,6 +99,31 @@ export function InlineCreateProductModal({
     }
   }, [isOpen, initialName, initialSku, initialPrice]);
 
+  // SA-1066 FL1: Escape closes the window by the same call as Cancel and X (none of the three asks about a discard). Read at the
+  // window in the capture phase so it works wherever focus sits, and so an order-builder Modal around us (Radix reads Escape at the
+  // document, also in capture) is not closed with it. An open Unit / Category / parent list sets `aria-controls` on its input and
+  // takes the first Escape: we only mark the event handled (`preventDefault`, which Radix honours by not dismissing) and let it
+  // reach the list. Without that mark the builder closed too, losing the order.
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // IME composition (isComposing / legacy keyCode 229, as use-listbox-nav reads it): that Escape cancels the composition, so
+      // we do not close. We still mark it handled: Radix reads it next and would dismiss the order builder around us. The mark
+      // does not touch the IME (a keydown during composition is not cancelable as far as the IME is concerned).
+      if (e.isComposing || e.keyCode === 229) {
+        e.preventDefault();
+        return;
+      }
+      e.preventDefault();
+      if ((e.target as Element | null)?.hasAttribute?.("aria-controls")) return; // the list closes itself
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   /**
@@ -210,7 +235,7 @@ export function InlineCreateProductModal({
       // W-1042: the counter reads this and holds scans and focus while the window is open. Not a dialog role: this
       // window also sits inside the order builder's Modal, and a nested role would break its Unit and Category picks.
       data-scan-pause
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[200] !mt-0 flex items-center justify-center bg-black/50 p-4 max-md:[&_input]:text-base max-md:[&_select]:text-base max-md:[&_textarea]:text-base"
     >
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         {/* Header */}
@@ -296,7 +321,7 @@ export function InlineCreateProductModal({
           )}
 
           {/* ── SKU (barcode scanner) + Unit ── */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">SKU / Barcode</label>
               <div className="flex gap-2">

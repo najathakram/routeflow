@@ -23,28 +23,18 @@ export function isPendingMirrorInvoice(inv: {
 }
 
 /**
- * The wording of the pending-mirror draft: a delivery business reviews and sends the invoice "after delivery"; a store-only
- * (POS-forced) business has no delivery at all, so the same draft is ready "after pickup". Until the capability is known
- * (`null`) neither moment is claimed. Pure, so the page and its test cannot drift.
+ * The note under the pending-mirror header: a delivery order is reviewed and sent "after delivery"; a pickup order (or a
+ * store-only, POS-forced business) has no delivery at all, so the same draft is ready "after pickup". Until the moment is
+ * known (`null`) neither is claimed. Pure, so the page and its test cannot drift. The reason beside the locked Send is
+ * `sendsAfterLabel`, the same value; there is no separate pill (SA-1066 M4).
  */
-export function pendingMirrorCopy(storeOnly: boolean | null): { badge: string; note: string } {
-  // `null` = the business's fulfilment capability is not known yet (loading, or a partial answer): say neither moment, so a
-  // store-only business never flashes "delivery" before its capability arrives.
+export function pendingMirrorCopy(storeOnly: boolean | null): { note: string } {
+  // `null` = neither the order's path nor the business's fulfilment capability is known yet (loading, or a partial answer):
+  // say neither moment, so a pickup order never flashes "delivery" before its capability arrives.
   if (storeOnly === null) {
-    return {
-      badge: "Mirrors the order \u2014 ready to send once it is handed over or delivered",
-      note: "you'll review and send this invoice once it is handed over or delivered.",
-    };
+    return { note: "you'll review and send this invoice once it is handed over or delivered." };
   }
-  // owner rule: an invoice DRAFT until handed over, final at hand-over. A store-only business has no delivery: it is "pickup".
-  if (storeOnly) {
-    return {
-      badge: "Ready to send after pickup.",
-      note: "you'll review and send this invoice after pickup.",
-    };
-  }
-  return {
-    badge: "Mirrors the order \u2014 ready to send after delivery",
-    note: "you'll review and send this invoice after delivery.",
-  };
+  // owner rule: an invoice DRAFT until handed over, final at hand-over. A pickup order has no delivery.
+  if (storeOnly) return { note: "you'll review and send this invoice after pickup." };
+  return { note: "you'll review and send this invoice after delivery." };
 }

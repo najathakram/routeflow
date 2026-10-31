@@ -42,3 +42,31 @@ describe("PosProgress third step", () => {
     expect(steps()[2]).toHaveTextContent(POS_COPY.stepHandedOver);
   });
 });
+
+/** SA-1066 M1: "(draft)" is only said when a draft invoice exists; no invoice reads "Invoice", not done. */
+describe("PosProgress invoice step", () => {
+  const stepTwo = (invoices: Array<{ id: string; status: string }>) => {
+    render(<PosProgress order={{ invoices, fulfillPath: "PICKUP" } as never} status="CONFIRMED" />);
+    return steps()[1];
+  };
+
+  it("R1: no invoice reads Invoice, not done", () => {
+    const step = stepTwo([]);
+    expect(step).toHaveTextContent(/^Invoice/);
+    expect(step).not.toHaveTextContent("(draft)");
+    expect(step).toHaveAttribute("data-done", "false");
+  });
+
+  it("R1a: a draft invoice reads Invoice (draft), done", () => {
+    const step = stepTwo([{ id: "i1", status: "DRAFT" }]);
+    expect(step).toHaveTextContent(POS_COPY.stepInvoiceDraft);
+    expect(step).toHaveAttribute("data-done", "true");
+  });
+
+  it("R1a: a final invoice reads Invoice, done", () => {
+    const step = stepTwo([{ id: "i1", status: "SENT" }]);
+    expect(step).toHaveTextContent(/^Invoice/);
+    expect(step).not.toHaveTextContent("(draft)");
+    expect(step).toHaveAttribute("data-done", "true");
+  });
+});
