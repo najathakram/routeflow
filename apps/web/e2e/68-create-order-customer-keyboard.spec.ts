@@ -11,7 +11,7 @@
  * "E2E Fixture Deli Three"). READ-ONLY: nothing is submitted and a started order is never
  * dismissed (an explicit dismiss is what parks a draft), so the tenant gains no rows.
  *
- * W-854: Regular order from the New order menu leaves the page usable. The e2e tenant has its counter off, so that row
+ * W-854 W63: Regular order from the New order menu leaves the page usable. The e2e tenant has its counter off, so that row
  * turns the counter on in the browser only: the features read is patched, nothing reaches the server.
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -45,7 +45,7 @@ for (const vp of [
   test.describe(`Create Order customer keyboard @${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test("W-854: Regular order opens the builder, Esc closes it, and the page still clicks", async ({
+    test("W63: Regular order opens the builder, Esc closes it, and the page still clicks", async ({
       page,
     }) => {
       await page.route("**/tenants/me/features*", async (route) => {

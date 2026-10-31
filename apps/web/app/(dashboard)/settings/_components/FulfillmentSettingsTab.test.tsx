@@ -130,10 +130,10 @@ describe("the Delivery method card", () => {
       ["On our own trucks", "Orders go on your delivery routes."],
       ["By carrier", "Orders ship with UPS, FedEx or another carrier."],
       ["Our trucks and by carrier", "Staff choose per order; customers choose in the portal."],
-      ["Pickup at our store", "Customers collect orders. New Order offers Counter sale first."],
+      ["Pickup at our store", "Customers collect orders. New order offers Counter sale first."],
       [
         "Pickup and by carrier",
-        "Customers collect or you ship. New Order offers Counter sale first.",
+        "Customers collect or you ship. New order offers Counter sale first.",
       ],
       [
         "No preference (today's setup)",

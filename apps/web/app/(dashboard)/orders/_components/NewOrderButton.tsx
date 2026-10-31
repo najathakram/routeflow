@@ -5,6 +5,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown } from "lucide-react";
 import { Button, type ButtonProps } from "@routeflow/ui/web";
 import { COUNTER_COPY, type FulfilmentCapability } from "@routeflow/types";
+import { afterMenuCloses } from "@/lib/after-menu-closes";
 import { regularOrderSubtitle, type NewOrderEntry } from "@/lib/counter-sale";
 import { useReadOnlyGate, WriteButton } from "@/lib/read-only-gate";
 
@@ -52,13 +53,12 @@ export function NewOrderButton({
     const frame = requestAnimationFrame(() => firstItem.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [menuOpen]);
-  // A pick leaves this control behind, so focus doesn't go back to it. Radix runs a menu item's select inside `flushSync`,
-  // so a dialog opened there mounts under the still-open modal menu: it never takes focus, and on close it restores the
-  // menu's `pointer-events: none` on body, which freezes the page. One tick later the menu is gone (#4034).
+  // A pick leaves this control behind, so focus doesn't go back to it. `onCloseAutoFocus` reads this at once, so it's set
+  // here and only the action waits: a dialog opened in the select itself freezes the page when it closes (SA-1073).
   const picked = React.useRef(false);
   const pick = (go: () => void) => () => {
     picked.current = true;
-    setTimeout(go, 0);
+    afterMenuCloses(go)();
   };
 
   const className = "max-sm:h-11";
@@ -67,9 +67,9 @@ export function NewOrderButton({
       return null;
     case "wait":
       return (
-        <Button type="button" size={size} leftIcon={leftIcon} className={className} disabled>
+        <WriteButton size={size} leftIcon={leftIcon} className={className} disabled>
           New order
-        </Button>
+        </WriteButton>
       );
     case "builder":
       return (

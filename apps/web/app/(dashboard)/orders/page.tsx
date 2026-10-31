@@ -1293,12 +1293,16 @@ export default function OrdersPage() {
             <EmptyState
               variant="orders"
               title="No orders yet"
-              description="Create an order on behalf of a customer to get started."
-              action={
-                <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
-                  Create order
-                </WriteButton>
-              }
+              {...(newOrder.kind === "builder" || newOrder.kind === "menu"
+                ? {
+                    description: "Create an order on behalf of a customer to get started.",
+                    action: (
+                      <WriteButton size="sm" onClick={() => setIsCreateOpen(true)}>
+                        Create order
+                      </WriteButton>
+                    ),
+                  }
+                : {})}
             />
           )}
         </div>

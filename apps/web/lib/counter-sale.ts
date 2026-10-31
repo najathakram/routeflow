@@ -135,8 +135,13 @@ export function regularOrderSubtitle(cap: FulfilmentCapability | null | undefine
       ? ["pick up later"]
       : []),
   ];
+  const last = words[words.length - 1];
   const line =
-    words.length > 1 ? `${words.slice(0, -1).join(", ")} or ${words[words.length - 1]}` : words[0];
+    words.length > 2
+      ? `${words.slice(0, -1).join(", ")}, or ${last}`
+      : words.length === 2
+        ? `${words[0]} or ${last}`
+        : last;
   return line ? line[0].toUpperCase() + line.slice(1) : "";
 }
 

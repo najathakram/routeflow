@@ -1,3 +1,4 @@
+import { afterMenuCloses } from "@/lib/after-menu-closes";
 import type { OrdersMoreMenuItem } from "../../_components/OrdersMoreMenu";
 
 /**
@@ -26,14 +27,6 @@ export interface PhoneActionContext {
   onUnconfirm: () => void;
   onReturnToConfirmed: () => void;
 }
-
-/**
- * A menu entry that opens a dialog runs a tick later: while the menu is still closing, its focus trap and
- * the new dialog's fight over focus (an endless focus ping-pong in jsdom, a flicker in a browser).
- */
-const afterMenuCloses = (fn: () => void) => () => {
-  setTimeout(fn, 0);
-};
 
 export function phoneActionItems(c: PhoneActionContext): OrdersMoreMenuItem[] {
   const items: OrdersMoreMenuItem[] = [];

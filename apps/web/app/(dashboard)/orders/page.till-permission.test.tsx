@@ -83,7 +83,9 @@ describe("Orders header and the operator's till permission", () => {
     mockGroups = ["PRICING", "FINANCE"];
     renderWithProviders(<OrdersPage />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
-    await act(async () => {}); // the answer has landed: the entry must still be absent
+    await act(async () => {});
+    // The answer has landed (New order waits for it): the entry must still be absent.
+    await waitFor(() => expect(screen.getByRole("button", { name: "New order" })).toBeEnabled());
     expect(screen.queryByRole("button", { name: "Counter sale" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Counter sale" })).toBeNull();
     expect(screen.queryByTestId("new-order-open")).toBeNull();
@@ -103,7 +105,10 @@ describe("Orders header and the operator's till permission", () => {
     renderWithProviders(<OrdersPage />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "New order" }));
+    // New order is disabled until the permissions answer is in (SA-940 A-1.1, `wait`).
+    const newOrder = screen.getByRole("button", { name: "New order" });
+    await waitFor(() => expect(newOrder).toBeEnabled());
+    fireEvent.click(newOrder);
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
@@ -119,7 +124,7 @@ describe("Orders header and the operator's till permission", () => {
       renderWithProviders(<OrdersPage />);
       await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
       await act(async () => {});
-      expect(screen.queryByRole("button", { name: "New order" })).toBeNull();
+      await waitFor(() => expect(screen.queryByRole("button", { name: "New order" })).toBeNull());
       expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
     });
 

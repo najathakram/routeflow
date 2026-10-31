@@ -58,7 +58,7 @@ describe("newOrderEntry", () => {
 
 describe("regularOrderSubtitle reads the builder's offer", () => {
   it.each([
-    ["both", ["ROUTE", "SHIP"], "Deliver, ship or pick up later"],
+    ["both", ["ROUTE", "SHIP"], "Deliver, ship, or pick up later"],
     ["delivery", ["ROUTE"], "Deliver or pick up later"],
     ["ship", ["SHIP"], "Ship or pick up later"],
   ])("%s with an optional counter", (_mode, methods, words) => {

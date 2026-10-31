@@ -12,6 +12,7 @@ const DASHBOARD = "app/(dashboard)/dashboard/page.tsx";
 
 const ENTRIES: ReadonlyArray<[string, string, string]> = [
   ["Orders header", ORDERS, "<NewOrderButton"],
+  ["orders empty state", ORDERS, "Create order"],
   ["dashboard, both branches", DASHBOARD, "<NewOrderButton"],
   ["sidebar Counter leaf", "app/(dashboard)/layout.tsx", 'href: "/orders/counter-sale"'],
   ["palette New Order", "components/CommandPalette.tsx", '"New Order"'],

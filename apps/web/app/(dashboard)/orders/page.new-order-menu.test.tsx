@@ -262,6 +262,44 @@ describe("Orders header: one New order", () => {
   });
 });
 
+describe("Orders empty state: Create order follows the same answer (SA-940 A-3)", () => {
+  const STARTER = "Create an order on behalf of a customer to get started.";
+  const createOrder = () => screen.queryByRole("button", { name: "Create order" });
+
+  it("W59: a store-only denied operator with no orders has no button and no description", () => {
+    features = loaded(STORE_ONLY);
+    perms = DENIED;
+    renderWithProviders(<OrdersPage />);
+    expect(screen.getByText("No orders yet")).toBeInTheDocument();
+    expect(createOrder()).toBeNull();
+    expect(screen.queryByText(STARTER)).toBeNull();
+  });
+
+  it("W60: while the answer is out there's no button", () => {
+    features = { isLoading: true };
+    renderWithProviders(<OrdersPage />);
+    expect(screen.getByText("No orders yet")).toBeInTheDocument();
+    expect(createOrder()).toBeNull();
+    expect(screen.queryByText(STARTER)).toBeNull();
+  });
+
+  it("W61 guard: a builder business keeps it, and it opens the builder", async () => {
+    features = loaded(NO_COUNTER);
+    renderWithProviders(<OrdersPage />);
+    expect(screen.getByText(STARTER)).toBeInTheDocument();
+    await userEvent.setup().click(createOrder()!);
+    expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+  });
+
+  it("guard: a menu business keeps it, and it opens the builder, as on master", async () => {
+    features = loaded(OPTIONAL);
+    renderWithProviders(<OrdersPage />);
+    await userEvent.setup().click(createOrder()!);
+    expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
 describe("Orders page: ?action=new waits for the gate", () => {
   it("cold, counter first, the gate answers after the first render: the menu opens, the builder doesn't", async () => {
     search = "action=new";
