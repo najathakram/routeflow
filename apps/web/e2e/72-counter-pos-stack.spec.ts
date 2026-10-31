@@ -176,6 +176,11 @@ async function discover(page: Page) {
   return { products: sellable.slice(0, 2), api, headers };
 }
 
+// S5: the buyer is asked first, so a sale with lines needs the Walk-in answer before any payment control is used.
+async function chooseWalkIn(page: Page) {
+  await page.getByRole("button", { name: "Walk-in", exact: true }).click();
+}
+
 for (const vp of VIEWPORTS) {
   test.describe(`POS stack counter @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
@@ -297,6 +302,7 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
     const nameA = String(a.name);
     await page.getByRole("button", { name: `Add a note to ${nameA}`, exact: true }).click();
     await page.getByLabel(`Note for ${nameA}`).fill("smoke note");
+    await chooseWalkIn(page);
     await page.getByRole("button", { name: "Exact" }).click();
     await page.getByRole("button", { name: "Complete & show receipt" }).click();
     await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
@@ -308,7 +314,7 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
 test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 390, and Void sale", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("an exact cash sale: Change reads as a normal row, secondary actions in one row at 1440 and a 2×2 grid at 390, Void sale opens the dialog", async ({
+  test("an exact cash sale: Change reads as a normal row, every action is on screen and none overlaps at 1440 and 390, Void sale opens the dialog", async ({
     page,
     context,
   }) => {
@@ -336,54 +342,74 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
     expect(await size("receipt-change")).toBeLessThan(await size("receipt-total"));
     await page.screenshot({ path: "test-results/w783-receipt-1440.png", fullPage: true });
 
-    // W-715 at 1440: the receipt column is max-w-md, so the secondary actions share ONE row and New sale (the primary)
-    // follows under them; nothing is cut off or hidden.
-    const box1440 = async (name: string | RegExp) => {
-      const b = await page
-        .getByRole("button", { name, exact: typeof name === "string" })
-        .boundingBox();
-      expect(b, `${name} is on screen at 1440`).not.toBeNull();
-      return b!;
-    };
-    const [p1440, e1440, n1440] = [
-      await box1440("Print"),
-      await box1440("Email receipt"),
-      await box1440("New sale"),
+    // W-715 / P-RCPT-1, with a fourth button (master added Print invoice, SA-1026 B): the row WRAPS, and that is expected. What
+    // matters is that every action is on screen, none sits on top of another, and the primary (New sale) is not above the
+    // secondaries. Print invoice exists only when the sale made an invoice, Return items only with the inline-returns add-on:
+    // each is checked when present.
+    const ACTIONS: Array<[string, string | RegExp]> = [
+      ["Print", "Print"],
+      ["Print invoice", /^Print invoice/],
+      ["Email receipt", "Email receipt"],
+      ["Return items", /^Return items/],
+      ["Void sale", /^Void sale ORD/],
+      ["New sale", "New sale"],
     ];
-    expect(Math.abs(p1440.y - e1440.y)).toBeLessThanOrEqual(2);
-    // Return items exists only with the inline-returns add-on: checked when present, as at 390
-    const ret1440 = page.getByRole("button", { name: /^Return items/ });
-    if (await ret1440.count()) {
-      expect(Math.abs(p1440.y - (await box1440(/^Return items/)).y)).toBeLessThanOrEqual(2);
-    }
-    expect(n1440.y).toBeGreaterThan(p1440.y);
+    const actionBoxes = async (viewportWidth: number) => {
+      const found: Record<string, { x: number; y: number; width: number; height: number }> = {};
+      for (const [label, name] of ACTIONS) {
+        const button = page.getByRole("button", { name, exact: typeof name === "string" });
+        if ((await button.count()) === 0) {
+          expect(
+            ["Print invoice", "Return items", "Void sale"],
+            `${label} is a required action`,
+          ).toContain(label);
+          continue;
+        }
+        const b = await button.first().boundingBox();
+        expect(b, `${label} is on screen at ${viewportWidth}`).not.toBeNull();
+        expect(
+          b!.x,
+          `${label} starts inside the viewport at ${viewportWidth}`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+          b!.x + b!.width,
+          `${label} ends inside the viewport at ${viewportWidth}`,
+        ).toBeLessThanOrEqual(viewportWidth);
+        found[label] = b!;
+      }
+      const labels = Object.keys(found);
+      for (const [i, a] of labels.entries()) {
+        for (const b of labels.slice(i + 1)) {
+          const A = found[a];
+          const B = found[b];
+          const overlap =
+            A.x < B.x + B.width - 1 &&
+            B.x < A.x + A.width - 1 &&
+            A.y < B.y + B.height - 1 &&
+            B.y < A.y + A.height - 1;
+          expect(overlap, `${a} and ${b} do not overlap at ${viewportWidth}`).toBe(false);
+        }
+      }
+      // New sale (the primary) is never above the Print button
+      expect(found["New sale"].y).toBeGreaterThanOrEqual(found["Print"].y);
+      return found;
+    };
 
-    // W-715 + P-RCPT-1: at 390 the actions are a 2×2 grid (Print · Email receipt / Return items · Void sale) with New sale
-    // full width under it; nothing hidden, nothing off screen. At 1440 they were one row.
+    // At 1440 the receipt column is max-w-md: Print, Print invoice and Email receipt share ONE row (that row really fits at
+    // 1440; the screenshot shows it). Return items, Void sale and New sale wrap below it.
+    const at1440 = await actionBoxes(1440);
+    expect(Math.abs(at1440["Print"].y - at1440["Email receipt"].y)).toBeLessThanOrEqual(2);
+    if (at1440["Print invoice"]) {
+      expect(Math.abs(at1440["Print"].y - at1440["Print invoice"].y)).toBeLessThanOrEqual(2);
+    }
+    expect(at1440["New sale"].y).toBeGreaterThan(at1440["Print"].y);
+
+    // At 390 no same-row claim is made (four or more buttons cannot all share a row on a phone): they are all on screen.
     await page.setViewportSize({ width: 390, height: 844 });
-    const box = async (name: string | RegExp) => {
-      const b = await page
-        .getByRole("button", { name, exact: typeof name === "string" })
-        .boundingBox();
-      expect(b, `${name} is on screen`).not.toBeNull();
-      expect(b!.x + b!.width).toBeLessThanOrEqual(390);
-      return b!;
-    };
-    const [print, email, newSale] = [
-      await box("Print"),
-      await box("Email receipt"),
-      await box("New sale"),
-    ];
-    expect(Math.abs(print.y - email.y)).toBeLessThan(2); // first row: two across
-    expect(newSale.y).toBeGreaterThan(print.y); // the primary sits under the grid
-    expect(newSale.width).toBeGreaterThan(print.width * 1.8); // full width
-    // the secondary actions are on screen too (Return items needs the add-on, so it is boxed when present)
-    if ((await page.getByRole("button", { name: "Return items", exact: true }).count()) > 0) {
-      await box("Return items");
-    }
-    if ((await page.getByRole("button", { name: /^Void sale ORD/ }).count()) > 0) {
-      await box(/^Void sale ORD/);
-    }
+    const at390 = await actionBoxes(390);
+    // the design still holds at 390: a 2-column grid with New sale full width under it (W-715, P-RCPT-1)
+    expect(at390["New sale"].y).toBeGreaterThan(at390["Print"].y);
+    expect(at390["New sale"].width).toBeGreaterThan(at390["Print"].width * 1.8);
     await page.screenshot({ path: "test-results/w783-receipt-390.png", fullPage: true });
 
     // W-716 / F14: Void sale opens the void dialog for this sale; the reason is marked required up front
@@ -417,6 +443,7 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
       await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
         timeout: 15_000,
       });
+      await chooseWalkIn(page);
       await page.getByLabel("Amount tendered").fill("1000");
       await page.getByRole("button", { name: "Complete & next sale" }).click();
       await expect(page.getByTestId("counter-last-sale")).toContainText("Change due", {
@@ -442,11 +469,19 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(2, {
       timeout: 15_000,
     });
+    await chooseWalkIn(page);
     // a cashier pauses; a scanner's CR+LF inside the window is swallowed by design (EMPTY_ENTER_QUIET_MS = 150)
     await page.waitForTimeout(250);
+    await scanField.focus();
     await scanField.press("Enter"); // empty scan box with lines: focus moves to the payment
     await expect(page.getByLabel("Amount tendered")).toBeFocused();
     await page.keyboard.type("1000");
+    await page.keyboard.press("Enter");
+    // SA-1067 M2b: a tender $100 or more over the total arms on the first Enter (no receipt yet); a second Enter completes the sale
+    await expect(page.getByText("Press Enter again to complete the sale.")).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.getByTestId("counter-sale-receipt")).toHaveCount(0);
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
   });
@@ -619,6 +654,7 @@ test.describe("SA-837b till: Record anyway on a duplicate payment reference", ()
       await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
         timeout: 15_000,
       });
+      await chooseWalkIn(page);
       await page.getByRole("radio", { name: "Check" }).click();
       await page.getByLabel("Check number").fill("QA-DUP-4242");
       await page.getByRole("button", { name: "Complete & show receipt" }).click();
@@ -680,6 +716,7 @@ test.describe("R7b till: a post-dated check is not tendered", () => {
       await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
         timeout: 15_000,
       });
+      await chooseWalkIn(page);
       await page.getByRole("radio", { name: "Check" }).click();
       await page.getByLabel("Check number").fill("1042");
       await expect(page.getByLabel("Check date")).toBeVisible();

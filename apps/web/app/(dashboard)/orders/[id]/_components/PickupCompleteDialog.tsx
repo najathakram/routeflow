@@ -20,6 +20,7 @@ import type {
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
 import { useCounterDefaultTender } from "@/lib/api/counter-customer-credit";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { tenderAmount } from "@/lib/counter-part-pay";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { duplicatePaymentRefMessage, retryCanHelp } from "@/lib/duplicate-payment-ref";
 import { usePrintInvoice } from "@/lib/use-print-invoice";
@@ -189,7 +190,7 @@ export function PickupCompleteDialog({
     });
   }, [open, due]);
 
-  const tenderedNum = Number(tendered) || 0;
+  const tenderedNum = tenderAmount(tendered);
   // W-778 (apple-ux): a refusal no retry can fix locks the controls; the run confirm is a warning the clerk can answer.
   const hardRefusal = errorCode !== undefined && COMPLETE_HARD_REFUSAL_CODES.has(errorCode);
   const onRunWarning = errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN;

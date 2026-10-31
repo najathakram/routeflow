@@ -8,11 +8,13 @@ import {
   cueForOutcome,
   continuousFrameScanned,
   createContinuousScanState,
+  createPausableClock,
   manualScanned,
   resetSteadyRead,
   scanSettled,
   shouldDecode,
   type ContinuousScanState,
+  type PausableClock,
   type ScanMode,
   type ScanEngineStep,
   type ScanOutcome,
@@ -105,6 +107,10 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const live = open && !paused;
 
   const engineRef = React.useRef<ContinuousScanState>(createContinuousScanState());
+  // SA-1067 C2: the engine reads "absent" off the time it is given (a code unseen for 0.6 s counts again). The camera is
+  // off while the price editor is open, so a code still held in view would look absent on resume and count a second time.
+  // This clock stops while the editor is open (the same one the counter strip uses, SA-1059).
+  const clockRef = React.useRef<PausableClock>(createPausableClock());
   // Hold to scan (owner ruling 2026-09-24): OPTIONAL per-device mode, default Continuous. In Hold mode the camera stays live
   // but a decoded frame is ignored unless the round button is held (a ref too, so a frame never races a state update).
   const [scanMode, setScanModeState] = React.useState<ScanMode>(() => readScanMode());
@@ -178,6 +184,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   React.useEffect(() => {
     if (!open) return;
     engineRef.current = createContinuousScanState();
+    clockRef.current = createPausableClock();
     setResolving(false);
     setHistory([]);
     setHighlightId(null);
@@ -330,8 +337,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const handleFrame = React.useCallback(
     (code: string, frame?: ScanFrame) => {
       if (!shouldDecode(scanModeRef.current, holdingRef.current)) return;
+      clockRef.current.unblock(); // the first frame after the editor closed ends its block
       applyStep(
-        continuousFrameScanned(engineRef.current, code, Date.now(), {
+        continuousFrameScanned(engineRef.current, code, clockRef.current.now(), {
           bounds: frame?.bounds,
           aimBox: frame?.aimBox,
           // Order builder (owner ruling 2026-10-14), and the counter's camera strip by SA-1059's extension (CounterCameraStrip):
@@ -436,6 +444,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // would increment the very line being edited (the focused field jumping under the operator's
   // cursor) with its cue and feedback hidden. Scanning resumes when the sheet closes.
   const camera = useContinuousScanCamera({ enabled: live && !editorOpen, onDetect: handleFrame });
+  React.useEffect(() => {
+    if (editorOpen) clockRef.current.block();
+  }, [editorOpen]);
 
   // A hold never outlives what can still deliver its release: closing / pausing the screen, a camera error (the button
   // unmounts, so its pointerup never arrives) or leaving Hold mode all end it, so the next session starts released.
