@@ -26,6 +26,20 @@ type PosOrder = Pick<Order, "invoices"> & { fulfillPath?: string | null };
 /** A VOID invoice is not an invoice for the order's purposes (no step done, nothing to pay or print). */
 const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.status !== "VOID");
 
+/** The Invoice card's Generate Invoice button, which the Invoice step in the progress row takes you to (SA-1066 F01). */
+export const GENERATE_INVOICE_ID = "generate-invoice-button";
+
+/** The Invoice card itself: where the step lands when no Generate Invoice button is drawn (only a voided invoice exists). */
+export const INVOICE_CARD_ID = "invoice-card";
+
+function goToGenerateInvoice() {
+  const button = document.getElementById(GENERATE_INVOICE_ID);
+  const target = button ?? document.getElementById(INVOICE_CARD_ID);
+  if (!target) return;
+  target.scrollIntoView({ block: "center" });
+  if (button) button.focus({ preventScroll: true });
+}
+
 /**
  * POS-mode order page (SA-763r P-2): Confirmed -> Invoice (draft) -> Handed over. There is no Out-for-delivery
  * step: hand-over IS the completion. The invoice step reads "(draft)" only while a draft invoice exists; with no
@@ -77,7 +91,19 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
         >
           {s.done && <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />}
           {i === current && <Circle className="h-3 w-3" aria-hidden />}
-          {s.label}
+          {s.key === "invoice" && !s.done ? (
+            // F01: no invoice yet, so the step is the way to the card's Generate Invoice button. The padding is the
+            // 44 x 44 tap area; the negative margins keep the pill's own size (24 high).
+            <button
+              type="button"
+              onClick={goToGenerateInvoice}
+              className="-mx-0.5 -my-[14px] min-w-11 px-0.5 py-[14px] text-center underline"
+            >
+              {s.label}
+            </button>
+          ) : (
+            s.label
+          )}
           {s.done && <span className="sr-only"> (completed)</span>}
           {i === current && <span className="sr-only"> (next step)</span>}
         </li>
@@ -239,6 +265,8 @@ export function PosOrderActions({
             {POS_COPY.confirmOrder}
           </Button>
         </ActionTier>
+        {/* SA-1066 F02: billing was only on the Invoice card, far down the page. Same button and write gate as at Ready. */}
+        {!firstInvoice && createInvoiceTier(false)}
         {switchToDelivery}
       </>
     );

@@ -1609,6 +1609,8 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // A window above us (New product) already took this Escape for its own list: nothing here closes (SA-1066 FL1).
+    if (event.defaultPrevented) return;
     // The "Order again" menu takes Escape first — it closes the menu, never the order.
     if (suggestionsMenuOpen) {
       event.preventDefault();

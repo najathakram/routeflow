@@ -1007,13 +1007,20 @@ export function useRevertInvoiceToDraft() {
 
 export function useUnvoidInvoice() {
   const qc = useQueryClient();
-  return useMutation<any, Error, string>({
+  return useMutation<any, Error, IdWithAck>({
     // SA-814: the invoice page toasts every unvoid refusal itself (copy from the body's `reason`): no second, global one.
     meta: { localErrorToast: true },
-    mutationFn: (id) => apiClient.post(`/invoices/${id}/unvoid`).then((r) => r.data),
-    onSuccess: (_, id) => {
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 460: an unvoid re-sells the whole invoice, so it can carry an ack
+      return (
+        ack
+          ? apiClient.post(`/invoices/${id}/unvoid`, ack)
+          : apiClient.post(`/invoices/${id}/unvoid`)
+      ).then((r) => r.data);
+    },
+    onSuccess: (_, v) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["invoices", splitIdAck(v).id] });
     },
   });
 }

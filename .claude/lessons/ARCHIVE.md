@@ -4499,3 +4499,47 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **A money read fails closed on error, paused and missing data, not just loading: the pick and the save are blocked until the read confirms. One shared gate decides it; no screen keeps its own tier fallback.**
 - **Guard:** `packages/pricing/src/customer-pricing-gate.spec.ts`, `apps/mobile/__tests__/customer-tier-fallback-pin.test.ts`, web `page.pricing-gate-w725.test.tsx`.
 
+### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
+
+- **Symptom:** #819 conflicted after a sibling PR squash-merged the schema/contract commit both
+  had stacked on locally — a normal rebase/merge treated the squashed content as new, corrupting
+  the schema state instead of cleanly resolving.
+- **Root cause:** two PRs stacked on a shared, not-yet-landed commit — once the owner squashes
+  the first one, that commit no longer exists on master under its original identity, so any
+  history-diffing operation sees a phantom conflict between "the same change, twice."
+- **Lesson:** **A PR stacked on another PR's not-yet-landed schema/contract commit must be
+  REBUILT from a fresh branch off the post-squash master — cherry-picking only its OWN commits,
+  never the shared ancestor or a merge commit — once the base PR lands. Never rebase or
+  ordinary-merge a stacked branch through someone else's squash.**
+- **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
+  rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
+- **Recurred 2026-10-02 (landing windows D to I):** squashing a stacked parent made each child conflict add/add on the parent's own files (#3025 to #3046 to #3050; #3044 to #3045), and a merge-tree against the then-current master missed it. Before opening a window simulate the whole order: for each PR in order run `git merge-tree --write-tree <cur> <head>`, then `git commit-tree <tree> -p <cur>` as the next base; a conflict at step N means that PR is carried (master merged in, new pin) after its parent lands, never in the same window.
+
+### L-184 · 2026-09-17 · deploy · #777 merged/deployed without its migration or a drift check
+
+- **Symptom:** #777 merged and deployed with a new `migrations/` folder, but the migration was
+  never applied to prod and the post-deploy drift run never happened — undetected for ~26 hours.
+- **Root cause:** the standing deploy flow assumes a migration ships and gets applied together,
+  but nothing gates the LANDING of a migration-carrying PR on the owner having applied it, and
+  `post-deploy-check` (the thing that runs automatically) has no drift check in it.
+- **Lesson:** **A PR that adds a `migrations/` folder is not LANDED until the owner has applied
+  it to prod AND the drift run shows exit 0 — a migration is authorized before merge, never
+  assumed to happen after. The merge coordinator checks
+  `git diff --name-only <base>..<merge> -- apps/api/prisma/migrations` on every landing.**
+- **Guard:** none yet — propose the merge coordinator's landing checklist running that diff as a
+  hard gate, and/or folding a drift check into `post-deploy-check` itself.
+
+### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
+
+- **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
+  full literal-source-text match on a JSX className. A purely additive `cn(TAP_TARGET, "...")`
+  wrapper (same classes, behavior still correct) broke both, because the source text was no
+  longer that exact string.
+- **Root cause:** the assertion pinned SOURCE TEXT, not the behavior the tests were meant to
+  guard (a control staying reachable/correctly sized) — coincidence-based in both directions: it
+  breaks on harmless changes and can just as easily PASS a real regression that preserves the
+  substring.
+- **Lesson:** **A regression test must assert the underlying behavior (DOM state, computed
+  style, an element's actual reachable size), never a scrape of the source file's literal
+  text.**
+- **Guard:** the fix (rewriting both to DOM-behavior assertions) is being built into #910.

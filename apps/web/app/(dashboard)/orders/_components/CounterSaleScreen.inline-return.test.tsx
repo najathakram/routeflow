@@ -21,6 +21,17 @@ jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: async (code: string) =>
     code === "BIG" ? { product: BIG, source: "sku" } : { notFound: true },
 }));
+// SA-1068: the till reads the customer's remembered prices (an empty, answered read here: no sticky upsell).
+jest.mock("@/lib/api/orders", () => ({
+  ...jest.requireActual("@/lib/api/orders"),
+  useCustomerPriceHistory: () => ({
+    data: {},
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [{ id: "c1", businessName: "Acme Co", pricingTier: 1 }] } }),
   useCustomerPrices: () => ({

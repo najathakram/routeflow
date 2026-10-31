@@ -11,6 +11,12 @@ import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import {
+  ADJUSTMENT_REASON_LABELS,
+  ADJUSTMENT_REASON_NOTE_MAX,
+  ADJUSTMENT_REASON_NOTE_MIN,
+  type AdjustmentReason,
+} from "@routeflow/types";
+import {
   useStockOverview,
   useSuppliers,
   useRecordAdjustment,
@@ -429,6 +435,7 @@ function AdjustStockModal({
     productId: defaultProductId ?? "",
     quantity: "",
     notes: "",
+    reason: "" as AdjustmentReason | "",
     reference: "",
     backdate: false,
     effectiveDate: "",
@@ -481,12 +488,28 @@ function AdjustStockModal({
   const selectedProduct = products.find((p) => p.id === form.productId);
   const qty = Number(form.quantity);
 
+  // SA-828: the server requires a reason; OTHER also needs a note.
+  const noteLen = form.notes.trim().length;
+  const reasonOk =
+    form.reason !== "" &&
+    (form.reason !== "OTHER" ||
+      (noteLen >= ADJUSTMENT_REASON_NOTE_MIN && noteLen <= ADJUSTMENT_REASON_NOTE_MAX));
+
+  const reasonProblem = reasonOk
+    ? null
+    : form.reason === ""
+      ? "Pick a reason."
+      : "Add a note for Other.";
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!reasonOk) return;
     recordAdjustment.mutate(
       {
         productId: form.productId,
         quantity: qty,
+        reason: form.reason,
+        reasonNote: form.reason === "OTHER" ? form.notes.trim() : undefined,
         notes: form.notes || undefined,
         reference: form.reference || undefined,
         effectiveDate: form.backdate && form.effectiveDate ? form.effectiveDate : undefined,
@@ -597,6 +620,27 @@ function AdjustStockModal({
           </div>
 
           <div>
+            <label htmlFor="adjust-reason" className="mb-1 block text-xs text-navy">
+              Reason *
+            </label>
+            <select
+              id="adjust-reason"
+              value={form.reason}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, reason: e.target.value as AdjustmentReason | "" }))
+              }
+              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Choose a reason</option>
+              {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
+                <option key={r} value={r}>
+                  {ADJUSTMENT_REASON_LABELS[r]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
             <label className="mb-1 block text-xs text-navy">Reference</label>
             <input
               type="text"
@@ -607,9 +651,12 @@ function AdjustStockModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-navy">Notes</label>
+            <label className="mb-1 block text-xs text-navy">
+              Notes{form.reason === "OTHER" ? " *" : ""}
+            </label>
             <textarea
               rows={2}
+              maxLength={ADJUSTMENT_REASON_NOTE_MAX}
               value={form.notes}
               onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
               className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -633,11 +680,20 @@ function AdjustStockModal({
             />
           )}
 
+          {reasonProblem && form.quantity.trim() !== "" && (
+            <p className="text-right text-xs text-navy/70" data-testid="adjust-save-hint">
+              {reasonProblem}
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
-            <Button type="submit" disabled={!form.productId} loading={recordAdjustment.isPending}>
+            <Button
+              type="submit"
+              disabled={!form.productId || !reasonOk}
+              loading={recordAdjustment.isPending}
+            >
               Save adjustment
             </Button>
           </div>

@@ -44,7 +44,9 @@ export function useListboxNav<T>({
 
   /** Returns true when the key was consumed (the caller then skips its own handling). */
   const onKeyDown = (e: React.KeyboardEvent): boolean => {
-    if (e.defaultPrevented || !open) return false;
+    // Escape is let through a prevented event: a window around the list marks Escape handled so an enclosing dialog does not
+    // dismiss, and the list must still close (SA-1066 FL1).
+    if ((e.defaultPrevented && e.key !== "Escape") || !open) return false;
     // IME composition (isComposing / legacy keyCode 229): the keys belong to the IME, not the list.
     if (e.nativeEvent?.isComposing || e.keyCode === 229) return false;
     if (e.key === "ArrowDown" && items.length > 0) {

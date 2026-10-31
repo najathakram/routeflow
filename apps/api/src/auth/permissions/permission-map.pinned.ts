@@ -365,6 +365,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "InventoryController.closePO": "CATALOG",
   "InventoryController.commitStockCount": "CATALOG",
   "InventoryController.commitStockCountSession": "CATALOG",
+  "InventoryController.countProduct": "CATALOG",
   "InventoryController.createPO": "CATALOG",
   "InventoryController.createSupplier": "CATALOG",
   "InventoryController.discardStockCountSession": "CATALOG",

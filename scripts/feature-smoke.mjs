@@ -357,6 +357,7 @@ async function s3(ctx) {
       productId: ctx.parent.id,
       quantity: 10,
       notes: "E2E-SMOKE parent stock bump",
+      reason: "COUNT_CORRECTION",
     });
     assert(bump.ok, `Raise parent stock +10 — ${bump.status}`);
     parentBumped = bump.ok;
@@ -425,6 +426,7 @@ async function s3(ctx) {
         productId: variantId,
         quantity: -4,
         notes: "E2E-SMOKE cleanup",
+        reason: "COUNT_CORRECTION",
       });
       assert(variantAdj.ok, `Cleanup — adjustment -4 on the variant`);
     }
@@ -437,6 +439,7 @@ async function s3(ctx) {
         productId: ctx.parent.id,
         quantity: parentAdjustQty,
         notes: "E2E-SMOKE cleanup",
+        reason: "COUNT_CORRECTION",
       });
       assert(parentAdj.ok, `Cleanup — adjustment ${parentAdjustQty} on the parent`);
     }

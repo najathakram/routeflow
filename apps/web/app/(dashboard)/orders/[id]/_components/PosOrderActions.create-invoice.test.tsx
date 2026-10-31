@@ -66,3 +66,35 @@ describe("PosOrderActions: Create invoice at Ready", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(1);
   });
 });
+
+/** SA-1066 F02: a Pending POS order with no invoice shows Create invoice in the top buttons, as a secondary. */
+describe("PosOrderActions: Create invoice at Pending", () => {
+  it("F02: Pending with no invoice offers Create invoice, 44 px, never a filled primary", () => {
+    renderActions("PENDING");
+    expect(create()).toBeInTheDocument();
+    expect(create()).not.toHaveClass("bg-accent-strong");
+    expect(create()).toHaveClass("h-11");
+  });
+
+  it("F02: it runs the same mutation for the same order", () => {
+    renderActions("PENDING");
+    fireEvent.click(create()!);
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toBe("o1");
+  });
+
+  it("F02: Ready for pickup stays the first (primary) button", () => {
+    renderActions("PENDING");
+    expect(screen.getAllByRole("button")[0]).toHaveTextContent("Ready for pickup");
+  });
+
+  it("F02: an invoice exists, so there is no Create invoice", () => {
+    renderActions("PENDING", [{ id: "i1", status: "SENT" }]);
+    expect(create()).toBeNull();
+  });
+
+  it("F02: a VOID invoice is not an invoice, so the button is still offered", () => {
+    renderActions("PENDING", [{ id: "i1", status: "VOID" }]);
+    expect(create()).toBeInTheDocument();
+  });
+});

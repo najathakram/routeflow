@@ -126,6 +126,7 @@ import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
@@ -1530,6 +1531,7 @@ export default function InvoiceDetailPage() {
   const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
+  const rw = useRestrictionWarningRetry(); // row 460: an unvoid re-sells the whole invoice, so staff may be warned
   const updateShipment = useUpdateInvoiceShipment();
   const updateTerms = useUpdateInvoiceTerms();
   const setCheckStatus = useSetCheckStatus();
@@ -3239,25 +3241,32 @@ export default function InvoiceDetailPage() {
             <Button
               variant="primary"
               onClick={() => {
-                unvoid.mutate(invoice.id, {
-                  onSuccess: (res: UnvoidInvoiceResult | undefined) => {
-                    setIsUnvoidOpen(false);
-                    // SA-839 §3: one more line when the void sat in an already-filed month.
-                    const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
-                    toast({
-                      title: "Invoice unvoided — now a draft",
-                      variant: "success",
-                      ...(note ? { description: note } : {}),
-                    });
-                  },
-                  onError: (e: any) =>
-                    toast({
-                      title: "Failed to unvoid the invoice",
-                      description:
-                        unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
-                      variant: "error",
-                    }),
-                });
+                const run = () =>
+                  unvoid.mutate(rw.attach(invoice.id), {
+                    onSuccess: (res: UnvoidInvoiceResult | undefined) => {
+                      setIsUnvoidOpen(false);
+                      // SA-839 §3: one more line when the void sat in an already-filed month.
+                      const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+                      toast({
+                        title: "Invoice unvoided — now a draft",
+                        variant: "success",
+                        ...(note ? { description: note } : {}),
+                      });
+                    },
+                    onError: (e: any) => {
+                      if (rw.handle(e, run)) {
+                        setIsUnvoidOpen(false); // the warning dialog owns the screen; "Sell anyway" re-runs this
+                        return;
+                      }
+                      toast({
+                        title: "Failed to unvoid the invoice",
+                        description:
+                          unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
+                        variant: "error",
+                      });
+                    },
+                  });
+                run();
               }}
               loading={unvoid.isPending}
             >
@@ -3297,6 +3306,7 @@ export default function InvoiceDetailPage() {
         />
       )}
       {duplicateDialog}
+      {rw.dialog}
     </div>
   );
 }

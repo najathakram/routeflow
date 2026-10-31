@@ -5,6 +5,7 @@ import {
   customerTierFor,
   priceGrid,
   roundMoney,
+  isStickyUpsell,
   resolveCustomerUnitPrice,
   unitCodeOf,
   type ProductCodes,
@@ -215,8 +216,7 @@ export class CustomerUnitPricesService {
           const sticky =
             row.kind === "pack" &&
             (resolved.source === "tier" || resolved.source === "list") &&
-            remembered != null &&
-            remembered > Number(p.pricePerUnit);
+            isStickyUpsell(remembered, Number(p.pricePerUnit));
           return {
             ref: row.ref,
             label: row.label,

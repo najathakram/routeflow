@@ -74,6 +74,7 @@ import { CropModal } from "./CropModal";
 import { ProductImagesEmpty } from "./ProductImagesEmpty";
 import { ProductImageActions } from "./ProductImageActions";
 import { ProductStockCostCard } from "./ProductStockCostCard";
+import { CountAdjustModal } from "./CountAdjustModal";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
 import { ProductHeaderControls } from "./ProductHeaderControls";
@@ -338,6 +339,7 @@ export default function ProductDetailPage() {
 
   // ── Set-cost modal state ──────────────────────────────────────────────────
   const [showCostModal, setShowCostModal] = React.useState(false);
+  const [showCountModal, setShowCountModal] = React.useState(false);
 
   // ── Variant-split modal state (PR-D) ──────────────────────────────────────
   const [showVariantSplit, setShowVariantSplit] = React.useState(false);
@@ -1252,6 +1254,12 @@ export default function ProductDetailPage() {
           onClose={() => setShowCostModal(false)}
         />
       )}
+      {showCountModal && (
+        <CountAdjustModal
+          product={{ ...product, currentStock }}
+          onClose={() => setShowCountModal(false)}
+        />
+      )}
       {/* Variant-split modal (PR-D) — moves this product's unassigned stock
           onto its variants. Same component as the Inventory Stock tab row
           action and the vendor-bill line badge. */}
@@ -2091,6 +2099,7 @@ export default function ProductDetailPage() {
                 stockStatus={stockStatus}
                 currentStock={currentStock}
                 onSetCost={() => setShowCostModal(true)}
+                onCount={isStaff ? () => setShowCountModal(true) : undefined}
                 pricesV2={v2}
               />
             )}

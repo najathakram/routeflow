@@ -37,7 +37,9 @@ export function forbiddenNames(text: string): string[] {
 
 const HELPERS = new Set(["saleFulfilmentKind", "orderFulfilmentKind", "defaultSaleFulfilmentKind"]);
 const isHelperCall = (e: ts.Expression): boolean => {
-  if (ts.isAwaitExpression(e)) return isHelperCall(e.expression);
+  if (ts.isAwaitExpression(e) || ts.isParenthesizedExpression(e)) return isHelperCall(e.expression);
+  // A choice between two helper answers is still the helper's answer (an order-linked sale vs an order-less one).
+  if (ts.isConditionalExpression(e)) return isHelperCall(e.whenTrue) && isHelperCall(e.whenFalse);
   return ts.isCallExpression(e) && ts.isIdentifier(e.expression) && HELPERS.has(e.expression.text);
 };
 
@@ -109,6 +111,14 @@ describe("one jurisdiction source (L8)", () => {
         ),
       ).toEqual([]);
       expect(kindViolations("f({ fulfilmentKind: params.fulfilmentKind });")).toEqual([]);
+      expect(
+        kindViolations(
+          "f({ fulfilmentKind: o ? await orderFulfilmentKind(db, o) : await defaultSaleFulfilmentKind(db, t, c) });",
+        ),
+      ).toEqual([]);
+      expect(
+        kindViolations("f({ fulfilmentKind: o ? await orderFulfilmentKind(db, o) : 'DELIVERY' });"),
+      ).toHaveLength(1);
     });
   });
 
