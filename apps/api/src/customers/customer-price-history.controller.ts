@@ -9,11 +9,13 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CustomerPriceHistoryService } from "./customer-price-history.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Step 2A — one customer's price history for one product (order-entry popover). Staff only:
  * OPERATOR admits OPERATOR and TENANT_ADMIN through the RolesGuard hierarchy; a DRIVER or CUSTOMER
  * gets 403. Kept apart from CustomersController so that controller's constructor is untouched.
  */
+@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
 @ApiTags("customers")
 @ApiBearerAuth()
 @Controller("customers")

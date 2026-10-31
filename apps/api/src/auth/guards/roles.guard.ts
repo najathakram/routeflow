@@ -2,7 +2,7 @@ import { Injectable, CanActivate, ExecutionContext, Logger, Optional } from "@ne
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../decorators/roles.decorator";
-import { PERMISSION_KEY } from "../permissions/permission.decorators";
+import { PERMISSION_BASE_KEY, PERMISSION_KEY } from "../permissions/permission.decorators";
 import { OperatorPermissionsService } from "../permissions/operator-permissions.service";
 import { permissionDeniedException } from "../permissions/permission-errors";
 import type { OperatorPermissionGroup } from "@prisma/client";
@@ -64,12 +64,23 @@ export class RolesGuard implements CanActivate {
     // Operator feature groups (spec-operator-permissions §4.1): only an OPERATOR on a handler that names groups.
     // Still synchronous for everyone else, so no existing caller or spec changes.
     if (user.role !== UserRole.OPERATOR || !this.permissions) return true;
-    const groups = this.reflector.getAllAndOverride<OperatorPermissionGroup[]>(PERMISSION_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    // Method metadata overrides class metadata, and a method may state EITHER a group list OR "base" (any operator).
+    const groups = this.permissionGroupsOf(context);
     if (!groups || groups.length === 0) return true;
     return this.checkGroups(context, user, groups);
+  }
+
+  /** The groups the handler names, or null when it is PermissionBase / unmarked (any operator). Nearest metadata wins. */
+  private permissionGroupsOf(context: ExecutionContext): OperatorPermissionGroup[] | null {
+    for (const target of [context.getHandler(), context.getClass()]) {
+      if (this.reflector.get(PERMISSION_BASE_KEY, target) !== undefined) return null;
+      const groups = this.reflector.get<OperatorPermissionGroup[] | undefined>(
+        PERMISSION_KEY,
+        target,
+      );
+      if (groups !== undefined) return groups;
+    }
+    return null;
   }
 
   private async checkGroups(
@@ -78,24 +89,40 @@ export class RolesGuard implements CanActivate {
     groups: OperatorPermissionGroup[],
   ): Promise<boolean> {
     const permissions = this.permissions!;
-    const mode = permissions.mode();
-    const where = `handler=${context.getClass().name}.${context.getHandler().name} tenant=${user.tenantId ?? "-"} route=${routeOf(context)}`;
+    // Everything that can throw sits inside the try: in SHADOW nothing here may ever block an operator.
+    let mode: ReturnType<OperatorPermissionsService["mode"]> | undefined;
+    let where = `handler=${context.getClass().name}.${context.getHandler().name} tenant=${user.tenantId ?? "-"}`;
     let allowed: boolean;
     try {
+      mode = permissions.mode();
+      where += ` route=${routeOf(context)}`;
       allowed = await permissions.hasAny(user, groups);
     } catch (err) {
       // SHADOW observes only: a failed lookup must never block an operator, so log it and allow.
-      if (mode !== "live") {
+      if (mode === "shadow") {
         this.logger.error(
           `permission lookup failed (shadow, allowed) groups=${groups.join("|")} ${where}: ${describeLookupError(err)}`,
         );
         return true;
       }
-      // LIVE fails closed: no answer is never an allow, so the error propagates and the request is refused.
+      // Anything but a confirmed shadow (live, or mode() itself threw) fails closed: no answer is never an allow.
+      if (mode !== "live") {
+        this.logger.error(
+          `permission lookup failed (mode unknown, refused) mode=${String(mode)} groups=${groups.join("|")} ${where}: ${describeLookupError(err)}`,
+        );
+      }
       throw err;
     }
     if (allowed) return true;
-    if (mode === "live") throw permissionDeniedException(groups);
+    // Only a confirmed shadow allows a deny: live, or any mode this guard does not know, is refused.
+    if (mode !== "shadow") {
+      if (mode !== "live") {
+        this.logger.error(
+          `permission mode unknown (refused) mode=${String(mode)} groups=${groups.join("|")} ${where}`,
+        );
+      }
+      throw permissionDeniedException(groups);
+    }
     // SHADOW: record what enforcement would do, allow the request.
     this.logger.warn(`would-deny groups=${groups.join("|")} ${where}`);
     return true;

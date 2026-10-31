@@ -20,10 +20,12 @@ import { UnknownStateBulkService } from "./unknown-state-bulk.service";
 import { UnknownStateCustomersQueryDto } from "./dto/unknown-state-customers-query.dto";
 import { UnknownStateCustomersService } from "./unknown-state-customers.service";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // The "Customers without a state on file" card (Addendum D). OPERATOR and TENANT_ADMIN (TENANT_ADMIN
 // satisfies OPERATOR in RolesGuard; owner 10-07: operators are near-admins). CUSTOMER, DRIVER and buyer
 // tokens get 403. The two bulk writes are staff-JWT writes, so the global TenantStatusGuard refuses them
 // in a read-only workspace (no read-only allow-list entry).
+@RequirePermission("CUSTOMERS", "REGULATED") // one flow, one any-of (SA-977 §2.1)
 @ApiTags("settings")
 @ApiBearerAuth()
 @Controller("settings/restrictions/unknown-state-customers")

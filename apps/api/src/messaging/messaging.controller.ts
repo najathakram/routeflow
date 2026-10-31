@@ -31,6 +31,7 @@ import { UpdateTemplateDto } from "./dto/update-template.dto";
 import { PreviewTemplateDto } from "./dto/preview-template.dto";
 import { UpdateMessagingSettingsDto } from "./dto/update-messaging-settings.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * P6-2 thin operator surface for the messaging engine. Manual send + a
  * notify test hook + minimal thread reads — the rich inbox is a later
@@ -42,6 +43,7 @@ import { UpdateMessagingSettingsDto } from "./dto/update-messaging-settings.dto"
  * the class role — the settings/margin pattern; TENANT_ADMIN also satisfies
  * OPERATOR via RolesGuard's hierarchy).
  */
+@RequirePermission("NOTIFICATIONS")
 @ApiTags("messaging")
 @ApiBearerAuth()
 @Controller("messaging")
@@ -55,6 +57,7 @@ export class MessagingController {
     private readonly staffEmail: StaffEmailSettingsService,
   ) {}
 
+  @RequirePermission("CUSTOMERS", "NOTIFICATIONS")
   @Post("threads/:customerId/messages")
   @ApiOperation({ summary: "Send a message to a customer over a channel (P6-2 engine)" })
   send(
@@ -72,6 +75,7 @@ export class MessagingController {
     });
   }
 
+  @RequirePermission("CUSTOMERS", "NOTIFICATIONS")
   @Post("notify")
   @ApiOperation({ summary: "Fire an event notification across its enabled channels" })
   notify(@Body() dto: NotifyDto, @CurrentUser() user: { id: string }) {
@@ -82,11 +86,13 @@ export class MessagingController {
     });
   }
 
+  @RequirePermission("CUSTOMERS", "NOTIFICATIONS")
   @Get("threads")
   listThreads() {
     return this.messaging.listThreads();
   }
 
+  @RequirePermission("CUSTOMERS", "NOTIFICATIONS")
   @Get("threads/:id")
   getThread(@Param("id") id: string) {
     return this.messaging.getThread(id);
@@ -94,6 +100,7 @@ export class MessagingController {
 
   // ─── Notifications config (P6-6) ─────────────────────────────────────────
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("config")
   @ApiOperation({
     summary: "Event×channel notification matrix + settings + MSGS meter (lazily seeds defaults)",
@@ -127,6 +134,7 @@ export class MessagingController {
     return this.config.preview(dto.body, dto.vars);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("settings")
   @ApiOperation({ summary: "Quiet-hours + timezone messaging settings" })
   getSettings() {

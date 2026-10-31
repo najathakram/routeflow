@@ -20,12 +20,14 @@ import { requireIdempotencyKey } from "./required-idempotency-key";
 import { PickupCompleteDto } from "./pickup-complete.dto";
 import { PickupCompleteService } from "./pickup-complete.service";
 
+import { RequirePermission } from "../../auth/permissions/permission.decorators";
 /**
  * POST /orders/:id/pickup-complete — staff hand a PICKUP order over at the till: DELIVERED + invoice sent
  * + tender recorded in one call. OPERATOR admits TENANT_ADMIN through RolesGuard's hierarchy. A payment
  * problem after the hand-over is a 200 body (`paymentRecorded: false`), never an error. The
  * `Idempotency-Key` header is REQUIRED (400 IDEMPOTENCY_KEY_REQUIRED), same character rules as the counter sale.
  */
+@RequirePermission("ORDERS")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
