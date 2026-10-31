@@ -836,6 +836,8 @@ export function CreateOrderModal({
             overrideReason: undefined,
           };
         }
+        // SA-1068 A-4: a linked line stays as parked while this customer's memories are unknown
+        if (!scanV2 && !fromOtherCustomer && priceHistory === undefined) return li;
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
         if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;

@@ -490,6 +490,64 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
         await waitFor(() => expect(orderPosts()).toHaveLength(1));
         expect(bodyOf(0).items[0]).toMatchObject({ unitPrice: 8, overrideReason: "Damaged box" });
       });
+
+      // SA-1068 M27: the builder's own line at memory carries the link, so the draft comes from the modal, not the till.
+      describe("a line the builder parked, linked to its customer", () => {
+        const memory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: false };
+
+        async function parkLinkedLine() {
+          mockCustomers = [{ ...customer, pricingTier: 2 }];
+          mockHistory = memory;
+          mockResolveProductByCode.mockResolvedValue({
+            ...product("p1"),
+            product: { ...product("p1").product, pricePerUnit: "12", priceTier2: "10" },
+          });
+          const first = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+            target: { value: "Acm" },
+          });
+          fireEvent.click(await screen.findByText("Acme Foods"));
+          capturedOnScan!("111");
+          await screen.findByText("Widget p1");
+          await waitForLocalCopy();
+          const [rec] = await localRecords();
+          expect((rec.payload as { lineItems: unknown[] }).lineItems[0]).toMatchObject({
+            prefillCustomerId: "c1",
+            unitPrice: 15,
+            priceType: "MANUAL",
+          });
+          first.unmount();
+        }
+
+        it("T17: a failed history read keeps the line as parked, and it still sends no price", async () => {
+          await parkLinkedLine();
+          mockHistory = { data: undefined, isPending: false, isError: true };
+          post.mockResolvedValue({ data: { id: "o1" } });
+          await resume();
+          expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+          expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+
+          fireEvent.click(createBtn());
+          await waitFor(() => expect(orderPosts()).toHaveLength(1));
+          expect(bodyOf(0).items[0]).not.toHaveProperty("unitPrice");
+        });
+
+        it("M14: the line waits at its parked price for the history read", async () => {
+          await parkLinkedLine();
+          mockProductNow = { p1: { id: "p1", pricePerUnit: "12", priceTier2: "10" } };
+          mockHistory = { data: undefined, isPending: true, isError: false };
+          const view = await resume();
+          expect(productReads()).toHaveLength(0);
+          expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+
+          mockHistory = memory;
+          view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          await waitFor(() => expect(productReads()).toHaveLength(1));
+          await flush();
+          expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+          expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+        });
+      });
     });
 
     it("A6: a resumed draft keeps its own submit key", async () => {
