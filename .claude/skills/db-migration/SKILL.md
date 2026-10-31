@@ -22,7 +22,7 @@ unchanged, in `apps/api/prisma/migrations/`.
 
 - **Never auto-migrate on deploy.** The Docker `CMD` is only `node dist/main.js`. Pushing code
   to `master`/`develop` redeploys app code; it must NOT touch the Railway database.
-- **Prod migrations only via** `railway run npx prisma migrate deploy` (controlled, by a human).
+- **Prod migrations only via** `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (controlled, by a human).
 - **Never** `prisma migrate reset` / `db push --force-reset` against any DB with real data.
 - **Never** call the destructive scripts named in `CLAUDE_SESSION_PREAMBLE.md`
   (e.g. `DANGER-fresh-data-WIPES-ALL-DATA.js`, `nuke-db.js`, `reset-seed.js`, `clear-financial-data.js`, `cleanup-qa-data.js`).
