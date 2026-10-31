@@ -3,12 +3,16 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
+import { createPortal } from "react-dom";
 import { X, Layers, ChevronUp } from "lucide-react";
-import { Button, cn, useToast } from "@routeflow/ui/web";
+import { Button, Modal, cn, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useDrafts, useDeleteDraft, type SaleDraft } from "@/lib/api/drafts";
 import { draftSummary, parkedAgo } from "@/lib/drafts";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AnchoredPopover } from "@/components/AnchoredPopover";
+import { useDraftDockSlot } from "@/lib/draft-dock-slot";
+import { isRegisterPath } from "@/lib/register-mode";
 
 /**
  * Minimize & resume drafts (pos-cost-roles-spec §2). A persistent bottom-left
@@ -16,6 +20,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
  * navigates back into the builder hydrated from the draft's payload; delete asks
  * to confirm. While any draft is parked, scanning a barcode anywhere prompts
  * "Add to draft — {customer}?" (one tap) vs starting a new order.
+ *
+ * On the till (SA-1066 A-3) nothing of it floats: a float over the checkout column can only clear Complete by luck of the
+ * window. There it is a "Drafts (n)" button portaled into the till header's slot (lib/draft-dock-slot.ts), and the same
+ * Resume / Discard chips open in an AnchoredPopover under that button.
  *
  * Only mounts its data hooks for roles that can build orders (operator / driver /
  * tenant-admin); customers never see the dock and never hit the operator-only
@@ -73,6 +81,8 @@ function useNarrowViewport(): boolean {
 function DraftDockInner() {
   const narrow = useNarrowViewport();
   const pathname = usePathname();
+  const till = isRegisterPath(pathname);
+  const slot = useDraftDockSlot();
   const router = useGuardedRouter(); // POS-7: Resume / Start new cannot leave the counter mid-sale
   const { toast } = useToast();
   const { data: drafts } = useDrafts();
@@ -80,10 +90,13 @@ function DraftDockInner() {
 
   const [collapsed, setCollapsed] = React.useState(true);
   const pillRef = React.useRef<HTMLButtonElement>(null);
+  // The till's Drafts button, as state: AnchoredPopover needs the element at render, and it exists only once portaled.
+  const [draftsBtn, setDraftsBtn] = React.useState<HTMLButtonElement | null>(null);
   const chipsId = React.useId();
   const [deleteTarget, setDeleteTarget] = React.useState<SaleDraft | null>(null);
   // A pending scan awaiting the operator's "add to which draft?" choice.
   const [scanPrompt, setScanPrompt] = React.useState<string | null>(null);
+  const promptListRef = React.useRef<HTMLUListElement>(null);
 
   const list = drafts ?? [];
   const hasDrafts = list.length > 0;
@@ -102,9 +115,10 @@ function DraftDockInner() {
     setCollapsed(true);
   }, [pathname]);
 
-  // Escape folds the expanded tray and hands focus back to the pill.
+  // Escape folds the expanded tray and hands focus back to the pill. On the till the popover owns Escape (it stops it
+  // in the capture phase and folds through onClose below), so this listener is the floating dock's only.
   React.useEffect(() => {
-    if (collapsed) return;
+    if (collapsed || till) return;
     const onEscape = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
@@ -113,7 +127,7 @@ function DraftDockInner() {
     };
     document.addEventListener("keydown", onEscape);
     return () => document.removeEventListener("keydown", onEscape);
-  }, [collapsed]);
+  }, [collapsed, till]);
 
   // ── Scan-to-draft: a global wedge-scanner listener, active only while at least
   // one draft is parked. A fast keystroke burst ending in Enter (and not typed
@@ -156,75 +170,139 @@ function DraftDockInner() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [hasDrafts]);
 
+  // While the prompt is open its first choice holds focus, and a wedge scanner ends every code with Enter: a burst's Enter
+  // would press that choice. Capture phase, before the button's own activation; a person's Enter (no burst) is untouched.
+  React.useEffect(() => {
+    if (scanPrompt === null) return;
+    let run = 0;
+    let lastKeyTime = 0;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const now = Date.now();
+      if (e.key === "Enter") {
+        if (run >= 6 && now - lastKeyTime < 200) e.preventDefault();
+        run = 0;
+        return;
+      }
+      if (e.key.length === 1) {
+        run = now - lastKeyTime > 200 ? 1 : run + 1;
+        lastKeyTime = now;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [scanPrompt]);
+
   if (!hasDrafts) return null;
 
   // Collapsed on a narrow screen = the pill alone; the chips (Resume / Discard) open with one tap.
   const visible = collapsed ? (narrow ? [] : list.slice(0, 2)) : list;
 
+  // One chip per draft, shared by the floating dock and the till's popover.
+  const chipRows = (rows: SaleDraft[]) =>
+    rows.map((draft, i) => {
+      const { title, itemCount, total } = draftSummary(draft);
+      return (
+        <div
+          key={draft.id}
+          className={cn(
+            "pointer-events-auto flex items-center gap-3 rounded-xl bg-navy px-3.5 py-2.5 text-white shadow-modal",
+            i > 0 && "opacity-90",
+          )}
+        >
+          <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-300">
+            Draft
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-semibold">{title}</p>
+            <p className="truncate text-[11.5px] text-white/55">
+              {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
+              <span className="font-mono">${total.toFixed(2)}</span> · paused{" "}
+              {parkedAgo(draft.updatedAt)}
+            </p>
+          </div>
+          <Button size="sm" onClick={() => resume(draft)}>
+            Resume
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              // The confirm is a modal over the page: fold the popover first so its Escape never competes with the dialog's.
+              if (till) setCollapsed(true);
+              setDeleteTarget(draft);
+            }}
+            className="shrink-0 rounded p-1 text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+            aria-label="Discard draft"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      );
+    });
+
   return (
     <>
-      {/* pointer-events-none on the wrapper so its transparent gaps never block
+      {till ? (
+        // No floating wrapper at all on the till, not even before the header's slot registers, so nothing flashes in
+        // and then moves. The button lives in the header row's flow, where no control can be covered.
+        slot &&
+        createPortal(
+          <Button
+            ref={setDraftsBtn}
+            className="min-h-[44px]"
+            variant="secondary"
+            aria-expanded={!collapsed}
+            aria-haspopup="dialog"
+            onClick={() => setCollapsed((c) => !c)}
+          >
+            Drafts ({list.length})
+          </Button>,
+          slot,
+        )
+      ) : (
+        /* pointer-events-none on the wrapper so its transparent gaps never block
           clicks to page content underneath; each interactive chip re-enables them.
           bottom-24 (not bottom-4) keeps the dock clear of the bottom-center PWA
           install prompt (which lives in the bottom ~96px band, mirroring main's
-          pb-24) — they can no longer overlap and hide the Resume/Discard actions. */}
-      <div className="pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
-        {/* Collapse control — a badge with the parked count (shown when >2). */}
-        {(list.length > 2 || (narrow && list.length > 0)) && (
-          <button
-            ref={pillRef}
-            type="button"
-            aria-expanded={!collapsed}
-            aria-controls={chipsId}
-            onClick={() => setCollapsed((c) => !c)}
-            className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
-          >
-            <Layers className="h-3.5 w-3.5 text-brand-300" />
-            {list.length} parked draft{list.length === 1 ? "" : "s"}
-            <ChevronUp
-              className={cn("h-3.5 w-3.5 transition-transform", collapsed && "rotate-180")}
-            />
-          </button>
-        )}
+          pb-24) — they can no longer overlap and hide the Resume/Discard actions. */
+        <div className="pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
+          {/* Collapse control — a badge with the parked count (shown when >2). */}
+          {(list.length > 2 || (narrow && list.length > 0)) && (
+            <button
+              ref={pillRef}
+              type="button"
+              aria-expanded={!collapsed}
+              aria-controls={chipsId}
+              onClick={() => setCollapsed((c) => !c)}
+              className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
+            >
+              <Layers className="h-3.5 w-3.5 text-brand-300" />
+              {list.length} parked draft{list.length === 1 ? "" : "s"}
+              <ChevronUp
+                className={cn("h-3.5 w-3.5 transition-transform", collapsed && "rotate-180")}
+              />
+            </button>
+          )}
 
-        <div id={chipsId} className="flex flex-col gap-2">
-          {visible.map((draft, i) => {
-            const { title, itemCount, total } = draftSummary(draft);
-            return (
-              <div
-                key={draft.id}
-                className={cn(
-                  "pointer-events-auto flex items-center gap-3 rounded-xl bg-navy px-3.5 py-2.5 text-white shadow-modal",
-                  i > 0 && "opacity-90",
-                )}
-              >
-                <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-300">
-                  Draft
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-semibold">{title}</p>
-                  <p className="truncate text-[11.5px] text-white/55">
-                    {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
-                    <span className="font-mono">${total.toFixed(2)}</span> · paused{" "}
-                    {parkedAgo(draft.updatedAt)}
-                  </p>
-                </div>
-                <Button size="sm" onClick={() => resume(draft)}>
-                  Resume
-                </Button>
-                <button
-                  type="button"
-                  onClick={() => setDeleteTarget(draft)}
-                  className="shrink-0 rounded p-1 text-white/55 transition-colors hover:bg-white/10 hover:text-white"
-                  aria-label="Discard draft"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            );
-          })}
+          <div id={chipsId} className="flex flex-col gap-2">
+            {chipRows(visible)}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* The till's chips: the same Resume / Discard rows, a transient panel under the button. Outside mousedown and
+          Escape fold it (Escape also hands focus back to the button); it flips and clamps on screen by itself. */}
+      {till && slot && draftsBtn && !collapsed && (
+        <AnchoredPopover
+          anchor={draftsBtn}
+          label="Parked drafts"
+          onClose={(reason) => {
+            setCollapsed(true);
+            if (reason === "escape") draftsBtn.focus();
+          }}
+        >
+          <div className="flex flex-col gap-2">{chipRows(list)}</div>
+        </AnchoredPopover>
+      )}
 
       {/* Delete confirm — parked drafts never expire, so removal is explicit. */}
       <ConfirmDialog
@@ -244,58 +322,59 @@ function DraftDockInner() {
         loading={deleteDraft.isPending}
       />
 
-      {/* Scan-to-draft prompt — pick which parked draft the scan joins. */}
+      {/* Scan-to-draft prompt — pick which parked draft the scan joins. A Modal (Radix): it names itself, traps Tab, closes on
+          Escape or the backdrop, and its role="dialog" data-state="open" also keeps the scan listener above from firing again. */}
       {scanPrompt && (
-        <div
-          className="fixed inset-0 z-[210] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
-          onClick={() => setScanPrompt(null)}
+        <Modal
+          open
+          onClose={() => setScanPrompt(null)}
+          title="Add scanned item to a draft?"
+          className="max-w-sm !p-0"
+          onOpenAutoFocus={(e) => {
+            // First focus on the first choice, not the close X.
+            e.preventDefault();
+            promptListRef.current?.querySelector("button")?.focus();
+          }}
         >
-          <div
-            className="w-full max-w-sm overflow-hidden rounded-xl border border-surface-border bg-white shadow-modal"
-            onClick={(e) => e.stopPropagation()}
+          <p className="-mt-3 mb-3 px-5 font-mono text-xs text-navy/60">{scanPrompt}</p>
+          <ul
+            ref={promptListRef}
+            className="max-h-[50vh] divide-y divide-surface-border overflow-y-auto border-t border-surface-border"
           >
-            <div className="border-b border-surface-border px-5 py-3.5">
-              <p className="text-sm font-semibold text-navy">Add scanned item to a draft?</p>
-              <p className="mt-0.5 font-mono text-xs text-navy/60">{scanPrompt}</p>
-            </div>
-            <ul className="max-h-[50vh] divide-y divide-surface-border overflow-y-auto">
-              {list.map((draft) => {
-                const { title, itemCount } = draftSummary(draft);
-                return (
-                  <li key={draft.id}>
-                    <button
-                      type="button"
-                      onClick={() => resume(draft, scanPrompt)}
-                      className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-raised"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-navy">
-                          {title}
-                        </span>
-                        <span className="block text-xs text-navy/60">
-                          {itemCount} item{itemCount === 1 ? "" : "s"}
-                        </span>
+            {list.map((draft) => {
+              const { title, itemCount } = draftSummary(draft);
+              return (
+                <li key={draft.id}>
+                  <button
+                    type="button"
+                    onClick={() => resume(draft, scanPrompt)}
+                    className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-raised"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-navy">{title}</span>
+                      <span className="block text-xs text-navy/60">
+                        {itemCount} item{itemCount === 1 ? "" : "s"}
                       </span>
-                      <span className="shrink-0 text-xs font-semibold text-brand-600">Add</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="border-t border-surface-border px-5 py-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setScanPrompt(null);
-                  router.push(newOrderHref(scanPrompt));
-                }}
-                className="text-sm font-medium text-navy/70 hover:text-navy"
-              >
-                Start a new order instead
-              </button>
-            </div>
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold text-brand-600">Add</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="border-t border-surface-border px-5 py-3">
+            <button
+              type="button"
+              onClick={() => {
+                setScanPrompt(null);
+                router.push(newOrderHref(scanPrompt));
+              }}
+              className="text-sm font-medium text-navy/70 hover:text-navy"
+            >
+              Start a new order instead
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   );
