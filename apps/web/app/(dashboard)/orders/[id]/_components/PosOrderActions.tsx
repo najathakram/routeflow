@@ -257,6 +257,8 @@ export function PosOrderActions({
             {POS_COPY.confirmOrder}
           </Button>
         </ActionTier>
+        {/* SA-1066 F02: billing was only on the Invoice card, far down the page. Same button and write gate as at Ready. */}
+        {!firstInvoice && createInvoiceTier(false)}
         {switchToDelivery}
       </>
     );
