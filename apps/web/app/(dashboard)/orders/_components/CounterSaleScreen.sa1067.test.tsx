@@ -1,6 +1,7 @@
 import * as React from "react";
 import { screen, waitFor, fireEvent } from "@/test-utils/render";
 import userEvent from "@testing-library/user-event";
+import { createNavShortcutHandler } from "@/lib/nav-shortcuts";
 import { renderTill } from "@/test-utils/render-till";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
@@ -207,6 +208,27 @@ describe("SA-1067 M4: a capital letter at a desktop till goes to the scan box", 
       expect(scanField()).not.toHaveFocus();
     },
   );
+
+  it("L4: Caps Lock on, G then H on a plain button goes to the scan box and does not navigate", async () => {
+    const push = jest.fn();
+    const handler = createNavShortcutHandler({
+      push,
+      routesAccess: true,
+      counterEnabled: true,
+      toggleHelp: jest.fn(),
+    });
+    window.addEventListener("keydown", handler); // the dashboard shell's own listener
+    try {
+      const btn = await withButtonFocused();
+      fireEvent.keyDown(btn, { key: "G" });
+      expect(scanField()).toHaveFocus();
+      fireEvent.keyDown(document.activeElement!, { key: "H" });
+      expect(push).not.toHaveBeenCalled();
+      expect(scanField()).toHaveFocus();
+    } finally {
+      window.removeEventListener("keydown", handler);
+    }
+  });
 
   it("a digit still goes to the scan box", async () => {
     const btn = await withButtonFocused();
