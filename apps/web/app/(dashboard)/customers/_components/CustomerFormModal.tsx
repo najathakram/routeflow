@@ -230,6 +230,9 @@ export function CustomerFormModal({
   // customer starts on the account default (ROUTE for an account with no fulfilment mode).
   const staffFulfilment = useStaffFulfilment();
   const newCustomerPath = staffFulfilment.formDefault;
+  // A customer stored as PICKUP keeps the picker, and its Pickup option, for the whole session: read once from the data the
+  // form opened with, never from the live value (picking Ship would otherwise unmount the control at the moment of choosing).
+  const openedOnPickup = formFulfillPath(initialData?.fulfillPath) === "PICKUP";
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -382,6 +385,7 @@ export function CustomerFormModal({
             data.fulfillPath,
             staffFulfilment.pickForm,
             staffFulfilment.staffDefault,
+            newCustomerPath,
           ),
           notes: data.notes,
           addresses,
@@ -431,6 +435,7 @@ export function CustomerFormModal({
             data.fulfillPath,
             staffFulfilment.pickForm,
             staffFulfilment.staffDefault,
+            formFulfillPath(initialData.fulfillPath),
           ),
           notes: data.notes,
         },
@@ -678,7 +683,7 @@ export function CustomerFormModal({
                 </label>
               </div>
             </div>
-            {(staffFulfilment.choice || watch("fulfillPath") === "PICKUP") && (
+            {(staffFulfilment.choice || openedOnPickup) && (
               <div className="space-y-1">
                 <Select
                   label="Default fulfillment"
@@ -688,9 +693,7 @@ export function CustomerFormModal({
                       label: m === "ROUTE" ? "Delivery route" : "Ship via carrier",
                     })),
                     // Shown only for a customer that already has it: the API does not let a form set PICKUP.
-                    ...(watch("fulfillPath") === "PICKUP"
-                      ? [{ value: "PICKUP", label: "Pickup (counter)" }]
-                      : []),
+                    ...(openedOnPickup ? [{ value: "PICKUP", label: "Pickup (counter)" }] : []),
                   ]}
                   register={register("fulfillPath")}
                 />
