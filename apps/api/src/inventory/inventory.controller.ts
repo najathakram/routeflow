@@ -45,6 +45,8 @@ import {
 } from "./dto/stock-count-session.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+@RequirePermission("CATALOG")
 @Controller("inventory")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
@@ -54,6 +56,7 @@ export class InventoryController {
     private readonly movementsExporter: InventoryMovementsExportService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("overview")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getStockOverview() {
@@ -163,11 +166,13 @@ export class InventoryController {
   }
 
   // ── Cost basis & valuation ──
+  @RequirePermission("PRICING", "REPORTS")
   @Get("valuation")
   getValuation() {
     return this.inventoryService.getValuation();
   }
 
+  @RequirePermission("PRICING")
   @Patch("products/:id/cost-basis")
   setCostBasis(
     @Param("id") id: string,
@@ -177,6 +182,7 @@ export class InventoryController {
     return this.inventoryService.setCostBasis(id, dto, user.id);
   }
 
+  @RequirePermission("PRICING")
   @Post("cost-basis/bulk")
   bulkSetCostBasis(@Body() dto: BulkSetCostBasisDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.bulkSetCostBasis(dto, user.id);

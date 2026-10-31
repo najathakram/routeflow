@@ -11,11 +11,13 @@ import {
   MatchExistingDto,
 } from "./dto/resolution.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * Variant resolution for unmatched scanned/imported lines (spec §5) + the
  * "Finish setup" queue for incomplete products. TENANT_ADMIN satisfies
  * @Roles(OPERATOR).
  */
+@RequirePermission("CATALOG")
 @Controller("import/resolution")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)

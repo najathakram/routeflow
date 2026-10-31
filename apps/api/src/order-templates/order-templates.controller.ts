@@ -25,6 +25,8 @@ import { AddTemplateItemDto } from "./dto/add-template-item.dto";
 import { GenerateTemplateOrderDto } from "./dto/generate-template-order.dto";
 import { toCustomerOrder } from "../common/staff-only-fields";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("ORDERS")
 @ApiTags("order-templates")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
