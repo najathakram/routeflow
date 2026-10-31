@@ -9,11 +9,12 @@ import { IDLE_RUN_MAX_MS, runWithIdleTimeout } from "./testing/run-with-idle-tim
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/heavy-slot.self-test.mjs");
 
-// The child is ~1 s of tiny `node` spawns and prints a line per check. It is ended only when it goes this
-// long WITHOUT output (stuck), never for total time: under a full verify it is merely slow, and a test of
+// The child is ~8 s of tiny `node` spawns and prints a line per check. It is ended only when it goes this
+// long (5 min) WITHOUT output (stuck), never for total time: under a full verify it is merely slow (90 s of silence was
+// measured while a type-check held 10 GB), and a test of
 // the slot must not fail because the slot is in use. It never touches the real slot dir (every case runs
 // in a temp dir), so a holder elsewhere cannot make it wait; only CPU starvation slows it.
-const IDLE_MS = 90_000;
+const IDLE_MS = 300_000;
 
 // The self-test builds its own explicit envs; this only keeps a CI / slot setting of the host
 // running jest (or a verify that holds a slot right now) from leaking into its process.

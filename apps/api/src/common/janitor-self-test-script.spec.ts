@@ -16,7 +16,7 @@ const SCRIPT = path.resolve(REPO_ROOT, "scripts/janitor.self-test.mjs");
 // prints one progress mark per case and is ended only when it goes this long without output (stuck).
 // JANITOR_SELF_TEST_TIMEOUT_MS overrides the idle window for a slower box without touching this file
 // (a non-numeric or non-positive value falls back to the default).
-const DEFAULT_IDLE_MS = 120_000;
+const DEFAULT_IDLE_MS = 300_000;
 const envIdleMs = Number(process.env.JANITOR_SELF_TEST_TIMEOUT_MS);
 const IDLE_MS = Number.isFinite(envIdleMs) && envIdleMs > 0 ? envIdleMs : DEFAULT_IDLE_MS;
 

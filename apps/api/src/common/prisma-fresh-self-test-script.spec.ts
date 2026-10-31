@@ -10,7 +10,7 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/prisma-fresh.self-test.mjs");
 
 // Ended only after this long WITHOUT output (it prints a line per check), never for total time under load.
-const IDLE_MS = 90_000;
+const IDLE_MS = 300_000;
 
 describe("prisma-fresh self-test contract", () => {
   it(
