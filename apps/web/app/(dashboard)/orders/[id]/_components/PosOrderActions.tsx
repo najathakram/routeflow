@@ -28,7 +28,8 @@ const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.s
 
 /**
  * POS-mode order page (SA-763r P-2): Confirmed -> Invoice (draft) -> Handed over. There is no Out-for-delivery
- * step: hand-over IS the completion. The invoice step reads "(draft)" until every invoice has been issued.
+ * step: hand-over IS the completion. The invoice step reads "(draft)" only while a draft invoice exists; with no
+ * invoice at all it reads "Invoice" and is not done.
  */
 export function PosProgress({ order, status }: { order: PosOrder; status: string }) {
   if (status === "DRAFT" || status === "CANCELLED") return null;
@@ -37,7 +38,7 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
     status === "CONFIRMED" || status === "OUT_FOR_DELIVERY" || status === "DELIVERED";
   const handedOver = status === "DELIVERED";
   const hasInvoice = invoices.length > 0;
-  const invoiceIsDraft = !hasInvoice || invoices.some((i) => i.status === "DRAFT");
+  const invoiceIsDraft = hasInvoice && invoices.some((i) => i.status === "DRAFT");
   const steps = [
     { key: "confirmed", label: POS_COPY.stepConfirmed, done: confirmed },
     {
@@ -196,6 +197,32 @@ export function PosOrderActions({
     </ActionTier>
   );
 
+  // The same mutation and write gate wherever it is offered. CONFIRMED: the primary. Ready (SA-1066 M2): a secondary
+  // while no invoice exists, so Hand over stays the one primary (hand-over does not wait for it; SA-1026 B issues then).
+  const createInvoiceTier = (primary: boolean) => (
+    <ActionTier tier={primary ? "primary" : "secondary"}>
+      <Button
+        size="sm"
+        className="h-11"
+        variant={primary ? undefined : "secondary"}
+        leftIcon={<FileText className="h-4 w-4" />}
+        loading={createInvoice.isPending}
+        onClick={() =>
+          createInvoice.mutate(orderId, {
+            onSuccess: () => toast({ title: POS_COPY.invoiceCreated, variant: "success" }),
+            onError: (err) =>
+              toast({
+                title: codedToastCopy(err) ?? POS_COPY.invoiceFailed,
+                variant: "error",
+              }),
+          })
+        }
+      >
+        {POS_COPY.createInvoice}
+      </Button>
+    </ActionTier>
+  );
+
   if (status === "PENDING") {
     return (
       <>
@@ -237,26 +264,7 @@ export function PosOrderActions({
           handOver(true)
         ) : (
           <>
-            <ActionTier tier="primary">
-              <Button
-                size="sm"
-                className="h-11"
-                leftIcon={<FileText className="h-4 w-4" />}
-                loading={createInvoice.isPending}
-                onClick={() =>
-                  createInvoice.mutate(orderId, {
-                    onSuccess: () => toast({ title: POS_COPY.invoiceCreated, variant: "success" }),
-                    onError: (err) =>
-                      toast({
-                        title: codedToastCopy(err) ?? POS_COPY.invoiceFailed,
-                        variant: "error",
-                      }),
-                  })
-                }
-              >
-                {POS_COPY.createInvoice}
-              </Button>
-            </ActionTier>
+            {createInvoiceTier(true)}
             {handOver(false)}
           </>
         )}
@@ -265,6 +273,8 @@ export function PosOrderActions({
       </>
     );
   }
+
+  if (status === "OUT_FOR_DELIVERY") return firstInvoice ? null : createInvoiceTier(false);
 
   if (status === "DELIVERED" && firstInvoice) {
     const paid = invoices.every((i) => i.status === "PAID");

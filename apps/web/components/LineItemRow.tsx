@@ -244,6 +244,8 @@ export function LineItemRow({
         // up it is the original single flex row — the grid-placement classes on the
         // children are inert inside a flex container.
         "grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-2 px-3 py-2.5 sm:flex sm:items-start sm:gap-3",
+        // F9: the modal scrolls the added row `nearest`; this keeps it clear of the sticky footer and the docked draft bar.
+        "scroll-mb-40",
         // Row 731: from `sm` the row is a flex line; while the qty-0 note shows it wraps so the note takes a line of its own.
         showQtyNote ? "sm:flex-wrap" : "",
         category ? "border-l-2 border-l-amber-300 bg-amber-50/30" : "",

@@ -31,3 +31,42 @@ describe("displayLineStatus", () => {
     expect(displayLineStatus(li(), "CONFIRMED")).toBe("PENDING");
   });
 });
+
+/** SA-1066 F15 (R14): a default line on an OPEN pickup order shows no badge; real outcomes still show; delivery is unchanged. */
+describe("displayLineStatus on a pickup order", () => {
+  const li = (over: Record<string, unknown> = {}) => ({
+    status: "PENDING",
+    deliveredQty: 0,
+    qty: 8,
+    ...over,
+  });
+
+  it.each(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"])(
+    "R14: a default line on an open PICKUP order (%s) has no badge",
+    (orderStatus) => {
+      expect(displayLineStatus(li(), orderStatus, "PICKUP")).toBeNull();
+    },
+  );
+
+  it("R14 guard: a cancelled line still shows Cancelled on a pickup order", () => {
+    expect(displayLineStatus(li({ status: "CANCELLED" }), "CONFIRMED", "PICKUP")).toBe("CANCELLED");
+  });
+
+  it("R14 guard: a delivered or partial outcome still shows on a pickup order", () => {
+    expect(displayLineStatus(li({ status: "DELIVERED" }), "CONFIRMED", "PICKUP")).toBe("DELIVERED");
+    expect(displayLineStatus(li({ status: "PARTIAL" }), "CONFIRMED", "PICKUP")).toBe("PARTIAL");
+    expect(displayLineStatus(li({ deliveredQty: 3 }), "CONFIRMED", "PICKUP")).toBe("PARTIAL");
+  });
+
+  it("R14 guard: a handed-over (DELIVERED) pickup order reads Delivered, a cancelled one keeps its stored status", () => {
+    expect(displayLineStatus(li(), "DELIVERED", "PICKUP")).toBe("DELIVERED");
+    expect(displayLineStatus(li(), "CANCELLED", "PICKUP")).toBe("PENDING");
+  });
+
+  it.each(["ROUTE", "SHIP", null, undefined])(
+    "R14 guard: a default line on a %s order is unchanged (PENDING)",
+    (path) => {
+      expect(displayLineStatus(li(), "CONFIRMED", path)).toBe("PENDING");
+    },
+  );
+});

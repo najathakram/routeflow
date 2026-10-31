@@ -1535,11 +1535,11 @@ describe("CounterSaleScreen: API contract wiring", () => {
   });
 
   describe("the displayed total is an ESTIMATE; the receipt carries the server's number", () => {
-    it("the running figure stays labelled 'Estimated total' (the server's figure can differ: a credit auto-applied, a re-priced line) and still drives quick tender / change", async () => {
+    it("the running figure is labelled 'Total' (SA-1066 M8; the server's figure can differ: a credit auto-applied, a re-priced line) and still drives quick tender / change", async () => {
       renderTill(<CounterSaleScreen />);
       await fillCola();
       const running = screen.getByTestId("running-total");
-      expect(running).toHaveTextContent("Estimated total");
+      expect(running).toHaveTextContent(/^Total/);
       expect(running).toHaveTextContent("$2.50");
       expect(screen.getByTestId("change-due")).toHaveTextContent("Change $17.50");
     });

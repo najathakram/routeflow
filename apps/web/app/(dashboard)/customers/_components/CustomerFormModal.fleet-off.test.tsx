@@ -64,17 +64,17 @@ describe("CustomerFormModal — default fulfillment", () => {
     expect(payload.fulfillPath).toBe("ROUTE");
   });
 
-  it("F-c: pickup mode (PICKUP is not a form value yet) falls back to SHIP and never submits PICKUP", async () => {
+  it("F-c: pickup mode (PICKUP is not a form value yet) sends no path at all: never PICKUP, and no SHIP nobody chose (SA-1066 M9)", async () => {
     caps = account({ methods: ["PICKUP"], staffDefault: "PICKUP", counter: "always" });
     const payload = await createCustomer();
     expect(screen.queryByLabelText("Default fulfillment")).not.toBeInTheDocument();
-    expect(payload.fulfillPath).toBe("SHIP");
+    expect(payload.fulfillPath).toBeUndefined();
   });
 
-  it("F-c: pickup_ship offers only the methods it has (no 'Delivery route'), default SHIP", async () => {
+  it("F-c: pickup_ship offers only the methods it has (no 'Delivery route') and sends no path (SA-1066 M9)", async () => {
     caps = account({ methods: ["PICKUP", "SHIP"], staffDefault: "PICKUP", counter: "always" });
     const payload = await createCustomer();
-    expect(payload.fulfillPath).toBe("SHIP");
+    expect(payload.fulfillPath).toBeUndefined();
     expect(screen.queryByRole("option", { name: "Delivery route" })).not.toBeInTheDocument();
   });
 

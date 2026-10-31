@@ -100,4 +100,25 @@ describe("g shortcuts and the counter leave guard", () => {
     expect(push).not.toHaveBeenCalled();
     expect(getCounterLeaveRequest()).toBe(false);
   });
+
+  it("a scan pause is held (the regulated-item window): a letter code is not a g shortcut", () => {
+    // SA-1066 F10: focus now sits on the window's question box, which is not a text field, so the editable check alone
+    // would let the barcode's own "g" then a letter jump to another page.
+    const pause = document.createElement("div");
+    pause.setAttribute("data-scan-pause", "");
+    const box = document.createElement("div");
+    box.tabIndex = -1;
+    pause.appendChild(box);
+    document.body.appendChild(pause);
+    box.focus();
+
+    press("g", "c");
+
+    expect(push).not.toHaveBeenCalled();
+    expect(getCounterLeaveRequest()).toBe(false);
+
+    pause.remove();
+    press("g", "c");
+    expect(push).toHaveBeenCalledWith("/customers");
+  });
 });
