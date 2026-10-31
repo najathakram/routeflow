@@ -7,7 +7,7 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
 
 /**
  * CQ-01 / CQ-02 / CQ-08 through the real screen: the checkout panel explains its number (Subtotal, Tax, one named charge
- * per regulated category, Estimated total), the total carries the deposit / excise the receipt prints, and an exempt
+ * per regulated category, Total), the total carries the deposit / excise the receipt prints, and an exempt
  * customer's panel carries neither tax nor levy.
  */
 
@@ -109,7 +109,7 @@ const visibleTotal = () =>
   "";
 
 describe("counter checkout panel: the number explains itself (CQ-08) and matches the receipt (CQ-01)", () => {
-  it("a taxed cart with a deposit and an excise item: Subtotal, Tax, one named charge each, Estimated total", async () => {
+  it("a taxed cart with a deposit and an excise item: Subtotal, Tax, one named charge each, Total", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await scan("SODA");
@@ -203,26 +203,26 @@ describe("R7b 1.4: a licence-needing line says so at add, for a walk-in", () => 
   });
 });
 
-describe("R7b ruling: the Estimated total row hides when it equals Amount due", () => {
-  it("hides Estimated total when it equals Amount due", async () => {
+describe("R7b ruling: the Total row hides when it equals Amount due", () => {
+  it("hides Total when it equals Amount due", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
     // cash, nothing tendered yet: Amount due is the total, to the cent
     expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $10.");
-    expect(screen.queryByText("Estimated total")).toBeNull();
+    expect(screen.queryByText("Total")).toBeNull();
   });
 
-  it("shows Estimated total when it differs from Amount due", async () => {
+  it("shows Total when it differs from Amount due", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await waitFor(() => expect(text("running-subtotal")).toContain("$10.00"));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "4" } });
     expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $6.");
-    expect(screen.getByText("Estimated total")).toBeInTheDocument();
+    expect(screen.getByText("Total")).toBeInTheDocument();
     expect(text("running-total")).toContain("$10.");
     // a card sale has no Amount due line, so the total keeps its row
     fireEvent.click(screen.getByRole("radio", { name: "Card" }));
-    expect(screen.getByText("Estimated total")).toBeInTheDocument();
+    expect(screen.getByText("Total")).toBeInTheDocument();
   });
 });

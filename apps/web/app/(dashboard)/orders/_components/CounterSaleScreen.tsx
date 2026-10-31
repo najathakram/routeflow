@@ -2100,11 +2100,17 @@ export function CounterSaleScreen() {
               </span>
             ) : (
               <div data-testid="estimated-total-row">
+                {/* F7: one bottom-figure size. On cash it sits above Amount due / Change (which is the big figure), so it stays
+                    small; on any other method it IS the bottom figure and reads at the same size. */}
                 <div
-                  className="flex justify-between text-lg font-semibold"
+                  className={
+                    method === "CASH"
+                      ? "flex justify-between text-lg font-semibold"
+                      : "flex justify-between text-3xl font-bold"
+                  }
                   data-testid="running-total"
                 >
-                  <span>Estimated total</span>
+                  <span>Total</span>
                   <span>{money(totals.total)}</span>
                 </div>
               </div>
