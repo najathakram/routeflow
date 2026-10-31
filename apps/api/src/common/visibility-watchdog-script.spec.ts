@@ -838,6 +838,85 @@ describe("visibility-watchdog.mjs: argument validation and single instance (#207
       240_000,
     );
 
+    /** A `ps` the new start finds first on PATH, so a row can change the answer between checks. */
+    function fakePsEnv(logFile: string, script: string, pathDirs: (binDir: string) => string) {
+      const binDir = path.join(dir, `ps-${path.basename(logFile, ".log")}`);
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(path.join(binDir, "ps"), script, { mode: 0o755 });
+      return {
+        ...fakeEnv("success", logFile, { VISIBILITY_WATCHDOG_STOP_WAIT_MS: "1000" }),
+        PATH: pathDirs(binDir),
+      };
+    }
+
+    posixOnly(
+      "PRIVATE: a pid that is no longer a watchdog at the SIGKILL is not killed, and the new start arms",
+      async () => {
+        const logFile = newLogPath("takeover-pid-recycled");
+        setVisibility(logFile, "PRIVATE");
+        const holder = await startBlockedHolder(logFile, "5", 6_000);
+        const next = startNext(
+          logFile,
+          "6",
+          fakePsEnv(
+            logFile,
+            [
+              "#!/bin/sh",
+              'if [ -e "$0.seen" ]; then echo "node some-other-program"; exit 0; fi',
+              ': > "$0.seen"',
+              'echo "node visibility-watchdog.mjs"',
+              "",
+            ].join("\n"),
+            (binDir) => `${binDir}:${process.env.PATH}`,
+          ),
+        );
+        try {
+          const text = await decided(logFile, next.pid);
+          expect(text).not.toContain(" refused ");
+          await exited(holder);
+          expect(holder.signalCode).toBeNull(); // SIGTERM alone ended it, once its gh call returned
+          expect(holder.exitCode).toBe(143);
+        } finally {
+          holder.kill("SIGKILL");
+          next.kill("SIGKILL");
+          await Promise.all([exited(holder), exited(next)]);
+        }
+      },
+      240_000,
+    );
+
+    posixOnly(
+      "PRIVATE: a pid that can't be confirmed at the SIGKILL is not killed, and the start refuses by name",
+      async () => {
+        const logFile = newLogPath("takeover-pid-unconfirmed");
+        setVisibility(logFile, "PRIVATE");
+        const holder = await startBlockedHolder(logFile, "5", 6_000);
+        // The first check answers and removes the only `ps` on PATH, so the second cannot run.
+        const next = startNext(
+          logFile,
+          "6",
+          fakePsEnv(
+            logFile,
+            ["#!/bin/sh", 'echo "node visibility-watchdog.mjs"', 'exec /bin/rm "$0"', ""].join(
+              "\n",
+            ),
+            (binDir) => binDir,
+          ),
+        );
+        try {
+          const text = await decided(logFile, next.pid);
+          expect(text).toMatch(new RegExp(` refused .*could not stop pid ${holder.pid}`));
+          await exited(holder);
+          expect(holder.signalCode).toBeNull();
+        } finally {
+          holder.kill("SIGKILL");
+          next.kill("SIGKILL");
+          await Promise.all([exited(holder), exited(next)]);
+        }
+      },
+      240_000,
+    );
+
     it("PRIVATE: a lock that moved during the read is judged again, and its old pid is left alone", async () => {
       const logFile = newLogPath("takeover-lock-moved");
       const holder = await startHolder(logFile);
