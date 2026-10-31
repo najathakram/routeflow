@@ -4,8 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InlineCreateProductModal } from "./InlineCreateProductModal";
 
 /**
- * SA-1066 F12 + F13: at 390 the SKU field takes a full row (it was 111 px beside Unit), and inputs read 16 px below `md` so
- * iOS does not zoom in on focus. The class goes on the window's root only: no global rule, the shared Input is unchanged.
+ * SA-1066 F12: at 390 the SKU field takes a full row (it was 111 px beside Unit).
  */
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
@@ -37,12 +36,5 @@ describe("InlineCreateProductModal at 390 (SA-1066)", () => {
     expect(row.className).toMatch(/(^|\s)grid-cols-1(\s|$)/);
     expect(row.className).toMatch(/(^|\s)sm:grid-cols-2(\s|$)/);
     expect(row.className).not.toMatch(/(^|\s)grid-cols-2(\s|$)/);
-  });
-
-  it("F13: the root sets inputs, selects and textareas to 16 px below md", () => {
-    const { container } = mount();
-    const root = container.querySelector("[data-scan-pause]") as HTMLElement;
-    for (const el of ["input", "select", "textarea"])
-      expect(root.className).toContain(`max-md:[&_${el}]:text-base`);
   });
 });

@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { TOUCH_FIRST_QUERY, isTouchFirst } from "./touch-first";
 
 /** SA-1059 MUST 5: touch-first is a media query, and anything short of a clear yes is a desktop till. */
@@ -33,5 +35,21 @@ describe("isTouchFirst", () => {
       throw new Error("blocked");
     });
     expect(isTouchFirst()).toBe(false);
+  });
+});
+
+/** SA-1071 A-2: the iOS zoom rule in `globals.css` keys on the same query, so the two can't drift. */
+describe("the 16px field rule", () => {
+  const css = fs.readFileSync(path.resolve(__dirname, "../app/globals.css"), "utf8");
+  const block = css.slice(css.indexOf("iOS zooms into a focused field"));
+
+  it("sits under TOUCH_FIRST_QUERY", () => {
+    expect(block).toContain(`@media ${TOUCH_FIRST_QUERY} {`);
+  });
+
+  it("sets 16px on every text field, and leaves the controls that take no typing", () => {
+    expect(block).toMatch(/textarea,\s+select\s+\{\s+font-size: 16px !important;/);
+    for (const type of ["checkbox", "radio", "range", "file", "color", "hidden"])
+      expect(block).toContain(`[type="${type}"]`);
   });
 });

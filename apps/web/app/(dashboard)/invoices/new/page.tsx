@@ -2807,7 +2807,7 @@ export default function NewInvoicePage() {
                                   });
                                 }}
                                 onFocus={(e) => e.target.select()}
-                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11 [@media(hover:none)_and_(pointer:coarse)]:w-11"
                                 readOnly={!!pendingUnitOf(item)}
                                 aria-disabled={!!pendingUnitOf(item) || undefined}
                                 title={w.pack.other}
@@ -2827,7 +2827,7 @@ export default function NewInvoicePage() {
                                   });
                                 }}
                                 onFocus={(e) => e.target.select()}
-                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11"
+                                className="aria-disabled:opacity-60 w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500 max-md:h-11 max-md:w-11 [@media(hover:none)_and_(pointer:coarse)]:w-11"
                                 readOnly={!!pendingUnitOf(item)}
                                 aria-disabled={!!pendingUnitOf(item) || undefined}
                                 title={`Extra ${w.base.lowerOther}`}
