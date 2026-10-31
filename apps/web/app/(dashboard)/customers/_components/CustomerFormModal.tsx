@@ -574,7 +574,7 @@ export function CustomerFormModal({
             }
           : undefined
       }
-      className="max-w-2xl max-md:[&_input]:text-base max-md:[&_select]:text-base max-md:[&_textarea]:text-base"
+      className="max-w-2xl"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
