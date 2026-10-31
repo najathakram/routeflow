@@ -91,6 +91,7 @@ import {
   PosProgress,
   posMoveOptions,
 } from "./_components/PosOrderActions";
+import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
@@ -234,6 +235,12 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
+  const ready = useReadyForPickupAction({
+    orderId: order?.id,
+    customerName: order?.customer?.businessName,
+    onReady: () => setLocalStatus("OUT_FOR_DELIVERY"),
+    onError: (err) => guardError(() => ready.press())(err),
+  });
   const reopenOrder = useReopenOrder();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
@@ -729,7 +736,7 @@ export default function OrderDetailPage() {
   };
   // A SHIP order asks for tracking first (one shipped email that carries it); other orders ship at once.
   const handleMarkShipped = () =>
-    order.fulfillPath === "SHIP" ? setShowShipDialog(true) : handleLock();
+    order.fulfillPath === "SHIP" ? setShowShipDialog(true) : (isPos ? ready.press : handleLock)();
 
   const handleCancel = () => setShowCancelConfirm(true);
 
@@ -1140,7 +1147,7 @@ export default function OrderDetailPage() {
           {/* PENDING actions */}
           {localStatus === "PENDING" && !isEditing && (
             <>
-              {access.staff && (
+              {access.staff && !isPos && (
                 <ActionTier tier="primary">
                   <Button
                     size="sm"
@@ -1166,7 +1173,8 @@ export default function OrderDetailPage() {
               status={localStatus}
               onHandOver={() => setPickupOpen(true)}
               onReadyForPickup={handleMarkShipped}
-              readyPending={updateStatus.isPending}
+              onConfirm={handleConfirm}
+              readyPending={updateStatus.isPending || ready.pending}
               moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
               onMove={setPendingPath}
             />
@@ -1237,7 +1245,7 @@ export default function OrderDetailPage() {
                   fulfillPath={order.fulfillPath}
                   v2={orderUiV2.enabled}
                   onMarkShipped={handleMarkShipped}
-                  pending={updateStatus.isPending}
+                  pending={updateStatus.isPending || ready.pending}
                 />
               )}
               {order.fulfillPath === "PICKUP" && !isPos && (

@@ -33,6 +33,7 @@ function renderActions(status: string, invoices: { id: string; status: string }[
       status={status}
       onHandOver={noop}
       onReadyForPickup={noop}
+      onConfirm={noop}
       moveOptions={{ delivery: "ROUTE", ship: true }}
       onMove={noop}
     />,
