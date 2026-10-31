@@ -36,6 +36,8 @@ import { UpdateStopStatusDto } from "./dto/update-stop-status.dto";
 import { ReorderRunStopsDto } from "./dto/reorder-run-stops.dto";
 import { DriverPaymentsGuard } from "./driver-payments.guard";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("DISPATCH")
 @ApiTags("routes")
 @ApiBearerAuth()
 // Owner decision 2026-08-28: /routes is SHARED between the two delivery features — an ad-hoc
@@ -130,6 +132,7 @@ export class RoutesController {
   }
 }
 
+@RequirePermission("DISPATCH")
 @ApiTags("route-runs")
 @ApiBearerAuth()
 // Same either-gate as RoutesController above — a run is the shared execution object for both

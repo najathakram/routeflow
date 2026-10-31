@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { isSpecialTier } from "@routeflow/pricing";
+import { isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { Button, Input, Modal, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money } from "@routeflow/pricing";
 import {
@@ -11,6 +11,7 @@ import {
   type PriceEditMode,
   type PriceEditRefusal,
 } from "@/lib/counter-price-edit";
+import { useArmedEnter } from "@/lib/armed-enter";
 
 /** What Apply hands back: the screen replaces ONE line's override with it and never posts from here. */
 export interface CounterPriceEdit {
@@ -90,6 +91,8 @@ function refusalCopy(
       return "Use at most two decimals, like 12.5.";
     case "AMOUNT_OVER_PRICE":
       return `That's more than the price. Enter ${money(max ?? 0)} or less.`;
+    case "OVER_LIMIT":
+      return `That's over the limit. Enter ${money(max ?? 0)} or less.`;
     case "REASON_REQUIRED":
       return `Add a reason. ${customerName?.trim() || "This customer"} has a special price on this item.`;
   }
@@ -121,15 +124,22 @@ export function CounterLinePriceEdit({
   const [error, setError] = React.useState<string | null>(null);
   const valueRef = React.useRef<HTMLInputElement>(null);
   const errorId = React.useId();
+  // SA-1067 M2a: a scanner's code ends in Enter, which would have applied it. The first Enter arms the value shown;
+  // a second Enter on the same mode, value and reason applies. Any edit ends the arm (A-2). Apply by pointer, or Tab to
+  // Apply and Enter, is not here.
+  const editKey = JSON.stringify([mode, value, reason]);
+  const armedEnter = useArmedEnter(editKey);
+  const { disarm } = armedEnter;
 
   React.useEffect(() => {
     if (!openWith) return;
     setMode("set");
-    setValue(openWith.value.toFixed(2));
+    setValue(roundMoney(openWith.value).toFixed(2));
     setReason("");
     setError(null);
+    disarm();
     setOpen(true);
-  }, [openWith]);
+  }, [openWith, disarm]);
 
   if (!canEditPrices) return null;
 
@@ -144,6 +154,7 @@ export function CounterLinePriceEdit({
     setValue("");
     setReason("");
     setError(null);
+    disarm();
     setOpen(true);
   };
   const close = () => setOpen(false);
@@ -167,6 +178,14 @@ export function CounterLinePriceEdit({
       ...(reason.trim() ? { reason: reason.trim() } : {}),
     });
     close();
+  };
+
+  const armed = armedEnter.armed;
+  const onFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
+    e.preventDefault();
+    if (!resolveCounterPriceEdit(mode, value, line, reason).ok) return apply();
+    armedEnter.press(true, apply);
   };
 
   return (
@@ -217,7 +236,7 @@ export function CounterLinePriceEdit({
             : undefined
         }
       >
-        <form onSubmit={apply} className="flex flex-col gap-4" noValidate>
+        <form onSubmit={apply} onKeyDown={onFormKeyDown} className="flex flex-col gap-4" noValidate>
           <div
             role="radiogroup"
             aria-label="How to change the price"
@@ -284,7 +303,7 @@ export function CounterLinePriceEdit({
 
           <p aria-live="polite" className="min-h-[1.25rem] text-sm text-navy/70">
             {preview?.ok
-              ? `New price ${money(preview.unitPrice)} per ${unitWord}. Line total ${money(preview.lineTotal)}.`
+              ? `New price ${money(preview.unitPrice)} per ${unitWord}. Line total ${money(preview.lineTotal)}.${armed ? " Press Enter again to apply." : ""}`
               : ""}
           </p>
 

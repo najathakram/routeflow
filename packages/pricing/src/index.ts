@@ -1,6 +1,7 @@
 export * from "./pricing";
 export * from "./counter-day-close";
 export * from "./cents";
+export * from "./unit-price-limit";
 export * from "./scale-frozen-split";
 export * from "./counter-register";
 export * from "./tier-pricing";

@@ -58,7 +58,7 @@ export function assertNoNegativeLineSubtotal(items: ReadonlyArray<LineSubtotalLi
 /** Money text for the refusal messages: `$10.50`, `-$0.50`. */
 function formatMoney(n: number): string {
   const r = roundMoney(n);
-  return `${r < 0 ? "-" : ""}$${Math.abs(r).toFixed(2)}`;
+  return `${r < 0 ? "-" : ""}$${roundMoney(Math.abs(r)).toFixed(2)}`;
 }
 
 /**

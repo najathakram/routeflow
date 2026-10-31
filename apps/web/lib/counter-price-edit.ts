@@ -1,4 +1,5 @@
 import {
+  MAX_UNIT_PRICE,
   computeLineSubtotal,
   decideStaffOverride,
   formatReceiptMoney,
@@ -19,6 +20,7 @@ export type PriceEditRefusal =
   | "PERCENT_RANGE"
   | "PERCENT_PRECISION"
   | "AMOUNT_OVER_PRICE"
+  | "OVER_LIMIT"
   | "REASON_REQUIRED";
 
 /** What the edit needs to know about the line. `tierPrice` is the system price for this customer (no edit). */
@@ -52,7 +54,7 @@ export type PriceEditResult =
   | {
       ok: false;
       refused: PriceEditRefusal;
-      /** AMOUNT_OVER_PRICE: the most that can be taken off */
+      /** AMOUNT_OVER_PRICE: the most that can be taken off; OVER_LIMIT: the most one unit may sell for */
       max?: number;
     };
 
@@ -110,6 +112,8 @@ export function resolveCounterPriceEdit(
       return { ok: false, refused: "AMOUNT_OVER_PRICE", max: roundMoney(line.tierPrice) };
     wanted = roundMoney(line.tierPrice - n);
   }
+  // SA-1067 M3: the server's unitPrice limit, checked on the price Apply would write, in every mode.
+  if (wanted > MAX_UNIT_PRICE) return { ok: false, refused: "OVER_LIMIT", max: MAX_UNIT_PRICE };
   const decision = decideStaffOverride({
     overridePrice: wanted,
     baselinePrice: line.tierPrice,

@@ -46,11 +46,17 @@ function makeHarness(stored?: unknown, env?: string) {
     getTenantId: jest.fn().mockReturnValue("t1"),
     systemConfig: undefined,
   };
-  const staff = new StaffOrderEmailService(prisma as never, {} as never, {} as never);
-  const svc = new StaffEmailSettingsService(prisma as never, staff);
+  const policies = { resolve: jest.fn().mockResolvedValue("dark"), set: jest.fn() };
+  const staff = new StaffOrderEmailService(
+    prisma as never,
+    {} as never,
+    {} as never,
+    policies as never,
+  );
+  const svc = new StaffEmailSettingsService(prisma as never, staff, policies as never);
   if (env === undefined) delete process.env.STAFF_ORDER_EMAIL;
   else process.env.STAFF_ORDER_EMAIL = env;
-  return { svc, staff, prisma, systemConfig, rows };
+  return { svc, staff, prisma, systemConfig, rows, policies };
 }
 
 async function rejection(p: Promise<unknown>): Promise<BadRequestException> {
@@ -98,10 +104,10 @@ describe("StaffEmailSettingsService", () => {
       expect((await svc.get("TENANT_ADMIN")).effectiveMode).toBe(expected);
     });
     it("effectiveMode follows the policy term (env on)", async () => {
-      const { svc, staff } = makeHarness([], "on");
-      staff.policyMode = "on";
+      const { svc, policies } = makeHarness([], "on");
+      policies.resolve.mockResolvedValue("on");
       expect((await svc.get("TENANT_ADMIN")).effectiveMode).toBe("on");
-      staff.policyMode = "dark";
+      policies.resolve.mockResolvedValue("dark");
       expect((await svc.get("TENANT_ADMIN")).effectiveMode).toBe("dark");
     });
     it("reads env at call time", async () => {
@@ -109,6 +115,57 @@ describe("StaffEmailSettingsService", () => {
       expect((await svc.get("TENANT_ADMIN")).effectiveMode).toBe("off");
       process.env.STAFF_ORDER_EMAIL = "dark";
       expect((await svc.get("TENANT_ADMIN")).effectiveMode).toBe("dark");
+    });
+  });
+
+  describe("SA-1063: the tenant's switch and who it goes to", () => {
+    it("GET carries the tenant's saved choice next to the effective mode", async () => {
+      const { svc, policies } = makeHarness([], "dark");
+      policies.resolve.mockResolvedValue("on");
+      const out = await svc.get("TENANT_ADMIN");
+      expect(out.policyMode).toBe("on");
+      expect(out.effectiveMode).toBe("dark"); // saved on, platform not started: the screen says so
+    });
+    it("GET gives the real addresses to a TENANT_ADMIN only", async () => {
+      const { svc } = makeHarness(["cc@acme.test"]);
+      expect((await svc.get("TENANT_ADMIN")).recipients).toEqual([
+        "boss@acme.test",
+        "cc@acme.test",
+      ]);
+      expect(await svc.get("OPERATOR")).not.toHaveProperty("recipients");
+    });
+    it("R16: PUT mode writes the tenant policy through PolicyService.set, with a reason and the actor", async () => {
+      const { svc, policies } = makeHarness([]);
+      const user = { sub: "u1", username: "boss", impersonatedBy: "sa-1" } as never;
+      await svc.update({ mode: "on" }, user);
+      expect(policies.set).toHaveBeenCalledWith({
+        tenantId: "t1",
+        key: "notifications.staffOrderEmail",
+        scopeType: "TENANT",
+        scopeId: null,
+        value: "on",
+        reason: expect.stringContaining("on"),
+        actor: { id: "u1", name: "boss", impersonatedBy: "sa-1" },
+      });
+    });
+    it("PUT mode alone leaves the Also-send-to list untouched", async () => {
+      const { svc, systemConfig } = makeHarness(["keep@acme.test"]);
+      await svc.update({ mode: "off" }, { sub: "u1" } as never);
+      expect(systemConfig.update).not.toHaveBeenCalled();
+      expect(systemConfig.create).not.toHaveBeenCalled();
+    });
+    it("PUT staffCc alone writes no policy", async () => {
+      const { svc, policies } = makeHarness([]);
+      await svc.update({ staffCc: ["a@acme.test"] });
+      expect(policies.set).not.toHaveBeenCalled();
+    });
+    it('"dark" and anything else is refused: the admin chooses on or off', async () => {
+      const { svc, policies } = makeHarness([]);
+      for (const bad of ["dark", "yes", true, null]) {
+        const err = await rejection(svc.update({ mode: bad as never }, { sub: "u1" } as never));
+        expect(err).toBeInstanceOf(BadRequestException);
+      }
+      expect(policies.set).not.toHaveBeenCalled();
     });
   });
 
@@ -276,8 +333,9 @@ describe("MessagingController staff-email-settings routes", () => {
     const c = new MessagingController({} as never, {} as never, {} as never, settings as never);
     expect(await c.getStaffEmailSettings({ role: "OPERATOR" })).toBe("g");
     expect(settings.get).toHaveBeenCalledWith("OPERATOR");
-    expect(await c.updateStaffEmailSettings({ staffCc: ["a@b.co"] })).toBe("u");
-    expect(settings.update).toHaveBeenCalledWith({ staffCc: ["a@b.co"] });
+    const user = { sub: "u1", username: "boss" } as never;
+    expect(await c.updateStaffEmailSettings({ staffCc: ["a@b.co"] }, user)).toBe("u");
+    expect(settings.update).toHaveBeenCalledWith({ staffCc: ["a@b.co"] }, user);
   });
 
   describe("no tenant context (SUPER_ADMIN / job): refused, nothing read or written", () => {

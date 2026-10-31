@@ -17,12 +17,13 @@
  * `schema` validates stored JSON at read AND write. It is a zod v4 schema so `GET /policies` can
  * hand the admin UI a JSON-schema of it (`z.toJSONSchema`).
  */
+import { isWholeCents } from "@routeflow/pricing";
 import { z, type ZodType } from "zod/v4";
-import type { PolicyScopeType } from "@prisma/client";
+import type { OperatorPermissionGroup, PolicyScopeType } from "@prisma/client";
 
 export type { PolicyScopeType };
 
-export type PolicyArea = "orders" | "credit" | "invoicing";
+export type PolicyArea = "orders" | "credit" | "invoicing" | "notifications";
 export type PolicyKind = "enum" | "money" | "set";
 
 export interface PolicyEntry<T = unknown> {
@@ -36,6 +37,11 @@ export interface PolicyEntry<T = unknown> {
   default: T;
   /** Which scope layers may hold a value for this key. */
   scopes: readonly PolicyScopeType[];
+  /**
+   * Operator access (SA-976 §8, spec-operator-permissions §4.3): the permission group an OPERATOR needs to read the key's
+   * history or change it (PR6), or "ADMIN" when only the account admin may. REQUIRED on every key.
+   */
+  group: OperatorPermissionGroup | "ADMIN";
   /** Rendered by the admin UI. */
   description: string;
   /** YYYY-MM-DD the entry was added. */
@@ -63,6 +69,10 @@ export type AtDoorEditMode = (typeof AT_DOOR_EDIT_MODES)[number];
 export const PRICE_DISCLOSURE_FACTS = ["originalPrice", "discount", "msrp"] as const;
 export type PriceDisclosureFact = (typeof PRICE_DISCLOSURE_FACTS)[number];
 
+/** SA-1063: off = never, dark = record WOULD_SEND only (today), on = send. Env STAFF_ORDER_EMAIL is the ceiling. */
+export const STAFF_ORDER_EMAIL_POLICY_MODES = ["off", "dark", "on"] as const;
+export type StaffOrderEmailPolicyMode = (typeof STAFF_ORDER_EMAIL_POLICY_MODES)[number];
+
 export const BUYER_OVERSELL_MODES = ["off", "backorder"] as const;
 export type BuyerOversellMode = (typeof BUYER_OVERSELL_MODES)[number];
 
@@ -73,6 +83,7 @@ export type BuyerBackorderVisibility = (typeof BUYER_BACKORDER_VISIBILITY_MODES)
 export const POLICY_REGISTRY = [
   entry<AtDoorEditMode>({
     key: "orders.driverAtDoorEdit",
+    group: "DISPATCH",
     area: "orders",
     kind: "enum",
     schema: z.enum(AT_DOOR_EDIT_MODES),
@@ -87,6 +98,8 @@ export const POLICY_REGISTRY = [
   }),
   entry<number | null>({
     key: "credit.approvalThreshold",
+    // SA-976 §8 (SA-726 M4): the credit-risk band stays account-admin only; supersedes spec Q5.
+    group: "ADMIN",
     area: "credit",
     kind: "money",
     // Cents-precision, non-negative, finite. `null` = no approval band (today's hard block).
@@ -94,8 +107,8 @@ export const POLICY_REGISTRY = [
       .number()
       .finite()
       .nonnegative()
-      // Tolerance, not ===: 0.29 * 100 is 28.999999999999996 in IEEE-754.
-      .refine((n) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6, {
+      // isWholeCents (SA-1048), not a hand cents round: 0.29 * 100 is 28.999999999999996 in IEEE-754.
+      .refine((n) => isWholeCents(n), {
         message: "must be whole cents",
       })
       .nullable(),
@@ -111,6 +124,7 @@ export const POLICY_REGISTRY = [
   }),
   entry<PriceDisclosureFact[]>({
     key: "invoicing.priceDisclosure",
+    group: "FINANCE",
     area: "invoicing",
     kind: "set",
     schema: z
@@ -126,6 +140,7 @@ export const POLICY_REGISTRY = [
   }),
   entry<BuyerOversellMode>({
     key: "orders.buyerOversell",
+    group: "ORDERS",
     area: "orders",
     kind: "enum",
     schema: z.enum(BUYER_OVERSELL_MODES),
@@ -141,6 +156,7 @@ export const POLICY_REGISTRY = [
   }),
   entry<BuyerBackorderVisibility>({
     key: "orders.buyerBackorderVisibility",
+    group: "ORDERS",
     area: "orders",
     kind: "enum",
     schema: z.enum(BUYER_BACKORDER_VISIBILITY_MODES),
@@ -155,6 +171,23 @@ export const POLICY_REGISTRY = [
       "'hide' = the item looks in stock and nothing about backorders reaches a buyer. Staff always " +
       "see the real stock and the tag.",
     added: "2026-10-07",
+  }),
+  entry<StaffOrderEmailPolicyMode>({
+    key: "notifications.staffOrderEmail",
+    // SA-1063 item 13 / R15 (A-2): the office email switch stays account-admin only.
+    group: "ADMIN",
+    area: "notifications",
+    kind: "enum",
+    schema: z.enum(STAFF_ORDER_EMAIL_POLICY_MODES),
+    default: "dark",
+    scopes: ["TENANT"],
+    // The office's own switch; a buyer client never renders it.
+    clientVisible: false,
+    description:
+      "Whether the office is emailed when a customer places, edits or cancels an order: 'off' = " +
+      "never, 'dark' = only record that an email would have been sent (today), 'on' = send it. " +
+      "The platform setting STAFF_ORDER_EMAIL is the ceiling: nothing is sent until it is on too.",
+    added: "2026-10-31",
   }),
 ] as const;
 

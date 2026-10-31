@@ -12,7 +12,9 @@ import { TobaccoRangeDto } from "./dto/tobacco-range.dto";
 import { GenerateTobaccoReportDto } from "./dto/generate-tobacco-report.dto";
 import { UpdateTobaccoSettingsDto } from "./dto/update-tobacco-settings.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // Guard order matters: AddonGuard reads req.user (set by JwtAuthGuard)
+@RequirePermission("REGULATED")
 @Controller("tobacco")
 @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)

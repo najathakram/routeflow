@@ -22,6 +22,7 @@ import { CreateProductCategoryDto } from "./dto/create-product-category.dto";
 import { UpdateProductCategoryDto } from "./dto/update-product-category.dto";
 import { SetProductLabelDto } from "./dto/set-product-label.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 // Reads: OPERATOR (TENANT_ADMIN/SUPER_ADMIN satisfy it via the RolesGuard hierarchy).
 // Writes: TENANT_ADMIN — a label decides what a ban covers.
 @Controller()
@@ -32,6 +33,7 @@ export class ProductCategoriesController {
     private readonly labels: ProductLabelsAdminService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("product-categories")
   @Roles(UserRole.OPERATOR)
   list(@Query("includeArchived") includeArchived?: string) {
@@ -54,12 +56,14 @@ export class ProductCategoriesController {
     return this.categories.update(id, dto, user);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("products/:productId/labels")
   @Roles(UserRole.OPERATOR)
   getLabels(@Param("productId") productId: string) {
     return this.labels.getForProduct(productId);
   }
 
+  @RequirePermission("REGULATED")
   @Put("products/:productId/labels/:categoryId")
   // Owner ruling 2026-10-14: operators too; a federal-covered label stays admin-only (the service checks).
   @Roles(UserRole.OPERATOR)
@@ -72,6 +76,7 @@ export class ProductCategoriesController {
     return this.labels.setLabel(productId, categoryId, dto, user);
   }
 
+  @RequirePermission("REGULATED")
   @Delete("products/:productId/labels/:categoryId")
   // Owner ruling 2026-10-14: operators too; a federal-covered label stays admin-only (the service checks).
   @Roles(UserRole.OPERATOR)

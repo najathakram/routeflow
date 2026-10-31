@@ -41,6 +41,8 @@ import { BulkDeleteProductsDto } from "./dto/bulk-delete-products.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+@RequirePermission("CATALOG")
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ProductsController {
@@ -50,6 +52,7 @@ export class ProductsController {
     private readonly openOrders: ProductOpenOrdersService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findAll(@Query() query: ListProductsDto) {
@@ -76,6 +79,7 @@ export class ProductsController {
   }
 
   // Must be declared before :id to avoid route collision
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("categories")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   listCategories() {
@@ -91,6 +95,7 @@ export class ProductsController {
   }
 
   // Must be declared before :id to avoid route collision
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("barcode/:barcode")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findByBarcode(@Param("barcode") barcode: string) {
@@ -105,6 +110,7 @@ export class ProductsController {
     return this.openOrders.getOpenOrders(id, clampOpenOrdersLimit(limit));
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get(":id")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findOne(@Param("id") id: string) {
@@ -143,6 +149,7 @@ export class ProductsController {
   // bulk-edit path — gated on flag.msrp itself (unlike create/update, which
   // gate only when the DTO carries an msrp key, this route has no other
   // purpose a flag-less tenant needs).
+  @RequirePermission("PRICING")
   @Post("msrp/bulk")
   @Roles(UserRole.OPERATOR)
   @UseGuards(PlanFlagGuard)

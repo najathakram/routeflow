@@ -127,6 +127,7 @@ function PanelBody({
   onCompareChange,
   onCompareRetry,
   onUse,
+  keyRef,
 }: {
   data: PriceHistoryResponse;
   productName: string;
@@ -144,9 +145,12 @@ function PanelBody({
   onCompareChange: (on: boolean) => void;
   onCompareRetry: () => void;
   onUse: (price: number) => void;
+  /** The panel's key handler, handed up so the popover SHELL (where focus really lands) can call it: a key pressed on a parent never reaches a child's handler. */
+  keyRef: React.MutableRefObject<((e: React.KeyboardEvent) => void) | null>;
 }) {
   const [showCost, setShowCost] = React.useState(false);
-  const [active, setActive] = React.useState(0);
+  // -1 = nothing chosen. A scanner's keyboard ends in Enter and cannot press arrows, so Enter alone must never commit a row.
+  const [active, setActive] = React.useState(-1);
   const bodyRef = React.useRef<HTMLDivElement>(null);
   // Focus the body only once the (visible) popover shell exists; AnchoredPopover also focuses it.
   React.useEffect(() => bodyRef.current?.focus({ preventScroll: true }), []);
@@ -210,14 +214,24 @@ function PanelBody({
   const refs = data.references;
   const agg = data.aggregate && sameUnit(data.aggregate.unitLabel, unit) ? data.aggregate : null;
   const neverSold = rows.length === 0;
+  // A different unit is a different list: the old index points at some other row.
+  React.useEffect(() => setActive(-1), [unit]);
+  // SA-1067 A-4: the arrow keys' preventDefault stops the shell's native scroll, so the highlight keeps its row on screen. Read
+  // from tbody: the unit tabs carry aria-selected too. `nearest` leaves a row already in view alone.
+  React.useEffect(() => {
+    if (active < 0) return;
+    bodyRef.current
+      ?.querySelector<HTMLElement>('tbody tr[aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [active]);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (rows.length === 0) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setActive((i) =>
-        Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
+        i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
       );
-    } else if (e.key === "Enter" && !(e.target as HTMLElement).closest("button")) {
+    } else if (e.key === "Enter" && active >= 0 && !(e.target as HTMLElement).closest("button")) {
       const r = rows[Math.min(active, rows.length - 1)];
       if (r && canUse(r)) {
         e.preventDefault();
@@ -226,13 +240,15 @@ function PanelBody({
     }
   };
 
+  React.useEffect(() => {
+    keyRef.current = onKeyDown;
+    return () => {
+      keyRef.current = null;
+    };
+  });
+
   return (
-    <div
-      ref={bodyRef}
-      tabIndex={-1}
-      onKeyDown={onKeyDown}
-      className="space-y-2 text-xs outline-none"
-    >
+    <div ref={bodyRef} tabIndex={-1} className="space-y-2 text-xs outline-none">
       <div>
         <p className="text-sm font-semibold text-navy">
           Price history · {data.productName || productName}
@@ -391,10 +407,9 @@ function PanelBody({
               <tr
                 key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
                 aria-selected={i === active}
-                onMouseEnter={() => setActive(i)}
                 className={cn(
                   "grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
-                  i === active && "bg-brand-50/60",
+                  i === active ? "bg-brand-50/60" : "hover:bg-brand-50/30",
                 )}
               >
                 <td className="col-start-1 row-start-1 whitespace-nowrap py-1 pr-0 text-navy/70 sm:pr-2">
@@ -503,6 +518,8 @@ function Panel({
   excludeOrderId?: string | null;
 }) {
   const [compare, setCompare] = React.useState(false);
+  // SA-1067 P4: AnchoredPopover focuses its own shell once placed, so Down and Enter arrive there, not on the panel body.
+  const keyRef = React.useRef<((e: React.KeyboardEvent) => void) | null>(null);
   // Two requests, so a failed or slow comparison never takes the customer's own rows away: the base
   // history is always shown; `?compare=all` is a separate query that only adds the aggregate (and its
   // average line, which the chart always draws). Both leave the order being edited out of the history
@@ -523,6 +540,7 @@ function Panel({
       onClose={(r) => onClose(r ?? "escape")}
       label="Price history"
       width={520}
+      onKeyDown={(e) => keyRef.current?.(e)}
     >
       {q.isLoading ? (
         <Skeleton />
@@ -557,6 +575,7 @@ function Panel({
             onUsePrice(price);
             onClose("use");
           }}
+          keyRef={keyRef}
         />
       )}
     </AnchoredPopover>

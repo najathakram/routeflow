@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { ChannelStatusMap, NotificationAudience } from "@routeflow/types";
+import type {
+  ChannelStatusMap,
+  NotificationAudience,
+  StaffEmailSettings,
+  UpdateStaffEmailSettingsRequest,
+} from "@routeflow/types";
 import type { DeliveryHealth } from "../reason-copy";
 import { apiClient } from "../api-client";
 
@@ -169,4 +174,22 @@ export function extractTemplateVars(body: string): string[] {
     if (!out.includes(m[1])) out.push(m[1]);
   }
   return out;
+}
+
+/** SA-1063: the office order-email switch. `GET/PUT /messaging/staff-email-settings`. */
+export function useStaffEmailSettings(enabled = true) {
+  return useQuery<StaffEmailSettings>({
+    queryKey: ["staff-email-settings"],
+    enabled,
+    queryFn: () => apiClient.get("/messaging/staff-email-settings").then((r) => r.data),
+  });
+}
+
+export function useUpdateStaffEmailSettings() {
+  const qc = useQueryClient();
+  return useMutation<StaffEmailSettings, Error, UpdateStaffEmailSettingsRequest>({
+    meta: { localErrorToast: true },
+    mutationFn: (dto) => apiClient.put("/messaging/staff-email-settings", dto).then((r) => r.data),
+    onSuccess: (saved) => qc.setQueryData(["staff-email-settings"], saved),
+  });
 }

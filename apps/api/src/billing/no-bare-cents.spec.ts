@@ -28,14 +28,8 @@ const sources = [...scan(__dirname), ...scan(path.join(SRC, "platform-admin"))];
  * Lines that are `* 100` / `/ 100` but NOT money. Each needs a reason, and a zero-match error below: an entry
  * that no longer matches any line is stale and must be deleted, never left to hide a future real hit.
  */
-const NOT_MONEY: { file: string; line: string; reason: string }[] = [
-  {
-    file: "platform-admin/platform-config.service.ts",
-    line: "estSpendUsd: Math.round(estSpendUsd * 100) / 100,",
-    reason:
-      "a display rounding of an AI-spend ESTIMATE in USD (not a Stripe amount, not a ledger write)",
-  },
-];
+// SA-1048: the one entry (estSpendUsd) now rounds through roundMoney, so nothing in billing/ or platform-admin/ is allow-listed.
+const NOT_MONEY: { file: string; line: string; reason: string }[] = [];
 const code = (text: string) =>
   text
     .replace(/\/\*[\s\S]*?\*\//g, "")

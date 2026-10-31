@@ -170,9 +170,32 @@ describe("resolveLineItems (rule 4)", () => {
 
 describe("lineLeftText (rule 5)", () => {
   it("names what is left in the line's own unit", () => {
-    expect(lineLeftText(lineB as any, 100)).toBe("100 pcs (10 boxes)");
-    expect(lineLeftText(lineA as any, 200)).toBe("200 pcs (1 Case)");
-    expect(lineLeftText({ id: "x", productId: P, qty: 12 } as any, 12)).toBe("12 pcs");
+    expect(lineLeftText(lineB as any, 100, 1)).toBe("100 pcs (10 boxes)");
+    expect(lineLeftText(lineA as any, 200, 1)).toBe("200 pcs (1 Case)");
+  });
+
+  it("A-8: under one box left reads the pieces once, as the form does", () => {
+    const loose = { id: "L", productId: P, qty: 5, boxes: null, pieces: 5, unitsPerBox: 10 } as any;
+    expect(lineLeftText(loose, 5, 1)).toBe("5 pcs");
+    expect(lineLeftText(lineB as any, 5, 1)).toBe("5 pcs");
+    expect(lineLeftText(lineB as any, 25, 1)).toBe("25 pcs (2 boxes + 5 pcs)");
+  });
+
+  it("A-8: a unit line reads its own word, one or many, and a part count stays true", () => {
+    const unit = { id: "U", productId: P, qty: 10, unitLabel: "Case", unitsPerBox: 1 } as any;
+    expect(lineLeftText(unit, 5, 1)).toBe("5 Cases");
+    expect(lineLeftText(unit, 1, 1)).toBe("1 Case");
+    expect(lineLeftText(unit, 1.5, 1)).toBe("1.5 Case");
+  });
+
+  it.each([
+    ["snapshot 12", { unitsPerBox: 12 }],
+    ["a null snapshot", { unitsPerBox: null }],
+    ["a stale label", { unitsPerBox: 12, unitLabel: "Case" }],
+  ])("A-8: a legacy line with %s reads its left count bare, in the line's unit", (_n, shape) => {
+    const legacy = { id: "L", productId: P, qty: 10, ...shape } as any;
+    expect(lineLeftText(legacy, 24, 12)).toBe("2");
+    expect(lineLeftText(legacy, 12, 1)).toBe("12");
   });
 });
 
@@ -184,6 +207,36 @@ describe("assertLineCaps (rule 5)", () => {
     const got = codeOf(() => assertLineCaps(r, order(lineA, lineB) as any, new Map(), oneFactor));
     expect(got?.type).toBe(BadRequestException);
     expect(got?.message).toMatch(/exceeds what is left on this line: 100 pcs \(10 boxes\)/);
+  });
+
+  it("A-8: the 400 reads in the line's own text on a unit line and a legacy line", () => {
+    const unit = {
+      id: "U",
+      productId: P,
+      qty: 10,
+      status: "ACTIVE",
+      unitLabel: "Case",
+      unitsPerBox: 1,
+    };
+    const u = resolveLineItems(
+      order(unit) as any,
+      [{ productId: P, orderItemId: "U", boxes: 11 }],
+      oneFactor,
+    );
+    expect(codeOf(() => assertLineCaps(u, order(unit) as any, new Map(), oneFactor))?.message).toBe(
+      "Return qty exceeds what is left on this line: 10 Cases.",
+    );
+
+    const legacy = { id: "L", productId: P, qty: 10, status: "ACTIVE", unitsPerBox: 12 };
+    const pack12 = new Map<string, any>([[P, { factor: 12 }]]);
+    const l = resolveLineItems(
+      order(legacy) as any,
+      [{ productId: P, orderItemId: "L", qty: 3 }],
+      pack12,
+    );
+    expect(
+      codeOf(() => assertLineCaps(l, order(legacy) as any, new Map([["L", 96]]), pack12))?.message,
+    ).toBe("Return qty exceeds what is left on this line: 2.");
   });
 
   it("G-r10: priors on the line are netted, and so are earlier items for the same line in this payload", () => {

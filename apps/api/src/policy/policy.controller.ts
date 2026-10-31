@@ -28,6 +28,7 @@ import { PolicyService, type PolicyActor } from "./policy.service";
 import { POLICY_REGISTRY, policyJsonSchema, type PolicyEntry } from "./policy-registry";
 import { ClearPolicyDto, ClearPolicyQueryDto, SetPolicyDto } from "./dto/policy.dto";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 function toRow(r: PolicyValue): PolicyValueRow {
   return {
     id: r.id,
@@ -55,6 +56,7 @@ function toRow(r: PolicyValue): PolicyValueRow {
 export class PolicyController {
   constructor(private readonly policies: PolicyService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "Policy registry plus this tenant's active values per scope" })

@@ -11,6 +11,7 @@ import { UnitsService } from "./units.service";
 import { CreateUnitDto } from "./dto/create-unit.dto";
 import { UpdateUnitDto } from "./dto/update-unit.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Tenant unit names (Settings > Units). All staff (OPERATOR, which TENANT_ADMIN satisfies) may add,
  * rename, archive and restore; drivers and buyers may not. Deliberately NO DELETE route: units are
@@ -21,6 +22,7 @@ import { UpdateUnitDto } from "./dto/update-unit.dto";
  * link (and the unit names behind them) are filled in by the U-6 backfill, so the owner grants the
  * flag to a tenant only after that backfill has run for it.
  */
+@RequirePermission("CATALOG")
 @Controller("units")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_settings_v1")
@@ -31,6 +33,7 @@ export class UnitsController {
    * `GET /units` is the ACTIVE units (an array, at most about 200). `GET /units?archived=1[&cursor=]`
    * is one page of the ARCHIVED units, `{ items, nextCursor }`, 100 per page (SA-810).
    */
+  @PermissionBase("unit list lookup, mirrors product-units list, SA-977")
   @Get()
   @Roles(UserRole.OPERATOR)
   list(@Query("archived") archived?: string, @Query("cursor") cursor?: string) {

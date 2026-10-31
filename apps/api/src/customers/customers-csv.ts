@@ -33,7 +33,7 @@ export function buildCustomersCsv(customers: CustomerCsvRow[]): string {
       csvCell(c.customerType),
       csvCell(c.status),
       roundMoney(c.receivables).toFixed(2),
-      c.credits.toFixed(2),
+      roundMoney(c.credits).toFixed(2),
     ].join(","),
   );
   return [CUSTOMERS_CSV_HEADER, ...rows].join("\n");
