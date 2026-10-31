@@ -85,11 +85,31 @@ function Skeleton() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  onUse,
+}: {
+  label: string;
+  value: string;
+  /** SA-1066 F08: set when a usable row carries this figure; the figure then does what that row's Use does. */
+  onUse?: () => void;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-wide text-navy/50">{label}</div>
-      <div className="font-mono text-xs text-navy">{value}</div>
+      {onUse ? (
+        <button
+          type="button"
+          aria-label={`Use the ${label.toLowerCase()} price (${value})`}
+          onClick={onUse}
+          className="min-h-11 font-mono text-xs text-brand-600 underline sm:min-h-0"
+        >
+          {value}
+        </button>
+      ) : (
+        <div className="font-mono text-xs text-navy">{value}</div>
+      )}
     </div>
   );
 }
@@ -180,6 +200,11 @@ function PanelBody({
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
+  // F08: a summary figure is usable only when a row carries that price and the line can use that row (same gate as its Use).
+  const summaryUse = (price: number | null | undefined) =>
+    price != null && rows.some((r) => r.unitPrice === price && canUse(r))
+      ? () => onUse(price)
+      : undefined;
   const marginCell = (r: PriceHistoryRow) =>
     !showCost
       ? MASK
@@ -237,12 +262,7 @@ function PanelBody({
               {refs.changeSinceLast != null && (
                 <>
                   {" · "}
-                  <span
-                    className={refs.changeSinceLast > 0 ? "text-emerald-700" : "text-amber-700"}
-                  >
-                    {refs.changeSinceLast > 0 ? "+" : ""}
-                    {(refs.changeSinceLast * 100).toFixed(0)}% since last order
-                  </span>
+                  <ChangeSinceLast value={refs.changeSinceLast} />
                 </>
               )}
             </p>
@@ -342,8 +362,8 @@ function PanelBody({
 
       {!neverSold && (
         <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
-          <Stat label="Last" value={money(summary?.last)} />
-          <Stat label="Low" value={money(summary?.low)} />
+          <Stat label="Last" value={money(summary?.last)} onUse={summaryUse(summary?.last)} />
+          <Stat label="Low" value={money(summary?.low)} onUse={summaryUse(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
           <Stat label="Qty invoiced" value={String(summary?.qtySold ?? 0)} />
           {data.costVisible && (
@@ -388,15 +408,17 @@ function PanelBody({
                 key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
                 aria-selected={i === active}
                 className={cn(
-                  "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
+                  "grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
                   i === active ? "bg-brand-50/60" : "hover:bg-brand-50/30",
                 )}
               >
-                <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
-                <td className="py-1 pr-2 font-mono text-navy">
+                <td className="col-start-1 row-start-1 whitespace-nowrap py-1 pr-0 text-navy/70 sm:pr-2">
+                  {fmtDate(r.date)}
+                </td>
+                <td className="col-start-2 row-span-2 row-start-1 py-1 pr-0 font-mono text-navy sm:pr-2">
                   {fmt(r.unitPrice)}
                   {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                    <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
+                    <span className="block w-fit rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
                       {PRICE_TYPE_TAG[r.priceType]}
                     </span>
                   )}
@@ -411,36 +433,35 @@ function PanelBody({
                     {marginCell(r)}
                   </td>
                 )}
-                <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
+                <td className="col-start-1 row-start-2 max-w-[5rem] break-words py-1 pl-0 pr-0 text-navy/70 sm:pl-2 sm:pr-2">
                   {r.qty} {r.unitLabel}
                 </td>
                 <td
-                  className="max-w-[7rem] truncate py-1 pr-2 text-navy/70"
+                  className="col-start-3 row-span-2 row-start-1 min-w-0 max-w-[7rem] py-1 pr-0 text-navy/70 sm:pr-2"
                   title={
                     r.source === "INVOICE"
                       ? (r.invoiceNumber ?? r.orderNumber)
                       : `${r.orderNumber} (not invoiced yet)`
                   }
                 >
-                  {r.source === "INVOICE" ? (
-                    (r.invoiceNumber ?? r.orderNumber)
-                  ) : (
-                    <>
-                      {r.orderNumber}
-                      <span className="ml-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
-                        not invoiced yet
-                      </span>
-                    </>
+                  {/* the number truncates; the chip never does (SA-1066 F4) */}
+                  <span className="block truncate">
+                    {r.source === "INVOICE" ? (r.invoiceNumber ?? r.orderNumber) : r.orderNumber}
+                  </span>
+                  {r.source !== "INVOICE" && (
+                    <span className="block w-fit whitespace-nowrap rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
+                      not invoiced yet
+                    </span>
                   )}
                 </td>
-                <td className="w-full py-1 text-right sm:w-auto">
+                <td className="col-start-4 row-span-2 row-start-1 ml-auto shrink-0 py-1 text-right">
                   <button
                     type="button"
                     disabled={!canUse(r)}
                     title={canUse(r) ? undefined : "A different unit than this line"}
                     aria-label={`Use this price (${fmt(r.unitPrice)})`}
                     onClick={() => onUse(r.unitPrice)}
-                    className="min-h-[44px] w-full whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:w-auto"
+                    className="min-h-[44px] min-w-[44px] whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:min-w-0"
                   >
                     <span className="sm:hidden">Use</span>
                     <span className="hidden sm:inline">Use this price</span>
@@ -452,6 +473,22 @@ function PanelBody({
         </table>
       )}
     </div>
+  );
+}
+
+/**
+ * The customer's last price against the one before it (the server's `changeSinceLast`), named as such: it is not today's
+ * price. Tests the raw value, never the rounded text: exactly 0 is "Same"; a non-zero change that rounds to 0 is "under 1%",
+ * because "Same" would be false (and this never prints "-0%").
+ */
+function ChangeSinceLast({ value }: { value: number }) {
+  if (value === 0) return <span className="text-navy/70">Same as the order before</span>;
+  const word = value > 0 ? "Up" : "Down";
+  const pct = Math.round(Math.abs(value) * 100);
+  return (
+    <span className={value > 0 ? "text-emerald-700" : "text-amber-700"}>
+      {pct === 0 ? `${word} under 1%` : `${word} ${pct}%`} from the order before
+    </span>
   );
 }
 
@@ -564,11 +601,14 @@ export function PriceHistoryButton({
   focusSelector,
   className,
   excludeOrderId,
+  label,
 }: {
   customerId?: string | null;
   customerName?: string | null;
   productId?: string | null;
   productName: string;
+  /** A visible word beside the clock (SA-1066 F07). Part of the same button; the accessible name stays "Price history". */
+  label?: string;
   /** The unit being entered (case / piece / ...), so history and "Use" never cross units. */
   unitHint?: string | null;
   /** The line's pack size (units per box), so a price from a different pack is never offered. */
@@ -645,10 +685,12 @@ export function PriceHistoryButton({
         }}
         className={cn(
           "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0 lg:min-w-0",
+          label && "w-auto gap-1 px-1",
           className,
         )}
       >
         <History className="h-3.5 w-3.5" aria-hidden />
+        {label && <span className="text-[11px] font-medium text-navy/70">{label}</span>}
       </button>
       {open && ready && anchor && (
         <Panel

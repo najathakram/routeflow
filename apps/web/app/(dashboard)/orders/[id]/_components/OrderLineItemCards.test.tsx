@@ -126,6 +126,18 @@ describe("lineRowProps — order line → read-only row", () => {
     });
   });
 
+  it("SA-1066 F15: a default line on an open PICKUP order carries no line status; delivery keeps it", () => {
+    expect(
+      lineRowProps(line({ status: "PENDING" }), "CONFIRMED", "PICKUP").lineStatus,
+    ).toBeUndefined();
+    expect(lineRowProps(line({ status: "PENDING" }), "CONFIRMED", "ROUTE").lineStatus).toBe(
+      "PENDING",
+    );
+    expect(lineRowProps(line({ status: "CANCELLED" }), "CONFIRMED", "PICKUP").lineStatus).toBe(
+      "CANCELLED",
+    );
+  });
+
   it("composes a variant's name at read time", () => {
     const p = lineRowProps(
       line({

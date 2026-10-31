@@ -8,6 +8,7 @@ import {
   isBoxedLine,
   registerPriceLabel,
   registerQtyLabel,
+  sellingUnitLabel,
   typedQtyOverCap,
   type TypedQty,
 } from "./counter-sale-line-edit";
@@ -22,11 +23,18 @@ import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceE
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 import { PriceHistoryButton } from "@/components/PriceHistory";
 
-// A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
-const UW = unitWords();
+// SA-934 A-1: the words are the builder's call, per line (LineItemRow): the product's own pack and base words when the line
+// carries them, else the defaults (a line held before this has neither and prints Box / pcs). A plain line prints its own unit (row 298).
+const wordsOf = (l: SaleLine) => unitWords({ packLabel: l.packLabel, baseUnitLabel: l.baseLabel });
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
 const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
+
+/** W-717: the note buttons are secondary to the steppers, so they drop the border (one weight per role, not six equal boxes). */
+const LINE_BTN_QUIET = cn(
+  TAP_TARGET,
+  "rounded px-2 text-xs text-navy/70 underline-offset-2 hover:underline disabled:opacity-40",
+);
 
 /** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
 export function LineStepper({
@@ -60,16 +68,18 @@ export function LineStepper({
       {text}
     </button>
   );
+  const w = wordsOf(line);
+  const unitLabel = sellingUnitLabel(line, w);
   return isBoxedLine(line) ? (
     <span
       className="flex flex-wrap items-center gap-1"
       role="group"
       aria-label={`Quantity of ${line.name}`}
     >
-      {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
-      {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
-      {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
-      {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
+      {btn(`Remove a box from ${line.name}`, `\u2212 ${unitLabel}`, "box", -1)}
+      {btn(`Add a box to ${line.name}`, `+ ${unitLabel}`, "box", 1)}
+      {btn(`Remove a piece from ${line.name}`, `\u2212 1 ${w.baseShortFor(1)}`, "piece", -1)}
+      {btn(`Add a piece to ${line.name}`, `+ 1 ${w.baseShortFor(1)}`, "piece", 1)}
       {hint}
     </span>
   ) : (
@@ -280,7 +290,7 @@ export function CounterLineRow({
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
-          {l.name} · {registerQtyLabel(l, UW)}
+          {l.name} · {registerQtyLabel(l, wordsOf(l))}
           <span className="block text-xs text-navy/70">
             {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
@@ -288,7 +298,7 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {registerPriceLabel(l, UW, money, priceUnitWord)}
+              {registerPriceLabel(l, wordsOf(l), money, priceUnitWord)}
             </span>
           </span>
         </span>
@@ -336,6 +346,7 @@ export function CounterLineRow({
               productName={l.name}
               unitHint={isBoxedLine(l) ? "case" : l.unit}
               packHint={l.unitsPerBox ?? null}
+              label="History"
               // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
               onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
             />
@@ -359,7 +370,7 @@ export function CounterLineRow({
         ) : null}
         <button
           type="button"
-          className={LINE_BTN}
+          className={LINE_BTN_QUIET}
           aria-label={`${hasNote ? "Edit the note on" : "Add a note to"} ${l.name}`}
           aria-expanded={editing}
           disabled={locked}
@@ -374,7 +385,7 @@ export function CounterLineRow({
         {hasNote ? (
           <button
             type="button"
-            className={LINE_BTN}
+            className={LINE_BTN_QUIET}
             aria-label={`Clear the note on ${l.name}`}
             disabled={locked}
             onClick={() => {

@@ -41,6 +41,7 @@ jest.mock("@/lib/api/customers", () => ({
         { id: "c1", businessName: "Acme Foods", pricingTier: 2 },
         { id: "c2", businessName: "Beta Bakery", pricingTier: 2, fulfillPath: "ROUTE" },
         { id: "c3", businessName: "Gamma Grocers", pricingTier: 2, fulfillPath: "ROUTE" },
+        { id: "c4", businessName: "Delta Depot", pricingTier: 2, fulfillPath: "SHIP" },
       ],
     },
   }),
@@ -289,5 +290,14 @@ describe("CreateOrderModal: Store pickup in the regular order", () => {
     await openBare();
     await pick("Beta", "Beta Bakery");
     expect(await addLineAndSubmit(/^confirm and invoice$/i)).toBe("PICKUP");
+  });
+
+  it("R2e (guard): POS mode, a SHIP customer, POS switched off: the path followed the customer", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP", "PICKUP"] });
+    mockPrefs = { "orders.posMode": "true" };
+    await openBare();
+    await pick("Delta", "Delta Depot");
+    fireEvent.click(await screen.findByRole("switch", { name: /store pickup/i }));
+    expect(await addLineAndSubmit(/^create order$/i)).toBe("SHIP");
   });
 });

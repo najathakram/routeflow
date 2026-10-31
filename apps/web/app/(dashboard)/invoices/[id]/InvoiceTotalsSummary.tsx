@@ -16,6 +16,8 @@ export interface InvoiceTotalsSummaryProps {
   /** Confirmed ADVANCE applications — reduces balanceDue, never cash. */
   advanceApplied: number;
   balanceDue: number;
+  /** A DRAFT is not owed yet: its Balance due is neutral, never danger red or success green (SA-1066 M5). */
+  isDraft?: boolean;
 }
 
 /**
@@ -37,6 +39,7 @@ export function InvoiceTotalsSummary({
   creditApplied,
   advanceApplied,
   balanceDue,
+  isDraft = false,
 }: InvoiceTotalsSummaryProps) {
   return (
     <div className="w-72 space-y-1.5 text-sm">
@@ -99,7 +102,7 @@ export function InvoiceTotalsSummary({
       <div
         className={cn(
           "mt-1.5 flex items-center justify-between border-t border-navy pt-2.5 text-base font-semibold",
-          balanceDue > 0 ? "text-danger" : "text-success",
+          isDraft ? "text-navy" : balanceDue > 0 ? "text-danger" : "text-success",
         )}
       >
         <span>Balance due</span>
