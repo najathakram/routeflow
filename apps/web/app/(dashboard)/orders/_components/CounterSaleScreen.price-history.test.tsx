@@ -78,6 +78,17 @@ const ACME = { id: "c-acme", businessName: "Acme Cafe", pricingTier: 2 };
 const BETA = { id: "c-beta", businessName: "Beta Deli", pricingTier: 1 };
 const WALKIN = { id: "c-walkin", businessName: "Walk-in Record", pricingTier: 1, isWalkIn: true };
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
+// SA-1068: the till reads the customer's remembered prices (an empty, answered read here: no sticky upsell).
+jest.mock("@/lib/api/orders", () => ({
+  ...jest.requireActual("@/lib/api/orders"),
+  useCustomerPriceHistory: () => ({
+    data: {},
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [ACME, BETA, WALKIN] } }),
   useCustomerPrices: (customerId: string | undefined) =>
