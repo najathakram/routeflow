@@ -11,6 +11,9 @@ jest.mock("@/lib/auth-context", () => ({
 jest.mock("./LowStockDigestToggle", () => ({
   LowStockDigestToggle: () => <div>low-stock-digest-toggle</div>,
 }));
+jest.mock("./StaffOrderEmailCard", () => ({
+  StaffOrderEmailCard: () => <div>customer-order-emails-card</div>,
+}));
 jest.mock("@/lib/api/notifications", () => ({
   useNotificationsStatus: () => ({ data: undefined }),
   useSendTestNotification: () => ({ mutate: jest.fn(), isPending: false }),
@@ -57,5 +60,22 @@ describe("NotificationsSettingsTab low-stock digest toggle", () => {
     role = "DRIVER";
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.queryByText("low-stock-digest-toggle")).not.toBeInTheDocument();
+  });
+});
+
+describe("NotificationsSettingsTab customer order emails card (SA-1063)", () => {
+  it("is shown to a TENANT_ADMIN", () => {
+    role = "TENANT_ADMIN";
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.getByText("customer-order-emails-card")).toBeInTheDocument();
+  });
+
+  it("is hidden from an OPERATOR and a DRIVER (they are not recipients)", () => {
+    for (const r of ["OPERATOR", "DRIVER"]) {
+      role = r;
+      const { unmount } = renderWithProviders(<NotificationsSettingsTab />);
+      expect(screen.queryByText("customer-order-emails-card")).not.toBeInTheDocument();
+      unmount();
+    }
   });
 });

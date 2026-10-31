@@ -7,6 +7,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 import { RegulatedVisibilityService } from "../buyer/regulated-visibility.service";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { MessagingModule } from "../messaging/messaging.module";
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { SystemConfigModule } from "../system-config/system-config.module";
     NotificationsModule,
     SystemConfigModule,
     SellingRestrictionsModule,
+    MessagingModule,
   ],
   controllers: [OrderTemplatesController],
   // RegulatedVisibilityService is stateless (PrismaService only); provided here, not imported from BuyerModule,

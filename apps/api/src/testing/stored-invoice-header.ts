@@ -2,9 +2,11 @@
  * SA-814 R5-2: a stored invoice header that AGREES with its lines, for specs that hand a service an invoice
  * to re-price or re-save. The recompute paths refuse (409 INVOICE_TAX_STATE_STALE) a header whose
  * `taxAmount` the stored lines cannot reproduce, so a fixture without a coherent header never reaches its
- * own assertions. Plain cent arithmetic on purpose: it must not call the production totals builder.
+ * own assertions. Rounds with roundMoney (never a hand-rolled cents round) but must not call the production totals builder.
  */
-const cents = (n: number): number => Math.round(n * 100) / 100;
+import { roundMoney } from "@routeflow/pricing";
+
+const cents = (n: number): number => roundMoney(n);
 const num = (v: unknown): number => Number(v ?? 0);
 
 export function storedInvoiceHeader(

@@ -211,7 +211,6 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   // ── policy (#1337): pending, no code yet ─────────────────────────────────────
   ...(
     [
-      ["notifications.staffOrderEmail", "WS4 staff order email switch (Notifications tab)"],
       ["credit.enforceNewOrders", "PR-3 credit Off/Watch card"],
       ["credit.enforceDelivery", "PR-3 credit Off/Watch card"],
     ] as const
@@ -223,6 +222,16 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     plannedSurface,
     adminOnly: true,
   })),
+  // SA-1063: the office order-email switch (Settings → Notifications), `PUT /messaging/staff-email-settings`.
+  // A TENANT_ADMIN turns it on or off; the platform env STAFF_ORDER_EMAIL stays the ceiling.
+  {
+    key: "notifications.staffOrderEmail",
+    home: "policy",
+    kind: "behaviour",
+    status: "live",
+    screen: "/settings?tab=notifications",
+    adminOnly: true,
+  },
   // WS8: the out-of-stock ordering switch (Settings -> Orders & stock), `PATCH /settings/inventory`.
   // Operators open the card read-only; only a TENANT_ADMIN changes it, so the row is not adminOnly.
   {
@@ -269,16 +278,16 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     key: PREF.staffOrderEmail,
     home: "userPref",
     kind: "preference",
-    status: "pending WS4",
-    plannedSurface: "WS4 staff order email toggle (My account → Email me about)",
+    status: "live",
+    screen: "/settings?tab=notifications",
     adminOnly: true,
   },
   {
     key: PREF.staffBuyerChangeEmail,
     home: "userPref",
     kind: "preference",
-    status: "pending WS4",
-    plannedSurface: "WS4 staff buyer-change email toggle (My account → Email me about)",
+    status: "live",
+    screen: "/settings?tab=notifications",
     adminOnly: true,
   },
   {
