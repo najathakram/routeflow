@@ -52,3 +52,17 @@ describe("F01: tapping the Invoice step lands on Generate Invoice", () => {
     ).toHaveLength(1);
   });
 });
+
+/**
+ * F01 tap area: jsdom has no layout, so this pins the classes. The browser row: the step's button measures 44 x 44 and its
+ * pill (the `li`) stays 24 high. Height = 16 line + 2 x 14 padding, taken back by -14 margins; width = min 44, padding 2 taken
+ * back by -2 margins.
+ */
+describe("F01: the step's button is a 44 x 44 tap area that leaves the pill height alone", () => {
+  it("carries the 44 px height, the 44 px minimum width, and margins that take the padding back", () => {
+    withCard(<PosProgress order={{ invoices: [] } as never} status="CONFIRMED" />);
+    const cls = screen.getByRole("button", { name: POS_COPY.stepInvoice }).className.split(/\s+/);
+    expect(cls).toEqual(expect.arrayContaining(["py-[14px]", "-my-[14px]", "min-w-11"]));
+    expect(cls).toEqual(expect.arrayContaining(["px-0.5", "-mx-0.5"]));
+  });
+});

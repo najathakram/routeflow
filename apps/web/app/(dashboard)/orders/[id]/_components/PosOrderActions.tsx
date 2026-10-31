@@ -89,8 +89,12 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
           {i === current && <Circle className="h-3 w-3" aria-hidden />}
           {s.key === "invoice" && !s.done ? (
             // F01: no invoice yet, so the step is the way to the card's Generate Invoice button. The padding is the
-            // 44 pt tap area; the negative margin keeps the pill's own height.
-            <button type="button" onClick={goToGenerateInvoice} className="-my-3 py-3 underline">
+            // 44 x 44 tap area; the negative margins keep the pill's own size (24 high).
+            <button
+              type="button"
+              onClick={goToGenerateInvoice}
+              className="-mx-0.5 -my-[14px] min-w-11 px-0.5 py-[14px] text-center underline"
+            >
               {s.label}
             </button>
           ) : (
