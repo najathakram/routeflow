@@ -12,6 +12,7 @@ import DashboardPage from "./page";
  * Row 344a (polish): a store-only business that may use POS mode also gets "Invoice a customer" (the builder intent,
  * `builder=1`: a bare `action=new` redirects a counter-default tenant straight back to the till), also a 44 px target.
  */
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

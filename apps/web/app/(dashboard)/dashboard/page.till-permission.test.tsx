@@ -8,6 +8,7 @@ import DashboardPage from "./page";
  * sale, and no "Invoice a customer" either: the builder's PICKUP path is the same till, and the server refuses it
  * for a denied operator (order-lifecycle), so both headers drop it together.
  */
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
