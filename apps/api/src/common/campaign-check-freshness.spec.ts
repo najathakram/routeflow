@@ -479,7 +479,10 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
     const verify: string = pkg.scripts?.verify ?? "";
 
     expect(verify.startsWith("node scripts/campaign-check.mjs --freshness-only && ")).toBe(true);
-    expect(verify.endsWith("node scripts/campaign-check.mjs")).toBe(true);
+    // W-1045: the chain ends with the pass-token commit step; the main gate is the link right before it.
+    expect(
+      verify.endsWith("node scripts/campaign-check.mjs && node scripts/verify-gate.mjs commit"),
+    ).toBe(true);
   });
 
   // R9 (addendum): a scoped jest run can leave a report that is FRESH by time but is not real
