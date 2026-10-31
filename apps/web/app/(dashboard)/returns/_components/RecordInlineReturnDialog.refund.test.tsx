@@ -95,7 +95,8 @@ const findLine = (copy: string) =>
 
 const lastCall = (m: jest.Mock) => m.mock.calls[m.mock.calls.length - 1];
 
-async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
+/** Open the dialog, count 5 pieces back as DAMAGED, and wait for the debounced quote request (no "Get quote" any more). */
+async function openAndAsk(props: Record<string, unknown> = {}) {
   const onRecorded = jest.fn();
   renderWithProviders(
     <RecordInlineReturnDialog
@@ -111,33 +112,23 @@ async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
   );
   await screen.findByText(/what came back/i);
   fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-  act(() => lastCall(quoteMutate)[1].onSuccess(q));
-  await screen.findByRole("button", { name: /take back items/i });
   return { onRecorded };
 }
-/** The quote step for a return that offers no take-back button (a refusal): waits for the step's heading instead. */
-async function toRefusalQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
-  renderWithProviders(
-    <RecordInlineReturnDialog
-      open
-      onClose={jest.fn()}
-      customerId="cust-1"
-      orderId="order-1"
-      customerName="Walk-in"
-      allowRefund
-      {...props}
-    />,
-  );
-  await screen.findByText(/what came back/i);
-  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-  await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+async function toQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
+  const ctx = await openAndAsk(props);
   act(() => lastCall(quoteMutate)[1].onSuccess(q));
-  await screen.findByText(/check the return/i);
+  await screen.findByRole("button", { name: /take back items/i });
+  return ctx;
+}
+/** The current quote for a return that offers no take-back button (a refusal): waits for the refusal sentence instead. */
+async function toRefusalQuote(q: RefundQuote, props: Record<string, unknown> = {}) {
+  await openAndAsk({ customerName: "Walk-in", ...props });
+  act(() => lastCall(quoteMutate)[1].onSuccess(q));
+  await screen.findByText(/can't be refunded here/i);
 }
 const captureOk = (data: unknown = RECORD) => act(() => lastCall(captureMutate)[1].onSuccess(data));
 const confirmBtn = (re: RegExp) => screen.getByRole("button", { name: re });
@@ -692,10 +683,10 @@ describe("refund flow", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("Back is hidden once the return is saved", async () => {
+  it("there is no Back on the one-step screen, before or after the return is saved", async () => {
     refundReturn.mockRejectedValue(apiErr(500));
     await refundFlow();
-    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();
@@ -1049,21 +1040,7 @@ describe("W-712 credit words per host (SA-929)", () => {
   });
 
   it("SA-959: a walk-in that cannot be refunded is refused with the way forward: no credit note, no take-back button", async () => {
-    renderWithProviders(
-      <RecordInlineReturnDialog
-        open
-        onClose={jest.fn()}
-        customerId="cust-1"
-        orderId="order-1"
-        customerName="Walk-in"
-        allowRefund
-      />,
-    );
-    await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    await openAndAsk({ customerName: "Walk-in" });
     act(() =>
       lastCall(quoteMutate)[1].onSuccess(
         quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }),
@@ -1079,20 +1056,7 @@ describe("W-712 credit words per host (SA-929)", () => {
   });
 
   it("SA-959: a walk-in on a host that offers no refund (allowRefund off) is refused the same way, never sent as store credit", async () => {
-    renderWithProviders(
-      <RecordInlineReturnDialog
-        open
-        onClose={jest.fn()}
-        customerId="cust-1"
-        orderId="order-1"
-        customerName="Walk-in"
-      />,
-    );
-    await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    await openAndAsk({ customerName: "Walk-in", allowRefund: false });
     act(() => lastCall(quoteMutate)[1].onSuccess(quote({ customerIsWalkIn: true })));
     expect(
       await screen.findByText("This sale can't be refunded here. Ask office staff to refund it."),
@@ -1100,16 +1064,16 @@ describe("W-712 credit words per host (SA-929)", () => {
     expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
   });
 
-  it("SA-959 + mm-ux 93.8%: the refusal is the step's main message and the Reason select is gone", async () => {
+  it("SA-959 + mm-ux 93.8%: the refusal is the main message under the list, the lines stay, and there is no Back", async () => {
     await toRefusalQuote(quote({ customerIsWalkIn: true, canRefund: false, paidInFull: false }));
     const msg = await screen.findByText(
       "This sale can't be refunded here. Ask office staff to refund it.",
     );
     expect(msg).toHaveAttribute("role", "status"); // a message, not a grey footnote under Total
     expect(msg.className).not.toMatch(/text-xs/);
-    expect(screen.queryByLabelText(/^reason$/i)).toBeNull();
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(5); // one screen: the work stays under the message
     expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
-    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
   });
 
   it("mm-ux 93.8%: the named case's credit sentence sits with the radio, not under the Total", async () => {
@@ -1200,28 +1164,12 @@ describe("mm-ux retake: error states say one thing, once", () => {
   const refusal = (message: string) => ({
     response: { status: 409, data: { code: "RETURN_EXCEEDS_SOLD", message } },
   });
-  const openToLines = async (props: Record<string, unknown> = {}) => {
-    renderWithProviders(
-      <RecordInlineReturnDialog
-        open
-        onClose={jest.fn()}
-        customerId="cust-1"
-        orderId="order-1"
-        customerName="Walk-in"
-        allowRefund
-        {...props}
-      />,
-    );
-    await screen.findByText(/what came back/i);
-    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-  };
+  const openToLines = (props: Record<string, unknown> = {}) =>
+    openAndAsk({ customerName: "Walk-in", ...props });
   const footerButtons = (name: string) =>
     screen.queryAllByRole("button", { name }).filter((b) => b.textContent === name);
 
-  it("a refused quote (a 409 with its own sentence) shows that sentence and Back, with no Close", async () => {
+  it("a refused quote (a 409 with its own sentence) shows that sentence under the list, keeps the work, with no Back and no Close", async () => {
     await openToLines();
     act(() =>
       lastCall(quoteMutate)[1].onError(refusal("Cola 12oz Can: only 2 were sold on this order.")),
@@ -1229,7 +1177,13 @@ describe("mm-ux retake: error states say one thing, once", () => {
     expect(
       await screen.findByText("Cola 12oz Can: only 2 were sold on this order."),
     ).toBeInTheDocument();
-    expect(footerButtons("Back")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Cola 12oz Can: only 2 were sold on this order.",
+    );
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(5); // refused quote keeps the work
+    expect(screen.getByLabelText(/add another product/i)).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /take back items/i })).toBeNull();
+    expect(footerButtons("Back")).toHaveLength(0);
     expect(footerButtons("Close")).toHaveLength(0);
   });
 
@@ -1279,11 +1233,11 @@ describe("mm-ux retake: error states say one thing, once", () => {
     expect(screen.queryByText(/goes back to the customer/i)).toBeNull();
   });
 
-  it("at 390 the confirm, Retry, Close and Back are 44 px (max-lg:min-h-11, below lg)", async () => {
+  it("at 390 the confirm, Retry, Close and Cancel are 44 px (max-lg:min-h-11, below lg)", async () => {
     refundReturn.mockRejectedValueOnce(apiErr(500));
     await toQuote(quote({ customerIsWalkIn: true, paidMethods: ["CASH"] }));
     expect(confirmBtn(/^take back items and refund/i).className).toMatch(/min-h-11/);
-    expect(screen.getByRole("button", { name: "Back" }).className).toMatch(/min-h-11/);
+    expect(screen.getByRole("button", { name: "Cancel" }).className).toMatch(/min-h-11/);
     fireEvent.click(confirmBtn(/^take back items and refund/i));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     captureOk();

@@ -22,6 +22,8 @@ import * as path from "path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SERVER_FILE = path.join(REPO_ROOT, "apps/api/src/returns/returns.service.ts");
 const MOBILE_FILE = path.join(REPO_ROOT, "apps/mobile/lib/returns-logic.ts");
+const PACKAGE_FILE = path.join(REPO_ROOT, "packages/returns/src/inline-return-state.ts");
+const INLINE_SERVICE_FILE = path.join(REPO_ROOT, "apps/api/src/returns/inline-returns.service.ts");
 
 function readSource(file: string): string {
   try {
@@ -76,5 +78,33 @@ describe("F08: mobile restockForReason stays set-equal to the server's NO_RESTOC
     // One comparison per reason: a duplicated literal would pass a set diff while
     // leaving the chain out of step with the server rule.
     expect(mobileReasons.length).toBe(SERVER_REASONS.length);
+  });
+});
+
+// R-1 (SA-1069 M7): web's closed return row says "Back to stock" or "Not added to stock" from
+// the `@routeflow/returns` copy of the set, and starts every return on the server's own fallback reason. The
+// same static-scan pin as above (no runtime import across the api/workspace boundary): both files are read as text.
+function packageNoRestockReasons(text: string): string[] {
+  const m = text.match(/export const NO_RESTOCK_REASONS = \[([^\]]*)\]/);
+  return m ? quotedLiterals(m[1]) : [];
+}
+const PACKAGE_REASONS = packageNoRestockReasons(readSource(PACKAGE_FILE));
+
+describe("R-1: @routeflow/returns stays set-equal to the server's NO_RESTOCK_REASONS", () => {
+  it("finds the package's set in source (guards against a silently-vacuous suite)", () => {
+    expect(PACKAGE_REASONS.length).toBeGreaterThan(0);
+  });
+
+  it("names exactly the server's no-restock reasons — no extra, none missing", () => {
+    expect(new Set(PACKAGE_REASONS)).toEqual(new Set(SERVER_REASONS));
+    expect(PACKAGE_REASONS.length).toBe(SERVER_REASONS.length);
+  });
+
+  it("DEFAULT_RETURN_REASON is the reason the inline capture falls back to", () => {
+    const pkg = readSource(PACKAGE_FILE).match(/export const DEFAULT_RETURN_REASON = "([A-Z_]+)"/);
+    const server = readSource(INLINE_SERVICE_FILE).match(/dto\.reason \?\? "([A-Z_]+)"/);
+    expect(pkg?.[1]).toBeDefined();
+    expect(server?.[1]).toBeDefined();
+    expect(pkg?.[1]).toBe(server?.[1]);
   });
 });

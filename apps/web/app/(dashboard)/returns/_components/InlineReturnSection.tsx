@@ -1,16 +1,18 @@
 "use client";
 
-// ─── Inline return capture — the shared "lines" + "quote" UI (#2406) ───────────────────────
+// ─── Inline return capture — the shared one-step UI (#2406, R-1 / SA-1069 section A) ───────────────────
 //
-// Extracted from RecordInlineReturnDialog (SA-484): the product-picker/qty-entry list and the
-// resulting quote breakdown, with NO opinion on what happens after a quote is in hand — that
-// varies per host. RecordInlineReturnDialog still owns its own order-picker, "success"/"refused"
-// screens and the immediate capture call; CreateOrderModal and the order-edit page instead read
-// the latest draft via `onStateChange` and fold it into their own order create/update payload at
-// SAVE time (see OrderInlineReturnsSection, the thin wrapper both of those hosts mount). No
-// client-side money math beyond what the dialog already did with these same
-// @routeflow/returns helpers — every dollar figure rendered here comes verbatim from the quote.
+// Extracted from RecordInlineReturnDialog (SA-484): one list of what came back, with the credit worked out live under it.
+// There is no second step: add a product (it lands at 1 piece), set its quantity, and the credit follows after a short pause.
+// Every line has a collapsed options row that shows its defaults in words ("Credit $14.40 · Bought too many · Back to
+// stock"); open it to change them, leave it and the default goes. The section has NO opinion on what happens after the
+// credit is known — that varies per host. RecordInlineReturnDialog still owns its own order-picker, "success"/"refused"
+// screens and the immediate capture call; CreateOrderModal and the order-edit page instead read the latest draft via
+// `onStateChange` and fold it into their own order create/update payload at SAVE time (see OrderInlineReturnsSection, the
+// thin wrapper both of those hosts mount). No client-side money math: every dollar figure rendered here comes verbatim from
+// the quote, and a quote is shown as current only while it is for exactly the lines on screen (useLiveReturnQuote).
 import * as React from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Input, Select, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
@@ -19,8 +21,6 @@ import { useOrder } from "@/lib/api/orders";
 import { returnReasonOptions } from "@/lib/reason-copy";
 import { LINE_UNDO_MS } from "@/app/(dashboard)/orders/_components/useCounterLineUndo";
 import { useProducts } from "@/lib/api/products";
-import { useInlineReturnQuote } from "@/lib/api/inline-returns";
-import { QUOTE_FAILED_COPY, isQuoteFailure } from "./quote-failure";
 import { useOptionalAuth } from "@/lib/auth-context";
 import type {
   InlineReturnQuoteChunk,
@@ -28,33 +28,29 @@ import type {
   ReturnReason,
 } from "@routeflow/types";
 import {
-  applyCoveredPiecesToLines,
-  applyReturnScan,
-  boxedProductIds,
-  buildQuoteRequest,
-  canOverrideReturnCredit,
-  canReturnOnlyPurchased,
-  CREDIT_OVERRIDE_REASON_MAX,
-  creditOverrideNote,
-  creditOverrideProblem,
-  DEFAULT_EXCESS_OPTION,
-  dropExcessAndRequote,
-  extractRefusalMessage,
-  groupQuoteChunks,
-  hasAnyQtyEntered,
-  isBoxedProduct,
-  NOTHING_BOUGHT_BEFORE_MESSAGE,
-  notBoughtBeforeNames,
-  sumChunkTotals,
-  type ExcessOption,
-  type InlineReturnLineDraft,
   ALREADY_RETURNED_DRIVER_NOTE,
   ALREADY_RETURNED_LABEL,
   ALREADY_RETURNED_NOTE,
-  alreadyReturnedProductIds,
+  applyCoveredToProduct,
+  applyReturnScan,
+  boxedProductIds,
+  canOverrideReturnCredit,
+  CREDIT_OVERRIDE_REASON_MAX,
+  creditOverrideNote,
+  DEFAULT_RETURN_REASON,
+  hasAnyQtyEntered,
+  isBoxedProduct,
+  lineQuoteFacts,
+  NOTHING_BOUGHT_BEFORE_MESSAGE,
+  restocksForReason,
+  sumChunkTotals,
+  type InlineReturnLineDraft,
+  type LineQuoteFacts,
 } from "@routeflow/returns";
 import { unitWords } from "@routeflow/pricing";
+import { countNoun } from "@/lib/plural";
 import { creditOutcomeLine, type CreditContext } from "./refund-copy";
+import { useLiveReturnQuote, type LiveQuoteStatus } from "./useLiveReturnQuote";
 
 // U-3a: returns carry no per-product label yet, so this prints the default words.
 const UW = unitWords();
@@ -68,14 +64,17 @@ function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-export type InlineReturnSectionStep = "lines" | "quote";
+export type InlineReturnQuoteStatus = LiveQuoteStatus;
 
 export interface InlineReturnSectionState {
-  step: InlineReturnSectionStep;
   lines: InlineReturnLineDraft[];
+  /** The quote for exactly these lines, or null: never a quote from lines that have since changed (SA-1069 M4). */
   quote: InlineReturnQuoteResponse | null;
-  excessOption: ExcessOption;
-  captureReason: ReturnReason | "";
+  quoteStatus: InlineReturnQuoteStatus;
+  /** "Reason for all items". Always set: it starts on the server's own default. */
+  captureReason: ReturnReason;
+  /** M14: a line's credit price is half-typed, so nothing was asked: the sentence that says what to fix, else null. */
+  problem: string | null;
 }
 
 export interface InlineReturnSectionProps {
@@ -84,23 +83,24 @@ export interface InlineReturnSectionProps {
    *  "opened from an order" hydration) — used by the dialog and the order-edit host. Omit for
    *  a customer with no carrying order yet (CreateOrderModal — the order doesn't exist yet). */
   entryOrderId?: string;
-  /** SA-740: the sale this return is from, sent on the quote and the excess re-quote (REQUIRED for a walk-in; the host
+  /** SA-740: the sale this return is from, sent on the quote (REQUIRED for a walk-in; the host
    *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
   sourceOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
-  /** Extra gate on "Get quote" beyond "has any qty entered" (default true) — the dialog uses
-   *  this for its own "an order must be picked first" requirement. */
+  /** False = the host is not ready to price a return (the dialog needs an order picked first): nothing is asked. */
   getQuoteEnabled?: boolean;
+  /** Said under the list while `getQuoteEnabled` is false and a quantity is entered. */
+  waitingFor?: string;
   onStateChange?: (state: InlineReturnSectionState) => void;
-  /** Rendered next to "Get quote" on the lines step (e.g. the dialog's own Cancel button). */
-  renderLinesActions?: () => React.ReactNode;
-  /** POS-4b: hide "Back" once a capture is saved (its lines can no longer change). */
-  hideBack?: boolean;
-  /** Rendered next to "Back" on the quote step (e.g. the dialog's confirm/capture button). */
+  /** Rendered in the action row under the summary, always (e.g. the dialog's own Cancel button). */
+  renderActions?: () => React.ReactNode;
+  /** POS-4b: after a capture is saved every input, the add box and the options are disabled (its lines can no longer change). */
+  locked?: boolean;
+  /** Rendered in the action row once the quote is current (e.g. the dialog's confirm/capture button). */
   renderQuoteActions?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
-  /** POS-4b: rendered above the quote step's action row (the dialog's refund-vs-credit choice). */
+  /** POS-4b: rendered above the action row once the quote is current (the dialog's refund-vs-credit choice). */
   renderQuoteFooter?: (quote: InlineReturnQuoteResponse) => React.ReactNode;
   /** POS-4b: a re-fetched quote (REFUND_AMOUNT_CHANGED) that replaces the one on screen. */
   quoteOverride?: InlineReturnQuoteResponse | null;
@@ -109,26 +109,27 @@ export interface InlineReturnSectionProps {
   /** W21b: replaces the default store-credit line under the totals (the dialog sets it when Refund is chosen).
    *  null = no line under the totals (the host shows it with its own choice). */
   quoteNote?: string | null;
-  /** SA-959: this return cannot be refunded here. The sentence is the step's main message, and the step has no Reason
-   *  select and no footer: there is nothing to confirm. */
+  /** SA-959: this return cannot be refunded here. The sentence is the summary's main message, and there is no footer:
+   *  there is nothing to confirm. */
   refusal?: string;
   /** Where the credit goes, for the default note under the totals: "thisOrder" on order create/edit (the credit is held for
    *  the carrying order first). Defaults to the neutral "account" line, which promises nothing about which order uses it. */
   creditContext?: CreditContext;
   /** Named in the default credit note ("for Acme Foods"); omitted = "the customer". */
   customerName?: string;
-  /** Called (in addition to the section's own inline error) when the Step-1 quote or the
-   *  excess re-quote is refused — the dialog uses this to switch to its full "refused" screen. */
-  onQuoteRefused?: (message: string) => void;
+  /** The words of the reason list: the counter says what happened at the register. Defaults to the entry order's. */
+  reasonContext?: "counter" | "delivery";
   /** Renders nothing while true, but keeps every hook (and internal lines/quote/reason state)
    *  running — a host that overlays its own screen on top (RecordInlineReturnDialog's
    *  "success"/"refused") sets this instead of unmounting, so a "Back" resumes with the SAME
    *  draft the operator already typed/fetched, and so its own same-named actions (e.g. "Back")
    *  never collide with this section's DOM while it is hidden. */
   hidden?: boolean;
-  /** Id of the host's "Choose a reason to continue" hint: the quote step's Reason select points at it while no reason is chosen. */
-  reasonHintId?: string;
 }
+
+/** A line the operator chose "Return only what was bought" for: what its rows held before, so choosing the other option
+ *  (or typing the number back) puts them back, and the pieces it was set to, so a different typed number ends the choice. */
+type Trim = { rows: { lineKey: string; boxes: string; pieces: string }[]; applied: string };
 
 export function InlineReturnSection({
   customerId,
@@ -136,43 +137,48 @@ export function InlineReturnSection({
   sourceOrderId,
   resetToken,
   getQuoteEnabled = true,
+  waitingFor,
   onStateChange,
-  renderLinesActions,
+  renderActions,
   renderQuoteActions,
   renderQuoteFooter,
-  hideBack,
+  locked = false,
   quoteOverride,
   totalOnly = false,
   quoteNote,
   refusal,
   creditContext = "account",
   customerName,
-  onQuoteRefused,
+  reasonContext,
   hidden = false,
-  reasonHintId,
 }: InlineReturnSectionProps) {
   const { data: entryOrder } = useOrder(entryOrderId ?? "");
   // R7b 3.1: a counter sale's reasons read in register words (same enum values)
-  const REASON_OPTIONS = React.useMemo(
-    () => returnReasonOptions(entryOrder?.counterSale ? "counter" : "delivery"),
-    [entryOrder?.counterSale],
-  );
+  const context = reasonContext ?? (entryOrder?.counterSale ? "counter" : "delivery");
+  const REASON_OPTIONS = React.useMemo(() => returnReasonOptions(context), [context]);
 
-  const [step, setStep] = React.useState<InlineReturnSectionStep>("lines");
   const [lines, setLines] = React.useState<SectionLine[]>([]);
-  const [captureReason, setCaptureReason] = React.useState<ReturnReason | "">("");
-  const [quote, setQuote] = React.useState<InlineReturnQuoteResponse | null>(null);
-  const [excessOption, setExcessOption] = React.useState<ExcessOption>(DEFAULT_EXCESS_OPTION);
-  const [quoteError, setQuoteError] = React.useState("");
-  const [quoteFailed, setQuoteFailed] = React.useState(false); // the last quote did not come back: Get quote reads Try again
+  const [captureReason, setCaptureReason] = React.useState<ReturnReason>(DEFAULT_RETURN_REASON);
+  const [trimmed, setTrimmed] = React.useState<Record<string, Trim>>({});
   const [productSearch, setProductSearch] = React.useState("");
+  const [focusLine, setFocusLine] = React.useState<string | null>(null);
+  const rootRef = React.useRef<HTMLDivElement>(null);
 
-  const quoteMutation = useInlineReturnQuote();
-  React.useEffect(() => {
-    if (quoteOverride) setQuote(quoteOverride);
-  }, [quoteOverride]);
   // #2695 (SA-557): staff only — the server refuses the fields from anyone else with a 400.
   const canOverrideCredit = canOverrideReturnCredit(useOptionalAuth()?.user?.role);
+
+  const live = useLiveReturnQuote({
+    lines,
+    customerId,
+    sourceOrderId,
+    enabled: getQuoteEnabled && !locked,
+  });
+  const quote = quoteOverride ?? live.quote;
+  const quoteStatus: InlineReturnQuoteStatus = quoteOverride ? "current" : live.status;
+  // While the next quote is pending the last one stays on screen DIMMED (details only): the credit figure and the host's
+  // actions wait for a current one.
+  const problem = live.messageKind === "invalid" ? live.message : null;
+  const detailQuote = quote ?? (quoteStatus === "pending" ? live.lastQuote : null);
 
   const { data: productResults } = useProducts(
     { search: productSearch, limit: 10 },
@@ -181,11 +187,8 @@ export function InlineReturnSection({
 
   // Fresh attempt whenever resetToken (or the entry order) changes.
   React.useEffect(() => {
-    setStep("lines");
-    setCaptureReason("");
-    setQuote(null);
-    setExcessOption(DEFAULT_EXCESS_OPTION);
-    setQuoteError("");
+    setCaptureReason(DEFAULT_RETURN_REASON);
+    setTrimmed({});
     setProductSearch("");
     if (entryOrder?.lineItems) {
       setLines(
@@ -198,6 +201,7 @@ export function InlineReturnSection({
             unit: li.product?.unit,
             unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
             qtySold: li.qty,
+            // nothing sold is presumed returned: seeded rows stay blank until the operator counts them
             boxes: "",
             pieces: "",
             reason: "" as ReturnReason | "",
@@ -211,9 +215,9 @@ export function InlineReturnSection({
   }, [resetToken, entryOrderId, entryOrder?.id]);
 
   React.useEffect(() => {
-    onStateChange?.({ step, lines, quote, excessOption, captureReason });
+    onStateChange?.({ lines, quote, quoteStatus, captureReason, problem });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, lines, quote, excessOption, captureReason]);
+  }, [lines, quote, quoteStatus, captureReason, problem]);
 
   function updateLine(lineKey: string, patch: Partial<InlineReturnLineDraft>) {
     setLines((prev) => prev.map((l) => (l.lineKey === lineKey ? { ...l, ...patch } : l)));
@@ -259,56 +263,30 @@ export function InlineReturnSection({
     clearRemoved();
   }
 
-  function addProduct(product: {
-    id: string;
-    name: string;
-    unit?: string;
-    unitsPerBox?: number | null;
-  }) {
-    if (lines.some((l) => l.productId === product.id)) return;
-    // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
-    if (removed?.line.productId === product.id) clearRemoved();
-    setLines((prev) => [
-      ...prev,
-      {
-        lineKey: crypto.randomUUID(),
-        productId: product.id,
-        productName: product.name,
-        unit: product.unit,
-        unitsPerBox: product.unitsPerBox ?? null,
-        boxes: "",
-        pieces: "",
-        reason: "",
-        note: "",
-      },
-    ]);
-    setProductSearch("");
-  }
-
-  // #2694: scan into "What came back" with the order picker's scanner — the shared
-  // BarcodeScannerButton (camera + USB wedge) and the order modal's resolve ladder. A scan adds the
-  // product with 1 piece; a repeat scan adds a piece (applyReturnScan). Returns never create a
-  // product, so an unknown code is a message.
+  // #2694 + R-1 M2: a scan, a search pick and "Did you mean" all add through ONE rule — a new product becomes a line at 1
+  // piece, a repeat adds a piece to its line (applyReturnScan). A search pick also puts the cursor in that line's Qty with
+  // the 1 selected, so typing replaces it; a scan leaves the focus alone (the scanner keeps typing into the add box).
+  // Returns never create a product, so an unknown code is a message.
   const { toast } = useToast();
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
   // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
   const [scanMatches, setScanMatches] = React.useState<any[]>([]);
-  const addScanned = (product: any) => {
-    const created = !linesRef.current.some((l) => l.productId === product.id);
+  const addProduct = (product: any, opts: { focusQty: boolean }) => {
+    const existing = linesRef.current.find((l) => l.productId === product.id);
+    const lineKey = existing?.lineKey ?? crypto.randomUUID();
+    // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
+    if (removed?.line.productId === product.id) clearRemoved();
     setLines(
-      (prev) =>
-        applyReturnScan<SectionLine>(prev, product, (base) => ({
-          ...base,
-          lineKey: crypto.randomUUID(),
-        })).lines,
+      (prev) => applyReturnScan<SectionLine>(prev, product, (base) => ({ ...base, lineKey })).lines,
     );
     setProductSearch("");
-    return { created };
+    if (opts.focusQty) setFocusLine(lineKey);
+    return { created: !existing };
   };
   const scanHandlerRef = useScanCodeHandler({
-    addLineItem: (product) => addScanned(product),
+    addLineItem: (product) => addProduct(product, { focusQty: false }),
     onSuggestion: (matches) => setScanMatches(matches),
     onUnknownCode: (code) => toast({ variant: "error", title: `No product with barcode ${code}` }),
     toast,
@@ -319,75 +297,53 @@ export function InlineReturnSection({
     setProductSearch("");
     void scanHandlerRef.current(code);
   }
+  React.useEffect(() => {
+    if (!focusLine) return;
+    const input = rootRef.current?.querySelector<HTMLInputElement>(
+      `[data-qty-line="${focusLine}"] input`,
+    );
+    if (input) {
+      input.focus();
+      input.select();
+    }
+    setFocusLine(null);
+  }, [focusLine, lines]);
 
-  function handleGetQuote() {
-    setQuoteError("");
-    setQuoteFailed(false);
-    quoteMutation.mutate(buildQuoteRequest(customerId, lines, undefined, sourceOrderId), {
-      onSuccess: (data) => {
-        setQuote(data);
-        // A new quote from the lines step credits its excess at current price by default —
-        // only THIS path resets it; the re-quote a "return only what was purchased" pick
-        // itself triggers (handleExcessOptionChange) must keep the pick (#2097).
-        setExcessOption(DEFAULT_EXCESS_OPTION);
-        setStep("quote");
-      },
-      onError: (err) => {
-        // A failed lines-step quote must not leave the OLD quote behind.
-        setQuote(null);
-        if (isQuoteFailure(err)) {
-          // nothing was refused: stay on the lines, say it once, and let Get quote ask again
-          setQuoteError(QUOTE_FAILED_COPY);
-          setQuoteFailed(true);
-          return;
-        }
-        const message = extractRefusalMessage(err);
-        setQuoteError(message);
-        onQuoteRefused?.(message);
-      },
-    });
+  // M8: "Return only what was bought" for ONE line. The live quote does the rest.
+  function chooseOnlyBought(productId: string) {
+    if (!quote || locked) return;
+    const next = applyCoveredToProduct(lines, quote, productId);
+    if (next === lines) return;
+    const rows = lines
+      .filter((l) => l.productId === productId)
+      .map((l) => ({ lineKey: l.lineKey, boxes: l.boxes, pieces: l.pieces }));
+    const applied = next.find((l) => l.productId === productId)?.pieces ?? "";
+    setTrimmed((t) => ({ ...t, [productId]: { rows, applied } }));
+    setLines(next);
   }
-
-  function handleExcessOptionChange(option: ExcessOption) {
-    // #2693: with nothing matched to an invoice, option 3's re-quote would be EMPTY (the API's
-    // raw ArrayMinSize refusal); the option is disabled and never sent.
-    if (option === "RETURN_ONLY_PURCHASED" && quote && !canReturnOnlyPurchased(quote)) return;
-    const previousOption = excessOption;
-    setExcessOption(option);
-    if (option !== "RETURN_ONLY_PURCHASED" || !quote) return;
-    quoteMutation.mutate(dropExcessAndRequote(customerId, quote, undefined, lines, sourceOrderId), {
-      onSuccess: (data) => {
-        setQuote(data);
-        // Cast is safe: applyCoveredPiecesToLines spreads each input line into its output, so a
-        // SectionLine's lineKey survives at runtime even though the shared package's own return
-        // type only promises InlineReturnLineDraft.
-        setLines((prev) => applyCoveredPiecesToLines(prev, data) as SectionLine[]);
-      },
-      onError: (err) => {
-        // The pick is set BEFORE its re-quote; a failed re-quote must put it back — the quote
-        // on screen is still the OLD one with the excess in it.
-        setExcessOption(previousOption);
-        const message = extractRefusalMessage(err);
-        setQuoteError(message);
-        onQuoteRefused?.(message);
-      },
-    });
+  function chooseCurrentPrice(productId: string) {
+    const trim = trimmed[productId];
+    if (!trim || locked) return;
+    setLines((prev) =>
+      prev.map((l) => {
+        const before = trim.rows.find((r) => r.lineKey === l.lineKey);
+        return before ? { ...l, boxes: before.boxes, pieces: before.pieces } : l;
+      }),
+    );
+    setTrimmed(({ [productId]: _gone, ...rest }) => rest);
   }
+  const onlyBoughtActive = (productId: string) => {
+    const trim = trimmed[productId];
+    const first = lines.find((l) => l.productId === productId);
+    return !!trim && !!first && first.boxes === "0" && first.pieces === trim.applied;
+  };
 
-  const { covered, excess } = quote
-    ? groupQuoteChunks(quote)
-    : { covered: [] as InlineReturnQuoteChunk[], excess: [] as InlineReturnQuoteChunk[] };
-  const excessTotals = sumChunkTotals(excess);
-  // B961 / SA-071c: an over-return chunk of goods the customer already returned or was credited for is labelled as such (not
-  // "Not on any invoice"); staff must type a reason per product, a driver's capture is held for the office.
-  const flaggedIds = quote ? alreadyReturnedProductIds(quote) : new Set<string>();
-  const anyAlreadyReturned = flaggedIds.size > 0;
-  const allExcessAlreadyReturned = excess.length > 0 && excess.every((c) => c.alreadyReturned);
-  const onlyBoughtPossible = quote ? canReturnOnlyPurchased(quote) : false;
-  const notBoughtBefore = quote && onlyBoughtPossible ? notBoughtBeforeNames(quote, lines) : [];
   const boxedIds = boxedProductIds(lines);
-  const overrideProblem = creditOverrideProblem(lines);
-  const canGetQuote = hasAnyQtyEntered(lines) && getQuoteEnabled && overrideProblem === null;
+  const flaggedIds = new Set<string>(
+    detailQuote ? detailQuote.chunks.filter((c) => c.alreadyReturned).map((c) => c.productId) : [],
+  );
+  const pending = quoteStatus === "pending";
+  const current = quoteStatus === "current" && !!quote;
 
   if (hidden) return null;
 
@@ -408,483 +364,547 @@ export function InlineReturnSection({
     </div>
   ) : null;
 
+  const reasonLabel = (reason: ReturnReason | "") =>
+    REASON_OPTIONS.find((o) => o.value === (reason || captureReason))?.label ?? "";
+
   return (
-    <div className="space-y-4">
-      {step === "lines" && (
-        <div className="space-y-4">
-          <div>
-            <h4 className="mb-2 text-sm font-semibold text-navy">What came back</h4>
-            <div className="space-y-3">
-              {lines.length === 0 && (
-                <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
-              )}
-              {lines.map((line, lineIndex) => {
-                const boxed = isBoxedProduct(line);
-                return (
-                  <React.Fragment key={line.lineKey}>
-                    {removed && removed.index === lineIndex ? undoRow : null}
-                    <div className="rounded-lg border border-surface-border p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-medium text-navy">{line.productName}</p>
-                          {typeof line.qtySold === "number" && (
-                            <p className="text-xs text-navy/70">
-                              {line.qtySold}
-                              {line.unit && line.unit !== "each" ? ` ${line.unit}` : ""} sold
-                              {line.qtyAlreadyReturned
-                                ? ` · Returned ${line.qtyAlreadyReturned}`
-                                : ""}
-                            </p>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          className="text-xs text-navy/50 hover:text-danger max-lg:min-h-11 max-lg:min-w-11"
-                          onClick={() => removeLine(line.lineKey)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        {boxed ? (
-                          <>
-                            <Input
-                              className="max-lg:h-11"
-                              label={UW.pack.other}
-                              type="number"
-                              min={0}
-                              inputMode="numeric"
-                              value={line.boxes}
-                              onChange={(e) => updateLine(line.lineKey, { boxes: e.target.value })}
-                            />
-                            <Input
-                              className="max-lg:h-11"
-                              label={UW.base.other}
-                              type="number"
-                              min={0}
-                              inputMode="numeric"
-                              value={line.pieces}
-                              onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
-                            />
-                          </>
-                        ) : (
-                          <Input
-                            className="max-lg:h-11"
-                            label={UW.base.other}
-                            type="number"
-                            min={0}
-                            inputMode="numeric"
-                            value={line.pieces}
-                            onChange={(e) => updateLine(line.lineKey, { pieces: e.target.value })}
-                          />
-                        )}
-                      </div>
-                      <LineExtras
-                        productName={line.productName}
-                        hasValue={
-                          !!line.reason ||
-                          !!line.note ||
-                          !!line.creditUnitPrice ||
-                          !!line.overrideReason
-                        }
-                      >
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          <Select
-                            className="max-lg:h-11"
-                            label="Reason (optional)"
-                            value={line.reason}
-                            onChange={(e) =>
-                              updateLine(line.lineKey, {
-                                reason: e.target.value as ReturnReason | "",
-                              })
-                            }
-                            options={[{ value: "", label: "Use default" }, ...REASON_OPTIONS]}
-                          />
-                          <Input
-                            className="max-lg:h-11"
-                            label="Note (optional)"
-                            value={line.note}
-                            onChange={(e) => updateLine(line.lineKey, { note: e.target.value })}
-                          />
-                        </div>
-                        {canOverrideCredit && (
-                          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
-                            <Input
-                              className="max-lg:h-11"
-                              label={boxed ? `Credit price per ${UW.pack.lower}` : "Credit price"}
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="Quoted price"
-                              value={line.creditUnitPrice ?? ""}
-                              onChange={(e) =>
-                                updateLine(line.lineKey, { creditUnitPrice: e.target.value })
-                              }
-                            />
-                            {(line.creditUnitPrice ?? "").trim() !== "" && (
-                              <Input
-                                className="max-lg:h-11"
-                                label="Why the lower price?"
-                                maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                                value={line.overrideReason ?? ""}
-                                onChange={(e) =>
-                                  updateLine(line.lineKey, { overrideReason: e.target.value })
-                                }
-                              />
-                            )}
-                          </div>
-                        )}
-                      </LineExtras>
-                    </div>
-                  </React.Fragment>
-                );
-              })}
-              {removed && removed.index >= lines.length ? undoRow : null}
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="flex items-end gap-2">
-              <div className="min-w-0 flex-1">
-                <Input
-                  className="max-lg:h-11"
-                  ref={productSearchRef}
-                  label="Add another product"
-                  placeholder="Search or scan a product"
-                  value={productSearch}
-                  onChange={(e) => setProductSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    // The scanner button's wedge detector already handled (and preventDefault'd)
-                    // a scan's Enter — standing down here keeps ONE scan to ONE add (#2704).
-                    if (e.defaultPrevented) return;
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleProductSearchEnter();
-                    }
-                  }}
-                />
-              </div>
-              <BarcodeScannerButton
-                inputRef={productSearchRef}
-                onScan={(code) => void scanHandlerRef.current(code)}
-                onError={(message) => toast({ variant: "error", title: message })}
-                className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
-                title="Scan barcode"
-              />
-            </div>
-            {scanMatches.length > 0 && (
-              <div className="mt-2">
-                <DidYouMeanPicker
-                  matches={scanMatches}
-                  onConfirm={(product) => {
-                    setScanMatches([]);
-                    addScanned(product);
-                  }}
-                  onCancel={() => setScanMatches([])}
-                />
-              </div>
-            )}
-            {productSearch.trim().length > 1 && (productResults?.data?.length ?? 0) > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-card">
-                {productResults!.data
-                  .filter((p: { id: string }) => !lines.some((l) => l.productId === p.id))
-                  .map(
-                    (p: {
-                      id: string;
-                      name: string;
-                      unit?: string;
-                      unitsPerBox?: number | null;
-                    }) => (
-                      <button
-                        type="button"
-                        key={p.id}
-                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
-                        onClick={() =>
-                          addProduct({
-                            id: p.id,
-                            name: p.name,
-                            unit: p.unit,
-                            unitsPerBox: p.unitsPerBox,
-                          })
-                        }
-                      >
-                        {p.name}
-                      </button>
-                    ),
-                  )}
-              </div>
-            )}
-          </div>
-
-          <Select
-            className="max-lg:h-11"
-            label="Reason"
-            value={captureReason}
-            onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
-            options={[{ value: "", label: "Choose a reason" }, ...REASON_OPTIONS]}
-          />
-
-          {overrideProblem && <p className="text-sm text-danger">{overrideProblem}</p>}
-          {quoteError && (
-            <p role={quoteFailed ? "alert" : undefined} className="text-sm text-danger">
-              {quoteError}
-            </p>
+    <div ref={rootRef} className="space-y-4">
+      <div>
+        <h4 className="mb-2 text-sm font-semibold text-navy">What came back</h4>
+        <div className="space-y-3">
+          {lines.length === 0 && (
+            <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
           )}
+          {lines.map((line, lineIndex) => {
+            const firstOfProduct =
+              lines.findIndex((l) => l.productId === line.productId) === lineIndex;
+            const facts =
+              firstOfProduct && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            return (
+              <React.Fragment key={line.lineKey}>
+                {removed && removed.index === lineIndex ? undoRow : null}
+                <ReturnLine
+                  line={line}
+                  boxed={isBoxedProduct(line)}
+                  boxedForNote={boxedIds.has(line.productId)}
+                  facts={facts}
+                  credit={current && facts ? facts.total : null}
+                  stale={!quote && !!detailQuote}
+                  locked={locked}
+                  reasonOptions={REASON_OPTIONS}
+                  reasonLabel={reasonLabel(line.reason)}
+                  stocks={restocksForReason(line.reason || captureReason)}
+                  canOverrideCredit={canOverrideCredit}
+                  needsAlreadyReturnedReason={
+                    firstOfProduct &&
+                    canOverrideCredit &&
+                    flaggedIds.has(line.productId) &&
+                    !(line.alreadyReturnedReason ?? "").trim()
+                  }
+                  onlyBoughtActive={onlyBoughtActive(line.productId)}
+                  onlyBoughtAvailable={!!quote}
+                  refused={live.status === "refused" && live.refusedProductId === line.productId}
+                  onChange={(patch) => updateLine(line.lineKey, patch)}
+                  onRemove={() => removeLine(line.lineKey)}
+                  onEnterQty={() => productSearchRef.current?.focus()}
+                  onOnlyBought={() => chooseOnlyBought(line.productId)}
+                  onCurrentPrice={() => chooseCurrentPrice(line.productId)}
+                />
+              </React.Fragment>
+            );
+          })}
+          {removed && removed.index >= lines.length ? undoRow : null}
+        </div>
+      </div>
 
-          <div className="flex justify-end gap-2">
-            {renderLinesActions?.()}
-            <Button
-              className="max-lg:min-h-11"
-              disabled={!canGetQuote}
-              loading={quoteMutation.isPending}
-              onClick={handleGetQuote}
-            >
-              {quoteFailed ? "Try again" : "Get quote"}
-            </Button>
+      <div className="relative">
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <Input
+              className="max-lg:h-11"
+              ref={productSearchRef}
+              label="Add another product"
+              placeholder="Search or scan a product"
+              value={productSearch}
+              disabled={locked}
+              onChange={(e) => setProductSearch(e.target.value)}
+              onKeyDown={(e) => {
+                // The scanner button's wedge detector already handled (and preventDefault'd)
+                // a scan's Enter — standing down here keeps ONE scan to ONE add (#2704).
+                if (e.defaultPrevented) return;
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleProductSearchEnter();
+                }
+              }}
+            />
           </div>
+          <BarcodeScannerButton
+            inputRef={productSearchRef}
+            onScan={(code) => void scanHandlerRef.current(code)}
+            onError={(message) => toast({ variant: "error", title: message })}
+            className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
+            title="Scan barcode"
+          />
+        </div>
+        {scanMatches.length > 0 && (
+          <div className="mt-2">
+            <DidYouMeanPicker
+              matches={scanMatches}
+              onConfirm={(product) => {
+                setScanMatches([]);
+                addProduct(product, { focusQty: true });
+              }}
+              onCancel={() => setScanMatches([])}
+            />
+          </div>
+        )}
+        {!locked && productSearch.trim().length > 1 && (productResults?.data?.length ?? 0) > 0 && (
+          <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-card">
+            {productResults!.data.map(
+              (p: { id: string; name: string; unit?: string; unitsPerBox?: number | null }) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised max-lg:min-h-11"
+                  onClick={() =>
+                    addProduct(
+                      { id: p.id, name: p.name, unit: p.unit, unitsPerBox: p.unitsPerBox },
+                      { focusQty: true },
+                    )
+                  }
+                >
+                  {p.name}
+                </button>
+              ),
+            )}
+          </div>
+        )}
+      </div>
+
+      <Select
+        className="max-lg:h-11"
+        label="Reason for all items"
+        value={captureReason}
+        disabled={locked}
+        onChange={(e) => setCaptureReason(e.target.value as ReturnReason)}
+        options={REASON_OPTIONS}
+      />
+
+      {!getQuoteEnabled && waitingFor && hasAnyQtyEntered(lines) && (
+        <p className="text-sm text-navy/70">{waitingFor}</p>
+      )}
+      {live.message && (live.status === "refused" || live.status === "failed") && (
+        <div className="space-y-2">
+          <p
+            role={live.messageKind === "server" ? "alert" : undefined}
+            className="text-sm text-danger"
+          >
+            {live.message}
+          </p>
+          {live.status === "failed" && (
+            <Button className="max-lg:min-h-11" variant="secondary" onClick={live.retry}>
+              Try again
+            </Button>
+          )}
         </div>
       )}
 
-      {step === "quote" && quote && (
-        <div className="space-y-4">
-          <div>
-            <h4 className="mb-2 text-sm font-semibold text-navy">Check the return</h4>
-            {refusal && (
-              <p
-                role="status"
-                className="mb-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-navy"
-              >
-                {refusal}
-              </p>
-            )}
-            {new Set(covered.map((c) => c.sourceOrderId)).size > 1 && (
-              <p className="mb-2 text-xs text-navy/70">
-                Goods can come from more than one earlier order — each line below shows exactly
-                where it was matched.
-              </p>
-            )}
-            <div className="space-y-2">
-              {covered.map((chunk, i) => (
-                <CoveredChunkRow
-                  key={`${chunk.sourceOrderId}-${chunk.sourceInvoiceItemId}-${i}`}
-                  chunk={chunk}
-                  productName={
-                    lines.find((l) => l.productId === chunk.productId)?.productName ?? "Item"
-                  }
-                  boxed={boxedIds.has(chunk.productId)}
-                />
-              ))}
-            </div>
-          </div>
-
-          {excess.length > 0 && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-navy">
-                {allExcessAlreadyReturned
-                  ? ALREADY_RETURNED_LABEL
-                  : anyAlreadyReturned
-                    ? `Not on any invoice, or ${ALREADY_RETURNED_LABEL.toLowerCase()}`
-                    : "Not on any invoice"}
-              </p>
-              {anyAlreadyReturned && (
-                <p className="text-xs text-amber-900">
-                  {canOverrideCredit ? ALREADY_RETURNED_NOTE : ALREADY_RETURNED_DRIVER_NOTE}
-                </p>
-              )}
-              {canOverrideCredit &&
-                [...flaggedIds].map((productId) => {
-                  const line = lines.find((l) => l.productId === productId);
-                  if (!line) return null;
-                  return (
-                    <Input
-                      className="max-lg:h-11"
-                      key={`already-returned-reason-${productId}`}
-                      label={`Why credit ${line.productName} again (required)`}
-                      maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                      value={line.alreadyReturnedReason ?? ""}
-                      onChange={(e) =>
-                        updateLine(line.lineKey, { alreadyReturnedReason: e.target.value })
-                      }
-                    />
-                  );
-                })}
-              <p className="text-xs text-navy/70">
-                {excess.reduce((s, c) => s + c.pieces, 0)} {UW.base.lower}(s) priced at the
-                customer&apos;s current price.
-              </p>
-              {excess.map((c, i) => (
-                <CreditOverrideNote
-                  key={`excess-override-${i}`}
-                  chunk={c}
-                  boxed={boxedIds.has(c.productId)}
-                />
-              ))}
-              <div className="mt-2 space-y-1 text-sm text-navy">
-                <div className="flex justify-between">
-                  <span>Net</span>
-                  <span>{money(excessTotals.subtotal)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Tax</span>
-                  <span>{money(excessTotals.taxAmount)}</span>
-                </div>
-                {excessTotals.categoryTax > 0 && (
-                  <div className="flex justify-between">
-                    <span>Category levy</span>
-                    <span>{money(excessTotals.categoryTax)}</span>
+      {quoteStatus !== "none" &&
+        live.status !== "refused" &&
+        live.status !== "failed" &&
+        (detailQuote || pending) && (
+          <div
+            data-testid="return-summary"
+            aria-busy={pending}
+            className={`rounded-lg bg-surface-raised p-3 ${pending ? "opacity-60" : ""}`}
+          >
+            {detailQuote ? (
+              <>
+                {!totalOnly && (
+                  <div className="flex justify-between text-sm text-navy">
+                    <span>Subtotal</span>
+                    <span>{money(detailQuote.subtotal)}</span>
                   </div>
                 )}
-              </div>
-
-              <div className="mt-3 space-y-2">
-                <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
-                  <input
-                    type="radio"
-                    name="excess-option"
-                    checked={excessOption === "CREDIT_AT_CURRENT_PRICE"}
-                    onChange={() => handleExcessOptionChange("CREDIT_AT_CURRENT_PRICE")}
-                  />
-                  Credit at current price
-                </label>
-                <label
-                  className={`flex items-center gap-2 text-sm max-lg:min-h-11 ${onlyBoughtPossible ? "text-navy" : "text-navy/50"}`}
-                >
-                  <input
-                    type="radio"
-                    name="excess-option"
-                    checked={excessOption === "RETURN_ONLY_PURCHASED"}
-                    disabled={!onlyBoughtPossible}
-                    aria-describedby={onlyBoughtPossible ? undefined : "excess-nothing-bought"}
-                    onChange={() => handleExcessOptionChange("RETURN_ONLY_PURCHASED")}
-                  />
-                  Return only what was bought
-                </label>
-                {!onlyBoughtPossible && (
-                  <p id="excess-nothing-bought" className="text-xs text-navy/70">
-                    {NOTHING_BOUGHT_BEFORE_MESSAGE}
+                {!totalOnly && (
+                  <div className="flex justify-between text-sm text-navy">
+                    <span>Tax</span>
+                    <span>{money(detailQuote.taxAmount)}</span>
+                  </div>
+                )}
+                {!totalOnly && detailQuote.categoryTax > 0 && (
+                  <div className="flex justify-between text-sm text-navy">
+                    <span>Category levy</span>
+                    <span>{money(detailQuote.categoryTax)}</span>
+                  </div>
+                )}
+                <div className="mt-1 flex justify-between border-t border-surface-border pt-1 text-sm font-semibold text-navy">
+                  <span>Total</span>
+                  <span>{money(detailQuote.total)}</span>
+                </div>
+                {quoteNote !== null && !refusal && (
+                  <p className="mt-2 text-xs text-navy/70">
+                    {quoteNote ??
+                      creditOutcomeLine(money(detailQuote.total), creditContext, customerName)}
                   </p>
                 )}
-                {notBoughtBefore.length > 0 && (
-                  <p className="text-xs text-navy/70">
-                    Not bought before: {notBoughtBefore.join(", ")}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-lg bg-surface-raised p-3">
-            {!totalOnly && (
-              <div className="flex justify-between text-sm text-navy">
-                <span>Subtotal</span>
-                <span>{money(quote.subtotal)}</span>
-              </div>
-            )}
-            {!totalOnly && (
-              <div className="flex justify-between text-sm text-navy">
-                <span>Tax</span>
-                <span>{money(quote.taxAmount)}</span>
-              </div>
-            )}
-            {!totalOnly && quote.categoryTax > 0 && (
-              <div className="flex justify-between text-sm text-navy">
-                <span>Category levy</span>
-                <span>{money(quote.categoryTax)}</span>
-              </div>
-            )}
-            <div className="mt-1 flex justify-between border-t border-surface-border pt-1 text-sm font-semibold text-navy">
-              <span>Total</span>
-              <span>{money(quote.total)}</span>
-            </div>
-            {quoteNote !== null && !refusal && (
-              <p className="mt-2 text-xs text-navy/70">
-                {quoteNote ?? creditOutcomeLine(money(quote.total), creditContext, customerName)}
+              </>
+            ) : (
+              <p role="status" className="text-sm text-navy/70">
+                Working out the return credit…
               </p>
             )}
           </div>
+        )}
 
-          {!refusal && (
-            <Select
-              className="max-lg:h-11"
-              label="Reason"
-              value={captureReason}
-              onChange={(e) => setCaptureReason(e.target.value as ReturnReason | "")}
-              options={[{ value: "", label: "Choose a reason" }, ...REASON_OPTIONS]}
-              aria-describedby={!captureReason && reasonHintId ? reasonHintId : undefined}
-            />
-          )}
-
-          {!refusal && renderQuoteFooter?.(quote)}
-          <div className="flex flex-wrap justify-end gap-2">
-            {!hideBack && (
-              <Button className="max-lg:min-h-11" variant="ghost" onClick={() => setStep("lines")}>
-                Back
-              </Button>
-            )}
-            {renderQuoteActions?.(quote)}
-          </div>
-        </div>
+      {current && refusal && (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-navy"
+        >
+          {refusal}
+        </p>
       )}
-    </div>
-  );
-}
-
-/** F23: a return line's optional extras (Reason, Note, staff Credit price) behind "More". The panel
- *  stays mounted (hidden while collapsed) so the button's aria-controls always points at a real
- *  element. While any extra holds a value the panel stays open, so a typed note or price is never
- *  out of sight; the toggle then reads "Less" and is disabled until the fields are empty again. */
-function LineExtras({
-  hasValue,
-  productName,
-  children,
-}: {
-  hasValue: boolean;
-  productName: string;
-  children: React.ReactNode;
-}) {
-  const [userOpen, setUserOpen] = React.useState(false);
-  const open = userOpen || hasValue;
-  const panelId = React.useId();
-  return (
-    <div className="mt-2">
-      <button
-        type="button"
-        className="min-h-11 text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
-        aria-label={`${open ? "Less" : "More"} for ${productName}`}
-        aria-expanded={open}
-        aria-controls={panelId}
-        disabled={hasValue}
-        title={hasValue ? "Clear these fields to hide them" : undefined}
-        onClick={() => setUserOpen((v) => !v)}
-      >
-        {open ? "Less" : "More"}
-      </button>
-      <div id={panelId} hidden={!open} className="space-y-2">
-        {children}
+      {current && !refusal && quote && renderQuoteFooter?.(quote)}
+      <div className="flex flex-wrap justify-end gap-2">
+        {renderActions?.()}
+        {current && quote && renderQuoteActions?.(quote)}
       </div>
     </div>
   );
 }
 
-function CoveredChunkRow({
-  chunk,
+/** One return line: name and counts, Qty, and the collapsed options row that shows the line's defaults in words. */
+function ReturnLine({
+  line,
   boxed,
-  productName,
+  boxedForNote,
+  facts,
+  credit,
+  stale,
+  locked,
+  reasonOptions,
+  reasonLabel,
+  stocks,
+  canOverrideCredit,
+  needsAlreadyReturnedReason,
+  onlyBoughtActive,
+  onlyBoughtAvailable,
+  refused,
+  onChange,
+  onRemove,
+  onEnterQty,
+  onOnlyBought,
+  onCurrentPrice,
 }: {
-  chunk: InlineReturnQuoteChunk;
+  line: SectionLine;
   boxed: boolean;
-  productName: string;
+  boxedForNote: boolean;
+  facts: LineQuoteFacts | null;
+  /** The line's credit from a CURRENT quote, else null. */
+  credit: number | null;
+  /** The details come from the last quote while the next is pending. */
+  stale: boolean;
+  locked: boolean;
+  reasonOptions: Array<{ value: ReturnReason; label: string }>;
+  reasonLabel: string;
+  stocks: boolean;
+  canOverrideCredit: boolean;
+  needsAlreadyReturnedReason: boolean;
+  onlyBoughtActive: boolean;
+  onlyBoughtAvailable: boolean;
+  refused: boolean;
+  onChange: (patch: Partial<InlineReturnLineDraft>) => void;
+  onRemove: () => void;
+  onEnterQty: () => void;
+  onOnlyBought: () => void;
+  onCurrentPrice: () => void;
 }) {
+  const [userOpen, setUserOpen] = React.useState(false);
+  const panelId = React.useId();
+  const hasValue =
+    !!line.reason ||
+    !!line.note ||
+    !!line.creditUnitPrice ||
+    !!line.overrideReason ||
+    !!(line.alreadyReturnedReason ?? "").trim();
+  // M9: a typed note or price is never out of sight, and a decision that is not optional opens by itself
+  const forced = hasValue || needsAlreadyReturnedReason;
+  const open = userOpen || forced;
+
+  const hasExcess = !!facts && facts.notOnInvoicePieces > 0;
+  const hasAlreadyReturned = !!facts && facts.alreadyReturnedPieces > 0;
+  const coveredPieces = facts ? facts.covered.reduce((s, c) => s + c.pieces, 0) : 0;
+  const showExcessChoice = hasExcess || onlyBoughtActive;
+  const onlyPossible = onlyBoughtAvailable && (onlyBoughtActive || coveredPieces > 0);
+
+  const summaryWords = [
+    credit !== null && facts && facts.total > 0 ? `Credit ${money(facts.total)}` : null,
+    reasonLabel,
+    stocks ? "Back to stock" : "Not added to stock",
+  ].filter(Boolean);
+
+  const flagWords = [
+    hasAlreadyReturned ? ALREADY_RETURNED_LABEL : null,
+    hasExcess
+      ? `${facts!.notOnInvoicePieces} not on any invoice · ${
+          onlyBoughtActive ? "Return only what was bought" : "Credit at current price"
+        }`
+      : onlyBoughtActive
+        ? "Returning only what was bought"
+        : null,
+  ].filter(Boolean);
+
+  const excessChunks = facts ? [...facts.notOnInvoice, ...facts.alreadyReturned] : [];
+
+  return (
+    <div
+      data-testid={`return-line-${line.productId}`}
+      className={`rounded-lg border p-3 ${refused ? "border-danger" : "border-surface-border"}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-navy">{line.productName}</p>
+          {typeof line.qtySold === "number" && (
+            <p className="text-xs text-navy/70">
+              {line.qtySold}
+              {line.unit && line.unit !== "each" ? ` ${line.unit}` : ""} sold
+              {line.qtyAlreadyReturned ? ` · Returned ${line.qtyAlreadyReturned}` : ""}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          className="text-xs text-navy/50 hover:text-danger disabled:cursor-not-allowed disabled:opacity-50 max-lg:min-h-11 max-lg:min-w-11"
+          disabled={locked}
+          onClick={onRemove}
+        >
+          Remove
+        </button>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {boxed && (
+          <Input
+            className="max-lg:h-11"
+            label={UW.pack.other}
+            type="number"
+            min={0}
+            inputMode="numeric"
+            enterKeyHint="done"
+            disabled={locked}
+            value={line.boxes}
+            onChange={(e) => onChange({ boxes: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onEnterQty();
+              }
+            }}
+          />
+        )}
+        <div data-qty-line={line.lineKey}>
+          <Input
+            className="max-lg:h-11"
+            label={UW.base.other}
+            type="number"
+            min={0}
+            inputMode="numeric"
+            enterKeyHint="done"
+            disabled={locked}
+            aria-invalid={refused}
+            value={line.pieces}
+            onChange={(e) => onChange({ pieces: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onEnterQty();
+              }
+            }}
+          />
+        </div>
+      </div>
+
+      {flagWords.length > 0 && (
+        <p
+          data-testid={`return-line-flag-${line.productId}`}
+          className={`mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-navy ${stale ? "opacity-60" : ""}`}
+        >
+          {flagWords.join(" · ")}
+        </p>
+      )}
+
+      <button
+        type="button"
+        className="mt-2 flex min-h-11 w-full items-center justify-between gap-2 text-left text-sm text-navy/70 hover:text-navy disabled:cursor-not-allowed disabled:opacity-60"
+        aria-expanded={open}
+        aria-controls={panelId}
+        disabled={forced}
+        title={forced ? "Clear these fields to hide them" : undefined}
+        onClick={() => setUserOpen((v) => !v)}
+      >
+        <span data-testid={`return-line-summary-${line.productId}`} className="min-w-0">
+          <span className="sr-only">Options for {line.productName}: </span>
+          {summaryWords.join(" · ")}
+        </span>
+        {open ? (
+          <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
+        )}
+      </button>
+      <div id={panelId} hidden={!open} className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Select
+            className="max-lg:h-11"
+            label="Reason (optional)"
+            value={line.reason}
+            disabled={locked}
+            onChange={(e) => onChange({ reason: e.target.value as ReturnReason | "" })}
+            options={[{ value: "", label: "Use default" }, ...reasonOptions]}
+          />
+          <Input
+            className="max-lg:h-11"
+            label="Note (optional)"
+            disabled={locked}
+            value={line.note}
+            onChange={(e) => onChange({ note: e.target.value })}
+          />
+        </div>
+        {canOverrideCredit && (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+            <Input
+              className="max-lg:h-11"
+              label={boxedForNote ? `Credit price per ${UW.pack.lower}` : "Credit price"}
+              type="text"
+              inputMode="decimal"
+              placeholder="Quoted price"
+              disabled={locked}
+              value={line.creditUnitPrice ?? ""}
+              onChange={(e) => onChange({ creditUnitPrice: e.target.value })}
+            />
+            {(line.creditUnitPrice ?? "").trim() !== "" && (
+              <Input
+                className="max-lg:h-11"
+                label="Why the lower price?"
+                maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                disabled={locked}
+                value={line.overrideReason ?? ""}
+                onChange={(e) => onChange({ overrideReason: e.target.value })}
+              />
+            )}
+          </div>
+        )}
+
+        {facts && facts.covered.length > 0 && (
+          <div className={`space-y-2 ${stale ? "opacity-60" : ""}`}>
+            {facts.spansOrders && (
+              <p className="text-xs text-navy/70">
+                Goods can come from more than one earlier order — each line below shows exactly
+                where it was matched.
+              </p>
+            )}
+            {facts.covered.map((chunk, i) => (
+              <CoveredChunkRow
+                key={`${chunk.sourceOrderId}-${chunk.sourceInvoiceItemId}-${i}`}
+                chunk={chunk}
+                boxed={boxedForNote}
+              />
+            ))}
+          </div>
+        )}
+
+        {facts && excessChunks.length > 0 && (
+          <div className={`space-y-1 text-xs text-navy/70 ${stale ? "opacity-60" : ""}`}>
+            {hasAlreadyReturned && (
+              <p className="text-amber-900">
+                {canOverrideCredit ? ALREADY_RETURNED_NOTE : ALREADY_RETURNED_DRIVER_NOTE}
+              </p>
+            )}
+            <p>
+              {countNoun(
+                facts.notOnInvoicePieces + facts.alreadyReturnedPieces,
+                UW.base.lower,
+                UW.base.lowerOther,
+              )}{" "}
+              priced at the customer&apos;s current price.
+            </p>
+            {excessChunks.map((c, i) => (
+              <CreditOverrideNote key={`excess-override-${i}`} chunk={c} boxed={boxedForNote} />
+            ))}
+            <div className="text-sm text-navy">
+              <div className="flex justify-between">
+                <span>Net</span>
+                <span>{money(sumChunkTotals(excessChunks).subtotal)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Tax</span>
+                <span>{money(sumChunkTotals(excessChunks).taxAmount)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {needsAlreadyReturnedReason || (hasAlreadyReturned && canOverrideCredit) ? (
+          <Input
+            className="max-lg:h-11"
+            label={`Why credit ${line.productName} again (required)`}
+            maxLength={CREDIT_OVERRIDE_REASON_MAX}
+            disabled={locked}
+            value={line.alreadyReturnedReason ?? ""}
+            onChange={(e) => onChange({ alreadyReturnedReason: e.target.value })}
+          />
+        ) : null}
+
+        {showExcessChoice && (
+          <fieldset className="m-0 min-w-0 space-y-2 border-0 p-0">
+            <legend className="sr-only">Goods past what was bought: {line.productName}</legend>
+            <label className="flex items-center gap-2 text-sm text-navy max-lg:min-h-11">
+              <input
+                type="radio"
+                name={`excess-${line.lineKey}`}
+                checked={!onlyBoughtActive}
+                disabled={locked}
+                onChange={onCurrentPrice}
+              />
+              Credit at current price
+            </label>
+            <label
+              className={`flex items-center gap-2 text-sm max-lg:min-h-11 ${onlyPossible ? "text-navy" : "text-navy/50"}`}
+            >
+              <input
+                type="radio"
+                name={`excess-${line.lineKey}`}
+                checked={onlyBoughtActive}
+                disabled={locked || !onlyPossible}
+                aria-describedby={
+                  onlyPossible ? undefined : `excess-nothing-bought-${line.lineKey}`
+                }
+                onChange={onOnlyBought}
+              />
+              Return only what was bought
+            </label>
+            {!onlyPossible && coveredPieces === 0 && (
+              <p id={`excess-nothing-bought-${line.lineKey}`} className="text-xs text-navy/70">
+                {NOTHING_BOUGHT_BEFORE_MESSAGE}
+              </p>
+            )}
+          </fieldset>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CoveredChunkRow({ chunk, boxed }: { chunk: InlineReturnQuoteChunk; boxed: boolean }) {
   const { data: sourceOrder } = useOrder(chunk.sourceOrderId ?? "");
   return (
     <div className="rounded-lg border border-surface-border p-3 text-sm">
       <div className="flex justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-medium text-navy">{productName}</p>
-          <p className="text-xs text-navy/70">
-            {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
-            {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
-          </p>
-        </div>
+        <p className="min-w-0 text-xs text-navy/70">
+          {sourceOrder ? `From order #${sourceOrder.orderNumber}` : "From an earlier order"}
+          {sourceOrder?.orderDate && ` · ${new Date(sourceOrder.orderDate).toLocaleDateString()}`}
+        </p>
         <span className="shrink-0 text-navy/70">
           {chunk.pieces} {UW.baseShortFor(chunk.pieces)}
         </span>

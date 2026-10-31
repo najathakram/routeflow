@@ -382,8 +382,8 @@ export default function OrderDetailPage() {
   const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
-  const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
-    toast({ title: RETURN_SAVE_BLOCKED[why], variant: "error" }),
+  const returnSave = useOrderInlineReturnSave(returnsRef, (_why, message) =>
+    toast({ title: message, variant: "error" }),
   );
 
   // Demotion modal
