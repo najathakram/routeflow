@@ -1,5 +1,6 @@
 import {
   isCalendarDay,
+  mayCompleteAtCounter,
   roundMoney,
   saleTotals,
   type ChargeLine,
@@ -18,6 +19,7 @@ import {
 import {
   API_ERROR_CODES,
   COMPLETE_MODE_ERROR_COPY,
+  UNSET_FULFILMENT_CAPABILITIES,
   counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
   type ToCollectMethod,
@@ -34,21 +36,15 @@ import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
  */
 
 export interface CounterSaleGate {
-  /** the "Counter sale" button (Orders + dashboard) */
+  /** the till is offered: the sidebar leaf, the palette, the settings index and the counter screen */
   showButton: boolean;
-  /** staff "New order" opens AS the counter sale */
-  opensAsCounter: boolean;
   /** "Ship this order instead": only when SHIP is a method of this business */
   offerShipInstead: boolean;
-  /** "Invoice order": a store-only business's way into the order builder (row 331) */
-  offerInvoiceOrder: boolean;
 }
 
 const NO_COUNTER: CounterSaleGate = {
   showButton: false,
-  opensAsCounter: false,
   offerShipInstead: false,
-  offerInvoiceOrder: false,
 };
 
 /**
@@ -62,47 +58,86 @@ export function isStoreOnly(
   return methods.length > 0 && methods.every((m) => m === "PICKUP");
 }
 
-/** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
+/** always -> the till, and "Ship this order instead" where SHIP is a method; optional -> the till; off / unknown / loading -> nothing. */
 export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
-  if (cap.counter === "optional")
-    return {
-      showButton: true,
-      opensAsCounter: false,
-      offerShipInstead: false,
-      offerInvoiceOrder: false,
-    };
+  if (cap.counter === "optional") return { showButton: true, offerShipInstead: false };
   if (cap.counter === "always")
     return {
       showButton: true,
-      opensAsCounter: true,
       offerShipInstead: (cap.methods ?? []).includes("SHIP"), // `?? []`: a partial answer must not crash the till
-      // A business with no delivery at all has nowhere else to build an invoiced order from: give it the entry.
-      offerInvoiceOrder: isStoreOnly(cap),
     };
   return NO_COUNTER;
 }
 
 /**
- * Row 331 (UX G7) + row 344: the ONE header rule for every place that carries the quick-create entries (the Orders
- * header, the dashboard header). A store-only business has a single place to ring a sale, so "New Order" (which
- * went to the same place as "Counter sale") is not offered, Counter sale is the filled primary and trails, and
- * the actions are 44 px targets below `sm`. Read from the one capability gate (`counterSaleGate`), so there is no
- * second rule and no second capability read. A partial gate (a test double, a loading state) is NOT store-only.
+ * W-854 (SA-940, A-1.1): what New order does here. The ONE predicate every sale entry reads: the Orders header, both
+ * dashboard branches and the `?action=new` intent. A new kind fails to compile at each caller.
+ * - `wait`: the gate hasn't answered. Nothing is offered and the URL intent stays.
+ * - `none`: a store-only business with the till denied or unknown. The builder's PICKUP path IS the till there (BO-07),
+ *   so sending this operator to the builder would hand back what their admin took away.
+ * - `builder`: no counter, a counter this operator is denied, or the capability read failed. One option isn't a choice.
+ * - `menu`: Counter sale and Regular order, with the business's default (`staffOpensAs`) first.
  */
-export interface QuickCreateRule {
-  storeOnly: boolean;
-  /** "New Order" is offered. */
-  showNewOrder: boolean;
-  /** "Counter sale" is the filled primary (and trails the other actions). */
-  counterIsPrimary: boolean;
+export type NewOrderEntry =
+  | { kind: "wait" }
+  | { kind: "none" }
+  | { kind: "builder" }
+  | { kind: "menu"; first: "counter" | "order" };
+
+export interface NewOrderGate {
+  capability?: FulfilmentCapability | null;
+  mayUseTill?: boolean;
+  permsKnown?: boolean;
+  loading?: boolean;
 }
 
-export function quickCreateRule(
-  gate: Partial<Pick<CounterSaleGate, "offerInvoiceOrder">> | null | undefined,
-): QuickCreateRule {
-  const storeOnly = gate?.offerInvoiceOrder === true;
-  return { storeOnly, showNewOrder: !storeOnly, counterIsPrimary: storeOnly };
+export function newOrderEntry(gate: NewOrderGate): NewOrderEntry {
+  if (gate.loading) return { kind: "wait" };
+  const cap = gate.capability;
+  const mayUseTill = gate.mayUseTill === true && gate.permsKnown === true;
+  if (isStoreOnly(cap) && !mayUseTill) return { kind: "none" };
+  if (!mayUseTill || (cap?.counter !== "always" && cap?.counter !== "optional"))
+    return { kind: "builder" };
+  return { kind: "menu", first: cap.staffOpensAs === "counter" ? "counter" : "order" };
+}
+
+/** What a bare `?action=new` does with that answer. A read-only workspace opens nothing: the screen's hint says why. */
+export function newOrderIntent(
+  entry: NewOrderEntry,
+  readOnly: boolean,
+): "wait" | "nothing" | "builder" | "menu" {
+  switch (entry.kind) {
+    case "wait":
+      return "wait";
+    case "none":
+      return "nothing";
+    case "builder":
+      return "builder";
+    case "menu":
+      return readOnly ? "nothing" : "menu";
+  }
+}
+
+/**
+ * SA-940 MUST 4, SA-1069 A-3: the Regular order line in the menu says what the builder will offer: its form methods, plus
+ * pickup later where the store hands over. It reads the same capability the builder falls back to (`useFulfilmentCaps`:
+ * an inconsistent answer is the UNSET shape), so the sentence stays true. Only ever shown inside the menu, where the
+ * till is allowed.
+ */
+export function regularOrderSubtitle(cap: FulfilmentCapability | null | undefined): string {
+  if (isStoreOnly(cap)) return "Pick up later, invoiced";
+  const offer = !cap || cap.consistent === false ? UNSET_FULFILMENT_CAPABILITIES : cap;
+  const words = [
+    ...(offer.methods.includes("ROUTE") ? ["deliver"] : []),
+    ...(offer.methods.includes("SHIP") ? ["ship"] : []),
+    ...(mayCompleteAtCounter({ mayUseTill: true, methods: offer.methods, counter: offer.counter })
+      ? ["pick up later"]
+      : []),
+  ];
+  const line =
+    words.length > 1 ? `${words.slice(0, -1).join(", ")} or ${words[words.length - 1]}` : words[0];
+  return line ? line[0].toUpperCase() + line.slice(1) : "";
 }
 
 /**

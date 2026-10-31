@@ -1,5 +1,6 @@
 import * as React from "react";
 import { act, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
 import DashboardPage from "./page";
 
 /**
@@ -87,22 +88,23 @@ describe("Dashboard header and the operator's till permission", () => {
     renderWithProviders(<DashboardPage />);
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
     await act(async () => {}); // the answer has landed: the entries must still be absent
+    await waitFor(() => expect(screen.queryByRole("button", { name: "New order" })).toBeNull());
     expect(screen.queryByText("Counter sale")).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull(),
-    );
+    expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull();
   });
 
   it("an operator with ORDERS: both are offered", async () => {
     renderWithProviders(<DashboardPage />);
-    expect(await screen.findByText("Counter sale")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Invoice a customer" })).toBeInTheDocument();
+    await userEvent.setup().click(await screen.findByTestId("new-order-open"));
+    expect(await screen.findByRole("menuitem", { name: /counter sale/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /regular order/i })).toBeInTheDocument();
   });
 
-  it("a tenant admin: Counter sale shows and permissions are never asked for", async () => {
+  it("a tenant admin: the menu shows and permissions are never asked for", async () => {
     authRole = "TENANT_ADMIN";
     renderWithProviders(<DashboardPage />);
-    expect(await screen.findByText("Counter sale")).toBeInTheDocument();
+    await userEvent.setup().click(await screen.findByTestId("new-order-open"));
+    expect(await screen.findByRole("menuitem", { name: /counter sale/i })).toBeInTheDocument();
     expect(mockGet).not.toHaveBeenCalledWith("/users/me/permissions");
   });
 });

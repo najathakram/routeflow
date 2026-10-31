@@ -56,9 +56,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
-import { quickCreateRule } from "@/lib/counter-sale";
+import { isStoreOnly, newOrderEntry, newOrderIntent } from "@/lib/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
-import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
+import { ReadOnlyHint, useReadOnlyGate, WriteButton } from "@/lib/read-only-gate";
+import { NewOrderButton } from "./_components/NewOrderButton";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -390,6 +391,9 @@ export default function OrdersPage() {
   // Customer search is URL-backed like the chips above, so drilling into an order
   // and pressing Back returns to the search that found it.
   const [customerSearch, setCustomerSearch, debouncedCustomerSearch] = useUrlSearch();
+  const newOrder = newOrderEntry(counterGate);
+  const { readOnly } = useReadOnlyGate();
+  const [newOrderMenuOpen, setNewOrderMenuOpen] = React.useState(false);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   // Draft resume state (pos-cost-roles-spec §2): which parked draft to hydrate and
   // an optional barcode to add on open.
@@ -407,27 +411,23 @@ export default function OrdersPage() {
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
     if (!resume && action !== "new") return;
-    // A business whose staff default is the counter: "New order" OPENS AS the counter sale, unless the operator chose
-    // "Ship this order instead" (?ship=1), which falls through to the normal builder.
-    if (
-      !resume &&
-      action === "new" &&
-      counterGate.opensAsCounter &&
-      searchParams.get("ship") !== "1" &&
-      // ?builder=1 (the /orders/new target and the "Invoice order" link) asks for the builder itself.
-      searchParams.get("builder") !== "1"
-    ) {
-      router.replace("/orders/counter-sale");
-      return;
+    // W-854: a bare ?action=new follows the one New order answer, and waits for it. `builder=1` (the /orders/new target),
+    // `ship=1` ("Ship this order instead"), a resume and a scan ask for the builder itself.
+    const direct =
+      resume || scan || searchParams.get("ship") === "1" || searchParams.get("builder") === "1";
+    const intent = direct ? "builder" : newOrderIntent(newOrder, readOnly);
+    if (intent === "wait") return;
+    if (intent === "builder") {
+      if (resume) {
+        setResumeDraftId(resume);
+      } else {
+        setResumeDraftId(null);
+      }
+      setInitialScanCode(scan);
+      setInitialFulfillPath(!resume && searchParams.get("preselect") === "SHIP" ? "SHIP" : null);
+      setIsCreateOpen(true);
     }
-    if (resume) {
-      setResumeDraftId(resume);
-    } else {
-      setResumeDraftId(null);
-    }
-    setInitialScanCode(scan);
-    setInitialFulfillPath(!resume && searchParams.get("preselect") === "SHIP" ? "SHIP" : null);
-    setIsCreateOpen(true);
+    if (intent === "menu") setNewOrderMenuOpen(true);
     // Strip ONLY the intent params. This used to replace with a bare "/orders",
     // which also discarded the status/date chips and the search — so opening the
     // builder from the draft dock silently cleared the operator's filters.
@@ -441,7 +441,7 @@ export default function OrdersPage() {
     const qs = params.toString();
     router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, counterGate.opensAsCounter]);
+  }, [searchParams, newOrder.kind, readOnly]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
@@ -767,9 +767,8 @@ export default function OrdersPage() {
     }
   };
 
-  // A store-only tenant (capabilities.fulfilment: PICKUP only): "New Order" went to the same place as "Counter sale",
-  // so the header has Counter sale (primary) and Invoice a customer (secondary) and nothing else duplicated.
-  const storeOnlyHeader = quickCreateRule(counterGate).storeOnly;
+  // A store-only tenant (capabilities.fulfilment: PICKUP only): the phone header keeps Export and Select in a More menu.
+  const storeOnlyHeader = isStoreOnly(counterGate.capability);
 
   const headerSubtitle = meta
     ? `${meta.total.toLocaleString("en-US")} order${meta.total !== 1 ? "s" : ""}${
@@ -959,38 +958,14 @@ export default function OrdersPage() {
                 ]}
               />
             ) : null}
-            {storeOnlyHeader &&
-            counterGate.permsKnown &&
-            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups ?? []) ? (
-              <Button
-                variant="secondary"
-                className="max-sm:h-11"
-                onClick={() => setIsCreateOpen(true)}
-              >
-                Invoice a customer
-              </Button>
-            ) : null}
-            {counterGate.showButton ? (
-              <WriteButton
-                // A store-only tenant has one place to ring a sale: the counter is the filled primary (UX G7).
-                variant={storeOnlyHeader ? undefined : "secondary"}
-                className={cn(storeOnlyHeader && "max-sm:h-11")}
-                onClick={() => router.push("/orders/counter-sale")}
-              >
-                Counter sale
-              </WriteButton>
-            ) : null}
-            {storeOnlyHeader ? null : (
-              <WriteButton
-                onClick={() =>
-                  counterGate.opensAsCounter
-                    ? router.push("/orders/counter-sale")
-                    : setIsCreateOpen(true)
-                }
-              >
-                New order
-              </WriteButton>
-            )}
+            <NewOrderButton
+              entry={newOrder}
+              capability={counterGate.capability}
+              open={newOrderMenuOpen}
+              onOpenChange={setNewOrderMenuOpen}
+              onCounterSale={() => router.push("/orders/counter-sale")}
+              onRegularOrder={() => setIsCreateOpen(true)}
+            />
             <ReadOnlyHint className="basis-full text-right text-xs text-slate-600" />
           </div>
         }

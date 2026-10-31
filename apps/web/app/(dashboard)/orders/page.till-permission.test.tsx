@@ -1,5 +1,6 @@
 import * as React from "react";
 import { act, fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
 import OrdersPage from "./page";
 
 /**
@@ -85,11 +86,14 @@ describe("Orders header and the operator's till permission", () => {
     await act(async () => {}); // the answer has landed: the entry must still be absent
     expect(screen.queryByRole("button", { name: "Counter sale" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Counter sale" })).toBeNull();
+    expect(screen.queryByTestId("new-order-open")).toBeNull();
   });
 
   it("an operator with ORDERS: Counter sale is offered and goes to the counter", async () => {
     renderWithProviders(<OrdersPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Counter sale" }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("new-order-open"));
+    await user.click(await screen.findByRole("menuitem", { name: /counter sale/i }));
     expect(push).toHaveBeenCalledWith("/orders/counter-sale");
   });
 
@@ -104,21 +108,22 @@ describe("Orders header and the operator's till permission", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  describe("a store-only account's Invoice a customer entry (the builder's PICKUP path)", () => {
+  describe("a store-only account's Regular order (the builder's PICKUP path)", () => {
     beforeEach(() => {
       mockCounter = "always";
       mockMethods = ["PICKUP"];
     });
 
-    it("an operator without ORDERS: no Invoice a customer", async () => {
+    it("an operator without ORDERS: no sale control at all", async () => {
       mockGroups = ["PRICING", "FINANCE"];
       renderWithProviders(<OrdersPage />);
       await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
       await act(async () => {});
+      expect(screen.queryByRole("button", { name: "New order" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
     });
 
-    it("while the permissions read is pending: Invoice a customer is absent", async () => {
+    it("while the permissions read is pending: New order is disabled and offers nothing", async () => {
       mockGet.mockImplementation((url: string) =>
         url === "/users/me/permissions"
           ? new Promise(() => undefined)
@@ -127,19 +132,23 @@ describe("Orders header and the operator's till permission", () => {
       renderWithProviders(<OrdersPage />);
       await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/users/me/permissions"));
       await act(async () => {});
-      expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
+      expect(screen.getByRole("button", { name: "New order" })).toBeDisabled();
+      expect(screen.queryByTestId("new-order-open")).toBeNull();
     });
 
-    it("an operator with ORDERS: Invoice a customer opens the builder", async () => {
+    it("an operator with ORDERS: Regular order opens the builder", async () => {
       renderWithProviders(<OrdersPage />);
-      fireEvent.click(await screen.findByRole("button", { name: "Invoice a customer" }));
+      const user = userEvent.setup();
+      await user.click(await screen.findByTestId("new-order-open"));
+      await user.click(await screen.findByRole("menuitem", { name: /regular order/i }));
       expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
     });
 
-    it("a tenant admin: Invoice a customer is offered", async () => {
+    it("a tenant admin: Regular order is offered", async () => {
       mockRole = "TENANT_ADMIN";
       renderWithProviders(<OrdersPage />);
-      expect(await screen.findByRole("button", { name: "Invoice a customer" })).toBeInTheDocument();
+      await userEvent.setup().click(await screen.findByTestId("new-order-open"));
+      expect(await screen.findByRole("menuitem", { name: /regular order/i })).toBeInTheDocument();
     });
   });
 

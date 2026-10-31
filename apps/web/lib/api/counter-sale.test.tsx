@@ -113,7 +113,7 @@ describe("useCreateCounterSale: the Idempotency-Key header", () => {
 });
 
 describe("useCounterSaleGate: a missing capability is DARK (entry points and screen alike)", () => {
-  const NONE = { showButton: false, opensAsCounter: false, offerShipInstead: false };
+  const NONE = { showButton: false, offerShipInstead: false };
   const gateFor = (f: typeof features) => {
     features = f;
     return renderHook(() => useCounterSaleGate(), { wrapper }).result.current;
@@ -128,7 +128,7 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
     ["capabilities without fulfilment", { data: { capabilities: {} } }],
     ["counter off", { data: { capabilities: { fulfilment: { counter: "off" } } } }],
     ["an unknown counter value", { data: { capabilities: { fulfilment: { counter: "bogus" } } } }],
-  ])("%s: no button, no open-as-counter", (_label, f) => {
+  ])("%s: no button", (_label, f) => {
     expect(gateFor(f)).toMatchObject(NONE);
   });
 
@@ -145,13 +145,13 @@ describe("useCounterSaleGate: a missing capability is DARK (entry points and scr
     expect(gateFor(f).loading).toBe(false);
   });
 
-  it("optional: the button only; always: the button and open-as-counter", () => {
+  it("optional and always: the till is offered", () => {
     expect(
       gateFor({ data: { capabilities: { fulfilment: { counter: "optional" } } } }),
-    ).toMatchObject({ showButton: true, opensAsCounter: false });
+    ).toMatchObject({ showButton: true });
     expect(
       gateFor({ data: { capabilities: { fulfilment: { counter: "always" } } } }),
-    ).toMatchObject({ showButton: true, opensAsCounter: true });
+    ).toMatchObject({ showButton: true });
   });
 });
 
@@ -247,20 +247,18 @@ describe("useCounterSaleGate: BO-07 till permission (an operator whose admin tur
     authUser = null;
   });
 
-  it("OPERATOR without ORDERS: no button, no open-as-counter, mayUseTill false, the capability and old keys intact", async () => {
+  it("OPERATOR without ORDERS: no button, mayUseTill false, the capability and old keys intact", async () => {
     authUser = { role: "OPERATOR" };
     get.mockResolvedValue(perms(["PRICING", "FINANCE"]));
     const { result } = render();
     await waitFor(() => expect(result.current.mayUseTill).toBe(false));
     expect(result.current).toMatchObject({
       showButton: false,
-      opensAsCounter: false,
       mayUseTill: false,
       loading: false,
       capability: { counter: "always" },
     });
     expect(result.current).toHaveProperty("offerShipInstead");
-    expect(result.current).toHaveProperty("offerInvoiceOrder");
     expect(result.current).toHaveProperty("failed");
     expect(result.current).toHaveProperty("retry");
   });
@@ -271,7 +269,7 @@ describe("useCounterSaleGate: BO-07 till permission (an operator whose admin tur
     const { result } = render();
     await waitFor(() => expect(permissionCalls()).toBe(1));
     await waitFor(() => expect(result.current.showButton).toBe(true));
-    expect(result.current).toMatchObject({ opensAsCounter: true, mayUseTill: true });
+    expect(result.current).toMatchObject({ mayUseTill: true });
   });
 
   it.each(["TENANT_ADMIN", "SUPER_ADMIN"])("%s: no permissions fetch at all", async (role) => {
@@ -288,7 +286,6 @@ describe("useCounterSaleGate: BO-07 till permission (an operator whose admin tur
     expect(result.current).toMatchObject({
       loading: true,
       showButton: false,
-      opensAsCounter: false,
     });
   });
 

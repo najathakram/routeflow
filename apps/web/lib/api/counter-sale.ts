@@ -46,20 +46,8 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   const permsKnown = !checkPermissions || perms.data !== undefined;
   const mayUseTill =
     checkPermissions && perms.data ? staffMay(role, "USE_POS_MODE", deniedGroups) : true;
-  const baseGate = enabled
-    ? counterSaleGate(cap)
-    : {
-        showButton: false,
-        opensAsCounter: false,
-        offerShipInstead: false,
-        offerInvoiceOrder: false,
-      };
-  const open = mayUseTill && !permsPending;
-  const gate = {
-    ...baseGate,
-    showButton: baseGate.showButton && open,
-    opensAsCounter: baseGate.opensAsCounter && open,
-  };
+  const baseGate = enabled ? counterSaleGate(cap) : { showButton: false, offerShipInstead: false };
+  const gate = { ...baseGate, showButton: baseGate.showButton && mayUseTill && !permsPending };
   return {
     ...gate,
     /** BO-07: the operator's admin has not turned selling on for this account (false only then). */
