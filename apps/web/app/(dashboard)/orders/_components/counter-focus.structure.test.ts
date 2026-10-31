@@ -18,7 +18,7 @@ const ALLOWED: Record<string, { count: number; why: string }> = {
   },
   "CounterNewItem.tsx": {
     count: 1,
-    why: "SA-1066 F10: the regulated-item question box takes focus (preventScroll) when it opens, so the keyboard lands on its own Cancel and the page does not jump; it is a dialog's own box, never the scan field",
+    why: "SA-1066 F10: the regulated-item question box takes focus (preventScroll) when it opens, so the keyboard lands on the question box, not on Cancel or any answer button, and the page does not jump; it is a dialog's own box, never the scan field",
   },
   "CounterReturnAction.tsx": {
     count: 1,

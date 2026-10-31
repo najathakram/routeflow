@@ -364,9 +364,34 @@ describe("SA-1066 F10: the regulated question takes focus on its box, never a bu
     tracked = [TOBACCO];
     await missThenCreate();
     await screen.findByText("Is this a licensed or regulated item?");
+    // A real click moves focus onto the button it presses; fireEvent.click does not. Without this the box would still hold
+    // focus and the test would pass even if the step change stopped re-focusing it.
+    screen.getByRole("button", { name: "Yes" }).focus();
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     await screen.findByText("Add it from Products, so its category and tax are set.");
     expect(document.activeElement).toBe(box());
+  });
+
+  it("R10: the box takes focus with preventScroll, on open and on the step change, so the page does not jump", async () => {
+    tracked = [TOBACCO];
+    const focusSpy = jest.spyOn(HTMLElement.prototype, "focus");
+    try {
+      await missThenCreate();
+      await screen.findByText("Is this a licensed or regulated item?");
+      const focusedBox = () =>
+        (focusSpy.mock.instances as unknown[]).some(
+          (el, i) =>
+            el === box() &&
+            JSON.stringify(focusSpy.mock.calls[i]?.[0]) === JSON.stringify({ preventScroll: true }),
+        );
+      expect(focusedBox()).toBe(true);
+      focusSpy.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+      await screen.findByText("Add it from Products, so its category and tax are set.");
+      expect(focusedBox()).toBe(true);
+    } finally {
+      focusSpy.mockRestore();
+    }
   });
 
   it("R10: the question has a Cancel that closes it like Esc, leaving the cart alone", async () => {
