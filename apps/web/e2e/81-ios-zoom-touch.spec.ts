@@ -6,13 +6,16 @@
  * The till needs a counter, and the e2e tenant has its counter off, so the features read is patched in the browser only.
  * Role: OPERATOR. Tenant: the approved e2e seed. READ-ONLY: nothing is submitted.
  */
-import { test, expect, devices, type Page } from "@playwright/test";
+import { test, expect, devices, type Locator, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 const CUSTOMER_NAME = "E2E Fixture Deli Three";
-const PRODUCT_NAME = "E2E Fixture Case Default";
-const SKU = "E2E-FIX-CASEDEFAULT";
+const TILL_SKU = "E2E-FIX-001";
+const TILL_PRODUCT = "E2E Fixture Widget A";
+// 12 to a box and no unit list, so an invoice line shows the boxes and pieces fields.
+const BOXED_SKU = "E2E-FIX-BOX";
+const BOXED_PRODUCT = "E2E Fixture Boxed Case";
 const { defaultBrowserType: _phoneBrowser, ...iPhone13 } = devices["iPhone 13"];
 
 /** The lowest computed size across the text fields on screen. A row reading 16 or more passes. */
@@ -43,9 +46,9 @@ async function openTillWithALine(page: Page) {
   await counterOn(page);
   await page.goto("/orders/counter-sale");
   const scan = page.getByLabel("Scan or search items");
-  await scan.fill(SKU);
+  await scan.fill(TILL_SKU);
   await scan.press("Enter");
-  await expect(page.getByRole("list", { name: "Items" })).toContainText(PRODUCT_NAME, {
+  await expect(page.getByRole("list", { name: "Items" })).toContainText(TILL_PRODUCT, {
     timeout: 15_000,
   });
 }
@@ -56,12 +59,29 @@ async function openInvoiceLine(page: Page) {
   await page.getByPlaceholder(/search customers/i).click();
   await page.getByPlaceholder(/search customers/i).fill(CUSTOMER_NAME);
   await page.getByText(CUSTOMER_NAME, { exact: true }).first().click();
-  await page.getByPlaceholder(/scan barcode, or type product name/i).fill(PRODUCT_NAME);
+  await page.getByPlaceholder(/scan barcode, or type product name/i).fill(BOXED_PRODUCT);
   await page
     .getByRole("listbox")
-    .getByRole("option", { name: new RegExp(SKU, "i") })
+    .getByRole("option", { name: new RegExp(BOXED_SKU, "i") })
     .click();
 }
+
+/** The add-customer window. Only its button opens it: nothing reads `?action=new` on /customers. */
+async function openCustomerForm(page: Page) {
+  await page.goto("/customers");
+  await page.getByRole("button", { name: "New customer" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+}
+
+/** Does 3 digits at this field's own font fit its inner width? */
+const holdsThreeDigits = (field: Locator) =>
+  field.evaluate((el: HTMLInputElement) => {
+    const cs = getComputedStyle(el);
+    const context = document.createElement("canvas").getContext("2d")!;
+    context.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    return context.measureText("123").width <= room;
+  });
 
 test.beforeEach(async ({ context }) => {
   await setTenantCookie(context, BASE);
@@ -80,20 +100,26 @@ test.describe("phone, upright", () => {
       .first()
       .click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByLabel(/price per|set price/i).first()).toHaveCSS("font-size", "16px");
+    await expect(dialog.getByLabel(/^price per/i)).toHaveCSS("font-size", "16px");
     await expect(dialog.getByLabel(/^reason/i)).toHaveCSS("font-size", "16px");
   });
 
-  for (const [flow, url] of [
-    ["add customer", "/customers?action=new"],
-    ["the order builder", "/orders?action=new&builder=1"],
-    ["add product", "/products?action=new"],
-  ] as const) {
-    test(`IZ1: ${flow}`, async ({ page }) => {
-      await page.goto(url);
-      await expectFieldsAt16(page);
-    });
-  }
+  test("IZ1: add customer", async ({ page }) => {
+    await openCustomerForm(page);
+    await expectFieldsAt16(page);
+  });
+
+  test("IZ1: the order builder", async ({ page }) => {
+    await page.goto("/orders?action=new&builder=1");
+    await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible();
+    await expectFieldsAt16(page);
+  });
+
+  test("IZ1: add product", async ({ page }) => {
+    await page.goto("/products?action=new");
+    await expect(page.getByRole("heading", { name: "New product" })).toBeVisible();
+    await expectFieldsAt16(page);
+  });
 
   test("IZ1: an invoice's own fields", async ({ page }) => {
     await openInvoiceLine(page);
@@ -105,7 +131,7 @@ test.describe("phone on its side", () => {
   test.use({ ...iPhone13, viewport: { width: 844, height: 390 } });
 
   test("IZ2: the customer form, the case a width class misses", async ({ page }) => {
-    await page.goto("/customers?action=new");
+    await openCustomerForm(page);
     await expectFieldsAt16(page);
   });
 });
@@ -118,18 +144,15 @@ test.describe("touch tablet", () => {
   }, testInfo) => {
     await openInvoiceLine(page);
     await expectFieldsAt16(page);
-    const boxed = page.locator('input[type="number"][title]').first();
-    if (await boxed.count()) {
-      await boxed.fill("123");
-      const fits = await boxed.evaluate((el: HTMLInputElement) => {
-        const cs = getComputedStyle(el);
-        const context = document.createElement("canvas").getContext("2d")!;
-        context.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-        const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-        return context.measureText(el.value).width <= room;
-      });
-      expect(fits).toBe(true);
-    }
+    const boxes = page.locator('input[type="number"][title]').first();
+    const pieces = page.locator('input[type="number"][title]').nth(1);
+    await expect(boxes).toBeVisible();
+    await expect(pieces).toBeVisible();
+    expect(await holdsThreeDigits(boxes)).toBe(true);
+    expect(await holdsThreeDigits(pieces)).toBe(true);
+    const piecesBox = (await pieces.boundingBox())!;
+    const rateBox = (await page.getByLabel("Unit price").first().boundingBox())!;
+    expect(piecesBox.x + piecesBox.width).toBeLessThanOrEqual(rateBox.x);
     await testInfo.attach("iz3-invoice-820", {
       body: await page.screenshot({ fullPage: true }),
       contentType: "image/png",
@@ -138,7 +161,7 @@ test.describe("touch tablet", () => {
 });
 
 test("IZ4: a mouse keeps its sizes", async ({ page }) => {
-  await page.goto("/customers?action=new");
+  await openCustomerForm(page);
   await expect.poll(async () => (await lowestFieldSize(page)).count).toBeGreaterThan(0);
   expect((await lowestFieldSize(page)).lowest).toBeLessThan(16);
   await openInvoiceLine(page);

@@ -2793,7 +2793,7 @@ export default function NewInvoicePage() {
                           </div>
                         ) : (
                           <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-0.5 max-md:flex-wrap">
+                            <div className="flex items-center gap-0.5 max-md:flex-wrap [@media(hover:none)_and_(pointer:coarse)]:flex-wrap">
                               <input
                                 type="number"
                                 min={0}

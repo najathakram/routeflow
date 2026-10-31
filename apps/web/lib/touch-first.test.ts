@@ -47,9 +47,34 @@ describe("the 16px field rule", () => {
     expect(block).toContain(`@media ${TOUCH_FIRST_QUERY} {`);
   });
 
-  it("sets 16px on every text field, and leaves the controls that take no typing", () => {
-    expect(block).toMatch(/textarea,\s+select\s+\{\s+font-size: 16px !important;/);
-    for (const type of ["checkbox", "radio", "range", "file", "color", "hidden"])
-      expect(block).toContain(`[type="${type}"]`);
+  it("sets 16px on input, textarea and select", () => {
+    expect(block).toMatch(
+      /input:not\([\s\S]*?\),\s+textarea,\s+select\s+\{\s+font-size: 16px !important;/,
+    );
+  });
+
+  it("leaves out exactly the types that take no typing", () => {
+    const excluded = /input:not\(([\s\S]*?)\),/.exec(block)?.[1] ?? "";
+    expect([...excluded.matchAll(/\[type="([a-z]+)"\]/g)].map((m) => m[1])).toEqual([
+      "checkbox",
+      "radio",
+      "range",
+      "file",
+      "color",
+      "hidden",
+      "button",
+      "submit",
+      "reset",
+    ]);
+  });
+
+  it("the invoice line's touch-only classes use the same query", () => {
+    const page = fs.readFileSync(
+      path.resolve(__dirname, "../app/(dashboard)/invoices/new/page.tsx"),
+      "utf8",
+    );
+    const variant = `[@media${TOUCH_FIRST_QUERY.replace(/: /g, ":").replace(/ /g, "_")}]`;
+    expect(page.split(`${variant}:w-11`)).toHaveLength(3); // boxes and pieces
+    expect(page).toContain(`${variant}:flex-wrap`);
   });
 });
