@@ -231,6 +231,33 @@ describe("OrderLineItemsTable — line total and status", () => {
     expect(within(rowFor("Sample Cola 12oz")).getByText("Partial")).toBeInTheDocument();
   });
 
+  it("SA-1066 F15: a default line on an open PICKUP order has no status pill; a cancelled one keeps its", () => {
+    const { unmount } = render(
+      <OrderLineItemsTable
+        lineItems={[line({ status: "PENDING" })]}
+        orderStatus="CONFIRMED"
+        fulfillPath="PICKUP"
+        total={520}
+      />,
+    );
+    expect(within(rowFor("Sample Cola 12oz")).queryByText("Pending")).toBeNull();
+    unmount();
+    render(
+      <OrderLineItemsTable
+        lineItems={[line({ status: "CANCELLED" })]}
+        orderStatus="CONFIRMED"
+        fulfillPath="PICKUP"
+        total={520}
+      />,
+    );
+    expect(within(rowFor("Sample Cola 12oz")).getByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("SA-1066 F15 guard: the same default line on a delivery order still reads Pending", () => {
+    renderTable([line({ status: "PENDING" })], "CONFIRMED");
+    expect(within(rowFor("Sample Cola 12oz")).getByText("Pending")).toBeInTheDocument();
+  });
+
   it("a line on a DELIVERED order with no per-line data reads Delivered", () => {
     renderTable([line({ status: "PENDING", deliveredQty: 0 })], "DELIVERED");
     expect(within(rowFor("Sample Cola 12oz")).getByText("Delivered")).toBeInTheDocument();

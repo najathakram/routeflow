@@ -1665,12 +1665,14 @@ export default function OrderDetailPage() {
               <OrderLineItemCards
                 lineItems={order.lineItems}
                 orderStatus={order.status}
+                fulfillPath={order.fulfillPath}
                 total={total}
               />
             ) : (
               <OrderLineItemsTable
                 lineItems={order.lineItems}
                 orderStatus={order.status}
+                fulfillPath={order.fulfillPath}
                 total={total}
               />
             )}

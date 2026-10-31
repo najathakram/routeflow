@@ -33,10 +33,13 @@ const CARD_CELL =
 export function OrderLineItemsTable({
   lineItems,
   orderStatus,
+  fulfillPath,
   total,
 }: {
   lineItems: OrderItem[];
   orderStatus: string;
+  /** The order's path: a default line on an open PICKUP order shows no status badge (SA-1066 F15). */
+  fulfillPath?: string | null;
   total: number;
 }) {
   return (
@@ -241,7 +244,10 @@ export function OrderLineItemsTable({
                 )}
               </td>
               <td role="cell" data-label="Status" className={cn("px-6 py-3", CARD_CELL)}>
-                <Badge status={displayLineStatus(li, orderStatus)} />
+                {(() => {
+                  const status = displayLineStatus(li, orderStatus, fulfillPath);
+                  return status ? <Badge status={status} /> : null;
+                })()}
               </td>
             </tr>
           ))}
