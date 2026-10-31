@@ -1,4 +1,4 @@
-import { READY_FOR_PICKUP_NOTICE_VALUES, type ReadyForPickupLast } from "@routeflow/types";
+import type { ReadyForPickupLast, ReadyForPickupNotice } from "@routeflow/types";
 import { Logger } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { SendOutcome } from "../messaging/messaging.service";
@@ -11,6 +11,19 @@ import { readyNoticeOf } from "./ready-for-pickup.notice";
  */
 export const READY_FOR_PICKUP_ACTION = "order.ready_for_pickup";
 export const READY_RECORD_ROWS = 20;
+
+/**
+ * Every notice a row can carry. A local copy on purpose: `@routeflow/types` resolves to raw TypeScript at runtime, so the
+ * compiled API (`node dist/main.js`) may import only types from it. ready-for-pickup.record.spec.ts pins this list
+ * set-equal to the shared READY_FOR_PICKUP_NOTICE_VALUES, so it cannot drift.
+ */
+export const READY_RECORD_NOTICES: readonly ReadyForPickupNotice[] = [
+  "SENT",
+  "NO_EMAIL",
+  "OPTED_OUT",
+  "OFF",
+  "FAILED",
+];
 
 const log = new Logger("ReadyForPickupRecord");
 
@@ -36,7 +49,7 @@ export async function readyRecord(
     const sends: ReadyForPickupLast[] = [];
     for (const r of rows ?? []) {
       const m = (r.meta ?? {}) as { notice?: string; email?: string };
-      const notice = READY_FOR_PICKUP_NOTICE_VALUES.find((n) => n === m.notice);
+      const notice = READY_RECORD_NOTICES.find((n) => n === m.notice);
       if (!notice) continue;
       sends.push({
         notice,
