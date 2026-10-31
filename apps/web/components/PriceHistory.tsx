@@ -368,7 +368,7 @@ function PanelBody({
                 aria-selected={i === active}
                 onMouseEnter={() => setActive(i)}
                 className={cn(
-                  "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
+                  "flex flex-nowrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
                   i === active && "bg-brand-50/60",
                 )}
               >
@@ -395,7 +395,7 @@ function PanelBody({
                   {r.qty} {r.unitLabel}
                 </td>
                 <td
-                  className="max-w-[7rem] py-1 pr-2 text-navy/70"
+                  className="min-w-0 max-w-[7rem] py-1 pr-2 text-navy/70"
                   title={
                     r.source === "INVOICE"
                       ? (r.invoiceNumber ?? r.orderNumber)
@@ -412,7 +412,7 @@ function PanelBody({
                     </span>
                   )}
                 </td>
-                <td className="py-1 text-right">
+                <td className="ml-auto shrink-0 py-1 text-right">
                   <button
                     type="button"
                     disabled={!canUse(r)}

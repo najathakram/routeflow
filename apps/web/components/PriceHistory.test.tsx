@@ -418,7 +418,7 @@ describe("LineItemRow wiring", () => {
 });
 
 describe("PriceHistoryButton — narrow screens and keyboard", () => {
-  it("caps the popover to the viewport and stacks/wraps each row's action", async () => {
+  it("caps the popover to the viewport and keeps each row on one line, Use pinned right (SA-1066 P01)", async () => {
     renderButton();
     await openPanel();
     const panel = await screen.findByRole("dialog", { name: "Price history" });
@@ -426,7 +426,12 @@ describe("PriceHistoryButton — narrow screens and keyboard", () => {
     const use = await within(panel).findByRole("button", { name: /Use this price \(\$14\.00\)/ });
     expect(use.className).toMatch(/min-h-\[44px\]/);
     const row = use.closest("tr")!;
-    expect(row.className).toMatch(/flex-wrap/);
+    expect(row.className).not.toMatch(/flex-wrap/);
+    expect(row.className).toMatch(/(^|\s)flex-nowrap(\s|$)/);
+    // the Use cell never shrinks and sits at the right edge; the order cell is the one that truncates
+    expect(use.closest("td")!.className).toMatch(/(^|\s)ml-auto(\s|$)/);
+    expect(use.closest("td")!.className).toMatch(/(^|\s)shrink-0(\s|$)/);
+    expect(row.querySelector("td.max-w-\\[7rem\\]")!.className).toMatch(/(^|\s)min-w-0(\s|$)/);
   });
 
   it("moves focus into the popover so Tab reaches every enabled action; Esc refocuses", async () => {
