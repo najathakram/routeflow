@@ -245,7 +245,7 @@ touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces t
   window script must not wait for one: list the checks that exist at the head sha (L-337) and wait
   for those.
 - **An unattended wait-then-go wrapper for public, push or merge is refused.** The auto-mode
-  classifier blocks a script that waits on a condition and then flips visibility, pushes or merges
+  classifier blocks a script that waits on a condition and then makes the repo public, pushes or merges
   by itself. Run the window script with the Lead's explicit go already in hand, so each step is an
   authorized action and not a deferred one.
 

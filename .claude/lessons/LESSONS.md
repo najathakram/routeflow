@@ -91,7 +91,7 @@
 - **Symptom:** a verify finished with every Turbo task passed (10 of 10, no `Failed:` line at the start of a line) and still exited 1: its trailing `campaign-check` failed.
 - **Root cause:** a scoped jest run in the same tree, started while verify was running, overwrote the gitignored `.campaign/runs/<workspace>.json` with a report of only the specs it ran; `campaign-check` then read that partial report. Grepping the log for the word "Failed" also matches test names.
 - **Lesson:** **Never run jest in a tree while its verify runs: order pre-check items before the verify, or run them in another worktree. If it happened, regenerate the report with that workspace's full suite and re-run `node scripts/campaign-check.mjs` alone; the Lead may accept the verify on that evidence without a full rerun. Judge a verify by Turbo's `Failed:` line at line start, never by grep for the word.**
-- **Guard:** the train pre-check script orders its scoped jest items before the verify and runs none beside it. Cf. [[L-359]].
+- **Guard:** the by-hand train pre-check orders its scoped jest items before the verify and runs none beside it. Cf. [[L-359]].
 
 ### L-362 · 2026-10-31 · tooling · a heavy-slot job runs the scripts of the tree it was started from; start it from the tree whose scripts you want
 
@@ -111,7 +111,7 @@
 
 - **Symptom:** the api type-check on a freshly installed train tree reported 913 diagnostics (baseline 551), nearly all "Cannot find module '@routeflow/pricing'".
 - **Root cause:** `@routeflow/pricing`, `returns` and `scanning` resolve their types from `dist/`; `npm ci --ignore-scripts` builds nothing, so every importer fails.
-- **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect.**
+- **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect. After a `packages/*` change lands or is edited, rebuild `dist/` in every tree that tests against it: web specs import the built `dist`, so a stale one fails silently with wrong money figures, not an error (archived L-176).**
 - **Guard:** the train check script runs the package builds first, then api and web check-types.
 
 ### L-354 · 2026-10-29 · tooling · a worktree whose hooks directory is missing runs no hooks and says nothing; every tree-making path installs them and a push checks they exist
@@ -153,7 +153,7 @@
 
 ### L-364 · 2026-10-31 · testing · a static pin that scans source text must read every shape the repo writes, template literals included; fix the source shape, never the pin, inside a train
 
-- **Symptom:** the date-input size pin (`apps/web/app/globals-date-input.static.test.ts`, #2080) went red on the assembled train: the new product-count window's date input read as unsized, although its shared class constant carries `w-full`. The member that added the input passed alone and the red appeared only on the assembled tree.
+- **Symptom:** the date-input size pin (`apps/web/app/globals-date-input.static.test.ts`, #2080) went red on the assembled train: the new product-count window's date input read as unsized, although its shared class constant carries `w-full`. The member that added the input never ran that pin: it is red at that member's own head too, so this is the case in [[L-323]], not a composition surprise.
 - **Root cause:** the pin collects string literals only (`ts.isStringLiteralLike`). A class constant written as a template literal with a substitution (`${TALL}` inside the string) is invisible to it, and no earlier input used that shape, so the pin's own spec never fed it one.
 - **Lesson:** **A pin that reads source text must handle every shape the repo writes (template expressions included), and its own spec must feed it the repo's real shapes. When a static pin goes red on a new file inside a train, change the source to a shape the pin reads (string concatenation, same classes); never edit the pin or its spec in the train.**
 - **Guard:** the by-hand train pre-check set runs the web static pins (`apps/web/app/*.static.test.ts`) before the long verify, so a red surfaces early. Cf. [[L-322]], [[L-323]].
@@ -226,7 +226,7 @@
 - **Symptom:** a worktree that shared `node_modules` with another tree (symlinked or hoisted) ran specs and queries against the OTHER tree's generated Prisma client, so a green run said nothing about this tree's `schema/*.prisma`.
 - **Root cause:** `prisma generate` writes the client into `node_modules/.prisma`, so a shared install serves whichever schema its owner last generated, and mocked specs accept any shape; trusting the green run was the mistake.
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
-- **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]]. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
+- **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
 
@@ -319,7 +319,7 @@
 - **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
 - **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
 - **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
-- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
+- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. archived L-167.
 
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 
