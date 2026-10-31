@@ -1,4 +1,5 @@
 import React from "react";
+import { sortInvoiceLines } from "./invoice-line-order";
 import { SEND_SNAPSHOT_INCLUDE, type SendSnapshot } from "./invoice-send-snapshot";
 import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
@@ -9,7 +10,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import type { InvoicePdfVariant } from "./invoice-pdf-variant";
 import { resolveInvoiceVariant } from "./invoice-stage";
-import { invoiceItemCode } from "./invoice-item-code";
+import { invoiceBarcodeSource, invoiceItemCode } from "./invoice-item-code";
 import { invoiceDisplayCategoryTax, invoiceDisplayLines, roundMoney } from "@routeflow/pricing";
 import { splitConfirmed } from "./payment-predicates";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -17,7 +18,11 @@ import { bcidFor } from "../common/barcode-bcid";
 import { toLineComponentViews } from "../orders/component-view";
 import { readFamilyPriceMode } from "../products/family-price";
 import { pdfItemDisplay, pdfSubLine } from "./invoice-pdf-item";
-import { resolveLiveDisplayUnits, withItemDisplayUnits } from "./invoice-display-unit";
+import {
+  resolveLiveDisplayUnits,
+  withItemDisplayUnits,
+  withPerBaseUnit,
+} from "./invoice-display-unit";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { orderQrUrl } from "./invoice-qr";
 import { withoutOverrideStamp } from "../common/restriction-override-columns";
@@ -146,12 +151,23 @@ export class InvoicePdfService {
 
     this.logger.log(`Generating PDF for invoice ${invoiceId}`);
 
+    // SA-1031: the tenant's choice, read once per render (like hideOriginalPrice below). Absent = shown; only "true" hides.
+    // Off skips every product-barcode draw here (no bwip call) and the template prints nothing for a null barcode.
+    const showBarcodes = (await this.systemConfig.get("invoice.hideBarcodes")) !== "true";
+
     // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
     // mapper the template model is built from (the findUnique above includes whole item rows).
+    const shownLines = sortInvoiceLines(inv.items); // SA-1058: a copy, `inv` is what the send hashes
     const itemsWithBarcodes = await Promise.all(
-      inv.items.map(withoutOverrideStamp).map(async (item) => {
+      shownLines.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);
-        if (barcodeText) {
+        // SA-1031 r2: a mixed pack prints the box (this line) OR its pieces, never both.
+        const source = invoiceBarcodeSource(
+          (item as any).product,
+          (item as { components?: { unitBarcode?: string | null }[] }).components,
+          showBarcodes,
+        );
+        if (source === "line" && barcodeText) {
           try {
             const buf = await bwipjs.toBuffer({
               bcid: "code128",
@@ -179,8 +195,16 @@ export class InvoicePdfService {
         const components = (item as { components?: unknown[] }).components;
         if (!components || components.length === 0) return item;
         const views = toLineComponentViews(components as never);
+        const piecesPrint =
+          invoiceBarcodeSource(
+            (item as any).product,
+            components as { unitBarcode?: string | null }[],
+            showBarcodes,
+          ) === "pieces";
         const subLines = await Promise.all(
-          views.map(async (v) => pdfSubLine(v, await this.subLineBarcode(v))),
+          views.map(async (v) =>
+            pdfSubLine(v, piecesPrint ? await this.subLineBarcode(v) : null, piecesPrint),
+          ),
         );
         return { ...item, subLines };
       }),
@@ -280,10 +304,17 @@ export class InvoicePdfService {
           live,
         ).items.map((i) => [i.id as string, i.displayUnit] as const),
       );
+      // SA-1029: the per-piece price of a today-layout pack line (display only; null for any other line).
+      const perById = new Map(
+        (await withPerBaseUnit(this.prisma.forTenant(), tenantId, items as any[])).map(
+          (i) => [i.id as string, i.perBaseUnit] as const,
+        ),
+      );
       return await Promise.all(
         items.map(async (item: any) => {
           const displayUnit = unitById.get(item.id);
-          if (!displayUnit || displayUnit.kind !== "pieces") return item;
+          if (!displayUnit || displayUnit.kind !== "pieces")
+            return perById.get(item.id) ? { ...item, perBaseUnit: perById.get(item.id) } : item;
           const views = item.components?.length
             ? toLineComponentViews(item.components as never)
             : [];
@@ -302,12 +333,18 @@ export class InvoicePdfService {
             views,
             displayUnit,
           );
-          if (lines.layout === "today") return item;
+          if (lines.layout === "today")
+            return perById.get(item.id) ? { ...item, perBaseUnit: perById.get(item.id) } : item;
           const barcodes = new Map<string, string | null>();
           if (lines.layout === "components") {
             for (const v of views) barcodes.set(v.componentProductId, await this.subLineBarcode(v));
           }
-          return { ...item, display: pdfItemDisplay(lines, barcodes) };
+          // the MSRP note names the line's word on this layout too; the template's `!item.display` guard keeps the cell empty
+          return {
+            ...item,
+            display: pdfItemDisplay(lines, barcodes),
+            ...(perById.get(item.id) ? { perBaseUnit: perById.get(item.id) } : {}),
+          };
         }),
       );
     } catch (err) {

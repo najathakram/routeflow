@@ -22,6 +22,7 @@ import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { customerLinePrice, saleTotals } from "@routeflow/pricing";
 import type { FulfilmentCapability } from "@routeflow/types";
 import { describeDb, requireLocalDatabaseUrl } from "../../common/testing/db-spec";
 import { _resetLockPoolForTests } from "../../common/db-locks";
@@ -465,6 +466,77 @@ describeDb("Counter money parity, the real chain on Postgres (CQ-01..CQ-03)", ()
       expect(cents(f.orders[0].total)).toBe(89);
       expect(invoiced(f)).toBe(89);
       expect(cents(res.total)).toBe(89);
+    });
+  });
+
+  describe("SA-1068 P1: the till shows the total the server charges for a named customer's remembered price", () => {
+    it("P1: a plain line for a customer with an above-list memory - the till's estimate equals the order, the invoice and the answer, to the cent", async () => {
+      // The memory: one earlier sale where the clerk typed $15 over the $10 list (tier 1, so a MANUAL upsell).
+      await ring(A, key(), {
+        customerId: A.customerId,
+        items: [{ productId: A.cola, qty: 1, unitPrice: 15 } as never],
+      });
+      // What the till reads (GET /orders/price-history) and shows for the next plain line: `customerLinePrice` with it.
+      const memory = await tenantCtx.run(A.tenantId, () =>
+        orders.getCustomerPriceHistory(A.customerId),
+      );
+      expect(memory[A.cola].lastPrice).toBe(15);
+      const product = await raw.product.findUniqueOrThrow({ where: { id: A.cola } });
+      const shown = customerLinePrice({ product, tier: 1, remembered: memory[A.cola].lastPrice });
+      const estimate = saleTotals([{ unitPrice: shown.price, qty: 2 }], { taxRate: 8.25 / 100 });
+
+      // The next sale: the same line, unedited, so the request carries no price (the server prices it).
+      const k = key();
+      const res = await ring(A, k, {
+        customerId: A.customerId,
+        items: [{ productId: A.cola, qty: 2 }],
+        payment: { method: "CASH", amount: 100 } as Pay,
+      });
+      const f = await footprint(A, k);
+      // 2 x 15.00 = 30.00 + 8.25% tax = 32.48 (master's till showed 2 x 10.00 + tax = 21.65)
+      expect(cents(f.orders[0].total)).toBe(32.48);
+      expect(cents(estimate.total)).toBe(cents(f.orders[0].total));
+      expect(cents(estimate.total)).toBe(invoiced(f));
+      expect(cents(estimate.total)).toBe(cents(res.total));
+    });
+
+    it("P1: a walk-in has no memory - the same line sells at the tier price", async () => {
+      const walkIn = await raw.customer.create({
+        data: {
+          userId: (
+            await raw.user.create({
+              data: {
+                email: `walkin-${A.slug}@example.test`,
+                username: `walkin-${A.slug}`,
+                role: "CUSTOMER",
+                tenantId: A.tenantId,
+              },
+            })
+          ).id,
+          businessName: "Acme walk-in",
+          contactName: "T",
+          tenantId: A.tenantId,
+          pricingTier: 1,
+          isWalkIn: true,
+        },
+      });
+      userIds.push(walkIn.userId);
+      await ring(A, key(), {
+        customerId: walkIn.id,
+        items: [{ productId: A.cola, qty: 1, unitPrice: 15 } as never],
+      });
+      const memory = await tenantCtx.run(A.tenantId, () =>
+        orders.getCustomerPriceHistory(walkIn.id),
+      );
+      expect(memory[A.cola]).toBeUndefined();
+      const k = key();
+      await ring(A, k, {
+        customerId: walkIn.id,
+        items: [{ productId: A.cola, qty: 2 }],
+        payment: { method: "CASH", amount: 100 } as Pay,
+      });
+      const f = await footprint(A, k);
+      expect(cents(f.orders[0].total)).toBe(21.65); // 2 x 10.00 + 8.25% tax
     });
   });
 });

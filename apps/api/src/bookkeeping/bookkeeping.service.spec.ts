@@ -27,10 +27,17 @@ jest.mock("../vendor-bills/vendor-bills.service", () => ({
 jest.mock("../invoices/invoice-display-unit", () => ({
   resolveIssueDisplayUnits: jest.fn(),
   writeIssueDisplayUnits: jest.fn().mockResolvedValue(undefined),
+  writeIssueBaseLabels: jest.fn().mockResolvedValue(undefined),
+  loadDraftBaseLabels: jest.fn(),
 }));
 
 import { BookkeepingService } from "./bookkeeping.service";
-import { resolveIssueDisplayUnits, writeIssueDisplayUnits } from "../invoices/invoice-display-unit";
+import {
+  loadDraftBaseLabels,
+  resolveIssueDisplayUnits,
+  writeIssueBaseLabels,
+  writeIssueDisplayUnits,
+} from "../invoices/invoice-display-unit";
 import { InvoiceService } from "./invoice.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
@@ -187,10 +194,11 @@ describe("BookkeepingService", () => {
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            issueDate: expect.objectContaining({
-              gte: expect.any(Date),
-              lte: expect.any(Date),
-            }),
+            // SA-906: a calendar column is filtered by day stamps; the whole last day is in (lt = next day's stamp)
+            issueDate: {
+              gte: new Date("2025-01-01T00:00:00.000Z"),
+              lt: new Date("2026-01-01T00:00:00.000Z"),
+            },
           }),
         }),
       );
@@ -282,10 +290,13 @@ describe("BookkeepingService", () => {
 
   describe("recordPayment — SA-827: a DRAFT paid through the ledger freezes its display unit once", () => {
     const UNITS = new Map([["it-1", { kind: "pieces" as const, label: "Piece" }]]);
+    const WORDS = new Map([["p-1", "Bag"]]); // SA-1029: the pre-tx base words
 
     function arm(status: string) {
       (resolveIssueDisplayUnits as jest.Mock).mockReset().mockResolvedValue(UNITS);
+      (loadDraftBaseLabels as jest.Mock).mockReset().mockResolvedValue(WORDS);
       (writeIssueDisplayUnits as jest.Mock).mockClear();
+      (writeIssueBaseLabels as jest.Mock).mockClear();
       prisma.invoice.findUnique.mockResolvedValue({ status, tenantId: "tenant-acme-1" });
       const txClient = {
         $executeRaw: jest.fn(),
@@ -293,6 +304,7 @@ describe("BookkeepingService", () => {
           findMany: jest.fn(async () => []),
           findUnique: jest.fn().mockResolvedValue({
             id: "inv-827",
+            tenantId: "tenant-acme-1",
             status,
             total: 100,
             payments: [],
@@ -324,6 +336,34 @@ describe("BookkeepingService", () => {
       expect((resolveIssueDisplayUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
         prisma.tenantTransaction.mock.invocationCallOrder[0],
       );
+      // SA-1029 A-1: the words are read off-tx too, then handed to the in-tx writer
+      const [wdb, wtenant, winv] = (loadDraftBaseLabels as jest.Mock).mock.calls[0];
+      expect(wdb).toBe(prisma.forTenant());
+      expect(wtenant).toBe("tenant-acme-1");
+      expect(winv).toBe("inv-827");
+      expect((loadDraftBaseLabels as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.tenantTransaction.mock.invocationCallOrder[0],
+      );
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+        WORDS,
+      ]);
+    });
+
+    it("D-R2: a DRAFT whose resolve found NO pieces line (null units) still freezes the base labels in the tx", async () => {
+      const tx = arm("DRAFT");
+      (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(null);
+      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
+      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
+        tx,
+        "inv-827",
+        "tenant-acme-1",
+        WORDS,
+      ]);
     });
 
     it("an already issued (SENT) invoice makes zero resolve calls and no write", async () => {
@@ -331,6 +371,8 @@ describe("BookkeepingService", () => {
       await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
       expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
       expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(writeIssueBaseLabels).not.toHaveBeenCalled();
+      expect(loadDraftBaseLabels).not.toHaveBeenCalled(); // no extra read on an issued invoice
     });
   });
 
@@ -1570,24 +1612,21 @@ describe("BookkeepingService", () => {
       await service.getFinanceDashboard();
 
       const nowInTest = new Date();
-      const startOfThisMonth = new Date(nowInTest.getFullYear(), nowInTest.getMonth(), 1);
+      // SA-906: the month starts at the tenant-calendar day stamp (UTC zone in this fixture), not the host clock
+      const startOfThisMonth = new Date(
+        Date.UTC(nowInTest.getUTCFullYear(), nowInTest.getUTCMonth(), 1),
+      );
       const thisMonthCall = calls.find(
         (c) => c.where?.OR?.[0]?.settledAt?.gte?.getTime() === startOfThisMonth.getTime(),
       );
       expect(thisMonthCall).toBeDefined();
       const upperBound: Date = thisMonthCall.where.OR[0].settledAt.lte;
-      expect(upperBound.getTime()).toBeLessThanOrEqual(nowInTest.getTime());
+      expect(upperBound.getTime()).toBeLessThanOrEqual(nowInTest.getTime()); // SA-1057 F-5: capped at now, as on master
       // The uncapped month-end instant is always later than `now` (unless the
       // test happens to run in the month's final millisecond) — proves the
       // cap actually did something, not just that `lte` exists.
       const rawMonthEnd = new Date(
-        nowInTest.getFullYear(),
-        nowInTest.getMonth() + 1,
-        0,
-        23,
-        59,
-        59,
-        999,
+        Date.UTC(nowInTest.getUTCFullYear(), nowInTest.getUTCMonth() + 1, 1) - 1,
       );
       expect(upperBound.getTime()).not.toBe(rawMonthEnd.getTime());
     });
@@ -2414,6 +2453,138 @@ describe("BookkeepingService", () => {
 
       const updateData = prisma.expense.update.mock.calls[0][0].data;
       expect(updateData.amount).toBe(0.02);
+    });
+  });
+
+  // SA-1057 F-2: a real-instant column (a credit note's or a payment's createdAt) is filtered on the tenant's own days, so a
+  // credit at 23:30 Chicago on Oct 31 is October's in Refund History and Receivable Summary as it is in the P&L. The head filtered
+  // `lte: 2026-10-31T23:59:59.999Z` (calendar stamps) and left it out.
+  describe("SA-1057 F-2: Refund History and Receivable Summary window real instants on the tenant's days", () => {
+    const OCT_CHICAGO = {
+      gte: new Date("2026-10-01T05:00:00.000Z"),
+      lt: new Date("2026-11-01T05:00:00.000Z"),
+    };
+
+    beforeEach(() => {
+      prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "America/Chicago" });
+    });
+
+    it("getRefundHistory: void payments and applied credit notes filter on the tenant-local instants", async () => {
+      await service.getRefundHistory("2026-10-01", "2026-10-31");
+      expect(prisma.invoicePayment.findMany.mock.calls[0][0].where.createdAt).toEqual(OCT_CHICAGO);
+      expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual(OCT_CHICAGO);
+    });
+
+    it("getReceivableSummary: the credit-note read filters on the tenant-local instants", async () => {
+      await service.getReceivableSummary("2026-10-01", "2026-10-31");
+      expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual(OCT_CHICAGO);
+    });
+
+    it("a null zone keeps UTC days (the same window as today)", async () => {
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      await service.getRefundHistory("2026-10-01", "2026-10-31");
+      expect(prisma.creditNote.findMany.mock.calls[0][0].where.createdAt).toEqual({
+        gte: new Date("2026-10-01T00:00:00.000Z"),
+        lt: new Date("2026-11-01T00:00:00.000Z"),
+      });
+    });
+  });
+
+  // SA-1057 F-4 / SA-906 MUST 3: RECEIPTS (collected money) keep master's bounds: UTC days, `now` as the cap, whatever the tenant's
+  // zone. The head moved them to the tenant's today, which hid an evening payment (west of UTC) or today's morning payment (east)
+  // until local midnight. SA-943 PR-B moves receipts to the tenant's zone; until then these rows pin master.
+  describe("SA-1057 F-4: receipts keep master's bounds at every site (R13)", () => {
+    const settledOf = (where: any) => where.OR[0].settledAt as { gte: Date; lte: Date };
+    const setNow = (iso: string, zone: string | null) => {
+      jest.useFakeTimers({
+        now: new Date(iso),
+        doNotFake: ["nextTick", "setImmediate", "setTimeout"],
+      });
+      prisma.tenantConfig.findUnique.mockResolvedValue(zone ? { timezone: zone } : null);
+    };
+    afterEach(() => jest.useRealTimers());
+
+    it("R13a: Chicago, a manual payment dated 2026-10-01 (stored 00:00Z) stays in October's cash flow", async () => {
+      setNow("2026-11-05T15:00:00.000Z", "America/Chicago");
+      await service.getCashFlow("2026-10-01", "2026-10-31");
+      expect(settledOf(prisma.invoicePayment.findMany.mock.calls[0][0].where)).toEqual({
+        gte: new Date("2026-10-01T00:00:00.000Z"),
+        lte: new Date("2026-10-31T23:59:59.999Z"),
+      });
+    });
+
+    it("R13b: Chicago at 2026-10-31T01:00Z (Oct 30 20:00 CDT): the dashboard's today, month and monthly bucket end at now", async () => {
+      const NOW_ISO = "2026-10-31T01:00:00.000Z";
+      setNow(NOW_ISO, "America/Chicago");
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.getFinanceDashboard();
+      const bounds = prisma.invoicePayment.aggregate.mock.calls.map((c: any) =>
+        settledOf(c[0].where),
+      );
+      const now = new Date(NOW_ISO);
+      expect(bounds).toContainEqual({ gte: new Date("2026-10-31T00:00:00.000Z"), lte: now }); // today
+      expect(bounds).toContainEqual({ gte: new Date("2026-10-01T00:00:00.000Z"), lte: now }); // this month + October's bucket
+      expect(bounds.map((b) => b.lte.toISOString())).not.toContain("2026-10-30T23:59:59.999Z");
+    });
+
+    it("R13c: Sydney at 2026-10-31T23:30Z (Nov 1 10:30 AEDT): the dashboard's today still opens at the UTC day", async () => {
+      setNow("2026-10-31T23:30:00.000Z", "Australia/Sydney");
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.getFinanceDashboard();
+      const bounds = prisma.invoicePayment.aggregate.mock.calls.map((c: any) =>
+        settledOf(c[0].where),
+      );
+      expect(bounds).toContainEqual({
+        gte: new Date("2026-10-31T00:00:00.000Z"),
+        lte: new Date("2026-10-31T23:30:00.000Z"),
+      }); // the UTC day, not the tenant's own Sydney day (which would open at 2026-10-31T13:00Z)
+      expect(bounds.map((b) => b.gte.toISOString())).not.toContain("2026-10-31T13:00:00.000Z");
+    });
+
+    it("R13d: Chicago, no `to`: cash flow, payments received and time to get paid end at now; a named `to` ends its day", async () => {
+      const NOW_ISO = "2026-10-31T01:00:00.000Z";
+      setNow(NOW_ISO, "America/Chicago");
+      const now = new Date(NOW_ISO);
+      const endOf30 = new Date("2026-10-30T23:59:59.999Z");
+      const lteOfCall = (mock: jest.Mock, i: number) => settledOf(mock.mock.calls[i][0].where).lte;
+
+      await service.getCashFlow();
+      await service.getPaymentsReceivedReport();
+      await service.getTimeToGetPaid();
+      expect(lteOfCall(prisma.invoicePayment.findMany, 0)).toEqual(now); // cash flow
+      expect(lteOfCall(prisma.invoicePayment.findMany, 1)).toEqual(now); // payments received
+      expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(now); // time to get paid
+
+      await service.getCashFlow(undefined, "2026-10-30");
+      await service.getPaymentsReceivedReport(undefined, "2026-10-30");
+      await service.getTimeToGetPaid(undefined, "2026-10-30");
+      expect(lteOfCall(prisma.invoicePayment.findMany, 2)).toEqual(endOf30);
+      expect(lteOfCall(prisma.invoicePayment.findMany, 3)).toEqual(endOf30);
+      expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(endOf30);
+    });
+
+    it("R13f: a named `to` AFTER now keeps the end of its own day, uncapped, at all three sites (master)", async () => {
+      setNow("2026-10-31T01:00:00.000Z", "America/Chicago");
+      const endOfNov15 = new Date("2026-11-15T23:59:59.999Z");
+      const lteOfCall = (mock: jest.Mock, i: number) => settledOf(mock.mock.calls[i][0].where).lte;
+
+      await service.getCashFlow(undefined, "2026-11-15");
+      await service.getPaymentsReceivedReport(undefined, "2026-11-15");
+      await service.getTimeToGetPaid(undefined, "2026-11-15");
+      expect(lteOfCall(prisma.invoicePayment.findMany, 0)).toEqual(endOfNov15);
+      expect(lteOfCall(prisma.invoicePayment.findMany, 1)).toEqual(endOfNov15);
+      expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(endOfNov15);
+    });
+
+    it("R13e: the mobile year to date is master's UTC year to now", async () => {
+      const NOW_ISO = "2026-10-31T01:00:00.000Z";
+      setNow(NOW_ISO, "America/Chicago");
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.getMobileDashboard();
+      expect(settledOf(prisma.invoicePayment.aggregate.mock.calls[0][0].where)).toEqual({
+        gte: new Date("2026-01-01T00:00:00.000Z"),
+        lte: new Date(NOW_ISO),
+      });
     });
   });
 });

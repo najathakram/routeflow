@@ -3031,7 +3031,12 @@ async function section7() {
     const r = await api(
       "POST",
       "/inventory/movements/adjustment",
-      { productId: state.productId, quantity: 10, notes: "QA adjustment" },
+      {
+        productId: state.productId,
+        quantity: 10,
+        notes: "QA adjustment",
+        reason: "COUNT_CORRECTION",
+      },
       state.operatorToken,
     );
     assert(r.id || r.type === "ADJUSTMENT", "No adjustment record");

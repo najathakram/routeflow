@@ -4452,3 +4452,94 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **On Windows, never pipe a script into `python3 -`. Make the edit with the editor tool, or write the script to a file and run it (node is always present in this repo); treat a silent hang on a heredoc as this trap before anything else.**
 - **Guard:** none automatic; the lane rules.
 - (Archived 2026-10-29 whole and verbatim to make room at cap: L-291: no recurrence since 2026-10-10; edits go through the Edit and Write tools; no citation outside the register.)
+
+## Archived 2026-10-30 — zero outside citations; headroom for L-355..L-358 (bookkeeping for W26r..W28b)
+
+### L-258 · 2026-10-02 · testing · a harness locator is chosen by test id or role, never by position (a `.last()` produced a false repro)
+
+- **Symptom:** the Expo 390 Playwright repro of "three same-code scans through the scan sheet's manual-entry field give one bottle" used `input.last()` for the manual field. After the first scan the cart row's quantity input became the last input, so scans two and three typed into the quantity field and the capture claimed the fix was missing. A runtime probe targeting the field by test id or role showed three submits giving three bottles ($6.00 in the DB) at both 1500 ms and 350 ms.
+- **Root cause:** a positional locator is correct only while the page keeps the same element order; the first interaction reordered it.
+- **Lesson:** **Target a field by `data-testid` or accessible role, never by `.first()`, `.last()` or `nth()`, and before filing a bug from a capture re-run the failing step with the stable locator and read the persisted value. Cf. [[L-202]], [[L-212]].**
+- **Guard:** none automated; the cost was one wrong-diagnosis cycle and a static re-trace by the lane.
+
+### L-304 · 2026-10-12 · process · a suspected display gap is judged against the payload the surface receives, not the JSX that reads the field
+
+- **Symptom:** a review reported that the staff order page's invoice card still printed a due date on a paid till sale; the follow-up spent a lane checking it. The card's `inv.dueDate` was never populated: the order read's invoice stubs are a narrow `select` with no `dueDate`.
+- **Root cause:** a reviewer inferred the defect from the component's JSX; the serializer that feeds it was not read. The real gap sat on the list read, which was found only by tracing `findAll`.
+- **Lesson:** **Before fixing or reporting a display gap, name the select, serializer or allowlist that feeds the field and confirm the field is in it; JSX that reads an absent field is dead code, not a defect. Then trace every OTHER read of the same document.**
+- **Guard:** none automatic; the review checklist for invoice/order display changes (named select first). Cf. [[L-167]].
+
+### L-309 · 2026-10-16 · tooling · a worktree git calls clean can still hold gitignored valuables; check `git status --ignored` before removing it
+
+- **Symptom:** a worktree reported clean by `git status` was about to be removed while it held ignored files that exist nowhere else: database backups, `*.sql` dumps, `.env*` files and `graphify-out/`.
+- **Root cause:** `git status` hides ignored files by design, so "clean" says nothing about untracked-and-ignored data; removal tooling that trusts it deletes them with the tree.
+- **Lesson:** **Before removing a worktree, run `git status --ignored --short` and list what is ignored; copy out anything not regenerable (backups, dumps, env files, built graphs) or stop and report. "Clean" is a statement about tracked files only.** Cf. [[L-180]].
+- **Guard:** none automatic; the worktree-removal step of the cleanup routine lists ignored files first.
+
+### L-317 · 2026-10-18 · domain · removing a whole-catalog fetch (limit=0) from a picker is a behavior change; prove what each consumer needs first
+
+- **Symptom:** the product-k11 train swapped `limit: 0` reads for per-line or server-searched reads on several pickers. Two swaps (the promotions picker, the purchase-order detail) broke a consumer that needed the full set and were reverted; the products-list categories and inventory pickers, which only needed distinct values, kept the swap.
+- **Root cause:** a `limit: 0` read feeds more than the dropdown: a guard scanning every product, a lookup of lines the page did not request, a picker that must show items before any search. The cost was visible, the other readers were not.
+- **Lesson:** **Before replacing a fetch-all with a narrower read, list every consumer of that data on the page and name what each needs (distinct values, a few rows, the full set). Swap only where the narrow read serves all of them; keep a deliberate fetch-all with a comment naming the consumer, and give each swap its own revert-able commit.**
+- **Guard:** none automatic; the remaining fetch-alls carry a DELIBERATE comment naming their consumer (products, promotions, purchase-orders, suppliers pages). Cf. [[L-167]].
+
+## Archived 2026-10-30 — zero outside citations; headroom for L-359, L-360 (bookkeeping for W29c)
+
+### L-336 · 2026-10-22 · testing · a layout change to a cell or control is proven in a browser hit-test at every width; jsdom cannot see an overlap
+
+- **Symptom:** row 688's invoice-edit Boxes + Pieces inputs passed every unit test, but in the browser Pieces sat UNDER Unit Price at 1440, 768 and 390 (`elementFromPoint` at its centre returned Unit Price), so loose pieces could not be reached by mouse. #3564 merged without UI captures; the proof of #3570 found it.
+- **Root cause:** jsdom computes no layout, so a control squeezed out of a 70 px grid column renders "fine" there; the unit tests checked values and labels, never geometry.
+- **Lesson:** **Any change that adds or resizes controls in a fixed-width cell, row or bar ships with a browser proof at 1440/768/390: a hit-test that the centre of each control resolves to that control, 44 px targets, and no horizontal overflow, kept as a permanent e2e spec on the local lane. Capture before merge, not after.**
+- **Guard:** `apps/web/e2e/78-invoice-edit-boxed-qty-hit.spec.ts` (project `invoice-edit-boxed-qty-hit`, on the `local:e2e` allow-list). Cf. [[L-334]].
+
+### L-341 · 2026-10-24 · domain · a price read gates on error and paused states, not only loading, through one shared gate (#3658, #3665, #3670)
+
+- **Symptom:** when the customer-prices read failed, or paused offline, scan and search stayed open and every pick was priced at LIST, or at the tier with per-product overrides dropped.
+- **Root cause:** the gates checked `isLoading` only (in TanStack Query v5 a paused or failed query is not loading), and each web and mobile screen hand-rolled its own `?? tier ?? 1` fallback chain.
+- **Lesson:** **A money read fails closed on error, paused and missing data, not just loading: the pick and the save are blocked until the read confirms. One shared gate decides it; no screen keeps its own tier fallback.**
+- **Guard:** `packages/pricing/src/customer-pricing-gate.spec.ts`, `apps/mobile/__tests__/customer-tier-fallback-pin.test.ts`, web `page.pricing-gate-w725.test.tsx`.
+
+### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
+
+- **Symptom:** #819 conflicted after a sibling PR squash-merged the schema/contract commit both
+  had stacked on locally — a normal rebase/merge treated the squashed content as new, corrupting
+  the schema state instead of cleanly resolving.
+- **Root cause:** two PRs stacked on a shared, not-yet-landed commit — once the owner squashes
+  the first one, that commit no longer exists on master under its original identity, so any
+  history-diffing operation sees a phantom conflict between "the same change, twice."
+- **Lesson:** **A PR stacked on another PR's not-yet-landed schema/contract commit must be
+  REBUILT from a fresh branch off the post-squash master — cherry-picking only its OWN commits,
+  never the shared ancestor or a merge commit — once the base PR lands. Never rebase or
+  ordinary-merge a stacked branch through someone else's squash.**
+- **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
+  rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
+- **Recurred 2026-10-02 (landing windows D to I):** squashing a stacked parent made each child conflict add/add on the parent's own files (#3025 to #3046 to #3050; #3044 to #3045), and a merge-tree against the then-current master missed it. Before opening a window simulate the whole order: for each PR in order run `git merge-tree --write-tree <cur> <head>`, then `git commit-tree <tree> -p <cur>` as the next base; a conflict at step N means that PR is carried (master merged in, new pin) after its parent lands, never in the same window.
+
+### L-184 · 2026-09-17 · deploy · #777 merged/deployed without its migration or a drift check
+
+- **Symptom:** #777 merged and deployed with a new `migrations/` folder, but the migration was
+  never applied to prod and the post-deploy drift run never happened — undetected for ~26 hours.
+- **Root cause:** the standing deploy flow assumes a migration ships and gets applied together,
+  but nothing gates the LANDING of a migration-carrying PR on the owner having applied it, and
+  `post-deploy-check` (the thing that runs automatically) has no drift check in it.
+- **Lesson:** **A PR that adds a `migrations/` folder is not LANDED until the owner has applied
+  it to prod AND the drift run shows exit 0 — a migration is authorized before merge, never
+  assumed to happen after. The merge coordinator checks
+  `git diff --name-only <base>..<merge> -- apps/api/prisma/migrations` on every landing.**
+- **Guard:** none yet — propose the merge coordinator's landing checklist running that diff as a
+  hard gate, and/or folding a drift check into `post-deploy-check` itself.
+
+### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
+
+- **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
+  full literal-source-text match on a JSX className. A purely additive `cn(TAP_TARGET, "...")`
+  wrapper (same classes, behavior still correct) broke both, because the source text was no
+  longer that exact string.
+- **Root cause:** the assertion pinned SOURCE TEXT, not the behavior the tests were meant to
+  guard (a control staying reachable/correctly sized) — coincidence-based in both directions: it
+  breaks on harmless changes and can just as easily PASS a real regression that preserves the
+  substring.
+- **Lesson:** **A regression test must assert the underlying behavior (DOM state, computed
+  style, an element's actual reachable size), never a scrape of the source file's literal
+  text.**
+- **Guard:** the fix (rewriting both to DOM-behavior assertions) is being built into #910.

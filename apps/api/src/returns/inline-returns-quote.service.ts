@@ -31,7 +31,7 @@ import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
 import { finiteStoredLevy } from "../common/money-invariants.util";
-import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
+import { getTierPrice, isWholeCents, packFromOwnSplit, roundMoney } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
@@ -578,7 +578,7 @@ export class InlineReturnsQuoteService {
             defaultUnitPrice: result.defaultUnitPrice,
             message:
               `${productName}: a credit price can only be lowered — the most this return can ` +
-              `credit is $${result.defaultUnitPrice.toFixed(2)} per unit.`,
+              `credit is $${roundMoney(result.defaultUnitPrice).toFixed(2)} per unit.`,
           });
         }
         return flag(result.chunk);

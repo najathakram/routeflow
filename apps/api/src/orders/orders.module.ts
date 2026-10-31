@@ -40,6 +40,8 @@ import { CounterSaleTodayService } from "./counter-sale/counter-sale-today.servi
 // SA-750r3: counter day close + Z report (separate controller: the counter-sale controller's constructor is pinned by its specs).
 import { CounterDayCloseController } from "./counter-sale/day-close/day-close.controller";
 import { CounterDayCloseService } from "./counter-sale/day-close/day-close.service";
+import { CounterDrawerController } from "./counter-sale/drawer/counter-drawer.controller";
+import { CounterDrawerService } from "./counter-sale/drawer/counter-drawer.service";
 import { EmailModule } from "../email/email.module";
 // SA-748: parked counter sales (POST|GET /orders/counter-sale/parked, .../:id/resume, DELETE .../:id) + the hourly sweep.
 import { CounterParkController } from "./counter-sale/counter-park.controller";
@@ -58,6 +60,9 @@ import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
 } from "./counter-sale/fulfilment-capability-reader";
+// W-1043: POST /orders/:id/ready-for-pickup (the staff "Ready for pickup" button; awaits the one email).
+import { ReadyForPickupController } from "./ready-for-pickup.controller";
+import { ReadyForPickupService } from "./ready-for-pickup.service";
 import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
 import { StorageModule } from "../storage/storage.module";
@@ -96,7 +101,9 @@ import { StorageModule } from "../storage/storage.module";
     CounterSaleVoidController,
     CounterParkController,
     CounterDayCloseController,
+    CounterDrawerController,
     PickupCompleteController,
+    ReadyForPickupController,
   ],
   providers: [
     OrdersService,
@@ -106,11 +113,13 @@ import { StorageModule } from "../storage/storage.module";
     CounterSaleService,
     CounterSaleTodayService,
     CounterDayCloseService,
+    CounterDrawerService,
     CounterParkService,
     CounterParkSweepService,
     QuickKeysService,
     CounterSaleVoidService,
     PickupCompleteService,
+    ReadyForPickupService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
     OrderBatchShipService,

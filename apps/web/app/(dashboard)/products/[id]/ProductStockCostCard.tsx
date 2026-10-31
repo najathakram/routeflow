@@ -12,12 +12,15 @@ export function ProductStockCostCard({
   stockStatus,
   currentStock,
   onSetCost,
+  onCount,
   pricesV2,
 }: {
   product: any;
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   currentStock: number;
   onSetCost: () => void;
+  /** Staff only: opens Count / Adjust (the page passes nothing for anyone else). */
+  onCount?: () => void;
   pricesV2?: boolean;
 }) {
   // J9: on a generic with variants, On hand IS its own not-yet-split stock (no second row).
@@ -28,13 +31,24 @@ export function ProductStockCostCard({
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
           Stock &amp; Cost
         </h3>
-        <button
-          type="button"
-          onClick={() => onSetCost()}
-          className="text-xs font-medium text-brand-600 transition-colors hover:underline"
-        >
-          Set cost
-        </button>
+        <div className="flex items-center gap-3">
+          {onCount && (
+            <button
+              type="button"
+              onClick={() => onCount()}
+              className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+            >
+              Count / Adjust
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onSetCost()}
+            className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+          >
+            Set cost
+          </button>
+        </div>
       </div>
       <div className="px-4">
         {pricesV2 !== true && (

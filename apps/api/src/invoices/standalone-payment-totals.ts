@@ -25,8 +25,8 @@ export function standaloneAllocationTotals(dto: {
     throw new BadRequestException({
       code: API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT,
       message:
-        `The allocations add up to $${allocatedTotal.toFixed(2)}, more than the ` +
-        `$${total.toFixed(2)} payment. Lower an allocation or raise the payment amount.`,
+        `The allocations add up to $${roundMoney(allocatedTotal).toFixed(2)}, more than the ` +
+        `$${roundMoney(total).toFixed(2)} payment. Lower an allocation or raise the payment amount.`,
       allocatedTotal,
       totalAmount: total,
     });

@@ -23,6 +23,17 @@ export function useTenantTimeZoneQuery(enabled = true) {
   };
 }
 
+/** Where the dashboard prompt sends the admin: the Business profile tab holds the field, the bare hub does not (SA-1067 Z-9). */
+export const TIME_ZONE_SETTINGS_HREF = "/settings?tab=profile#settings-timezone";
+
+/**
+ * SA-1067 Z4: "UTC" is the fallback the API writes when nobody picked a zone (`FALLBACK_ZONE`), so it is the one value that
+ * means "not set yet". An unknown zone (still loading, or none sent) is NOT unset: nothing should flash before /settings answers.
+ */
+export function isZoneUnset(zone: string | undefined): boolean {
+  return zone === "UTC";
+}
+
 export function useTenantTimeZone(enabled = true): string | undefined {
   return useTenantTimeZoneQuery(enabled).zone;
 }
@@ -71,4 +82,54 @@ export function useShippedWeek(enabled = true) {
     isError,
     retry,
   };
+}
+
+/**
+ * SA-943 (W-765): the default for a payment / settled / received date box - the BUSINESS's today in its zone, so the
+ * API (which reads a date-only tenant-local today as "now") never sees yesterday's UTC day or tomorrow's. With no zone
+ * (still loading, or none on file) it is the UTC day: the SAME fallback the API applies to a business without a zone, so
+ * the box and the server always name the same day. Never the browser's day - for a business with no zone a Chicago
+ * browser at 20:00 CDT would send 10-24, which the UTC-zoned server stores as 10-24T00:00Z, 20 hours early. A box
+ * defaulted while the zone was loading moves to the zone's day when it arrives (`useResyncOnZone`). Pinned by
+ * `payment-date-defaults.inventory.test.ts`.
+ */
+export function tenantTodayIso(zone: string | undefined, now: Date = new Date()): string {
+  return zone ? calendarDayInZone(zone, now) : utcDay(now);
+}
+
+/**
+ * SA-943 MUST 2: a stored payment instant as the date its edit box shows - the tenant-local day, the same day the API's
+ * "kept" rule compares against, so resending it unchanged keeps the stored instant. "" for no instant. With no zone it
+ * is the UTC day, the server's own fallback for that comparison.
+ */
+export function tenantDateOf(iso: string | null | undefined, zone: string | undefined): string {
+  if (!iso) return "";
+  const at = new Date(iso);
+  return zone ? calendarDayInZone(zone, at) : utcDay(at);
+}
+
+function utcDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * SA-943: keeps a date box that was defaulted from `defaultFor(zone)` in step with the zone. When the zone arrives (or
+ * changes) and the box still holds the default computed under the previous zone, it moves to the new zone's default;
+ * a date the user typed is never touched. Known edge: a typed date EQUAL to the previous default is indistinguishable
+ * from the default and does move (only possible in the brief window before the zone loads).
+ */
+export function useResyncOnZone(
+  zone: string | undefined,
+  defaultFor: (zone: string | undefined) => string,
+  current: string,
+  apply: (next: string) => void,
+): void {
+  const prevZone = React.useRef(zone);
+  React.useEffect(() => {
+    if (prevZone.current === zone) return;
+    const before = defaultFor(prevZone.current);
+    prevZone.current = zone;
+    const next = defaultFor(zone);
+    if (current === before && next !== before) apply(next);
+  }, [zone, defaultFor, current, apply]);
 }

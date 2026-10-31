@@ -19,12 +19,14 @@ const STAFF_WRITE_HOOKS = [
   "useCreateSale",
   "usePosFinish",
   "useCreateCounterSale",
+  "usePickupComplete",
   "useCreateInvoice",
   "useUpdateInvoice",
   "useDuplicateInvoice",
   "useConvertEstimateToInvoice",
   "useRunRecurringInvoice",
   "useGenerateTemplateOrder",
+  "useUnvoidInvoice",
 ];
 const CALL = new RegExp(`\\b(${STAFF_WRITE_HOOKS.join("|")})\\b`);
 const WIRED =

@@ -14,6 +14,7 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * SA-767 L-2 (B286 / #2840), unit level: a manual stock / cost writer takes the Product lock FIRST,
@@ -38,15 +39,25 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let lockStatement: jest.Mock;
+  let stock: StockHelperMock;
+  /** The helper's one insert (SA-927): ordering assertions use it where the old per-row create was. */
+  const insert = () => (prisma.stockMovement as any).createManyAndReturn as jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-927: the real stock helper reads the LOCKED row from the stubs the test gives findUnique / findMany.
+    stock = wireStockHelper(prisma);
     lockStatement = jest.fn().mockResolvedValue(0);
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $executeRaw: lockStatement, $queryRaw: jest.fn().mockResolvedValue([]) }),
+      fn(
+        stock.wrapTx({
+          ...prisma,
+          $executeRaw: lockStatement,
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        }),
+      ),
     );
     prisma.stockMovement.count.mockResolvedValue(0);
-    prisma.stockMovement.create.mockResolvedValue({ id: "mv-1" });
     const mod = await Test.createTestingModule({
       providers: [
         InventoryService,
@@ -84,10 +95,11 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
 
     // (20 * 3 + 5 * 4) / 25 = 3.20 (the stale row would give (10 * 2 + 5 * 4) / 15 = 2.6667)
     expect(prisma.product.update.mock.calls[0][0].data.averageCost.toString()).toBe("3.2");
-    expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("3.2");
-    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("25");
+    expect(stock.written()[0].avgCostAfter.toString()).toBe("3.2");
+    expect(stock.written()[0].stockAfter.toString()).toBe("25");
+    // the helper takes the lock (its `FOR UPDATE` statement) before it inserts and before it writes the counter
     expect(lockCalls()).toHaveLength(1);
-    expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
+    expect(lockedBefore(insert(), 1)).toBe(true);
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
   });
 
@@ -99,12 +111,12 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
 
     await service.recordAdjustment({ productId: "prod-1", quantity: 5 } as any, "u-1");
 
-    expect(prisma.stockMovement.create.mock.calls[0][0].data.avgCostAfter.toString()).toBe("3");
+    expect(stock.written()[0].avgCostAfter.toString()).toBe("3");
     expect(prisma.stockLot.create.mock.calls[0][0].data.unitCost.toString()).toBe("3");
-    expect(lockedBefore(prisma.product.findUnique, 2)).toBe(true);
+    expect(lockedBefore(insert(), 1)).toBe(true);
   });
 
-  it("a count REPLACE is counted minus the LOCKED stock, written as an increment", async () => {
+  it("a count REPLACE is counted minus the LOCKED stock, written as the absolute locked stock plus that delta", async () => {
     // validation read: 100 on hand; by the time the lock is granted a sale left 70
     prisma.product.findMany
       .mockResolvedValueOnce([row({ currentStock: D(100) })])
@@ -116,36 +128,36 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       "u-1",
     );
 
-    expect(prisma.product.update.mock.calls[0][0].data).toEqual({
-      currentStock: { increment: D(20) },
-    });
-    const movement = prisma.stockMovement.create.mock.calls[0][0].data;
+    // SA-927: one absolute write of the helper's fold (locked 70 + 20), never an increment
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
+    const movement = stock.written()[0];
     expect(movement.quantity.toString()).toBe("20");
-    expect(movement.stockAfter.toString()).toBe("90"); // the counter the update RETURNED
+    expect(movement.stockAfter.toString()).toBe("90");
     expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
-    expect(lockCalls()).toHaveLength(1);
+    // the up-front statement, then the helper's re-lock of the same row (held already: a no-op)
+    expect(lockCalls()).toHaveLength(2);
+    expect(lockedBefore(insert(), 1)).toBe(true);
   });
 
-  it("the movement's stockAfter is the counter the update returned, whatever the delta implied", async () => {
+  it("the movement's stockAfter is the helper's fold of the LOCKED stock and the delta (no second counter read)", async () => {
     prisma.product.findMany.mockResolvedValue([row({ currentStock: D(70) })]);
-    prisma.product.update.mockResolvedValue({ currentStock: D(88) });
 
     await service.commitStockCount(
       { sessionId: "s-2", items: [{ productId: "prod-1", quantity: 90, mode: "REPLACE" }] } as any,
       "u-1",
     );
 
-    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("88");
+    expect(stock.written()[0].stockAfter.toString()).toBe("90");
   });
 
-  it("setCostBasis stamps stockAfter from the update's returned row, after the lock", async () => {
+  it("setCostBasis stamps stockAfter from the locked row, after the lock", async () => {
     prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100) }));
     prisma.product.findMany.mockResolvedValue([row({ currentStock: D(70) })]);
     prisma.product.update.mockResolvedValue({ currentStock: D(70) });
 
     await service.setCostBasis("prod-1", { unitCost: 5 } as any, "u-1");
 
-    expect(prisma.stockMovement.create.mock.calls[0][0].data.stockAfter.toString()).toBe("70");
+    expect(stock.written()[0].stockAfter.toString()).toBe("70");
     expect(lockedBefore(prisma.product.findMany, 1)).toBe(true);
   });
 
@@ -164,8 +176,17 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       "u-1",
     );
 
-    expect(lockCalls()).toHaveLength(1);
-    expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
+    // ONE up-front statement over every product, before any write; the helper then re-locks each product it
+    // writes (rows this tx already holds: a no-op), so no statement after the first takes a new lock.
+    const calls = lockCalls();
+    expect(calls).toHaveLength(1 + 2);
+    expect(lockedBefore(insert(), 1)).toBe(true);
+    const firstLockValues = lockStatement.mock.calls
+      .filter((c) => (c[0] as string[]).join("?").includes("FOR UPDATE"))[0]
+      .slice(1)
+      .flat();
+    expect(firstLockValues).toEqual(expect.arrayContaining(["prod-1", "prod-2"]));
+    expect(stock.written()).toHaveLength(2);
   });
 
   it("a session commit locks every counted product once, before the cost row and the adjustment", async () => {
@@ -197,18 +218,76 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
       row({ id: "prod-2", name: "Sugar", currentStock: D(6) }),
     ];
     prisma.product.findMany.mockResolvedValue(rows);
-    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+    // the update persists into the rows the helper's next locked read returns, as the DB does: the
+    // corrected cost written by the cost row is the average the adjustment row is stamped with
+    prisma.product.update.mockImplementation(async ({ where, data }: any) => {
+      const r: any = rows.find((x) => x.id === where.id);
+      if (r && data?.averageCost !== undefined) r.averageCost = data.averageCost;
+      if (r && data?.currentStock !== undefined) r.currentStock = data.currentStock;
+      return { currentStock: D(90) };
+    });
 
     await service.commitStockCountSession("sess-1", {} as any, { sub: "u-1" });
 
-    expect(lockCalls()).toHaveLength(1);
-    const types = prisma.stockMovement.create.mock.calls.map((c) => c[0].data.type);
+    // the up-front statement over both products, then one re-lock per helper call (the cost row, the adjustments)
+    expect(lockCalls()).toHaveLength(1 + 2);
+    expect(lockedBefore(insert(), 1)).toBe(true);
+    const types = stock.written().map((d) => d.type);
     expect(types).toEqual(["COST_BASIS", "ADJUSTMENT", "ADJUSTMENT"]);
     // the REPLACE line: 90 counted - 100 expected = -10 (the locked 70 is NOT the base: a sale after
     // the count survives), valued at the corrected 5.00
-    const adj = prisma.stockMovement.create.mock.calls[1][0].data;
+    const adj = stock.written()[1];
     expect(adj.quantity.toString()).toBe("-10");
     expect(adj.avgCostAfter.toString()).toBe("5");
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
+  });
+
+  it("countProduct SET is counted minus the LOCKED stock, written as the helper's fold (SA-828)", async () => {
+    // validation read + the date gate's flag read: 100 on hand; by the time the lock is granted a sale left 70.
+    // The count is DATED: since row 563 (#3673) the gate reads product flags only for a person-chosen
+    // date, so an undated count has no flag read (the twin below).
+    prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100), unitsPerBox: null }));
+    prisma.product.findMany
+      .mockResolvedValueOnce([row({ currentStock: D(100) })])
+      .mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.countProduct(
+      "prod-1",
+      {
+        mode: "SET",
+        parts: [{ quantity: 90 }],
+        reason: "COUNT_CORRECTION",
+        effectiveDate: "2026-10-01",
+      } as any,
+      "u-1",
+    );
+
+    // SA-927: one absolute write of the helper's fold (locked 70 + 20), never an increment
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
+    const movement = stock.written()[0];
+    expect(movement.quantity.toString()).toBe("20");
+    expect(movement.stockAfter.toString()).toBe("90");
+    // findMany calls: 1 the SA-802 date gate's flag read, 2 the locked read.
+    expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
+    // the up-front statement, then the helper's re-lock of the same row (held already: a no-op)
+    expect(lockCalls()).toHaveLength(2);
+  });
+
+  it("an undated countProduct SET: the first findMany IS the locked read (no date-gate read)", async () => {
+    prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100), unitsPerBox: null }));
+    prisma.product.findMany.mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.countProduct(
+      "prod-1",
+      { mode: "SET", parts: [{ quantity: 90 }], reason: "COUNT_CORRECTION" } as any,
+      "u-1",
+    );
+
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
+    expect(prisma.product.findMany).toHaveBeenCalledTimes(1);
+    expect(lockedBefore(prisma.product.findMany, 1)).toBe(true);
+    expect(lockCalls()).toHaveLength(2);
   });
 });

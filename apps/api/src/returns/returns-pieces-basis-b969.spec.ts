@@ -196,7 +196,7 @@ describe("ReturnsService — a STANDARD return is priced in PIECES on both sides
     expect([r.findOne, r.findAll, r.mint]).toEqual([30, 30, 30]);
   });
 
-  it("(d) the 2-invoice POOL path is unchanged: two 1-box invoices, 1 box back => $120.00 lump on the latest, pooled in pieces", async () => {
+  it("(d) the 2-invoice POOL path is unchanged: two 1-box invoices, 1 box back => $120.00 lump on inv-1, the invoice the fill took it from (SA-1051), pooled in pieces", async () => {
     const invoices = [
       invoice("inv-1", [invItem("i1", BOX_UNAWARE_BOX)]),
       invoice("inv-2", [invItem("i2", BOX_UNAWARE_BOX)], {
@@ -208,6 +208,7 @@ describe("ReturnsService — a STANDARD return is priced in PIECES on both sides
     withReturn(invoices, [orderLine({})], [{ productId: "pp", qty: 1 }]);
     const r = await previewAndMint();
     expect([r.findOne, r.findAll, r.mint]).toEqual([120, 120, 120]);
+    expect(creditNotesCreate.mock.calls[0][0]).toMatchObject({ invoiceId: "inv-1", amount: 120 });
     expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({
       pooledRefund: [{ productId: "pp", qty: 12 }],
     });

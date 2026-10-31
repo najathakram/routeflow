@@ -31,6 +31,7 @@ describe("access-token validation on JwtAuthGuard-only routes", () => {
   const linkAppleAccount = jest.fn().mockResolvedValue(undefined);
   const listSessions = jest.fn().mockResolvedValue([]);
   const findById = jest.fn().mockResolvedValue({ id: "u1" });
+  const getMe = jest.fn().mockResolvedValue({ id: "u1", alsoBuyer: false });
 
   const staffAccess = () =>
     jwt.sign(
@@ -89,7 +90,7 @@ describe("access-token validation on JwtAuthGuard-only routes", () => {
         },
         { provide: StaffHandoffService, useValue: {} },
         { provide: AppleOAuthService, useValue: { isConfigured: () => true, linkAppleAccount } },
-        { provide: UsersService, useValue: { findById } },
+        { provide: UsersService, useValue: { findById, getMe } },
         { provide: OperatorPermissionsService, useValue: {} },
         { provide: AuditService, useValue: { log: jest.fn() } }, // NoImpersonationGuard (SA-778)
       ],
@@ -111,6 +112,7 @@ describe("access-token validation on JwtAuthGuard-only routes", () => {
     expect(linkAppleAccount).not.toHaveBeenCalled();
     expect(listSessions).not.toHaveBeenCalled();
     expect(findById).not.toHaveBeenCalled();
+    expect(getMe).not.toHaveBeenCalled();
   });
 
   it.each(routes)("%s rejects a token without a role", async (_n, call) => {

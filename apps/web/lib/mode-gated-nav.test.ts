@@ -1,4 +1,16 @@
+import { promotionsOn } from "@routeflow/types";
 import { MODE_GATED_NAV, modeGatedVisible } from "./plan-gated-nav";
+
+// SA-070 / SA-1032 rule 3: the nav gate reads a mode through the shared predicate, never its own
+// "off". Undefined → the real helper; a test sets a value to prove the gate obeys the helper.
+const mockPromotionsOn = jest.fn<boolean | undefined, [string | null | undefined]>();
+jest.mock("@routeflow/types", () => {
+  const actual = jest.requireActual("@routeflow/types");
+  return {
+    ...actual,
+    promotionsOn: (mode?: string | null) => mockPromotionsOn(mode) ?? actual.promotionsOn(mode),
+  };
+});
 
 // SA-1032: a business that turns promotions off loses the Promotions entry in the sidebar and
 // the command palette. No config (modes unset) behaves as today: the entry shows.
@@ -18,5 +30,16 @@ describe("modeGatedVisible — promotions", () => {
 
   it("never hides a route it does not gate", () => {
     expect(modeGatedVisible("/orders", { promotions: "off" })).toBe(true);
+  });
+
+  it("SA-1032 rule 3: /promotions is gated by the shared promotionsOn", () => {
+    expect(MODE_GATED_NAV["/promotions"]).toEqual(["promotions", promotionsOn]);
+    mockPromotionsOn.mockReturnValue(false);
+    try {
+      expect(modeGatedVisible("/promotions", { promotions: "on" })).toBe(false);
+      expect(mockPromotionsOn).toHaveBeenCalledWith("on");
+    } finally {
+      mockPromotionsOn.mockReset();
+    }
   });
 });

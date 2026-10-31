@@ -41,6 +41,8 @@ import { AddonGuard } from "../billing/addon.guard";
 import { RequireAddon } from "../billing/require-addon.decorator";
 import { MB, uploadLimits } from "../common/upload-limits";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("FINANCE")
 @ApiTags("bookkeeping")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -51,11 +53,13 @@ export class BookkeepingController {
 
   // Core money endpoints (summary, dashboard, transactions, expenses,
   // bills/bulk-mark-paid) stay UNGATED — only reports/* is behind flag.reports.
+  @RequirePermission("REPORTS")
   @Get("summary")
   getSummary() {
     return this.bookkeepingService.getSummary();
   }
 
+  @RequirePermission("REPORTS", "FINANCE")
   @Get("dashboard")
   getDashboard() {
     return this.bookkeepingService.getMobileDashboard();
@@ -205,6 +209,7 @@ export class BookkeepingController {
   }
 
   // ── Reports ── every reports/* route is gated on flag.reports.
+  @RequirePermission("REPORTS")
   @Get("reports/pl")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -212,6 +217,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getProfitAndLoss(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/aging")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -219,6 +225,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getArAging();
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/cashflow")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -227,12 +234,14 @@ export class BookkeepingController {
   }
 
   // Core money endpoint — stays UNGATED (owner decision pending). Not reports/*.
+  @RequirePermission("REPORTS", "FINANCE")
   @Get("finance-dashboard")
   getFinanceDashboard() {
     return this.bookkeepingService.getFinanceDashboard();
   }
 
   // ── Extended Reports ── every reports/* route is gated on flag.reports.
+  @RequirePermission("REPORTS")
   @Get("reports/ar-aging-invoices")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -241,6 +250,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getArAgingInvoices(interval);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/sales-by-customer")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -248,6 +258,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getSalesByCustomer(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/sales-by-item")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -255,6 +266,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getSalesByItem(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/customer-balance")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -262,6 +274,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getCustomerBalanceSummary();
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/invoice-details")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -274,6 +287,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getInvoiceDetailsReport(from, to, status, customerId);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/bad-debts")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -281,6 +295,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getBadDebtsReport();
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/payments-received")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -288,6 +303,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getPaymentsReceivedReport(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/time-to-get-paid")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -295,6 +311,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getTimeToGetPaid(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/expense-details")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -306,6 +323,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getExpenseDetailsReport(from, to, categoryId);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/expenses-by-category")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -313,6 +331,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getExpensesByCategoryReport(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/expenses-by-customer")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -320,6 +339,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getExpensesByCustomerReport(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/sales-by-driver")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -327,6 +347,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getSalesByDriver(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/ar-aging-details")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -338,6 +359,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getArAgingDetails(from, to, customerId);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/estimate-details")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -349,6 +371,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getEstimateDetails(from, to, status);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/refund-history")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")
@@ -356,6 +379,7 @@ export class BookkeepingController {
     return this.bookkeepingService.getRefundHistory(from, to);
   }
 
+  @RequirePermission("REPORTS")
   @Get("reports/receivable-summary")
   @UseGuards(PlanFlagGuard)
   @RequirePlanFlag("flag.reports")

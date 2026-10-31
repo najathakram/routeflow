@@ -1473,7 +1473,7 @@ export class RoutesService {
       const outstanding = await this.getUnsettledPhysicalMoney(id, run);
       if (outstanding > 0.001) {
         throw new BadRequestException(
-          `This run collected $${outstanding.toFixed(2)} in cash/checks. Record the run settlement before completing.`,
+          `This run collected $${roundMoney(outstanding).toFixed(2)} in cash/checks. Record the run settlement before completing.`,
         );
       }
     }
@@ -1893,9 +1893,9 @@ export class RoutesService {
     const sign = variance < 0 ? "-" : "+";
     const noteLines = [
       `Settlement recorded by ${user.username} at ${when.toISOString()}`,
-      `Expected (cash + checks): $${expectedPhysical.toFixed(2)}`,
-      `Counted: $${dto.countedCash.toFixed(2)}`,
-      `Variance: ${sign}$${Math.abs(variance).toFixed(2)}`,
+      `Expected (cash + checks): $${roundMoney(expectedPhysical).toFixed(2)}`,
+      `Counted: $${roundMoney(dto.countedCash).toFixed(2)}`,
+      `Variance: ${sign}$${roundMoney(Math.abs(variance)).toFixed(2)}`,
     ];
     if (dto.varianceReason) noteLines.push(`Reason: ${dto.varianceReason}`);
 
@@ -2259,7 +2259,7 @@ export class RoutesService {
             // finds nothing in the logs.
             this.logger.log(
               `completeStop: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
-                `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
+                `$${roundMoney(outstanding).toFixed(2)} in cash/checks is unsettled.`,
             );
           } else {
             await tx.routeRun.update({
@@ -2386,6 +2386,7 @@ export class RoutesService {
     // (after the idempotency check so a cached replay never re-uploads).
     await ingestPodCapture(this.podDeps, dto, stopId, { idempotencyKey: dto.idempotencyKey }); // #3723: retries overwrite
     const catalog = await this.invoicesService.loadUnitCatalog(stop); // SA-967: once, before the tx
+    const baseLabels = await this.invoicesService.loadBaseLabels(stop); // SA-1029: once, before the tx
 
     let autoCompleted = false;
     let paymentIds: string[] = [];
@@ -2505,6 +2506,7 @@ export class RoutesService {
             dto.payment.amount,
             dto.payment.method,
             catalog,
+            baseLabels,
             { runId, stopId },
           );
           paymentIds = recorded.paymentIds;
@@ -2542,7 +2544,7 @@ export class RoutesService {
             // leaves no trace at all in the logs.
             this.logger.log(
               `completeWithPayment: RF-016 auto-completion withheld for run ${runId} (stop ${stopId}) — ` +
-                `$${outstanding.toFixed(2)} in cash/checks is unsettled.`,
+                `$${roundMoney(outstanding).toFixed(2)} in cash/checks is unsettled.`,
             );
           } else {
             await tx.routeRun.update({

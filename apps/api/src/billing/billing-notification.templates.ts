@@ -1,4 +1,4 @@
-import { fromCents } from "@routeflow/pricing";
+import { fromCents, roundMoney } from "@routeflow/pricing";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import { webBaseUrl } from "../config/web-base-url";
 export { escapeHtml };
@@ -358,7 +358,7 @@ function rfMoney(n: number, currency: string): string {
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(n);
   } catch {
-    return `${n.toFixed(2)} ${currency}`;
+    return `${roundMoney(n).toFixed(2)} ${currency}`;
   }
 }
 
@@ -463,7 +463,7 @@ function formatDunningAmount(cents: number, currency?: string | null): string {
       fromCents(cents),
     );
   } catch {
-    return `${fromCents(cents).toFixed(2)} ${code}`;
+    return `${roundMoney(fromCents(cents)).toFixed(2)} ${code}`;
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   InvoiceStatus,
   LineComponentView,
   OverrideStampView,
+  PerBaseUnit,
   RestrictionAck,
   ToCollectState,
 } from "@routeflow/types";
@@ -131,6 +132,8 @@ export interface InvoiceItem extends Partial<OverrideStampView> {
   components?: LineComponentView[] | null;
   /** SA-827: how this line reads (pieces view or today's layout). */
   displayUnit?: InvoiceDisplayUnitView | null;
+  /** SA-1029: price per base piece beside a pack line (display only); null = no per-piece cell. */
+  perBaseUnit?: PerBaseUnit | null;
 }
 
 export interface InvoicePayment {
@@ -1004,13 +1007,20 @@ export function useRevertInvoiceToDraft() {
 
 export function useUnvoidInvoice() {
   const qc = useQueryClient();
-  return useMutation<any, Error, string>({
+  return useMutation<any, Error, IdWithAck>({
     // SA-814: the invoice page toasts every unvoid refusal itself (copy from the body's `reason`): no second, global one.
     meta: { localErrorToast: true },
-    mutationFn: (id) => apiClient.post(`/invoices/${id}/unvoid`).then((r) => r.data),
-    onSuccess: (_, id) => {
+    mutationFn: (v) => {
+      const { id, ack } = splitIdAck(v); // row 460: an unvoid re-sells the whole invoice, so it can carry an ack
+      return (
+        ack
+          ? apiClient.post(`/invoices/${id}/unvoid`, ack)
+          : apiClient.post(`/invoices/${id}/unvoid`)
+      ).then((r) => r.data);
+    },
+    onSuccess: (_, v) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["invoices", splitIdAck(v).id] });
     },
   });
 }
@@ -1077,6 +1087,8 @@ export interface PriceAdjustmentDto {
 export interface InvoiceSettings {
   defaultTerms: string;
   hideOriginalPrice?: boolean;
+  /** SA-1031: true = the invoice PDF prints no product barcode (or the code under it). Absent/false = shown. */
+  hideBarcodes?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
   depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null

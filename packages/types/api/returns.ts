@@ -29,6 +29,19 @@ export interface CreateReturnItemDto {
 }
 
 /**
+ * SA-1042 B9c: a LINE item as the web form sends it: the order line and the count in that line's own unit, either `qty` (a
+ * box-unaware line) or `boxes` and `pieces` (a split or factor-1 unit line), never both. The server converts, caps and prices.
+ */
+export type CreateReturnLineItemDto = Omit<
+  CreateReturnItemDto,
+  "qty" | "orderItemId" | "boxes" | "pieces"
+> & {
+  orderItemId: string;
+} & (
+    { qty: number; boxes?: never; pieces?: never } | { qty?: never; boxes: number; pieces?: number }
+  );
+
+/**
  * B959: a returned item that was NOT billed on the order, so it got no refund (a mixed return still refunds the billed part).
  * `processRefund` returns these as `unbilledItems`, each with a readable `message`, so a refund is never a silent $0.
  */

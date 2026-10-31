@@ -355,6 +355,16 @@ export const ADJUSTMENT_REASON_VALUES = [
 ] as const;
 export type AdjustmentReason = (typeof ADJUSTMENT_REASON_VALUES)[number];
 
+/** Labels shared by web and mobile, in picker order. */
+export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReason, string> = {
+  COUNT_CORRECTION: "Count correction",
+  DAMAGED: "Damaged",
+  EXPIRED: "Expired",
+  THEFT: "Theft or loss",
+  SAMPLE: "Sample",
+  OTHER: "Other",
+};
+
 export const CRM_CONNECTION_STATUS_VALUES = [
   "CONNECTED",
   "NEEDS_ATTENTION",
@@ -648,6 +658,10 @@ export const PAYMENT_IDEMPOTENCY_SCOPE_VALUES = [
   "ADVANCE_PAYMENT",
 ] as const;
 export type PaymentIdempotencyScope = (typeof PAYMENT_IDEMPOTENCY_SCOPE_VALUES)[number];
+
+/** W-819 / SA-930 section 4: what a counter drawer event records. OPENING_FLOAT today; cash drops and paid-outs are the seam. */
+export const COUNTER_DRAWER_EVENT_KIND_VALUES = ["OPENING_FLOAT"] as const;
+export type CounterDrawerEventKind = (typeof COUNTER_DRAWER_EVENT_KIND_VALUES)[number];
 
 // SA-1049 R5: the status/plan enums the platform-admin badge renders (Prisma `TenantStatus`, `TenantPlan`,
 // `UserStatus`, `BuyerAccountStatus`, `CustomerLinkStatus`). The derived types are `…Value`: `../index.ts` still

@@ -421,6 +421,16 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /**
+   * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
+   * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
+   */
+  LINES_REPLACE_AFTER_DELIVERY: "LINES_REPLACE_AFTER_DELIVERY",
+  /**
+   * W-861 (SA-944): a walk-in sale with a live payment on its invoice cannot be edited (the shared Walk-in customer
+   * cannot owe). Ring up added items as a new sale, or take items back with a Return. 409, nothing written.
+   */
+  WALK_IN_SALE_PAID: "WALK_IN_SALE_PAID",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
@@ -478,6 +488,9 @@ export const API_ERROR_CODES = {
   FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   // 409 body: productId, period (the filed period's label) and filedFor ("Tobacco" or the tracked category's name, W-755).
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
+  COUNT_FRACTIONAL_PACK: "COUNT_FRACTIONAL_PACK",
+  // SA-828a: two parts of one count name the same unit (at most one part per ladder level).
+  COUNT_DUPLICATE_UNIT: "COUNT_DUPLICATE_UNIT",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
   FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
@@ -598,12 +611,22 @@ export const API_ERROR_CODES = {
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
   /** 403 from a promotion create, edit, pause/resume or delete while the business has promotions turned off (SA-1032). Existing promotions stay readable. */
   PROMOTIONS_OFF: "PROMOTIONS_OFF",
+  /** 422 from the products list / ids / CSV when the Low or In-stock filter would match more than LOW_STOCK_ID_CAP products: narrow the filter (SA-1002). */
+  LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Record it with today's date instead. */
   COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
   /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */
   DAY_CLOSED_FOR_PAYMENT_DATE: "DAY_CLOSED_FOR_PAYMENT_DATE",
   /** 409 from POST /orders/counter-sale/day-close: this window was closed by another request first (a first-close race). */
   DAY_ALREADY_CLOSED: "DAY_ALREADY_CLOSED",
+  /** 409 from POST /orders/counter-sale/drawer/opening-float: this window's opening float was already counted with a different amount (an identical amount replays the existing row). Only an admin can correct it (PATCH). */
+  COUNTER_FLOAT_ALREADY_COUNTED: "COUNTER_FLOAT_ALREADY_COUNTED",
+  /** 404 from PATCH /orders/counter-sale/drawer/opening-float: no opening float was counted for that register and window. */
+  COUNTER_FLOAT_NOT_COUNTED: "COUNTER_FLOAT_NOT_COUNTED",
+  /** 409 from PATCH /orders/counter-sale/drawer/opening-float: the float is no longer the amount the admin's screen showed (expectedAmount), so another correction landed first. Reload and retry. */
+  COUNTER_FLOAT_CHANGED: "COUNTER_FLOAT_CHANGED",
+  /** 409 from POST or PATCH /orders/counter-sale/drawer/opening-float: windowStart is not the register's open window (a close already covers it, or it is not the window DayCloseState.preview.windowStart names). Reload the day-close state. */
+  COUNTER_FLOAT_WINDOW_NOT_OPEN: "COUNTER_FLOAT_WINDOW_NOT_OPEN",
   /** 409 from POST /orders/counter-sale/parked: this register already holds the maximum open parked carts (COUNTER_PARK_MAX_PER_REGISTER); resume or discard one first. */
   PARK_LIMIT: "PARK_LIMIT",
   /** 404 from resume / discard of a parked cart: it was already taken back (by another till), discarded, or has expired. */
@@ -788,6 +811,11 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /**
+   * 409 from POST /orders/:id/ready-for-pickup (W-1043): the order is not a PICKUP, non-counter order at PENDING or
+   * CONFIRMED (a ROUTE / SHIP order, a counter sale, or one already past Ready). Nothing was written.
+   */
+  ORDER_NOT_READYABLE: "ORDER_NOT_READYABLE",
   /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
   COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
   /**
@@ -806,6 +834,11 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
   /** W-776 (SA-925): pickup-complete's pre-check refused a closed day before the first write (nothing changed). */
   COUNTER_COMPLETE_DAY_CLOSED: "COUNTER_COMPLETE_DAY_CLOSED",
+  /**
+   * Row 590 (SA-978a): PATCH /orders/:id/status to DELIVERED, 409: the order rides a run stop that is not COMPLETED. The stop is the
+   * one writer of a run order's delivery; complete it on the route, or take the order off the run first. Nothing written.
+   */
+  ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
    * `paymentErrorCode` of a 200 from POST /orders/:id/pickup-complete: handed over with no payment sent, but
    * the final invoices leave money owing (a remainder or rebuild at DELIVERED). Retry with a payment.

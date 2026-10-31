@@ -7,7 +7,12 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
  * (an internal caller) the service judges nothing, so the controller must always pass `user.sub`.
  */
 describe("InvoicesController — the acting user reaches create/update (H3b)", () => {
-  const service = { create: jest.fn(), update: jest.fn(), voidInvoice: jest.fn() };
+  const service = {
+    create: jest.fn(),
+    update: jest.fn(),
+    voidInvoice: jest.fn(),
+    unvoidInvoice: jest.fn(),
+  };
   const controller = new InvoicesController(service as never, {} as never);
   const user = { sub: "user-1" } as JwtPayload;
 
@@ -26,6 +31,12 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
   it("void passes the id and the acting user (W-870: VOID_SALE needs the principal)", async () => {
     await controller.void("inv-1", user);
     expect(service.voidInvoice).toHaveBeenCalledWith("inv-1", user);
+  });
+
+  it("unvoid passes the id, the actor AND the ack body (row 460: without them the unvoid is judged for nobody and a warned one can never be acknowledged)", async () => {
+    const dto = { warningHash: "rw1:abc", restrictionOverrides: [] } as never;
+    await controller.unvoid("inv-1", dto, user);
+    expect(service.unvoidInvoice).toHaveBeenCalledWith("inv-1", user, dto);
   });
 
   it("update passes the id, the body and the whole actor (row 510 override needs the role)", async () => {

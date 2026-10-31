@@ -12,6 +12,7 @@ import {
   type RecordSupplierPaymentDto,
 } from "@/lib/api/supplier-payments";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { tenantTodayIso, useResyncOnZone, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fieldCls =
@@ -51,7 +52,9 @@ export function RecordSupplierPaymentModal({
   const { toast } = useToast();
   const record = useRecordSupplierPayment();
   const [totalAmount, setTotalAmount] = React.useState("");
-  const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
+  const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
+  const [paidAt, setPaidAt] = React.useState(() => tenantTodayIso(zone));
+  useResyncOnZone(zone, tenantTodayIso, paidAt, setPaidAt);
   const [method, setMethod] = React.useState<SupplierPaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
@@ -245,8 +248,8 @@ export function RecordSupplierPaymentModal({
             {eligibleBills.length === 0 ? (
               <p className="text-sm text-navy/70 italic">No outstanding bills for this supplier.</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-surface-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-surface-border">
+                <table className="min-w-[480px] w-full text-sm">
                   <thead className="bg-surface-raised text-xs font-medium text-navy/70">
                     <tr>
                       <th className="px-3 py-2 text-left">Bill #</th>

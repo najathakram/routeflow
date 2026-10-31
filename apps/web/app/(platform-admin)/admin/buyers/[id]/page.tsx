@@ -571,8 +571,8 @@ export default function BuyerDetailPage() {
               </button>
             </div>
           ) : (
-            <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-x-auto">
+              <table className="min-w-[560px] w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-4 py-3 text-left">Seller (Tenant)</th>

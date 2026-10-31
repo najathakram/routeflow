@@ -71,6 +71,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
+import { newProductPrefill } from "@/lib/product-prefill";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
@@ -116,16 +117,17 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import type { BlockedLine } from "@routeflow/types";
+import type { BlockedLine, FulfillPath } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
@@ -172,7 +174,7 @@ const schema = z.object({
    *  `.optional()` (not `.default()`) matches `urgent` above — every call site
    *  already supplies an explicit "ROUTE"/"SHIP" value, and `.default()` here
    *  makes the zodResolver's inferred type disagree with useForm<FormValues>. */
-  fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
+  fulfillPath: z.enum(FULFILL_PATH_VALUES).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -182,7 +184,9 @@ type FormValues = z.infer<typeof schema>;
  * rather than widening the shared type — fully optional so drafts parked
  * before this feature (missing the key) still hydrate fine.
  */
-type DraftPayloadWithFulfillPath = OrderDraftPayload & { fulfillPath?: "ROUTE" | "SHIP" };
+type DraftPayloadWithFulfillPath = OrderDraftPayload & {
+  fulfillPath?: FulfillPath;
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -598,7 +602,7 @@ export function CreateOrderModal({
     return () => clearTimeout(t);
   }, [productSearch]);
 
-  const { data: customersData } = useCustomers({
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: debouncedCustomerSearch || undefined,
   });
   // A term that looks like a scanned code goes through the candidate-aware
@@ -614,6 +618,9 @@ export function CreateOrderModal({
     includeVariants: true,
   });
 
+  // The search has an answer (not on its way, not failed): only then is "No customers found." (and Add) true.
+  const customersAnswered =
+    debouncedCustomerSearch.length > 0 && customersData !== undefined && !customersFetching;
   const filteredCustomers = React.useMemo(() => {
     if (!debouncedCustomerSearch) return [];
     return (customersData?.data ?? []).slice(0, 8);
@@ -692,6 +699,13 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // W-1043: Store pickup in the regular order. Offered when the business has PICKUP and the till is allowed (the API
+  // refuses PICKUP otherwise); POS mode and a store-only business keep their own switch and behaviour.
+  const storePickupOffered = posAllowed && staffFulfilment.methods.includes("PICKUP");
+  const isPickup = posMode || (storePickupOffered && fulfillPath === "PICKUP");
+  // pickForm only knows ROUTE | SHIP (it would turn a PICKUP into SHIP), so PICKUP is carried here, only where it is offered.
+  const pickPath = (p?: string | null): FormValues["fulfillPath"] =>
+    p === "PICKUP" && storePickupOffered ? "PICKUP" : staffFulfilment.pickForm(p);
   // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
   // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
   // POS mode sends the explicit PICKUP path, which does not depend on the delivery settings: never blocked by them.
@@ -700,7 +714,7 @@ export function CreateOrderModal({
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
     selectedCustomer?.id,
-    posMode ? "PICKUP" : fulfillPath,
+    isPickup ? "PICKUP" : fulfillPath,
   );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
@@ -770,14 +784,21 @@ export function CreateOrderModal({
   const [customerListOpen, setCustomerListOpen] = React.useState(true);
   // Seeds the order's fulfilment from the customer's own default here (not in a
   // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
-  const pickCustomer = (c: SelectedCustomer) => {
+  const pickCustomer = (c: SelectedCustomer, keepPath = false) => {
     setSelectedCustomer(c);
-    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    // W-1041: a customer made in the sale holds the form default, not the path the clerk chose: keep the clerk's.
+    if (!keepPath && fulfillPath !== "PICKUP")
+      setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setCustomerListOpen(true);
     customerUndo.dismiss();
   };
+  // W-1041: a pickup (POS) order needs no address; a delivery or shipped one does.
+  const newCustomerDoor = useNewCustomerDoor<SelectedCustomer>(
+    (c) => pickCustomer(c, true),
+    !isPickup,
+  );
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
@@ -1199,9 +1220,9 @@ export function CreateOrderModal({
   const createProductRowIndex = productNavRows.length;
   productNavRows.push({ kind: "create" });
   const openCreateProduct = () => {
-    const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-    setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-    setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
+    const prefill = newProductPrefill(debouncedProductSearch);
+    setCreateProductInitialName(prefill.name);
+    setCreateProductInitialSku(prefill.sku);
     setCreateProductOpen(true);
     setProductSearch("");
     setDebouncedProductSearch("");
@@ -1610,7 +1631,7 @@ export function CreateOrderModal({
       customerListOpen &&
       !selectedCustomer &&
       customerSearch &&
-      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+      (filteredCustomers.length > 0 || customersAnswered)
     ) {
       event.preventDefault();
       setCustomerListOpen(false);
@@ -1668,7 +1689,7 @@ export function CreateOrderModal({
   // Fill the builder from a draft payload (a docked server draft, a local copy, or the other device's version after a conflict).
   // Returns the payload exactly as the builder will re-serialize it, so the engine's baseline matches and hydrating itself writes nothing.
   const hydrateFromPayload = (p: DraftPayloadWithFulfillPath): DraftPayload => {
-    const pick = staffFulfilment.pickForm(p.fulfillPath);
+    const pick = pickPath(p.fulfillPath);
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
@@ -1982,7 +2003,9 @@ export function CreateOrderModal({
       items: itemsForSubmit,
       notes: data.notes,
       urgent: posMode ? false : data.urgent,
-      fulfillPath: posMode ? "PICKUP" : staffFulfilment.pickForm(data.fulfillPath),
+      fulfillPath: isPickup
+        ? "PICKUP"
+        : staffFulfilment.pickForm(data.fulfillPath === "PICKUP" ? undefined : data.fulfillPath),
       // POS mode: the delivery-only fields step aside (their values are kept, so switching POS off restores them).
       requestedDeliveryDate: posMode ? undefined : requestedDeliveryDate || undefined,
       orderDate: orderDate || undefined,
@@ -2673,10 +2696,11 @@ export function CreateOrderModal({
                     setCustomerError("");
                   }}
                   results={filteredCustomers as SelectedCustomer[]}
-                  searched={debouncedCustomerSearch.length > 0}
+                  searched={customersAnswered}
                   listOpen={customerListOpen}
                   onListOpenChange={setCustomerListOpen}
                   onPick={pickCustomer}
+                  onCreateNew={newCustomerDoor.open}
                   error={customerError}
                 />
                 {customerUndo.previous && (
@@ -3234,7 +3258,7 @@ export function CreateOrderModal({
               </div>
             )}
 
-            {staffFulfilment.choice && !posMode && (
+            {(staffFulfilment.choice || storePickupOffered) && !posMode && (
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
                 <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
@@ -3251,6 +3275,20 @@ export function CreateOrderModal({
                       {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
                     </button>
                   ))}
+                  {storePickupOffered && (
+                    <button
+                      type="button"
+                      onClick={() => setValue("fulfillPath", "PICKUP")}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === "PICKUP"
+                          ? "bg-navy text-white"
+                          : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      Store pickup
+                    </button>
+                  )}
                 </div>
                 {fulfillPath === "SHIP" && (
                   <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
@@ -3287,6 +3325,8 @@ export function CreateOrderModal({
           </section>
         </div>
       </form>
+      {/* Outside the form: a submit inside the customer window must not bubble into the order's. */}
+      {newCustomerDoor.modal}
 
       <InlineCreateProductModal
         isOpen={createProductOpen}

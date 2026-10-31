@@ -14,6 +14,10 @@ export type CustomerPriceHistory = Record<string, { lastPrice: number; listPrice
  *
  * Tenant scoping comes from the caller's `forTenant()` client. PROMO lines are excluded (a promotion's net price is
  * transient); B606: unit-aware lines (`unitLabel` set) are excluded (a Case price is per-case money).
+ *
+ * SA-1068: a walk-in has no remembered price. Every counter walk-in sale shares ONE customer record, so one clerk's
+ * above-list one-off would reach strangers. `Customer.isWalkIn` is `Boolean?` and most customers hold null, so the
+ * filter keeps null AND false; a plain `isWalkIn: false` (or `{ not: true }`) would drop every null customer's memory.
  */
 export async function loadCustomerPriceHistory(
   db: PriceHistoryDb,
@@ -23,6 +27,7 @@ export async function loadCustomerPriceHistory(
     where: {
       order: {
         customerId,
+        customer: { OR: [{ isWalkIn: null }, { isWalkIn: false }] },
         status: { notIn: [OrderStatus.CANCELLED] },
       },
       originalPrice: { not: null },

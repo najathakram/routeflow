@@ -114,6 +114,19 @@ describe("ReceiptService.send (POST /orders/:id/receipt)", () => {
     });
   });
 
+  describe("SA-1067 C-7: the order of the lines", () => {
+    it("reads the lines by position, then createdAt, then id (null positions last on ASC)", async () => {
+      const { prisma, send } = setup({});
+      await send();
+      const select = prisma.order.findFirst.mock.calls[0][0].select;
+      expect(select.lineItems.orderBy).toEqual([
+        { position: "asc" },
+        { createdAt: "asc" },
+        { id: "asc" },
+      ]);
+    });
+  });
+
   describe("tenant isolation", () => {
     it("reads the order scoped to the caller's tenant", async () => {
       const { prisma, send } = setup({});

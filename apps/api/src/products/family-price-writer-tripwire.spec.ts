@@ -32,6 +32,10 @@ const EXEMPT: Record<string, string> = {
     "Test-only seeding fixture of the B284 order-stock DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Product, Customer and User rows in `qa-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "inventory/testing/count-db-harness.ts":
     "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
+  "inventory/testing/sa802-world.ts":
+    "Test-only seeding fixture of the SA-802 / SA-828 DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Tenant, User and Product rows in `qa-sa802-*` tenants (assertTestTenant), never a governed variant or recipe row and never a live tenant.",
+  "orders/testing/units-fold-db-harness.ts":
+    "Test-only seeding fixture of the D3 units-fold DB specs (orders/testing, imported only by *.db.spec.ts): seedFoldTenant creates throwaway standalone Product rows (pricePerUnit and the tier columns) in `qa-ufold-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "products/product-families.service.ts":
     "WS8 families: createFamily mints brand-new rows and, by plan, ignores the mixed_packs mode (the variant price is the " +
     "caller's unless copyFamilyPrice is set); updateVariants refuses a price EDIT 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on, " +
@@ -214,12 +218,17 @@ export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }
     reason:
       "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
   },
+  "inventory/testing/sa802-world.ts": {
+    count: 1,
+    reason:
+      "Test-only seeding fixture of the SA-802 / SA-828 DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Tenant, User and Product rows in `qa-sa802-*` tenants (assertTestTenant), never a governed variant or recipe row and never a live tenant.",
+  },
   "inventory/inventory.service.ts": {
-    count: 3,
+    count: 1,
     reason:
       "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
-      "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
-      "cost-basis write with a ternary `data` names only cost columns.",
+      "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off (the " +
+      "cost-basis write moved to inventory/stock-movements.ts, SA-927).",
   },
   "products/product-families.service.ts": {
     count: 3,

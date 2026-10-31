@@ -31,7 +31,7 @@ import { useOrders, type Order } from "@/lib/api/orders";
 import { useShipSlotReserve } from "@/lib/ship-caps-hint";
 import { getTenantCookie } from "@/lib/tenant-cookie";
 import { useTenantFeatures } from "@/lib/tenant-features";
-import { useShippedWeekFrom } from "@/lib/tenant-timezone";
+import { TIME_ZONE_SETTINGS_HREF, isZoneUnset, useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
@@ -43,7 +43,7 @@ import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusB
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { quickCreateRule } from "@/lib/counter-sale";
-import { ORDER_STATUS_VALUES, staffMay } from "@routeflow/types";
+import { ORDER_STATUS_VALUES, lowStockThreshold, staffMay } from "@routeflow/types";
 import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
@@ -485,7 +485,8 @@ interface Product {
   name: string;
   /** PIECES (system-wide stock unit) — label via `unitsLabel`, never next to `unit`. */
   currentStock?: number | null;
-  lowStockThreshold?: number | null;
+  /** The product's reorder point (the list sends it): the low-stock threshold is `lowStockThreshold(reorderPoint)`. */
+  reorderPoint?: number | null;
   unit?: string;
   unitsPerBox?: number | null;
 }
@@ -560,8 +561,11 @@ function LowStockPanel({
           {products.map((p) => {
             const stockUnset = p.currentStock == null;
             const qty = p.currentStock ?? 0;
-            const threshold = p.lowStockThreshold ?? 5;
-            const pct = stockUnset ? 0 : Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
+            const threshold = lowStockThreshold(p.reorderPoint);
+            const pct =
+              stockUnset || threshold <= 0
+                ? 0
+                : Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
             return (
               <li key={p.id} className="px-5 py-3">
                 <p className="truncate text-sm font-semibold text-navy">{p.name}</p>
@@ -892,6 +896,8 @@ export default function DashboardPage() {
 
   const ownerName = settingsData?.ownerName;
   const businessName = settingsData?.businessName;
+  // SA-1067 Z4: only the tenant admin can change the zone, so only they are asked.
+  const askForTimeZone = user?.role === "TENANT_ADMIN" && isZoneUnset(settingsData?.timezone);
 
   // PHASE 1a: the redirect effect above fires once driverHasRunsAccess is
   // known true — render nothing rather than a frame of operator dashboard
@@ -922,6 +928,22 @@ export default function DashboardPage() {
             nothing assigned to you here. Ask your admin to turn on Routes.
           </p>
         </Card>
+      )}
+
+      {/* ── Time zone never picked (SA-1067 Z4) ── */}
+      {askForTimeZone && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-navy"
+        >
+          <p>
+            Set your business time zone. Until then, invoices and reports use UTC, so evening sales
+            can show tomorrow&apos;s date.
+          </p>
+          <Link href={TIME_ZONE_SETTINGS_HREF} className="font-medium text-brand-700 underline">
+            Set time zone
+          </Link>
+        </div>
       )}
 
       {/* ── Mode switcher (dual-role users only) ── */}

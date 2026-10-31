@@ -16,6 +16,8 @@ import { RouteOptimizationService } from "./route-optimization.service";
 import { RouteAnalysisService } from "./route-analysis.service";
 import { ApplyRouteVariantDto } from "./dto/apply-route-variant.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("DISPATCH")
 @ApiTags("route-runs")
 @ApiBearerAuth()
 // Owner decision 2026-08-28: optimize/analyze are SHARED between the two delivery features — an
@@ -61,6 +63,7 @@ export class RouteOptimizationController {
   }
 }
 
+@RequirePermission("DISPATCH")
 @ApiTags("routes")
 @ApiBearerAuth()
 // Same either-gate as RouteOptimizationController above — see the rationale comment there.

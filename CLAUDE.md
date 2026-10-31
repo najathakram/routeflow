@@ -7,7 +7,7 @@ Multi-tenant delivery / route-management SaaS. **npm + Turbo monorepo**: NestJS 
 
 ## Tech Stack
 
-- npm workspaces (`apps/*`, `packages/*`) + **Turbo**; npm 10.8, Node >= 18 (CI 20).
+- npm workspaces (`apps/*`, `packages/*`) + **Turbo**; npm 11.9, Node >= 18 (CI 24).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + Postgres, Redis (Socket.io), Passport JWT. Jest `*.spec.ts`.
 - **Web** (`apps/web`): Next.js 15.5 / React 19 App Router, golden reference for flows/DTOs. Radix + Tailwind, TanStack Query, RHF + zod. Jest+RTL `*.test.tsx`, Playwright `e2e/*.spec.ts`.
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role. Jest pure-logic `__tests__/*.test.ts`.
@@ -90,7 +90,7 @@ Vitest, Biome, Supabase, Vercel, a second HTTP client, a root-level test runner 
 1. Schema change: fresh backup, then `prod-migrate.mjs` first.
 2. Start `scripts/visibility-watchdog.mjs` detached FIRST (45 min), then `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`.
 3. Push, CI green, squash-merge to master (Railway auto-deploys); open the docs-only bookkeeping PR in the same window.
-4. Wait until BOTH deployments are `SUCCESS` (never flip on `BUILDING`), then flip private in a `finally` and confirm `PRIVATE`.
+4. Wait until every service status on the merge commit (api, web, mobile, root) is `SUCCESS` (never flip on `BUILDING`), then flip private in a `finally` and confirm `PRIVATE`.
 5. Watch deploy, then `npm run post-deploy-check` (E2E self-fires; do not dispatch).
 
 Never `railway up` an unmerged branch. "Snapshot code -> repository not found": stay public until deploy finishes or `railway up --service @routeflow/api --ci` then `@routeflow/web`. Full: `docs/runbooks/deploy-visibility-flip.md`.

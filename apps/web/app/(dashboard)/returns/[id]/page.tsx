@@ -22,7 +22,8 @@ import { undoAmendedPeriodNote } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
 import { TENDER_OPTIONS } from "../_components/refund-copy";
 import { RefundSlipAction } from "../_components/RefundSlipAction";
-import { refundErrorMessage } from "@/lib/credit-note-error-copy";
+import { RETURN_MIXED_UNIT_PRODUCT_COPY, refundErrorMessage } from "@/lib/credit-note-error-copy";
+import { orderedItemQtyText, returnedItemQtyText } from "@/lib/return-line-qty";
 import {
   useReturn,
   useApproveReturn,
@@ -96,6 +97,8 @@ const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
   NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
   NOTHING_BILLED:
     "None of the returned items were billed on this order, so there is nothing to refund.",
+  // B976 (SA-1042): a product sold in different units has no single price; the same words the refund toast uses (one source).
+  UNIT_UNRESOLVED: RETURN_MIXED_UNIT_PRODUCT_COPY,
 };
 
 function refundEstimateReasonText(reason: string): string {
@@ -748,11 +751,12 @@ export default function ReturnDetailPage() {
                     <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
                       Product
                     </th>
-                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
-                      Ordered Qty
-                    </th>
+                    {/* Return Qty first: at phone width it is the column on screen without a swipe. */}
                     <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
                       Return Qty
+                    </th>
+                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
+                      Ordered Qty
                     </th>
                     <th className="px-4 py-2.5 text-left text-xs font-medium text-navy/70">
                       Condition / Notes
@@ -765,8 +769,12 @@ export default function ReturnDetailPage() {
                       <td className="px-6 py-3 font-medium text-navy">
                         {item.product?.name ?? item.productId}
                       </td>
-                      <td className="px-4 py-3 text-center text-navy/70">{item.orderedQty}</td>
-                      <td className="px-4 py-3 text-center font-semibold text-navy">{item.qty}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-center font-semibold text-navy">
+                        {returnedItemQtyText(item)}
+                      </td>
+                      <td className="px-4 py-3 text-center text-navy/70">
+                        {item.line ? orderedItemQtyText(item.line) : `${item.orderedQty} pcs`}
+                      </td>
                       <td className="px-4 py-3 text-navy/70">
                         {item.condition && (
                           <span className="mr-2 inline-flex items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-navy">

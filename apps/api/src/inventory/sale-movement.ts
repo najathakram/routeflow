@@ -1,16 +1,15 @@
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { costDecimal } from "./costing";
 import { pairedReceiptIds } from "./bill-revert";
+import type { StockMovementRow } from "./stock-movements";
 
 /**
- * B562 PR-2 (SA-136 §2): the ONE SALE-side StockMovement writer. Extracted from
+ * B562 PR-2 (SA-136 §2): the ONE SALE-side StockMovement row builder. Extracted from
  * `InventoryService.recordSale` so the order stock paths (orders/order-stock.ts) and the inventory
  * service book a sale through the same cost resolver — never a second one.
  *
- * Invariant (SA-136 §1): every write to `Product.currentStock` appends exactly one StockMovement for
- * that product in the same transaction, carrying the signed quantity that moved the counter and
- * `stockAfter` = the counter after the write. Callers therefore write the row AFTER the counter update
- * and pass the counter the update RETURNED — never a pre-read.
+ * SA-927: the row goes through `applyStockMovements` (stock-movements.ts), which moves the counter and
+ * stamps stockAfter; this file only builds the row and resolves its cost.
  */
 
 export interface SaleCost {
@@ -74,10 +73,8 @@ export async function resolveSaleCost(
 
 export interface SaleMovementInput {
   productId: string;
-  /** Signed pieces that moved the counter: negative = out (a sale), positive = back (a reversal). */
+  /** Signed pieces: negative = out (a sale), positive = back (a reversal). */
   quantity: Prisma.Decimal | number;
-  /** The counter AFTER the write that moved it — read from that write's own result. */
-  stockAfter: Prisma.Decimal | number;
   /** `ORDER:<orderId>` for order paths. */
   reference: string | null;
   /** The stock event: CREATE | EDIT | CANCEL | UNCANCEL | PROMOTE | DEMOTE | TEMPLATE:<id>. */
@@ -88,30 +85,25 @@ export interface SaleMovementInput {
 }
 
 /**
- * Append the SALE row for one product's stock event. A zero quantity writes nothing (a row that moved
- * no stock would break "one row per write"). Does NOT touch `currentStock` or the lots: the caller has
- * already moved the counter, and lot consumption for order sales is out of PR-2's scope (SA-149 D-11).
+ * The SALE row for one product's stock event, for `applyStockMovements` (SA-927 §1: the helper moves the
+ * counter and stamps stockAfter). A zero quantity gives null (no row). Call it inside the helper's plan
+ * function, so the cost is resolved under the product lock. Sales never move the average ("keep").
  */
-export async function recordSaleMovement(
+export async function saleMovementRow(
   tx: Prisma.TransactionClient,
   input: SaleMovementInput,
-): Promise<{ id: string } | null> {
+): Promise<StockMovementRow | null> {
   const quantity = new Prisma.Decimal(input.quantity);
   if (quantity.isZero()) return null;
   const cost = input.cost ?? (await resolveSaleCost(tx, input.productId, quantity.abs()));
-  return tx.stockMovement.create({
-    data: {
-      productId: input.productId,
-      type: MovementType.SALE,
-      quantity,
-      unitCost: cost.unitCost,
-      // Sales never move the average — the snapshot carries it forward.
-      avgCostAfter: cost.avgCost,
-      stockAfter: new Prisma.Decimal(input.stockAfter),
-      reference: input.reference,
-      notes: input.notes ?? null,
-      performedById: input.performedById,
-    },
-    select: { id: true },
-  });
+  return {
+    productId: input.productId,
+    type: MovementType.SALE,
+    quantity,
+    unitCost: cost.unitCost,
+    average: "keep",
+    reference: input.reference,
+    notes: input.notes ?? null,
+    performedById: input.performedById,
+  };
 }

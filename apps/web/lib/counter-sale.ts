@@ -5,9 +5,11 @@ import {
   type ChargeLine,
   validCustomer,
   validLine,
-  type CategoryTaxType,
 } from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
+import { saleLinesOf, type CartCategory, type CartLine } from "./sale-lines";
+
+export type { CartCategory, CartLine };
 import {
   SALE_ORDER_EXISTS_CODES as ORDER_EXISTS_CODES,
   isDefinitiveSaleRefusal,
@@ -117,26 +119,6 @@ export function preselectFulfilment(
   return cap.staffDefault;
 }
 
-export interface CartLine {
-  unitPrice: number;
-  qty: number;
-  boxes?: number | null;
-  pieces?: number | null;
-  unitsPerBox?: number | null;
-  /** The product's regulated category (levy), snapshotted when the line was added. */
-  trackedCategoryId?: string | null;
-}
-
-/** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
-export interface CartCategory {
-  id?: string;
-  /** the category's name: the levy prints as its own named charge ("CRV deposit") */
-  name?: string;
-  taxType: string;
-  rate: string | number;
-  priceIncludesTax?: boolean | null;
-}
-
 export interface CartTotalsContext {
   /** Tax-exempt customer: $0 of BOTH the sales tax and the levy (RF-079 / RF-4), as on the order and invoice. */
   isTaxExempt?: boolean;
@@ -162,28 +144,10 @@ export function cartTotals(
   /** the levy as named charges, one per regulated category (CQ-08) */
   chargeLines: ChargeLine[];
 } {
-  const t = saleTotals(
-    lines.map((l) => {
-      const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
-      return {
-        unitPrice: l.unitPrice,
-        qty: l.qty,
-        boxes: l.boxes ?? undefined,
-        pieces: l.pieces ?? undefined,
-        unitsPerBox: l.unitsPerBox ?? undefined,
-        category: c
-          ? {
-              id: c.id ?? l.trackedCategoryId,
-              name: c.name,
-              taxType: c.taxType as CategoryTaxType,
-              rate: Number(c.rate),
-              priceIncludesTax: c.priceIncludesTax ?? false,
-            }
-          : null,
-      };
-    }),
-    { taxRate, isTaxExempt: ctx.isTaxExempt === true },
-  );
+  const t = saleTotals(saleLinesOf(lines, ctx.categories), {
+    taxRate,
+    isTaxExempt: ctx.isTaxExempt === true,
+  });
   return {
     subtotal: t.subtotal,
     tax: t.regularTax,
@@ -216,6 +180,17 @@ export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
 }
 
+/**
+ * SA-1067 M2b: the largest US bill. A real tender is within one bill of the sale, so a tender this far over it is far more
+ * likely a scanner's code than money; Enter on it arms and a second Enter completes.
+ */
+export const TENDER_ARM_OVER = 100;
+
+/** True when Enter alone must not complete the sale: the tender is `TENDER_ARM_OVER` or more over what's due. */
+export function tenderNeedsSecondEnter(total: number, tendered: number): boolean {
+  return roundMoney(tendered - total) >= TENDER_ARM_OVER;
+}
+
 /** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
 export function amountDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(total - tendered));
@@ -246,6 +221,10 @@ export function paymentMethodOptions(
   return at > 0 ? [all[at], ...all.slice(0, at), ...all.slice(at + 1)] : all;
 }
 
+/** Mirrors the API DTO: a payment amount is at most 1,000,000 and a reference at most 100 characters. */
+export const COUNTER_MAX_TENDER = 1_000_000;
+export const COUNTER_MAX_REFERENCE_LENGTH = 100;
+
 /** SA-1026 A: the one choice inside the Check tender for a named customer whose check is not in hand. */
 export const CHECK_NOT_RECEIVED_LABEL = "Check not received yet";
 
@@ -264,7 +243,12 @@ export function resolveTender(
     : { method };
 }
 
-export type PaymentProblem = "TENDER_SHORT" | "CHECK_NUMBER_REQUIRED" | "WALK_IN_ON_ACCOUNT";
+export type PaymentProblem =
+  | "TENDER_SHORT"
+  | "TENDER_TOO_LARGE"
+  | "CHECK_NUMBER_REQUIRED"
+  | "CHECK_NUMBER_TOO_LONG"
+  | "WALK_IN_ON_ACCOUNT";
 
 export function validatePayment(input: {
   method: CounterSalePaymentMethod;
@@ -282,7 +266,14 @@ export function validatePayment(input: {
     if (input.isWalkIn || input.fullTenderOnly || !(roundMoney(Number(input.tendered ?? 0)) > 0))
       return "TENDER_SHORT";
   }
+  if (input.method === "CASH" && Number(input.tendered) > COUNTER_MAX_TENDER)
+    return "TENDER_TOO_LARGE";
   if (input.method === "CHECK" && !(input.reference ?? "").trim()) return "CHECK_NUMBER_REQUIRED";
+  if (
+    input.method === "CHECK" &&
+    (input.reference ?? "").trim().length > COUNTER_MAX_REFERENCE_LENGTH
+  )
+    return "CHECK_NUMBER_TOO_LONG";
   return null;
 }
 
@@ -296,7 +287,9 @@ export const isTenderShortCopy = (text: string): boolean => text.startsWith(TEND
 export const PAYMENT_PROBLEM_COPY: Record<PaymentProblem, string> = {
   /** the amount-less fallback; callers that know the total use `paymentProblemCopy` */
   TENDER_SHORT: `${TENDER_SHORT_PREFIX} the full total.`,
+  TENDER_TOO_LARGE: "The most you can take in one payment is $1,000,000. Enter a smaller amount.",
   CHECK_NUMBER_REQUIRED: "Enter the check number.",
+  CHECK_NUMBER_TOO_LONG: "A check number can be at most 100 characters. Shorten it.",
   WALK_IN_ON_ACCOUNT:
     "A walk-in customer can't be charged on account. Pick a customer or another payment method.",
 };
@@ -728,6 +721,26 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  // W-778: the Complete-at-counter refusals are the dialog's own copy too (one message per refusal, never also the generic 409 toast)
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+]);
+/**
+ * W-778: refusals no retry from this dialog can fix (nothing was written). The dialog shows only Close (or Reload) and locks
+ * the tender controls, so nothing looks ready to retry. COUNTER_COMPLETE_ON_RUN is not here: the clerk can confirm it.
+ */
+export const COMPLETE_HARD_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
 ]);
 /** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
 const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([

@@ -9,8 +9,9 @@ import type { SaleLine } from "./counter-sale-scan";
 /**
  * POS-2 (DISPLAY ONLY): re-prices the counter cart's lines for the customer now on the sale, the way Create Order prices a
  * line for a customer: the tier is the customer's per-product CustomerPrice tier, else their default tier, and the price is
- * `getTierPrice` of the line's tier-column snapshot at that tier. The sale request never carries these prices (the server
- * prices at create from the same rule), so nothing here can record a staff price override.
+ * `getTierPrice` of the line's tier-column snapshot at that tier. The display reads the server's rule (tier, the customer's
+ * layer, their remembered price) and the sale request carries no price for an unedited line, so nothing here can record a
+ * staff price override.
  *
  * A line edited by PERCENT or DOLLARS OFF (R17-3) has that same edit re-applied to the new customer's price; a line the
  * clerk priced by hand (`priceEdited`, mode "set") keeps its NET price as typed (so does an edit the new customer cannot
@@ -18,6 +19,9 @@ import type { SaleLine } from "./counter-sale-scan";
  * cent) is no override and the line becomes a plain line again. A line without a snapshot (held before this existed) is left
  * alone. `kept` counts the edited lines whose tier price the customer WOULD have changed; an edited line whose net
  * stands and only whose STANDARD/SPECIAL flag moved is updated silently and is NOT counted as kept.
+ *
+ * SA-1068: `rememberedOf` is the customer's remembered price (a sticky upsell, above list): the server books it, so the display
+ * shows it (`customerLinePrice` decides; a layer row beats it). The request still carries no price for an unedited line.
  *
  * S19b (SA-811a): `layerOf` (flag on, the customer's price layer) puts a layered product on the customer's price through
  * `customerLinePrice`; with no layer for a product (flag off: `layerOf` omitted) the price is master's `getTierPrice`.
@@ -34,6 +38,8 @@ export function repriceLines(
   lines: readonly SaleLine[],
   tierFor: (productId: string) => number,
   layerOf?: (productId: string) => readonly CustomerLayerUnit[] | undefined,
+  /** SA-1068: the customer's remembered price for a product (the server's sticky upsell); omitted = none. */
+  rememberedOf?: (productId: string) => number | null | undefined,
 ): RepriceResult {
   let changed = 0;
   let kept = 0;
@@ -46,9 +52,10 @@ export function repriceLines(
       product: l.tierPrices as Record<string, unknown>,
       tier,
       layer: layerOf?.(l.productId),
+      remembered: rememberedOf?.(l.productId),
     });
     const unitPrice = lp.price;
-    const priceType = lp.isSpecial ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = lp.priceType;
     if (l.override) {
       // R17-3: a percent or dollars-off edit is RE-APPLIED to the new customer's price; a hand-typed price (mode "set"),
       // or an edit this customer cannot take (over their price, a special tier with no reason), keeps its net.
@@ -123,12 +130,18 @@ export function repriceLines(
       product: l.tierPrices as Record<string, unknown>,
       tier: tierFor(l.productId),
       layer: layerOf?.(l.productId),
+      remembered: rememberedOf?.(l.productId),
     });
     const want = lp.layered ? lp.isSpecial : undefined;
-    if (l.special === want) return l;
+    const wantRemembered = lp.remembered;
+    if (l.special === want && l.remembered === wantRemembered) return l;
     flagMoved = true;
-    const { special: _s, ...rest } = l;
-    return want === undefined ? rest : { ...rest, special: want };
+    const { special: _s, remembered: _r, ...rest } = l;
+    return {
+      ...rest,
+      ...(want === undefined ? {} : { special: want }),
+      ...(wantRemembered ? { remembered: wantRemembered } : {}),
+    };
   });
   return {
     lines: changed || kept || touched || flagMoved ? flagged : (lines as SaleLine[]),

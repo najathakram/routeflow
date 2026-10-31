@@ -7,6 +7,7 @@ import { parseScanField } from "@/lib/counter-sale";
 import { formatMoney } from "@/lib/format";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
+import { WriteButton } from "@/lib/read-only-gate";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 
 /** The same wait Create Order's product search uses before it asks the server. */
@@ -68,18 +69,21 @@ export function useCounterLiveMatches({ text, enabled, onPick }: Options) {
     resetKey: `${term}|${debounced}`,
     idPrefix: "counter-match",
   });
-  return { rows, open, empty, nav };
+  return { rows, open, empty, nav, term };
 }
 
 /** The list under the scan field. Renders nothing while closed. */
 export function CounterLiveMatches({
   live,
   onPick,
+  onCreate,
 }: {
   live: ReturnType<typeof useCounterLiveMatches>;
   onPick: (product: any) => void;
+  /** W-1042: the typed text, offered as a new item. Absent when the clerk may not create one. */
+  onCreate?: (text: string) => void;
 }) {
-  const { rows, open, empty, nav } = live;
+  const { rows, open, empty, nav, term } = live;
   const listRef = React.useRef<HTMLUListElement>(null);
   // On a phone the fixed payment bar covers the lower third: bring the list to the middle of the visible page.
   React.useEffect(() => {
@@ -87,12 +91,22 @@ export function CounterLiveMatches({
   }, [open]);
   if (empty) {
     return (
-      <p
-        role="status"
-        className="rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy/70 shadow-dropdown"
-      >
-        No items match.
-      </p>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white px-3 py-2 shadow-dropdown">
+        <p role="status" className="text-sm text-navy/70">
+          No items match.
+        </p>
+        {onCreate ? (
+          <WriteButton
+            className="min-h-[44px]"
+            variant="secondary"
+            // mousedown keeps the focus in the scan field, as the rows above do
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onCreate(term)}
+          >
+            {`Create "${term}"`}
+          </WriteButton>
+        ) : null}
+      </div>
     );
   }
   if (!open) return null;

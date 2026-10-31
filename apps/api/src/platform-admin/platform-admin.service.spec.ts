@@ -5497,6 +5497,32 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(tenantMirror.upsert).toHaveBeenCalledTimes(1);
       expect(tenantMirror.upsert).toHaveBeenCalledWith(TENANT_ID);
     });
+
+    // SA-1067 Z2: a row-less tenant's first config save must not store the column default (New York) as if chosen.
+    describe("SA-1067 Z-5/Z-6: the zone of a config row created by this save", () => {
+      const seen = async (dto: Record<string, unknown>) => {
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          status: "ACTIVE",
+          plan: "STARTER",
+          subscription: null,
+        } as any);
+        await service.updateTenantConfig(TENANT_ID, dto as any, ADMIN_ID);
+        return (prisma.tenantConfig.upsert as jest.Mock).mock.calls[0][0];
+      };
+
+      it("Z-5: no zone in the dto creates the row on UTC, and the update never touches the zone", async () => {
+        const call = await seen({ city: "Austin" });
+        expect(call.create).toMatchObject({ tenantId: TENANT_ID, timezone: "UTC", city: "Austin" });
+        expect(call.update).toEqual({ city: "Austin" });
+      });
+
+      it("Z-6: a real zone in the dto wins over the fallback", async () => {
+        const call = await seen({ city: "Austin", timezone: "America/Chicago" });
+        expect(call.create.timezone).toBe("America/Chicago");
+      });
+    });
   });
 
   describe("updateTenantClass", () => {

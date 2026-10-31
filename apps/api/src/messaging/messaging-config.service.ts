@@ -52,7 +52,8 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   // NOTIFICATION_TRIGGERS) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
-  // SA-603c: no firing site yet — exhaustiveness only (absent from NOTIFICATION_TRIGGERS).
+  // SA-603c / SA-1063: sent by StaffOrderEmailService from the customer order routes, switched by the policy
+  // notifications.staffOrderEmail; not rule-matrix triggers (absent from NOTIFICATION_TRIGGERS) — this entry keeps the Record exhaustive.
   [NotificationEvent.STAFF_NEW_ORDER]: [INTERNAL],
   [NotificationEvent.BUYER_ORDER_EDITED]: [INTERNAL],
   [NotificationEvent.BUYER_ORDER_CANCELLED]: [INTERNAL],
@@ -136,7 +137,7 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
     label: "Check returned",
     body: "A check payment from {{customerName}} for {{amount}} was returned ({{reason}}) on invoice {{invoiceNumber}}.",
   },
-  // SA-603c: exhaustiveness-only templates; no firing site yet.
+  // SA-603c / SA-1063: exhaustiveness-only templates (the emails are sent by StaffOrderEmailService, not by a rule).
   [NotificationEvent.STAFF_NEW_ORDER]: {
     label: "New order (staff)",
     body: "New order {{orderNumber}} from {{customerName}}.",

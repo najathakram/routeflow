@@ -44,6 +44,8 @@ import { ListCustomersDto } from "./dto/list-customers.dto";
 import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
 import { CreateAdvancePaymentDto, ApplyAdvancePaymentDto } from "./dto/advance-payment.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+@RequirePermission("CUSTOMERS")
 @ApiTags("customers")
 @ApiBearerAuth()
 @Controller("customers")
@@ -55,6 +57,7 @@ export class CustomersController {
     private readonly statementPdfService: StatementPdfService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR)
   findAll(@Query() query: ListCustomersDto) {
@@ -80,6 +83,7 @@ export class CustomersController {
     res.send(csv);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("tags")
   @Roles(UserRole.OPERATOR)
   listTags() {
@@ -164,6 +168,7 @@ export class CustomersController {
 
   // ─── :id param routes ─────────────────────────────────────────────────────
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get(":id")
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
@@ -182,18 +187,21 @@ export class CustomersController {
     return this.customersService.changeStatus(id, dto);
   }
 
+  @RequirePermission("CUSTOMERS", "DISPATCH")
   @Get(":id/routes")
   @Roles(UserRole.OPERATOR)
   findRoutes(@Param("id") id: string) {
     return this.customersService.findRoutes(id);
   }
 
+  @RequirePermission("CUSTOMERS", "ORDERS")
   @Get(":id/orders")
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   findOrders(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOrders(id, user);
   }
 
+  @RequirePermission("FINANCE", "CUSTOMERS")
   @Get(":id/statement")
   @Roles(UserRole.OPERATOR)
   getStatement(@Param("id") id: string) {
@@ -205,12 +213,14 @@ export class CustomersController {
   // Operator twins of the buyer statement-PDF endpoints (P5-15) — same
   // services, tenant-scoped by customerId. Until now a downloadable customer
   // statement existed ONLY in the buyer portal.
+  @RequirePermission("FINANCE", "CUSTOMERS")
   @Get(":id/statements")
   @Roles(UserRole.OPERATOR)
   getStatementMonths(@Param("id") id: string) {
     return this.statementService.listAvailableMonths(id);
   }
 
+  @RequirePermission("FINANCE", "CUSTOMERS")
   @Get(":id/statements/:month")
   @Roles(UserRole.OPERATOR)
   async getStatementPdf(@Param("id") id: string, @Param("month") month: string) {
@@ -220,6 +230,7 @@ export class CustomersController {
     return { url };
   }
 
+  @RequirePermission("FINANCE")
   @Post(":id/advance-payments")
   @Roles(UserRole.OPERATOR)
   createAdvancePayment(
@@ -238,12 +249,14 @@ export class CustomersController {
     });
   }
 
+  @RequirePermission("FINANCE", "CUSTOMERS")
   @Get(":id/advance-payments")
   @Roles(UserRole.OPERATOR)
   getAdvancePayments(@Param("id") id: string) {
     return this.customersService.getAdvancePayments(id);
   }
 
+  @RequirePermission("FINANCE")
   @Post(":id/advance-payments/:apId/apply")
   @Roles(UserRole.OPERATOR)
   applyAdvancePayment(
@@ -254,6 +267,7 @@ export class CustomersController {
     return this.customersService.applyAdvancePaymentToInvoice(apId, dto, id);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   @UseGuards(PlanFlagGuard)
@@ -262,6 +276,7 @@ export class CustomersController {
     return this.customersService.getCustomerPrices(id);
   }
 
+  @RequirePermission("PRICING")
   @Post(":id/prices")
   @Roles(UserRole.OPERATOR)
   @UseGuards(PlanFlagGuard)
@@ -274,6 +289,7 @@ export class CustomersController {
     return this.customersService.upsertCustomerPrice(id, dto, user);
   }
 
+  @RequirePermission("PRICING")
   @Delete(":id/prices/:priceId")
   @Roles(UserRole.OPERATOR)
   @UseGuards(PlanFlagGuard)
@@ -320,6 +336,7 @@ export class CustomersController {
 
   // ─── Contact Persons ──────────────────────────────────────────────────────
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get(":id/contacts")
   @Roles(UserRole.OPERATOR)
   listContacts(@Param("id") id: string) {
@@ -370,6 +387,7 @@ export class CustomersController {
 
   // ─── Income Chart ─────────────────────────────────────────────────────────
 
+  @RequirePermission("FINANCE", "REPORTS")
   @Get(":id/income-chart")
   @Roles(UserRole.OPERATOR)
   getIncomeChart(@Param("id") id: string) {

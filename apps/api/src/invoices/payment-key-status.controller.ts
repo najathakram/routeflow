@@ -9,12 +9,14 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { requireIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import { PaymentKeyStatusService } from "./payment-key-status.service";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * SA-824: GET /invoices/payments/by-key/:key (read-only) and POST /invoices/payments/by-key/:key/resolve (the
  * "Check payment status" answer that closes the race: found, or a tombstone). Same roles as the payment
  * writers (OPERATOR, which admits TENANT_ADMIN), tenant-scoped. Two segments deep after `payments`, so
  * `GET payments/:paymentId` / `POST payments/:paymentId/image` can never take them.
  */
+@RequirePermission("FINANCE")
 @Controller("invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)

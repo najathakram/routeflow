@@ -15,6 +15,7 @@ import { AddonService } from "../billing/addon.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 const OPERATOR = {
   sub: "user-op-1",
@@ -66,6 +67,7 @@ describe("SA-740 §1: captureInTx source sale + locks", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     quote = { priceInlineReturn: jest.fn().mockResolvedValue(PRICED) };
     prisma.order.findFirst.mockResolvedValue({
       id: "ord-carrying",

@@ -1,3 +1,4 @@
+import type { CustomerLinePrice } from "@routeflow/pricing";
 import type { SaveDraftInput } from "@/lib/api/drafts";
 import { draftDeviceLabel, type DraftLineItem, type OrderDraftPayload } from "@/lib/drafts";
 
@@ -23,7 +24,7 @@ export interface CounterShipLine {
   /** Product snapshot taken when the line was added; lines held before it existed fall back (see the mapper). */
   listPrice?: number;
   unit?: string;
-  priceType?: "STANDARD" | "SPECIAL";
+  priceType?: CustomerLinePrice["priceType"];
   category?: string;
   /** POS-3 per-line note; rides onto the draft line's `note` (trimmed, omitted when empty). */
   note?: string;

@@ -35,11 +35,16 @@ export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
     reason:
       "Test-only seeding helper of the SA-767 count DB specs (inventory/testing, collected only by *.db.spec.ts): it createMany's throwaway Product rows (name, pricePerUnit, a variable data array) into `qa-sa767-*` tenants, never a governed variant or recipe row and never a live tenant.",
   },
-  "src/inventory/inventory.service.ts": {
-    count: 3,
+  "src/inventory/testing/sa802-world.ts": {
+    count: 1,
     reason:
-      "createVariantRowInTx spreads the family's five price columns and a cost-basis `data`; " +
-      "neither names familyPriceOverride (the flag has no writer in M2, SA-584a).",
+      "Test-only seeding fixture of the SA-802 / SA-828 DB specs (inventory/testing, imported only by *.db.spec.ts): it creates throwaway Tenant, User and Product rows in `qa-sa802-*` tenants (assertTestTenant), never a governed variant or recipe row and never a live tenant.",
+  },
+  "src/inventory/inventory.service.ts": {
+    count: 1,
+    reason:
+      "createVariantRowInTx spreads the family's five price columns (the cost-basis write moved to " +
+      "inventory/stock-movements.ts, SA-927); it never names familyPriceOverride (the flag has no writer in M2, SA-584a).",
   },
   "src/products/product-families.service.ts": {
     count: 3,

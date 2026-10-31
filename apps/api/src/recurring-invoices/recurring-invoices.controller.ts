@@ -22,9 +22,11 @@ import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
 import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 import { RunRecurringInvoiceDto } from "./dto/run-recurring-invoice.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // WP5a (R3b.3, R3b.5): flag.recurring_invoices ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
 // PLAN_FLAG_ENFORCEMENT switch flips on.
+@RequirePermission("FINANCE")
 @Controller("recurring-invoices")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
