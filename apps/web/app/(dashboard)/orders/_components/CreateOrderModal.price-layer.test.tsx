@@ -600,6 +600,18 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
         expect((await saved()).unitPrice).toBeUndefined();
       });
 
+      it("T54 guard: with no resume, a failed history read still lets the customer's prices land", async () => {
+        await addWidgetForCustomer().then(async (view) => {
+          await shows("45");
+          await switchTo("Dune Deli", undefined);
+          await shows("38");
+          customerPrices = { data: [{ productId: "prod-1", pricingTier: 3 }] };
+          rerenderModal(view);
+          await shows("36");
+        });
+        expect((await saved()).unitPrice).toBeUndefined();
+      });
+
       it("T43 guard: a price typed while the read is out stands when it lands", async () => {
         const view = await addWidgetForCustomer();
         await shows("45");

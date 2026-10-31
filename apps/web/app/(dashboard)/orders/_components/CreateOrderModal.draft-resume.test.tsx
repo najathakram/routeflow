@@ -24,9 +24,11 @@ jest.mock("@/lib/auth-context", () => {
 let mockCustomers: Array<Record<string, unknown>> = [];
 // The customer's remembered prices; the rows without a memory read an empty history.
 let mockHistory: Record<string, unknown> = { data: {} };
+// One reference across renders, as a settled query gives: a new array would re-run the customer effect on every render.
+const mockNoCustomerPrices = { data: [] };
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
-  useCustomerPrices: (customerId?: string) => ({ data: customerId ? [] : [] }),
+  useCustomerPrices: () => mockNoCustomerPrices,
   useCustomer: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/products", () => ({
@@ -98,9 +100,10 @@ jest.mock("@/components/BarcodeScannerButton", () => ({
 jest.mock("@/components/InlineCreateProductModal", () => ({
   InlineCreateProductModal: () => null,
 }));
+let mockScanV2 = false;
 jest.mock("@/lib/api/addons", () => ({
   ...jest.requireActual("@/lib/api/addons"),
-  useScanV2: () => false,
+  useScanV2: () => mockScanV2,
   useOrderUiV2: () => ({ enabled: false, resolved: true }),
 }));
 jest.mock("./scan/useContinuousScanCamera", () => ({
@@ -118,6 +121,28 @@ jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,
   useProductUnits: () => ({ data: undefined }),
 }));
+// A ready layer with no rows, so a line added re-runs the customer effect. Set before the modal mounts.
+let mockLayerOn = false;
+jest.mock("@/lib/api/useCustomerPriceLayer", () => {
+  const actual = jest.requireActual("@/lib/api/useCustomerPriceLayer");
+  const { priceLayerStatus } = jest.requireActual("@routeflow/pricing");
+  const on = {
+    ...priceLayerStatus({
+      enabled: true,
+      isPending: false,
+      isError: false,
+      data: { complete: true, products: {} },
+    }),
+    layerOf: () => undefined,
+    error: null,
+    refetch: jest.fn(),
+  };
+  return {
+    ...actual,
+    useCustomerPriceLayer: (customerId?: string) =>
+      mockLayerOn ? on : actual.useCustomerPriceLayer(customerId),
+  };
+});
 const mockResolveProductByCode = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolveProductByCode(code),
@@ -175,6 +200,8 @@ beforeEach(() => {
   mockLoadedDraft = undefined;
   mockProductNow = {};
   mockHistory = { data: {} };
+  mockScanV2 = false;
+  mockLayerOn = false;
   storage = createMemoryDraftStorage();
   setDraftMirrorStorage(storage);
   mockCreateDraft.mockImplementation(() => NEVER()); // the server is unreachable unless a test says otherwise
@@ -491,16 +518,45 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
         expect(bodyOf(0).items[0]).toMatchObject({ unitPrice: 8, overrideReason: "Damaged box" });
       });
 
-      // SA-1068 M27: the builder's own line at memory carries the link, so the draft comes from the modal, not the till.
+      // SA-1068 A-8: the builder's own line at memory carries the link and its tiers, so the draft comes from the modal, not
+      // the till. List $42, tier $38, memory $45. Nothing is sent on any row.
       describe("a line the builder parked, linked to its customer", () => {
-        const memory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: false };
+        const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 2 };
+        const columns = { pricePerUnit: "42", priceTier2: "38", priceTier3: "36" };
+        const read = (data?: Record<string, { lastPrice: number }>, isError = false) => ({
+          data,
+          isPending: false,
+          isError,
+        });
+        const failed = read(undefined, true);
+        const out = { data: undefined, isPending: true, isError: false };
+        const memory = read({ p1: { lastPrice: 45 } });
+        const memoryNow = read({ p1: { lastPrice: 50 } });
+        const shows = (price: string) => screen.findByText(`$${price}.00 / each`);
+        const note = (from: string, to: string) =>
+          waitFor(() =>
+            expect(screen.getByTestId("price-changed-note")).toHaveTextContent(
+              `Price changed since you started ($${from}.00 → $${to}.00)`,
+            ),
+          );
+        const noNote = () =>
+          expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+        const refresh = (view: { rerender: (ui: React.ReactElement) => void }) =>
+          view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        const sendsNoPrice = async () => {
+          post.mockResolvedValue({ data: { id: "o1" } });
+          fireEvent.click(createBtn());
+          await waitFor(() => expect(orderPosts()).toHaveLength(1));
+          expect(bodyOf(0).items[0]).not.toHaveProperty("unitPrice");
+        };
 
         async function parkLinkedLine() {
-          mockCustomers = [{ ...customer, pricingTier: 2 }];
+          mockCustomers = [{ ...customer, pricingTier: 2 }, custB];
           mockHistory = memory;
+          mockProductNow = { p1: { id: "p1", ...columns } };
           mockResolveProductByCode.mockResolvedValue({
             ...product("p1"),
-            product: { ...product("p1").product, pricePerUnit: "12", priceTier2: "10" },
+            product: { ...product("p1").product, ...columns },
           });
           const first = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
           fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
@@ -511,41 +567,178 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
           await screen.findByText("Widget p1");
           await waitForLocalCopy();
           const [rec] = await localRecords();
-          expect((rec.payload as { lineItems: unknown[] }).lineItems[0]).toMatchObject({
+          const parkedLine = (rec.payload as unknown as { lineItems: Record<string, unknown>[] })
+            .lineItems[0];
+          expect(parkedLine).toMatchObject({
             prefillCustomerId: "c1",
-            unitPrice: 15,
+            unitPrice: 45,
             priceType: "MANUAL",
           });
+          expect(parkedLine.tierPrices).toBeDefined();
           first.unmount();
+          return rec.payload as unknown as { lineItems: Record<string, unknown>[] };
         }
 
-        it("T17: a failed history read keeps the line as parked, and it still sends no price", async () => {
+        it("T46: a failed history read keeps the line as parked, and it still sends no price", async () => {
           await parkLinkedLine();
-          mockHistory = { data: undefined, isPending: false, isError: true };
-          post.mockResolvedValue({ data: { id: "o1" } });
+          mockHistory = failed;
           await resume();
           expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
-          expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
-
-          fireEvent.click(createBtn());
-          await waitFor(() => expect(orderPosts()).toHaveLength(1));
-          expect(bodyOf(0).items[0]).not.toHaveProperty("unitPrice");
+          expect(await shows("45")).toBeInTheDocument();
+          await sendsNoPrice();
         });
 
-        it("M14: the line waits at its parked price for the history read", async () => {
+        it("T47: the line waits at its parked price for the history read", async () => {
           await parkLinkedLine();
-          mockProductNow = { p1: { id: "p1", pricePerUnit: "12", priceTier2: "10" } };
-          mockHistory = { data: undefined, isPending: true, isError: false };
+          mockHistory = out;
           const view = await resume();
           expect(productReads()).toHaveLength(0);
-          expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+          expect(await shows("45")).toBeInTheDocument();
 
           mockHistory = memory;
-          view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          refresh(view);
           await waitFor(() => expect(productReads()).toHaveLength(1));
           await flush();
-          expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
-          expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+          noNote();
+          expect(await shows("45")).toBeInTheDocument();
+          await sendsNoPrice();
+        });
+
+        it("T48: a line added after a failed read leaves the parked line alone", async () => {
+          await parkLinkedLine();
+          mockHistory = failed;
+          mockLayerOn = true;
+          await resume();
+          expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+          mockResolveProductByCode.mockResolvedValue(product("p2"));
+          capturedOnScan!("222");
+          await screen.findByText("Widget p2");
+          await flush();
+          expect(screen.getByTestId("prices-not-refreshed")).toBeInTheDocument();
+          expect(await shows("45")).toBeInTheDocument();
+        });
+
+        it("T49: a memory that moved writes the note when the reads land after the resume", async () => {
+          await parkLinkedLine();
+          mockHistory = out;
+          const view = await resume();
+          mockHistory = memoryNow;
+          refresh(view);
+          await waitFor(() => expect(productReads()).toHaveLength(1));
+          await flush();
+          expect(await shows("50")).toBeInTheDocument();
+          await note("45", "50");
+          await sendsNoPrice();
+        });
+
+        it("T50: the same with the reads cached", async () => {
+          await parkLinkedLine();
+          mockHistory = memoryNow;
+          await resume();
+          await waitFor(() => expect(productReads()).toHaveLength(1));
+          await flush();
+          expect(await shows("50")).toBeInTheDocument();
+          await note("45", "50");
+          await sendsNoPrice();
+        });
+
+        it("T51: no memory now, reads cached: tier, with the note", async () => {
+          await parkLinkedLine();
+          mockHistory = read({});
+          await resume();
+          await waitFor(() => expect(productReads()).toHaveLength(1));
+          await flush();
+          expect(await shows("38")).toBeInTheDocument();
+          await note("45", "38");
+          await sendsNoPrice();
+        });
+
+        it("T52: a failed read, then a switch to B: B's reads re-price it, write the note and clear the notice", async () => {
+          await parkLinkedLine();
+          mockHistory = failed;
+          const view = await resume();
+          expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+
+          mockHistory = out;
+          fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+          fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+            target: { value: "Bet" },
+          });
+          fireEvent.click(await screen.findByText("Beta Bakery"));
+          await flush();
+          mockHistory = memoryNow;
+          refresh(view);
+          await waitFor(() => expect(productReads()).toHaveLength(1));
+          await flush();
+          expect(await shows("50")).toBeInTheDocument();
+          await note("38", "50");
+          expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
+          await sendsNoPrice();
+        });
+
+        it("T53 guard: a line linked to another customer still drops to tier when this customer's read fails", async () => {
+          const payload = await parkLinkedLine();
+          storage = createMemoryDraftStorage();
+          setDraftMirrorStorage(storage);
+          await seedParked({
+            ...payload,
+            lineItems: [{ ...payload.lineItems[0], prefillCustomerId: "c2" }],
+          });
+          mockHistory = failed;
+          await resume();
+          expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+          expect(await shows("38")).toBeInTheDocument();
+          await sendsNoPrice();
+        });
+
+        it("M28 guard: the resume ends when its re-price runs, so a line added after it reads nothing", async () => {
+          await parkLinkedLine();
+          await resume();
+          await waitFor(() => expect(productReads()).toHaveLength(1));
+          await flush();
+          mockResolveProductByCode.mockResolvedValue(product("p2"));
+          capturedOnScan!("222");
+          await screen.findByText("Widget p2");
+          await flush();
+          expect(productReads()).toHaveLength(1);
+        });
+
+        describe("T55 guard, scan_v2 on", () => {
+          it("T46: a failed read moves the line to tier, as before", async () => {
+            await parkLinkedLine();
+            mockScanV2 = true;
+            mockHistory = failed;
+            await resume();
+            expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+            expect(await shows("38")).toBeInTheDocument();
+          });
+
+          it("T47: the line shows tier, then the memory when the read lands", async () => {
+            await parkLinkedLine();
+            mockScanV2 = true;
+            mockHistory = out;
+            const view = await resume();
+            expect(await shows("38")).toBeInTheDocument();
+            mockHistory = memory;
+            refresh(view);
+            await waitFor(() => expect(productReads()).toHaveLength(1));
+            await flush();
+            expect(await shows("45")).toBeInTheDocument();
+            noNote();
+          });
+
+          it("T49: a memory that moved shows, with no note", async () => {
+            await parkLinkedLine();
+            mockScanV2 = true;
+            mockHistory = out;
+            const view = await resume();
+            mockHistory = memoryNow;
+            refresh(view);
+            await waitFor(() => expect(productReads()).toHaveLength(1));
+            await flush();
+            expect(await shows("50")).toBeInTheDocument();
+            noNote();
+          });
         });
       });
     });

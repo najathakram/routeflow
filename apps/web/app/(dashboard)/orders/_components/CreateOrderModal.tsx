@@ -805,13 +805,16 @@ export function CreateOrderModal({
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
   // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
-  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes.
+  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes, and
+  // SA-1068 M27: a linked line follows its customer until a person prices it.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
       lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
     : "";
   React.useEffect(() => {
+    // read here: React can run the updater below after the resume effect has cleared this
+    const resuming = repriceAfterResumeRef.current;
     setLineItems((prev) => {
       let changed = false;
       const next = prev.map((line) => {
@@ -836,8 +839,8 @@ export function CreateOrderModal({
             overrideReason: undefined,
           };
         }
-        // SA-1068 A-4: a linked line stays as parked while this customer's memories are unknown
-        if (!scanV2 && !fromOtherCustomer && priceHistory === undefined) return li;
+        // SA-1068 M28: a resume re-prices its own lines and writes the note, so a linked line waits for it
+        if (!scanV2 && !fromOtherCustomer && resuming) return li;
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
         if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
@@ -1815,13 +1818,13 @@ export function CreateOrderModal({
   React.useEffect(() => {
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
-    repriceAfterResumeRef.current = false;
     // SA-1068 A-4: the read has settled, so no data means it failed. Test the data: a failed refetch keeps its cached memories.
     if (priceHistory === undefined) {
       // Unknown memories: a re-price could put a remembered line on a tier the server won't book, under a false note.
       setPricesNotRefreshed(true);
       return;
     }
+    repriceAfterResumeRef.current = false;
     const tierFor = tierForProduct; // the one tier chain this modal prices with
     const layerOf = priceLayer.enabled
       ? (productId: string) => priceLayer.layerOf(productId)
