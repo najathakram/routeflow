@@ -21,7 +21,7 @@ import { useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { ActionTier } from "./ActionTier";
 import { PickupHandOverButton } from "./PickupHandOver";
 
-type PosOrder = Pick<Order, "invoices">;
+type PosOrder = Pick<Order, "invoices"> & { fulfillPath?: string | null };
 
 /** A VOID invoice is not an invoice for the order's purposes (no step done, nothing to pay or print). */
 const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.status !== "VOID");
@@ -45,7 +45,15 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
       label: invoiceIsDraft ? POS_COPY.stepInvoiceDraft : POS_COPY.stepInvoice,
       done: hasInvoice,
     },
-    { key: "handed", label: POS_COPY.stepHandedOver, done: handedOver },
+    {
+      key: "handed",
+      // W-1043: a PICKUP order that is Ready is not handed over yet; the step says what is true until DELIVERED.
+      label:
+        order.fulfillPath === "PICKUP" && status === "OUT_FOR_DELIVERY"
+          ? POS_COPY.readyForPickup
+          : POS_COPY.stepHandedOver,
+      done: handedOver,
+    },
   ];
   const current = steps.findIndex((s) => !s.done);
   return (
