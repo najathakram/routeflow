@@ -4,6 +4,9 @@ import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricesGrid } from "./ProductPricesGrid";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import { GRID, PRODUCT } from "./units-v2/window/k11-20a.fixtures";
+import { setWideViewport } from "@/test-utils/viewport";
+
+setWideViewport();
 
 // K11-20a: the grid's layout no longer has to follow the viewport. The floating price window measures its own width and
 // asks for "table" or "cards"; "auto" (the default) is today's md: classes, so the inline grid is unchanged.

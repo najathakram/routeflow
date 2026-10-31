@@ -10,6 +10,7 @@ import DashboardPage from "./page";
  * a skeleton and its loaded twin carry the same shared min-h constant. The measured CLS lives in
  * e2e/69-dashboard-cls.spec.ts.
  */
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

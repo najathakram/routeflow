@@ -6,6 +6,7 @@ import DashboardPage from "./page";
  * W20 fold: the dashboard's Counter sale entry uses the SAME staff-only predicate as the shell and the palette.
  * The REAL useCounterSaleGate runs over a CACHED "always" answer: only `enabled` can hide it for non-staff.
  */
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
