@@ -27,12 +27,13 @@ import path from "node:path";
 
 const API_ROOT = path.resolve(__dirname, "../..");
 
-/** The four test-only overrides, all gated on JEST_WORKER_ID inside the script. */
+/** The five test-only overrides, all gated on JEST_WORKER_ID inside the script. */
 const OVERRIDE_NAMES = [
   "VISIBILITY_WATCHDOG_GH_CMD",
   "VISIBILITY_WATCHDOG_LOG_FILE",
   "VISIBILITY_WATCHDOG_MARKER_FILE",
   "VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS",
+  "VISIBILITY_WATCHDOG_STOP_WAIT_MS",
 ] as const;
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/visibility-watchdog.mjs");
 
@@ -90,6 +91,17 @@ beforeAll(() => {
       "  writeState(state);",
       "  process.exit(0);",
       "} else if (args[0] === 'repo' && args[1] === 'view') {",
+      "  const delayMs = Number(process.env.FAKE_VIEW_DELAY_MS || '0');",
+      "  if (delayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);",
+      "  const swapLock = process.env.FAKE_SWAP_LOCK;",
+      "  if (swapLock && !fs.existsSync(swapLock + '.swapped')) {",
+      "    fs.writeFileSync(swapLock + '.swapped', '');",
+      "    fs.writeFileSync(swapLock, JSON.stringify({ pid: Number(process.env.FAKE_SWAP_PID) }));",
+      "  }",
+      "  if (mode === 'view-fail') {",
+      "    process.stderr.write('HTTP 502: Bad Gateway\\n');",
+      "    process.exit(1);",
+      "  }",
       "  const state = readState();",
       "  process.stdout.write(JSON.stringify({ visibility: state.visibility }));",
       "  process.exit(0);",
@@ -121,6 +133,7 @@ function fakeEnv(
     VISIBILITY_WATCHDOG_LOG_FILE: logFile,
     VISIBILITY_WATCHDOG_MARKER_FILE: markerPathFor(logFile),
     VISIBILITY_WATCHDOG_ATTEMPT_DELAYS_MS: "[5,5,5,5,5,5]",
+    VISIBILITY_WATCHDOG_STOP_WAIT_MS: "195000",
     FAKE_MODE: mode,
     FAKE_STATE_FILE: logFile.replace(/\.log$/, ".state.json"),
     FAKE_FAIL_ATTEMPTS: "0",
@@ -321,7 +334,7 @@ describe("visibility-watchdog.mjs contract", () => {
     expect(log).toContain("delays=[5000,15000,30000,60000,120000]");
   });
 
-  it("the four test-only overrides are gated on JEST_WORKER_ID and announced on stderr", () => {
+  it("the five test-only overrides are gated on JEST_WORKER_ID and announced on stderr", () => {
     const logFile = newLogPath("override-warnings");
     const res = run(["--minutes", "0.01", "--repo", "acme/test"], fakeEnv("success", logFile));
 
@@ -681,6 +694,236 @@ describe("visibility-watchdog.mjs: argument validation and single instance (#207
     // Load flake (row 272): passes alone, took 111 s on a saturated shared host (the replacer's
     // PowerShell process-identity check is slow under load). Timeout only; assertions unchanged.
   }, 240_000);
+
+  describe("a live watchdog holds the lock: the visibility read at start decides", () => {
+    const setVisibility = (logFile: string, visibility: string) =>
+      fs.writeFileSync(
+        logFile.replace(/\.log$/, ".state.json"),
+        JSON.stringify({ visibility, editCalls: 0 }),
+      );
+    const startNext = (logFile: string, minutes: string, env = fakeEnv("success", logFile)) =>
+      spawn(process.execPath, [SCRIPT, "--minutes", minutes, "--repo", "acme/test"], {
+        env,
+        stdio: "ignore",
+      });
+    /** Waits for the new start's own `start` line or for a refusal, whichever the log shows first. */
+    async function decided(logFile: string, pid: number | undefined) {
+      for (let i = 0; i < 4_000; i++) {
+        const text = readLog(logFile);
+        if (text.includes(` pid=${pid} `) || text.includes(" refused ")) return text;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error("the new start neither armed nor refused");
+    }
+
+    it("PRIVATE: the new start stops the old one, takes the lock and logs a takeover line", async () => {
+      const logFile = newLogPath("takeover-private");
+      const holder = await startHolder(logFile);
+      setVisibility(logFile, "PRIVATE");
+      // A later deadline than the holder's 5 minutes. Async: a blocked parent could not reap it.
+      const next = startNext(logFile, "6");
+      try {
+        const text = await decided(logFile, next.pid);
+        expect(text).not.toContain(" refused ");
+        expect(text).toMatch(new RegExp(` takeover .*pid ${holder.pid}.*visibility=PRIVATE`));
+        await exited(holder);
+        expect(JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid).toBe(next.pid);
+      } finally {
+        holder.kill("SIGKILL");
+        next.kill("SIGKILL");
+        await Promise.all([exited(holder), exited(next)]);
+      }
+    }, 240_000);
+
+    /** A watchdog blocked in its first `gh` call, where it cannot run a SIGTERM handler. */
+    async function startBlockedHolder(logFile: string, minutes: string, viewDelayMs: number) {
+      const child = spawn(process.execPath, [SCRIPT, "--minutes", minutes, "--repo", "acme/test"], {
+        env: fakeEnv("success", logFile, { FAKE_VIEW_DELAY_MS: String(viewDelayMs) }),
+        stdio: "ignore",
+      });
+      const lock = lockPathFor(logFile);
+      for (let i = 0; i < 300 && !fs.existsSync(lock); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return child;
+    }
+    // Windows ends a process at process.kill, so only POSIX can leave a signal pending.
+    const posixOnly = process.platform === "win32" ? it.skip : it;
+
+    posixOnly(
+      "PRIVATE: an old watchdog blocked in gh goes late, and the new start still arms and flips on its deadline",
+      async () => {
+        const logFile = newLogPath("takeover-blocked");
+        setVisibility(logFile, "PRIVATE");
+        const holder = await startBlockedHolder(logFile, "0.2", 8_000);
+        const next = startNext(logFile, "0.3");
+        try {
+          await exited(next);
+          await exited(holder);
+          const text = readLog(logFile);
+          expect(text).not.toContain(" refused ");
+          expect(next.exitCode).toBe(0);
+          expect(holder.exitCode).toBe(143);
+          const deadline = text.match(new RegExp(` pid=${next.pid} .*deadline=(\\S+)`))?.[1];
+          const attemptAt = text.match(/^(\S+) attempt /m)?.[1];
+          expect(Date.parse(attemptAt ?? "") - Date.parse(deadline ?? "")).toBeLessThan(5_000);
+        } finally {
+          holder.kill("SIGKILL");
+          next.kill("SIGKILL");
+          await Promise.all([exited(holder), exited(next)]);
+        }
+      },
+      240_000,
+    );
+
+    posixOnly(
+      "PRIVATE: an old watchdog that outlasts the wait is killed, so exactly one arms",
+      async () => {
+        const logFile = newLogPath("takeover-outlasted");
+        setVisibility(logFile, "PRIVATE");
+        const holder = await startBlockedHolder(logFile, "5", 20_000);
+        const next = startNext(
+          logFile,
+          "6",
+          fakeEnv("success", logFile, { VISIBILITY_WATCHDOG_STOP_WAIT_MS: "1000" }),
+        );
+        try {
+          const text = await decided(logFile, next.pid);
+          expect(text).not.toContain(" refused ");
+          await exited(holder);
+          expect(holder.signalCode).toBe("SIGKILL");
+          expect(next.exitCode).toBeNull();
+          expect(JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid).toBe(next.pid);
+        } finally {
+          holder.kill("SIGKILL");
+          next.kill("SIGKILL");
+          await Promise.all([exited(holder), exited(next)]);
+        }
+      },
+      240_000,
+    );
+
+    posixOnly(
+      "PRIVATE: two starts waiting on one old watchdog leave exactly one armed",
+      async () => {
+        const logFile = newLogPath("takeover-two-waiting");
+        setVisibility(logFile, "PRIVATE");
+        const holder = await startBlockedHolder(logFile, "5", 8_000);
+        const starts = [startNext(logFile, "6"), startNext(logFile, "7")];
+        const running = () => starts.filter((c) => c.exitCode === null && c.signalCode === null);
+        const lockPid = () => {
+          try {
+            return JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid;
+          } catch {
+            return null;
+          }
+        };
+        const settled = () => running().length === 1 && lockPid() === running()[0]?.pid;
+        try {
+          await exited(holder);
+          for (let i = 0; i < 300 && !settled(); i++) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          expect(running()).toHaveLength(1);
+          expect(lockPid()).toBe(running()[0]?.pid);
+          // One more look: a second watchdog that lost the lock would still be running here.
+          await new Promise((r) => setTimeout(r, 1_000));
+          expect(running()).toHaveLength(1);
+        } finally {
+          holder.kill("SIGKILL");
+          starts.forEach((c) => c.kill("SIGKILL"));
+          await Promise.all([exited(holder), ...starts.map(exited)]);
+        }
+      },
+      240_000,
+    );
+
+    it("PRIVATE: a lock that moved during the read is judged again, and its old pid is left alone", async () => {
+      const logFile = newLogPath("takeover-lock-moved");
+      const holder = await startHolder(logFile);
+      setVisibility(logFile, "PRIVATE");
+      const dead = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+      await exited(dead);
+      const next = startNext(
+        logFile,
+        "6",
+        fakeEnv("success", logFile, {
+          FAKE_SWAP_LOCK: lockPathFor(logFile),
+          FAKE_SWAP_PID: String(dead.pid),
+        }),
+      );
+      try {
+        const text = await decided(logFile, next.pid);
+        expect(text).not.toContain(" takeover ");
+        expect(holder.exitCode).toBeNull();
+        expect(holder.signalCode).toBeNull();
+      } finally {
+        holder.kill("SIGKILL");
+        next.kill("SIGKILL");
+        await Promise.all([exited(holder), exited(next)]);
+      }
+    }, 240_000);
+
+    it("PRIVATE reads the repo the old watchdog guards, not the new start's", async () => {
+      const logFile = newLogPath("takeover-held-repo");
+      const holder = await startHolder(logFile);
+      const next = spawn(process.execPath, [SCRIPT, "--minutes", "6", "--repo", "acme/other"], {
+        env: recordingEnv(logFile),
+        stdio: "ignore",
+      });
+      try {
+        await decided(logFile, next.pid);
+        expect(fs.readFileSync(callsFile, "utf8").split(String.fromCharCode(10))[0]).toBe(
+          "repo view acme/test --json visibility",
+        );
+      } finally {
+        holder.kill("SIGKILL");
+        next.kill("SIGKILL");
+        await Promise.all([exited(holder), exited(next)]);
+      }
+    }, 240_000);
+
+    it("PRIVATE with an earlier deadline than the old one: refused, so a window it was armed for keeps its cover", async () => {
+      const logFile = newLogPath("takeover-earlier-deadline");
+      const holder = await startHolder(logFile);
+      setVisibility(logFile, "PRIVATE");
+      try {
+        const res = run(["--minutes", "1", "--repo", "acme/test"], fakeEnv("success", logFile));
+        expect(res.status).toBe(3);
+        expect(readLog(logFile)).toMatch(
+          new RegExp(` refused .*pid ${holder.pid}.*visibility=PRIVATE.*later deadline`),
+        );
+        expect(holder.exitCode).toBeNull();
+      } finally {
+        holder.kill("SIGKILL");
+        await exited(holder);
+      }
+    }, 240_000);
+
+    it.each([
+      ["PUBLIC", "success"],
+      ["unknown", "view-fail"],
+    ])(
+      "%s: refused, the old one keeps running, and the log says what was read",
+      async (read, mode) => {
+        const logFile = newLogPath(`takeover-${read}`);
+        const holder = await startHolder(logFile);
+        try {
+          const res = run(["--minutes", "6", "--repo", "acme/test"], fakeEnv(mode, logFile));
+          expect(res.status).toBe(3);
+          expect(readLog(logFile)).toMatch(
+            new RegExp(` refused .*pid ${holder.pid}.*visibility=${read}`),
+          );
+          expect(holder.exitCode).toBeNull();
+          expect(JSON.parse(fs.readFileSync(lockPathFor(logFile), "utf8")).pid).toBe(holder.pid);
+        } finally {
+          holder.kill("SIGKILL");
+          await exited(holder);
+        }
+      },
+      240_000,
+    );
+  });
 
   it("a lock left by a dead pid is stale: the new start just takes it", async () => {
     const logFile = newLogPath("stale-lock");
