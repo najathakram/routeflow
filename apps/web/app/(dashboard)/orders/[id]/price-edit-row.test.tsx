@@ -4,7 +4,7 @@ import { renderWithProviders, screen, waitFor, within } from "@/test-utils/rende
 import { PriceEditRow } from "./price-edit-row";
 
 /**
- * Order edit: the price-history button sits beside the "Unit price" input and "Use this price" goes
+ * Order edit: the price-history button sits beside the price input and "Use this price" goes
  * through the SAME path as typing (commitPrice -> onPriceChange), so a SPECIAL line still asks for
  * its reason and the margin-floor hint still keys off the resulting price.
  */
