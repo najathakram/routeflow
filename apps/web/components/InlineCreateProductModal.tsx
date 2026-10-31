@@ -3,11 +3,13 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { unitWords } from "@routeflow/pricing";
+import { formatReceiptMoney, unitWords } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
 import { CategoryCombobox } from "./CategoryCombobox";
@@ -45,6 +47,21 @@ interface InlineCreateProductModalProps {
   requirePrice?: boolean;
 }
 
+/** SA-1071 I4: a new item's price at or above this gets a "check the price" note. A note, never a block. */
+export const NEW_ITEM_PRICE_CHECK = 1000;
+
+/** I2a (SA-1071): sku, barcode and unitSku share one input here, so the sentence names which one the server meant. */
+const codeInUseCopy = (field: string | undefined): string =>
+  field === "barcode"
+    ? "That barcode is already used by another item."
+    : field === "unitSku"
+      ? "That unit code is already used by another item."
+      : "That code is already used by another item.";
+const PRICE_REQUIRED_COPY = "Enter a price to sell this item.";
+const PRICE_BELOW_ZERO_COPY = "A price can't be below $0.00.";
+
+type FieldErrors = { name?: string; unit?: string; price?: string };
+
 export function InlineCreateProductModal({
   isOpen,
   onClose,
@@ -57,10 +74,20 @@ export function InlineCreateProductModal({
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
   const w = unitWords();
-  const createProduct = useCreateProduct();
+  // SA-1071 I2: this window toasts its own refusals (below), so the app-wide toast must not add a second.
+  const createProduct = useCreateProduct({ localErrorToast: true });
   const submittingRef = React.useRef(false);
   const skuInputRef = React.useRef<HTMLInputElement>(null);
-  const [codeInUse, setCodeInUse] = React.useState(false);
+  const [codeInUse, setCodeInUse] = React.useState<string | null>(null);
+  const codeErrId = React.useId();
+  // SA-1071 I3: a failed submit names the field (Name, Unit, Price), marks it invalid and puts the cursor on the first.
+  const [fieldErrors, setFieldErrors] = React.useState<FieldErrors>({});
+  const nameRef = React.useRef<HTMLInputElement>(null);
+  const priceRef = React.useRef<HTMLInputElement>(null);
+  const unitId = React.useId();
+  const nameErrId = React.useId();
+  const unitErrId = React.useId();
+  const priceNoteId = React.useId();
 
   const [form, setForm] = React.useState({
     name: initialName,
@@ -74,6 +101,11 @@ export function InlineCreateProductModal({
   });
 
   const priceOk = Number(form.pricePerUnit) > 0;
+  const priceBelowZero = form.pricePerUnit.trim() !== "" && Number(form.pricePerUnit) < 0;
+  // The price line: a typed negative is wrong on every door; a blank price only matters where one is required (the counter).
+  const priceError = fieldErrors.price ?? (priceBelowZero ? PRICE_BELOW_ZERO_COPY : null);
+  const priceHint = priceError ? null : requirePrice && !priceOk ? PRICE_REQUIRED_COPY : null;
+  const priceCheck = Number(form.pricePerUnit) >= NEW_ITEM_PRICE_CHECK;
 
   // Loading state while resolving a scanned barcode → parent product
   const [variantOfScanLoading, setVariantOfScanLoading] = React.useState(false);
@@ -154,28 +186,37 @@ export function InlineCreateProductModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (requirePrice && !priceOk) return;
 
     // For variants the `name` field stores ONLY the variant name (e.g. "Strawberry").
     // The parent context comes from `parentProductId` — UI components compose the
     // display name as `<parent.name> - <variant.variantName>` (displayProductName)
     // when needed. This keeps the parent product's own name unchanged and avoids
     // redundant prefixes baked into every variant row.
-    let productName = form.name.trim();
-    if (form.parentProductId) {
-      if (!form.variantName.trim()) {
-        toast({ title: "Variant name is required", variant: "error" });
-        return;
-      }
-      productName = form.variantName.trim();
-    } else if (!productName) {
+    const productName = form.parentProductId ? form.variantName.trim() : form.name.trim();
+    // SA-1071 I3: the form is `noValidate`, so every client failure is named here, in field order.
+    const found: FieldErrors = {};
+    if (!productName)
+      found.name = form.parentProductId
+        ? "Enter a flavor or variety."
+        : "Enter a name for this item.";
+    if (!form.unit.trim()) found.unit = "Choose a unit, like each or case.";
+    if (priceBelowZero) found.price = PRICE_BELOW_ZERO_COPY;
+    else if (requirePrice && !priceOk) found.price = PRICE_REQUIRED_COPY;
+    if (found.name || found.unit || found.price) {
+      setFieldErrors(found);
+      const target = found.name
+        ? nameRef.current
+        : found.unit
+          ? document.getElementById(unitId)
+          : priceRef.current;
+      target?.focus();
       return;
     }
     // I-79: one create per attempt. `loading` disables the button only after a re-render, so a second click in the
     // same frame would POST again and come back 409; the ref drops it until this attempt settles.
     if (submittingRef.current) return;
     submittingRef.current = true;
-    setCodeInUse(false);
+    setCodeInUse(null);
 
     createProduct.mutate(
       {
@@ -211,13 +252,21 @@ export function InlineCreateProductModal({
           });
         },
         onError: (err: unknown) => {
-          const res = (err as { response?: { status?: number; data?: { code?: string } } } | null)
-            ?.response;
-          if (res?.status === 400 && res.data?.code === API_ERROR_CODES.PRODUCT_CODE_IN_USE)
-            setCodeInUse(true);
+          const res = (
+            err as {
+              response?: { status?: number; data?: { code?: string; field?: string } };
+            } | null
+          )?.response;
+          if (res?.status === 400 && res.data?.code === API_ERROR_CODES.PRODUCT_CODE_IN_USE) {
+            setCodeInUse(codeInUseCopy(res.data.field));
+            skuInputRef.current?.focus();
+            return;
+          }
+          // A read-only workspace already has its own toast; this one names the problem for every other refusal, once.
+          if (isReadOnlyRefusal(err)) return;
           toast({
             title: "Failed to create product",
-            description: "Check the details and try again.",
+            description: codedToastCopy(err) ?? "Check the details and try again.",
             variant: "error",
           });
         },
@@ -250,7 +299,7 @@ export function InlineCreateProductModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4 px-6 py-4">
           {/* ── Variant of — optional parent ── */}
           {parentCandidates.length > 0 && (
             <div>
@@ -283,14 +332,24 @@ export function InlineCreateProductModal({
                 Flavor / Variety <span className="text-danger">*</span>
               </label>
               <input
-                required
+                ref={nameRef}
                 autoFocus
                 type="text"
                 value={form.variantName}
-                onChange={(e) => setForm((f) => ({ ...f, variantName: e.target.value }))}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, variantName: e.target.value }));
+                  setFieldErrors((x) => ({ ...x, name: undefined }));
+                }}
+                aria-invalid={fieldErrors.name ? true : undefined}
+                aria-describedby={fieldErrors.name ? nameErrId : undefined}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder='e.g. "Chocolate", "Large", "500ml"'
               />
+              {fieldErrors.name && (
+                <p id={nameErrId} role="alert" className="mt-1 text-[11px] text-danger">
+                  {fieldErrors.name}
+                </p>
+              )}
               {/* Display preview — variant rows show their flavor; parent context
                   comes from the relationship, not from being baked into the name. */}
               {selectedParent && (
@@ -309,14 +368,24 @@ export function InlineCreateProductModal({
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Name *</label>
               <input
-                required
+                ref={nameRef}
                 autoFocus
                 type="text"
                 value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, name: e.target.value }));
+                  setFieldErrors((x) => ({ ...x, name: undefined }));
+                }}
+                aria-invalid={fieldErrors.name ? true : undefined}
+                aria-describedby={fieldErrors.name ? nameErrId : undefined}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder="e.g. Sourdough Bread"
               />
+              {fieldErrors.name && (
+                <p id={nameErrId} role="alert" className="mt-1 text-[11px] text-danger">
+                  {fieldErrors.name}
+                </p>
+              )}
             </div>
           )}
 
@@ -329,24 +398,47 @@ export function InlineCreateProductModal({
                   ref={skuInputRef}
                   type="text"
                   value={form.sku}
-                  onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+                  onChange={(e) => {
+                    setCodeInUse(null);
+                    setForm((f) => ({ ...f, sku: e.target.value }));
+                  }}
+                  aria-invalid={codeInUse ? true : undefined}
+                  aria-describedby={codeInUse ? codeErrId : undefined}
                   className="min-w-0 flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   placeholder="Scan or type"
                 />
                 <BarcodeScannerButton
                   inputRef={skuInputRef}
-                  onScan={(code) => setForm((f) => ({ ...f, sku: code }))}
+                  onScan={(code) => {
+                    setCodeInUse(null);
+                    setForm((f) => ({ ...f, sku: code }));
+                  }}
                   title="Scan barcode"
                 />
               </div>
+              {codeInUse && (
+                <p id={codeErrId} role="alert" className="mt-1 text-sm font-medium text-red-700">
+                  {codeInUse}
+                </p>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Unit *</label>
               <UnitCombobox
-                required
+                id={unitId}
                 value={form.unit}
-                onChange={(v) => setForm((f) => ({ ...f, unit: v }))}
+                onChange={(v) => {
+                  setForm((f) => ({ ...f, unit: v }));
+                  setFieldErrors((x) => ({ ...x, unit: undefined }));
+                }}
+                invalid={!!fieldErrors.unit}
+                describedBy={fieldErrors.unit ? unitErrId : undefined}
               />
+              {fieldErrors.unit && (
+                <p id={unitErrId} role="alert" className="mt-1 text-[11px] text-danger">
+                  {fieldErrors.unit}
+                </p>
+              )}
             </div>
           </div>
 
@@ -355,17 +447,36 @@ export function InlineCreateProductModal({
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Price ($)</label>
               <input
+                ref={priceRef}
                 type="number"
                 min={0}
                 step={0.01}
                 value={form.pricePerUnit}
-                onChange={(e) => setForm((f) => ({ ...f, pricePerUnit: e.target.value }))}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, pricePerUnit: e.target.value }));
+                  setFieldErrors((x) => ({ ...x, price: undefined }));
+                }}
+                // SA-1071 I4: the retype is one step, not select-then-type
+                onFocus={(e) => e.currentTarget.select()}
+                aria-invalid={priceError ? true : undefined}
+                aria-describedby={priceError || priceHint || priceCheck ? priceNoteId : undefined}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder="0.00"
               />
-              {requirePrice && !priceOk && (
-                <p className="mt-1 text-[11px] text-navy/70">Enter a price to sell this item.</p>
-              )}
+              <div id={priceNoteId}>
+                {priceError && (
+                  <p role="alert" className="mt-1 text-[11px] text-danger">
+                    {priceError}
+                  </p>
+                )}
+                {priceHint && <p className="mt-1 text-[11px] text-navy/70">{priceHint}</p>}
+                {!priceError && priceCheck && (
+                  <p className="mt-1 text-[11px] text-navy">
+                    That&apos;s {formatReceiptMoney(Number(form.pricePerUnit))} each. Check the
+                    price before you save.
+                  </p>
+                )}
+              </div>
               {initialCost != null && initialCost > 0 && (
                 <p className="mt-1 text-[11px] text-navy/70">
                   Suggested from invoice cost ${initialCost.toFixed(2)} + 30%. Cost is saved to the
@@ -398,12 +509,6 @@ export function InlineCreateProductModal({
               placeholder="e.g. 12 (optional)"
             />
           </div>
-
-          {codeInUse && (
-            <p role="alert" className="text-sm font-medium text-red-700">
-              That code is already used by another item.
-            </p>
-          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" type="button" onClick={onClose}>
