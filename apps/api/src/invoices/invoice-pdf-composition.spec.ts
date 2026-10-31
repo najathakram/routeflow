@@ -79,7 +79,12 @@ function invoice(o: Record<string, unknown> = {}, components: unknown[] = []) {
   };
 }
 
-async function make(mode: string, inv: unknown, slug: string | null = "acme") {
+async function make(
+  mode: string,
+  inv: unknown,
+  slug: string | null = "acme",
+  cfg: Record<string, string> = {},
+) {
   const prisma = createMockPrisma();
   prisma.invoice.findUnique.mockResolvedValue(inv as never);
   prisma.tenantConfig.findUnique.mockResolvedValue(null as never);
@@ -96,7 +101,10 @@ async function make(mode: string, inv: unknown, slug: string | null = "acme") {
           presignedUrl: jest.fn().mockResolvedValue("https://cdn/x.pdf"),
         },
       },
-      { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      {
+        provide: SystemConfigService,
+        useValue: { get: jest.fn(async (k: string) => cfg[k] ?? null) },
+      },
       {
         provide: FeatureConfigService,
         useValue: { getEffectiveMode: jest.fn().mockResolvedValue(mode) },
@@ -197,4 +205,78 @@ describe("invoice PDF payload: the order QR (case 22)", () => {
       warn.mockRestore();
     },
   );
+});
+
+/**
+ * SA-1031: a tenant can turn the product barcodes off the invoice PDF (`invoice.hideBarcodes`; absent = shown). Off means
+ * no line Code128 and no code under it, and no piece barcode image or digits; a piece keeps its "SKU ..." text; the order QR
+ * (not a product barcode) stays.
+ */
+describe("invoice PDF payload: invoice.hideBarcodes (SA-1031)", () => {
+  const KEY = "invoice.hideBarcodes";
+  const comps = [component("a", 24, 0, 0.625), component("o", 24, 1, null)];
+  const plainLine = () =>
+    invoice({
+      items: [
+        {
+          ...invoice().items[0],
+          product: {
+            id: "p1",
+            name: "Soda",
+            barcode: "012345678905",
+            sku: "S-1",
+            unitSku: "UNIT-1",
+          },
+        },
+      ],
+    });
+  const code128 = () => mockToBuffer.mock.calls.filter(([o]) => o.bcid === "code128");
+  beforeEach(() => {
+    mockCapturedInvoice = null;
+    mockToBuffer.mockClear();
+    process.env.WEB_URL = "https://app.example.com";
+  });
+
+  it("B-R1: key 'true': a plain line has no barcode image and no code text, and no Code128 is drawn", async () => {
+    const svc = await make("off", plainLine(), "acme", { [KEY]: "true" });
+    await svc.generateAndUpload("inv-1");
+    const item = mockCapturedInvoice.items[0];
+    expect(item.barcodeDataUri).toBeUndefined();
+    expect(item.barcodeText).toBeUndefined();
+    expect(code128()).toHaveLength(0);
+  });
+
+  it("B-R2: key 'true': a piece has no barcode image and no digits, keeps its SKU, and no piece barcode is drawn", async () => {
+    const svc = await make("off", invoice({}, comps), "acme", { [KEY]: "true" });
+    await svc.generateAndUpload("inv-1");
+    const subs = mockCapturedInvoice.items[0].subLines;
+    expect(subs).toHaveLength(2);
+    expect(subs[0]).toMatchObject({
+      name: "Name a",
+      unitSku: "SKU-a",
+      barcodeText: null,
+      barcodeDataUri: null,
+      priceText: "$0.63 (included)",
+    });
+    expect(mockToBuffer.mock.calls.some(([o]) => o.bcid === "upca")).toBe(false);
+  });
+
+  it.each([[undefined], ["false"], ["yes"], [""]])(
+    "B-G1/B-G2: key %p: the line barcode renders exactly as before",
+    async (raw) => {
+      const svc = await make("off", plainLine(), "acme", raw === undefined ? {} : { [KEY]: raw });
+      await svc.generateAndUpload("inv-1");
+      const item = mockCapturedInvoice.items[0];
+      expect(item.barcodeText).toBe("UNIT-1");
+      expect(item.barcodeDataUri).toMatch(/^data:image\/png;base64,/);
+      expect(code128()).toHaveLength(1);
+    },
+  );
+
+  it("B-G3: key 'true' leaves the order QR (it is not a product barcode)", async () => {
+    const svc = await make("on", invoice(), "acme", { [KEY]: "true" });
+    await svc.generateAndUpload("inv-1");
+    expect(mockCapturedInvoice.qrDataUri).toMatch(/^data:image\/png;base64,/);
+    expect(mockToBuffer.mock.calls.some(([o]) => o.bcid === "qrcode")).toBe(true);
+  });
 });
