@@ -74,19 +74,19 @@ describe("SA-1067 M2a: the price dialog's Enter arms, a second Enter applies", (
     expect(onApply).not.toHaveBeenCalled();
   });
 
-  it("D6: an `openWith` prefill needs two Enters", async () => {
+  it("D6: an `openWith` prefill that opens the dialog (SA-1071: a special-tier line, an ordinary one applies at once) needs two Enters", async () => {
     const onApply = jest.fn();
-    const props = { canEditPrices: true, name: "Cola", line: plain, onApply } as const;
+    const props = { canEditPrices: true, name: "Cola", line: special, onApply } as const;
     const { rerender } = render(<CounterLinePriceEdit {...props} openWith={null} />);
     rerender(<CounterLinePriceEdit {...props} openWith={{ value: 9 }} />);
     const price = await screen.findByRole("textbox", { name: "Price per item" });
     expect(price).toHaveValue("9.00");
     const user = userEvent.setup();
-    price.focus();
-    await user.keyboard("{Enter}");
+    await user.type(screen.getByRole("textbox", { name: "Reason (required)" }), "Matched{Enter}");
     expect(onApply).not.toHaveBeenCalled();
     await user.keyboard("{Enter}");
     expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onApply.mock.calls[0][0]).toMatchObject({ unitPrice: 9, reason: "Matched" });
   });
 
   it("D7: `4011` then a click on Apply applies at once", async () => {

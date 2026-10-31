@@ -444,12 +444,13 @@ function PanelBody({
                       : `${r.orderNumber} (not invoiced yet)`
                   }
                 >
-                  {/* the number truncates; the chip never does (SA-1066 F4) */}
+                  {/* the number truncates; the note never does (SA-1066 F4) */}
                   <span className="block truncate">
                     {r.source === "INVOICE" ? (r.invoiceNumber ?? r.orderNumber) : r.orderNumber}
                   </span>
                   {r.source !== "INVOICE" && (
-                    <span className="block w-fit whitespace-nowrap rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
+                    // SA-1071 P3: where the number came from, not the price: plain muted text, so the price-type pill is the row's only pill
+                    <span className="block w-fit whitespace-nowrap text-[11px] text-navy/70">
                       not invoiced yet
                     </span>
                   )}
