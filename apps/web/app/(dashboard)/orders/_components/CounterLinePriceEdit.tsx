@@ -11,6 +11,7 @@ import {
   type PriceEditMode,
   type PriceEditRefusal,
 } from "@/lib/counter-price-edit";
+import { useArmedEnter } from "@/lib/armed-enter";
 
 /** What Apply hands back: the screen replaces ONE line's override with it and never posts from here. */
 export interface CounterPriceEdit {
@@ -121,6 +122,8 @@ export function CounterLinePriceEdit({
   const [error, setError] = React.useState<string | null>(null);
   const valueRef = React.useRef<HTMLInputElement>(null);
   const errorId = React.useId();
+  const armedEnter = useArmedEnter();
+  const { disarm } = armedEnter;
 
   React.useEffect(() => {
     if (!openWith) return;
@@ -128,8 +131,9 @@ export function CounterLinePriceEdit({
     setValue(openWith.value.toFixed(2));
     setReason("");
     setError(null);
+    disarm();
     setOpen(true);
-  }, [openWith]);
+  }, [openWith, disarm]);
 
   if (!canEditPrices) return null;
 
@@ -144,6 +148,7 @@ export function CounterLinePriceEdit({
     setValue("");
     setReason("");
     setError(null);
+    disarm();
     setOpen(true);
   };
   const close = () => setOpen(false);
@@ -167,6 +172,17 @@ export function CounterLinePriceEdit({
       ...(reason.trim() ? { reason: reason.trim() } : {}),
     });
     close();
+  };
+
+  // SA-1067 M2a: a scanner's code ends in Enter, which would have applied it. The first Enter arms the value shown;
+  // a second Enter on the same mode, value and reason applies. Apply by pointer, or Tab to Apply and Enter, is not here.
+  const editKey = JSON.stringify([mode, value, reason]);
+  const armed = armedEnter.isArmed(editKey);
+  const onFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
+    e.preventDefault();
+    if (!resolveCounterPriceEdit(mode, value, line, reason).ok) return apply();
+    armedEnter.press(editKey, true, apply);
   };
 
   return (
@@ -217,7 +233,7 @@ export function CounterLinePriceEdit({
             : undefined
         }
       >
-        <form onSubmit={apply} className="flex flex-col gap-4" noValidate>
+        <form onSubmit={apply} onKeyDown={onFormKeyDown} className="flex flex-col gap-4" noValidate>
           <div
             role="radiogroup"
             aria-label="How to change the price"
@@ -284,7 +300,7 @@ export function CounterLinePriceEdit({
 
           <p aria-live="polite" className="min-h-[1.25rem] text-sm text-navy/70">
             {preview?.ok
-              ? `New price ${money(preview.unitPrice)} per ${unitWord}. Line total ${money(preview.lineTotal)}.`
+              ? `New price ${money(preview.unitPrice)} per ${unitWord}. Line total ${money(preview.lineTotal)}.${armed ? " Press Enter again to apply." : ""}`
               : ""}
           </p>
 
