@@ -111,7 +111,7 @@ import { PRICE_LAYER_TOO_MANY_COPY } from "@/components/PriceLayerNotice";
 import { isTextEntryActive } from "@/lib/refocus-scanner";
 import { unlockScanCue } from "@/lib/scan-cue";
 import { isTouchFirst } from "@/lib/touch-first";
-import { cameraFrameBlocked, counterDialogOpen } from "./counter-scan-guard";
+import { cameraFrameBlocked, counterDialogOpen, scanPauseHeld } from "./counter-scan-guard";
 import { fitCameraRoom, isMdUp } from "./counter-camera-room";
 import { CounterCameraStrip, useCameraScanEngine } from "./CounterCameraStrip";
 import { scrollPageToTop } from "@/lib/scroll-top";
@@ -838,6 +838,10 @@ export function CounterSaleScreen() {
     e.preventDefault();
     lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return; // frozen while the sale POST is in flight: a mid-POST scan would miss the sale
+    if (scanPauseHeld()) {
+      setScanText(""); // a window has the scan, and the box is cleared so the next scan doesn't join onto this one
+      return;
+    }
     const text = scanText;
     setScanText("");
     scan.submit(text);

@@ -298,13 +298,38 @@ describe("W-1042 MUST 14a at the screen: the counter holds scans while a window 
     expect(lines()).toHaveLength(0);
   });
 
+  it("R13e: with the question open and the cursor in the scan box, a scan adds no line and clears the box; after Esc the same scan adds it", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    created = {
+      id: "p-cola",
+      name: "Sample Cola",
+      sku: "200000000001",
+      unit: "each",
+      pricePerUnit: 2.5,
+      unitsPerBox: null,
+      isActive: true,
+    };
+    field().focus();
+    submitScan("200000000001");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(lines()).toHaveLength(0);
+    expect(field().value).toBe("");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(openDialog()).toBeNull();
+    submitScan("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Cola");
+  });
+
   it("R13a: focus on a button, a re-arm fires, then a wedge scan: focus stays out of the scan box and no line is added", async () => {
     await missThenCreate();
     await waitFor(() => expect(paused()).not.toBeNull());
     const button = screen.getByRole("button", { name: "Cancel" });
     button.focus();
-    submitScan("200000008888"); // a queued scan finishing now ends in the screen's re-arm
-    await screen.findByText("No product for '200000008888'");
+    fireEvent.blur(field()); // the scan box losing focus asks for a re-arm
+    submitScan("200000008888"); // a scan while the window is open is dropped
     await new Promise((r) => setTimeout(r, 80));
     expect(document.activeElement).toBe(button);
     await userEvent.keyboard("200000008888{Enter}");
