@@ -486,6 +486,8 @@ describe("R-1 M6: every quote fact has a place", () => {
     answer(quoteResponse([chunk()]));
     setQty("11");
     expect(screen.getByTestId("return-summary")).toHaveAttribute("aria-busy", "true");
+    // the credit sentence is for a current quote only: pending, it names no amount at all
+    expect(screen.getByTestId("return-summary")).not.toHaveTextContent(/store credit|credit note/i);
   });
 });
 

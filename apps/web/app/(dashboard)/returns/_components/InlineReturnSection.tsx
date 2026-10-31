@@ -543,7 +543,7 @@ export function InlineReturnSection({
                   <span>Total</span>
                   <span>{money(detailQuote.total)}</span>
                 </div>
-                {quoteNote !== null && !refusal && (
+                {current && quoteNote !== null && !refusal && (
                   <p className="mt-2 text-xs text-navy/70">
                     {quoteNote ??
                       creditOutcomeLine(money(detailQuote.total), creditContext, customerName)}
