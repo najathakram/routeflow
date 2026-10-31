@@ -108,7 +108,7 @@ beforeEach(() => {
   mockOfferShip = false;
   mockSaleMutate.mockReset();
   get.mockImplementation((url: string) =>
-    url.startsWith("/customers/")
+    url.endsWith("/prices")
       ? new Promise((resolve) => {
           releasePrices = () => resolve({ data: [] });
         })
