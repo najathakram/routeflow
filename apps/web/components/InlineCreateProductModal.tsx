@@ -108,8 +108,13 @@ export function InlineCreateProductModal({
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
-      // IME composition (isComposing / legacy keyCode 229, as use-listbox-nav reads it): that Escape cancels the composition.
-      if (e.isComposing || e.keyCode === 229) return;
+      // IME composition (isComposing / legacy keyCode 229, as use-listbox-nav reads it): that Escape cancels the composition, so
+      // we do not close. We still mark it handled: Radix reads it next and would dismiss the order builder around us. The mark
+      // does not touch the IME (a keydown during composition is not cancelable as far as the IME is concerned).
+      if (e.isComposing || e.keyCode === 229) {
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       if ((e.target as Element | null)?.hasAttribute?.("aria-controls")) return; // the list closes itself
       e.stopPropagation();

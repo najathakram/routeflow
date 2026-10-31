@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 jest.mock("@/components/OrderStatusBadge", () => ({ useOrderStatusLabel: () => (s: string) => s }));
 
-import { PosProgress } from "./PosOrderActions";
+import { INVOICE_CARD_ID, PosProgress } from "./PosOrderActions";
 import { POS_COPY } from "@/lib/pos-copy";
 
 /**
@@ -79,13 +79,13 @@ describe("F01: an order with only a voided invoice", () => {
           order={{ invoices: [{ id: "i1", status: "VOID" }] } as never}
           status="CONFIRMED"
         />
-        <section id="invoice-card" tabIndex={-1}>
+        <section id={INVOICE_CARD_ID} tabIndex={-1}>
           Invoice
         </section>
       </>,
     );
     fireEvent.click(screen.getByRole("button", { name: POS_COPY.stepInvoice }));
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById("invoice-card"));
+    expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById(INVOICE_CARD_ID));
   });
 });

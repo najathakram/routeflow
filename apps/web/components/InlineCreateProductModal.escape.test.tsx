@@ -172,6 +172,22 @@ describe("FL1: inside the real builder Modal, one Escape closes one layer", () =
     expect(builderClosed).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229", { keyCode: 229 }],
+  ])(
+    "a composing Escape (%s) is marked handled, so the builder stays open; the window stays too",
+    (_n, init) => {
+      wrap(<Builder />);
+      fireEvent.keyDown(name(), { key: "Escape", ...init });
+      expect(builderClosed).not.toHaveBeenCalled();
+      expect(windowOpen()).toBe(true);
+      // Radix still hands the key to the builder's handler, marked, so its own Escape paths see "handled" and do nothing
+      expect(builderEscape).toHaveBeenCalledTimes(1);
+      expect(builderEscape.mock.calls[0][0].defaultPrevented).toBe(true);
+    },
+  );
+
   it("an open list with nothing in it (no match) still closes on the first Escape, not stuck", () => {
     wrap(<Builder />);
     const category = screen.getByPlaceholderText("e.g. Bakery") as HTMLInputElement;
