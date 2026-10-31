@@ -174,12 +174,14 @@ beforeEach(() => {
   window.sessionStorage.clear();
   barcodeFor = {};
   listFor = {};
+  quickKeys = { register: "main", cap: 12, keys: [] };
   mockCamera.opts = null;
   mockCamera.mounted = 0;
   clock = 1_000_000;
   dateSpy = jest.spyOn(Date, "now").mockImplementation(() => clock);
   (apiClient.get as jest.Mock).mockImplementation(async (url: string, cfg?: any) => {
     if (url === "/settings") return { data: { taxRate: 0 } };
+    if (url === "/orders/counter-sale/quick-keys") return { data: quickKeys };
     if (url.startsWith("/products/barcode/")) {
       const code = decodeURIComponent(url.slice("/products/barcode/".length));
       return barcodeFor[code] ? { data: await barcodeFor[code]() } : notFound();
@@ -213,6 +215,7 @@ afterEach(() => {
   delete (window as unknown as Record<string, unknown>).matchMedia;
 });
 
+let quickKeys: { register: string; cap: number; keys: unknown[] };
 const scanField = () => screen.getByLabelText("Scan or search items") as HTMLInputElement;
 const wedge = async (text: string) => {
   fireEvent.change(scanField(), { target: { value: text } });
@@ -1236,6 +1239,38 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     fireEvent.click(undoBtn()!);
     await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
     expect(lines()).toHaveLength(1);
+  });
+
+  it("K3 (review-a): a quick key after a read ends that read's Undo, so it can't take the wrong line", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    quickKeys.keys = [
+      {
+        productId: CHIPS.id,
+        name: CHIPS.name,
+        sellLevel: "UNIT",
+        pinned: true,
+        product: CHIPS,
+      },
+    ];
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(await screen.findByTestId(`quick-key-${CHIPS.id}`));
+    await waitFor(() => expect(lines()).toHaveLength(2));
+    if (undoBtn()) fireEvent.click(undoBtn()!);
+    await act(async () => {});
+    expect(
+      lines()
+        .map((l) => l.textContent)
+        .join(" "),
+    ).toContain(COLA.name);
+    expect(
+      lines()
+        .map((l) => l.textContent)
+        .join(" "),
+    ).toContain(CHIPS.name);
+    expect(undoBtn()).toBeNull();
   });
 
   it("K4: closing the camera says what happened, until the camera opens again", () => {

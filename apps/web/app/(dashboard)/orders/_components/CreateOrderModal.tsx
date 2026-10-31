@@ -1193,7 +1193,8 @@ export function CreateOrderModal({
   const addPicked = (product: any) => {
     if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
     // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
-    recordPick(product, addLineItem(product, undefined, { startOnDefaultUnit: true }));
+    const added = addLineItem(product, undefined, { startOnDefaultUnit: true });
+    recordPick(product, added);
   };
   const recordPick = (product: any, result: { created: boolean; refused?: boolean }) => {
     if (result.refused) return;

@@ -195,6 +195,15 @@ export { lineQtyLabel, toSaleItem } from "./counter-sale-line-edit";
 /** An empty Enter in the scan box moves to the payment only this long after the last scan submit or scan-box keystroke. */
 export const EMPTY_ENTER_QUIET_MS = 150;
 
+/** SA-1071 K3: what the latest scan did, so the camera's Undo can take that one read back. */
+interface LastRead {
+  tempId: string;
+  created: boolean;
+  n: number;
+  level: SellLevel;
+  qtyAfter: number;
+}
+
 export function CounterSaleScreen() {
   const readOnlyGate = useReadOnlyGate();
   const router = useRouter();
@@ -639,14 +648,13 @@ export function CounterSaleScreen() {
   // An add past the per-line cap leaves the cart as it was (addScannedProduct returns the same array), says why once, and
   // returns false so the scan confirmation does not claim "Added".
   // SA-1071 K3: what the latest add did, so the camera's Undo can take that one read back.
-  const [lastRead, setLastRead] = React.useState<{
-    tempId: string;
-    created: boolean;
-    n: number;
-    level: SellLevel;
-    qtyAfter: number;
-  } | null>(null);
-  const addCapped = (product: any, level: SellLevel, n: number): boolean => {
+  const [lastRead, setLastRead] = React.useState<LastRead | null>(null);
+  /** Null when the add was refused. Only a scan keeps the read: a quick key isn't a read to undo. */
+  const addCapped = (
+    product: any,
+    level: SellLevel,
+    n: number,
+  ): { read: LastRead | null } | null => {
     const prev = linesRef.current;
     const next = addScannedProduct(
       prev,
@@ -659,13 +667,13 @@ export function CounterSaleScreen() {
     );
     if (next === prev) {
       setError(QTY_TOO_LARGE_COPY);
-      return false;
+      return null;
     }
     linesRef.current = next;
     setLines(next);
     const hit = next.find((l) => l.productId === product.id);
-    setLastRead(
-      hit
+    return {
+      read: hit
         ? {
             tempId: hit.tempId,
             created: !prev.some((l) => l.productId === product.id),
@@ -674,13 +682,12 @@ export function CounterSaleScreen() {
             qtyAfter: hit.qty,
           }
         : null,
-    );
-    return true;
+    };
   };
 
   // The ONE add path: a scan, a picker click and a quick-key tap all land a product through here.
   const addProduct = (product: any, level: SellLevel, n: number) => {
-    addCapped(product, level, n);
+    if (addCapped(product, level, n)) setLastRead(null);
   };
 
   // B1206-B1208: every scan joins one FIFO queue resolved through the shared exact-code ladder (see useCounterSaleScan).
@@ -689,7 +696,9 @@ export function CounterSaleScreen() {
     refocus,
     add: (product, level, n) => {
       scanCueArmedRef.current = true;
-      return addCapped(product, level, n);
+      const added = addCapped(product, level, n);
+      if (added) setLastRead(added.read);
+      return added !== null;
     },
   });
 
@@ -1080,6 +1089,7 @@ export function CounterSaleScreen() {
     setLines([]);
     setScanText("");
     setLastRead(null);
+    setWalkInUndo(null);
     setCameraOffNote(false);
     scan.reset();
     resetTenderDefault();

@@ -59,8 +59,10 @@ const codeInUseCopy = (field: string | undefined): string =>
       : "That code is already used by another item.";
 const PRICE_REQUIRED_COPY = "Enter a price to sell this item.";
 const PRICE_BELOW_ZERO_COPY = "A price can't be below $0.00.";
+const PRICE_DECIMALS_COPY = "Use at most two decimals, like 12.50.";
+const UNITS_PER_BOX_COPY = "Enter a whole number, 1 or more.";
 
-type FieldErrors = { name?: string; unit?: string; price?: string };
+type FieldErrors = { name?: string; unit?: string; price?: string; units?: string };
 
 export function InlineCreateProductModal({
   isOpen,
@@ -84,9 +86,11 @@ export function InlineCreateProductModal({
   const [fieldErrors, setFieldErrors] = React.useState<FieldErrors>({});
   const nameRef = React.useRef<HTMLInputElement>(null);
   const priceRef = React.useRef<HTMLInputElement>(null);
+  const unitsRef = React.useRef<HTMLInputElement>(null);
   const unitId = React.useId();
   const nameErrId = React.useId();
   const unitErrId = React.useId();
+  const unitsErrId = React.useId();
   const priceNoteId = React.useId();
 
   const [form, setForm] = React.useState({
@@ -202,13 +206,18 @@ export function InlineCreateProductModal({
     if (!form.unit.trim()) found.unit = "Choose a unit, like each or case.";
     if (priceBelowZero) found.price = PRICE_BELOW_ZERO_COPY;
     else if (requirePrice && !priceOk) found.price = PRICE_REQUIRED_COPY;
-    if (found.name || found.unit || found.price) {
+    else if (!/^\d*(\.\d{0,2})?$/.test(form.pricePerUnit.trim())) found.price = PRICE_DECIMALS_COPY;
+    const units = form.unitsPerBox.trim();
+    if (units && (!/^\d+$/.test(units) || Number(units) < 1)) found.units = UNITS_PER_BOX_COPY;
+    if (found.name || found.unit || found.price || found.units) {
       setFieldErrors(found);
       const target = found.name
         ? nameRef.current
         : found.unit
           ? document.getElementById(unitId)
-          : priceRef.current;
+          : found.price
+            ? priceRef.current
+            : unitsRef.current;
       target?.focus();
       return;
     }
@@ -500,14 +509,25 @@ export function InlineCreateProductModal({
               {w.base.other} per {w.pack.lower}
             </label>
             <input
+              ref={unitsRef}
               type="number"
               min={1}
               step={1}
               value={form.unitsPerBox}
-              onChange={(e) => setForm((f) => ({ ...f, unitsPerBox: e.target.value }))}
+              onChange={(e) => {
+                setForm((f) => ({ ...f, unitsPerBox: e.target.value }));
+                setFieldErrors((x) => ({ ...x, units: undefined }));
+              }}
+              aria-invalid={fieldErrors.units ? true : undefined}
+              aria-describedby={fieldErrors.units ? unitsErrId : undefined}
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               placeholder="e.g. 12 (optional)"
             />
+            {fieldErrors.units && (
+              <p id={unitsErrId} role="alert" className="mt-1 text-[11px] text-danger">
+                {fieldErrors.units}
+              </p>
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

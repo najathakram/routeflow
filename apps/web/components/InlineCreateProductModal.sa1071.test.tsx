@@ -125,6 +125,42 @@ describe("SA-1071 I2: a server refusal names the problem, once", () => {
 });
 
 describe("SA-1071 I3: a client failure names the field", () => {
+  const unitsInput = () => screen.getByPlaceholderText("e.g. 12 (optional)") as HTMLInputElement;
+
+  it.each(["1.5", "0", "-2"])(
+    "I3 (review-a): units per box %s is named, and nothing is sent",
+    (value) => {
+      mount();
+      fill();
+      type(unitsInput(), value);
+      submit();
+      expect(createMutate).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a whole number, 1 or more.");
+      expect(unitsInput()).toHaveAttribute("aria-invalid", "true");
+      expect(unitsInput()).toHaveFocus();
+      type(unitsInput(), "12");
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
+
+  it("I3 (review-a): a price with three decimals is named, and nothing is sent", () => {
+    mount();
+    fill("Fresh Pie", "each", "1.234");
+    submit();
+    expect(createMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Use at most two decimals, like 12.50.");
+    expect(priceInput()).toHaveFocus();
+  });
+
+  it("guard: a whole pack and two decimals go through", () => {
+    mount();
+    fill("Fresh Pie", "each", "1.25");
+    type(unitsInput(), "12");
+    submit();
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(createMutate.mock.calls[0][0]).toMatchObject({ pricePerUnit: "1.25", unitsPerBox: 12 });
+  });
+
   it("I3: the form turns the browser's own bubble off", () => {
     mount();
     expect(form()).toHaveAttribute("novalidate");
