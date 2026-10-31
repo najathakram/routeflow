@@ -118,6 +118,26 @@ describeDb(
       expect(after.permissionsVersion).toBe(before.permissionsVersion);
     });
 
+    it("A5-6: OPERATOR with {} moved to DRIVER stays {} and keeps the version (a move out stamps nothing)", async () => {
+      const u = await mkUser(UserRole.OPERATOR, []);
+      const before = await stored(u.id);
+      await update(u.id, { role: UserRole.DRIVER });
+      const after = await stored(u.id);
+      expect(after.role).toBe(UserRole.DRIVER);
+      expect(after.deniedPermissionGroups).toEqual([]);
+      expect(after.permissionsVersion).toBe(before.permissionsVersion);
+    });
+
+    it("A5-7: OPERATOR with {} saved with its own role, email and username stays {} and keeps the version", async () => {
+      const u = await mkUser(UserRole.OPERATOR, []);
+      const before = await stored(u.id);
+      await update(u.id, { role: UserRole.OPERATOR, email: u.email, username: u.username });
+      const after = await stored(u.id);
+      expect(after.role).toBe(UserRole.OPERATOR);
+      expect(after.deniedPermissionGroups).toEqual([]);
+      expect(after.permissionsVersion).toBe(before.permissionsVersion);
+    });
+
     it("A5-5: OPERATOR with {} given an email edit only keeps the list and the version", async () => {
       const u = await mkUser(UserRole.OPERATOR, []);
       const before = await stored(u.id);
