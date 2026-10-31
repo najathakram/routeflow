@@ -246,7 +246,7 @@ describe("order page: Complete at counter (I-120 PR-2)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Card" }));
     fireEvent.click(within(dialog).getByRole("button", { name: /^complete$/i }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "Nothing changed. This order is on Sam's run. Completing it here takes it off the run.",
+      "This order is on Sam's run. Completing it here takes it off the run.",
     );
     expect(within(dialog).queryByRole("button", { name: /^complete$/i })).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Take off run and complete" }));

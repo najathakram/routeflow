@@ -21,7 +21,7 @@ import { useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { ActionTier } from "./ActionTier";
 import { PickupHandOverButton } from "./PickupHandOver";
 
-type PosOrder = Pick<Order, "invoices">;
+type PosOrder = Pick<Order, "invoices"> & { fulfillPath?: string | null };
 
 /** A VOID invoice is not an invoice for the order's purposes (no step done, nothing to pay or print). */
 const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.status !== "VOID");
@@ -45,7 +45,15 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
       label: invoiceIsDraft ? POS_COPY.stepInvoiceDraft : POS_COPY.stepInvoice,
       done: hasInvoice,
     },
-    { key: "handed", label: POS_COPY.stepHandedOver, done: handedOver },
+    {
+      key: "handed",
+      // W-1043: a PICKUP order that is Ready is not handed over yet; the step says what is true until DELIVERED.
+      label:
+        order.fulfillPath === "PICKUP" && status === "OUT_FOR_DELIVERY"
+          ? POS_COPY.readyForPickup
+          : POS_COPY.stepHandedOver,
+      done: handedOver,
+    },
   ];
   const current = steps.findIndex((s) => !s.done);
   return (
@@ -101,8 +109,8 @@ export function posMoveOptions(
 }
 
 /**
- * The action-bar slice of a POS order: ONE primary per state. PENDING offers only the switch (its primary is the
- * page's existing Confirm Order); CONFIRMED: Create invoice, then Hand over; DELIVERED: Record payment / Print.
+ * The action-bar slice of a POS order: ONE primary per state. PENDING: Ready for pickup (Confirm order, which the
+ * page renders, steps down to secondary) and the switch; CONFIRMED: Create invoice, then Hand over; DELIVERED: Record payment / Print.
  * Edit order and the status demotions stay where the page already renders them.
  */
 export function PosOrderActions({
@@ -112,6 +120,7 @@ export function PosOrderActions({
   onHandOver,
   onReadyForPickup,
   readyPending,
+  onConfirm,
   moveOptions = { delivery: "ROUTE", ship: false },
   onMove,
 }: {
@@ -122,6 +131,8 @@ export function PosOrderActions({
   /** "Ready for pickup": the customer notification (the order's OUT_FOR_DELIVERY step, kept out of the 3-step layout). */
   onReadyForPickup: () => void;
   readyPending?: boolean;
+  /** "Confirm order" for a PENDING POS order: Ready for pickup is its primary now, so Confirm lives here as a secondary. */
+  onConfirm: () => void;
   moveOptions?: PosMoveOptions;
   /** Moves the order off pickup (the page asks first): "Switch to delivery" / "Ship by carrier…". */
   onMove: (path: "ROUTE" | "SHIP") => void;
@@ -168,14 +179,14 @@ export function PosOrderActions({
       </ActionTier>
     ) : null;
 
-  if (status === "PENDING") return switchToDelivery;
-
-  const readyForPickup = (
-    <ActionTier tier="secondary">
+  // W-1043: at PENDING it is the order's one primary action (the page's Confirm order steps down); at CONFIRMED it
+  // follows Create invoice / Hand over. One server step either way (POST /orders/:id/ready-for-pickup).
+  const readyForPickup = (primary: boolean) => (
+    <ActionTier tier={primary ? "primary" : "secondary"}>
       <Button
         size="sm"
         className="h-11"
-        variant="secondary"
+        variant={primary ? undefined : "secondary"}
         leftIcon={<Bell className="h-4 w-4" />}
         onClick={onReadyForPickup}
         loading={readyPending}
@@ -184,6 +195,27 @@ export function PosOrderActions({
       </Button>
     </ActionTier>
   );
+
+  if (status === "PENDING") {
+    return (
+      <>
+        {readyForPickup(true)}
+        <ActionTier tier="secondary">
+          <Button
+            size="sm"
+            className="h-11"
+            variant="secondary"
+            leftIcon={<CheckCircle2 className="h-4 w-4" />}
+            onClick={onConfirm}
+            loading={readyPending}
+          >
+            {POS_COPY.confirmOrder}
+          </Button>
+        </ActionTier>
+        {switchToDelivery}
+      </>
+    );
+  }
 
   if (status === "CONFIRMED") {
     const handOver = (primary: boolean) => (
@@ -228,7 +260,7 @@ export function PosOrderActions({
             {handOver(false)}
           </>
         )}
-        {readyForPickup}
+        {readyForPickup(false)}
         {switchToDelivery}
       </>
     );

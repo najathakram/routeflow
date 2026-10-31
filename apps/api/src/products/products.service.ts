@@ -53,7 +53,8 @@ import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "./scan-match";
-import { buildProductListWhere } from "./product-list-where";
+import { buildProductListWhere, needsLowStockIds } from "./product-list-where";
+import { lowStockProductIds } from "./low-stock-ids";
 import type { ProductIdsForFilterResponse } from "@routeflow/types";
 import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
@@ -426,7 +427,8 @@ export class ProductsService {
     const limit = fetchAll ? 10_000 : limitRaw;
     const skip = (page - 1) * limit;
 
-    const where: any = buildProductListWhere(query, opts);
+    const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
+    const where: any = buildProductListWhere(query, { ...opts, lowStockIds });
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
     // display names for line items. The parent row is small (no nested
@@ -512,7 +514,8 @@ export class ProductsService {
    */
   async findIds(query: ListProductsDto): Promise<ProductIdsForFilterResponse> {
     this.requireTenant();
-    const where: any = buildProductListWhere(query);
+    const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
+    const where: any = buildProductListWhere(query, { lowStockIds });
     const db = this.prisma.forTenant();
     const [rows, total] = await Promise.all([
       db.product.findMany({
