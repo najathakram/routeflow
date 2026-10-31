@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 import { useListboxNav } from "@/lib/use-listbox-nav";
+import { WriteButton } from "@/lib/read-only-gate";
 
 interface PickerCustomer {
   id: string;
@@ -18,6 +19,8 @@ interface Props<C extends PickerCustomer> {
   listOpen: boolean;
   onListOpenChange: (open: boolean) => void;
   onPick: (c: C) => void;
+  /** W-1041: offers `Add "<typed>" as a new customer` when the search found nobody. */
+  onCreateNew?: (name: string) => void;
   error?: string;
   inputRef: React.Ref<HTMLInputElement>;
 }
@@ -35,6 +38,7 @@ export function CustomerSearchPicker<C extends PickerCustomer>({
   listOpen,
   onListOpenChange,
   onPick,
+  onCreateNew,
   error,
   inputRef,
 }: Props<C>) {
@@ -84,6 +88,18 @@ export function CustomerSearchPicker<C extends PickerCustomer>({
           {results.length === 0 && searched && (
             <li role="status" className="px-3 py-2 text-sm text-navy/70">
               No customers found.
+            </li>
+          )}
+          {results.length === 0 && searched && onCreateNew && (
+            <li role="presentation" className="px-3 pb-2">
+              <WriteButton
+                type="button"
+                variant="secondary"
+                className="min-h-[44px] w-full"
+                onClick={() => onCreateNew(value.trim())}
+              >
+                Add &quot;{value.trim()}&quot; as a new customer
+              </WriteButton>
             </li>
           )}
           {results.map((c, i) => (

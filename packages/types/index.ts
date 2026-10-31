@@ -281,3 +281,4 @@ export {
   isLicenceLive,
   licenceExpiryCutoff,
 } from "./licence-validity";
+export * from "./api/ready-for-pickup";

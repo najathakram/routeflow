@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
+import { WriteButton } from "@/lib/read-only-gate";
 
 /** CQ-11: the customer search came back empty (a typed search with no match), instead of a blank dropdown. */
 export const COUNTER_NO_CUSTOMERS_COPY = "No customers found";
@@ -79,6 +80,7 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   disabled,
   onPick,
   listbox,
+  onCreateNew,
 }: {
   /** the text in the search field */
   search: string;
@@ -89,6 +91,8 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   onPick: (customer: C) => void;
   /** keyboard state from `useCustomerListbox`; without it the list is click-only */
   listbox?: CustomerListbox;
+  /** W-1041: offers `Add "<typed>" as a new customer` under "No customers found"; without it the line stands alone. */
+  onCreateNew?: (name: string) => void;
 }) {
   if (matches.length > 0) {
     if (listbox && !listbox.open) return null;
@@ -136,9 +140,22 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   }
   if (search.trim() && answered) {
     return (
-      <p role="status" className="text-sm text-navy/70" data-testid="counter-customer-none">
-        {COUNTER_NO_CUSTOMERS_COPY}
-      </p>
+      <>
+        <p role="status" className="text-sm text-navy/70" data-testid="counter-customer-none">
+          {COUNTER_NO_CUSTOMERS_COPY}
+        </p>
+        {onCreateNew ? (
+          <WriteButton
+            type="button"
+            variant="secondary"
+            className="min-h-[44px] w-full sm:w-auto"
+            disabled={disabled}
+            onClick={() => onCreateNew(search.trim())}
+          >
+            Add &quot;{search.trim()}&quot; as a new customer
+          </WriteButton>
+        ) : null}
+      </>
     );
   }
   return null;
