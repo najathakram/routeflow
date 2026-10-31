@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { roundMoney, unitWords } from "@routeflow/pricing";
+import { plural, roundMoney, unitWords } from "@routeflow/pricing";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
@@ -49,6 +49,8 @@ export function SplitInvoiceModal({
 
   // Per-row qty to invoice (defaults to remaining for each row).
   const [qtyById, setQtyById] = React.useState<Record<string, number>>({});
+  // F04: rows whose typed quantity went past what is left (the box still clamps; the row says how much is left).
+  const [overById, setOverById] = React.useState<Record<string, boolean>>({});
   const [terms, setTerms] = React.useState(defaultTerms);
   const [dueDate, setDueDate] = React.useState(() => todayPlusDays(TERM_DAYS[defaultTerms] ?? 30));
   const [send, setSend] = React.useState(false);
@@ -62,6 +64,7 @@ export function SplitInvoiceModal({
       next[it.id] = remaining;
     });
     setQtyById(next);
+    setOverById({});
     setTerms(defaultTerms);
     setDueDate(todayPlusDays(TERM_DAYS[defaultTerms] ?? 30));
     setSend(false);
@@ -171,6 +174,7 @@ export function SplitInvoiceModal({
                 {billable.map((it) => {
                   const remaining = it.qty - it.invoicedQty;
                   const q = qtyById[it.id] ?? 0;
+                  const leftId = `split-left-${it.id}`;
                   return (
                     <tr key={it.id} className="border-t border-surface-border">
                       <td className="px-3 py-2 text-navy">{it.productName}</td>
@@ -186,8 +190,10 @@ export function SplitInvoiceModal({
                           max={remaining}
                           step="any"
                           value={q}
+                          aria-describedby={overById[it.id] ? leftId : undefined}
                           onChange={(e) => {
                             const v = Number(e.target.value);
+                            setOverById((prev) => ({ ...prev, [it.id]: v > remaining }));
                             setQtyById((prev) => ({
                               ...prev,
                               [it.id]: Number.isNaN(v) ? 0 : Math.min(Math.max(0, v), remaining),
@@ -195,6 +201,15 @@ export function SplitInvoiceModal({
                           }}
                           className="w-24 rounded border border-surface-border px-2 py-1 text-right text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
+                        {overById[it.id] && (
+                          <p id={leftId} role="status" className="mt-1 text-xs text-amber-700">
+                            {`Only ${remaining} ${
+                              it.boxes != null
+                                ? unitWords().baseShortFor(remaining)
+                                : plural(it.unit ?? "", remaining)
+                            } left to invoice`.replace("  ", " ")}
+                          </p>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-navy">
                         {formatMoney(previewSplitLineTotal(it, q))}
