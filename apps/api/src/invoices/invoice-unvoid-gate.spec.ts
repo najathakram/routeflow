@@ -19,13 +19,20 @@ const rows = [
   { id: "li3", productId: "p1", restrictionOverrideRuleIds: [] },
   { id: "li4", productId: null, restrictionOverrideRuleIds: [] },
 ];
-const prismaWith = (items: unknown[], order: unknown = null) => ({
-  getTenantId: () => "t1",
-  forTenant: () => ({
-    invoiceItem: { findMany: jest.fn().mockResolvedValue(items) },
-    order: { findFirst: jest.fn().mockResolvedValue(order) },
-  }),
-});
+// `mode` is the tenant's stored fulfilment model (an order-less invoice takes its kind from it, L8).
+const prismaWith = (items: unknown[], order: unknown = null, mode = "delivery") => {
+  const featureLookup = jest.fn().mockResolvedValue({ mode });
+  return {
+    getTenantId: () => "t1",
+    tenantFeatureConfig: { findFirst: featureLookup } as never,
+    featureLookup,
+    forTenant: () => ({
+      invoiceItem: { findMany: jest.fn().mockResolvedValue(items) },
+      order: { findFirst: jest.fn().mockResolvedValue(order) },
+      customer: { findFirst: jest.fn().mockResolvedValue({ fulfillPath: null }) },
+    }),
+  };
+};
 const OP = { sub: "u1", role: "OPERATOR" } as never;
 
 describe("unvoidParams", () => {
@@ -84,14 +91,38 @@ describe("unvoidParams", () => {
     expect(params.fulfilmentKind).toBe("COUNTER");
   });
 
-  it("an order-less invoice is DELIVERY", async () => {
+  // SA-958 A-1: an unvoid is a new sale, and an order-less one is judged as the customer's NEXT order would be
+  // (`defaultSaleFulfilmentKind`, L8), exactly as create and duplicate judge it. DELIVERY is no longer assumed.
+  it("U1 an order-less invoice at a pickup-only tenant is judged at the store (PICKUP)", async () => {
     const { params } = await unvoidParams(
-      prismaWith(rows),
+      prismaWith(rows, null, "pickup"),
+      { id: "inv1", customerId: "c1" },
+      OP,
+      undefined,
+    );
+    expect(params.fulfilmentKind).toBe("PICKUP");
+  });
+
+  it("U2 an order-less invoice at a delivery tenant is still DELIVERY (the customer's address)", async () => {
+    const { params } = await unvoidParams(
+      prismaWith(rows, null, "delivery"),
       { id: "inv1", customerId: "c1" },
       OP,
       undefined,
     );
     expect(params.fulfilmentKind).toBe("DELIVERY");
+  });
+
+  it("U3 an order-linked counter invoice keeps its order's kind and never reads the tenant default", async () => {
+    const prisma = prismaWith(rows, { counterSale: true, fulfillPath: "PICKUP" }, "delivery");
+    const { params } = await unvoidParams(
+      prisma,
+      { id: "inv1", customerId: "c1", orderId: "o1" },
+      OP,
+      undefined,
+    );
+    expect(params.fulfilmentKind).toBe("COUNTER");
+    expect(prisma.featureLookup).not.toHaveBeenCalled();
   });
 
   it("a tenant-less session is refused (fail closed)", async () => {

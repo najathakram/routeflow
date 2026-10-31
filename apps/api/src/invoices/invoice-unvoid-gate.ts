@@ -1,6 +1,8 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { OVERRIDE_STAMP_SELECT } from "../common/restriction-override-columns";
+import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
+import type { PrismaService } from "../prisma/prisma.service";
 import type { HeldLine } from "../selling-restrictions/restriction-warning";
 import { orderFulfilmentKind } from "../selling-restrictions/sale-fulfilment";
 import type { SellableLinesArgs } from "../selling-restrictions/selling-restrictions.service";
@@ -25,7 +27,10 @@ const productsOf = (rows: ReadonlyArray<{ productId?: string | null }>) =>
   new Set(rows.flatMap((r) => (r.productId ? [r.productId] : [])));
 
 export async function unvoidParams(
-  prisma: { forTenant(): any; getTenantId(): string | null | undefined },
+  prisma: Pick<PrismaService, "tenantFeatureConfig"> & {
+    forTenant(): any;
+    getTenantId(): string | null | undefined;
+  },
   inv: { id: string; customerId: string; orderId?: string | null },
   actor: Actor,
   ack: Ack,
@@ -34,9 +39,15 @@ export async function unvoidParams(
     .forTenant()
     .invoiceItem.findMany({ where: { invoiceId: inv.id }, select: HELD_SELECT });
   // An order-linked invoice is the same sale as its order: a counter / pickup order's invoice is judged at the store.
-  const sale = { fulfilmentKind: await orderFulfilmentKind(prisma.forTenant(), inv.orderId) };
+  // An order-less one is judged as the customer's NEXT order would be (L8, SA-958 A-1), as create and duplicate do.
+  const tenant = iGate.tenantId(prisma);
+  const sale = {
+    fulfilmentKind: inv.orderId
+      ? await orderFulfilmentKind(prisma.forTenant(), inv.orderId)
+      : await defaultSaleFulfilmentKind(prisma, tenant, inv.customerId),
+  };
   return {
-    params: iGate.whole(iGate.tenantId(prisma), inv.customerId, asLive(rows), actor, ack, sale),
+    params: iGate.whole(tenant, inv.customerId, asLive(rows), actor, ack, sale),
     judged: productsOf(rows),
   };
 }
