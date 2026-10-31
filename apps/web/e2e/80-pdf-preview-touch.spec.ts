@@ -118,14 +118,15 @@ function cspErrors(page: Page) {
 
 async function openInvoicePreview(page: Page) {
   await page.goto("/invoices/new");
-  await page.getByRole("button", { name: /new sale/i }).click();
+  // Preview exists only outside sale mode.
+  await page.getByRole("button", { name: /other charge/i }).click();
   await page.getByPlaceholder(/search customers/i).click();
   await page.getByPlaceholder(/search customers/i).fill(CUSTOMER_NAME);
   await page.getByText(CUSTOMER_NAME, { exact: true }).first().click();
   await page.getByPlaceholder(/scan barcode, or type product name/i).fill(PRODUCT_NAME);
   await page
     .getByRole("listbox")
-    .getByRole("button", { name: new RegExp(SKU, "i") })
+    .getByRole("option", { name: new RegExp(SKU, "i") })
     .click();
   await page.getByRole("button", { name: /^preview$/i }).click();
 }
