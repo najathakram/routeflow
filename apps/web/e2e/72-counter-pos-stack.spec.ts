@@ -406,7 +406,10 @@ test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 
 
     // At 390 no same-row claim is made (four or more buttons cannot all share a row on a phone): they are all on screen.
     await page.setViewportSize({ width: 390, height: 844 });
-    await actionBoxes(390);
+    const at390 = await actionBoxes(390);
+    // the design still holds at 390: a 2-column grid with New sale full width under it (W-715, P-RCPT-1)
+    expect(at390["New sale"].y).toBeGreaterThan(at390["Print"].y);
+    expect(at390["New sale"].width).toBeGreaterThan(at390["Print"].width * 1.8);
     await page.screenshot({ path: "test-results/w783-receipt-390.png", fullPage: true });
 
     // W-716 / F14: Void sale opens the void dialog for this sale; the reason is marked required up front
