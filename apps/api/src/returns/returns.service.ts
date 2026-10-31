@@ -235,6 +235,8 @@ export interface FindAllReturnsOptions {
   /** SA-727b: only INLINE returns captured for a REFUND whose refund is not recorded yet (RECEIVED, EXTERNAL_REFUND stored,
    * refundedAt null, no credit note). Overrides `kind` and `status`. */
   pendingRefund?: boolean;
+  /** SA-1060 PR-1: only returns held for one of these reasons (the controller whitelists them). */
+  holdReason?: string[];
   page?: number;
   limit?: number;
 }
@@ -602,6 +604,7 @@ export class ReturnsService {
       search,
       kind = "STANDARD",
       pendingRefund = false,
+      holdReason,
       page = 1,
       limit = 20,
     } = options;
@@ -628,6 +631,7 @@ export class ReturnsService {
       where.refundedAt = null;
       where.creditNoteId = null;
     }
+    if (holdReason?.length) where.holdReason = { in: holdReason };
     if (reason) where.reason = reason;
     if (search) {
       where.OR = [

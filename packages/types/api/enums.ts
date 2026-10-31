@@ -91,6 +91,15 @@ export const RETURN_HOLD_REASON_VALUES = [
 ] as const;
 export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];
 
+/** SA-1060 PR-1: the holds staff can approve or reject on an INLINE return. The one list the service and the approval screen both read. */
+export const INLINE_HOLD_REASONS = [
+  "DRIVER_CAP",
+  "ALREADY_RETURNED",
+] as const satisfies readonly ReturnHoldReason[];
+export type InlineHoldReason = (typeof INLINE_HOLD_REASONS)[number];
+export const isInlineHoldReason = (reason: string | null | undefined): reason is InlineHoldReason =>
+  reason != null && (INLINE_HOLD_REASONS as readonly string[]).includes(reason);
+
 export const RETURN_PRICE_SOURCE_VALUES = [
   "SOURCE_INVOICE",
   "CUSTOMER_PRICE",
