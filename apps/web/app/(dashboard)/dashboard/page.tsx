@@ -31,7 +31,7 @@ import { useOrders, type Order } from "@/lib/api/orders";
 import { useShipSlotReserve } from "@/lib/ship-caps-hint";
 import { getTenantCookie } from "@/lib/tenant-cookie";
 import { useTenantFeatures } from "@/lib/tenant-features";
-import { isZoneUnset, useShippedWeekFrom } from "@/lib/tenant-timezone";
+import { TIME_ZONE_SETTINGS_HREF, isZoneUnset, useShippedWeekFrom } from "@/lib/tenant-timezone";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
@@ -940,7 +940,7 @@ export default function DashboardPage() {
             Set your business time zone. Until then, invoices and reports use UTC, so evening sales
             can show tomorrow&apos;s date.
           </p>
-          <Link href="/settings#settings-timezone" className="font-medium text-brand-700 underline">
+          <Link href={TIME_ZONE_SETTINGS_HREF} className="font-medium text-brand-700 underline">
             Set time zone
           </Link>
         </div>

@@ -71,7 +71,7 @@ describe("Dashboard: the business time zone was never picked", () => {
     expect(await screen.findByText(PROMPT)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Set time zone" })).toHaveAttribute(
       "href",
-      "/settings#settings-timezone",
+      "/settings?tab=profile#settings-timezone",
     );
   });
 

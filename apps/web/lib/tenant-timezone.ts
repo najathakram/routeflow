@@ -23,6 +23,9 @@ export function useTenantTimeZoneQuery(enabled = true) {
   };
 }
 
+/** Where the dashboard prompt sends the admin: the Business profile tab holds the field, the bare hub does not (SA-1067 Z-9). */
+export const TIME_ZONE_SETTINGS_HREF = "/settings?tab=profile#settings-timezone";
+
 /**
  * SA-1067 Z4: "UTC" is the fallback the API writes when nobody picked a zone (`FALLBACK_ZONE`), so it is the one value that
  * means "not set yet". An unknown zone (still loading, or none sent) is NOT unset: nothing should flash before /settings answers.

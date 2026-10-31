@@ -1,7 +1,8 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { act, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import SettingsPage from "./page";
+import { TIME_ZONE_SETTINGS_HREF } from "@/lib/tenant-timezone";
 
 // R16-4: Business Profile shows the tenant time zone. TENANT_ADMIN edits it (PATCH /settings
 // `timezone`); every lower role sees it as read-only text.
@@ -11,8 +12,9 @@ jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { id: "u1", username: "someone", role: mockRole } }),
 }));
+let mockSearch = "tab=profile";
 jest.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams("tab=profile"),
+  useSearchParams: () => new URLSearchParams(mockSearch),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 jest.mock("@/lib/api-client", () => ({
@@ -40,6 +42,7 @@ const HELP = "Applies to receipts and today's sales from now on";
 beforeEach(() => {
   jest.clearAllMocks();
   mockRole = "TENANT_ADMIN";
+  mockSearch = "tab=profile";
   (apiClient.get as jest.Mock).mockResolvedValue({ data: SAVED });
 });
 
@@ -192,5 +195,33 @@ describe("Settings: time zone", () => {
     await screen.findByLabelText("Time zone");
     await waitFor(() => expect(screen.getByLabelText("Time zone")).toHaveValue("America/Chicago"));
     expect(screen.queryByText(NOT_SET)).toBeNull();
+  });
+
+  // SA-1067 Z-9: the dashboard prompt's link has to land where the field is, not just look right. The hub (no ?tab=) renders no
+  // Time zone field; the field lives on the Business profile tab, so the link's own query is replayed through the real page.
+  it("Z-9: the dashboard link's URL renders the Time zone field for a tenant admin on UTC", async () => {
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { ...SAVED, timezone: "UTC" } });
+    const url = new URL(TIME_ZONE_SETTINGS_HREF, "http://localhost");
+    mockSearch = url.search.slice(1);
+    expect(url.hash).toBe("#settings-timezone");
+    renderWithProviders(<SettingsPage />);
+    const field = await screen.findByLabelText("Time zone");
+    expect(field.id).toBe(url.hash.slice(1));
+  });
+
+  it("Z-9: the bare /settings hub does not render the field (why the link names ?tab=profile)", async () => {
+    mockSearch = "";
+    renderWithProviders(<SettingsPage />);
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByLabelText("Time zone")).toBeNull();
+  });
+
+  it("Z-13: an operator on UTC never sees the not-set line (only the admin can change the zone)", async () => {
+    mockRole = "OPERATOR";
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { ...SAVED, timezone: "UTC" } });
+    renderWithProviders(<SettingsPage />);
+    await screen.findByText("UTC");
+    expect(screen.queryByText("Not set yet. Dates use UTC until you pick your city.")).toBeNull();
   });
 });
