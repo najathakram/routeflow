@@ -168,7 +168,13 @@ function DraftDockInner() {
           bottom-24 (not bottom-4) keeps the dock clear of the bottom-center PWA
           install prompt (which lives in the bottom ~96px band, mirroring main's
           pb-24) — they can no longer overlap and hide the Resume/Discard actions. */}
-      <div className="pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
+      <div
+        className={cn(
+          "pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto",
+          // SA-1066 F9: on the till, from md up, the dock sits right so it never covers the sale's last lines
+          pathname === "/orders/counter-sale" && "md:left-auto md:right-4",
+        )}
+      >
         {/* Collapse control — a badge with the parked count (shown when >2). */}
         {(list.length > 2 || (narrow && list.length > 0)) && (
           <button

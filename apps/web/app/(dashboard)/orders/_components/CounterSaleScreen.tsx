@@ -1866,7 +1866,7 @@ export function CounterSaleScreen() {
                     ref={tenderRef}
                     aria-label="Amount tendered"
                     inputMode="decimal"
-                    className="mt-1 min-h-[44px] w-full scroll-mb-40 rounded border px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded border px-3 py-2"
                     value={tendered}
                     disabled={locked}
                     onChange={(e) => {

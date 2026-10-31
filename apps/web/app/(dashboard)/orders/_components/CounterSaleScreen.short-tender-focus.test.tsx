@@ -140,13 +140,6 @@ describe("W-709: a short tender takes the cashier to Amount tendered", () => {
     expect(scrolled.some((el) => el === tender || el.contains(tender))).toBe(true);
   });
 
-  it("SA-1066 F9: the scrolled field keeps 10rem clear below it, past a docked draft bar", async () => {
-    renderTill(<CounterSaleScreen />);
-    await scan("012345678905");
-    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
-    expect(screen.getByLabelText("Amount tendered").className).toMatch(/\bscroll-mb-40\b/);
-  });
-
   it("too little cash: the same, and Exact then completes it in one tap", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("012345678905");
