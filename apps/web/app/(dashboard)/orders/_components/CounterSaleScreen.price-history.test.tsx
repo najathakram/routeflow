@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
 import { computeLineSubtotal } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
@@ -64,10 +65,14 @@ const CRATE = {
   unitsPerBox: 24,
 };
 const PRODUCTS: Record<string, unknown> = { COLA, JUICE, WATER, CRATE };
+/** every code the scan box submitted, in order (a lookup is the proof a scan reached the scan box) */
+const mockLookups: string[] = [];
 jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
-  resolveProductByCode: async (code: string) =>
-    PRODUCTS[code] ? { product: PRODUCTS[code], source: "sku" } : { notFound: true },
+  resolveProductByCode: async (code: string) => {
+    mockLookups.push(code);
+    return PRODUCTS[code] ? { product: PRODUCTS[code], source: "sku" } : { notFound: true };
+  },
 }));
 const ACME = { id: "c-acme", businessName: "Acme Cafe", pricingTier: 2 };
 const BETA = { id: "c-beta", businessName: "Beta Deli", pricingTier: 1 };
@@ -165,6 +170,7 @@ const parkedPayload = () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLookups.length = 0;
   window.localStorage.clear();
   window.sessionStorage.clear();
   mockUser = ADMIN;
@@ -606,6 +612,162 @@ describe("W-853 Use this price opens the price dialog; Apply is the one write", 
     await waitFor(() =>
       expect(within(lineOf("Cola")).getByRole("button", { name: "Price history" })).toHaveFocus(),
     );
+  });
+});
+
+describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan box", () => {
+  /** the history answer for Cola: one row at $9.00 (R13l overrides it with two) */
+  const COLA_HISTORY = HISTORY["p-cola"];
+  beforeEach(() => {
+    HISTORY["p-cola"] = [historyRow({ unitPrice: 9 })];
+  });
+  afterEach(() => {
+    HISTORY["p-cola"] = COLA_HISTORY;
+  });
+  const priceDialogs = () => screen.queryAllByRole("dialog", { name: "Change the price for Cola" });
+  const scanBox = () => screen.getByLabelText("Scan or search items") as HTMLInputElement;
+  /** a desktop till (no touch-first), one $10.00 Cola line, the panel open with focus inside it */
+  const openPanel = async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    mockLookups.length = 0; // the setup scan is not under test
+    const panel = await openHistory("Cola");
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    return panel;
+  };
+  /** lets the scan's lookup (async) and the price dialog settle, then reads everything a row cares about */
+  const observed = async () => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 80));
+    });
+    return {
+      lookups: [...mockLookups],
+      priceDialogs: priceDialogs().length,
+      total: (total().textContent ?? "").replace(/^Total\s*/, ""),
+      chips: screen.queryAllByTestId("line-price-chip").length,
+    };
+  };
+  const SCANNED = (...lookups: string[]) => ({
+    lookups,
+    priceDialogs: 0,
+    total: "$10.00",
+    chips: 0,
+  });
+  /** Tab until a "Use this price" button holds focus */
+  const tabToUse = async (user: ReturnType<typeof userEvent.setup>) => {
+    for (let i = 0; i < 12; i++) {
+      const a = document.activeElement as HTMLElement | null;
+      if (a?.getAttribute("aria-label")?.startsWith("Use this price")) return;
+      await user.tab();
+    }
+    throw new Error("Use this price never took focus");
+  };
+
+  it("R13e: a desktop till with the panel open sends the whole code to the scan box, letters included", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("AB12345{Enter}");
+    expect(await observed()).toEqual(SCANNED("AB12345"));
+  });
+
+  it("R13f: letters then Enter submit the code to the scan, and the price dialog does not open", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("ABCDEF{Enter}");
+    expect(await observed()).toEqual(SCANNED("ABCDEF"));
+  });
+
+  it("R13g: a letter code, then a 12-digit code: the line keeps its own total, no price chip, two lookups", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("ABCDEF{Enter}");
+    await user.keyboard("123456789012{Enter}");
+    expect(await observed()).toEqual(SCANNED("ABCDEF", "123456789012"));
+  });
+
+  it("R13h: a prefix of letters keeps its letters: AB12345 is submitted whole", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("AB12345{Enter}");
+    expect(await observed()).toEqual(SCANNED("AB12345"));
+  });
+
+  it("R13i: focus on Use, letters then Enter: the code goes to the scan, Use is not pressed", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await tabToUse(user);
+    await user.keyboard("ABCDEF{Enter}");
+    expect(await observed()).toEqual(SCANNED("ABCDEF"));
+  });
+
+  it("R13j: a symbol prefix counts: ]C1234 is submitted whole", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("]C1234{Enter}");
+    expect(await observed()).toEqual(SCANNED("]C1234"));
+  });
+
+  it("R13k: an all-digit code still goes whole to the scan box", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("123456789012{Enter}");
+    expect(await observed()).toEqual(SCANNED("123456789012"));
+  });
+
+  it("R13l: ArrowDown then Enter use row 1's price in the dialog; nothing is priced until Apply", async () => {
+    HISTORY["p-cola"] = COLA_HISTORY; // two rows: 9.00 and 8.004
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(priceDialogs()).toHaveLength(1));
+    expect(screen.getByRole("textbox", { name: "Price per item" })).toHaveValue("8.00");
+    expect(total()).toHaveTextContent("$10.00");
+    expect(screen.queryAllByTestId("line-price-chip")).toHaveLength(0);
+    expect(mockLookups).toEqual([]);
+  });
+
+  it("R13m: Tab to Use, then Enter opens the dialog; again with Space", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await tabToUse(user);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(priceDialogs()).toHaveLength(1));
+    expect(screen.getByRole("textbox", { name: "Price per item" })).toHaveValue("9.00");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    const panel = await openHistory("Cola");
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    await tabToUse(user);
+    await user.keyboard(" ");
+    await waitFor(() => expect(priceDialogs()).toHaveLength(1));
+    expect(screen.getByRole("textbox", { name: "Price per item" })).toHaveValue("9.00");
+    expect(mockLookups).toEqual([]);
+  });
+
+  it("R13n: Escape closes the panel and focus goes back to the history button", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Price history" })).toBeNull());
+    await waitFor(() =>
+      expect(within(lineOf("Cola")).getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
+    expect(mockLookups).toEqual([]);
+  });
+
+  it("R13o: panel shut, focus on a line button, g: not routed to the scan box", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    const button = within(lineOf("Cola")).getByRole("button", { name: "Price history" });
+    button.focus();
+    expect(button).toHaveFocus();
+    await user.keyboard("g");
+    expect(scanBox()).not.toHaveFocus();
+    expect(scanBox()).toHaveValue("");
   });
 });
 
