@@ -23,6 +23,12 @@ export interface SaleLine {
   unitPrice: number;
   qty: number;
   unitsPerBox?: number;
+  /**
+   * SA-934 A-1: the product's own pack and base words, snapshotted when the line was added (display only: `toSaleItem`
+   * names its fields, so the request does not change). Absent on a line held before this: the row prints Box / pcs.
+   */
+  packLabel?: string | null;
+  baseLabel?: string | null;
   boxes?: number;
   pieces?: number;
   /** POS-3: an optional per-line note (max NOTE_MAX); sent as the wire item's `note`. */
@@ -101,6 +107,8 @@ export function addScannedProduct(
       name: displayProductName(product),
       unitPrice: lp.price,
       unitsPerBox: upb,
+      ...(product.packLabel ? { packLabel: String(product.packLabel) } : {}),
+      ...(product.baseUnitLabel ? { baseLabel: String(product.baseUnitLabel) } : {}),
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
       priceType: lp.priceType,

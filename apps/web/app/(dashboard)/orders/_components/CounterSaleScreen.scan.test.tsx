@@ -266,7 +266,8 @@ describe("B1208: the scanned level decides the line", () => {
       fireEvent.click(screen.getByRole("button", { name: "Add a piece to Sample Cola 24pk" }));
     }
     expect(lines()[0]).toHaveTextContent("1 box");
-    expect(lines()[0]).not.toHaveTextContent("pcs");
+    // loose pieces would read "+ 3 pcs"; the stepper's own "1 Box (24 pcs)" label is not a leftover
+    expect(lines()[0]).not.toHaveTextContent(/\+ \d+ pcs/);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00");
   });
 
