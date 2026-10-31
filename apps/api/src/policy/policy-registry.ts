@@ -17,6 +17,7 @@
  * `schema` validates stored JSON at read AND write. It is a zod v4 schema so `GET /policies` can
  * hand the admin UI a JSON-schema of it (`z.toJSONSchema`).
  */
+import { isWholeCents } from "@routeflow/pricing";
 import { z, type ZodType } from "zod/v4";
 import type { PolicyScopeType } from "@prisma/client";
 
@@ -94,8 +95,8 @@ export const POLICY_REGISTRY = [
       .number()
       .finite()
       .nonnegative()
-      // Tolerance, not ===: 0.29 * 100 is 28.999999999999996 in IEEE-754.
-      .refine((n) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6, {
+      // isWholeCents (SA-1048), not a hand cents round: 0.29 * 100 is 28.999999999999996 in IEEE-754.
+      .refine((n) => isWholeCents(n), {
         message: "must be whole cents",
       })
       .nullable(),

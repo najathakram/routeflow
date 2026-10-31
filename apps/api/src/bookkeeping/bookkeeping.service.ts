@@ -289,7 +289,7 @@ export class BookkeepingService implements OnModuleInit {
       const paymentAmount = roundMoney(dto.amount);
       if (paymentAmount > remaining + 0.001) {
         throw new BadRequestException(
-          `Payment of ${paymentAmount} exceeds remaining balance of ${remaining.toFixed(2)}`,
+          `Payment of ${paymentAmount} exceeds remaining balance of ${roundMoney(remaining).toFixed(2)}`,
         );
       }
 

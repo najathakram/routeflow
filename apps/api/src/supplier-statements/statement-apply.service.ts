@@ -280,8 +280,8 @@ export class StatementApplyService {
         if (amount > capAmount + LINE_AMOUNT_EPSILON) {
           throw refuse(
             API_ERROR_CODES.STATEMENT_APPLY_OVER_LINE,
-            `Confirmed amount ${amount.toFixed(2)} for bill ${bill.billNumber} exceeds the ` +
-              `statement's own line of ${capAmount.toFixed(2)}.`,
+            `Confirmed amount ${roundMoney(amount).toFixed(2)} for bill ${bill.billNumber} exceeds the ` +
+              `statement's own line of ${roundMoney(capAmount).toFixed(2)}.`,
             { billId: bill.id, billNumber: bill.billNumber, amount, lineAmount: capAmount },
           );
         }
@@ -295,8 +295,8 @@ export class StatementApplyService {
         if (amount > remaining + BALANCE_EPSILON) {
           throw refuse(
             API_ERROR_CODES.STATEMENT_APPLY_OVER_BALANCE,
-            `Confirmed amount ${amount.toFixed(2)} for bill ${bill.billNumber} exceeds its ` +
-              `remaining balance of ${remaining.toFixed(2)}.`,
+            `Confirmed amount ${roundMoney(amount).toFixed(2)} for bill ${bill.billNumber} exceeds its ` +
+              `remaining balance of ${roundMoney(remaining).toFixed(2)}.`,
             { billId: bill.id, billNumber: bill.billNumber, amount, remaining },
           );
         }

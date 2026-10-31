@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ImportEntityType, MigrationSource, Prisma, StagingRecordStatus } from "@prisma/client";
+import { isWholeCents, roundMoney } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { productCategoryViolation, productNameViolation } from "../common/text-cell-guards";
@@ -49,9 +50,9 @@ function normalizedPrice(payload: Record<string, unknown>): string | null {
   // Strict shape: "12,50" (decimal comma), "12abc" and "1e3" must not parse to a different price.
   if (typeof raw === "string" && !PRICE_SHAPE.test(raw.trim())) return null;
   // A numeric cell is held to the same two-decimal rule (1.234 would round to 1.23).
-  if (typeof raw === "number" && Math.round(raw * 100) / 100 !== raw) return null;
+  if (typeof raw === "number" && !isWholeCents(raw)) return null;
   const n = parseImportMoney(raw);
-  return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? n.toFixed(2) : null;
+  return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? roundMoney(n).toFixed(2) : null;
 }
 
 /** The flag a staged PRODUCT payload earns (name first, then category), or null when it is safe to commit. */
