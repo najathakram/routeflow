@@ -38,6 +38,22 @@ import {
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
+import { createRequire } from "node:module";
+
+const { workspacesWithScript, findCrossWorkspaceSpecs } = createRequire(import.meta.url)(
+  "./lib/cross-workspace-specs.cjs",
+);
+
+/**
+ * The api `-script` specs that read another workspace, as { file, reads } (derived, never hand-kept). The api unit
+ * and repo-truth lanes skip `-script` specs (they run serially), so these reach a fast push only through the pins
+ * call: `planPins` selects one when the diff touches a directory it reads.
+ */
+export function loadCrossScriptSpecs(root) {
+  return (findCrossWorkspaceSpecs(root)["apps/api"] ?? [])
+    .filter((s) => s.spec.endsWith("-script.spec.ts"))
+    .map((s) => ({ file: s.spec, reads: s.reads }));
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -141,6 +157,8 @@ export function excludedLine(excluded) {
     : null;
 }
 
+const API_NAME = "@routeflow/api";
+
 /**
  * Pure planner for every turbo call a run makes (no spawn, no env), so the self-test can assert the
  * exact argv for FULL/AFFECTED x unsplit/split x excluded/not. `splitJest` is "JEST_MAX_WORKERS is
@@ -156,9 +174,16 @@ export function excludedLine(excluded) {
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, pins = null }) {
+export function planTurboCalls({
+  scope,
+  excluded = [],
+  splitJest,
+  fast = false,
+  pins = null,
+  repoTruth: repoTruthNames = [API_NAME],
+}) {
   const drop = new Set(excluded);
-  if (fast) return withPins(planFastCalls({ scope, drop, excluded }), pins, drop);
+  if (fast) return withPins(planFastCalls({ scope, drop, excluded, repoTruthNames }), pins, drop);
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -177,10 +202,10 @@ export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, 
         };
   }
   const filters = scope.workspaces.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
-  const API = "@routeflow/api";
   const calls = [];
-  // Only apps/api defines test:repo-truth today; a second workspace adding one must be added here.
-  const repoTruth = drop.has(API) ? [] : ["--filter=" + API];
+  // Every workspace that defines test:repo-truth (the caller derives the names from the workspaces' package.json;
+  // default api only) runs it on every affected push, whatever the diff touched.
+  const repoTruth = repoTruthNames.filter((w) => !drop.has(w)).map((w) => "--filter=" + w);
   if (!splitJest) {
     if (filters.length)
       calls.push({ jest: false, args: ["check-types", "lint", "test", ...filters] });
@@ -210,8 +235,7 @@ export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, 
  * `changedSince` is set on call 2 ONLY — never on a `jest: false` call and never on a tripwire.
  */
 const PRICING = "@routeflow/pricing";
-function planFastCalls({ scope, drop, excluded }) {
-  const API = "@routeflow/api";
+function planFastCalls({ scope, drop, excluded, repoTruthNames = [API_NAME] }) {
   const calls = [];
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
@@ -232,7 +256,8 @@ function planFastCalls({ scope, drop, excluded }) {
   if (filters.length) calls.push({ jest: false, args: ["check-types", "lint", ...filters] });
   if (related.length) calls.push({ jest: true, changedSince: true, args: ["test", ...related] });
   if (selected.includes(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
-  if (!drop.has(API)) calls.push({ jest: true, args: ["test:repo-truth", `--filter=${API}`] });
+  const repoTruth = repoTruthNames.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
+  if (repoTruth.length) calls.push({ jest: true, args: ["test:repo-truth", ...repoTruth] });
   return {
     calls,
     note: calls.length
@@ -391,7 +416,7 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * cannot be computed (`files` null) runs the pins rather than skipping them. VERIFY_EXCLUDE naming
  * api drops the pins (they are api specs), with no line. `pins: null` means "plan none".
  */
-export function planPins({ fast, files, excluded = [], specs }) {
+export function planPins({ fast, files, excluded = [], specs, crossScript }) {
   if (!fast || excluded.includes("@routeflow/api")) return { pins: null, line: null };
   if (files === null) {
     return {
@@ -400,8 +425,13 @@ export function planPins({ fast, files, excluded = [], specs }) {
       line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and ALL -script specs run (fail closed).",
     };
   }
-  if (!repoPinsNeeded(files)) return { pins: null, line: null };
-  const picked = selectScriptSpecs({ files, specs: specs ?? loadScriptSpecs(ROOT) });
+  const cross = crossScript ?? loadCrossScriptSpecs(ROOT);
+  if (!repoPinsNeeded(files, cross)) return { pins: null, line: null };
+  const picked = selectScriptSpecs({
+    files,
+    specs: specs ?? loadScriptSpecs(ROOT),
+    crossScript: cross,
+  });
   return {
     pins: true,
     scriptSpecs: picked.files,
@@ -543,6 +573,7 @@ export async function main() {
     splitJest: Boolean(JEST_MAX_WORKERS),
     fast: runMode.fast,
     pins,
+    repoTruth: workspacesWithScript(ROOT, "test:repo-truth").map((w) => w.name),
   });
   if (plan.note) console.log(plan.note);
   // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's

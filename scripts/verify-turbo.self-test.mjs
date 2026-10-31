@@ -74,6 +74,7 @@ import {
   LOW_MEM_THRESHOLD_BYTES,
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
+  loadCrossScriptSpecs,
   planPins,
   planTurboCalls,
 } from "./verify-turbo.mjs";
@@ -1212,6 +1213,7 @@ if (process.platform !== "win32") {
           "heavy-slot.mjs",
           "prisma-fresh.mjs",
           "verify-result.mjs",
+          "cross-workspace-specs.cjs",
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
@@ -1233,8 +1235,12 @@ if (process.platform !== "win32") {
           ["apps/control", "@routeflow/control"],
           ["packages/pricing", "@routeflow/pricing"],
         ]) {
-          put(`${dir}/package.json`, JSON.stringify({ name }));
+          // main() discovers the repo-truth workspaces from package.json (cross-workspace-lane.spec):
+          // the root declares the workspace globs and api carries the lane script, as in the real repo.
+          const scripts = dir === "apps/api" ? { "test:repo-truth": "jest" } : undefined;
+          put(`${dir}/package.json`, JSON.stringify({ name, scripts }));
         }
+        put("package.json", JSON.stringify({ workspaces: ["apps/*", "packages/*"] }));
         // The Prisma freshness preflight runs here too (CI is unset, api is in the plan), so the
         // fixture carries a schema folder and a generated client that is FRESH for it, resolved the
         // way apps/api finds its own (@prisma/client -> .prisma/client). Same text on both sides is
@@ -2189,6 +2195,39 @@ check(
     [none.scriptSpecs, /no -script specs/.test(none.scriptLine ?? "")],
     ["all", true],
   );
+  // R3C-l: a -script spec that reads ANOTHER workspace (inferred-goods-rate-parity-script reads apps/mobile) is not
+  // related by name to an apps/mobile edit, and no PIN_TRIGGER matches that path: it must be selected by what it reads.
+  const xSpec = "src/common/xread-script.spec.ts";
+  const xSpecs = [S("xread-script.spec.ts", "mentions none of the changed names"), ...specs];
+  const cross = [{ file: xSpec, reads: ["apps/mobile"] }];
+  const xPlan = (files, crossScript) =>
+    planPins({ fast: true, files, excluded: [], specs: xSpecs, crossScript });
+  check(
+    "R3C-l an edit under a directory a cross-workspace -script spec reads runs the pins and selects it",
+    (({ pins, scriptSpecs }) => [pins, scriptSpecs])(xPlan(["apps/mobile/lib/a.ts"], cross)),
+    [true, [AUDIT, xSpec]],
+  );
+  check(
+    "R3C-l2 the same edit with no cross list plans no pins (the old miss); an edit elsewhere still plans none",
+    [xPlan(["apps/mobile/lib/a.ts"], []).pins, xPlan(["apps/web/app/page.tsx"], cross).pins],
+    [null, null],
+  );
+  check(
+    "R3C-l3 the real repo derives its cross-workspace -script specs (inferred-goods-rate-parity is one)",
+    loadCrossScriptSpecs(ROOT).some((c) =>
+      /inferred-goods-rate-parity-script.spec.ts$/.test(c.file),
+    ),
+    true,
+  );
+  // R3C-m: web and mobile configure the campaign reporter; a lane run that kept it would overwrite
+  // .campaign/runs/<ws>.json with the lane's few specs, and campaign-check then refuses the push as PARTIAL.
+  check(
+    "R3C-m the workspace lane runner drops the campaign reporter",
+    readFileSync(join(ROOT, "scripts", "run-cross-workspace-specs.mjs"), "utf8").includes(
+      '"--reporters=default"',
+    ),
+    true,
+  );
   // (e) FR2 covers every pin that walks apps/api/scripts
   const walkers = REPO_WIDE_PINS.filter((p) => /apps\/api\/scripts/.test(p.why)).map((p) =>
     p.file.replace(/^apps\/api\/src\/common\//, ""),
@@ -2216,5 +2255,50 @@ check(
   ],
   [true, true, []],
 );
+
+// XW: every workspace that defines test:repo-truth gets the always-run lane (cross-workspace-lane.spec.ts). A web-only
+// diff used to run only the api lane, whose hand-kept list missed api-error-codes-parity.
+{
+  const repoTruth = ["@routeflow/api", "@routeflow/web", "@routeflow/mobile"];
+  const lane = (plan) =>
+    plan.calls.filter((c) => c.args[0] === "test:repo-truth").map((c) => c.args);
+  const want = [
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/web",
+      "--filter=@routeflow/mobile",
+    ],
+  ];
+  check(
+    "XW1 AFFECTED: the lane runs every repo-truth workspace, on a diff that selects only web",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, repoTruth })),
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: true, repoTruth })),
+    ],
+    [want, want],
+  );
+  check(
+    "XW2 FAST: the lane runs every repo-truth workspace, FULL (no changedSince), on a web-only diff",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, repoTruth })),
+      planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, repoTruth }).calls.find(
+        (c) => c.args[0] === "test:repo-truth",
+      ).changedSince,
+    ],
+    [want, undefined],
+  );
+  check(
+    "XW3 an excluded workspace is dropped from the lane; the default stays api only",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, excluded: [WEB], repoTruth })),
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false })),
+    ],
+    [
+      [["test:repo-truth", "--filter=@routeflow/api", "--filter=@routeflow/mobile"]],
+      [["test:repo-truth", "--filter=@routeflow/api"]],
+    ],
+  );
+}
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
