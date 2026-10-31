@@ -22,10 +22,17 @@
 -- The api must never be rolled back to a deploy that predates BAD_DEBT while this folder stands: that recreates the P2023 fault.
 -- Run this folder's rollback SQL (below) BEFORE any Railway rollback behind the deploy that carries BAD_DEBT.
 --
--- Rollback (restores the old default; the appended deny entries are removed by hand if wanted):
+-- Rollback. REQUIRED before any Railway rollback behind the deploy that carries BAD_DEBT (not optional cleanup):
 --   ALTER TABLE "User" ALTER COLUMN "deniedPermissionGroups" SET DEFAULT '{}';
---   UPDATE "User" SET "deniedPermissionGroups" = array_remove("deniedPermissionGroups", 'BAD_DEBT'::"OperatorPermissionGroup")
---    WHERE "role" = 'OPERATOR';
+--   UPDATE "User" SET "deniedPermissionGroups" = array_remove("deniedPermissionGroups", 'BAD_DEBT'::"OperatorPermissionGroup"),
+--          "permissionsVersion" = "permissionsVersion" + 1
+--    WHERE 'BAD_DEBT'::"OperatorPermissionGroup" = ANY("deniedPermissionGroups");
+-- There is NO role filter on purpose: the column default stamps {BAD_DEBT} on a new account of EVERY role (a driver, a customer),
+-- not only an operator, and a client generated without BAD_DEBT throws P2023 reading any such row. The version is bumped in the
+-- same UPDATE, as every write to the deny list does.
+-- The same UPDATE also applies from DEPLOY ORDER step 3, BEFORE this folder runs, if the rehearsal confirms that the new client
+-- stamps its own schema default on user.create (it sends {BAD_DEBT} even while the column default is still '{}'): rows created
+-- between the deploy and this folder carry the value too. The SET DEFAULT line is harmless then.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
