@@ -233,7 +233,8 @@ export class SettingsController {
         if (newZone === undefined) {
           await this.prisma.tenantConfig.upsert({
             where: { tenantId },
-            create: { tenantId, ...configUpdate },
+            // SA-1067 Z2: a row-less tenant's first save must not store the column default (New York) as if chosen.
+            create: { tenantId, timezone: FALLBACK_ZONE, ...configUpdate },
             update: configUpdate,
           });
         }
@@ -672,7 +673,11 @@ export class SettingsController {
     if (dto.creditAutoApplyOnSend !== undefined && tenantId) {
       await this.prisma.tenantConfig.upsert({
         where: { tenantId },
-        create: { tenantId, creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+        create: {
+          tenantId,
+          timezone: FALLBACK_ZONE,
+          creditAutoApplyOnSend: dto.creditAutoApplyOnSend,
+        },
         update: { creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
       });
     }
