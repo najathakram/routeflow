@@ -66,6 +66,22 @@ describe("cross-workspace spec detector (fixture repo)", () => {
       'import fs from "fs"; const APPS = path.join(ROOT, "apps"); fs.readdirSync(path.join(APPS, "web", "lib"));',
     "apps/api/src/variable-root-no-fs.spec.ts":
       'const APPS = path.join(ROOT, "apps"); it("x", () => path.join(APPS, "web", "lib"));',
+    // the helper shape: the spec reads the filesystem, the paths live in a registry file beside it
+    // (copier-contract.spec.ts + copier-registry.ts)
+    "apps/api/src/helper/uses-helper.spec.ts":
+      'import fs from "fs"; import { FILES } from "./registry"; it("x", () => fs.readFileSync(FILES[0]));',
+    "apps/api/src/helper/registry.ts": 'export const FILES = ["apps/web/lib/x.ts"];',
+    "apps/api/src/helper/deeper/uses-deep-helper.spec.ts":
+      'import fs from "fs"; import { FILES } from "./deep"; it("x", () => fs.readFileSync(FILES[0]));',
+    // two hops below the spec: spec -> deep.ts -> leaf.ts, which holds the path
+    "apps/api/src/helper/deeper/deep.ts": 'export { FILES } from "./leaf";',
+    "apps/api/src/helper/deeper/leaf.ts": 'export const FILES = ["apps/web/lib/y.ts"];',
+    "apps/api/src/helper/no-fs.spec.ts":
+      'import { FILES } from "./registry"; it("x", () => expect(FILES).toHaveLength(1));',
+    // a module OUTSIDE the spec's own tree is production code, not its helper: not followed
+    "apps/api/src/outside.ts": 'export const WHERE = "apps/web/lib/x.ts";',
+    "apps/api/src/lone/uses-outside.spec.ts":
+      'import fs from "fs"; import { WHERE } from "../outside"; it("x", () => fs.readFileSync(WHERE));',
     "apps/web/lib/reads-ui.test.ts":
       'import fs from "node:fs"; fs.readFileSync(path.join(ROOT, "packages/ui/src/a.ts"));',
     "apps/web/lib/reads-self.test.ts":
@@ -84,6 +100,8 @@ describe("cross-workspace spec detector (fixture repo)", () => {
       "src/a/b/climbs-literal.spec.ts",
       "src/a/b/climbs.spec.ts",
       "src/cwd-root.spec.ts",
+      "src/helper/deeper/uses-deep-helper.spec.ts",
+      "src/helper/uses-helper.spec.ts",
       "src/reads-web-joined.spec.ts",
       "src/reads-web.spec.ts",
       "src/variable-root.spec.ts",
@@ -121,6 +139,16 @@ describe("cross-workspace spec detector (fixture repo)", () => {
     expect(all).not.toContain("reads-own");
     expect(all).not.toContain("names-web-in-prose");
     expect(all).not.toContain("no-fs-but-path");
+    expect(all).not.toContain("no-fs.spec"); // a helper names the path, but the spec never reads the filesystem
+    expect(all).not.toContain("uses-outside"); // a module outside the spec's own tree is not its helper
+  });
+
+  it("a read through a helper beside the spec (or below it) counts, and names what the helper reaches", () => {
+    const found = detector.findCrossWorkspaceSpecs(root);
+    const reads = (spec: string) =>
+      found["apps/api"].find((s: { spec: string }) => s.spec === spec)?.reads;
+    expect(reads("src/helper/uses-helper.spec.ts")).toEqual(["apps/web"]);
+    expect(reads("src/helper/deeper/uses-deep-helper.spec.ts")).toEqual(["apps/web"]);
   });
 });
 
@@ -138,6 +166,8 @@ describe("the real repo", () => {
       "src/common/shared-dto-inventory.spec.ts",
       "src/regulated/report-warning-codes-parity.spec.ts",
       "src/common/size-ratchet.spec.ts",
+      // reads the client copiers (apps/web, apps/mobile) through its registry file, not through a path of its own
+      "src/common/testing/copier-contract/copier-contract.spec.ts",
     ]) {
       expect(apiSpecs).toContain(canary);
     }
@@ -207,9 +237,10 @@ describe("the real repo", () => {
       }
     }
     expect(unhashed).toEqual([]);
-    // Without these the key would also hash installs, Next builds, compiled packages and the Jest cache the lane writes.
+    // Without these the key would also hash installs, Next builds, compiled packages and the Jest cache the lane writes
+    // (repo-truth-key-script.spec.ts pins the resolved key itself on turbo's dry run).
     for (const generated of ["node_modules", ".next", "dist", ".turbo", ".jest-cache"]) {
-      expect(block).toContain(`"!**/${generated}/**"`);
+      expect(block).toContain(`"!$TURBO_ROOT$/**/${generated}/**"`); // rooted: a bare !**/x/** stays inside one workspace
     }
   });
 

@@ -106,7 +106,7 @@ function owningDir(root, abs, dirs) {
 }
 
 /** Workspace dirs (other than `ws`) that `src`, a spec living in `specDir`, can reach. */
-function reachedDirs(src, { root, ws, specDir, dirs }) {
+function reachedDirs(src, { root, ws, specDir, dirs, fsRead }) {
   const others = dirs.filter((d) => d !== ws);
   const reached = new Set();
   const add = (abs) => {
@@ -118,7 +118,7 @@ function reachedDirs(src, { root, ws, specDir, dirs }) {
     const text = literalText(m);
     if (/^\.\.?([/\\]|$)/.test(text)) add(path.resolve(specDir, text));
   }
-  const reads = FS_READ.test(src);
+  const reads = fsRead ?? FS_READ.test(src);
   for (const call of src.matchAll(PATH_CALL)) {
     const args = call[1].split(",").map((a) => a.trim());
     const literals = (a) => {
@@ -149,6 +149,80 @@ function reachedDirs(src, { root, ws, specDir, dirs }) {
   return [...reached].sort();
 }
 
+// A relative import (static, dynamic, require) in comment-stripped source.
+const LOCAL_IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'](\.{1,2}\/[^"'\n]+)["']/g;
+const IMPORT_EXTS = ["", ".ts", ".tsx", ".js", ".cjs", ".mjs", "/index.ts", "/index.js"];
+
+// The paths a source file imports by relative specifier (extension not yet resolved), read once per run: a spec's
+// helpers are shared by every spec beside it, and most imports leave the spec's tree and are never looked up.
+function sourceOf(file, cache) {
+  let src = cache.sources.get(file);
+  if (src === undefined) {
+    try {
+      src = stripComments(fs.readFileSync(file, "utf8"));
+    } catch {
+      src = "";
+    }
+    cache.sources.set(file, src);
+  }
+  return src;
+}
+
+function importedPaths(file, cache) {
+  const hit = cache.imports.get(file);
+  if (hit) return hit;
+  let out = [];
+  try {
+    const src = sourceOf(file, cache);
+    out = [...src.matchAll(LOCAL_IMPORT)].map((m) => path.resolve(path.dirname(file), m[1]));
+  } catch {
+    /* unreadable: no imports */
+  }
+  cache.imports.set(file, out);
+  return out;
+}
+
+/** The file an extension-less import path names (a.ts, a/index.ts, ...), or null. Memoised. */
+function resolveImport(stem, cache) {
+  if (cache.files.has(stem)) return cache.files.get(stem);
+  let found = null;
+  for (const ext of IMPORT_EXTS) {
+    try {
+      if (fs.statSync(stem + ext).isFile()) {
+        found = stem + ext;
+        break;
+      }
+    } catch {
+      /* not this extension */
+    }
+  }
+  cache.files.set(stem, found);
+  return found;
+}
+
+/**
+ * The non-spec source files a spec imports that live in its OWN directory tree (beside it or below it), followed
+ * transitively: its helpers. copier-contract.spec.ts names no other workspace itself; the client files it checks are
+ * listed in copier-registry.ts beside it. A module outside the spec's tree is production code, not a helper, and is
+ * not followed (it would flag every spec that imports a service which mentions a path).
+ */
+function helperFiles(specFile, cache) {
+  const base = path.dirname(specFile);
+  const seen = new Set();
+  const queue = [specFile];
+  while (queue.length) {
+    const from = queue.shift();
+    for (const stem of importedPaths(from, cache)) {
+      if (!(stem === base || stem.startsWith(base + path.sep))) continue; // outside the tree: not looked up
+      const cand = resolveImport(stem, cache);
+      if (!cand || SPEC_FILE.test(cand) || seen.has(cand)) continue;
+      seen.add(cand);
+      queue.push(cand);
+    }
+  }
+  return [...seen];
+}
+
 /**
  * { "apps/api": [{ spec: "src/common/x.spec.ts", reads: ["apps/web"] }], ... } — spec paths are relative to
  * the workspace and use "/". A workspace with none is absent.
@@ -156,12 +230,28 @@ function reachedDirs(src, { root, ws, specDir, dirs }) {
 function findCrossWorkspaceSpecs(root) {
   const dirs = workspaceDirs(root);
   const result = {};
+  const cache = { sources: new Map(), imports: new Map(), files: new Map(), reached: new Map() };
   for (const ws of dirs) {
     const files = [];
     walkSpecs(path.join(root, ws), files);
     for (const file of files) {
-      const src = stripComments(fs.readFileSync(file, "utf8"));
-      const reads = reachedDirs(src, { root, ws, specDir: path.dirname(file), dirs });
+      const src = sourceOf(file, cache);
+      const reached = new Set(reachedDirs(src, { root, ws, specDir: path.dirname(file), dirs }));
+      // Its helpers' paths count when the SPEC (or the helper) reads the filesystem.
+      const specReads = FS_READ.test(src);
+      for (const helper of helperFiles(file, cache)) {
+        const key = `${helper}|${specReads}`;
+        if (!cache.reached.has(key)) {
+          const hsrc = sourceOf(helper, cache);
+          const fsRead = specReads || FS_READ.test(hsrc);
+          cache.reached.set(
+            key,
+            reachedDirs(hsrc, { root, ws, specDir: path.dirname(helper), dirs, fsRead }),
+          );
+        }
+        for (const d of cache.reached.get(key)) reached.add(d);
+      }
+      const reads = [...reached].sort();
       if (!reads.length) continue;
       const spec = path.relative(path.join(root, ws), file).split(path.sep).join("/");
       (result[ws] = result[ws] || []).push({ spec, reads });
