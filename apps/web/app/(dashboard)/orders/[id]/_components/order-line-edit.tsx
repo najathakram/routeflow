@@ -43,6 +43,7 @@ import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "../scan-level-line";
 import { storedPackBasis } from "../stored-pack-basis";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { priceFieldUnitWord } from "@/lib/product-unit-label";
 import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
 
@@ -82,6 +83,11 @@ export interface EditItemState {
   originalBoxSplit?: boolean;
   /** Row 630: the named unit the line was STORED on (a unit line); absent = a stored pack line, whose own price and size price its derived Piece. */
   originalUnitLabel?: string;
+  /** The stored line's unit words (pack label, pack size), restored with the rest of the line when a substitution is
+   *  undone: the price field and the stepper read them, and a substitute rewrites them (SA-1069 U-2). */
+  originalUnit?: string;
+  originalPackUnit?: string;
+  originalPackUnitsPerBox?: number | null;
   /** SA-1044 A-2: the stored line's raw `unitsPerBox` (the held level's factor; null = unknown), never the pack fallback. */
   heldUnitsPerBox?: number | null;
   /** The line's own price, restored alongside the denomination when a
@@ -271,6 +277,19 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
 }
 
 /**
+ * The line's own unit words, for the Undo handlers. Substituting rewrites unit / packUnit / packUnitsPerBox / unitLabel to
+ * the SUBSTITUTE's so the price field and the stepper name the unit the line is now sold by; Undo puts the stored ones back.
+ */
+function restoredUnitWords(it: EditItemState): Partial<EditItemState> {
+  return {
+    unit: it.originalUnit ?? it.unit,
+    packUnit: it.originalPackUnit,
+    packUnitsPerBox: it.originalPackUnitsPerBox,
+    unitLabel: it.originalUnitLabel,
+  };
+}
+
+/**
  * Build one edit-state row from a loaded order line — shared by the DRAFT auto-enter effect and
  * `enterEditMode` so the two seeding sites can never drift (A3-2).
  *
@@ -330,9 +349,14 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
       : null,
     unit: li.product?.unit ?? "",
     packUnit: li.product?.unit ?? undefined,
+    originalUnit: li.product?.unit ?? "",
+    originalPackUnit: li.product?.unit ?? undefined,
     // Row 620: a legacy boxed line's own sale-time size wins over the live product (a repack after the sale must not
     // re-denominate a Piece pick). A unit line's snapshot is the picked unit's factor, so it keeps the live pack.
     packUnitsPerBox: isUnitLine
+      ? (li.product?.unitsPerBox ?? undefined)
+      : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
+    originalPackUnitsPerBox: isUnitLine
       ? (li.product?.unitsPerBox ?? undefined)
       : (li.unitsPerBox ?? li.product?.unitsPerBox ?? undefined),
     unitLabel: li.unitLabel ?? undefined,
@@ -1165,6 +1189,7 @@ export function EditableLineItems({
                             unitsPerBox: item.originalUnitsPerBox ?? null,
                             boxSplit: item.originalBoxSplit ?? false,
                             ...restoredPrice(item),
+                            ...restoredUnitWords(item),
                             substituteProductId: undefined,
                           }
                         : {}),
@@ -1205,6 +1230,7 @@ export function EditableLineItems({
                           unitsPerBox: item.originalUnitsPerBox ?? null,
                           boxSplit: item.originalBoxSplit ?? false,
                           ...restoredPrice(item),
+                          ...restoredUnitWords(item),
                           substituteProductId: undefined,
                         })
                       }
@@ -1246,6 +1272,7 @@ export function EditableLineItems({
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
+              unitWord={priceFieldUnitWord(item)}
               // B465 fix round 5: a substitution's own baseline wins over the
               // REPLACED product's originalUnitPrice — same resolution as
               // needsSpecialTierReason, so the required-field styling and the
@@ -1340,6 +1367,12 @@ export function EditableLineItems({
                   qty: split.qty,
                   unitsPerBox: upb,
                   boxSplit: split.boxes != null,
+                  // The line is now sold by the SUBSTITUTE's unit: the price field and the stepper read these
+                  // words, and a picked unit of the replaced product (Case) no longer applies.
+                  unit: p.unit ?? "",
+                  packUnit: p.unit ?? undefined,
+                  packUnitsPerBox: upb ?? undefined,
+                  unitLabel: undefined,
                 });
                 setSubstituteOpenId(null);
               }}

@@ -32,7 +32,7 @@
  * through the same shared formatter (`invoiceLineQtyText` / `formatQtySplit` with the
  * unit as `boxLabel`), so the text itself does not vary. The EDIT-mode markup
  * (`PriceEditRow`/`EditableLineItems`) is NOT flag-gated, so the price-input locator
- * below (mirrors 24-order-edit-pricing's own xpath-from-"Unit price" pattern) is safe.
+ * below (mirrors 24-order-edit-pricing's own xpath-from-the-price-label pattern) is safe.
  *
  * Residue: leaves one PENDING order + one invoice on e2e-routeflow — the same
  * no-cleanup tolerance 21/22/24's own throwaway fixtures take (neither resource has an
@@ -379,14 +379,14 @@ test.describe("Units v1 — order → edit → invoice lane (#2233 / SA-390)", (
       timeout: 10_000,
     });
 
-    // Nearest ancestor <div> that also contains a "Unit price" label — the pattern
+    // Nearest ancestor <div> that also contains a "Price per <unit>" / "Price each" label — the pattern
     // 24-order-edit-pricing.spec.ts uses to scope PriceEditRow's input to THIS line.
     const editRow = page
       .getByText(UNITS_PRODUCT_NAME, { exact: true })
-      .locator('xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]');
-    const unitPriceInput = editRow
-      .getByText("Unit price", { exact: true })
-      .locator("xpath=..//input");
+      .locator(
+        'xpath=ancestor::div[.//*[(starts-with(normalize-space(text()),"Price per ") or normalize-space(text())="Price each")]][1]',
+      );
+    const unitPriceInput = editRow.getByText(/^Price (per .+|each)$/).locator("xpath=..//input");
     await expect(unitPriceInput).toHaveValue("21.00", { timeout: 10_000 });
     await unitPriceInput.fill("24.00");
     await expect(unitPriceInput).toHaveValue("24.00");

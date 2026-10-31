@@ -118,6 +118,6 @@ describe("#2715 PR-1 — one bordered card per line", () => {
     renderEditor(true);
     const card = screen.getByText("Widget").closest(".rounded-lg.border");
     expect(card).not.toBeNull();
-    expect(card).toContainElement(screen.getAllByText(/unit price/i)[0]);
+    expect(card).toContainElement(screen.getAllByText(/^price (per|each)/i)[0]);
   });
 });

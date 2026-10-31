@@ -111,7 +111,7 @@ describe("Edit Items fields are 44 px on touch widths (row 730)", () => {
     const qty = screen.getByRole("spinbutton", { name: /qty/i });
     expect(tokens(qty)).toEqual(expect.arrayContaining(["h-9", "max-lg:h-11"]));
     for (const label of [
-      ...screen.getAllByLabelText(/^unit price/i),
+      ...screen.getAllByLabelText(/^price (per|each)/i),
       ...screen.getAllByLabelText(/\$ off/i),
     ]) {
       expect(tokens(label.closest("span.rounded") as HTMLElement)).toEqual(
