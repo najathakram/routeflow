@@ -20,8 +20,11 @@ let layer: LayerState;
 let history: Record<string, { lastPrice: number }> | undefined;
 // One reference across renders, as a settled query gives: a new array would re-run every effect and hide a missing dependency.
 const mockNoCustomerPrices = { data: [] };
+let customerPrices: { data: { productId: string; pricingTier: number }[] } = mockNoCustomerPrices;
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
 const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 3 };
+const custC = { id: "c3", businessName: "Cedar Cafe", pricingTier: 2 };
+const custD = { id: "c4", businessName: "Dune Deli", pricingTier: 2 };
 const rerenderModal = (view: { rerender: (ui: React.ReactElement) => void }) =>
   view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
 
@@ -61,8 +64,8 @@ jest.mock("@/lib/tenant-features", () => ({
   }),
 }));
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [cust, custB] } }),
-  useCustomerPrices: () => mockNoCustomerPrices,
+  useCustomers: () => ({ data: { data: [cust, custB, custC, custD] } }),
+  useCustomerPrices: () => customerPrices,
   useCustomer: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/products", () => ({
@@ -486,6 +489,142 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
       expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
       await switchToBeta();
       expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    });
+
+    // List $42, tier 2 $38, tier 3 $36. A's memory is $45, B's is $50, C has none, D is on tier 3 for this product.
+    describe("SA-1068 A-7 M27: a linked line follows its customer", () => {
+      const stocked = {
+        ...widget,
+        product: { ...widget.product, priceTier2: "38", priceTier3: "36" },
+      };
+      const A = { "prod-1": { lastPrice: 45 } };
+      const B = { "prod-1": { lastPrice: 50 } };
+      type View = { rerender: (ui: React.ReactElement) => void };
+      const shows = (price: string) => screen.findByText(`$${price}.00 / each`);
+      const land = (view: View, read: typeof history) => {
+        history = read;
+        rerenderModal(view);
+      };
+      const switchTo = async (name: string, read: typeof history) => {
+        history = read; // the mock has one read: what's here at the switch is what's cached, undefined is still out
+        fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+        fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+          target: { value: name.slice(0, 3) },
+        });
+        fireEvent.click(await screen.findByText(name));
+      };
+
+      beforeEach(() => {
+        mockResolveProductByCode.mockResolvedValue(stocked);
+        cust.pricingTier = 2;
+        custB.pricingTier = 2;
+        customerPrices = mockNoCustomerPrices;
+      });
+      afterEach(() => {
+        custB.pricingTier = 3;
+        customerPrices = mockNoCustomerPrices;
+      });
+
+      const walks: [string, (view: View) => Promise<void>][] = [
+        [
+          "T37: to B with the read out, then it lands",
+          async (view) => {
+            await switchTo("Beta Bakery", undefined);
+            await shows("38");
+            land(view, B);
+            await shows("50");
+          },
+        ],
+        [
+          "T38: to B cached, then to C with no memory",
+          async () => {
+            await switchTo("Beta Bakery", B);
+            await shows("50");
+            await switchTo("Cedar Cafe", {});
+            await shows("38");
+          },
+        ],
+        [
+          "T39: to C with no memory, then back to A",
+          async () => {
+            await switchTo("Cedar Cafe", {});
+            await shows("38");
+            await switchTo("Acme Foods", A);
+            await shows("45");
+          },
+        ],
+        [
+          "T40: to C with no memory, then on to B",
+          async () => {
+            await switchTo("Cedar Cafe", {});
+            await shows("38");
+            await switchTo("Beta Bakery", B);
+            await shows("50");
+          },
+        ],
+        [
+          "T41: to B with the read out, back to A before it lands",
+          async () => {
+            await switchTo("Beta Bakery", undefined);
+            await shows("38");
+            await switchTo("Acme Foods", A);
+            await shows("45");
+          },
+        ],
+        [
+          "T42: to D, the history lands first and the customer's prices last",
+          async (view) => {
+            await switchTo("Dune Deli", undefined);
+            await shows("38");
+            land(view, {});
+            await shows("38");
+            customerPrices = { data: [{ productId: "prod-1", pricingTier: 3 }] };
+            rerenderModal(view);
+            await shows("36");
+          },
+        ],
+      ];
+
+      it.each(walks)("%s, and nothing is sent", async (_, walk) => {
+        const view = await addWidgetForCustomer();
+        await shows("45");
+        await walk(view);
+        expect((await saved()).unitPrice).toBeUndefined();
+      });
+
+      it.each(walks)("T45 guard, scan_v2 on: %s", async (_, walk) => {
+        mockScanV2 = true;
+        const view = await addWidgetForCustomer();
+        await shows("45");
+        await walk(view);
+        expect((await saved()).unitPrice).toBeUndefined();
+      });
+
+      it("T43 guard: a price typed while the read is out stands when it lands", async () => {
+        const view = await addWidgetForCustomer();
+        await shows("45");
+        await switchTo("Beta Bakery", undefined);
+        await shows("38");
+        openEditor("$38.00 / each");
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "30" } });
+        fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "dented cans" } });
+        closeEditor();
+        await shows("30");
+        land(view, B);
+        await new Promise((r) => setTimeout(r, 50));
+        await shows("30");
+        expect((await saved()).unitPrice).toBe(30);
+      });
+
+      it("T44 guard: a Retail price pre-filled at $45 stands when A is picked again", async () => {
+        cust.pricingTier = 1;
+        await addWidgetForCustomer();
+        await shows("45");
+        await switchTo("Acme Foods", A);
+        await new Promise((r) => setTimeout(r, 50));
+        await shows("45");
+        expect((await saved()).unitPrice).toBe(45);
+      });
     });
   });
 

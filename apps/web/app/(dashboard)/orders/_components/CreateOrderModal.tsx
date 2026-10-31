@@ -232,7 +232,8 @@ interface LineItem extends DerivedBaseMarker {
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
   /** B755: the customer whose last-given history pre-filled this line's price. A different customer chosen later
-   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it. */
+   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it.
+   *  A line the system priced keeps its link until a person prices it (SA-1068 M27). */
   prefillCustomerId?: string;
   /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
   priceChangedFrom?: number;
@@ -817,17 +818,8 @@ export function CreateOrderModal({
         let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        // classic modal (scan_v2 off): only a price pre-filled from another customer moves (B755 below)
-        if (
-          !scanV2 &&
-          !(
-            li.prefillCustomerId != null &&
-            selectedCustomer != null &&
-            li.prefillCustomerId !== selectedCustomer.id
-          )
-        ) {
-          return li;
-        }
+        // classic modal (scan_v2 off): only a linked line moves (B755 below, SA-1068 M27)
+        if (!scanV2 && !(li.prefillCustomerId != null && selectedCustomer != null)) return li;
         // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
         // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
         // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
@@ -867,7 +859,13 @@ export function CreateOrderModal({
           return li;
         }
         changed = true;
-        return { ...li, unitPrice: tierPrice, priceType, specialPrice };
+        return {
+          ...li,
+          unitPrice: tierPrice,
+          priceType,
+          specialPrice,
+          prefillCustomerId: line.prefillCustomerId != null ? selectedCustomer?.id : undefined, // SA-1068 M27
+        };
       });
       return changed ? next : prev;
     });
