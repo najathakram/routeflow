@@ -5,6 +5,7 @@
  *   F5, F6: the same from the buyer portal link and a notification link. Red rows, a different bug from the copies:
  *     the menu never closes (SA-1073 A-3), so on one copy they read 1 open menu and body `pointer-events` `none`.
  *   F7: Sign out with an empty cart still signs out.
+ *   F9: with no cart, a notification link lands on its page and closes the panel.
  *   R1: a reload keeps the till's cart, so the row the PR reports is checked here.
  * No jsdom row can prove this: the freeze is a real browser's body `pointer-events`, left by two copies of Radix's layer.
  *
@@ -203,6 +204,20 @@ test.describe("the till's user menu with lines in the cart", () => {
     await page.reload();
     await expect(lines).toHaveCount(1, { timeout: 15_000 });
   });
+});
+
+test("F9: with no cart, a notification link lands on its page and leaves it working", async ({
+  page,
+  context,
+}) => {
+  await notificationToSettings(page);
+  await setTenantCookie(context, BASE);
+  await page.goto("/orders");
+  await page.getByRole("button", { name: /notifications$/i }).click();
+  await page.getByRole("link", { name: /Proof notification/ }).click();
+  await page.waitForURL("**/settings");
+  await expect(openMenus(page)).toHaveCount(0);
+  await pageTakesClicks(page, page.getByRole("button", { name: "Open user menu" }));
 });
 
 test.describe("F7: an empty cart", () => {
