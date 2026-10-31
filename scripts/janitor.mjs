@@ -69,7 +69,7 @@
 //                                               (root, apps/*, packages/*) of each listed tree, whatever its
 //                                               git state; never source, local-assets or the registration.
 //                                               Refuses a tree another tree links into, a locked tree, one a
-//                                               running process names, or one whose HEAD/index moved in 72h.
+//                                               running process names, or one whose HEAD/index moved in 24h.
 //                                               Report-first (files per tree; --sizes adds exact GB, 30-45 s a
 //                                               tree); --apply clears tree by tree and reports GB freed.
 //
@@ -2167,9 +2167,6 @@ export function unlinkLinksWithin(dir) {
 // unlinkJunctionsVerified: rescan-to-0). Every refusal is fail-closed (an unknown is a no).
 // ---------------------------------------------------------------------------
 
-/** A tree whose index or HEAD moved this recently is somebody's live work, even to a node_modules clear. */
-export const MODULES_ONLY_IDLE_HOURS = 72;
-
 /**
  * The refusal reason for clearing a listed tree's node_modules, or null. Dirty is NOT a reason.
  * info: { name, isMainCheckout, isLocked, linkedFrom (array | null = scan failed),
@@ -2185,11 +2182,9 @@ export function modulesOnlyRefusal(info) {
   }
   if (info.inUseBy == null) return "the process scan failed, so something may be using it";
   if (info.inUseBy.length > 0) return `a running process uses it (${info.inUseBy[0]})`;
-  if (
-    isRecentlyActive(info.headMs, info.nowMs, MODULES_ONLY_IDLE_HOURS) ||
-    isRecentlyActive(info.indexMs, info.nowMs, MODULES_ONLY_IDLE_HOURS)
-  ) {
-    return `HEAD or index touched in the last ${MODULES_ONLY_IDLE_HOURS}h (or unknown)`;
+  if (isRecentlyActive(info.headMs, info.nowMs) || isRecentlyActive(info.indexMs, info.nowMs)) {
+    // The same RECENT_ACTIVITY_HOURS every other janitor rule uses: one idle number, not two.
+    return `HEAD or index touched in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)`;
   }
   return null;
 }

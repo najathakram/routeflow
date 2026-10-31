@@ -74,7 +74,7 @@ import {
   removeWorktreePlain,
   resolveListedPaths,
   findJunctions,
-  MODULES_ONLY_IDLE_HOURS,
+  RECENT_ACTIVITY_HOURS,
   modulesOnlyRefusal,
   mentionsTree,
   findModulesDirs,
@@ -2821,15 +2821,19 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
     assert.match(modulesOnlyRefusal({ ...okInfo, linkedFrom: null }), /link scan failed/);
   });
   t(
-    "MO3: a tree whose HEAD or index moved in the last 72h is refused; unknown counts as recent",
+    "MO3: a tree whose HEAD or index moved in the last 24h is refused; unknown counts as recent",
     () => {
-      assert.equal(MODULES_ONLY_IDLE_HOURS, 72);
+      // One idle number for the whole janitor: modules-only reuses RECENT_ACTIVITY_HOURS (owner 2026-10-31).
+      assert.equal(RECENT_ACTIVITY_HOURS, 24);
+      const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
+      assert.doesNotMatch(src, /MODULES_ONLY_IDLE_HOURS/, "a second idle constant crept back in");
       const recent = (over) => modulesOnlyRefusal({ ...okInfo, ...over });
-      assert.match(recent({ headMs: NOW - 71 * HOUR }), /72h/);
-      assert.match(recent({ indexMs: NOW - 71 * HOUR }), /72h/);
-      assert.match(recent({ headMs: null }), /72h/);
-      assert.match(recent({ indexMs: null }), /72h/);
-      assert.equal(recent({ headMs: NOW - 73 * HOUR, indexMs: NOW - 73 * HOUR }), null);
+      assert.match(recent({ headMs: NOW - 23 * HOUR }), /24h/);
+      assert.match(recent({ indexMs: NOW - 23 * HOUR }), /24h/);
+      assert.match(recent({ headMs: null }), /24h/);
+      assert.match(recent({ indexMs: null }), /24h/);
+      assert.equal(recent({ headMs: NOW - 25 * HOUR, indexMs: NOW - 25 * HOUR }), null);
+      assert.equal(recent({ headMs: NOW - 30 * HOUR, indexMs: NOW - 47 * HOUR }), null);
     },
   );
   t(
@@ -3097,7 +3101,7 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
         nowMs: NOW,
       };
       const plan = (p, ops = base) => planModulesOnlyTree(p, "C:/wt/main", ops, true);
-      assert.match(plan("C:/wt/recent").refused, /72h/);
+      assert.match(plan("C:/wt/recent").refused, /24h/);
       assert.match(plan("C:/wt/busy").refused, /running process/);
       assert.match(plan("C:/wt/nowhere").refused, /not a registered worktree/);
       assert.ok(plan("C:/wt/ok").tree);
