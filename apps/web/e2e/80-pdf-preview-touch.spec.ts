@@ -227,7 +227,7 @@ test.describe("touch", () => {
     );
     await page.goto(`/customers/${customer.id}`);
     await page.getByRole("tab", { name: /documents/i }).click();
-    await page.getByText("agreement.pdf").first().click();
+    await page.getByTitle("View agreement.pdf").click();
     await expect(
       page
         .locator("[role=dialog] canvas")
