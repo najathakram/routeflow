@@ -2,7 +2,7 @@
  * R-1 (one-step return capture, 1440/768/390) and R7b Batch 3 (mocked reads, nothing written): New Return by order number (B1264, 1280), the unit price's unit on the
  * order page (B1261, 390). Role: OPERATOR (pre-authed storage state). Registered as the "counter-return" project.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 
 const WALKIN_ORDER = {
@@ -28,6 +28,17 @@ const WALKIN_ORDER = {
     },
   ],
 };
+
+/** Wide screens show Record return in the action bar; at phone width it sits in the "More actions" menu (apple-ux r4). */
+async function openRecordReturn(page: Page) {
+  const more = page.getByRole("button", { name: "More actions" });
+  if (await more.isVisible()) {
+    await more.click();
+    await page.getByRole("menuitem", { name: /record return|return items/i }).click();
+    return;
+  }
+  await page.getByRole("button", { name: /record return|return items/i }).click();
+}
 
 test("B1264: New Return, type an order number, the return form for that order opens (1280)", async ({
   page,
@@ -78,7 +89,7 @@ test("R7b 3.1: Remove then Undo brings the return line back (390)", async ({
   );
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
   await page.goto("/orders/e2e-r1");
-  await page.getByRole("button", { name: /record return|return items/i }).click();
+  await openRecordReturn(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Cola 12oz Can");
   await dialog.getByLabel(/^pieces$/i).fill("1");
@@ -128,7 +139,7 @@ test("R-1: the optional line fields sit in a collapsed options row; the pieces f
   );
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
   await page.goto("/orders/e2e-r1");
-  await page.getByRole("button", { name: /record return|return items/i }).click();
+  await openRecordReturn(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel(/^pieces$/i)).toBeVisible();
   // collapsed: the panel stays mounted but hidden
@@ -173,7 +184,7 @@ for (const width of [1440, 768, 390]) {
       return r.fulfill({ json: QUOTE_ONE });
     });
     await page.goto("/orders/e2e-r1");
-    await page.getByRole("button", { name: /record return|return items/i }).click();
+    await openRecordReturn(page);
     const dialog = page.getByRole("dialog");
     // one render: no Get quote and no Back, from the first screen
     await expect(dialog.getByRole("button", { name: /get quote/i })).toHaveCount(0);
@@ -214,7 +225,7 @@ test("R-1 + W-712 F25: the confirm button carries the real amount and the walk-i
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
   await page.route(/\/api\/v1\/returns\/inline\/quote$/, (r) => r.fulfill({ json: QUOTE_ONE }));
   await page.goto("/orders/e2e-r1");
-  await page.getByRole("button", { name: /record return|return items/i }).click();
+  await openRecordReturn(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel(/^pieces$/i).fill("1");
   // the order the goods came from is in the line's options, titled by the product
