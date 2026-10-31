@@ -378,7 +378,7 @@ function PanelBody({
                 <td className="col-start-2 row-span-2 row-start-1 py-1 pr-0 font-mono text-navy sm:pr-2">
                   {fmt(r.unitPrice)}
                   {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                    <span className="block w-fit rounded bg-sunken px-1 text-[11px] uppercase text-navy/70 sm:ml-1 sm:inline">
+                    <span className="block w-fit rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
                       {PRICE_TYPE_TAG[r.priceType]}
                     </span>
                   )}
@@ -393,7 +393,7 @@ function PanelBody({
                     {marginCell(r)}
                   </td>
                 )}
-                <td className="col-start-1 row-start-2 py-1 pl-0 pr-0 text-navy/70 sm:whitespace-nowrap sm:pl-2 sm:pr-2">
+                <td className="col-start-1 row-start-2 max-w-[5rem] break-words py-1 pl-0 pr-0 text-navy/70 sm:pl-2 sm:pr-2">
                   {r.qty} {r.unitLabel}
                 </td>
                 <td

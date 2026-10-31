@@ -171,6 +171,20 @@ describe("CounterSaleScreen: a new customer in the sale (W-1041)", () => {
     expect((screen.getByLabelText("Business Name") as HTMLInputElement).value).toBe("");
   });
 
+  it("F21: the New customer button reaches the door as the opener, so dismissing returns focus to it", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const door = screen.getByRole("button", { name: "New customer" });
+    // Focus is on the Find a customer box (a click that never focuses the button, as in Safari): an ignored opener would
+    // fall back to what held focus, and the find box is also the "opener gone" fallback, so both routes lead there.
+    const find = screen.getByLabelText("Find a customer");
+    find.focus();
+    fireEvent.click(door);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByLabelText("Business Name")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(door));
+    expect(document.activeElement).not.toBe(find);
+  });
+
   it("R9 (SA-1066 F6): while the no-match row offers Add, the buyer question's New customer is not drawn too", () => {
     renderWithProviders(<CounterSaleScreen />);
     search("Acme Cafe");
