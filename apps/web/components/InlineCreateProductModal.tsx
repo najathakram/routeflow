@@ -4,6 +4,7 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { unitWords } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
@@ -40,6 +41,8 @@ interface InlineCreateProductModalProps {
   initialPrice?: number;
   /** Purchase cost carried from a vendor-bill line; saved as the product's standardCost */
   initialCost?: number;
+  /** The counter: Save stays off until the price is above $0 (a blank price would sell a $0 line). */
+  requirePrice?: boolean;
 }
 
 export function InlineCreateProductModal({
@@ -50,12 +53,14 @@ export function InlineCreateProductModal({
   initialSku = "",
   initialPrice,
   initialCost,
+  requirePrice = false,
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
   const w = unitWords();
   const createProduct = useCreateProduct();
   const submittingRef = React.useRef(false);
   const skuInputRef = React.useRef<HTMLInputElement>(null);
+  const [codeInUse, setCodeInUse] = React.useState(false);
 
   const [form, setForm] = React.useState({
     name: initialName,
@@ -67,6 +72,8 @@ export function InlineCreateProductModal({
     parentProductId: "",
     variantName: "",
   });
+
+  const priceOk = Number(form.pricePerUnit) > 0;
 
   // Loading state while resolving a scanned barcode → parent product
   const [variantOfScanLoading, setVariantOfScanLoading] = React.useState(false);
@@ -122,6 +129,7 @@ export function InlineCreateProductModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (requirePrice && !priceOk) return;
 
     // For variants the `name` field stores ONLY the variant name (e.g. "Strawberry").
     // The parent context comes from `parentProductId` — UI components compose the
@@ -142,6 +150,7 @@ export function InlineCreateProductModal({
     // same frame would POST again and come back 409; the ref drops it until this attempt settles.
     if (submittingRef.current) return;
     submittingRef.current = true;
+    setCodeInUse(false);
 
     createProduct.mutate(
       {
@@ -176,7 +185,11 @@ export function InlineCreateProductModal({
             variantName: "",
           });
         },
-        onError: () => {
+        onError: (err: unknown) => {
+          const res = (err as { response?: { status?: number; data?: { code?: string } } } | null)
+            ?.response;
+          if (res?.status === 400 && res.data?.code === API_ERROR_CODES.PRODUCT_CODE_IN_USE)
+            setCodeInUse(true);
           toast({
             title: "Failed to create product",
             description: "Check the details and try again.",
@@ -193,7 +206,12 @@ export function InlineCreateProductModal({
   const isVariant = !!form.parentProductId;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+    <div
+      // W-1042: the counter reads this and holds scans and focus while the window is open. Not a dialog role: this
+      // window also sits inside the order builder's Modal, and a nested role would break its Unit and Category picks.
+      data-scan-pause
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4"
+    >
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
@@ -287,7 +305,7 @@ export function InlineCreateProductModal({
                   type="text"
                   value={form.sku}
                   onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-                  className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="min-w-0 flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                   placeholder="Scan or type"
                 />
                 <BarcodeScannerButton
@@ -320,6 +338,9 @@ export function InlineCreateProductModal({
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder="0.00"
               />
+              {requirePrice && !priceOk && (
+                <p className="mt-1 text-[11px] text-navy/70">Enter a price to sell this item.</p>
+              )}
               {initialCost != null && initialCost > 0 && (
                 <p className="mt-1 text-[11px] text-navy/70">
                   Suggested from invoice cost ${initialCost.toFixed(2)} + 30%. Cost is saved to the
@@ -353,11 +374,21 @@ export function InlineCreateProductModal({
             />
           </div>
 
+          {codeInUse && (
+            <p role="alert" className="text-sm font-medium text-red-700">
+              That code is already used by another item.
+            </p>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" type="button" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" loading={createProduct.isPending}>
+            <Button
+              type="submit"
+              loading={createProduct.isPending}
+              disabled={requirePrice && !priceOk}
+            >
               Create product
             </Button>
           </div>
