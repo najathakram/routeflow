@@ -126,6 +126,7 @@ import type { BlockedLine } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
@@ -594,7 +595,7 @@ export function CreateOrderModal({
     return () => clearTimeout(t);
   }, [productSearch]);
 
-  const { data: customersData } = useCustomers({
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: debouncedCustomerSearch || undefined,
   });
   // A term that looks like a scanned code goes through the candidate-aware
@@ -610,6 +611,9 @@ export function CreateOrderModal({
     includeVariants: true,
   });
 
+  // The search has an answer (not on its way, not failed): only then is "No customers found." (and Add) true.
+  const customersAnswered =
+    debouncedCustomerSearch.length > 0 && customersData !== undefined && !customersFetching;
   const filteredCustomers = React.useMemo(() => {
     if (!debouncedCustomerSearch) return [];
     return (customersData?.data ?? []).slice(0, 8);
@@ -766,14 +770,20 @@ export function CreateOrderModal({
   const [customerListOpen, setCustomerListOpen] = React.useState(true);
   // Seeds the order's fulfilment from the customer's own default here (not in a
   // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
-  const pickCustomer = (c: SelectedCustomer) => {
+  const pickCustomer = (c: SelectedCustomer, keepPath = false) => {
     setSelectedCustomer(c);
-    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    // W-1041: a customer made in the sale holds the form default, not the path the clerk chose: keep the clerk's.
+    if (!keepPath) setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setCustomerListOpen(true);
     customerUndo.dismiss();
   };
+  // W-1041: a pickup (POS) order needs no address; a delivery or shipped one does.
+  const newCustomerDoor = useNewCustomerDoor<SelectedCustomer>(
+    (c) => pickCustomer(c, true),
+    !posMode,
+  );
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
@@ -1606,7 +1616,7 @@ export function CreateOrderModal({
       customerListOpen &&
       !selectedCustomer &&
       customerSearch &&
-      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+      (filteredCustomers.length > 0 || customersAnswered)
     ) {
       event.preventDefault();
       setCustomerListOpen(false);
@@ -2669,10 +2679,11 @@ export function CreateOrderModal({
                     setCustomerError("");
                   }}
                   results={filteredCustomers as SelectedCustomer[]}
-                  searched={debouncedCustomerSearch.length > 0}
+                  searched={customersAnswered}
                   listOpen={customerListOpen}
                   onListOpenChange={setCustomerListOpen}
                   onPick={pickCustomer}
+                  onCreateNew={newCustomerDoor.open}
                   error={customerError}
                 />
                 {customerUndo.previous && (
@@ -3277,6 +3288,8 @@ export function CreateOrderModal({
           </section>
         </div>
       </form>
+      {/* Outside the form: a submit inside the customer window must not bubble into the order's. */}
+      {newCustomerDoor.modal}
 
       <InlineCreateProductModal
         isOpen={createProductOpen}

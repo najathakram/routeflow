@@ -1,6 +1,6 @@
 import * as React from "react";
 import { act } from "@testing-library/react";
-import { screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
 import { TOUCH_FIRST_QUERY } from "@/lib/touch-first";
@@ -15,6 +15,7 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
  *  C1/C2  a decode is a code, never a typed quantity   C3  one queue   C4  a typed quantity still multiplies
  *  C5     the repeat gap   C6  aim box + steady read   C7  the scanned level   C8  pauses   C9  frozen sale
  *  C10    frames dropped while the clerk is elsewhere   C11  touch-first focus   C12  a desktop till is unchanged
+ *  W-1041 the new-customer window is a dialog: it drops frames from either door, with focus on a field or a button
  */
 
 jest.mock("@/lib/auth-context", () => ({
@@ -33,6 +34,25 @@ jest.mock("@/lib/api/customers", () => ({
     isFetching: false,
     refetch: jest.fn(),
   }),
+  useCreateCustomer: () => ({
+    mutate: (_payload: unknown, opts?: { onSuccess?: (d: unknown) => void }) =>
+      opts?.onSuccess?.({
+        customer: { id: "c-new", businessName: "Acme Cafe", pricingTier: 1, isWalkIn: false },
+      }),
+    isPending: false,
+    error: null,
+    reset: jest.fn(),
+  }),
+  useUpdateCustomer: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
+}));
+jest.mock("@/lib/api/tobacco", () => ({
+  ...jest.requireActual("@/lib/api/tobacco"),
+  useHasAddon: () => false,
+}));
+jest.mock("@/lib/api/sales-agents", () => ({ useSalesAgents: () => ({ data: undefined }) }));
+jest.mock("../../sales-agents/_components/AgentFormModal", () => ({ AgentFormModal: () => null }));
+jest.mock("@/components/AddressAutocomplete", () => ({
+  AddressAutocomplete: () => <input aria-label="Street" />,
 }));
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
 jest.mock("@/lib/scan-cue", () => ({ playScanCue: jest.fn(), unlockScanCue: jest.fn() }));
@@ -962,5 +982,82 @@ describe("MUST 10: opening the strip brings the scan bar to the top of the scrol
     openCamera();
     expect(screen.getByTestId("counter-camera-strip")).toBeInTheDocument();
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("W-1041: the new-customer window pauses the camera", () => {
+  // Radix hides the till behind an open window from the accessibility tree, so the cart is read from the DOM here.
+  const rows = () =>
+    Array.from(document.querySelectorAll('[aria-label="Items"] > li')).filter(
+      (li) => li.textContent !== "No items yet.",
+    );
+  const renderAsking = () => {
+    const out = renderWithProviders(<CounterSaleScreen />);
+    openCamera();
+    return out;
+  };
+  const openAdd = () => {
+    fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "Acme Cafe" } });
+    fireEvent.click(screen.getByRole("button", { name: 'Add "Acme Cafe" as a new customer' }));
+  };
+  const openBuyerDoor = () => fireEvent.click(screen.getByRole("button", { name: "New customer" }));
+  const doors = [
+    ["Add", renderPhoneTill, openAdd],
+    ["the buyer question's New customer", renderAsking, openBuyerDoor],
+  ] as const;
+  const settle = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+  describe.each(doors)("from %s", (_name, render, open) => {
+    it.each([
+      ["a field", () => screen.getByLabelText("Business Name")],
+      ["a button", () => screen.getByRole("button", { name: "Cancel" })],
+    ])(
+      "with focus on %s, a decoded frame adds no line, looks nothing up and shows Camera paused",
+      async (_f, target) => {
+        barcodeFor["200000000001"] = () => COLA;
+        render();
+        open();
+        expect(screen.getByRole("dialog")).toHaveAttribute("data-state", "open");
+        target().focus();
+        expect(screen.queryByText("Camera paused")).toBeNull();
+        hold("200000000001", 10);
+        await settle();
+        expect(rows()).toHaveLength(0);
+        expect(barcodeCalls()).toEqual([]);
+        expect(screen.getByText("Camera paused")).toBeInTheDocument();
+      },
+    );
+
+    it.each([
+      ["Cancel", "Cancel"],
+      ["Save", "Create Customer"],
+    ])(
+      "a code held in view through %s is not recounted, and the next accepted frame scans",
+      async (_n, button) => {
+        barcodeFor["200000000001"] = () => COLA;
+        barcodeFor["200000000002"] = () => CHIPS;
+        render();
+        hold("200000000001");
+        await waitFor(() => expect(rows()).toHaveLength(1));
+        open();
+        screen.getByRole("button", { name: button }).focus();
+        hold("200000000001", 20); // 2 s with the same code in front of the lens, all dropped
+        fireEvent.change(screen.getByLabelText("Business Name"), {
+          target: { value: "Acme Cafe" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: button }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        hold("200000000001", 10);
+        await settle();
+        expect(rows()).toHaveLength(1);
+        expect(rows()[0]).toHaveTextContent("\u00d7 1");
+        expect(barcodeCalls()).toEqual(["200000000001"]);
+        hold("200000000002", 5); // a new accepted frame after the window scans normally
+        await waitFor(() => expect(rows()).toHaveLength(2));
+      },
+    );
   });
 });
