@@ -497,7 +497,8 @@ describeDb(
 
       it("B7 guard: a price staff typed for a tier customer sticks", async () => {
         const c = await customer({ tier: 3 });
-        await sale(c.id, { unitPrice: 11 });
+        // A tier customer's price change needs a reason, by the staff-override rule.
+        await sale(c.id, { unitPrice: 11, overrideReason: "Agreed for this account" });
         expect(await line(await sale(c.id))).toMatchObject({ unitPrice: 11, priceType: "MANUAL" });
       });
     });
