@@ -3113,7 +3113,7 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
   );
 
   t(
-    "MO12: report-only sizes each tree and removes nothing; one failed tree does not stop the next",
+    "MO12: report-only counts files (GB with sizes) and removes nothing; one failed tree does not stop the next",
     () => {
       const f = mk();
       try {
@@ -3140,13 +3140,23 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
         const log = [];
         const report = runModulesOnly([a, b], ctx, { io: io(log) });
         assert.equal(report.trees, 2);
-        assert.equal(report.bytes, 3001);
+        assert.equal(report.files, 3, "the default report counts files, it does not stat them");
+        assert.equal(report.bytes, 0);
         assert.ok(existsSync(join(a, "node_modules")) && existsSync(join(b, "node_modules")));
         assert.ok(
-          log.some((l) => /would clear 1 node_modules dir\(s\), \d+\.\d\d GB/.test(l)),
+          log.some((l) => /would clear 1 node_modules dir\(s\), 2 files \(/.test(l)),
           JSON.stringify(log),
         );
         assert.ok(log.some((l) => /Report-only run/.test(l)));
+        const logSized = [];
+        const sized = runModulesOnly([a, b], ctx, { sizes: true, io: io(logSized) });
+        assert.equal(sized.bytes, 3001);
+        assert.ok(
+          logSized.some((l) =>
+            /would clear 1 node_modules dir\(s\), 2 files, \d+\.\d\d GB/.test(l),
+          ),
+          JSON.stringify(logSized),
+        );
         const log2 = [];
         const applied = runModulesOnly([a, b], ctx, {
           apply: true,

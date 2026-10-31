@@ -70,7 +70,8 @@
 //                                               git state; never source, local-assets or the registration.
 //                                               Refuses a tree another tree links into, a locked tree, one a
 //                                               running process names, or one whose HEAD/index moved in 72h.
-//                                               Report-first (per-tree GB); --apply clears tree by tree.
+//                                               Report-first (files per tree; --sizes adds exact GB, 30-45 s a
+//                                               tree); --apply clears tree by tree and reports GB freed.
 //
 // Preflight threshold guidance (document, not enforced by this tool):
 //   > 10 GB  normal — proceed with anything
@@ -2236,7 +2237,32 @@ export function findModulesDirs(tree, { lstat = lstatSync, readdir = readdirSync
   return { dirs, links, unknown };
 }
 
-/** Apparent size in bytes of a tree, never following a link. Best effort: unreadable parts count 0. */
+/** Files (links and folders excluded) in a tree, never following a link: one readdir pass, no stat. */
+export function countTreeFiles(dir, { readdir = readdirSync } = {}) {
+  let files = 0;
+  const pending = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    let entries;
+    try {
+      entries = readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) pending.push(join(current, entry.name));
+      else files++;
+    }
+  }
+  return files;
+}
+
+/**
+ * Apparent size in bytes of a tree, never following a link. Best effort: unreadable parts count 0.
+ * One lstat per file, so it costs 30-45 s for a real 1.7 GB node_modules (a readdir pass is 1.5 s):
+ * only --sizes asks for it.
+ */
 export function treeSizeBytes(dir, { readdir = readdirSync, lstat = lstatSync } = {}) {
   let bytes = 0;
   const pending = [dir];
@@ -2363,7 +2389,7 @@ const gbOf = (bytes) => bytes / 1024 ** 3;
 export function runModulesOnly(
   paths,
   { repoRoot, mainCheckoutPath },
-  { apply = false, io = {} } = {},
+  { apply = false, sizes = false, io = {} } = {},
 ) {
   const log = io.log ?? ((m) => console.log(m));
   const now = io.now ?? (() => Date.now());
@@ -2387,6 +2413,7 @@ export function runModulesOnly(
     nowMs: now(),
   };
   const sizeOf = io.sizeOf ?? ((dirs) => dirs.reduce((sum, d) => sum + treeSizeBytes(d), 0));
+  const filesOf = io.filesOf ?? ((dirs) => dirs.reduce((sum, d) => sum + countTreeFiles(d), 0));
   const remove =
     io.removeTree ??
     ((tree) =>
@@ -2397,10 +2424,14 @@ export function runModulesOnly(
       }));
   const freeGb = io.freeGb ?? getFreeSpaceGb;
 
-  const unique = [
-    ...new Set(paths.map((p) => (caseInsensitive ? resolve(p).toLowerCase() : resolve(p)))),
-  ];
-  const summary = { trees: 0, refused: [], failed: [], bytes: 0, dirs: 0 };
+  // One entry per tree (case-folded on Windows), shown as the caller wrote it.
+  const byKey = new Map();
+  for (const p of paths) {
+    const key = caseInsensitive ? resolve(p).toLowerCase() : resolve(p);
+    if (!byKey.has(key)) byKey.set(key, resolve(p));
+  }
+  const unique = [...byKey.values()];
+  const summary = { trees: 0, refused: [], failed: [], bytes: 0, dirs: 0, files: 0 };
   const freeBefore = apply ? freeGb() : null;
   unique.forEach((listed, i) => {
     const label = `[${i + 1}/${unique.length}]`;
@@ -2420,12 +2451,16 @@ export function runModulesOnly(
       return;
     }
     if (!apply) {
-      const bytes = sizeOf(tree.dirs);
+      const files = filesOf(tree.dirs);
+      const bytes = sizes ? sizeOf(tree.dirs) : null;
       summary.trees++;
       summary.dirs += tree.dirs.length;
-      summary.bytes += bytes;
+      summary.files += files;
+      if (bytes != null) summary.bytes += bytes;
       log(
-        `${label} ${tree.name}: would clear ${tree.dirs.length} node_modules dir(s), ${gbOf(bytes).toFixed(2)} GB (${secs()} s)`,
+        `${label} ${tree.name}: would clear ${tree.dirs.length} node_modules dir(s), ${files} files${
+          bytes == null ? "" : `, ${gbOf(bytes).toFixed(2)} GB`
+        } (${secs()} s)`,
       );
       return;
     }
@@ -2446,7 +2481,7 @@ export function runModulesOnly(
   });
   log(
     `\n${apply ? "Cleared" : "Would clear"} node_modules in ${summary.trees} tree(s) (${summary.dirs} dir(s)): ` +
-      `${gbOf(summary.bytes).toFixed(1)} GB${apply ? " freed" : ""}. ` +
+      `${apply ? `${gbOf(summary.bytes).toFixed(1)} GB freed` : sizes ? `${gbOf(summary.bytes).toFixed(1)} GB` : `${summary.files} files (add --sizes for GB: slow)`}. ` +
       `Refused ${summary.refused.length}. ${apply ? `Failed ${summary.failed.length}. ` : ""}` +
       `Total ${((clock() - t0) / 1000).toFixed(0)} s.`,
   );
@@ -2526,7 +2561,8 @@ function main() {
       );
       process.exit(2);
     }
-    const { failed } = runModulesOnly(paths, { repoRoot, mainCheckoutPath }, { apply });
+    const sizes = argv.includes("--sizes");
+    const { failed } = runModulesOnly(paths, { repoRoot, mainCheckoutPath }, { apply, sizes });
     if (failed.length) process.exit(1);
     return;
   }
