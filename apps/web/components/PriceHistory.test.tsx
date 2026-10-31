@@ -195,7 +195,10 @@ describe("PriceHistoryButton — popover behaviour", () => {
     expect(within(dialog).getByText("Customer: Acme Foods")).toBeInTheDocument();
     for (const label of ["Last", "Low", "High", "Qty invoiced"])
       expect(within(dialog).getByText(label)).toBeInTheDocument();
-    expect(within(dialog).getByText("$12.90", { selector: "div" })).toBeInTheDocument(); // low
+    // low: a usable row carries it, so the figure is a button (SA-1066 F08)
+    expect(
+      within(dialog).getByRole("button", { name: "Use the low price ($12.90)" }),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText("not invoiced yet")).toBeInTheDocument();
     expect(within(dialog).getByText("INV-0002")).toBeInTheDocument();
     expect(within(dialog).getByText("Discount")).toBeInTheDocument();

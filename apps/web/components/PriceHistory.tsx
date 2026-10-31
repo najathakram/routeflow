@@ -85,11 +85,31 @@ function Skeleton() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  onUse,
+}: {
+  label: string;
+  value: string;
+  /** SA-1066 F08: set when a usable row carries this figure; the figure then does what that row's Use does. */
+  onUse?: () => void;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-wide text-navy/50">{label}</div>
-      <div className="font-mono text-xs text-navy">{value}</div>
+      {onUse ? (
+        <button
+          type="button"
+          aria-label={`Use the ${label.toLowerCase()} price (${value})`}
+          onClick={onUse}
+          className="min-h-11 font-mono text-xs text-brand-600 underline sm:min-h-0"
+        >
+          {value}
+        </button>
+      ) : (
+        <div className="font-mono text-xs text-navy">{value}</div>
+      )}
     </div>
   );
 }
@@ -176,6 +196,11 @@ function PanelBody({
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
+  // F08: a summary figure is usable only when a row carries that price and the line can use that row (same gate as its Use).
+  const useFor = (price: number | undefined) =>
+    price != null && rows.some((r) => r.unitPrice === price && canUse(r))
+      ? () => onUse(price)
+      : undefined;
   const marginCell = (r: PriceHistoryRow) =>
     !showCost
       ? MASK
@@ -321,8 +346,8 @@ function PanelBody({
 
       {!neverSold && (
         <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
-          <Stat label="Last" value={money(summary?.last)} />
-          <Stat label="Low" value={money(summary?.low)} />
+          <Stat label="Last" value={money(summary?.last)} onUse={useFor(summary?.last)} />
+          <Stat label="Low" value={money(summary?.low)} onUse={useFor(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
           <Stat label="Qty invoiced" value={String(summary?.qtySold ?? 0)} />
           {data.costVisible && (
