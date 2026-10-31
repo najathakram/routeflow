@@ -87,7 +87,7 @@ export class ReadyForPickupService {
       where: { id: order.customerId },
       select: { email: true, orderStatusEmails: true },
     });
-    const channels = await this.messaging.enabledChannels(NotificationEvent.READY_FOR_PICKUP);
+    const channels = await this.messaging.sendChannels(NotificationEvent.READY_FOR_PICKUP);
     const record = await readyRecord(this.prisma, user.tenantId, id);
     return {
       preview: readyPreviewOf(channels, {

@@ -5,6 +5,7 @@ import { MeterService } from "../billing/meter.service";
 import { isInternalEmail } from "../common/internal-email";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
 import {
+  DEFAULT_ON,
   DEFAULT_TEMPLATES,
   EVENT_CHANNELS,
   effectiveTemplateBody,
@@ -332,6 +333,28 @@ export class MessagingService {
       );
       return [];
     }
+  }
+
+  /**
+   * What notify() would send for this event right now. Read-only, so it answers as if notify had seeded: with no enabled
+   * rule for the event a send seeds the defaults first (an existing row keeps its value, a missing rule takes DEFAULT_ON,
+   * a missing template is active), and a channel with no active template is skipped. It does not catch: a failed read
+   * fails the caller instead of reading as "switched off" (enabledChannels answers a different question, a business
+   * switching an event off).
+   */
+  async sendChannels(eventKey: NotificationEvent): Promise<MessageChannel[]> {
+    const db = this.prisma.forTenant();
+    const [rules, templates] = await Promise.all([
+      db.notificationRule.findMany({ where: { eventKey } }),
+      db.messageTemplate.findMany({ where: { eventKey } }),
+    ]);
+    const seeds = !rules.some((r) => r.enabled);
+    return EVENT_CHANNELS[eventKey].filter((channel) => {
+      const rule = rules.find((r) => r.channel === channel);
+      const template = templates.find((t) => t.channel === channel);
+      const on = rule ? rule.enabled : seeds && DEFAULT_ON.has(`${eventKey}:${channel}`);
+      return on && (template ? template.isActive : seeds);
+    });
   }
 
   async customisedChannels(eventKey: NotificationEvent): Promise<MessageChannel[]> {

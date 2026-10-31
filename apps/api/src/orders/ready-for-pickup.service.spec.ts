@@ -56,7 +56,7 @@ describe("ReadyForPickupService.markReady", () => {
     };
     const messaging = {
       notify: jest.fn().mockResolvedValue(outcomes),
-      enabledChannels: jest.fn().mockResolvedValue(["EMAIL"]),
+      sendChannels: jest.fn().mockResolvedValue(["EMAIL"]),
     };
     const notifications = { sendToCustomer: jest.fn().mockResolvedValue(undefined) };
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
@@ -328,7 +328,7 @@ describe("ReadyForPickupService.markReady", () => {
         preview: { notice: "SENT", email: "buyer@acme.test" },
         last: { notice: "SENT", email: "buyer@acme.test", at: at.toISOString() },
       });
-      expect(h.messaging.enabledChannels).toHaveBeenCalledWith("READY_FOR_PICKUP");
+      expect(h.messaging.sendChannels).toHaveBeenCalledWith("READY_FOR_PICKUP");
     });
 
     it("no record yet: last is null and the preview says what a press would do", async () => {
@@ -389,7 +389,7 @@ describe("ReadyForPickupService.markReady", () => {
 
     it("preview is OFF when the Ready email is switched off", async () => {
       const h = await build();
-      h.messaging.enabledChannels.mockResolvedValue([]);
+      h.messaging.sendChannels.mockResolvedValue([]);
       expect((await h.service.getRecord("ord-1", user)).preview).toEqual({ notice: "OFF" });
     });
   });

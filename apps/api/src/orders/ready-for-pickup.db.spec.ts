@@ -24,6 +24,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { buildDbOrdersService } from "../common/testing/orders-service-db-harness";
 import { AuditService } from "../audit/audit.service";
+import { MessagingService } from "../messaging/messaging.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -69,7 +70,7 @@ describeDb("W-1060 Ready for pickup record — real Postgres", () => {
 
   const messaging = {
     notify: readyEmail,
-    enabledChannels: async () => ["EMAIL"] as never,
+    sendChannels: async () => ["EMAIL"] as never,
   };
   const ready = () =>
     new ReadyForPickupService(
@@ -200,6 +201,8 @@ describeDb("W-1060 Ready for pickup record — real Postgres", () => {
     try {
       for (const t of tenants) {
         await raw.auditLog.deleteMany({ where: { tenantId: t.id } });
+        await raw.notificationRule.deleteMany({ where: { tenantId: t.id } });
+        await raw.messageTemplate.deleteMany({ where: { tenantId: t.id } });
         await raw.systemConfig.deleteMany({ where: { tenantId: t.id } });
         await raw.counterDayClose.deleteMany({ where: { tenantId: t.id } });
         await raw.invoice.deleteMany({ where: { tenantId: t.id } });
@@ -287,5 +290,119 @@ describeDb("W-1060 Ready for pickup record — real Postgres", () => {
     await expect(as(1, () => ready().getRecord(id, operator(1)))).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  /**
+   * SA-1070 A-1: the line answers from what the send would do. The REAL MessagingService (its rule and template reads, and
+   * notify's seeding) runs; only `sendMessage` is a spy. Each row reads the preview, presses, and the two must agree.
+   */
+  describe("A-1: the preview and the press agree on the rule rows (R36-R42)", () => {
+    const sent = jest.fn(async (input: { channel: string }) => ({
+      channel: input.channel,
+      outcome: "sent",
+    }));
+    let real: MessagingService;
+    const readyReal = () =>
+      new ReadyForPickupService(
+        orders,
+        prisma,
+        { sendToCustomer: pushes } as never,
+        real as never,
+        new AuditService(prisma),
+      );
+    const rule = (channel: "EMAIL" | "PORTAL", enabled: boolean) =>
+      raw.notificationRule.create({
+        data: { tenantId: tenants[0].id, eventKey: "READY_FOR_PICKUP", channel, enabled },
+      });
+    const template = (channel: "EMAIL" | "PORTAL", isActive: boolean) =>
+      raw.messageTemplate.create({
+        data: {
+          tenantId: tenants[0].id,
+          eventKey: "READY_FOR_PICKUP",
+          channel,
+          body: "Order {{orderNumber}} is ready for pickup.",
+          isActive,
+        },
+      });
+    const ruleCount = () => raw.notificationRule.count({ where: { tenantId: tenants[0].id } });
+    const emails = () => sent.mock.calls.filter(([i]) => i.channel === "EMAIL").length;
+    /** Preview, then press: the two answers, with the number of emails the press sent. */
+    async function previewThenPress() {
+      const id = await seed();
+      const { preview } = await as(0, () => readyReal().getRecord(id, operator(0)));
+      const pressed = await as(0, () => readyReal().markReady(id, operator(0), {}));
+      return { id, preview, pressed, sentEmails: emails() };
+    }
+
+    beforeAll(() => {
+      real = new MessagingService(prisma, {} as never, {} as never);
+      jest.spyOn(real, "sendMessage").mockImplementation(sent as never);
+    });
+    beforeEach(async () => {
+      sent.mockClear();
+      await raw.notificationRule.deleteMany({ where: { tenantId: tenants[0].id } });
+      await raw.messageTemplate.deleteMany({ where: { tenantId: tenants[0].id } });
+    });
+
+    const email = () => `buyer-0-${run}@acme.test`;
+
+    it("R36: no rule rows: a press seeds the defaults and sends, so the line says it sends", async () => {
+      const { preview, pressed, sentEmails } = await previewThenPress();
+      expect(preview).toEqual({ notice: "SENT", email: email() });
+      expect(pressed).toEqual(preview);
+      expect(sentEmails).toBe(1);
+    });
+
+    it("R37: EMAIL and PORTAL both switched off: OFF, and nothing is sent", async () => {
+      await rule("EMAIL", false);
+      await rule("PORTAL", false);
+      const { preview, pressed, sentEmails } = await previewThenPress();
+      expect(preview).toEqual({ notice: "OFF" });
+      expect(pressed).toEqual(preview);
+      expect(sentEmails).toBe(0);
+    });
+
+    it("R38: EMAIL on with its active copy: sends one email", async () => {
+      await rule("EMAIL", true);
+      await template("EMAIL", true);
+      const { preview, pressed, sentEmails } = await previewThenPress();
+      expect(preview).toEqual({ notice: "SENT", email: email() });
+      expect(pressed).toEqual(preview);
+      expect(sentEmails).toBe(1);
+    });
+
+    it("R39: the EMAIL row missing beside PORTAL on: no seeding, so OFF (not 'no row means default')", async () => {
+      await rule("PORTAL", true);
+      await template("PORTAL", true);
+      const { preview, pressed, sentEmails } = await previewThenPress();
+      expect(preview).toEqual({ notice: "OFF" });
+      expect(pressed).toEqual(preview);
+      expect(sentEmails).toBe(0);
+    });
+
+    it("R40: the EMAIL row missing beside PORTAL off: a press seeds EMAIL on and sends", async () => {
+      await rule("PORTAL", false);
+      const { preview, pressed, sentEmails } = await previewThenPress();
+      expect(preview).toEqual({ notice: "SENT", email: email() });
+      expect(pressed).toEqual(preview);
+      expect(sentEmails).toBe(1);
+    });
+
+    it("R41: EMAIL on but its copy inactive: OFF, nothing is sent", async () => {
+      await rule("EMAIL", true);
+      await template("EMAIL", false);
+      const { preview, pressed, sentEmails } = await previewThenPress();
+      expect(preview).toEqual({ notice: "OFF" });
+      expect(pressed).toEqual(preview);
+      expect(sentEmails).toBe(0);
+    });
+
+    it("R42: reading the line writes nothing: no rule rows after the GET, before the press", async () => {
+      const id = await seed();
+      expect(await ruleCount()).toBe(0);
+      await as(0, () => readyReal().getRecord(id, operator(0)));
+      expect(await ruleCount()).toBe(0);
+      expect(await raw.messageTemplate.count({ where: { tenantId: tenants[0].id } })).toBe(0);
+    });
   });
 });
