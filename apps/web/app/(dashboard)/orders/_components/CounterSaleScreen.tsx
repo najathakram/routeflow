@@ -418,7 +418,8 @@ export function CounterSaleScreen() {
     if (receipt || locked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-      // digits only: letters are the g-then-x navigation shortcuts. While focus is inside the price history panel (a popover over
+      // digits and CAPITAL letters on a desktop: the g-then-x navigation shortcuts are lowercase and a wedge's code is capitals
+      // (SA-1067 M4: a code that starts with a letter lost it, and its digits then matched a different item). While focus is inside the price history panel (a popover over
       // the till) any printable key but Space is a scan: the whole code, letters included, so its Enter never presses Use.
       // SA-1059: a touch-first device has no standing focus in the scan field, so a wedge's code that starts with a letter would
       // lose it; there letters are routed too (a desktop stays digits only).
@@ -426,7 +427,7 @@ export function CounterSaleScreen() {
         ? /^\S$/
         : isTouchFirst()
           ? /^[0-9A-Za-z]$/
-          : /^[0-9]$/;
+          : /^[0-9A-Z]$/;
       if (!routed.test(e.key)) return;
       const scanEl = scanRef.current;
       if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;

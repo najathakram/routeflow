@@ -182,3 +182,35 @@ describe("SA-1067 M2b: a tender far over the total needs a second Enter", () => 
     expect(mutateAsync.mock.calls[0][0].dto.payment).toEqual({ method: "CARD", amount: 5 });
   });
 });
+
+describe("SA-1067 M4: a capital letter at a desktop till goes to the scan box", () => {
+  const scanField = () => screen.getByLabelText("Scan or search items");
+  const withButtonFocused = async () => {
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    const btn = screen.getByRole("button", { name: "Remove Case" });
+    btn.focus();
+    return btn;
+  };
+
+  it("a capital A typed while a button holds focus moves focus to the scan box", async () => {
+    const btn = await withButtonFocused();
+    fireEvent.keyDown(btn, { key: "A" });
+    expect(scanField()).toHaveFocus();
+  });
+
+  it.each(["g", "a", "?"])(
+    "a lowercase %s is left alone (the g-then-x shortcuts stay)",
+    async (key) => {
+      const btn = await withButtonFocused();
+      fireEvent.keyDown(btn, { key });
+      expect(scanField()).not.toHaveFocus();
+    },
+  );
+
+  it("a digit still goes to the scan box", async () => {
+    const btn = await withButtonFocused();
+    fireEvent.keyDown(btn, { key: "5" });
+    expect(scanField()).toHaveFocus();
+  });
+});
