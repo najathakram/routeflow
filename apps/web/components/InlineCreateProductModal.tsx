@@ -99,6 +99,22 @@ export function InlineCreateProductModal({
     }
   }, [isOpen, initialName, initialSku, initialPrice]);
 
+  // SA-1066 FL1: Escape closes the window by the same call as Cancel and X (none of the three asks about a discard). Read at the
+  // window in the capture phase so it works wherever focus sits, and so an order-builder Modal around us (Radix reads Escape at the
+  // document) is not closed with it. An open Unit / Category / parent list sets `aria-controls` on its input and takes its own Escape first.
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if ((e.target as Element | null)?.hasAttribute?.("aria-controls")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   /**
