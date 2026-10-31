@@ -126,7 +126,12 @@ describeDb("W-1060 Ready for pickup record — real Postgres", () => {
     as(0, () => ready().markReady(orderId, operator(0), body));
   const demote = (orderId: string) =>
     as(0, () =>
-      orders.changeStatus(orderId, { status: "CONFIRMED" }, operator(0), { silent: true }),
+      orders.changeStatus(
+        orderId,
+        { status: "CONFIRMED", reason: "W-1060 spec: back to Confirmed" },
+        operator(0),
+        { silent: true },
+      ),
     );
   const rows = (orderId: string) =>
     raw.auditLog.findMany({
