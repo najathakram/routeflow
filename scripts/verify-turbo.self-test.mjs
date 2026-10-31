@@ -1134,6 +1134,7 @@ if (process.platform !== "win32") {
           "scrubbed-git-env.cjs",
           "heavy-slot.mjs",
           "prisma-fresh.mjs",
+          "cross-workspace-specs.cjs",
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
@@ -1142,8 +1143,12 @@ if (process.platform !== "win32") {
           ["apps/control", "@routeflow/control"],
           ["packages/pricing", "@routeflow/pricing"],
         ]) {
-          put(`${dir}/package.json`, JSON.stringify({ name }));
+          // main() discovers the repo-truth workspaces from package.json (cross-workspace-lane.spec):
+          // the root declares the workspace globs and api carries the lane script, as in the real repo.
+          const scripts = dir === "apps/api" ? { "test:repo-truth": "jest" } : undefined;
+          put(`${dir}/package.json`, JSON.stringify({ name, scripts }));
         }
+        put("package.json", JSON.stringify({ workspaces: ["apps/*", "packages/*"] }));
         // The Prisma freshness preflight runs here too (CI is unset, api is in the plan), so the
         // fixture carries a schema folder and a generated client that is FRESH for it, resolved the
         // way apps/api finds its own (@prisma/client -> .prisma/client). Same text on both sides is
