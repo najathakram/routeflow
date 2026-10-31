@@ -4,9 +4,10 @@
 // RouteFlow repo, a real worktree, Docker, or the npm cache; nothing here
 // deletes anything real.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
+  renameSync,
   lstatSync,
   lutimesSync,
   mkdirSync,
@@ -81,6 +82,12 @@ import {
   planModulesOnlyTree,
   removeModulesOnlyTree,
   runModulesOnly,
+  PROBE_SUFFIX,
+  probeNameFor,
+  probeTreeInUse,
+  ProbeStuckError,
+  leftoverProbes,
+  EXECUTE_DEPS,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -2823,7 +2830,8 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
   t(
     "MO3: a tree whose HEAD or index moved in the last 24h is refused; unknown counts as recent",
     () => {
-      // One idle number for the whole janitor: modules-only reuses RECENT_ACTIVITY_HOURS (owner 2026-10-31).
+      // One idle number for the whole janitor: modules-only reuses RECENT_ACTIVITY_HOURS (the Lead's
+      // ruling under the owner's "delete old worktrees as long as their work is taken in").
       assert.equal(RECENT_ACTIVITY_HOURS, 24);
       const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
       assert.doesNotMatch(src, /MODULES_ONLY_IDLE_HOURS/, "a second idle constant crept back in");
@@ -3210,6 +3218,372 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
       }
     },
   );
+
+  // ---- review-a MEDIUM on #4049: the command-line match misses live trees; the rename probe closes it.
+  t("MO14: a process is matched in Git Bash /c/... form, quoted or not, at a boundary", () => {
+    const tree = "C:\\ClaudeCode\\wt\\u6";
+    assert.ok(mentionsTree('bash -c "cd /c/ClaudeCode/wt/u6 && ls"', tree));
+    assert.ok(mentionsTree("bash -c 'cd /c/claudecode/WT/u6/apps/api && npm test'", tree));
+    assert.ok(mentionsTree("node /c/ClaudeCode/wt/u6/dist/main.js", tree));
+    assert.ok(mentionsTree("sh /cygdrive/c/ClaudeCode/wt/u6/run.sh", tree));
+    assert.ok(mentionsTree("C:/ClaudeCode/wt/u6/x.mjs", tree), "the drive:/ form still works");
+    assert.ok(!mentionsTree("cd /c/ClaudeCode/wt/u60 && ls", tree), "a longer sibling name");
+    assert.ok(!mentionsTree("cd /c/ClaudeCode/wt/u6-old && ls", tree));
+    assert.ok(!mentionsTree("cd /d/ClaudeCode/wt/u6 && ls", tree), "another drive is another tree");
+    assert.ok(!mentionsTree("cd /c/Users/admin", tree));
+  });
+
+  const rn = () => {
+    const calls = [];
+    return {
+      calls,
+      ok: (a, b) => calls.push(`${a} -> ${b}`),
+      failBack: (a, b) => {
+        calls.push(`${a} -> ${b}`);
+        if (calls.length === 2) throw Object.assign(new Error("EPERM back"), { code: "EPERM" });
+      },
+      busy: (a, b) => {
+        calls.push(`${a} -> ${b}`);
+        throw Object.assign(new Error("EBUSY"), { code: "EBUSY" });
+      },
+    };
+  };
+  t("MO15: the rename probe renames beside the tree and back; EBUSY means in use", () => {
+    const tree = resolve("C:/wt/lane-x");
+    const probe = tree + PROBE_SUFFIX;
+    assert.equal(PROBE_SUFFIX, ".janitor-probe", "a fixed, greppable name");
+    assert.equal(probeNameFor(tree), probe);
+    const free = rn();
+    assert.equal(probeTreeInUse(tree, { rename: free.ok, exists: () => false }), null);
+    assert.deepEqual(free.calls, [`${tree} -> ${probe}`, `${probe} -> ${tree}`]);
+    const busy = rn();
+    const why = probeTreeInUse(tree, { rename: busy.busy, exists: () => false });
+    assert.match(why, /in use.*EBUSY/);
+    assert.deepEqual(busy.calls, [`${tree} -> ${probe}`], "nothing moved, so nothing to move back");
+    const left = rn();
+    assert.match(probeTreeInUse(tree, { rename: left.ok, exists: () => true }), /leftover probe/);
+    assert.deepEqual(left.calls, [], "an existing probe name is never renamed over");
+  });
+  t("MO16: a rename that cannot be moved back is a ProbeStuckError naming both paths", () => {
+    const tree = resolve("C:/wt/lane-y");
+    const r = rn();
+    assert.throws(
+      () => probeTreeInUse(tree, { rename: r.failBack, exists: () => false }),
+      (e) =>
+        e instanceof ProbeStuckError &&
+        e.message.includes(tree) &&
+        e.message.includes(tree + PROBE_SUFFIX) &&
+        /EPERM/.test(e.message),
+    );
+  });
+  t("MO17: leftover probe names are found beside listed and registered trees", () => {
+    const f = mk();
+    try {
+      const a = join(f.root, "a");
+      const b = join(f.root, "b");
+      mkdirSync(a);
+      mkdirSync(b + PROBE_SUFFIX);
+      assert.deepEqual(leftoverProbes([a, b]), [b + PROBE_SUFFIX]);
+      assert.deepEqual(leftoverProbes([a]), []);
+    } finally {
+      f.rm();
+    }
+  });
+  t("MO18: a REAL free tree comes back whole under its own name, with no probe left", () => {
+    const f = mk();
+    try {
+      const tree = join(f.root, "lane");
+      put(join(tree, "node_modules", "p", "i.js"), "keep");
+      put(join(tree, "src", "a.ts"), "src");
+      assert.equal(probeTreeInUse(tree), null);
+      assert.equal(readFileSync(join(tree, "node_modules", "p", "i.js"), "utf8"), "keep");
+      assert.equal(readFileSync(join(tree, "src", "a.ts"), "utf8"), "src");
+      assert.ok(!existsSync(tree + PROBE_SUFFIX));
+    } finally {
+      f.rm();
+    }
+  });
+  // Real processes whose command line names nothing in the tree: only their cwd holds it. Windows
+  // refuses the rename (EBUSY); POSIX lets it through (lsof covers cwds there), so these rows are
+  // Windows-only and return early elsewhere.
+  const holdsTree = (name, spawnIt) =>
+    t(name, () => {
+      if (process.platform !== "win32") return;
+      const f = mk();
+      let child;
+      try {
+        const tree = join(f.root, "lane");
+        put(join(tree, "node_modules", "p", "i.js"), "keep");
+        child = spawnIt(tree);
+        // A child sets its cwd during its own start-up, after spawn returns. Probing inside that
+        // window renames the folder out from under it (it then lands elsewhere), so let it settle
+        // first: this row is about a process that has been running, not one still starting.
+        Atomics.wait(sleeper, 0, 0, 1500);
+        const why = probeTreeInUse(tree);
+        assert.match(
+          String(why),
+          /in use/,
+          `a process with its cwd in the tree must read as in use, got ${why}`,
+        );
+        assert.ok(existsSync(join(tree, "node_modules", "p", "i.js")), "tree still where it was");
+        assert.ok(!existsSync(tree + PROBE_SUFFIX));
+        child.kill();
+        let freed = null;
+        for (let i = 0; i < 100; i++) {
+          freed = probeTreeInUse(tree);
+          if (freed === null) break;
+          Atomics.wait(sleeper, 0, 0, 50);
+        }
+        assert.equal(freed, null, "once the process is gone the tree is free again");
+      } finally {
+        try {
+          child?.kill();
+        } catch {
+          /* already gone */
+        }
+        for (let i = 0; i < 100; i++) {
+          try {
+            f.rm();
+            break;
+          } catch {
+            Atomics.wait(sleeper, 0, 0, 50);
+          }
+        }
+      }
+    });
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  holdsTree("MO19: a node process whose only tie is its cwd in the tree reads as in use", (tree) =>
+    spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: tree, stdio: "ignore" }),
+  );
+  holdsTree("MO20: an idle cmd whose cwd is in the tree reads as in use", (tree) =>
+    spawn("cmd.exe", ["/k"], { cwd: tree, stdio: ["pipe", "ignore", "ignore"] }),
+  );
+
+  const runIo = (a, b, c, log, extra = {}) => ({
+    log: (m) => log.push(m),
+    listWorktrees: () => [a, b, c].filter(Boolean).map((p) => ({ path: p, locked: false })),
+    scanLinkTargets: (trees) => scanLinkTargets(trees),
+    listProcessPaths: () => [],
+    headMs: () => NOW - 100 * HOUR,
+    indexMs: () => NOW - 100 * HOUR,
+    now: () => NOW,
+    freeGb: () => 5,
+    ...extra,
+  });
+  t("MO21: a tree the probe finds in use is refused untouched and the run moves on", () => {
+    const f = mk();
+    try {
+      const a = join(f.root, "a");
+      const b = join(f.root, "b");
+      put(join(a, "node_modules", "p", "i.js"));
+      put(join(b, "node_modules", "p", "i.js"));
+      const log = [];
+      const removed = [];
+      const summary = runModulesOnly(
+        [a, b],
+        { repoRoot: f.root, mainCheckoutPath: join(f.root, "main") },
+        {
+          apply: true,
+          io: runIo(a, b, null, log, {
+            rename: (from, to) => {
+              if (from === a)
+                throw Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
+              renameSync(from, to);
+            },
+            removeTree: (planned) => {
+              removed.push(planned.path);
+              return removeModulesOnlyTree(planned, realOps);
+            },
+          }),
+        },
+      );
+      assert.deepEqual(removed, [b], "the busy tree never reached the remover");
+      assert.ok(existsSync(join(a, "node_modules", "p", "i.js")));
+      assert.ok(!existsSync(join(b, "node_modules")));
+      assert.equal(summary.refused.length, 1);
+      assert.match(summary.refused[0].reason, /in use/);
+      assert.equal(summary.stopped ?? null, null);
+      assert.ok(
+        log.some((l) => /REFUSED .*a: .*in use/.test(l)),
+        JSON.stringify(log),
+      );
+    } finally {
+      f.rm();
+    }
+  });
+  t("MO22: a rename-back failure stops the WHOLE run, loudly, before any later tree", () => {
+    const f = mk();
+    try {
+      const a = join(f.root, "a");
+      const b = join(f.root, "b");
+      const c = join(f.root, "c");
+      for (const p of [a, b, c]) put(join(p, "node_modules", "p", "i.js"));
+      const log = [];
+      const removed = [];
+      let backs = 0;
+      const summary = runModulesOnly(
+        [a, b, c],
+        { repoRoot: f.root, mainCheckoutPath: join(f.root, "main") },
+        {
+          apply: true,
+          io: runIo(a, b, c, log, {
+            rename: (from, to) => {
+              if (from === b + PROBE_SUFFIX) {
+                backs++;
+                throw Object.assign(new Error("EPERM: cannot move back"), { code: "EPERM" });
+              }
+              renameSync(from, to);
+            },
+            removeTree: (planned) => {
+              removed.push(planned.path);
+              return removeModulesOnlyTree(planned, realOps);
+            },
+          }),
+        },
+      );
+      assert.equal(backs, 1);
+      assert.deepEqual(removed, [a], "only the tree before the stuck one was cleared");
+      assert.ok(existsSync(join(c, "node_modules", "p", "i.js")), "the later tree was not touched");
+      assert.match(summary.stopped, /RUN STOPPED/);
+      assert.match(summary.stopped, new RegExp(b.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
+      assert.ok(
+        log.some((l) => /RUN STOPPED/.test(l) && l.includes(b + PROBE_SUFFIX)),
+        JSON.stringify(log),
+      );
+    } finally {
+      // the stuck tree sits under its probe name in this fixture: put it back so the fixture can go
+      try {
+        renameSync(join(f.root, "b" + PROBE_SUFFIX), join(f.root, "b"));
+      } catch {
+        /* already home */
+      }
+      f.rm();
+    }
+  });
+  t("MO23: a leftover probe name stops an --apply run before it changes anything", () => {
+    const f = mk();
+    try {
+      const a = join(f.root, "a");
+      put(join(a, "node_modules", "p", "i.js"));
+      mkdirSync(join(f.root, "dead" + PROBE_SUFFIX));
+      const log = [];
+      const removed = [];
+      const io = runIo(a, null, null, log, {
+        removeTree: (planned) => (removed.push(planned.path), 1),
+      });
+      io.listWorktrees = () => [
+        { path: a, locked: false },
+        { path: join(f.root, "dead"), locked: false },
+      ];
+      const ctx = { repoRoot: f.root, mainCheckoutPath: join(f.root, "main") };
+      const applied = runModulesOnly([a], ctx, { apply: true, io });
+      assert.deepEqual(removed, [], "nothing is cleared while a probe name is unexplained");
+      assert.match(applied.stopped, /leftover/i);
+      assert.ok(
+        log.some((l) => /LEFTOVER/.test(l) && l.includes("dead" + PROBE_SUFFIX)),
+        JSON.stringify(log),
+      );
+      const reportLog = [];
+      const report = runModulesOnly([a], ctx, {
+        io: { ...io, log: (m) => reportLog.push(m) },
+      });
+      assert.equal(report.trees, 1, "report-only still reports");
+      assert.ok(reportLog.some((l) => /LEFTOVER/.test(l)));
+    } finally {
+      f.rm();
+    }
+  });
+  t(
+    "MO24: whole-tree removal probes first: in use is refused, a stuck rename stops applyActions",
+    () => {
+      const calls = [];
+      const deps = (probe) => ({
+        refuseDelete: () => null,
+        isDirty: () => false,
+        removeTree: () => {},
+        removeWorktree: (x) => calls.push(`removeWorktree ${x}`),
+        removeWorktreePlain: (x) => calls.push(`removeWorktreePlain ${x}`),
+        probeTree: probe,
+        run: () => {},
+        log: (m) => calls.push(`log ${m}`),
+      });
+      const tree = { kind: "worktree", target: "/w/lane", worktreePath: "/w/lane", plain: true };
+      assert.equal(
+        execute(
+          tree,
+          deps(() => "in use (EBUSY)"),
+        ),
+        "refused",
+      );
+      assert.ok(!calls.some((c) => c.startsWith("removeWorktree")), JSON.stringify(calls));
+      assert.ok(calls.some((c) => /REFUSED.*in use/.test(c)));
+      calls.length = 0;
+      assert.equal(
+        execute(
+          tree,
+          deps(() => null),
+        ),
+        "done",
+      );
+      assert.deepEqual(
+        calls.filter((c) => c.startsWith("remove")),
+        ["removeWorktreePlain /w/lane"],
+      );
+      calls.length = 0;
+      execute(
+        { ...tree, plain: false },
+        deps(() => "in use"),
+      );
+      assert.ok(!calls.some((c) => c.startsWith("removeWorktree")), "the forced path probes too");
+      const log = [];
+      const ran = [];
+      const out = applyActions(
+        [tree, { ...tree, target: "/w/two" }, { ...tree, target: "/w/three" }],
+        Infinity,
+        {
+          getFreeSpaceGb: () => 1,
+          log: (m) => log.push(m),
+          execute: (a) => {
+            ran.push(a.target);
+            if (a.target === "/w/two")
+              throw new ProbeStuckError("tree /w/two is now at /w/two.probe");
+            return "done";
+          },
+        },
+      );
+      assert.deepEqual(ran, ["/w/lane", "/w/two"], "nothing runs after a stuck rename");
+      assert.match(out.stopped, /RUN STOPPED/);
+      assert.ok(log.some((l) => /RUN STOPPED/.test(l)));
+      assert.equal(out.failed.length, 1);
+      assert.equal(typeof EXECUTE_DEPS.probeTree, "function", "the real deps carry the probe");
+      const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
+      assert.match(
+        src,
+        /case "worktree": \{[\s\S]{0,500}probeTree/,
+        "execute probes before removing",
+      );
+    },
+  );
+  t("MO25: the planner refuses the main checkout and a locked tree itself", () => {
+    const worktrees = [
+      { path: "C:/wt/main", locked: false },
+      { path: "C:/wt/held", locked: true },
+    ];
+    const ops = {
+      worktrees,
+      linkScan: { links: [], unknown: {} },
+      procPaths: [],
+      headMs: () => NOW - 100 * HOUR,
+      indexMs: () => NOW - 100 * HOUR,
+      findDirs: () => ({ dirs: ["x"], links: [], unknown: [] }),
+      nowMs: NOW,
+    };
+    assert.match(
+      planModulesOnlyTree("C:/wt/main", "C:/wt/main", ops, true).refused,
+      /main checkout/,
+    );
+    assert.match(planModulesOnlyTree("C:/wt/held", "C:/wt/main", ops, true).refused, /locked/);
+  });
 }
 
 console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);

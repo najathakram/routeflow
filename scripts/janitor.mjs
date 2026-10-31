@@ -69,9 +69,16 @@
 //                                               (root, apps/*, packages/*) of each listed tree, whatever its
 //                                               git state; never source, local-assets or the registration.
 //                                               Refuses a tree another tree links into, a locked tree, one a
-//                                               running process names, or one whose HEAD/index moved in 24h.
-//                                               Report-first (files per tree; --sizes adds exact GB, 30-45 s a
-//                                               tree); --apply clears tree by tree and reports GB freed.
+//                                               running process names (command line, any path form incl.
+//                                               Git Bash /c/...), one whose HEAD/index moved in 24h, and,
+//                                               at --apply time, one that cannot be renamed (the rename
+//                                               probe: a process whose cwd is inside holds it on Windows).
+//                                               A rename-back failure or a leftover `.janitor-probe` name
+//                                               stops the whole run. Report-first (files per tree; --sizes
+//                                               adds exact GB, ~20-45 s a tree); --apply clears tree by
+//                                               tree and reports GB freed.
+//                                               Known limit: on macOS/Linux a rename never fails for a held
+//                                               cwd, so only the `lsof` cwd list and the 24h rule guard there.
 //
 // Preflight threshold guidance (document, not enforced by this tool):
 //   > 10 GB  normal — proceed with anything
@@ -724,7 +731,7 @@ export function unlinkJunctionsVerified(dir, { findJunctions: find, unlinkJuncti
 
 /**
  * #1326 review: a target that IS a junction (a lane's node_modules -> main's) must never be
- * scanned — Get-ChildItem -Recurse walks INTO the target. Unlink the link alone and prove it with
+ * scanned — even a fast walk would be reading another tree's files. Unlink the link alone and prove it with
  * deps.exists (lstat-based in WINDOWS_DEPS). Returns true when `dir` was a link. deps.isLink is
  * REQUIRED: a missing one would silently treat every junction target as a plain tree.
  */
@@ -1685,7 +1692,7 @@ function describeAction(a) {
 }
 
 /** The real OS/git calls execute() uses; the self-test injects fakes instead. */
-const EXECUTE_DEPS = {
+export const EXECUTE_DEPS = {
   refuseDelete: (target, opts) => refuseDelete(target, resolveRepoContext(), opts),
   // #2671: the Jest-cache guard (the B815 guard only allows the repo's own trees).
   refuseJestCacheDelete: (target, root) =>
@@ -1697,6 +1704,8 @@ const EXECUTE_DEPS = {
   },
   salvage: (a) => salvageIgnored(a.worktreePath, a.worktree, a.salvage, a.salvageRoot),
   removeTree: (t) => safeRemoveTree(t),
+  // Immediately before a whole-tree removal: rename the root away and back (see probeTreeInUse).
+  probeTree: (t) => probeTreeInUse(t),
   removeWorktree: (t) => {
     const { repoRoot } = resolveRepoContext();
     removeWorktreeSafely(t, {
@@ -1781,10 +1790,18 @@ export function execute(a, deps = EXECUTE_DEPS) {
         return "skipped";
       }
       return "done";
-    case "worktree":
+    case "worktree": {
+      // Last look before the delete: a process that started after the plan was built (or one the
+      // process list cannot see) still holds the root, and Windows refuses to rename a held tree.
+      const held = deps.probeTree?.(a.target);
+      if (held) {
+        deps.log(`   REFUSED, skipped: ${a.target} (${held})`);
+        return "refused";
+      }
       if (a.plain) deps.removeWorktreePlain(a.target);
       else deps.removeWorktree(a.target);
       return "done";
+    }
     case "docker-build-cache":
       deps.run("docker", ["builder", "prune", "-a", "-f"]);
       return "done";
@@ -1813,6 +1830,7 @@ export function applyActions(actions, target, deps = {}) {
   } = deps;
   const failed = [];
   let ran = 0;
+  let stopped = null;
   for (const a of actions) {
     const free = freeSpace();
     if (meetsThreshold(free, target)) {
@@ -1826,12 +1844,18 @@ export function applyActions(actions, target, deps = {}) {
     } catch (err) {
       log(`   FAILED ${a.kind} ${a.target ?? ""}: ${err.message}`);
       failed.push({ action: a, message: err.message });
+      if (err instanceof ProbeStuckError) {
+        // A tree is sitting under the probe name: nothing else runs until a person has looked.
+        stopped = `RUN STOPPED: ${err.message}`;
+        log(`\n${stopped}`);
+        break;
+      }
     }
   }
   if (failed.length) {
     log(`\n${failed.length} of ${ran} action(s) failed.`);
   }
-  return { ran, failed };
+  return { ran, failed, stopped };
 }
 
 // ---------------------------------------------------------------------------
@@ -2045,6 +2069,60 @@ export function buildAllowListActions(repoRoot, mainCheckoutPath, listPaths) {
   return { actions, skipped };
 }
 
+// ---------------------------------------------------------------------------
+// The rename probe: the in-use check that needs no process list. A tree with a process whose cwd
+// is inside it (an idle shell, `node dist/main.js` run from the tree) shows nothing in a Windows
+// command line, but Windows refuses to rename a folder something holds. So immediately before a
+// tree is cleared or removed, its root is renamed to a fixed name beside it and straight back:
+// any failure to rename AWAY means it is in use (refuse that tree, move on). Failing to rename
+// BACK leaves the tree under the probe name, which is the one case that stops the whole run.
+// ---------------------------------------------------------------------------
+
+export const PROBE_SUFFIX = ".janitor-probe";
+
+/** A rename-back failure: the tree is under its probe name. Stops the run; never swallowed. */
+export class ProbeStuckError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ProbeStuckError";
+  }
+}
+
+export function probeNameFor(tree) {
+  return resolve(tree) + PROBE_SUFFIX;
+}
+
+/**
+ * Probe one tree. Returns null when nothing holds it, or the refusal reason when it is in use (or
+ * its probe name is already taken). Throws ProbeStuckError when the tree was renamed away but could
+ * not be renamed back: the message names both paths so a person can finish the job by hand.
+ */
+export function probeTreeInUse(tree, { rename = renameSync, exists = pathPresent } = {}) {
+  const from = resolve(tree);
+  const probe = probeNameFor(tree);
+  if (exists(probe))
+    return `leftover probe ${probe} exists beside it; inspect it before anything runs`;
+  try {
+    rename(from, probe);
+  } catch (err) {
+    return `in use: it cannot be renamed (${err?.code ?? err?.message})`;
+  }
+  try {
+    rename(probe, from);
+  } catch (err) {
+    throw new ProbeStuckError(
+      `the tree ${from} is now at ${probe} and could not be renamed back ` +
+        `(${err?.code ?? err?.message}). Rename it back by hand: ${probe} -> ${from}`,
+    );
+  }
+  return null;
+}
+
+/** Probe names still present beside any of `trees` (a run died between its two renames). */
+export function leftoverProbes(trees, { exists = pathPresent } = {}) {
+  return [...new Set(trees.map(probeNameFor))].filter((p) => exists(p));
+}
+
 /** Remove a whole worktree, with its OS/git calls injected (testable anywhere). */
 export function removeWorktreeSafely(
   target,
@@ -2158,7 +2236,9 @@ export function unlinkLinksWithin(dir) {
 }
 
 // ---------------------------------------------------------------------------
-// --paths <file> --modules-only [--apply] (owner 2026-10-31: C: is full of regenerable node_modules).
+// --paths <file> --modules-only [--apply] (owner 2026-10-31: "Clean up C. There should be a lot of junk there").
+// The 24h idle number is the Lead's ruling under the owner's "delete old worktrees as long as their
+// work is taken in", not an owner ruling on 24h itself; it is RECENT_ACTIVITY_HOURS, the janitor's one.
 // For each LISTED tree it removes the REAL node_modules dirs (root, apps/*, packages/*) and nothing
 // else: never source, uncommitted work, local-assets, the worktree registration or `.git`. The
 // tree's git state does not matter (node_modules is regenerable); what matters is that nothing is
@@ -2191,12 +2271,16 @@ export function modulesOnlyRefusal(info) {
 
 /**
  * Does `text` (a command line, an exe path or a cwd) name `tree` or anything inside it? Case-folded
- * and slash-normalised; a match must end at a path boundary (C:\wt\u6 is not C:\wt\u60).
+ * and slash-normalised, Git Bash's /c/... (and /cygdrive/c/...) read as C:\...; a match must end at
+ * a path boundary (C:\wt\u6 is not C:\wt\u60).
  */
 export function mentionsTree(text, tree) {
   const norm = (s) =>
     String(s)
       .replace(/^\\\\\?\\/, "")
+      // A drive in Git Bash form only where a path can start (line start, space, quote, = ( ; ,),
+      // so the `:/x/` inside C:/x/y is never read as a drive.
+      .replace(/(^|[\s"'=(;,])\/(?:cygdrive\/)?([a-zA-Z])\//g, "$1$2:/")
       .replace(/\//g, "\\")
       .toLowerCase();
   const hay = norm(text);
@@ -2255,7 +2339,7 @@ export function countTreeFiles(dir, { readdir = readdirSync } = {}) {
 
 /**
  * Apparent size in bytes of a tree, never following a link. Best effort: unreadable parts count 0.
- * One lstat per file, so it costs 30-45 s for a real 1.7 GB node_modules (a readdir pass is 1.5 s):
+ * One lstat per file, so it costs ~20-45 s for a real 1.7 GB node_modules (a readdir pass is 1.5 s):
  * only --sizes asks for it.
  */
 export function treeSizeBytes(dir, { readdir = readdirSync, lstat = lstatSync } = {}) {
@@ -2418,6 +2502,7 @@ export function runModulesOnly(
         exists: pathPresent,
       }));
   const freeGb = io.freeGb ?? getFreeSpaceGb;
+  const probe = (p) => probeTreeInUse(p, io.rename ? { rename: io.rename } : {}); // io.rename: tests only
 
   // One entry per tree (case-folded on Windows), shown as the caller wrote it.
   const byKey = new Map();
@@ -2426,9 +2511,24 @@ export function runModulesOnly(
     if (!byKey.has(key)) byKey.set(key, resolve(p));
   }
   const unique = [...byKey.values()];
-  const summary = { trees: 0, refused: [], failed: [], bytes: 0, dirs: 0, files: 0 };
+  const summary = { trees: 0, refused: [], failed: [], bytes: 0, dirs: 0, files: 0, stopped: null };
+
+  // A probe name left by a run that died between its two renames: the tree may be under it. Say
+  // so, and (with --apply) change nothing until a person has looked; never guess which is right.
+  const leftovers = leftoverProbes([...worktrees.map((w) => w.path), ...unique]);
+  for (const p of leftovers) {
+    log(
+      `LEFTOVER PROBE ${p}: a previous run died between its two renames; the tree may be under ` +
+        `this name. Inspect it and rename it back by hand.`,
+    );
+  }
+  if (apply && leftovers.length > 0) {
+    summary.stopped = `RUN STOPPED: ${leftovers.length} leftover probe name(s); nothing was changed`;
+    log(`\n${summary.stopped}`);
+    return summary;
+  }
   const freeBefore = apply ? freeGb() : null;
-  unique.forEach((listed, i) => {
+  for (const [i, listed] of unique.entries()) {
     const label = `[${i + 1}/${unique.length}]`;
     const tStart = clock();
     const secs = () => ((clock() - tStart) / 1000).toFixed(1);
@@ -2436,14 +2536,14 @@ export function runModulesOnly(
     if (planned.refused) {
       log(`${label} REFUSED ${listed}: ${planned.refused} (${secs()} s)`);
       summary.refused.push({ worktree: listed, reason: planned.refused });
-      return;
+      continue;
     }
     const tree = planned.tree;
     if (tree.dirs.length === 0) {
       log(
         `${label} ${tree.name}: no real node_modules (${tree.links.length} link(s) left alone) (${secs()} s)`,
       );
-      return;
+      continue;
     }
     if (!apply) {
       const files = filesOf(tree.dirs);
@@ -2457,23 +2557,38 @@ export function runModulesOnly(
           bytes == null ? "" : `, ${gbOf(bytes).toFixed(2)} GB`
         } (${secs()} s)`,
       );
-      return;
+      continue;
     }
     const before = freeGb();
     try {
+      // Immediately before clearing: something holding the tree (a cwd the process list cannot
+      // see, a process that started since the list was read) makes the rename away fail.
+      const held = probe(tree.path);
+      if (held) {
+        log(`${label} REFUSED ${listed}: ${held} (${secs()} s)`);
+        summary.refused.push({ worktree: listed, reason: held });
+        continue;
+      }
       const removed = remove(tree);
-      const freed = freeGb() - before;
+      const freed = Math.max(0, freeGb() - before);
       summary.trees++;
       summary.dirs += tree.dirs.length;
-      summary.bytes += Math.max(0, freed) * 1024 ** 3;
+      summary.bytes += freed * 1024 ** 3;
       log(
         `${label} ${tree.name}: cleared ${removed ?? tree.dirs.length} dir(s), freed ${freed.toFixed(2)} GB in ${secs()} s`,
       );
     } catch (err) {
+      if (err instanceof ProbeStuckError) {
+        summary.failed.push({ worktree: tree.path, message: err.message });
+        summary.stopped = `RUN STOPPED: ${err.message}`;
+        log(`${label} FAILED ${tree.name}: ${err.message}`);
+        log(`\n${summary.stopped}\nNo further tree was touched.`);
+        break;
+      }
       log(`${label} FAILED ${tree.name}: ${err.message} (${secs()} s)`);
       summary.failed.push({ worktree: tree.path, message: err.message });
     }
-  });
+  }
   log(
     `\n${apply ? "Cleared" : "Would clear"} node_modules in ${summary.trees} tree(s) (${summary.dirs} dir(s)): ` +
       `${apply ? `${gbOf(summary.bytes).toFixed(1)} GB freed` : sizes ? `${gbOf(summary.bytes).toFixed(1)} GB` : `${summary.files} files (add --sizes for GB: slow)`}. ` +
@@ -2557,8 +2672,12 @@ function main() {
       process.exit(2);
     }
     const sizes = argv.includes("--sizes");
-    const { failed } = runModulesOnly(paths, { repoRoot, mainCheckoutPath }, { apply, sizes });
-    if (failed.length) process.exit(1);
+    const { failed, stopped } = runModulesOnly(
+      paths,
+      { repoRoot, mainCheckoutPath },
+      { apply, sizes },
+    );
+    if (failed.length || stopped) process.exit(1);
     return;
   }
   const scoped = worktreesOnly || !!paths;
@@ -2570,6 +2689,16 @@ function main() {
 
   const before = getFreeSpaceGb();
   console.log(`free space before: ${before.toFixed(1)} GB (target ${target} GB)`);
+
+  // A probe name left by a run that died mid-rename: reported at the start in every mode, and an
+  // --apply run changes nothing while one exists (never guess where the tree is).
+  const leftovers = leftoverProbes(listWorktrees(repoRoot).map((w) => w.path));
+  for (const p of leftovers) {
+    console.error(
+      `LEFTOVER PROBE ${p}: a previous run died between its two renames; the tree may be under ` +
+        `this name. Inspect it and rename it back by hand.`,
+    );
+  }
 
   let { actions, skipped } = buildPlan(repoRoot, mainCheckoutPath, worktreesRoot, { paths });
   const allowFile = flagValue(argv, "--allow-list", null);
@@ -2602,12 +2731,17 @@ function main() {
     return;
   }
 
+  if (leftovers.length > 0) {
+    console.error(`\nRUN STOPPED: ${leftovers.length} leftover probe name(s); nothing was changed`);
+    process.exit(1);
+  }
+
   console.log("\nApplying...");
-  const { failed } = applyActions(actions, target);
+  const { failed, stopped } = applyActions(actions, target);
 
   const after = getFreeSpaceGb();
   console.log(`\nfree space after: ${after.toFixed(1)} GB (was ${before.toFixed(1)} GB)`);
-  if (failed.length) process.exit(1);
+  if (failed.length || stopped) process.exit(1);
 }
 
 // Guarded: when imported from an inline script there is no argv[1] to compare against.
