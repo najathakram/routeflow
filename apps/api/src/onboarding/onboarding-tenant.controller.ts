@@ -18,6 +18,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { OnboardingTenantService } from "./onboarding-tenant.service";
 import { OnboardingSignOffDto } from "./dto/onboarding.dto";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 interface AuthUser {
   id: string;
   tenantId: string | null;
@@ -41,6 +42,7 @@ export class OnboardingTenantController {
     return user.tenantId;
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "This workspace's onboarding progress (customer-owned steps)" })

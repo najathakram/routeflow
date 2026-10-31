@@ -17,6 +17,7 @@ import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CommissionStatementsService } from "./commission-statements.service";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // ─── DTOs ────────────────────────────────────────────────────────────────────
 // See the note in sales-agents.controller.ts: house convention is a
 // dto/*.ts file; this package's file allowlist has no dto/ path for
@@ -49,6 +50,7 @@ export class RecordCommissionPayoutDto {
  * staleness) → payouts (capped by ledger-derived remaining, books a linked
  * COMMISSIONS_AND_FEES Expense). Class-gated on flag.sales_agents.
  */
+@RequirePermission("FINANCE")
 @Controller("commission-statements")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)

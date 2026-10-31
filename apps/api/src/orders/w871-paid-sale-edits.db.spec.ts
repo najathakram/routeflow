@@ -6,6 +6,8 @@
  *    unlocks it.
  *  - A named customer's paid DELIVERED sale: a staff replace-all is 409 LINES_REPLACE_AFTER_DELIVERY, nothing written.
  *  - `POST /invoices/:id/reopen`'s guard refuses the walk-in sale's PAID invoice.
+ *  - Reopening a delivered walk-in sale through the REAL `changeStatus` is 409 WALK_IN_SALE_PAID while a live payment
+ *    stands, PAID or PENDING, and the order, its `deliveredAt`, its lines and its invoice are unchanged.
  *  - The overpay judge's fail-closed fallback, on a real transaction: the projection stub returns nothing (what the
  *    re-sync returns on an unclean partition), the stored external money (2.00) exceeds the order total (1.50): 409.
  *
@@ -206,7 +208,7 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   const snapshot = async (orderId: string) => ({
     header: await raw.order.findUniqueOrThrow({
       where: { id: orderId },
-      select: { subtotal: true, total: true, status: true },
+      select: { subtotal: true, total: true, status: true, deliveredAt: true },
     }),
     lines: await raw.orderItem.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } }),
     invoices: await raw.invoice.findMany({
@@ -217,6 +219,15 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
   });
   const edit = (orderId: string, dto: any) =>
     tenantCtx.run(tenantId, () => orders.updateOrderItems(orderId, dto, operator()));
+  const stampDelivered = (orderId: string) =>
+    raw.order.update({
+      where: { id: orderId },
+      data: { deliveredAt: new Date("2026-10-26T12:00:00Z") },
+    });
+  const reopen = (orderId: string, status: "CONFIRMED" | "PARTIALLY_DELIVERED") =>
+    tenantCtx.run(tenantId, () =>
+      orders.changeStatus(orderId, { status, reason: "customer changed their mind" }, operator()),
+    );
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: requireLocalDatabaseUrl() });
@@ -323,6 +334,34 @@ describeDb("W-861 + W-871 — paid walk-in edits and post-delivery replaces, rea
       response: { code: "WALK_IN_SALE_PAID" },
     });
     await expect(load(named.inv.id)).resolves.toMatchObject({ id: named.inv.id });
+  });
+
+  it.each(["CONFIRMED", "PARTIALLY_DELIVERED"] as const)(
+    "reopening a paid walk-in sale to %s is 409 WALK_IN_SALE_PAID, the row and deliveredAt untouched",
+    async (to) => {
+      const { o } = await paidSale(await customer(true));
+      await stampDelivered(o.id);
+      const before = await snapshot(o.id);
+      await expect(reopen(o.id, to)).rejects.toMatchObject({
+        status: 409,
+        response: { code: "WALK_IN_SALE_PAID" },
+      });
+      expect(await snapshot(o.id)).toEqual(before);
+    },
+  );
+
+  it("a PENDING payment on a SENT invoice refuses the reopen the same way", async () => {
+    const { o, inv } = await paidSale(await customer(true), { paid: false });
+    await raw.invoicePayment.create({
+      data: { tenantId, invoiceId: inv.id, amount: "2.00", method: "CASH", status: "PENDING" },
+    } as any);
+    await stampDelivered(o.id);
+    const before = await snapshot(o.id);
+    await expect(reopen(o.id, "CONFIRMED")).rejects.toMatchObject({
+      status: 409,
+      response: { code: "WALK_IN_SALE_PAID" },
+    });
+    expect(await snapshot(o.id)).toEqual(before);
   });
 
   it("SA-956 (a): a qty increase on a paid named sale whose invoice holds a manual line is 200, not 409 (head: 409)", async () => {
