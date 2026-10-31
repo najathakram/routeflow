@@ -10,7 +10,7 @@ type Hist = {
   isSuccess: boolean;
   isError: boolean;
   isFetching: boolean;
-  data?: Record<string, { lastPrice: number; listPriceAtTime: number }>;
+  data?: Record<string, { lastPrice: number; stickyPrice: number | null; listPriceAtTime: number }>;
   refetch: jest.Mock;
 };
 let mockHist: Hist;
@@ -75,13 +75,30 @@ describe("T5: the remembered-price read gates Pay", () => {
     mockHist = hist({
       isSuccess: true,
       isFetching: false,
-      data: { "p-1": { lastPrice: 15, listPriceAtTime: 10 } },
+      data: { "p-1": { lastPrice: 15, stickyPrice: 15, listPriceAtTime: 10 } },
     });
     const r = run(customer).result.current;
     expect(r.blocked).toBe(false);
     expect(r.unconfirmed).toBeNull();
     expect(r.rememberedOf("p-1")).toBe(15);
     expect(r.rememberedOf("p-2")).toBeNull();
+  });
+
+  it("B12 (SA-1072): a tier price remembered from a SPECIAL line isn't the till's price", () => {
+    mockHist = hist({
+      isSuccess: true,
+      isFetching: false,
+      data: { "p-1": { lastPrice: 12, stickyPrice: null, listPriceAtTime: 10 } },
+    });
+    const r = run(customer).result.current;
+    expect(r.rememberedOf("p-1")).toBeNull();
+    const walkIn = addScannedProduct([], product, "CASE" as never, 1, 1);
+    const setLines = jest.fn();
+    act(() => {
+      run(customer, walkIn, setLines);
+    });
+    expect(setLines).not.toHaveBeenCalled();
+    expect(walkIn[0].unitPrice).toBe(10);
   });
 
   it("a walk-in has no customer: no wait, nothing remembered", () => {
@@ -97,7 +114,7 @@ describe("T6 through the hook: the cart follows the customer", () => {
     mockHist = hist({
       isSuccess: true,
       isFetching: false,
-      data: { "p-1": { lastPrice: 15, listPriceAtTime: 10 } },
+      data: { "p-1": { lastPrice: 15, stickyPrice: 15, listPriceAtTime: 10 } },
     });
     const walkIn = addScannedProduct([], product, "CASE" as never, 1, 1);
     expect(walkIn[0].unitPrice).toBe(10);

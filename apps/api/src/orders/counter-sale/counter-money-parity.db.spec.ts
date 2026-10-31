@@ -482,7 +482,7 @@ describeDb("Counter money parity, the real chain on Postgres (CQ-01..CQ-03)", ()
       );
       expect(memory[A.cola].lastPrice).toBe(15);
       const product = await raw.product.findUniqueOrThrow({ where: { id: A.cola } });
-      const shown = customerLinePrice({ product, tier: 1, remembered: memory[A.cola].lastPrice });
+      const shown = customerLinePrice({ product, tier: 1, remembered: memory[A.cola].stickyPrice });
       const estimate = saleTotals([{ unitPrice: shown.price, qty: 2 }], { taxRate: 8.25 / 100 });
 
       // The next sale: the same line, unedited, so the request carries no price (the server prices it).
