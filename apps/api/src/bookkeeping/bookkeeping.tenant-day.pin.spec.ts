@@ -94,8 +94,11 @@ const ACCRUAL_READS = [
   "fetchAccrualNetSalesByCustomer",
   "fetchBadDebtExpense",
 ];
+// A call is zone-less when it names no `timeZone` at all, or names one only as a literal `null` / `undefined` (UTC by another route).
 const zonelessCalls = (source: string) =>
-  ACCRUAL_READS.flatMap((n) => callsOf(source, n)).filter((c) => !/timeZone/.test(c));
+  ACCRUAL_READS.flatMap((n) => callsOf(source, n)).filter(
+    (c) => !/timeZone/.test(c) || /timeZone\s*:\s*(null|undefined)\b/.test(c),
+  );
 
 describe("SA-1057 F-6: MUST 1's ban list and the zone at every accrual read", () => {
   it("bans every host-clock window construct MUST 1 names", () => {
@@ -126,6 +129,12 @@ describe("SA-1057 F-6: MUST 1's ban list and the zone at every accrual read", ()
         "fetchBadDebtExpense(\n  db,\n  tenantId,\n  { gte },\n  { timeZone: zone },\n)",
       ),
     ).toEqual([]);
+    expect(
+      zonelessCalls("fetchAccrualNetSales(db, tenantId, w, { timeZone: null });"),
+    ).toHaveLength(1);
+    expect(
+      zonelessCalls("fetchBadDebtExpense(db, tenantId, w, { timeZone:undefined })"),
+    ).toHaveLength(1);
     expect(callsOf("fetchAccrualNetSalesByCustomer(a)", "fetchAccrualNetSales")).toEqual([]);
   });
 });

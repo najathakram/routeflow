@@ -2563,6 +2563,19 @@ describe("BookkeepingService", () => {
       expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(endOf30);
     });
 
+    it("R13f: a named `to` AFTER now keeps the end of its own day, uncapped, at all three sites (master)", async () => {
+      setNow("2026-10-31T01:00:00.000Z", "America/Chicago");
+      const endOfNov15 = new Date("2026-11-15T23:59:59.999Z");
+      const lteOfCall = (mock: jest.Mock, i: number) => settledOf(mock.mock.calls[i][0].where).lte;
+
+      await service.getCashFlow(undefined, "2026-11-15");
+      await service.getPaymentsReceivedReport(undefined, "2026-11-15");
+      await service.getTimeToGetPaid(undefined, "2026-11-15");
+      expect(lteOfCall(prisma.invoicePayment.findMany, 0)).toEqual(endOfNov15);
+      expect(lteOfCall(prisma.invoicePayment.findMany, 1)).toEqual(endOfNov15);
+      expect(prisma.invoice.findMany.mock.calls.at(-1)![0].where.paidAt.lte).toEqual(endOfNov15);
+    });
+
     it("R13e: the mobile year to date is master's UTC year to now", async () => {
       const NOW_ISO = "2026-10-31T01:00:00.000Z";
       setNow(NOW_ISO, "America/Chicago");
