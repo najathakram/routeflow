@@ -1704,7 +1704,9 @@ export const EXECUTE_DEPS = {
   },
   salvage: (a) => salvageIgnored(a.worktreePath, a.worktree, a.salvage, a.salvageRoot),
   removeTree: (t) => safeRemoveTree(t),
-  // Immediately before a whole-tree removal: rename the root away and back (see probeTreeInUse).
+  // Before a whole-tree removal or node_modules clear: a running process that names the tree (the
+  // list is read once, at the first removal of the run), then the rename probe (see probeTreeInUse).
+  processUse: (t) => processUseRefusal((runProcessPaths ??= { list: listProcessPaths() }).list, t),
   probeTree: (t) => probeTreeInUse(t),
   removeWorktree: (t) => {
     const { repoRoot } = resolveRepoContext();
@@ -1741,6 +1743,17 @@ export function execute(a, deps = EXECUTE_DEPS) {
     if (why) {
       deps.log(`   REFUSED, skipped: ${a.target} (${why})`);
       return "refused";
+    }
+    // Before ANYTHING under the tree is touched (salvage, link unlink, git, rmdir): a running
+    // process that names it, then the rename probe for one that only holds its cwd. A plain
+    // `git worktree remove` that fails half way has already emptied files by then (review-a, #4049).
+    if (a.kind === "worktree" || a.kind === "node_modules") {
+      const tree = a.kind === "worktree" ? a.target : a.worktreePath;
+      const held = tree ? (deps.processUse?.(tree) ?? deps.probeTree?.(tree)) : null;
+      if (held) {
+        deps.log(`   REFUSED, skipped: ${a.target} (${held})`);
+        return "refused";
+      }
     }
     // B748: the plan (isDirty) is computed once; execute() may run later, or be reordered by a
     // caller. Re-verify RIGHT BEFORE deleting anything under a worktree — a worktree going dirty
@@ -1790,18 +1803,10 @@ export function execute(a, deps = EXECUTE_DEPS) {
         return "skipped";
       }
       return "done";
-    case "worktree": {
-      // Last look before the delete: a process that started after the plan was built (or one the
-      // process list cannot see) still holds the root, and Windows refuses to rename a held tree.
-      const held = deps.probeTree?.(a.target);
-      if (held) {
-        deps.log(`   REFUSED, skipped: ${a.target} (${held})`);
-        return "refused";
-      }
+    case "worktree":
       if (a.plain) deps.removeWorktreePlain(a.target);
       else deps.removeWorktree(a.target);
       return "done";
-    }
     case "docker-build-cache":
       deps.run("docker", ["builder", "prune", "-a", "-f"]);
       return "done";
@@ -2267,6 +2272,15 @@ export function modulesOnlyRefusal(info) {
     return `HEAD or index touched in the last ${RECENT_ACTIVITY_HOURS}h (or unknown)`;
   }
   return null;
+}
+
+let runProcessPaths; // { list } once read: one process listing per janitor run
+
+/** null when no running process names `tree`; else the refusal. An unreadable list (null) refuses. */
+export function processUseRefusal(procPaths, tree) {
+  if (procPaths == null) return "the process list could not be read, so something may be using it";
+  const hit = procPaths.find((p) => mentionsTree(p, tree));
+  return hit === undefined ? null : `a running process uses it (${String(hit).slice(0, 120)})`;
 }
 
 /**

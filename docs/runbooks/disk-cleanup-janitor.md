@@ -44,8 +44,11 @@ node scripts/janitor.mjs --paths drop-safe.txt --apply
 - Every `--worktrees-only` or `--paths` removal is the junction unlink + rescan-to-0 (B817/B818), then a **plain**
   `git worktree remove`. Never `--force`, never a recursive delete: a tree git refuses stays, and the
   run reports it as FAILED.
-- Immediately before each whole-tree removal the root is renamed to `<tree>.janitor-probe` and straight
-  back (see "The rename probe" below).
+- Before **anything** under a listed tree is touched (local-assets salvage, link unlink, `git worktree
+remove`, a `node_modules` clear), `--apply` checks that no running process names the tree (command line
+  or executable path, any path form; the process list is read once per run; an unreadable list refuses),
+  then renames the root to `<tree>.janitor-probe` and straight back (see "The rename probe" below). Either
+  check refuses just that tree, which stays complete.
 
 ### Clearing only `node_modules` (`--paths <file> --modules-only`)
 

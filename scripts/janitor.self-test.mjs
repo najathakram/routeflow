@@ -87,6 +87,7 @@ import {
   probeTreeInUse,
   ProbeStuckError,
   leftoverProbes,
+  processUseRefusal,
   EXECUTE_DEPS,
 } from "./janitor.mjs";
 
@@ -3557,13 +3558,158 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
       assert.equal(out.failed.length, 1);
       assert.equal(typeof EXECUTE_DEPS.probeTree, "function", "the real deps carry the probe");
       const src = readFileSync(fileURLToPath(new URL("./janitor.mjs", import.meta.url)), "utf8");
-      assert.match(
-        src,
-        /case "worktree": \{[\s\S]{0,500}probeTree/,
-        "execute probes before removing",
+      const at = (s) => src.indexOf(s);
+      const body = src.slice(at("export function execute("));
+      const order = [
+        "deps.processUse",
+        "deps.probeTree",
+        "deps.salvage(a)",
+        "deps.removeWorktreePlain(a.target)",
+      ].map((s) => body.indexOf(s));
+      assert.ok(
+        order.every((i) => i > 0),
+        JSON.stringify(order),
+      );
+      assert.deepEqual(
+        order,
+        [...order].sort((x, y) => x - y),
+        "execute checks processes, then probes, before it salvages or removes anything",
       );
     },
   );
+
+  // review-a on #4049: plain --paths --apply had no process check; a cwd-held tree was emptied
+  // while FAILED printed. The checks now run before ANYTHING under the tree is touched.
+  t("MO26: a live process refuses whole-tree removal before salvage, unlink or remove", () => {
+    const calls = [];
+    const deps = (procs) => ({
+      refuseDelete: () => null,
+      isDirty: () => false,
+      isDirtyAllowList: () => false,
+      salvage: () => (calls.push("salvage"), { ok: true }),
+      removeTree: () => calls.push("removeTree"),
+      removeWorktree: () => calls.push("removeWorktree"),
+      removeWorktreePlain: () => calls.push("removeWorktreePlain"),
+      processUse: (x) => processUseRefusal(procs, x),
+      probeTree: () => (calls.push("probe"), null),
+      run: () => {},
+      log: (m) => calls.push(`log ${m}`),
+    });
+    const tree = "C:\\wt\\lane";
+    const a = {
+      kind: "worktree",
+      target: tree,
+      worktreePath: tree,
+      plain: true,
+      allowListed: true,
+      salvage: ["local-assets/"],
+    };
+    assert.equal(execute(a, deps(["node C:\\wt\\lane\\dist\\main.js"])), "refused");
+    assert.equal(execute(a, deps(["bash -c 'cd /c/wt/lane && npm test'"])), "refused");
+    assert.equal(execute(a, deps(null)), "refused", "an unreadable process list refuses");
+    assert.ok(
+      !calls.some((c) => /^(salvage|probe|removeTree|removeWorktree)/.test(c)),
+      JSON.stringify(calls),
+    );
+    assert.ok(
+      calls.some((c) => /REFUSED.*(process|unreadable)/.test(c)),
+      JSON.stringify(calls),
+    );
+    calls.length = 0;
+    assert.equal(execute(a, deps(["node C:\\wt\\lane2\\x.js"])), "done");
+    assert.deepEqual(
+      calls.filter((c) => !c.startsWith("log")),
+      ["probe", "salvage", "removeWorktreePlain"],
+    );
+  });
+  t(
+    "MO27: processUseRefusal names the process, refuses on an unreadable list, passes a free tree",
+    () => {
+      assert.match(processUseRefusal(["node C:/wt/lane/a.mjs"], "C:\\wt\\lane"), /running process/);
+      assert.match(processUseRefusal(null, "C:\\wt\\lane"), /process list could not be read/);
+      assert.equal(processUseRefusal(["node C:\\wt\\lane-old\\a.mjs", ""], "C:\\wt\\lane"), null);
+      assert.equal(processUseRefusal([], "C:\\wt\\lane"), null);
+      assert.equal(typeof EXECUTE_DEPS.processUse, "function", "the real deps carry the check");
+    },
+  );
+  t(
+    "MO28: a REAL tree held only by a cwd is left COMPLETE by a whole-tree removal (Windows)",
+    () => {
+      if (process.platform !== "win32") return;
+      const f = mk();
+      let child;
+      try {
+        const tree = join(f.root, "lane");
+        put(join(tree, "src", "a.ts"), "keep-a");
+        put(join(tree, "node_modules", "p", "i.js"), "keep-i");
+        child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+          cwd: tree,
+          stdio: "ignore",
+        });
+        Atomics.wait(sleeper, 0, 0, 1500);
+        const wipes = [];
+        const out = execute(
+          { kind: "worktree", target: tree, worktreePath: tree, plain: true },
+          {
+            refuseDelete: () => null,
+            isDirty: () => false,
+            processUse: () => null, // the command line names nothing in the tree
+            probeTree: (x) => probeTreeInUse(x),
+            // what a failing `git worktree remove` does today: empties files, then reports FAILED
+            removeWorktreePlain: (x) => {
+              wipes.push(x);
+              rmSync(join(x, "src"), { recursive: true, force: true });
+              rmSync(join(x, "node_modules"), { recursive: true, force: true });
+            },
+            removeWorktree: () => assert.fail("never forced"),
+            removeTree: () => {},
+            run: () => {},
+            log: () => {},
+          },
+        );
+        assert.equal(out, "refused");
+        assert.deepEqual(wipes, [], "nothing was removed");
+        assert.equal(readFileSync(join(tree, "src", "a.ts"), "utf8"), "keep-a");
+        assert.equal(readFileSync(join(tree, "node_modules", "p", "i.js"), "utf8"), "keep-i");
+      } finally {
+        try {
+          child?.kill();
+        } catch {
+          /* already gone */
+        }
+        for (let i = 0; i < 100; i++) {
+          try {
+            f.rm();
+            break;
+          } catch {
+            Atomics.wait(sleeper, 0, 0, 50);
+          }
+        }
+      }
+    },
+  );
+  t("MO29: a node_modules clear on a listed tree is process-checked and probed too", () => {
+    const calls = [];
+    const deps = (use, probe) => ({
+      refuseDelete: () => null,
+      isDirty: () => false,
+      removeTree: (x) => calls.push(`removeTree ${x}`),
+      processUse: () => use,
+      probeTree: () => probe,
+      run: () => {},
+      log: () => {},
+    });
+    const a = {
+      kind: "node_modules",
+      target: "C:\\wt\\lane\\node_modules",
+      worktreePath: "C:\\wt\\lane",
+    };
+    assert.equal(execute(a, deps("a running process uses it", null)), "refused");
+    assert.equal(execute(a, deps(null, "in use: it cannot be renamed (EBUSY)")), "refused");
+    assert.deepEqual(calls, []);
+    assert.equal(execute(a, deps(null, null)), "done");
+    assert.deepEqual(calls, ["removeTree C:\\wt\\lane\\node_modules"]);
+  });
   t("MO25: the planner refuses the main checkout and a locked tree itself", () => {
     const worktrees = [
       { path: "C:/wt/main", locked: false },
