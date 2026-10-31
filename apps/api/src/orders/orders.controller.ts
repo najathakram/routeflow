@@ -13,6 +13,7 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
@@ -25,7 +26,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole } from "@prisma/client";
+import { OrderStatus, UserRole } from "@prisma/client";
+import { StaffOrderEmailService, type PendingOrderRef } from "../messaging/staff-order-email";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { CreateSaleDto } from "./dto/create-sale.dto";
@@ -63,9 +65,23 @@ export class OrdersController {
     private readonly changeRequestsService: ChangeRequestsService,
     private readonly batchShipService: OrderBatchShipService,
     private readonly packingSlipService: PackingSlipService,
+    // SA-1063: tell the office when a CUSTOMER principal places, edits or cancels an order (see the pin spec).
+    @Optional() private readonly staffOrderEmail?: StaffOrderEmailService,
   ) {}
 
   private readonly logger = new Logger(OrdersController.name);
+
+  /** SA-1063: after the commit, off the request path. Only a CUSTOMER principal is a buyer event. */
+  private tellOfficeOfCustomerOrder(
+    user: JwtPayload,
+    orderId: string,
+    merged: boolean,
+    pendingBefore: PendingOrderRef[],
+  ): void {
+    if (user.role === UserRole.CUSTOMER) {
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(orderId, { merged, pendingBefore });
+    }
+  }
 
   /** A CUSTOMER caller gets customer-facing fields only (common/staff-only-fields.ts); staff get `order` itself. */
   private forCaller<T>(user: JwtPayload, order: T): T {
@@ -420,6 +436,12 @@ export class OrdersController {
       // SA-923: a discount keeps this order apart ONCE; persisting skipAutoMerge would opt it out of every future merge.
       { skipAutoMerge: choice === "separate", ...(separateForDiscount && { separateOnce: true }) },
     );
+    // SA-1063 A-1: the customer's pending orders BEFORE the sweep. The sweep keeps the newest order and deletes the
+    // folded ones, so this read is how the office email can name them. It never rejects.
+    const pendingBefore =
+      user.role === UserRole.CUSTOMER && created.customerId
+        ? ((await this.staffOrderEmail?.pendingOrdersOf(created.customerId)) ?? [])
+        : [];
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.
     if (!isStaff && created.customerId) {
@@ -438,7 +460,12 @@ export class OrdersController {
           // customer anyway, so `try` defers to them instead of spending this request's budget.
           { lockMode: "try", actor: user },
         );
-        if (merged) return this.forCaller(user, merged);
+        if (merged) {
+          // The sweep returns the lone order when nothing folded: that is the created order, not a merge
+          // (a replay of the same Idempotency-Key lands here too and must not read as an edit).
+          this.tellOfficeOfCustomerOrder(user, merged.id, merged.id !== created.id, pendingBefore);
+          return this.forCaller(user, merged);
+        }
       } catch (e) {
         if (!isMergeContention(e)) throw e;
         this.logger.warn(
@@ -446,6 +473,7 @@ export class OrdersController {
         );
       }
     }
+    this.tellOfficeOfCustomerOrder(user, created.id, false, pendingBefore);
     return this.forCaller(user, created);
   }
 
@@ -576,7 +604,14 @@ export class OrdersController {
     @Body() dto: ChangeOrderStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.forCaller(user, await this.ordersService.changeStatus(id, dto, user));
+    // SA-1063: a customer's cancel tells the office; a draft cancel does not (read before the cancel).
+    const customerCancel = user.role === UserRole.CUSTOMER && dto.status === OrderStatus.CANCELLED;
+    const wasDraft = customerCancel ? await this.staffOrderEmail?.orderIsDraft(id) : undefined;
+    const changed = await this.ordersService.changeStatus(id, dto, user);
+    if (customerCancel) {
+      void this.staffOrderEmail?.notifyBuyerOrderCancelled(id, { wasDraft: wasDraft ?? true });
+    }
+    return this.forCaller(user, changed);
   }
 
   @Post(":id/reopen")
@@ -603,6 +638,7 @@ export class OrdersController {
       user.role === UserRole.CUSTOMER
         ? await this.ordersService.updateOrderItems(id, dto, user, { buyerLineIds: true })
         : await this.ordersService.updateOrderItems(id, dto, user);
+    if (user.role === UserRole.CUSTOMER) void this.staffOrderEmail?.notifyBuyerOrderEdited(id); // SA-1063
     return this.forCaller(user, edited);
   }
 

@@ -3,6 +3,7 @@ import {
   dayCloseHandOvers,
   dayCloseVerdictText,
   dayCloseZSections,
+  roundMoney,
   type ZRow,
 } from "@routeflow/pricing";
 import type { DayCloseSnapshot } from "@routeflow/types";
@@ -23,7 +24,7 @@ export interface ZReportEmail {
 
 /** `$12.30`, `-$1.50`: whole cents, sign in front. */
 export function zMoney(n: number): string {
-  const cents = Math.round(Math.abs(n) * 100);
+  const cents = Math.round(roundMoney(Math.abs(n)) * 100);
   const text = `$${Math.floor(cents / 100).toLocaleString("en-US")}.${String(cents % 100).padStart(2, "0")}`;
   return n < 0 && cents > 0 ? `-${text}` : text;
 }

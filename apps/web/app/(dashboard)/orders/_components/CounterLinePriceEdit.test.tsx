@@ -149,6 +149,21 @@ describe("CounterLinePriceEdit: the dialog", () => {
     );
   });
 
+  it("a plain line sold by the case names its own unit; each and unit keep item", () => {
+    const { unmount } = mount({ line: { ...plain, unitWord: "case" } });
+    open();
+    expect(field("Price per case")).toBeTruthy();
+    mode("Amount off");
+    expect(field("Amount off per case")).toBeTruthy();
+    mode("Percent off");
+    fireEvent.change(field("Percent off"), { target: { value: "10" } });
+    expect(screen.getByText("New price $9.00 per case. Line total $18.00.")).toBeTruthy();
+    unmount();
+    mount({ line: { ...plain, unitWord: "each" } });
+    open();
+    expect(field("Price per item")).toBeTruthy();
+  });
+
   it("a boxed line reads per box and its preview equals the cart's computeLineSubtotal total", () => {
     mount({ line: boxed });
     open();

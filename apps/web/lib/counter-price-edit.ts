@@ -33,6 +33,8 @@ export interface PriceEditLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
+  /** the line's own selling-unit word ("case"); label only. Absent, "each" or "unit" read as "item". */
+  unitWord?: string;
 }
 
 export type PriceEditResult =

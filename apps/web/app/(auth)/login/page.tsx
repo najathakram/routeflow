@@ -18,6 +18,7 @@ import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
 import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
 import { isInShell } from "@/lib/in-shell";
+import { postSignInDestination, readAlsoBuyer } from "@/lib/role-choice";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -104,12 +105,14 @@ export default function LoginPage() {
     try {
       const user = await authLogin(data.username, data.password);
       // Read at submit time (not via useSearchParams) so /login keeps prerendering its form — a Suspense boundary here would blank the whole page until hydration.
-      const redirectTarget = landingForRole(
-        safeOperatorRedirect(new URLSearchParams(window.location.search).get("redirect")),
-        user.role,
-      );
+      const explicitRedirect = new URLSearchParams(window.location.search).get("redirect");
+      const redirectTarget = landingForRole(safeOperatorRedirect(explicitRedirect), user.role);
       if (user.forcePasswordChange) router.push("/change-password");
-      else router.push(redirectTarget);
+      else {
+        // W-839 / SA-937: a driver who also buys is asked which role to use (only a driver pays for the /me read).
+        const alsoBuyer = await readAlsoBuyer(user);
+        router.push(postSignInDestination(user, alsoBuyer, explicitRedirect, redirectTarget));
+      }
     } catch (err: unknown) {
       const errObj = err as {
         response?: {

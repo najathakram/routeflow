@@ -10,6 +10,7 @@
  * instead of asserting on call arguments. Every model write goes through the stores below; the tx is
  * the mock itself, so a rolled-back request simply never happens (the services throw before writing).
  */
+import { roundMoney } from "@routeflow/pricing";
 import { createMockPrisma, type MockPrisma } from "../../testing/prisma-mock";
 import { SplitInvoiceFakeDb, fakeOrderLine } from "../../invoices/testing/split-invoice-fake-db";
 import { RegulatedLedgerService } from "../regulated-ledger.service";
@@ -60,7 +61,7 @@ const pick = (row: Row, select?: Row): Row =>
       )
     : { ...row };
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
+const r2 = (n: number) => roundMoney(n);
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 export interface LineSum {

@@ -32,4 +32,9 @@ describe("P-1: one file draws every invoice barcode", () => {
     expect(src.split("bwipjs.toBuffer(").length - 1).toBe(3);
     expect(src).toContain('"invoice.hideBarcodes"');
   });
+
+  it("MP-G5: the send fingerprint does not read which barcode source is drawn (a rendering rule, not data)", () => {
+    const state = readFileSync(join(SRC, "invoices/invoice-send-state.ts"), "utf8");
+    expect(state).not.toContain("invoiceBarcodeSource");
+  });
 });
