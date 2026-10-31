@@ -246,7 +246,7 @@ export function SearchableProductPicker({
     // scanner via `inputRef`) already called preventDefault() and handled itself — this handler
     // must not also treat it as a manual Enter (opening the dropdown / picking the highlighted
     // row), or a real scan double-fires.
-    if (e.defaultPrevented) return;
+    if (e.defaultPrevented && e.key !== "Escape") return; // Escape: see use-listbox-nav (a window marks it handled)
     if (open && e.key === "Tab") {
       setOpen(false); // W-694: keyboard focus leaves the field, so the list must not stay open
       return;

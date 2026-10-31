@@ -9,10 +9,11 @@ import { InlineCreateProductModal } from "./InlineCreateProductModal";
  * takes the exact path Cancel takes: `onClose`, with no discard question (X and Cancel ask none either). An open Unit or
  * Category list takes its own Escape first. The root stays a non-dialog (a nested role breaks the order builder's picks).
  */
+const mockProducts: Array<{ id: string; name: string; isActive: boolean }> = [];
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
   useCreateProduct: () => ({ mutate: jest.fn(), isPending: false }),
-  useProducts: () => ({ data: { data: [] } }),
+  useProducts: () => ({ data: { data: mockProducts } }),
   useProductCategories: () => ({ data: ["Bakery"] }),
 }));
 jest.mock("@routeflow/ui/web", () => ({
@@ -88,5 +89,74 @@ describe("FL1: Escape closes the New product window", () => {
     fireEvent.keyDown(name(), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onCloseOrder).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The order builder's Modal is Radix: it reads Escape at the document in the capture phase, ahead of React. With a Unit,
+ * Category or parent list open the first Escape must close only that list; the second only the window; the third is the
+ * builder's own. This drives the real Modal around the real window, so the capture-phase order is the real one.
+ */
+describe("FL1: inside the real builder Modal, one Escape closes one layer", () => {
+  const builderClosed = jest.fn();
+  function Builder() {
+    const [order, setOrder] = React.useState(true);
+    const [win, setWin] = React.useState(true);
+    return (
+      <Modal
+        open={order}
+        onClose={() => {
+          builderClosed();
+          setOrder(false);
+        }}
+        title="New order"
+      >
+        <InlineCreateProductModal
+          isOpen={win}
+          onClose={() => setWin(false)}
+          onCreated={jest.fn()}
+        />
+      </Modal>
+    );
+  }
+  beforeEach(() => {
+    builderClosed.mockClear();
+    mockProducts.length = 0;
+    mockProducts.push({ id: "p1", name: "Sample Cola", isActive: true });
+  });
+  const windowOpen = () => screen.queryByPlaceholderText("e.g. Sourdough Bread") !== null;
+
+  it.each([
+    ["Category", () => screen.getByPlaceholderText("e.g. Bakery")],
+    ["Unit", () => screen.getByPlaceholderText("e.g. case, kg, unit")],
+    ["Variant of", () => screen.getByPlaceholderText("Standalone product (type to search)\u2026")],
+  ])("%s list open: list, then window, then builder", (_name, field) => {
+    wrap(<Builder />);
+    const input = field() as HTMLInputElement;
+    fireEvent.focus(input);
+    expect(input).toHaveAttribute("aria-controls");
+
+    fireEvent.keyDown(input, { key: "Escape" }); // 1: the list only
+    expect(input).not.toHaveAttribute("aria-controls");
+    expect(windowOpen()).toBe(true);
+    expect(builderClosed).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Escape" }); // 2: the window only
+    expect(windowOpen()).toBe(false);
+    expect(builderClosed).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, { key: "Escape" }); // 3: the builder's own
+    expect(builderClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it("an open list with nothing in it (no match) still closes on the first Escape, not stuck", () => {
+    wrap(<Builder />);
+    const category = screen.getByPlaceholderText("e.g. Bakery") as HTMLInputElement;
+    fireEvent.change(category, { target: { value: "zzzz" } });
+    fireEvent.keyDown(category, { key: "Escape" });
+    expect(category).not.toHaveAttribute("aria-controls");
+    fireEvent.keyDown(category, { key: "Escape" });
+    expect(windowOpen()).toBe(false);
+    expect(builderClosed).not.toHaveBeenCalled();
   });
 });

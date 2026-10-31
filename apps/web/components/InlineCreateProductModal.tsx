@@ -101,13 +101,15 @@ export function InlineCreateProductModal({
 
   // SA-1066 FL1: Escape closes the window by the same call as Cancel and X (none of the three asks about a discard). Read at the
   // window in the capture phase so it works wherever focus sits, and so an order-builder Modal around us (Radix reads Escape at the
-  // document) is not closed with it. An open Unit / Category / parent list sets `aria-controls` on its input and takes its own Escape first.
+  // document, also in capture) is not closed with it. An open Unit / Category / parent list sets `aria-controls` on its input and
+  // takes the first Escape: we only mark the event handled (`preventDefault`, which Radix honours by not dismissing) and let it
+  // reach the list. Without that mark the builder closed too, losing the order.
   React.useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
-      if ((e.target as Element | null)?.hasAttribute?.("aria-controls")) return;
       e.preventDefault();
+      if ((e.target as Element | null)?.hasAttribute?.("aria-controls")) return; // the list closes itself
       e.stopPropagation();
       onClose();
     };
