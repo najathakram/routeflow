@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { isSpecialTier } from "@routeflow/pricing";
+import { isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { Button, Input, Modal, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money } from "@routeflow/pricing";
 import {
@@ -125,7 +125,7 @@ export function CounterLinePriceEdit({
   React.useEffect(() => {
     if (!openWith) return;
     setMode("set");
-    setValue(openWith.value.toFixed(2));
+    setValue(roundMoney(openWith.value).toFixed(2));
     setReason("");
     setError(null);
     setOpen(true);

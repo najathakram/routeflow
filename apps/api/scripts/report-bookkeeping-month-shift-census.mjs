@@ -14,6 +14,7 @@
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { roundMoney } from "@routeflow/pricing";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 
 export const STOP_DOLLARS = 500;
@@ -53,10 +54,10 @@ export function monthShifts(events, zones) {
     if (from === to) continue;
     const a = bucket(e.tenantId, from);
     a.movedOut += 1;
-    a.outDollars = Math.round((a.outDollars + e.amount) * 100) / 100;
+    a.outDollars = roundMoney(a.outDollars + e.amount);
     const b = bucket(e.tenantId, to);
     b.movedIn += 1;
-    b.inDollars = Math.round((b.inDollars + e.amount) * 100) / 100;
+    b.inDollars = roundMoney(b.inDollars + e.amount);
   }
   return [...rows.values()]
     .map((r) => ({ ...r, stop: Math.max(r.outDollars, r.inDollars) > STOP_DOLLARS }))
