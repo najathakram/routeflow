@@ -1,8 +1,8 @@
-import { applyTypedPrice } from "./staff-price-override";
+import { applyTypedPrice, type OverridableLine } from "./staff-price-override";
 
 /** SA-1068 M18: a price typed at the tier is still sent when a memory could book instead. */
 describe("applyTypedPrice with a memory that may book", () => {
-  const line = { productName: "Widget", listPrice: 12, unitPrice: 15, priceType: "MANUAL" };
+  const line: OverridableLine = { productName: "Widget", listPrice: 12 };
 
   it("no memory: the tier price is no override, as today", () => {
     const next = applyTypedPrice(line, 12);
