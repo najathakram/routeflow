@@ -338,3 +338,76 @@ describe("W-1042 MUST 14a at the screen: the counter holds scans while a window 
     expect(lines()).toHaveLength(0);
   });
 });
+
+describe("SA-1066 F10: the regulated question takes focus on its box, never a button, and has Cancel", () => {
+  const box = () => screen.getByRole("dialog").firstElementChild as HTMLElement;
+  const COLA_ROW = {
+    id: "p-cola",
+    name: "Sample Cola",
+    sku: "200000000001",
+    unit: "each",
+    pricePerUnit: 2.5,
+    unitsPerBox: null,
+    isActive: true,
+  };
+
+  it("R10: opening moves focus into the dialog box (tabIndex -1), not onto a button", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    expect(document.activeElement).toBe(box());
+    expect(box()).toHaveAttribute("tabindex", "-1");
+    expect(document.activeElement?.tagName).not.toBe("BUTTON");
+  });
+
+  it("R10: the step change (Yes) puts focus back on the box, still not a button", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await screen.findByText("Add it from Products, so its category and tax are set.");
+    expect(document.activeElement).toBe(box());
+  });
+
+  it("R10: the question has a Cancel that closes it like Esc, leaving the cart alone", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(openDialog()).toBeNull();
+    expect(posts).toHaveLength(0);
+    expect(lines()).toHaveLength(0);
+  });
+
+  it("R10a: a wedge code and its Enter while the question is open add no line and press no answer", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    await userEvent.keyboard("200000008888{Enter}");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(lines()).toHaveLength(0);
+    expect(screen.queryByText("Is this a licensed or regulated item?")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "New product" })).toBeNull();
+    expect(screen.queryByText("Add it from Products, so its category and tax are set.")).toBeNull();
+  });
+
+  it("R10b: a re-arm that fires while the question is open leaves focus on the box", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.blur(field());
+    await new Promise((r) => setTimeout(r, 80));
+    expect(document.activeElement).toBe(box());
+  });
+
+  it("R10c: Cancel, then the same scan adds a line", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    created = COLA_ROW;
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    submitScan("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Cola");
+  });
+});
