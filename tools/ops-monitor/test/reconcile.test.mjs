@@ -963,3 +963,20 @@ test("unknown-lane: aliased lane ids resolve to their target and raise nothing",
     .map((a) => a.id);
   assert.deepEqual(ids, ["unknown-lane:ghost"]);
 });
+
+test("blocker-cleared: an open unclaimed item whose blockers landed warns, naming them", () => {
+  const state = mkState([
+    item("W-1", { status: "live" }),
+    item("W-2", { status: "planned", blockedBy: ["W-1"], title: "Next piece" }),
+    item("W-3", { status: "planned", blockedBy: ["W-1"], claimedBy: "pc-lane" }),
+    item("W-4", { status: "planned", blockedBy: ["W-5"] }),
+    item("W-5", { status: "building" }),
+  ]);
+  const alarms = run({ state });
+  const a = find(alarms, "blocker-cleared:W-2");
+  assert.equal(a.severity, "warn");
+  assert.equal(a.item, "W-2");
+  assert.equal(a.message, "W-2 can start: W-1 is live and nobody has claimed it");
+  assert.equal(find(alarms, "blocker-cleared:W-3"), undefined, "claimed");
+  assert.equal(find(alarms, "blocker-cleared:W-4"), undefined, "blocker still building");
+});

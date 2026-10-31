@@ -154,3 +154,11 @@ test("X1 harm and statusText item fields validate", () => {
   );
   assert.equal(validateEvent(ev("item.edit", "525", { fields: { statusText: 5 } })).ok, false);
 });
+
+test("blockedBy takes a list of item ids", () => {
+  const edit = (blockedBy) => ev("item.edit", "525", { fields: { blockedBy } });
+  assert.deepEqual(validateEvent(edit(["W-853", "B12"])).errors, []);
+  assert.deepEqual(validateEvent(edit([])).errors, []);
+  assert.deepEqual(validateEvent(edit(["not an id"])).errors, ['invalid item field "blockedBy"']);
+  assert.deepEqual(validateEvent(edit("W-853")).errors, ['invalid item field "blockedBy"']);
+});

@@ -69,6 +69,7 @@ function newItem(id, fields, ts) {
     members: [...(fields.members ?? [])],
     parts: structuredClone(fields.parts ?? []),
     related: [...(fields.related ?? [])],
+    blockedBy: [...(fields.blockedBy ?? [])],
     links,
     refPrs: uniq([...split.refPrs, ...(fields.refPrs ?? [])]),
     registerFields: {},
@@ -217,6 +218,7 @@ export function fold(events, { bugs = new Map() } = {}) {
       if (it.train === from) it.train = to;
       it.members = it.members.map(swap);
       it.related = it.related.map(swap);
+      it.blockedBy = it.blockedBy.map(swap);
     }
     for (const list of [state.pushes, state.prEvents, state.rulings, state.notes, state.decisions])
       for (const rec of list) if (rec.item === from) rec.item = to;
