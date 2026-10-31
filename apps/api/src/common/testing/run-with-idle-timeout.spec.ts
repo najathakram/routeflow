@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { runWithIdleTimeout } from "./run-with-idle-timeout";
 
 // A wrapper spec that drives a self-test as a child process used to give the child a fixed wall-clock budget. Under
@@ -11,6 +12,35 @@ const ticker = (everyMs: number, count: number, code = 0) => [
   "-e",
   `let n=0;const t=setInterval(()=>{console.log("line "+(++n));if(n>=${count}){clearInterval(t);process.exit(${code});}},${everyMs});`,
 ];
+
+// A process is gone when it no longer exists or is only a zombie (an orphan reparented to a PID 1 that does not reap,
+// as in a container, stays listed as "Z" until then).
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch {
+    return true; // no /proc (Windows): kill(pid, 0) succeeded
+  }
+}
+async function goneWithin(pid: number, ms: number): Promise<boolean> {
+  for (const stop = Date.now() + ms; Date.now() < stop;) {
+    if (!isAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return !isAlive(pid);
+}
+function killQuietly(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
 
 describe("runWithIdleTimeout", () => {
   it("lets a child run far longer than the idle window as long as it keeps printing", async () => {
@@ -64,8 +94,10 @@ describe("runWithIdleTimeout", () => {
 
   // Linux: SIGTERM reaches the direct child only, and 'close' waits for EVERY holder of its pipes. A grandchild
   // that inherited stdio kept them open, so a silent child was never reported at the idle limit (or the ceiling).
-  // The helper must END the wait itself: SIGKILL after a grace, destroy the pipes, resolve.
-  it("resolves at the idle limit even when a grandchild holds the child's pipes open", async () => {
+  // The helper must END the wait itself (SIGKILL after a grace, destroy the pipes, resolve) AND leave nothing running:
+  // both signals go to the child's process group, so the grandchild goes too (POSIX; Windows signals the child only).
+  // The windows are 2 s: 300 ms closed before a starved child had started, so a healthy helper read red.
+  it("resolves at the idle limit even when a grandchild holds the child's pipes open, and leaves none running", async () => {
     const res = await runWithIdleTimeout(
       node,
       [
@@ -73,33 +105,39 @@ describe("runWithIdleTimeout", () => {
         'const gc=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>{},15000)"],{stdio:"inherit"});' +
           'console.log("gc "+gc.pid);setInterval(()=>{},1000);',
       ],
-      { idleMs: 300, graceMs: 300 },
+      { idleMs: 2_000, graceMs: 300 },
     );
+    const pid = Number(/gc (\d+)/.exec(res.stdout)?.[1]);
     try {
+      expect(pid).toBeGreaterThan(0);
       expect(res.timedOut).toBe("idle");
-      expect(res.elapsedMs).toBeLessThan(5_000);
+      expect(res.elapsedMs).toBeLessThan(10_000);
+      if (process.platform !== "win32") expect(await goneWithin(pid, 5_000)).toBe(true);
     } finally {
-      const pid = Number(/gc (\d+)/.exec(res.stdout)?.[1]);
-      if (pid) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          /* already gone */
-        }
-      }
+      if (pid) killQuietly(pid);
     }
-  }, 20_000);
+  }, 30_000);
 
-  it("resolves when the child ignores SIGTERM: SIGKILL follows the grace", async () => {
+  it("resolves when the child ignores SIGTERM: SIGKILL follows the grace, and the child is gone", async () => {
     const res = await runWithIdleTimeout(
       node,
-      ["-e", 'process.on("SIGTERM",()=>{});console.log("deaf");setInterval(()=>{},1000);'],
-      { idleMs: 300, graceMs: 300 },
+      [
+        "-e",
+        'process.on("SIGTERM",()=>{});console.log("deaf "+process.pid);setInterval(()=>{},1000);',
+      ],
+      { idleMs: 2_000, graceMs: 300 },
     );
-    expect(res.timedOut).toBe("idle");
-    expect(res.stdout).toContain("deaf");
-    expect(res.elapsedMs).toBeLessThan(5_000);
-  }, 20_000);
+    const pid = Number(/deaf (\d+)/.exec(res.stdout)?.[1]);
+    try {
+      expect(pid).toBeGreaterThan(0);
+      expect(res.timedOut).toBe("idle");
+      expect(res.elapsedMs).toBeLessThan(10_000);
+      // `res.signal` cannot prove the SIGKILL (the helper fills it in): the deaf child must actually be gone.
+      expect(await goneWithin(pid, 5_000)).toBe(true);
+    } finally {
+      if (pid) killQuietly(pid);
+    }
+  }, 30_000);
 
   it("rejects an idle window that is not a positive number", async () => {
     await expect(runWithIdleTimeout(node, ["-e", "0"], { idleMs: 0 })).rejects.toThrow(/idleMs/);

@@ -36,6 +36,10 @@ export const IDLE_RUN_GRACE_MS = 2_000;
  * Ending the child must END THE WAIT too. SIGTERM reaches the direct child only, and `close` waits for every holder
  * of its pipes: on Linux a grandchild that inherited stdio (or a child that ignores SIGTERM) kept the promise pending
  * past both limits. So `end()` follows SIGTERM with SIGKILL after `graceMs`, destroys both pipes and resolves.
+ *
+ * Both signals go to the child's whole process GROUP on POSIX (the child is spawned `detached`, which makes it its
+ * own group leader), so a stuck grandchild does not outlive the helper. Limits: a descendant that detaches itself
+ * still escapes, and Ctrl+C in a terminal no longer reaches the child. Windows has no group: only the child is signalled.
  */
 export function runWithIdleTimeout(
   cmd: string,
@@ -54,6 +58,7 @@ export function runWithIdleTimeout(
       cwd: opts.cwd,
       env: opts.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
     let stdout = "";
     let stderr = "";
@@ -61,15 +66,23 @@ export function runWithIdleTimeout(
     let idleTimer: NodeJS.Timeout;
     let graceTimer: NodeJS.Timeout | undefined;
     let finished = false;
+    const signal = (s: NodeJS.Signals) => {
+      try {
+        if (process.platform === "win32" || child.pid === undefined) child.kill(s);
+        else process.kill(-child.pid, s);
+      } catch {
+        child.kill(s);
+      }
+    };
     const end = (why: "idle" | "max") => {
       timedOut ??= why;
-      child.kill("SIGTERM");
+      signal("SIGTERM");
       if (graceTimer) return;
       graceTimer = setTimeout(() => {
-        child.kill("SIGKILL");
+        signal("SIGKILL");
         child.stdout.destroy();
         child.stderr.destroy();
-        done(child.exitCode, child.signalCode ?? "SIGKILL");
+        done(child.exitCode, child.signalCode ?? (child.exitCode === null ? "SIGKILL" : null));
       }, graceMs);
     };
     const armIdle = () => {
