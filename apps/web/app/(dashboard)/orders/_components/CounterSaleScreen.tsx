@@ -750,11 +750,10 @@ export function CounterSaleScreen() {
   // SA-1067 M2b: Enter in Amount tendered completes the sale only when the figure is plausible money; a tender a bill or
   // more over the total (a scanner's code) arms first. The key names what a second Enter would complete. Amount paying
   // now needs none: an amount over the total is already refused there, so it can't post.
-  const tenderEnter = useArmedEnter();
   const tenderKey = JSON.stringify([method, tendered, payTotal]);
+  const tenderEnter = useArmedEnter(tenderKey); // any change of method, figure or total ends the arm (A-2)
   const onTenderEnter = () =>
     tenderEnter.press(
-      tenderKey,
       tenderNeedsSecondEnter(payTotal, tenderedNum),
       () => void completeSale(false),
     );
@@ -1928,7 +1927,7 @@ export function CounterSaleScreen() {
               </>
             ) : null}
 
-            {tenderEnter.isArmed(tenderKey) ? (
+            {tenderEnter.armed ? (
               <p role="status" className="text-sm font-medium text-navy">
                 Press Enter again to complete the sale.
               </p>

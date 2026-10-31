@@ -184,6 +184,56 @@ describe("SA-1067 M2b: a tender far over the total needs a second Enter", () => 
   });
 });
 
+describe("SA-1067 A-2: an arm lasts only while the value stands", () => {
+  it("T9: cash, 4011 Enter, clear Amount tendered, 4011 Enter again: no post, the hint is back", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    const tender = screen.getByLabelText("Amount tendered");
+    await user.type(tender, "4011{Enter}");
+    expect(hint()).toBeInTheDocument();
+    await user.clear(tender);
+    expect(hint()).toBeNull();
+    await user.type(tender, "4011{Enter}");
+    expect(posted()).toBe(0);
+    expect(hint()).toBeInTheDocument();
+  });
+
+  it("T10: an arm does not outlive its sale: 4011 Enter, type 20 over it, Complete; the next sale at the same total needs two Enters for 4011", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    const tender = screen.getByLabelText("Amount tendered");
+    await user.type(tender, "4011{Enter}");
+    await user.clear(tender);
+    await user.type(tender, "20");
+    complete();
+    await waitFor(() => expect(posted()).toBe(1));
+    fireEvent.click(await screen.findByRole("button", { name: "New sale" }));
+    await scanCase();
+    await user.type(screen.getByLabelText("Amount tendered"), "4011{Enter}");
+    expect(await screen.findByText(HINT)).toBeInTheDocument();
+    expect(posted()).toBe(1);
+  });
+
+  it("T11: 4011 Enter, change the quantity and put it back, Enter: no post, the hint is back", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    await user.type(screen.getByLabelText("Amount tendered"), "4011{Enter}");
+    const qty = screen.getByLabelText("Set quantity of Case");
+    for (const n of ["2", "1"]) {
+      fireEvent.change(qty, { target: { value: n } });
+      fireEvent.keyDown(qty, { key: "Enter" });
+      await waitFor(() => expect(screen.getByTestId("change-due")).toBeInTheDocument());
+    }
+    screen.getByLabelText("Amount tendered").focus();
+    await user.keyboard("{Enter}");
+    expect(posted()).toBe(0);
+    expect(hint()).toBeInTheDocument();
+  });
+});
+
 describe("SA-1067 M4: a capital letter at a desktop till goes to the scan box", () => {
   const scanField = () => screen.getByLabelText("Scan or search items");
   const withButtonFocused = async () => {

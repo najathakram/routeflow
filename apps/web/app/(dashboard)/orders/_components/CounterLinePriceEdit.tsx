@@ -124,7 +124,11 @@ export function CounterLinePriceEdit({
   const [error, setError] = React.useState<string | null>(null);
   const valueRef = React.useRef<HTMLInputElement>(null);
   const errorId = React.useId();
-  const armedEnter = useArmedEnter();
+  // SA-1067 M2a: a scanner's code ends in Enter, which would have applied it. The first Enter arms the value shown;
+  // a second Enter on the same mode, value and reason applies. Any edit ends the arm (A-2). Apply by pointer, or Tab to
+  // Apply and Enter, is not here.
+  const editKey = JSON.stringify([mode, value, reason]);
+  const armedEnter = useArmedEnter(editKey);
   const { disarm } = armedEnter;
 
   React.useEffect(() => {
@@ -176,15 +180,12 @@ export function CounterLinePriceEdit({
     close();
   };
 
-  // SA-1067 M2a: a scanner's code ends in Enter, which would have applied it. The first Enter arms the value shown;
-  // a second Enter on the same mode, value and reason applies. Apply by pointer, or Tab to Apply and Enter, is not here.
-  const editKey = JSON.stringify([mode, value, reason]);
-  const armed = armedEnter.isArmed(editKey);
+  const armed = armedEnter.armed;
   const onFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
     if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
     e.preventDefault();
     if (!resolveCounterPriceEdit(mode, value, line, reason).ok) return apply();
-    armedEnter.press(editKey, true, apply);
+    armedEnter.press(true, apply);
   };
 
   return (

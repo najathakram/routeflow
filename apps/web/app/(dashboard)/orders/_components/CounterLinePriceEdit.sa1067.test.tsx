@@ -168,4 +168,42 @@ describe("SA-1067 M2a: the price dialog's Enter arms, a second Enter applies", (
       await user.click(screen.getByRole("button", { name: "Cancel" }));
     }
   });
+
+  it("D13: 4011 Enter, clear the field, 4011 Enter: not applied, the hint is back", async () => {
+    const user = userEvent.setup();
+    const { onApply } = mount();
+    const price = await openDialog(user);
+    await user.type(price, "4011{Enter}");
+    await user.clear(price);
+    await user.type(price, "4011{Enter}");
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByText(new RegExp(HINT))).toBeInTheDocument();
+  });
+
+  it("D14: 4011 Enter, type 5, restore 4011 by hand, Enter: not applied, the hint is back", async () => {
+    const user = userEvent.setup();
+    const { onApply } = mount();
+    const price = await openDialog(user);
+    await user.type(price, "4011{Enter}");
+    await user.type(price, "5");
+    await user.type(price, "{Backspace}");
+    expect(price).toHaveValue("4011");
+    await user.keyboard("{Enter}");
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByText(new RegExp(HINT))).toBeInTheDocument();
+  });
+
+  it("D15: 4011 Enter, abc Enter (refused), restore 4011, Enter: not applied, the hint is back", async () => {
+    const user = userEvent.setup();
+    const { onApply } = mount();
+    const price = await openDialog(user);
+    await user.type(price, "4011{Enter}");
+    await user.clear(price);
+    await user.type(price, "abc{Enter}");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a price, like 12.50.");
+    await user.clear(price);
+    await user.type(price, "4011{Enter}");
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByText(new RegExp(HINT))).toBeInTheDocument();
+  });
 });
