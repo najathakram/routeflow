@@ -47,6 +47,62 @@ function threePagePdf(): Buffer {
   return Buffer.from(out, "latin1");
 }
 
+/** A one-page scan: an all-white JBIG2 image, so R12 reads the request and the console, not pixels. */
+function jbig2Pdf(): Buffer {
+  const SIZE = 300;
+  const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  const segment = (num: number, type: number, data: number[]) => [
+    ...u32(num),
+    type,
+    0,
+    1,
+    ...u32(data.length),
+    ...data,
+  ];
+  const info = [...u32(SIZE), ...u32(SIZE), ...u32(0), ...u32(0), 0, 0, 0];
+  const mmr = [...new Array<number>(Math.ceil(SIZE / 8)).fill(0xff), 0x00, 0x10, 0x01];
+  const region = [...u32(SIZE), ...u32(SIZE), ...u32(0), ...u32(0), 0, 1, ...mmr];
+  const image = [...segment(0, 48, info), ...segment(1, 38, region)];
+  const content = `${SIZE} 0 0 ${SIZE} 0 0 cm /Im0 Do\n`;
+  const chunks: Buffer[] = [];
+  const offsets: number[] = [];
+  let at = 0;
+  const put = (b: string | number[]) => {
+    const buffer = typeof b === "string" ? Buffer.from(b, "latin1") : Buffer.from(b);
+    chunks.push(buffer);
+    at += buffer.length;
+  };
+  const obj = (n: number, body: () => void) => {
+    offsets[n] = at;
+    put(`${n} 0 obj\n`);
+    body();
+    put("\nendobj\n");
+  };
+  put("%PDF-1.5\n");
+  obj(1, () => put("<</Type/Catalog/Pages 2 0 R>>"));
+  obj(2, () => put("<</Type/Pages/Kids[3 0 R]/Count 1>>"));
+  obj(3, () =>
+    put(
+      `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${SIZE} ${SIZE}]/Contents 4 0 R/Resources<</XObject<</Im0 5 0 R>>>>>>`,
+    ),
+  );
+  obj(4, () => {
+    put(`<</Length ${content.length}>>\nstream\n${content}\nendstream`);
+  });
+  obj(5, () => {
+    put(
+      `<</Type/XObject/Subtype/Image/Width ${SIZE}/Height ${SIZE}/BitsPerComponent 1/ColorSpace/DeviceGray/Filter/JBIG2Decode/Length ${image.length}>>\nstream\n`,
+    );
+    put(image);
+    put("\nendstream");
+  });
+  const xref = at;
+  put("xref\n0 6\n0000000000 65535 f \n");
+  for (let n = 1; n <= 5; n += 1) put(`${String(offsets[n]).padStart(10, "0")} 00000 n \n`);
+  put(`trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`);
+  return Buffer.concat(chunks);
+}
+
 const servePdf = (page: Page) =>
   page.route(`**${PDF_PATH}`, (route) =>
     route.fulfill({ status: 200, contentType: "application/pdf", body: threePagePdf() }),
@@ -174,6 +230,33 @@ test.describe("touch", () => {
         .first()
         .or(page.getByText("Preview isn't available here.")),
     ).toBeVisible({ timeout: 20_000 });
+  });
+
+  test("R12: a JBIG2 scan loads its JavaScript decoder and decodes", async ({ page }) => {
+    const warnings: string[] = [];
+    page.on("console", (m) => warnings.push(m.text()));
+    const errors = cspErrors(page);
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], subtotal: 0, tax: 0, total: 0 }),
+      }),
+    );
+    const decoder = page.waitForResponse(/\/pdfjs\/jbig2_nowasm_fallback\.js/);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: jbig2Pdf() });
+    const answer = await decoder;
+    expect(answer.status()).toBe(200);
+    expect(answer.headers()["content-type"]).toMatch(/javascript/);
+    await expect(page.getByLabel("Invoice PDF").locator("canvas").first()).toBeVisible({
+      timeout: 20_000,
+    });
+    expect(warnings.filter((w) => /unable to decode image/i.test(w))).toEqual([]);
+    expect(errors).toEqual([]);
   });
 
   test("R11: the scan modal draws a PDF on canvas", async ({ page }) => {

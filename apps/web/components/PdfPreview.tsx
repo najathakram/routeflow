@@ -6,6 +6,12 @@ import { cn } from "@routeflow/ui/web";
 /** The one sentence a site's `fallback` says when the PDF can't be drawn. */
 export const PDF_PREVIEW_UNAVAILABLE = "Preview isn't available here.";
 
+/**
+ * Where `scripts/copy-pdfjs-fallbacks.mjs` puts pdf.js's JavaScript decoders. With wasm off and no URL, a JBIG2 or JPX scan
+ * draws white and pdf.js raises nothing, so `fallback` never fires (SA-1074 A-1). The trailing slash is required.
+ */
+const PDF_WASM_URL = "/pdfjs/";
+
 /** iOS limits total canvas memory, so a very long PDF stops here and says so. */
 export const PDF_PREVIEW_MAX_PAGES = 50;
 
@@ -24,7 +30,8 @@ export interface PdfPreviewProps {
 }
 
 /**
- * W-1064 (SA-1074): a PDF preview that scrolls on a phone. iOS draws a PDF in an iframe at its own size and doesn't scroll it,
+ * W-1064 (SA-1074): a PDF preview that scrolls on a phone. `fallback` covers what pdf.js raises; a bad image inside a page
+ * isn't raised. iOS draws a PDF in an iframe at its own size and doesn't scroll it,
  * and Android Chrome doesn't draw one inline at all, so touch devices get canvases. Desktop keeps the iframe, for its zoom,
  * find and print.
  */
@@ -69,9 +76,9 @@ function PdfCanvases({ src, title, className, getBytes, fallback }: PdfPreviewPr
         ]);
         if (stopped) return;
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc();
-        // No text or annotation layer, so a link or a script in a PDF does nothing. pdf.js 6 has no eval path at all, and
-        // `script-src` has no `wasm-unsafe-eval`, so its wasm decoders stay off rather than fail on CSP.
-        const task = pdfjs.getDocument({ data, useWasm: false });
+        // No text or annotation layer, so a link or a script in a PDF does nothing. `script-src` has no `wasm-unsafe-eval`, so
+        // the wasm decoders stay off and a scan decodes through the JavaScript fallbacks.
+        const task = pdfjs.getDocument({ data, useWasm: false, wasmUrl: PDF_WASM_URL });
         destroy = () => task.destroy();
         const pdf = await task.promise;
         if (stopped) return;

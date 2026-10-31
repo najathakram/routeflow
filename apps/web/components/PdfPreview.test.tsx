@@ -55,6 +55,7 @@ describe("PdfPreview on touch", () => {
     expect(args.data).toBeInstanceOf(Uint8Array);
     expect(args.url).toBeUndefined();
     expect(args.useWasm).toBe(false);
+    expect(args.wasmUrl).toBe("/pdfjs/"); // P11: without it a scanned page draws white, with no error
     expect(document.querySelector("iframe")).toBeNull();
   });
 

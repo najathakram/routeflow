@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-pdfjs-fallbacks.mjs",
     "dev": "next dev -H 127.0.0.1",
+    "prebuild": "node scripts/copy-pdfjs-fallbacks.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
