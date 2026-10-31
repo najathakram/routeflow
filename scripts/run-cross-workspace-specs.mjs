@@ -34,9 +34,16 @@ console.log(`test:repo-truth: ${specs.length} cross-workspace spec(s) in ${ws}`)
 // jest's package "exports" hides bin/jest.js: find the bin through its package.json.
 const jestPkg = createRequire(path.join(cwd, "package.json")).resolve("jest/package.json");
 const jest = path.join(path.dirname(jestPkg), "bin", "jest.js");
-const r = spawnSync(process.execPath, [jest, "--runTestsByPath", ...specs, ...args], {
-  cwd,
-  stdio: "inherit",
-  env: process.env,
-});
+// --reporters=default: web and mobile configure the campaign reporter, which would overwrite
+// .campaign/runs/<ws>.json with only THIS lane's few specs and turn campaign-check falsely PARTIAL (the api lane's
+// jest.repo-truth.config.js drops it the same way).
+const r = spawnSync(
+  process.execPath,
+  [jest, "--reporters=default", "--runTestsByPath", ...specs, ...args],
+  {
+    cwd,
+    stdio: "inherit",
+    env: process.env,
+  },
+);
 process.exit(r.status ?? 1);

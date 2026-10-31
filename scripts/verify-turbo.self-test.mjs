@@ -2076,6 +2076,15 @@ check(
     ),
     true,
   );
+  // R3C-m: web and mobile configure the campaign reporter; a lane run that kept it would overwrite
+  // .campaign/runs/<ws>.json with the lane's few specs, and campaign-check then refuses the push as PARTIAL.
+  check(
+    "R3C-m the workspace lane runner drops the campaign reporter",
+    readFileSync(join(ROOT, "scripts", "run-cross-workspace-specs.mjs"), "utf8").includes(
+      '"--reporters=default"',
+    ),
+    true,
+  );
   // (e) FR2 covers every pin that walks apps/api/scripts
   const walkers = REPO_WIDE_PINS.filter((p) => /apps\/api\/scripts/.test(p.why)).map((p) =>
     p.file.replace(/^apps\/api\/src\/common\//, ""),
