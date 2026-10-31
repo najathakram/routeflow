@@ -886,17 +886,28 @@ export function CounterSaleScreen() {
   // room that is missing while the strip is open. A bar already stuck at the top is already there: nothing moves. From md up the
   // bar is not floating and none of this applies. Coming back from a receipt (the sale view, strip included, was gone) is an
   // opening again; a cart that grows or shrinks only refits the room, it never moves the page under the clerk's hand.
+  // SA-1066 F44: closing the strip puts the scroller back where it was when the strip opened, so the clerk lands on the customer
+  // line again instead of mid-page. Leaving the till (unmount) restores nothing: the next page owns the scroller.
+  const leavingRef = React.useRef(false);
+  React.useLayoutEffect(() => {
+    leavingRef.current = false;
+    return () => {
+      leavingRef.current = true;
+    };
+  }, []);
   React.useLayoutEffect(() => {
     if (!cameraOpen || !touchFirst || receipt || isMdUp()) return;
     const main = document.getElementById("main-content");
     const bar = scanBarRef.current;
     const room = cameraRoomRef.current;
     if (!main || !bar) return;
+    const scrollTopBefore = main.scrollTop;
     const target = fitCameraRoom(main, bar, room);
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
     main.scrollTo?.({ top: target, behavior: reduced ? "auto" : "smooth" });
     return () => {
       if (room) room.style.height = "0px";
+      if (!leavingRef.current) main.scrollTo?.({ top: scrollTopBefore, behavior: "auto" });
     };
   }, [cameraOpen, touchFirst, receipt]);
   const lineCount = lines.length;
