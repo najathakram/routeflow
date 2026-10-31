@@ -1,11 +1,11 @@
 /**
- * READ-ONLY census for SA-906 / W-728 (Bookkeeping windows on the tenant's own day). The owner reads it BEFORE the deploy;
+ * READ-ONLY census for SA-906 / W-728 (Bookkeeping windows on the tenant's own day). The owner reads it BEFORE the merge;
  * nothing here writes. Real-instant events (credit notes, external refunds, write-offs) that fall in a DIFFERENT month on the
  * tenant's own calendar than on the UTC one used today will move between months in the P&L and the dashboards. This lists,
  * per tenant and month, how many events and how many dollars move out of and into that month.
  *
  * Output: tenant ids (internal, never a slug or a name) with counts and dollars. A tenant-month with more than $500 moved is
- * marked STOP (the owner reads it before the deploy). `--self-test` runs the pure part with no database.
+ * marked STOP (the owner reads it before the merge). `--self-test` runs the pure part with no database.
  *
  *   railway run --service postgres node apps/api/scripts/report-bookkeeping-month-shift-census.mjs [--months 24]
  *
