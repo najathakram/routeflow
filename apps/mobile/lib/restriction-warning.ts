@@ -198,3 +198,12 @@ export function ruleText(rule: RestrictionWarningRule): string {
   }
   return RESTRICTION_COPY.unchecked;
 }
+
+// Row 672: the remedy logic lives once in the shared types package (re-exported so callers keep this import path).
+export {
+  REMEDY_COPY,
+  customerStateFix,
+  remedyActions,
+  type CustomerStateFix,
+  type RemedyAction,
+} from "@routeflow/types/api/restrictions";

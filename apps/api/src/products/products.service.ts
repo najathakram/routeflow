@@ -18,6 +18,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { CostingMethod, MovementType, Prisma, StockAlertStatus } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { compressImage } from "../storage/compress.util";
@@ -52,7 +53,8 @@ import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "./scan-match";
-import { buildProductListWhere } from "./product-list-where";
+import { buildProductListWhere, needsLowStockIds } from "./product-list-where";
+import { lowStockProductIds } from "./low-stock-ids";
 import type { ProductIdsForFilterResponse } from "@routeflow/types";
 import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
@@ -425,7 +427,8 @@ export class ProductsService {
     const limit = fetchAll ? 10_000 : limitRaw;
     const skip = (page - 1) * limit;
 
-    const where: any = buildProductListWhere(query, opts);
+    const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
+    const where: any = buildProductListWhere(query, { ...opts, lowStockIds });
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
     // display names for line items. The parent row is small (no nested
@@ -511,7 +514,8 @@ export class ProductsService {
    */
   async findIds(query: ListProductsDto): Promise<ProductIdsForFilterResponse> {
     this.requireTenant();
-    const where: any = buildProductListWhere(query);
+    const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
+    const where: any = buildProductListWhere(query, { lowStockIds });
     const db = this.prisma.forTenant();
     const [rows, total] = await Promise.all([
       db.product.findMany({
@@ -2224,7 +2228,7 @@ export class ProductsService {
                 category: item.category ?? null,
                 description: item.description ?? null,
                 isActive: item.isActive ?? true,
-                currentStock: openingStock,
+                // currentStock keeps its default 0; the helper books the opening row (SA-927).
                 averageCost: openingCost,
                 reorderPoint: item.reorderPoint ?? null,
               },
@@ -2233,17 +2237,23 @@ export class ProductsService {
             mapBarcodeUniqueViolation(e, item.barcode ?? "");
           }
           if (!openingStock.isZero()) {
-            await tx.stockMovement.create({
-              data: {
-                productId: created.id,
-                type: MovementType.PURCHASE,
-                quantity: openingStock,
-                unitCost: openingCost,
-                avgCostAfter: openingCost,
-                stockAfter: openingStock,
-                notes: "Opening stock (bulk import)",
-              },
-            });
+            // SA-927: the opening PURCHASE row goes through the one writer (stockAfter = openingStock);
+            // the average is SET to the opening cost so avgCostAfter and Product.averageCost match it.
+            await applyStockMovements(
+              tx,
+              tenantIdForBulk,
+              [
+                {
+                  productId: created.id,
+                  type: MovementType.PURCHASE,
+                  quantity: openingStock,
+                  unitCost: openingCost,
+                  average: openingCost ? { set: openingCost } : "keep",
+                  notes: "Opening stock (bulk import)",
+                },
+              ],
+              { productIds: [created.id] },
+            );
           }
           await syncProductBarcodesFromLegacy(tx, {
             tenantId: tenantIdForBulk,

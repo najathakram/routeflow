@@ -22,6 +22,7 @@ import {
 } from "@nestjs/common";
 import { FulfillPath, OrderStatus, RouteRunStatus, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import type { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import type { OrdersService } from "./orders.service";
 import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
@@ -128,6 +129,74 @@ export type UpdateFulfillPathArgs = [
   opts?: FulfillPathSwitchOptions,
 ];
 
+/**
+ * Row 590 (SA-1000 §2): the ONE release of an order's link to a FINISHED (COMPLETED / CANCELLED) run, extracted unchanged from
+ * updateFulfillPathImpl. B692 class: a PICKUP order that stays linked to a finished run's stop is skipped by the later stock
+ * stamp (it excludes rows carrying a routeRunStopId), so a later quantity cut would restock what was never stamped; and an
+ * office DELIVERED on such a link is refused (ORDER_DELIVERED_ON_ROUTE_STOP). The link is released ONLY when every run it points
+ * at was read and is finished: an active run is the caller's to refuse or take off, and a link whose run row could not be read
+ * is refused too (fail closed), because clearing a link we cannot classify could detach a live run. The read and the write are
+ * not one transaction (a dispatch attaching in between would have its fresh link cleared by an unconditional write), so the
+ * release is conditional on the exact link that was read, and a miss is a coded 409 with nothing written. `data` rides the same
+ * write (the path switch sets `fulfillPath`).
+ */
+export async function releaseFinishedRunLink(
+  db: any,
+  order: { id: string; routeRunId: string | null; routeRunStopId: string | null },
+  runs: { stopRun: unknown; idRun: unknown },
+  data: Record<string, unknown> = {},
+): Promise<void> {
+  if (
+    (order.routeRunStopId != null && runs.stopRun == null) ||
+    (order.routeRunId != null && runs.idRun == null)
+  ) {
+    throw new BadRequestException(
+      "This order is linked to a delivery run that could not be read. Check its run before switching it to pickup.",
+    );
+  }
+  const released = await db.order.updateMany({
+    where: { id: order.id, routeRunId: order.routeRunId, routeRunStopId: order.routeRunStopId },
+    data: { ...data, routeRunId: null, routeRunStopId: null },
+  });
+  if (released.count === 0) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+      message:
+        "This order's delivery run changed while you were switching it. Reload and try again.",
+    });
+  }
+}
+
+/**
+ * Row 590 (SA-1000 §2): the counter's pickup completion releases a STALE link before its hand-over claim. An order already on
+ * PICKUP skips updateFulfillPath, and `activeRunLink` is null for a finished run, so such a link was never released and the
+ * DELIVERED step then 409ed on every retry, after the claim. Returns true when a link was released; false when there is no
+ * link or the run is still active (the take-off or the refusal owns that).
+ */
+export async function releaseStaleRunLink(
+  prisma: Pick<PrismaService, "forTenant">,
+  orderId: string,
+): Promise<boolean> {
+  const order = await prisma.forTenant().order.findFirst({
+    where: { id: orderId },
+    select: {
+      id: true,
+      routeRunId: true,
+      routeRunStopId: true,
+      routeRunStop: { select: { routeRun: { select: { status: true } } } },
+      routeRun: { select: { status: true } },
+    },
+  });
+  if (!order || (order.routeRunId == null && order.routeRunStopId == null)) return false;
+  const stopRun = order.routeRunStop?.routeRun ?? null;
+  const idRun = order.routeRun ?? null;
+  const active = (r: { status: RouteRunStatus } | null) =>
+    r != null && (r.status === RouteRunStatus.SCHEDULED || r.status === RouteRunStatus.IN_PROGRESS);
+  if (active(stopRun) || active(idRun)) return false;
+  await releaseFinishedRunLink(prisma.forTenant(), order, { stopRun, idRun });
+  return true;
+}
+
 export async function updateFulfillPathImpl(
   self: OrdersService,
   orderId: string,
@@ -175,12 +244,14 @@ export async function updateFulfillPathImpl(
       routeRunStopId: true,
       routeRunStop: {
         select: {
-          routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+          routeRun: {
+            select: { id: true, status: true, driver: { select: { contactName: true } } },
+          },
         },
       },
       // A driver-created order can carry a bare routeRunId with no stop (create writes both columns
       // independently), so the run is also read through routeRunId.
-      routeRun: { select: { status: true, driver: { select: { contactName: true } } } },
+      routeRun: { select: { id: true, status: true, driver: { select: { contactName: true } } } },
     },
   });
   if (!order) throw new NotFoundException("Order not found");
@@ -209,6 +280,7 @@ export async function updateFulfillPathImpl(
   ) {
     throw new BadRequestException({
       code: API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+      runId: run?.id ?? null, // W-778: the clients link to the run the order must come off
       message: `This order is out on an active delivery run${
         run?.driver?.contactName ? ` with ${run.driver.contactName}` : ""
       }. Remove it from the run before switching it to ${
@@ -227,33 +299,13 @@ export async function updateFulfillPathImpl(
         data: { fulfillPath: dto.fulfillPath },
       });
     }
-    // B692 class: a PICKUP order that stays linked to a finished (COMPLETED / CANCELLED) run's stop is
-    // skipped by the later stock stamp, which excludes rows carrying a routeRunStopId, so a later quantity
-    // cut would restock what was never stamped. The link is released ONLY when every run it points at was
-    // read and is finished: an active run was refused above, and a link whose run row could not be read is
-    // refused too (fail closed), because clearing a link we cannot classify could detach a live run.
-    if (
-      (order.routeRunStopId != null && stopRun == null) ||
-      (order.routeRunId != null && idRun == null)
-    ) {
-      throw new BadRequestException(
-        "This order is linked to a delivery run that could not be read. Check its run before switching it to pickup.",
-      );
-    }
-    // The read above and this write are not one transaction: a dispatch attaching in between would have
-    // its fresh link cleared by an unconditional write. The release is conditional on the exact link that
-    // was read, and a miss is a coded 409 with nothing written.
-    const released = await db.order.updateMany({
-      where: { id: orderId, routeRunId: order.routeRunId, routeRunStopId: order.routeRunStopId },
-      data: { fulfillPath: dto.fulfillPath, routeRunId: null, routeRunStopId: null },
-    });
-    if (released.count === 0) {
-      throw new ConflictException({
-        code: API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
-        message:
-          "This order's delivery run changed while you were switching it. Reload and try again.",
-      });
-    }
+    // B692 class: see releaseFinishedRunLink (the ONE release, shared with the counter's pickup completion).
+    await releaseFinishedRunLink(
+      db,
+      { id: orderId, routeRunId: order.routeRunId, routeRunStopId: order.routeRunStopId },
+      { stopRun, idRun },
+      { fulfillPath: dto.fulfillPath },
+    );
     const updated = await db.order.findFirst({ where: { id: orderId } });
     if (!updated) throw new NotFoundException("Order not found");
     return updated;

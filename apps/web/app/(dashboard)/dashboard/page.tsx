@@ -43,7 +43,7 @@ import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusB
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { quickCreateRule } from "@/lib/counter-sale";
-import { ORDER_STATUS_VALUES, staffMay } from "@routeflow/types";
+import { ORDER_STATUS_VALUES, lowStockThreshold, staffMay } from "@routeflow/types";
 import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
@@ -485,7 +485,8 @@ interface Product {
   name: string;
   /** PIECES (system-wide stock unit) — label via `unitsLabel`, never next to `unit`. */
   currentStock?: number | null;
-  lowStockThreshold?: number | null;
+  /** The product's reorder point (the list sends it): the low-stock threshold is `lowStockThreshold(reorderPoint)`. */
+  reorderPoint?: number | null;
   unit?: string;
   unitsPerBox?: number | null;
 }
@@ -560,8 +561,11 @@ function LowStockPanel({
           {products.map((p) => {
             const stockUnset = p.currentStock == null;
             const qty = p.currentStock ?? 0;
-            const threshold = p.lowStockThreshold ?? 5;
-            const pct = stockUnset ? 0 : Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
+            const threshold = lowStockThreshold(p.reorderPoint);
+            const pct =
+              stockUnset || threshold <= 0
+                ? 0
+                : Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
             return (
               <li key={p.id} className="px-5 py-3">
                 <p className="truncate text-sm font-semibold text-navy">{p.name}</p>

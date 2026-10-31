@@ -10,6 +10,7 @@ import {
   typedPriceEditChip,
   type PriceEditLine,
 } from "@/lib/counter-price-edit";
+import { priceUnitWord } from "@/lib/product-unit-label";
 import type { CounterPriceEdit } from "./CounterLinePriceEdit";
 import type { SaleLine } from "./counter-sale-scan";
 
@@ -36,6 +37,8 @@ export function priceEditLineOf(l: SaleLine, tier: number): PriceEditLine {
     boxes: l.boxes,
     pieces: l.pieces,
     unitsPerBox: l.unitsPerBox,
+    // the word the register row quotes the price per (label only)
+    ...(l.unit ? { unitWord: priceUnitWord(l.unit) } : {}),
   };
 }
 

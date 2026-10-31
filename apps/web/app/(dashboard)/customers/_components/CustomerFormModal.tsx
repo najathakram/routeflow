@@ -101,6 +101,12 @@ export interface CustomerFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   mode: "add" | "edit";
+  /** W-1041: a sale's "new customer" door. Called with the new customer after the toast, before `onClose`. */
+  onCreated?: (customer: { id: string; businessName: string; [k: string]: unknown }) => void;
+  /** W-1041: the typed search, prefilled as the business name of a new customer. */
+  initialName?: string;
+  /** W-1041: false lets a new customer save without an address (the sale does not need one). Default true. */
+  addressRequired?: boolean;
   initialData?: {
     id?: string;
     businessName: string;
@@ -136,12 +142,13 @@ export interface CustomerFormModalProps {
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
   newCustomerFulfillPath: "ROUTE" | "SHIP" = "ROUTE",
+  initialName = "",
 ): CustomerFormValues {
   if (!initialData) {
     return {
       customerType: "BUSINESS",
       fulfillPath: newCustomerFulfillPath,
-      businessName: "",
+      businessName: initialName,
       contactName: "",
       salutation: "",
       firstName: "",
@@ -192,8 +199,18 @@ function buildDefaultValues(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CustomerFormModal({ isOpen, onClose, mode, initialData }: CustomerFormModalProps) {
+export function CustomerFormModal({
+  isOpen,
+  onClose,
+  mode,
+  initialData,
+  onCreated,
+  initialName,
+  addressRequired = true,
+}: CustomerFormModalProps) {
   const { toast } = useToast();
+  // W-1041: inside a sale one name is enough (the contact name falls back to it) and the email sits under it.
+  const door = !!onCreated;
   const router = useRouter();
   const qc = useQueryClient();
   const createCustomer = useCreateCustomer({ localErrorToast: true }); // the banner below shows errors
@@ -227,11 +244,19 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     setValue,
     formState: { errors },
   } = useForm<CustomerFormValues>({
-    resolver: zodResolver(customerSchema),
+    resolver: (values, context, options) =>
+      zodResolver(customerSchema)(
+        door && values.customerType === "BUSINESS" && !values.contactName?.trim()
+          ? // A blank business name always fails on businessName, so the stand-in is never submitted.
+            { ...values, contactName: values.businessName?.trim() ? values.businessName : "-" }
+          : values,
+        context,
+        options,
+      ),
     // onInvalid (handleSubmit's second argument) is the single focus owner: it announces "Fix N field(s)" and
     // scrolls to the first invalid control, so a failed submit never looks like a dead button (row 328).
     shouldFocusError: false,
-    defaultValues: buildDefaultValues(initialData, newCustomerPath),
+    defaultValues: buildDefaultValues(initialData, newCustomerPath, initialName),
   });
   const onInvalid = useInvalidFocus();
 
@@ -243,7 +268,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     if (isOpen) {
       createCustomer.reset();
       updateCustomer.reset();
-      reset(buildDefaultValues(initialData, newCustomerPath));
+      reset(buildDefaultValues(initialData, newCustomerPath, initialName));
       setStreetError("");
       setCityError("");
       setZipError("");
@@ -292,16 +317,19 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     const resolvedDisplayName = isBusiness ? (data.businessName ?? "") : fullName;
 
     if (mode === "add") {
+      // W-1041: a sale that needs no address saves without one, but a half-filled address is not dropped.
+      const needAddress =
+        addressRequired || [data.street, data.city, data.zip].some((v) => v?.trim());
       let hasAddressError = false;
-      if (!data.street?.trim()) {
+      if (needAddress && !data.street?.trim()) {
         setStreetError("Required");
         hasAddressError = true;
       } else setStreetError("");
-      if (!data.city?.trim()) {
+      if (needAddress && !data.city?.trim()) {
         setCityError("Required");
         hasAddressError = true;
       } else setCityError("");
-      if (!data.zip?.trim()) {
+      if (needAddress && !data.zip?.trim()) {
         setZipError("Required");
         hasAddressError = true;
       } else setZipError("");
@@ -315,6 +343,22 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           .toLowerCase()
           .slice(0, 24) || "customer";
       const username = `${usernameBase}_${Date.now().toString(36)}`;
+      const addresses = needAddress
+        ? [
+            {
+              line1: data.street!,
+              city: data.city!,
+              // Never default a blank state (it used to become "TX"): the selling-restrictions
+              // engine keys off the address state, so a guessed one judges the customer in the
+              // wrong jurisdiction and hides the "can't tell where" path. Blank stays blank.
+              state: data.state?.trim() ?? "",
+              zip: data.zip!,
+              isDefault: true,
+              label: "Main",
+              addressType: data.addressType || "BILLING",
+            },
+          ]
+        : undefined;
 
       createCustomer.mutate(
         {
@@ -335,25 +379,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           currency: data.currency || "USD",
           fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
           notes: data.notes,
-          addresses: [
-            {
-              line1: data.street!,
-              city: data.city!,
-              // Never default a blank state (it used to become "TX"): the selling-restrictions
-              // engine keys off the address state, so a guessed one judges the customer in the
-              // wrong jurisdiction and hides the "can't tell where" path. Blank stays blank.
-              state: data.state?.trim() ?? "",
-              zip: data.zip!,
-              isDefault: true,
-              label: "Main",
-              addressType: data.addressType || "BILLING",
-            },
-          ],
+          addresses,
           ...(salesAgentId ? { salesAgentId } : {}),
         },
         {
-          onSuccess: () => {
+          onSuccess: (created) => {
             toast({ title: "Customer added", variant: "success" });
+            if (created?.customer) onCreated?.(created.customer);
             onClose();
           },
         },
@@ -402,6 +434,16 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       );
     }
   };
+
+  const emailField = (
+    <Input
+      label="Email (optional)"
+      type="email"
+      placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
+      register={register("email")}
+      error={errors.email?.message}
+    />
+  );
 
   return (
     <Modal
@@ -484,8 +526,8 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                   error={errors.businessName?.message}
                 />
                 <Input
-                  label="Contact Name"
-                  placeholder="Jane Doe"
+                  label={door ? "Contact Name (optional)" : "Contact Name"}
+                  placeholder={door ? "Same as business name" : "Jane Doe"}
                   register={register("contactName")}
                   error={errors.contactName?.message}
                 />
@@ -524,6 +566,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 </div>
               </div>
             )}
+            {door && emailField}
           </section>
 
           {/* ── Sales agent (add mode only, flag-gated) ──────────────────────── */}
@@ -579,13 +622,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 register={register("mobile")}
               />
             </div>
-            <Input
-              label="Email (optional)"
-              type="email"
-              placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
-              register={register("email")}
-              error={errors.email?.message}
-            />
+            {!door && emailField}
           </section>
 
           {/* ── Account ─────────────────────────────────────────────────────── */}
@@ -659,7 +696,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           {mode === "add" ? (
             <section className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Primary Delivery Address
+                Primary Delivery Address{addressRequired ? "" : " (optional)"}
               </p>
               <div className="flex gap-2">
                 {(["BILLING", "SHIPPING"] as const).map((t) => (

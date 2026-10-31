@@ -233,6 +233,7 @@ describeDb("driver cash vs the day close totals, real Postgres (row 342)", () =>
           60,
           "CASH",
           null,
+          null,
         ),
       ),
     );

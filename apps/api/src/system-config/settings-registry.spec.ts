@@ -275,6 +275,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
     await controller.updateInvoiceSettings({
       defaultTerms: "Net 30",
       hideOriginalPrice: true,
+      hideBarcodes: true,
       depositDefaultPercent: 10,
       depositCollectAtOrder: true,
     } as any);

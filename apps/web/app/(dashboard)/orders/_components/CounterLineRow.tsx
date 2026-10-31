@@ -8,12 +8,19 @@ import {
   isBoxedLine,
   registerPriceLabel,
   registerQtyLabel,
+  typedQtyOverCap,
   type TypedQty,
 } from "./counter-sale-line-edit";
-import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
+import {
+  qtyRefusalMessage,
+  QTY_AT_CAP_HINT,
+  QTY_TOO_LARGE_COPY,
+  type QtyFieldKind,
+} from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
+import { PriceHistoryButton } from "@/components/PriceHistory";
 
 // A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
 const UW = unitWords();
@@ -31,11 +38,22 @@ export function LineStepper({
   locked: boolean;
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
 }) {
+  const hintId = React.useId();
+  // A "+" that is off only because the line is full says so (a disabled button alone gives no reason).
+  const atCap = (unit: StepUnit, dir: 1 | -1) =>
+    dir === 1 && !locked && stepLine(line, unit, dir) === line;
+  const anyAtCap = atCap("piece", 1) || (isBoxedLine(line) && atCap("box", 1));
+  const hint = anyAtCap ? (
+    <span id={hintId} className="basis-full text-xs text-navy/70" data-testid="counter-line-full">
+      {QTY_AT_CAP_HINT}
+    </span>
+  ) : null;
   const btn = (label: string, text: string, unit: StepUnit, dir: 1 | -1) => (
     <button
       type="button"
       className={LINE_BTN}
       aria-label={label}
+      aria-describedby={atCap(unit, dir) ? hintId : undefined}
       disabled={locked || stepLine(line, unit, dir) === line}
       onClick={() => onStep(line.tempId, unit, dir)}
     >
@@ -52,6 +70,7 @@ export function LineStepper({
       {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
       {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
       {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
+      {hint}
     </span>
   ) : (
     <span
@@ -61,6 +80,7 @@ export function LineStepper({
     >
       {btn(`Remove one ${line.name}`, "\u2212", "piece", -1)}
       {btn(`Add one ${line.name}`, "+", "piece", 1)}
+      {hint}
     </span>
   );
 }
@@ -75,6 +95,7 @@ function QtyField({
   value,
   locked,
   onCommit,
+  overCap,
   onEnter,
   tabOut = false,
 }: {
@@ -83,6 +104,8 @@ function QtyField({
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
+  /** A clean whole number the cap alone refuses (a boxed line's boxes and pieces together): the row words it. */
+  overCap?: (text: string) => boolean;
   onEnter?: () => void;
   /** The LAST quantity field of the line: Tab with a typed draft commits it and hands focus to the scan box. */
   tabOut?: boolean;
@@ -94,7 +117,11 @@ function QtyField({
     if (draft === null) return;
     const text = draft;
     setDraft(null); // accepted or refused, the field re-reads the line
-    setRefusal(onCommit(text) ? null : qtyRefusalMessage(text, kind));
+    setRefusal(
+      onCommit(text)
+        ? null
+        : (qtyRefusalMessage(text, kind) ?? (overCap?.(text) ? QTY_TOO_LARGE_COPY : null)),
+    );
   };
   return (
     <>
@@ -106,7 +133,7 @@ function QtyField({
         aria-label={label}
         aria-invalid={refusal ? true : undefined}
         aria-describedby={refusal ? messageId : undefined}
-        className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
+        className="min-h-[44px] w-20 rounded border px-2 text-center text-sm disabled:opacity-40"
         disabled={locked}
         value={draft ?? String(value)}
         onChange={(e) => {
@@ -161,6 +188,7 @@ function LineQtyEditor({
         value={line.boxes ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { boxes: t })}
+        overCap={(t) => typedQtyOverCap(line, { boxes: t })}
         onEnter={onEnter}
       />
       <QtyField
@@ -169,6 +197,7 @@ function LineQtyEditor({
         value={line.pieces ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
+        overCap={(t) => typedQtyOverCap(line, { pieces: t })}
         onEnter={onEnter}
         tabOut
       />
@@ -180,6 +209,7 @@ function LineQtyEditor({
       value={line.qty}
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
+      overCap={(t) => typedQtyOverCap(line, { qty: t })}
       onEnter={onEnter}
       tabOut
     />
@@ -204,6 +234,7 @@ export function CounterLineRow({
   canEditPrices = false,
   priceTier = 1,
   customerName,
+  historyCustomerId = null,
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
@@ -224,6 +255,8 @@ export function CounterLineRow({
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
   customerName?: string;
+  /** W-853: the NAMED customer (never a walk-in) whose past prices the line offers; shown only with `canEditPrices`. */
+  historyCustomerId?: string | null;
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
@@ -235,6 +268,7 @@ export function CounterLineRow({
   hideOriginalPrice?: boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const [historyPick, setHistoryPick] = React.useState<{ value: number } | null>(null);
   const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
   const closeNote = () => {
     setEditing(false);
@@ -289,9 +323,24 @@ export function CounterLineRow({
           customerName={customerName}
           locked={locked}
           onApply={(edit) => onPriceEdit?.(l.tempId, edit)}
+          openWith={historyPick}
           onReset={() => onPriceReset?.(l.tempId)}
           onClosed={onPriceClosed}
         />
+        {canEditPrices && historyCustomerId && l.productId ? (
+          <fieldset disabled={locked} className="contents">
+            <PriceHistoryButton
+              customerId={historyCustomerId}
+              customerName={customerName}
+              productId={l.productId}
+              productName={l.name}
+              unitHint={isBoxedLine(l) ? "case" : l.unit}
+              packHint={l.unitsPerBox ?? null}
+              // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
+              onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
+            />
+          </fieldset>
+        ) : null}
         {edited ? (
           <span
             className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"

@@ -11,12 +11,12 @@ describe("AIM_BOX_FRACTION is the drawn box (w-5/6, h-3/5)", () => {
   it("matches the overlay's classes", () => {
     expect(AIM_BOX_FRACTION).toEqual({ width: 5 / 6, height: 3 / 5 });
   });
-  it("ScanOrderScreen DRAWS that same box (the visible overlay and the enforced rect share the fractions)", () => {
-    const src = readFileSync(
-      join(__dirname, "../app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx"),
-      "utf8",
-    );
+  it("ScanViewfinder DRAWS that same box (the visible overlay and the enforced rect share the fractions)", () => {
+    const dir = join(__dirname, "../app/(dashboard)/orders/_components/scan");
+    const src = readFileSync(join(dir, "ScanViewfinder.tsx"), "utf8");
     expect(src).toMatch(/h-3\/5 w-5\/6 rounded border-2/);
+    // SA-1059: the box moved out of ScanOrderScreen so the counter strip draws the very same one; the screen must still use it
+    expect(readFileSync(join(dir, "ScanOrderScreen.tsx"), "utf8")).toMatch(/<ScanViewfinder\b/);
   });
 });
 

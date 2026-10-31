@@ -156,11 +156,13 @@ export * from "./api/payment-ref";
 export * from "./payment-ref-copy";
 export * from "./credit-over-limit-copy";
 export * from "./counter-copy";
+export * from "./order-route-stop-copy";
 export * from "./counter-default-tender";
 export * from "./no-longer-fits-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";
+export * from "./api/stock-level";
 export * from "./api/product-prices-v2";
 export * from "./api/finance";
 export * from "./api/credit-notes";
@@ -279,3 +281,4 @@ export {
   isLicenceLive,
   licenceExpiryCutoff,
 } from "./licence-validity";
+export * from "./api/ready-for-pickup";

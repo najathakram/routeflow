@@ -8,6 +8,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * SA-808 §5 (B846 sibling): the PO-edit reversal. A re-apply used to write its compensation as an
@@ -56,6 +57,7 @@ const purchases = (rows: any[], monthKey: string) =>
 describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (SA-808 §5)", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: StockHelperMock;
 
   beforeEach(async () => {
     // Only Date is faked: the stock tx helpers use real timers/microtasks.
@@ -75,8 +77,9 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       ],
     });
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { track: true }); // SA-927: the real stock helper over the mock
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) }),
+      fn(stock.wrapTx({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) })),
     );
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -121,8 +124,6 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
     });
     prisma.stockMovement.findMany.mockResolvedValue([mv()]);
     prisma.stockMovement.count.mockResolvedValue(0);
-    let rowSeq = 0;
-    prisma.stockMovement.create.mockImplementation(async () => ({ id: `row-${++rowSeq}` }));
     prisma.stockLot.findMany.mockResolvedValue([
       { id: "lot-1", productId: "prod-1", qty: D(10), remainingQty: D(10), purchaseDate: SEPT_5 },
     ]);
@@ -139,7 +140,7 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       },
       "user-1",
     );
-  const written = () => prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data);
+  const written = (): any[] => stock.written();
   const markFiled = (periodStart: string, periodEnd: string) =>
     prisma.tobaccoReport.findFirst.mockResolvedValue({
       periodStart: new Date(periodStart),
@@ -199,7 +200,7 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       period: "October 2026",
       productId: "prod-1",
     });
-    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    expect(stock.written()).toHaveLength(0);
     expect(prisma.stockLot.deleteMany).not.toHaveBeenCalled();
     expect(prisma.product.update).not.toHaveBeenCalled();
   });
@@ -243,9 +244,7 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       expect(reversal.quantity.toString()).toBe("-10");
       expect(reversal.unitCost.toString()).toBe("3");
       expect(written()).toHaveLength(2); // one reversal + one re-post, nothing else touched
-      expect(prisma.product.update.mock.calls[0][0].data.currentStock.decrement.toString()).toBe(
-        "10",
-      );
+      expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("0"); // 10 - 10
     });
 
     it("a LEGACY ADJUSTMENT reversal still pairs — no double reversal of the receipt it undid", async () => {
@@ -367,10 +366,10 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("10");
       expect(prisma.stockLot.create.mock.calls[0][0].data.purchaseDate).toEqual(AUG_5);
       // the counter moved by the whole line, once each way
-      const incs = prisma.product.update.mock.calls
-        .map((c: any) => c[0].data.currentStock)
-        .map((c: any) => (c.increment ? `+${c.increment}` : `-${c.decrement}`));
-      expect(incs).toEqual(["-10", "+5", "+5"]);
+      const incs = prisma.product.update.mock.calls.map((c: any) =>
+        c[0].data.currentStock.toString(),
+      );
+      expect(incs).toEqual(["0", "5", "10"]); // 10 - 10, then +5, +5, each written absolute
     });
 
     it("August filed, September open: August is unchanged, September 5, and the closed receipt's pair lands in October netting 0", async () => {
@@ -477,7 +476,7 @@ describe("InventoryService.updatePurchaseOrder — reversal is a PURCHASE row (S
       expect(where.productId).toBe("prod-1");
       expect(where.effectiveAt).toEqual({ gt: SEPT_5 });
       // this edit's OWN rows (by id, not by a clock a concurrent commit can slip under) never count
-      expect(where.id).toEqual({ notIn: ["row-1", "row-2"] });
+      expect(where.id).toEqual({ notIn: written().map((r: any) => r.id) });
       expect(where.createdAt).toBeUndefined();
     });
 

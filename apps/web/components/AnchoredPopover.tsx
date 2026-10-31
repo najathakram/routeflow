@@ -97,6 +97,7 @@ export function AnchoredPopover({
     <div
       ref={ref}
       role="dialog"
+      data-anchored-popover=""
       aria-label={label}
       tabIndex={-1}
       onKeyDown={(e) => {
