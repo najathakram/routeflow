@@ -904,3 +904,43 @@ describe("review-c on #4036 at 852bb08fce", () => {
     expect(line.queryByText(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE)).toBeNull();
   });
 });
+
+describe("review-c on #4036 at d2d62cf335: the already-returned reason follows the ruling row", () => {
+  it("count on row 2: the reason box and the credit sit on row 2, and what is typed there is sent", async () => {
+    authRole = "OPERATOR";
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+    const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    setQty("6", 1);
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        chunk({ pieces: 4 }),
+        noSale({ pieces: 2, subtotal: 5, taxAmount: 0, alreadyReturned: true }),
+      ]),
+    );
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    // row 1 has no count, so the capture drops it: it must not carry the box or the credit
+    expect(within(rows()[0]).queryByLabelText(/why credit widget again/i)).toBeNull();
+    expect(within(rows()[0]).queryByText(/^Credit \$/)).toBeNull();
+    const why = within(rows()[1]).getByLabelText(/why credit widget again \(required\)/i);
+    expect(within(rows()[1]).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+      "Credit $",
+    );
+    fireEvent.change(why, { target: { value: "Customer returned a second batch" } });
+    expect(
+      buildCaptureRequest({
+        customerId: "cust-1",
+        orderId: "order-1",
+        lines: last().lines,
+        returnKey: "k",
+        reason: "EXCESS_ORDER",
+      }).items[0]?.alreadyReturnedReason,
+    ).toBe("Customer returned a second batch");
+  });
+});

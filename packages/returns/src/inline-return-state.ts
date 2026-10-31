@@ -319,14 +319,20 @@ export function alreadyReturnedProductIds(quote: InlineReturnQuoteResponse): Set
   return new Set(quote.chunks.filter((c) => c.alreadyReturned).map((c) => c.productId));
 }
 
-/** Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. */
+/**
+ * Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. The reason read is the
+ * ruling row's (the first row with a quantity), the one `buildCaptureRequest` keeps; a reason on a row it drops is not sent.
+ */
 export function missingAlreadyReturnedReasons(
-  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">>,
+  lines: ReadonlyArray<
+    Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason"> &
+      Partial<Pick<InlineReturnLineDraft, "boxes" | "pieces">>
+  >,
   quote: InlineReturnQuoteResponse,
 ): string[] {
+  const draft = lines.map((l) => ({ ...l, boxes: l.boxes ?? "", pieces: l.pieces ?? "" }));
   return [...alreadyReturnedProductIds(quote)].filter(
-    (id) =>
-      !lines.some((l) => l.productId === id && (l.alreadyReturnedReason ?? "").trim().length > 0),
+    (id) => !(draft[rulingLineIndex(draft, id)]?.alreadyReturnedReason ?? "").trim(),
   );
 }
 

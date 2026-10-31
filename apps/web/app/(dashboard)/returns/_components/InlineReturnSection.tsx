@@ -387,13 +387,14 @@ export function InlineReturnSection({
           )}
           {lines.map((line, lineIndex) => {
             const firstIndex = lines.findIndex((l) => l.productId === line.productId);
-            const firstOfProduct = firstIndex === lineIndex;
             // buildCaptureRequest drops rows with no quantity, merges the rest of one product and keeps the first merged row's
             // reason, so that row's reason is what the server applies (and the stock outcome that follows) to the whole product
             const rulingIndex = rulingLineIndex(lines, line.productId);
             const ruling = lines[rulingIndex];
+            // the product's quote facts, the credit and the already-returned reason all sit on the ruling row too
+            const isRuling = lineIndex === rulingIndex;
             const facts =
-              firstOfProduct && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+              isRuling && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
             return (
               <React.Fragment key={line.lineKey}>
                 {removed && removed.index === lineIndex ? undoRow : null}
@@ -413,7 +414,7 @@ export function InlineReturnSection({
                   firstReason={ruling.reason}
                   canOverrideCredit={canOverrideCredit}
                   needsAlreadyReturnedReason={
-                    firstOfProduct &&
+                    isRuling &&
                     canOverrideCredit &&
                     flaggedIds.has(line.productId) &&
                     !(line.alreadyReturnedReason ?? "").trim()

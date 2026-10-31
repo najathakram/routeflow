@@ -1135,3 +1135,29 @@ describe("ALREADY_RETURNED_NOTHING_LEFT_MESSAGE — true for a line that WAS bou
     expect(ALREADY_RETURNED_NOTHING_LEFT_MESSAGE).toMatch(/already returned or credited/);
   });
 });
+
+describe("missingAlreadyReturnedReasons follows the ruling row (review-c on #4036 at d2d62cf335)", () => {
+  const quote = {
+    chunks: [{ productId: "p1", alreadyReturned: true }],
+  } as unknown as Parameters<typeof missingAlreadyReturnedReasons>[1];
+  const row = (boxes: string, pieces: string, alreadyReturnedReason?: string) => ({
+    productId: "p1",
+    boxes,
+    pieces,
+    alreadyReturnedReason,
+  });
+
+  it("a reason typed on a blank row the capture drops does not count", () => {
+    expect(missingAlreadyReturnedReasons([row("", "", "typed"), row("", "3")], quote)).toEqual([
+      "p1",
+    ]);
+  });
+
+  it("the reason on the row that counts clears it", () => {
+    expect(missingAlreadyReturnedReasons([row("", ""), row("", "3", "typed")], quote)).toEqual([]);
+  });
+
+  it("with no count anywhere the first row's reason is the one read", () => {
+    expect(missingAlreadyReturnedReasons([row("", "", "typed"), row("", "")], quote)).toEqual([]);
+  });
+});
