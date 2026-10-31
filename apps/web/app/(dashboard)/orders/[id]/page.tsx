@@ -2057,7 +2057,14 @@ export default function OrderDetailPage() {
                           size="sm"
                           // One filled primary leads the page: while PENDING that is Confirm Order
                           // (apple-ux r3 Q16), so invoicing is secondary until the order is confirmed.
-                          variant={localStatus === "PENDING" || isEditing ? "secondary" : "primary"}
+                          // SA-1066 M2: a Ready POS order's one primary is Hand over; Create invoice is secondary.
+                          variant={
+                            localStatus === "PENDING" ||
+                            isEditing ||
+                            (isPos && localStatus === "OUT_FOR_DELIVERY")
+                              ? "secondary"
+                              : "primary"
+                          }
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
                           disabled={isEditing}
