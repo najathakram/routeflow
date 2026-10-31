@@ -7,6 +7,7 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper } from "./testing/stock-helper-mock";
 
 /**
  * SA-587e (#2717 M2): assignToVariants is a Serializable transaction; even with the family-first
@@ -49,6 +50,10 @@ describe("assignToVariants retry (SA-587e)", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-927: the real stock helper runs; its locked read answers from the parent / variant rows above.
+    wireStockHelper(prisma, {
+      stateOf: (ids) => ids.map((id) => (id === "parent-1" ? parent : { ...variant, id })),
+    });
     prisma.product.findUnique.mockResolvedValue(parent);
     prisma.product.findFirst.mockResolvedValue(variant);
     const mod = await Test.createTestingModule({

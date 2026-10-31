@@ -2,7 +2,7 @@ import type { AimBoxRect, BarcodeBoundsLike } from "@routeflow/scanning";
 
 /**
  * The web phone scanner's aim box (owner ruling 2026-09-24, DEFAULT ON): ONE centered box, the same one the camera strip
- * already DRAWS (`ScanOrderScreen`: `h-3/5 w-5/6`). Only a barcode whose centre is inside it counts; the drawing and the
+ * already DRAWS (`ScanViewfinder`: `h-3/5 w-5/6`). Only a barcode whose centre is inside it counts; the drawing and the
  * enforcement share these fractions, pinned by a source test.
  */
 export const AIM_BOX_FRACTION = { width: 5 / 6, height: 3 / 5 } as const;

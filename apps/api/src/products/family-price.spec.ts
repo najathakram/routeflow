@@ -24,6 +24,7 @@ import {
   propagateFamilyPrice,
   variantPriceWriteDecision,
 } from "./family-price";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 /**
  * #2717 M2 (SA-574) family price authority. Test 15: the `mixed_packs` registry row is OFF by
@@ -330,6 +331,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
 
   async function build(mode: "on" | "off" | "absent"): Promise<ProductsService> {
     prisma = createMockPrisma();
+    wireStockHelper(prisma);
     gateway = { emitProductUpdated: jest.fn() };
     featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(mode === "on" ? "on" : "off") };
     rows = {
@@ -565,6 +567,7 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
 describe("InventoryService assignToVariants new variant (test 20)", () => {
   async function run(mode: "on" | "off") {
     const prisma = createMockPrisma();
+    wireStockHelper(prisma);
     const parent = {
       id: "fam",
       name: "Cola",

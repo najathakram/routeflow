@@ -15,6 +15,7 @@ import { NumberingService } from "../import/numbering.service";
 import { AddonService } from "../billing/addon.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 const user = (role: string): JwtPayload =>
@@ -94,9 +95,9 @@ describe("InlineReturnsService.capture: a walk-in return is never store credit (
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    prisma.tenantTransaction.mockImplementation((fn: any) =>
-      fn({ ...prisma, $executeRaw: jest.fn().mockResolvedValue(0) }),
-    );
+    // The restock runs the real stock helper: the wired tx answers its locked product read and the
+    // `app.current_tenant_id` read the restock takes (a test tenant) instead of the plain mock's no rows.
+    wireStockHelper(prisma, { ample: true });
     prisma.invoiceItem.findMany.mockResolvedValue([{ id: "invitem-1", invoiceId: "inv-1" }]);
     prisma.invoice.findMany.mockResolvedValue([paidInvoice()]);
     prisma.order.findFirst.mockResolvedValue({

@@ -10,6 +10,9 @@ import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 /**
  * B568: the Zoho stock sync (`ImportService.importInventory`), existing-product branch, moves the
@@ -23,15 +26,18 @@ describe("ImportService.importInventory — existing product stock sync is atomi
   let order: string[];
   let tx: {
     $executeRaw: jest.Mock;
-    product: { findFirst: jest.Mock; update: jest.Mock };
+    product: { update: jest.Mock };
     stockMovement: { create: jest.Mock };
   };
   let txRejection: unknown;
+  // SA-927: the locked read is the stock helper's own tenant-scoped read (a $queryRaw), served by this spy
+  let lockedRead: jest.Mock;
 
   const CSV = "Item Name,SKU,Closing Stock\nWidget A,SKU-A,80\n";
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     order = [];
     txRejection = undefined;
     tx = {
@@ -40,11 +46,6 @@ describe("ImportService.importInventory — existing product stock sync is atomi
         return 0;
       }),
       product: {
-        // the LOCKED read: another writer committed a sale of 10 after the pre-read saw 100
-        findFirst: jest.fn(async () => {
-          order.push("read");
-          return { id: "prod-1", currentStock: D(90), averageCost: D("2.5") };
-        }),
         update: jest.fn(async () => {
           order.push("update");
           return { currentStock: D(80) };
@@ -57,9 +58,15 @@ describe("ImportService.importInventory — existing product stock sync is atomi
         }),
       },
     };
+    // the LOCKED read: another writer committed a sale of 10 after the pre-read saw 100
+    lockedRead = jest.fn(async () => {
+      order.push("read");
+      return [{ id: "prod-1", currentStock: D(90), averageCost: D("2.5") }];
+    });
+    stock.setState(lockedRead);
     (prisma as any).tenantTransaction = jest.fn(async (fn: any) => {
       try {
-        return await fn(tx);
+        return await fn(stock.wrapTx(tx));
       } catch (e) {
         txRejection = e;
         throw e;
@@ -117,7 +124,9 @@ describe("ImportService.importInventory — existing product stock sync is atomi
 
     const res = await service.importInventory(Buffer.from(CSV), "user-1");
 
-    expect(tx.product.update).toHaveBeenCalledTimes(1); // same callback as the failing movement
+    // SA-927: the helper inserts the rows before it writes the counter, so the rejected movement leaves
+    // no counter write behind at all
+    expect(tx.product.update).not.toHaveBeenCalled();
     expect(txRejection).toEqual(expect.objectContaining({ message: "movement boom" }));
     expect(res.updated).toBe(0);
     expect(res.skipped).toBe(1);
@@ -138,12 +147,12 @@ describe("ImportService.importInventory — existing product stock sync is atomi
     expect(Number(data.quantity)).toBe(-10);
   });
 
-  it("U2: the call order is lock, then the locked read, then the counter update, then the movement", async () => {
+  it("U2: the call order is lock, then the locked read, then the movement, then the counter write (SA-927: rows first)", async () => {
     await service.importInventory(Buffer.from(CSV), "user-1");
 
     // lockProductsForStock issues several $executeRaw statements; collapse the run
     const collapsed = order.filter((e, i) => i === 0 || e !== order[i - 1]);
-    expect(collapsed).toEqual(["lock", "read", "update", "movement"]);
+    expect(collapsed).toEqual(["lock", "read", "movement", "update"]);
   });
 
   it("U3: the delta is the CSV closing minus the LOCKED stock (pre-read 100, locked 90, closing 80 -> -10, not -20)", async () => {
@@ -151,7 +160,7 @@ describe("ImportService.importInventory — existing product stock sync is atomi
 
     const upd = tx.product.update.mock.calls[0][0];
     expect(upd.where).toEqual({ id: "prod-1" });
-    expect(Number(upd.data.currentStock.increment)).toBe(-10);
+    expect(Number(upd.data.currentStock)).toBe(80); // locked 90 + delta -10, written absolute
     const mv = tx.stockMovement.create.mock.calls[0][0].data;
     expect(Number(mv.quantity)).toBe(-10);
     expect(mv.type).toBe("ADJUSTMENT");
@@ -159,29 +168,23 @@ describe("ImportService.importInventory — existing product stock sync is atomi
     expect(mv.performedById).toBe("user-1");
   });
 
-  it("U4: stockAfter is the counter the same tx's update returned; avgCostAfter is the locked average", async () => {
-    tx.product.update.mockImplementationOnce(async () => {
-      order.push("update");
-      return { currentStock: D(79) }; // whatever the tx returns is what the row records
-    });
-
+  it("U4: stockAfter is the locked counter plus the delta; avgCostAfter is the locked average", async () => {
     await service.importInventory(Buffer.from(CSV), "user-1");
 
     const mv = tx.stockMovement.create.mock.calls[0][0].data;
-    expect(Number(mv.stockAfter)).toBe(79);
+    expect(Number(mv.stockAfter)).toBe(80);
     expect(Number(mv.avgCostAfter)).toBe(2.5);
   });
 
   it("U5: a closing stock equal to the locked stock writes nothing", async () => {
-    tx.product.findFirst.mockImplementationOnce(async () => ({
-      id: "prod-1",
-      currentStock: D(80),
-      averageCost: D("2.5"),
-    }));
+    lockedRead.mockImplementationOnce(async () => {
+      order.push("read");
+      return [{ id: "prod-1", currentStock: D(80), averageCost: D("2.5") }];
+    });
 
     const res = await service.importInventory(Buffer.from(CSV), "user-1");
 
-    expect(tx.product.findFirst).toHaveBeenCalledTimes(1); // the locked read did run
+    expect(lockedRead).toHaveBeenCalledTimes(1); // the locked read did run
     expect(tx.product.update).not.toHaveBeenCalled();
     expect(tx.stockMovement.create).not.toHaveBeenCalled();
     expect(prisma.product.update).not.toHaveBeenCalled();

@@ -1,7 +1,8 @@
-import { isPaidAtSale } from "@routeflow/pricing";
+import { isPaidAtSale, perBaseUnitPrice } from "@routeflow/pricing";
 import { formatDate } from "../messaging/messaging.helpers";
 import { computeDepositFields } from "./deposit-fields";
 import { confirmedBalance } from "./invoice-balance-classify";
+import { sortInvoiceLines } from "./invoice-line-order";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, splitConfirmed } from "./payment-predicates";
 import type { InvoiceEmailAttachment } from "./invoice-attachment";
@@ -36,6 +37,14 @@ export function emailPaidBasis(inv: { total: unknown; payments?: any[] | null })
   return { totalPaid, creditApplied, advanceApplied, creditNoteNumbers, balanceDue };
 }
 
+/** SA-1029: the per-piece price beside a pack line (display only); the unit word is the frozen label, else the live product's. */
+function itemPerBaseUnit(it: any) {
+  return perBaseUnitPrice(
+    { ...it, unitPrice: it.unitPrice != null ? Number(it.unitPrice) : null },
+    it.baseLabel ?? it.product?.baseUnitLabel,
+  );
+}
+
 export function buildInvoiceEmailPayload(
   inv: any,
   ctx: {
@@ -61,7 +70,7 @@ export function buildInvoiceEmailPayload(
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: inv.items.map((it: any) => ({
+    items: sortInvoiceLines(inv.items).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),
@@ -72,6 +81,7 @@ export function buildInvoiceEmailPayload(
       priceType: it.priceType ?? null,
       promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       ...invoiceItemQtyFields(it),
+      perBaseUnit: itemPerBaseUnit(it),
     })),
     pdfUrl: ctx.pdfUrl,
     attachment: ctx.attachment,
@@ -113,7 +123,7 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: inv.items.map((it: any) => ({
+    items: sortInvoiceLines(inv.items).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),
@@ -125,6 +135,7 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
       priceType: it.priceType ?? null,
       promoFreeUnits: it.promoFreeUnits != null ? Number(it.promoFreeUnits) : null,
       ...invoiceItemQtyFields(it),
+      perBaseUnit: itemPerBaseUnit(it),
     })),
     pdfUrl,
     attachment,

@@ -31,6 +31,9 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 /**
  * F08 round 4: build the `order.invoices` rows a mocked `return.findUnique` returns by
@@ -87,6 +90,7 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     // SA-737: the claim re-reads the Return's status under its row lock
     prisma.return.findFirst.mockResolvedValue({ id: "ret", status: "RECEIVED", kind: "STANDARD" });
     creditNotesCreate = jest.fn();
@@ -1389,7 +1393,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         regulatedSalesLedger: { findMany: jest.fn().mockResolvedValue([]) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
-      prisma.tenantTransaction.mockImplementation((fn: any) => fn(tx));
+      prisma.tenantTransaction.mockImplementation((fn: any) => fn(stock.wrapTx(tx)));
+      // 10 on hand: the 2 undone pieces leave 8
+      stock.setState((ids) => ids.map((id) => ({ id, currentStock: 10, averageCost: 3 })));
 
       // The STALE outer read: still APPROVED when cancel() first looked it up.
       prisma.return.findUnique.mockResolvedValue({
@@ -1401,10 +1407,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
 
       await service.cancel(id, { sub: "u1", role: "OPERATOR" } as any);
 
-      expect(tx.product.update).toHaveBeenCalledWith({
-        where: { id: "p1" },
-        data: { currentStock: { decrement: 2 } },
-      });
+      expect(tx.product.update).toHaveBeenCalledTimes(1);
+      expect(tx.product.update.mock.calls[0][0].where).toEqual({ id: "p1" });
+      expect(Number(tx.product.update.mock.calls[0][0].data.currentStock)).toBe(8); // 10 - 2
       // B562 PR-2 (SA-136 §2): nothing deletes a movement — one reversing RETURN row is APPENDED,
       // same reference, stockAfter from the decrement's own result.
       expect(tx.stockMovement.deleteMany).not.toHaveBeenCalled();
@@ -1415,15 +1420,19 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         type: "RETURN",
         reference: `RET-${id.slice(0, 8)}`,
         notes: "RETURN_CANCELLED",
-        stockAfter: 8,
         performedById: "u1",
       });
+      expect(Number(rev.stockAfter)).toBe(8);
       expect(rev.quantity.toString()).toBe("-2");
       expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      // the return-row FOR UPDATE, then the stock helper's product locks (two statements) after the fresh read
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        txReturnFindUnique.mock.invocationCallOrder[0],
+      );
+      expect(tx.$executeRaw.mock.invocationCallOrder[1]).toBeGreaterThan(
         txReturnFindUnique.mock.invocationCallOrder[0],
       );
     });
