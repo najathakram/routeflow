@@ -24,7 +24,7 @@
 - **Symptom:** a re-pinned train showed a "different" patch-id from the gated sha; the comparison had been run against the wrong master, so a safe update looked like drift.
 - **Root cause:** a patch-id depends on the base; once master moves, the same member diff hashes differently, so the check says nothing about carry-over.
 - **Lesson:** **For a train rebuilt on a newer master, show that every file that changed between the gated and the new head is a master-only file with identical bytes on master, and that the update merge's `git show --remerge-diff` is empty. Use patch-id only against the same base.**
-- **Guard:** none automatic; the train PR body lists the old and new head and the delta file list. Cf. [[L-350]].
+- **Guard:** none automatic; the train PR body lists the old and new head and the delta file list. Cf. [[L-350]]. Extended 2026-10-31: a PASS read carries over a merge only when the remerge-diff is empty. An empty merge-up of master into a stacked train keeps every gate; any non-empty remerge needs a delta read of its own.
 
 ### L-347 · 2026-10-25 · process · a wording or format sweep changes strings only; a behaviour or number-format edit in it goes back out (W-785)
 
@@ -82,8 +82,16 @@
 - **Guard:** none automatic yet; the landing script is to run `npm run check-types -w apps/api` on the post-merge tree before the next merge (to be added).
 - **Recurrence (2026-10-17, units-v2-3):** a merge that makes a parameter REQUIRED must re-run every spec and call site that passes it on the merged tree, not only the files the PR touched; run the full check-types ratchet plus the specs that import the changed function before the train is cut.
 - **Recurrence (2026-10-18, fixes-4):** members that each passed alone broke combined: one member's component began calling `useSearchParams` while another's page test mocked `next/navigation` without it (a mock misses a new hook call), and a third's picker output grew past what a Linux pipe flushes. Run the FULL web and api suites on the combined train tree, not only each member's own set.
+- **Recurrence (2026-10-31, W33):** one member made `group` required on every policy registry entry while an already-landed key had none; api check-types failed only on the assembled tree, and the composition pre-check was the first catch. Run the api check-types ratchet and the repo-truth lane (`permission-coverage`, the policy-registry spec) on the assembled train before verify (cf. [[L-359]]).
 
 ## tooling
+
+### L-362 · 2026-10-31 · tooling · a heavy-slot job runs the scripts of the tree it was started from; start it from the tree whose scripts you want
+
+- **Symptom:** a slot waiter started from the main checkout used its stale `scripts/lib/heavy-slot.mjs`, which lacked the capped-label rule, and blocked the queue for jobs that the newer script would have let through.
+- **Root cause:** the slot's queue rules live in the script file of whichever tree launches the waiter; the main checkout was behind master, so an old policy ran beside newer waiters.
+- **Lesson:** **Start a slot job from the tree whose copy of the slot scripts you mean to rely on (a fresh master worktree), and check that copy carries the rule you depend on before queueing. A stale checkout is not a neutral launcher.**
+- **Guard:** none automatic; the dispatch note names the tree the slot job starts from. Cf. [[L-354]].
 
 ### L-356 · 2026-10-30 · tooling · a failed merge in a tree whose hooks cannot run looks exactly like a conflict; classify by unmerged files first
 
@@ -138,22 +146,6 @@
   atomically, or a self-test asserting `index` refuses/warns on a renamed fixture.
   The record-to-ledger mirror is pinned by `bugs.mjs self-test` T13b/R9 (run by `common/bugs-self-test-script.spec.ts`).
 
-### L-190 · 2026-09-17 · tooling · FG-B (#819) had to be rebuilt, not rebased, after FG-A squash-merged
-
-- **Symptom:** #819 conflicted after a sibling PR squash-merged the schema/contract commit both
-  had stacked on locally — a normal rebase/merge treated the squashed content as new, corrupting
-  the schema state instead of cleanly resolving.
-- **Root cause:** two PRs stacked on a shared, not-yet-landed commit — once the owner squashes
-  the first one, that commit no longer exists on master under its original identity, so any
-  history-diffing operation sees a phantom conflict between "the same change, twice."
-- **Lesson:** **A PR stacked on another PR's not-yet-landed schema/contract commit must be
-  REBUILT from a fresh branch off the post-squash master — cherry-picking only its OWN commits,
-  never the shared ancestor or a merge commit — once the base PR lands. Never rebase or
-  ordinary-merge a stacked branch through someone else's squash.**
-- **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
-  rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
-- **Recurred 2026-10-02 (landing windows D to I):** squashing a stacked parent made each child conflict add/add on the parent's own files (#3025 to #3046 to #3050; #3044 to #3045), and a merge-tree against the then-current master missed it. Before opening a window simulate the whole order: for each PR in order run `git merge-tree --write-tree <cur> <head>`, then `git commit-tree <tree> -p <cur>` as the next base; a conflict at step N means that PR is carried (master merged in, new pin) after its parent lands, never in the same window.
-
 ### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
 
 - **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
@@ -198,6 +190,13 @@
 
 ## testing
 
+### L-363 · 2026-10-31 · testing · a timing-based spec goes red under slot load and passes alone; record it, rerun on the same tree, rule per spec, and never edit it inside a train
+
+- **Symptom:** the heavy-slot self-test (a 120 s cap), the lock-timeout concurrency specs and the bugs self-test's concurrency check went red in a train verify while the slot was loaded, and passed when run alone.
+- **Root cause:** each measures wall-clock time or concurrency; load stretches the run past its bound, so red there says the machine was busy, not that a member broke anything. Loosening the bound inside the train would change the gate under test.
+- **Lesson:** **On a red timing spec, record the evidence (spec, duration, slot load), rerun that spec alone on the SAME tree and sha, and rule per spec: green alone is a load flake, red alone is a defect. Do not edit or loosen a spec inside a train; file it for its own PR.**
+- **Guard:** none automatic; the train PR body lists each rerun and its ruling. Cf. [[L-359]], [[L-353]].
+
 ### L-353 · 2026-10-29 · testing · a spec with literal fixture dates, over code that reads the real clock, turns master red on a calendar date with no commit
 
 - **Symptom:** a train push went red on master's own billing spec (5 of 109 cases) although no commit had touched it; the train's members were suspected first.
@@ -239,21 +238,6 @@
 - **Root cause:** those specs asserted the old error code as a stand-in for "the second writer lost"; the new guard fires first on the same input, so the invariant still held but the expected code was stale.
 - **Lesson:** **When a new guard or error code is inserted ahead of an existing one, grep the specs for the old code and update each; keep the invariant the spec proves (one writer wins, nothing written) and change only the expected code, never loosen the assertion to accept any error.**
 - **Guard:** none automatic; the train gate runs the full suite (cf. [[L-264]]).
-
-### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
-
-- **Symptom:** `touch-reveal-b511.test.ts` and `edit-line-item-row-b513.test.ts` both asserted a
-  full literal-source-text match on a JSX className. A purely additive `cn(TAP_TARGET, "...")`
-  wrapper (same classes, behavior still correct) broke both, because the source text was no
-  longer that exact string.
-- **Root cause:** the assertion pinned SOURCE TEXT, not the behavior the tests were meant to
-  guard (a control staying reachable/correctly sized) — coincidence-based in both directions: it
-  breaks on harmless changes and can just as easily PASS a real regression that preserves the
-  substring.
-- **Lesson:** **A regression test must assert the underlying behavior (DOM state, computed
-  style, an element's actual reachable size), never a scrape of the source file's literal
-  text.**
-- **Guard:** the fix (rewriting both to DOM-behavior assertions) is being built into #910.
 
 ### L-247 · 2026-09-29 · testing · swapping a constructor dependency has construction sites tsc does not check (#2241)
 
@@ -447,6 +431,13 @@
 
 ## deploy
 
+### L-361 · 2026-10-31 · deploy · a window script reads the watchdog deadline from the log line of the pid it started, and reads that log with `grep -a`
+
+- **Symptom:** a window script took its "time left" from the last deadline line in the watchdog log. The log is appended by every run, so the tail could hold the previous run's deadline, already in the past; acting on it flips the repo private while a deploy is still building. A plain `grep` on the same log also printed "Binary file matches" and no deadline at all.
+- **Root cause:** the log is shared by every watchdog run and holds bytes that grep treats as binary; "the newest line" was assumed to mean "my watchdog's line".
+- **Lesson:** **Start the watchdog, keep its pid, and read the deadline only from the log line that names that pid; read the log with `grep -a`; if no line for the pid appears, stop and ask instead of falling back to the tail.**
+- **Guard:** none automatic; the window script is owed this change. Cf. [[L-357]].
+
 ### L-360 · 2026-10-30 · deploy · a landing is deployed only when every service status on the merge commit is SUCCESS; the repo has more than api and web
 
 - **Symptom:** a train merge showed api and web SUCCESS while the mobile service failed. A gate that named "both services" would have called the landing done.
@@ -459,7 +450,7 @@
 - **Symptom:** two windows closed with CI still running and landed one PR between them; waits for CI burned the 45-minute watchdog.
 - **Root cause:** windows were sized to CI wait plus merges. A run that starts while the repo is public keeps running after the flip, but a run that starts on a private repo fails on billing.
 - **Lesson:** **Start every CI run at window open, close on the watchdog, and spend the window on merge, deploy SUCCESS and the private read-back. Never flip on BUILDING.**
-- **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask.
+- **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask. Extended 2026-10-31: never flip private while a train's hosted CI run is in progress unless the watchdog forces it. A hosted job was cancelled about 3 minutes after the flip with every real step already passed and only the post-run step cancelled; a cancelled run is not green, so read the run's conclusion (as [[L-337]] refuses CANCELLED), and a second short window may re-run the failed job.
 
 ### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
 
@@ -467,17 +458,3 @@
 - **Root cause:** the e2e seed runs against production after every deploy, so a tenant a feature PR adds to it is created for real by the next post-deploy E2E.
 - **Lesson:** **The production e2e seed gains a tenant or row only through its own reviewed PR, never inside a feature PR. Test data follows the approved test-tenant policy (CLAUDE.md "Test tenants & real-client data").**
 - **Guard:** standing rule plus the e2e-seed review checklist; no script yet.
-
-### L-184 · 2026-09-17 · deploy · #777 merged/deployed without its migration or a drift check
-
-- **Symptom:** #777 merged and deployed with a new `migrations/` folder, but the migration was
-  never applied to prod and the post-deploy drift run never happened — undetected for ~26 hours.
-- **Root cause:** the standing deploy flow assumes a migration ships and gets applied together,
-  but nothing gates the LANDING of a migration-carrying PR on the owner having applied it, and
-  `post-deploy-check` (the thing that runs automatically) has no drift check in it.
-- **Lesson:** **A PR that adds a `migrations/` folder is not LANDED until the owner has applied
-  it to prod AND the drift run shows exit 0 — a migration is authorized before merge, never
-  assumed to happen after. The merge coordinator checks
-  `git diff --name-only <base>..<merge> -- apps/api/prisma/migrations` on every landing.**
-- **Guard:** none yet — propose the merge coordinator's landing checklist running that diff as a
-  hard gate, and/or folding a drift check into `post-deploy-check` itself.
