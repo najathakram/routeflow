@@ -126,7 +126,8 @@ function PanelBody({
   onUse: (price: number) => void;
 }) {
   const [showCost, setShowCost] = React.useState(false);
-  const [active, setActive] = React.useState(0);
+  // -1 = nothing chosen. A scanner's keyboard ends in Enter and cannot press arrows, so Enter alone must never commit a row.
+  const [active, setActive] = React.useState(-1);
   const bodyRef = React.useRef<HTMLDivElement>(null);
   // Focus the body only once the (visible) popover shell exists; AnchoredPopover also focuses it.
   React.useEffect(() => bodyRef.current?.focus({ preventScroll: true }), []);
@@ -185,14 +186,16 @@ function PanelBody({
   const refs = data.references;
   const agg = data.aggregate && sameUnit(data.aggregate.unitLabel, unit) ? data.aggregate : null;
   const neverSold = rows.length === 0;
+  // A different unit is a different list: the old index points at some other row.
+  React.useEffect(() => setActive(-1), [unit]);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (rows.length === 0) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setActive((i) =>
-        Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
+        i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
       );
-    } else if (e.key === "Enter" && !(e.target as HTMLElement).closest("button")) {
+    } else if (e.key === "Enter" && active >= 0 && !(e.target as HTMLElement).closest("button")) {
       const r = rows[Math.min(active, rows.length - 1)];
       if (r && canUse(r)) {
         e.preventDefault();
@@ -371,10 +374,9 @@ function PanelBody({
               <tr
                 key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
                 aria-selected={i === active}
-                onMouseEnter={() => setActive(i)}
                 className={cn(
                   "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
-                  i === active && "bg-brand-50/60",
+                  i === active ? "bg-brand-50/60" : "hover:bg-brand-50/30",
                 )}
               >
                 <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>

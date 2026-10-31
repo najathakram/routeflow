@@ -137,7 +137,7 @@ describe("keyboard", () => {
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     await within(dialog).findByText("INV-D"); // newest first: 13, 12, 11, 10
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
-    await user.keyboard("{ArrowDown}{ArrowDown}");
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
     await user.keyboard("{Enter}");
     expect(onUse).toHaveBeenCalledWith(11);
     expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
