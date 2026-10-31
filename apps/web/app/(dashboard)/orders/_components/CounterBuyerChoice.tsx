@@ -21,7 +21,8 @@ export function CounterBuyerChoice({
   customerName?: string;
   disabled: boolean;
   onWalkIn: () => void;
-  onNewCustomer?: () => void;
+  /** Gets the button that was pressed, so the window it opens can hand focus back to it (F21). */
+  onNewCustomer?: (opener: HTMLElement) => void;
 }) {
   const headingId = React.useId();
   const asking = kind === null;
@@ -56,7 +57,7 @@ export function CounterBuyerChoice({
                 variant="secondary"
                 className="min-h-[44px]"
                 disabled={disabled}
-                onClick={onNewCustomer}
+                onClick={(e) => onNewCustomer(e.currentTarget)}
               >
                 New customer
               </WriteButton>
