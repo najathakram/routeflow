@@ -83,3 +83,26 @@ export function CounterBuyerChoice({
     </div>
   );
 }
+
+/**
+ * SA-1066 F3: while the camera is open below md, the buyer card is scrolled out of view (the sticky scan bar rests at the top
+ * so the viewfinder has room). One line in that bar says who is buying: the customer's name, or Walk-in. Nothing before the
+ * question is answered. Scrolling up still reaches the card.
+ */
+export function CounterBuyerLine({
+  kind,
+  customerName,
+}: {
+  kind: BuyerKind;
+  customerName?: string;
+}) {
+  if (kind === null) return null;
+  return (
+    <p
+      className="truncate pb-1 text-xs font-medium text-navy/70 md:hidden"
+      data-testid="counter-camera-who"
+    >
+      {kind === "customer" && customerName ? customerName : "Walk-in"}
+    </p>
+  );
+}

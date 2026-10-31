@@ -1061,3 +1061,52 @@ describe("W-1041: the new-customer window pauses the camera", () => {
     );
   });
 });
+
+describe("SA-1066 camera: Added on the picture, Close at bottom-left, who is buying in the bar", () => {
+  const strip = () => screen.getByTestId("counter-camera-strip");
+
+  it("R8: a read puts `Added <name>` on the viewfinder (aria-hidden) and announces it once, in the status region", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    const overlay = await within(strip()).findByText("Added Sample Cola");
+    expect(overlay).toHaveAttribute("aria-hidden", "true");
+    const announced = screen
+      .getAllByRole("status")
+      .filter((el) => el.textContent?.includes("Added Sample Cola"));
+    expect(announced).toHaveLength(1);
+    expect(strip().contains(announced[0])).toBe(false);
+  });
+
+  it("R8a: Close camera sits bottom-left at 44 px and closes the camera like the toggle", () => {
+    renderPhoneTill();
+    const close = within(strip()).getByRole("button", { name: "Close camera" });
+    expect(close.className).toMatch(/\bleft-1\b/);
+    expect(close.className).toMatch(/\bbottom-1\b/);
+    expect(close.className).toMatch(/\bh-11\b/);
+    expect(close.className).toMatch(/\bw-11\b/);
+    fireEvent.click(close);
+    expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
+    expect(screen.getByRole("button", { name: "Scan with camera" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("R8b: with the camera open, the sticky bar names the buyer in one line below md; shut, nothing", () => {
+    renderTill(<CounterSaleScreen />); // taps Walk-in, like the clerk
+    expect(screen.queryByTestId("counter-camera-who")).toBeNull();
+    openCamera();
+    const who = screen.getByTestId("counter-camera-who");
+    expect(who).toHaveTextContent(/^Walk-in$/);
+    expect(who.className).toMatch(/\bmd:hidden\b/);
+    expect(screen.getByTestId("counter-scan-bar").contains(who)).toBe(true);
+  });
+
+  it("R8b: before anyone is chosen there is no line to claim a buyer", () => {
+    renderWithProviders(<CounterSaleScreen />); // the question is still unanswered
+    openCamera();
+    expect(screen.queryByTestId("counter-camera-who")).toBeNull();
+  });
+});

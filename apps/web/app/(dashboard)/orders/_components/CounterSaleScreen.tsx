@@ -143,7 +143,7 @@ import {
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterNewItem } from "./CounterNewItem";
-import { CounterBuyerChoice } from "./CounterBuyerChoice";
+import { CounterBuyerChoice, CounterBuyerLine } from "./CounterBuyerChoice";
 import { BUYER_REASON_COPY, kindOfPick } from "./counter-buyer-choice";
 import { useCounterBuyerChoice } from "./useCounterBuyerChoice";
 import { useNewCustomerDoor } from "./useNewCustomerDoor";
@@ -1562,12 +1562,17 @@ export function CounterSaleScreen() {
           >
             {/* SA-1059: inline above the field, inside the sticky bar, so the strip never covers the cart */}
             {touchFirst && cameraOpen ? (
-              <CounterCameraStrip
-                engine={cameraEngine}
-                enabled={cameraEnabled}
-                frameBlocked={() => cameraFrameBlocked(scanRef.current)}
-                onCode={onCameraCode}
-              />
+              <>
+                <CounterBuyerLine kind={buyerChoice.kind} customerName={customer?.businessName} />
+                <CounterCameraStrip
+                  engine={cameraEngine}
+                  enabled={cameraEnabled}
+                  frameBlocked={() => cameraFrameBlocked(scanRef.current)}
+                  onCode={onCameraCode}
+                  added={scan.message ? "" : scanCue || scan.added}
+                  onClose={toggleCamera}
+                />
+              </>
             ) : null}
             <form onSubmit={onScanSubmit} className="flex items-center gap-2 py-2">
               <input

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Zap, ZapOff } from "lucide-react";
+import { X, Zap, ZapOff } from "lucide-react";
 import {
   continuousFrameScanned,
   createContinuousScanState,
@@ -77,11 +77,17 @@ export function CounterCameraStrip({
   enabled,
   frameBlocked,
   onCode,
+  added,
+  onClose,
 }: {
   engine: CameraScanEngine;
   enabled: boolean;
   frameBlocked: () => boolean;
   onCode: (code: string) => void;
+  /** The scan box's confirmation ("Added Cola"), drawn on the picture; the status region below the field announces it. */
+  added?: string;
+  /** Close camera (bottom-left): the screen's own toggle. */
+  onClose?: () => void;
 }) {
   const { clock } = engine;
   // Paused while frames are dropped as well as while the camera is off, so the clerk sees why a code does nothing. Set only
@@ -145,6 +151,25 @@ export function CounterCameraStrip({
           >
             Camera paused
           </p>
+        ) : null}
+        {added ? (
+          <p
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-12 bottom-2 truncate rounded bg-black/70 px-2 py-1 text-center text-xs font-medium text-white"
+            data-testid="counter-camera-added"
+          >
+            {added}
+          </p>
+        ) : null}
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close camera"
+            className="absolute bottom-1 left-1 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white"
+          >
+            <X className="h-5 w-5" aria-hidden />
+          </button>
         ) : null}
         {camera.torchAvailable ? (
           <button
