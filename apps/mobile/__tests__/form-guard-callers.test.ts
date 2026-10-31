@@ -18,14 +18,23 @@
  * RTL), so this reads each screen as text and pins the wiring, never a
  * rendered tree. Paths resolve from `__dirname`, never `process.cwd()`.
  */
-import { readFileSync, readdirSync, statSync } from "fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join, relative } from "path";
 
 const MOBILE_ROOT = join(__dirname, "..");
 
 /**
- * Recursively lists every .ts/.tsx file under `dir`, skipping node_modules
- * and build output — a plain fs walk rather than `git grep`, so this suite
+ * Recursively lists every .ts/.tsx file under `dir`, skipping node_modules,
+ * hidden folders and build output — a plain fs walk rather than `git grep`, so this suite
  * has no dependency on git being on PATH or on the process cwd, and cannot
  * pick up a concurrent, unrelated in-progress edit from another builder's
  * `git` index state in this shared worktree.
@@ -33,7 +42,12 @@ const MOBILE_ROOT = join(__dirname, "..");
 function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
-    if (entry === "node_modules" || entry === ".expo" || entry === "dist" || entry === "__tests__")
+    if (
+      entry === "node_modules" ||
+      entry.startsWith(".") ||
+      entry === "dist" ||
+      entry === "__tests__"
+    )
       continue;
     const full = join(dir, entry);
     const st = statSync(full);
@@ -69,6 +83,21 @@ const formSheetSrc = readScreen("components", "FormSheet.tsx");
 // returning [] (a bad cwd, a renamed root) must fail loudly instead of letting the "no
 // warnIfDirty hits" assertion pass vacuously over an empty file list.
 const ALL_MOBILE_SOURCE_FILES = listSourceFiles(MOBILE_ROOT);
+
+describe("the source walk", () => {
+  it("skips hidden folders: jest's own .jest-cache changes under the walk while workers run", () => {
+    const root = mkdtempSync(join(tmpdir(), "form-guard-walk-"));
+    try {
+      mkdirSync(join(root, ".jest-cache"));
+      mkdirSync(join(root, "lib"));
+      writeFileSync(join(root, ".jest-cache", "cached.ts"), "");
+      writeFileSync(join(root, "lib", "source.ts"), "");
+      expect(listSourceFiles(root)).toEqual([join(root, "lib", "source.ts")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("standing-orders/new.tsx discard guard (REG-FG-01)", () => {
   it("REG-FG-01: imports hasUnsavedStandingOrder from lib/discard-guard", () => {

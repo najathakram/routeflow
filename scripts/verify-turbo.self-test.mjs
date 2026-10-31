@@ -68,6 +68,7 @@ import {
   excludedLine,
   executePlan,
   finishRun,
+  settlesReports,
   jestPassthrough,
   jestWorkerBudget,
   LOW_MEM_THRESHOLD_BYTES,
@@ -171,9 +172,11 @@ function isUnder(root, p, pathImpl = path) {
 // This file runs INSIDE the pre-push hook, which exports RF_VERIFY_MODE=fast (and a held heavy-slot
 // token), and a developer may have FULL_VERIFY / CI / VERIFY_EXCLUDE / JEST_MAX_WORKERS set: any of
 // them would silently change the plan a fixture's main() runs. So no ambient verify knob reaches a
-// spawned script; a case sets what it needs explicitly on top.
+// spawned script; a case sets what it needs explicitly on top. The W-1045 gate exports its nonce, result path and tree
+// key around the whole chain too: a nested main() that inherited them would write the pass stage with the REAL nonce
+// before the real verify-turbo runs (proven on Linux, where these cases run).
 const AMBIENT_VERIFY_KNOBS =
-  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
 const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
   Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
 
@@ -398,14 +401,15 @@ check(
   true,
 );
 // SP8: adding a stale workspace to the filter regenerates its report only on a turbo cache MISS —
-// on a HIT turbo replays without running jest. The `--freshness-only` pre-step forces a real run on
-// a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the order.
+// on a HIT turbo replays without running jest. In CI the `--freshness-only` pre-step forces a real
+// run on a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the
+// order. Locally it defers to `--reports-only`, which verify-turbo runs inside its slot.
 {
   const chain = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.verify;
   const fresh = chain.indexOf("--freshness-only");
   const scoped = chain.indexOf("verify-turbo.mjs");
   check(
-    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (forces a real run on a cache HIT)",
+    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (in CI it forces a real run on a cache HIT)",
     fresh !== -1 && scoped !== -1 && fresh < scoped,
     true,
   );
@@ -975,6 +979,17 @@ check(
   ],
 );
 
+check(
+  "RS4 settlesReports: only a green, full-enforcement run off CI",
+  [
+    settlesReports({ fast: false, status: 0, env: {} }),
+    settlesReports({ fast: true, status: 0, env: {} }),
+    settlesReports({ fast: false, status: 1, env: {} }),
+    settlesReports({ fast: false, status: 0, env: { CI: "1" } }),
+  ],
+  [true, false, false, false],
+);
+
 // End to end: the REAL main() with a stub `npx` first on PATH that records its argv. CI=1 makes
 // the scope FULL without touching git; JEST_MAX_WORKERS selects the split path. POSIX only (the
 // stub is a shell script; Windows' npx is a .cmd and `shell: true`).
@@ -1108,6 +1123,68 @@ if (process.platform !== "win32") {
       [3, 2],
     );
 
+    // VT1-VT5 (W-1045): the pass token verify-turbo stages for the pre-push gate. A hook run exports the three
+    // RF_VERIFY_* names around the whole chain; the real main() runs here with them set explicitly (VT2-VT5) or only
+    // in the OUTER process (VT1, the leak the T2 read proved on Linux).
+    const stageDir = mkdtempSync(join(tmpdir(), "verify-stage-"));
+    try {
+      const tokenFile = join(stageDir, "rf-verify-result");
+      const stage = `${tokenFile}.turbo`;
+      const tokenEnv = {
+        RF_VERIFY_RESULT_FILE: tokenFile,
+        RF_VERIFY_NONCE: "nonce-under-test",
+        RF_VERIFY_TREE_KEY: "tree-under-test",
+      };
+      const staged = () => (existsSync(stage) ? JSON.parse(readFileSync(stage, "utf8")) : null);
+
+      rmSync(stage, { force: true });
+      const savedTok = Object.fromEntries(Object.keys(tokenEnv).map((k) => [k, process.env[k]]));
+      Object.assign(process.env, tokenEnv);
+      try {
+        runMain({});
+      } finally {
+        for (const [k, v] of Object.entries(savedTok)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+      check(
+        "VT1 a nested main() does not inherit the gate's nonce: no stage is written from the outer env",
+        staged(),
+        null,
+      );
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv });
+      const green = staged();
+      check(
+        "VT2 a fully green run stages the pass: this run's nonce and tree key, every planned call counted",
+        [green?.nonce, green?.treeKey, green?.planned, green?.ran],
+        ["nonce-under-test", "tree-under-test", 1, 1],
+      );
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "7" });
+      check("VT3 a run whose call exits non-zero stages nothing", staged(), null);
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "0,3", JEST_MAX_WORKERS: "2" });
+      check("VT4 one failed call in a split run stages nothing", staged(), null);
+
+      writeFileSync(
+        stage,
+        JSON.stringify({ v: 1, nonce: "someone-else", treeKey: "x", planned: 1, ran: 1 }),
+      );
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "7" });
+      check(
+        "VT5 a stage already on disk is cleared at the start, so a failing run cannot inherit it",
+        staged(),
+        null,
+      );
+    } finally {
+      rmSync(stageDir, { recursive: true, force: true });
+    }
+
     // AFFECTED needs a real scoped decision, so main() runs from a scratch repo that holds a copy of
     // the script and its lib, a feature branch one apps/api file ahead of origin/master, and no
     // campaign-check (staleWorkspaces fails open to []). Same B420 discipline as runMoveFixture:
@@ -1134,9 +1211,23 @@ if (process.platform !== "win32") {
           "scrubbed-git-env.cjs",
           "heavy-slot.mjs",
           "prisma-fresh.mjs",
+          "verify-result.mjs",
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
+        // The report step's stub: it records its argv and whether the slot is held, then exits with
+        // STUB_REPORTS_EXIT. The real script would force real test runs in this fixture.
+        put(
+          "scripts/campaign-check.mjs",
+          [
+            'import { appendFileSync } from "node:fs";',
+            'if (!process.argv.includes("--reports-only")) process.exit(0);',
+            "const held = process.env.RF_HEAVY_SLOT_TOKEN ? 'held' : 'free';",
+            "appendFileSync(process.env.STUB_REPORTS_LOG, `--reports-only ${held}\\n`);",
+            "process.exit(Number(process.env.STUB_REPORTS_EXIT || 0));",
+            "",
+          ].join("\n"),
+        );
         for (const [dir, name] of [
           ["apps/api", "@routeflow/api"],
           ["apps/control", "@routeflow/control"],
@@ -1168,12 +1259,36 @@ if (process.platform !== "win32") {
         put("apps/api/src/x.ts", "export const x = 1;\n");
         fgit("add", "-A");
         fgit("commit", "-q", "-m", "change");
+        const reportsLog = join(stubDir, "reports.log");
         const aff = (extraEnv) =>
-          runMain(extraEnv, {
-            ci: false,
-            cwd: fixDir,
-            script: join(fixDir, "scripts", "verify-turbo.mjs"),
-          });
+          runMain(
+            { STUB_REPORTS_LOG: reportsLog, ...extraEnv },
+            {
+              ci: false,
+              cwd: fixDir,
+              script: join(fixDir, "scripts", "verify-turbo.mjs"),
+            },
+          );
+        const reportRuns = (extraEnv) => {
+          writeFileSync(reportsLog, "");
+          const r = aff(extraEnv);
+          return [r.status, readFileSync(reportsLog, "utf8").split("\n").filter(Boolean)];
+        };
+        check(
+          "RS1 main(): a green plan settles its reports once, inside the slot",
+          reportRuns({ JEST_MAX_WORKERS: "" }),
+          [0, ["--reports-only held"]],
+        );
+        check(
+          "RS2 main(): a report step that fails fails the verify with its status",
+          reportRuns({ JEST_MAX_WORKERS: "", STUB_REPORTS_EXIT: "9" }),
+          [9, ["--reports-only held"]],
+        );
+        check(
+          "RS3 main(): a red plan forces no tests",
+          reportRuns({ JEST_MAX_WORKERS: "", STUB_EXIT_SEQ: "3" }),
+          [3, []],
+        );
         const affUnsplit = aff({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "" });
         check(
           "VX25 main() AFFECTED unsplit: the scope is really AFFECTED, 2 calls ran, first non-zero (3) wins",
@@ -1233,6 +1348,21 @@ if (process.platform !== "win32") {
     rmSync(stubDir, { recursive: true, force: true });
   }
 }
+
+// VT0 (W-1045): runs on every platform, unlike the main() cases above. The gate's nonce, result path and tree key are
+// ambient verify state: cleanVerifyEnv must drop each, or a nested verify-turbo would stage a pass with the real nonce.
+check(
+  "VT0 cleanVerifyEnv drops RF_VERIFY_RESULT_FILE, RF_VERIFY_NONCE and RF_VERIFY_TREE_KEY",
+  Object.keys(
+    cleanVerifyEnv({
+      RF_VERIFY_RESULT_FILE: "f",
+      RF_VERIFY_NONCE: "n",
+      RF_VERIFY_TREE_KEY: "t",
+      KEEP_ME: "1",
+    }),
+  ),
+  ["KEEP_ME"],
+);
 
 // HS: every heavy local entry point takes the machine-wide slot INSIDE the script (so root
 // package.json, which busts every turbo cache when edited, never changes). A future heavy entry point
@@ -1646,7 +1776,7 @@ check(
     "FV7a hook asks scripts/verify-mode.mjs, before the marker comparison and before `npm run verify`",
     at("scripts/verify-mode.mjs") > -1 &&
       at("scripts/verify-mode.mjs") < at('[ -f "$marker" ]') &&
-      at("scripts/verify-mode.mjs") < at("npm run verify || exit 1"),
+      at("scripts/verify-mode.mjs") < at("scripts/verify-gate.mjs run"),
     true,
   );
   check(
@@ -1771,7 +1901,7 @@ check(
     [
       hook.includes(`fast_stamp="${STAMP}"`),
       /not proof|\$fast_stamp|\$\{fast_stamp\}/.test(skipLine),
-      /npm run verify \|\| exit 1[\s\S]*fast_stamp/.test(hook),
+      /verify-gate\.mjs run[\s\S]*fast_stamp/.test(hook),
     ],
     [true, true, true],
   );
@@ -1905,9 +2035,22 @@ check(
     [await executePlan(calls, run), ran, await executePlan([{ id: "z" }], async () => 0)],
     [1, ["a", "pin", "c"], 0],
   );
+  {
+    // W-1045: `null ?? 0` read a signal-killed call as green. A non-number status is a failure, and `ran` gets every one.
+    const got = [];
+    check(
+      "FR7a (W-1045) a null status from a killed call is a failure, never a pass; ran records every status",
+      [
+        await executePlan([{}, {}], async () => null, got),
+        got,
+        await executePlan([{}], async () => undefined),
+      ],
+      [1, [null, null], 1],
+    );
+  }
   check(
     "FR7b main() delegates the tail to executePlan and finishRun",
-    (({ vt }) => [/executePlan\(plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
+    (({ vt }) => [/executePlan\(\s*plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
       vt: readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8"),
     }),
     [true, true],

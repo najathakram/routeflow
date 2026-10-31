@@ -20,6 +20,7 @@ import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
+import { RESULT_FILE_ENV, clearStage, stageRun } from "./lib/verify-result.mjs";
 import {
   FAST_VERIFY_BANNER,
   REPO_WIDE_PINS,
@@ -409,11 +410,26 @@ export function planPins({ fast, files, excluded = [], specs }) {
   };
 }
 
-/** Runs every planned call in order (never short-circuits); the first non-zero status is the run's. */
-export async function executePlan(calls, runCall) {
-  const statuses = [];
-  for (const c of calls) statuses.push(await runCall(c));
-  return statuses.find((s) => s !== 0) ?? 0;
+/**
+ * Runs every planned call in order (never short-circuits); the first non-zero status is the run's. A status that is not
+ * a number (null from a signal) is a failure, never a pass: `null ?? 0` used to read as green (W-1045). `ran` receives
+ * every status so the caller can prove all planned calls finished green.
+ */
+export async function executePlan(calls, runCall, ran = []) {
+  for (const c of calls) ran.push(await runCall(c));
+  const i = ran.findIndex((s) => s !== 0); // not find(): an undefined status must not look like "none"
+  return i === -1 ? 0 : typeof ran[i] === "number" ? ran[i] : 1;
+}
+
+/**
+ * Whether this run settles its campaign reports inside the slot. campaign-check's pre-step predicts
+ * a cache miss before the queue, and the shared turbo cache can fill during the wait, so turbo
+ * replays the task and no report is written. The check at the end of the chain then forces those
+ * tests outside any slot, where the slot log can't see the load. A fast run enforces no reports,
+ * a failed plan has already lost, and CI holds no slot, so its end-of-chain check does this.
+ */
+export function settlesReports({ fast, status, env }) {
+  return status === 0 && !fast && !env.CI;
 }
 
 /** The last line of a fast run is the not-proof stamp; any other run prints nothing new. */
@@ -424,6 +440,8 @@ export function finishRun({ fast, status, log = console.log }) {
 }
 
 export async function main() {
+  // W-1045: any pass stage already on disk was not written by THIS run; a run that then runs nothing must not inherit it.
+  clearStage(process.env);
   const defaults = chooseVerifyDefaults({
     totalMemBytes: totalmem(),
     env: process.env,
@@ -503,7 +521,7 @@ export async function main() {
     if (scope.stale?.length) {
       console.log(
         `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
-          `their tests join the run (turbo regenerates the report on a cache miss; the --freshness-only pre-step forces a real run on a hit). No enforcement is relaxed.`,
+          `their tests join the run (turbo regenerates the report on a cache miss; on a hit, campaign-check --reports-only forces a real run inside the slot). No enforcement is relaxed.`,
       );
     }
   }
@@ -542,15 +560,34 @@ export async function main() {
   }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
-  const status = await withHeavySlot({ label: "verify" }, () =>
-    executePlan(plan.calls, (c) =>
-      c.jest
-        ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
-        : c.pins
-          ? pinJest(c)
-          : turbo(c.args),
-    ),
-  );
+  const ran = [];
+  const status = await withHeavySlot({ label: "verify" }, async () => {
+    const planned = await executePlan(
+      plan.calls,
+      (c) =>
+        c.jest
+          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+          : c.pins
+            ? pinJest(c)
+            : turbo(c.args),
+      ran,
+    );
+    if (!settlesReports({ fast: runMode.fast, status: planned, env: process.env })) return planned;
+    const settled = await spawnAsync(
+      process.execPath,
+      [join(ROOT, "scripts", "campaign-check.mjs"), "--reports-only"],
+      { cwd: ROOT, stdio: "inherit" },
+    );
+    return settled.status ?? 1;
+  });
+  // W-1045: under the pre-push hook a pass is a written token, not an exit code. Only a run in which every planned call
+  // returned the number 0, and whose reports settled, writes it (scripts/lib/verify-result.mjs); the chain's last link
+  // promotes it.
+  const staged = stageRun(process.env, { status, statuses: ran, planned: plan.calls.length });
+  if (!staged && status === 0 && process.env[RESULT_FILE_ENV])
+    console.log(
+      "verify-turbo: no pass token written (nothing was planned, or a call did not finish green).",
+    );
   // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
   process.exit(finishRun({ fast: runMode.fast, status }));
 }
