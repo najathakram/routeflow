@@ -134,6 +134,10 @@ on:
   # Manual trigger — runs BOTH jobs. This is the documented recovery path after a
   # Railway deploy is re-run (see the e2e job's readiness gate).
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "Runner trial: the exact commit hosted CI verified"
+        required: false
 
 # PR runs group per-ref (a new push cancels the stale run). Deploy-driven runs
 # group per DEPLOYED SHA with cancellation OFF — `github.ref` is empty/constant
@@ -195,10 +199,13 @@ jobs:
       (github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.draft != true)) &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: [self-hosted, routeflow-ephemeral]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
 
       # DARK (R3): report the PR's own counted size (scripts/pr-size.mjs, one rule in
       # scripts/lib/pr-size.mjs) as a ::warning:: annotation. Never fails the job. The checkout is
@@ -442,8 +449,7 @@ jobs:
     timeout-minutes: 15
     if: >
       (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success') ||
-      github.event_name == 'repository_dispatch' ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'repository_dispatch'
     outputs:
       run: ${{ steps.freshness.outputs.run }}
       reason: ${{ steps.freshness.outputs.reason }}
