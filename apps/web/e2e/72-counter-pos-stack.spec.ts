@@ -176,6 +176,11 @@ async function discover(page: Page) {
   return { products: sellable.slice(0, 2), api, headers };
 }
 
+// S5: the buyer is asked first, so a sale with lines needs the Walk-in answer before any payment control is used.
+async function chooseWalkIn(page: Page) {
+  await page.getByRole("button", { name: "Walk-in", exact: true }).click();
+}
+
 for (const vp of VIEWPORTS) {
   test.describe(`POS stack counter @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
@@ -297,6 +302,7 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
     const nameA = String(a.name);
     await page.getByRole("button", { name: `Add a note to ${nameA}`, exact: true }).click();
     await page.getByLabel(`Note for ${nameA}`).fill("smoke note");
+    await chooseWalkIn(page);
     await page.getByRole("button", { name: "Exact" }).click();
     await page.getByRole("button", { name: "Complete & show receipt" }).click();
     await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
@@ -417,6 +423,7 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
       await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
         timeout: 15_000,
       });
+      await chooseWalkIn(page);
       await page.getByLabel("Amount tendered").fill("1000");
       await page.getByRole("button", { name: "Complete & next sale" }).click();
       await expect(page.getByTestId("counter-last-sale")).toContainText("Change due", {
@@ -442,8 +449,10 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(2, {
       timeout: 15_000,
     });
+    await chooseWalkIn(page);
     // a cashier pauses; a scanner's CR+LF inside the window is swallowed by design (EMPTY_ENTER_QUIET_MS = 150)
     await page.waitForTimeout(250);
+    await scanField.focus();
     await scanField.press("Enter"); // empty scan box with lines: focus moves to the payment
     await expect(page.getByLabel("Amount tendered")).toBeFocused();
     await page.keyboard.type("1000");
@@ -625,6 +634,7 @@ test.describe("SA-837b till: Record anyway on a duplicate payment reference", ()
       await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
         timeout: 15_000,
       });
+      await chooseWalkIn(page);
       await page.getByRole("radio", { name: "Check" }).click();
       await page.getByLabel("Check number").fill("QA-DUP-4242");
       await page.getByRole("button", { name: "Complete & show receipt" }).click();
@@ -686,6 +696,7 @@ test.describe("R7b till: a post-dated check is not tendered", () => {
       await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
         timeout: 15_000,
       });
+      await chooseWalkIn(page);
       await page.getByRole("radio", { name: "Check" }).click();
       await page.getByLabel("Check number").fill("1042");
       await expect(page.getByLabel("Check date")).toBeVisible();
