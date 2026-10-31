@@ -119,7 +119,7 @@ function Stat({
           type="button"
           aria-label={`Use the ${label.toLowerCase()} price (${value})`}
           onClick={onUse}
-          className="min-h-11 font-mono text-xs text-brand-600 underline sm:min-h-0"
+          className="flex min-h-11 items-start font-mono text-xs text-brand-600 underline sm:min-h-0"
         >
           {value}
         </button>
@@ -390,7 +390,7 @@ function PanelBody({
       )}
 
       {!neverSold && (
-        <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
           <Stat label="Last" value={money(summary?.last)} onUse={summaryUse(summary?.last)} />
           <Stat label="Low" value={money(summary?.low)} onUse={summaryUse(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
@@ -403,7 +403,7 @@ function PanelBody({
               type="button"
               onClick={() => setShowCost((v) => !v)}
               aria-pressed={showCost}
-              className="ml-auto flex items-center gap-1 text-[11px] text-navy/70 hover:text-navy"
+              className="ml-auto flex items-center gap-1 self-end text-[11px] text-navy/70 hover:text-navy"
             >
               {showCost ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               {showCost ? "Hide cost" : "Show cost"}

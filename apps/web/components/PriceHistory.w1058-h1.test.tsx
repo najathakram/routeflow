@@ -126,6 +126,29 @@ describe("H1: a close button in the panel header at every width", () => {
   });
 });
 
+describe("H1b: the error state keeps a close button", () => {
+  it("the alert has a Close price history button that closes the panel and returns focus to the trigger", async () => {
+    setViewport(true);
+    mockGet.mockRejectedValue(new Error("boom"));
+    renderWithProviders(
+      <PriceHistoryButton
+        customerId="c1"
+        customerName="Acme Foods"
+        productId="p1"
+        productName="Cola"
+        onUsePrice={jest.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Price history" });
+    fireEvent.click(trigger);
+    const alert = await screen.findByRole("alert");
+    const close = within(alert).getByRole("button", { name: "Close price history" });
+    fireEvent.click(close);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+});
+
 describe("H2: an outside pointerdown dismisses (touch sends no mouse events)", () => {
   it("pointerDown on the page closes the panel; a pointerDown inside does not", async () => {
     setViewport(true);
