@@ -1268,6 +1268,22 @@ describe("ScanOrderScreen", () => {
       expect(resolve).toHaveBeenCalledTimes(1);
     });
 
+    it("C-4b: the first frame after the editor closes ends the block: a code gone for 1 s afterwards counts again", async () => {
+      const resolve = jest
+        .fn<Promise<ScanResolution>, [string]>()
+        .mockResolvedValue(added("p1", "Widget"));
+      setup({ lines: [L()] }, resolve);
+      await scan("111");
+      fireEvent.click(screen.getByTestId("price-p1"));
+      await advance(1_000);
+      fireEvent.click(screen.getByRole("button", { name: "close-editor" }));
+      await scan("111"); // held through the edit: not a new scan, and this frame ends the block
+      expect(resolve).toHaveBeenCalledTimes(1);
+      await advance(1_000); // the code leaves the frame for a real second
+      await scan("111");
+      expect(resolve).toHaveBeenCalledTimes(2); // a clock still frozen by the editor would never see it leave
+    });
+
     it("C-5 (guard): a code gone for 0.6 s with no editor open counts again", async () => {
       const resolve = jest
         .fn<Promise<ScanResolution>, [string]>()
