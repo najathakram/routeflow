@@ -4,6 +4,7 @@ import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { unitWords } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
@@ -187,7 +188,8 @@ export function InlineCreateProductModal({
         onError: (err: unknown) => {
           const res = (err as { response?: { status?: number; data?: { code?: string } } } | null)
             ?.response;
-          if (res?.status === 400 && res.data?.code === "PRODUCT_CODE_IN_USE") setCodeInUse(true);
+          if (res?.status === 400 && res.data?.code === API_ERROR_CODES.PRODUCT_CODE_IN_USE)
+            setCodeInUse(true);
           toast({
             title: "Failed to create product",
             description: "Check the details and try again.",
