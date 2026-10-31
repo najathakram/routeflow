@@ -131,7 +131,7 @@ describe("three lines, three toggles", () => {
     await settled(dialog);
     expect(chip(dialog, "own")).toHaveAccessibleName("This customer's prices, Box of 12");
     expect(chip(dialog, "like")).toHaveAccessibleName(
-      "Other customers' average, Box of 12, latest Sep 2026: $24.50",
+      "All customers' average except this one, Box of 12, latest Sep 2026: $24.50",
     );
     expect(chip(dialog, "conv")).toHaveAccessibleName(
       "All customers, all units, average per Box of 12, latest Sep 2026: $25.11",
@@ -224,7 +224,7 @@ describe("three lines, three toggles", () => {
     const dialog = await open();
     await settled(dialog);
     expect(within(dialog).getByRole("img")).toHaveAccessibleName(
-      "Price over time: this customer, 2 sales; other customers' monthly average; all customers, all units, monthly average",
+      "Price over time: this customer, 2 sales; all customers' monthly average, except this one; all customers, all units, monthly average",
     );
     fireEvent.click(chip(dialog, "like"));
     expect(within(dialog).getByRole("img")).toHaveAccessibleName(
@@ -321,8 +321,7 @@ describe("a line that cannot draw says why (never a silent hide)", () => {
     expect(c).toHaveAttribute("aria-disabled", "true");
     expect(c).not.toBeDisabled();
     expect(c).toHaveAttribute("aria-pressed", "false");
-    const note =
-      "Other customers: no average for Box of 12 yet. It needs 3 other buyers in a month.";
+    const note = "All customers: no average for Box of 12 yet. It needs 3 other buyers in a month.";
     expect(within(dialog).getByText(note)).toBeInTheDocument();
     expect(c).toHaveAccessibleDescription(note);
     fireEvent.click(c);

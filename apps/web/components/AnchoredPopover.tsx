@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
  * A lightweight, NON-modal popover anchored under an element — the hand-rolled pattern of
  * `MarginHint`'s CostHistoryPopover, extracted. Portaled to <body> so it escapes a modal's
  * `transform` / `overflow` clipping; `position: fixed` from the anchor rect; closes on an outside
- * mousedown; Escape is a CAPTURE-phase window listener that stops propagation, so a surrounding
+ * pointerdown (touch fires it; iOS Safari may send no mouse events for a tap); Escape is a CAPTURE-phase window listener that stops propagation, so a surrounding
  * Radix Dialog (the order builder) does not also close and discard the order.
  *
  * Inside a modal Radix Dialog it portals INTO the dialog's content instead of <body>: outside the
@@ -24,7 +24,7 @@ export function AnchoredPopover({
   children,
 }: {
   anchor: HTMLElement;
-  /** Why it closed: Escape or a mousedown outside (the panel's own actions call their own close). */
+  /** Why it closed: Escape or a pointerdown outside (the panel's own actions call their own close). */
   onClose: (reason?: "escape" | "outside") => void;
   label: string;
   /** Card width in px (kept on screen horizontally). */
@@ -75,7 +75,7 @@ export function AnchoredPopover({
   }, [placed]);
 
   React.useEffect(() => {
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (ref.current && !ref.current.contains(t) && !anchor.contains(t)) onClose("outside");
     };
@@ -85,10 +85,10 @@ export function AnchoredPopover({
       e.stopPropagation();
       onClose("escape");
     };
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey, true);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey, true);
     };
   }, [anchor, onClose]);

@@ -275,7 +275,7 @@ describe("the notes", () => {
     const m = model({ comparison: [entry({ likeForLike: [] })] });
     expect(m.notes.map((n) => [n.id, n.lines])).toEqual([["ph-note-like", ["like"]]]);
     expect(m.notes[0]!.text).toBe(
-      "Other customers: no average for Box of 12 yet. It needs 3 other buyers in a month.",
+      "All customers: no average for Box of 12 yet. It needs 3 other buyers in a month.",
     );
   });
   it("line 3 empty only", () => {

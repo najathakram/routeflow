@@ -81,7 +81,7 @@ export const NOTE_COPY = {
   neverSoldNoAverages: "There aren't enough sales to other customers to show an average yet.",
   noAverages: "No averages yet. Each needs 3 other buyers in a month.",
   likeEmpty: (unit: string) =>
-    `Other customers: no average for ${unit} yet. It needs 3 other buyers in a month.`,
+    `All customers: no average for ${unit} yet. It needs 3 other buyers in a month.`,
   convEmpty: "All units: no average yet. It needs 3 other buyers in a month.",
   unavailable: "Averages aren't available.",
   loading: "Loading averages…",

@@ -53,7 +53,7 @@ function useChartSize(ref: React.RefObject<HTMLElement | null>) {
     mq.addEventListener?.("change", apply);
     return () => mq.removeEventListener?.("change", apply);
   }, []);
-  return { w, h: tall ? 96 : 80 };
+  return { w, h: tall ? 96 : 140 };
 }
 
 const monthIndex = (m: string) => {
@@ -144,7 +144,7 @@ function Plot({
 
   const label = [
     on.own && drawn("own") && `this customer, ${model.own.length} sales`,
-    on.like && drawn("like") && "other customers' monthly average",
+    on.like && drawn("like") && "all customers' monthly average, except this one",
     on.conv && drawn("conv") && "all customers, all units, monthly average",
   ]
     .filter(Boolean)
@@ -285,8 +285,8 @@ function chipSpecs(model: ChartModel): ChipSpec[] {
   const likeLast = model.canDraw.like ? last(model.like) : undefined;
   const convLast = model.canDraw.conv ? last(model.conv) : undefined;
   const likeName = likeLast
-    ? `Other customers' average, ${unit}, latest ${monthLabel(likeLast.month)}: ${fmt(likeLast.price)}`
-    : `Other customers' average, ${unit}`;
+    ? `All customers' average except this one, ${unit}, latest ${monthLabel(likeLast.month)}: ${fmt(likeLast.price)}`
+    : `All customers' average except this one, ${unit}`;
   const convName = convLast
     ? `All customers, all units, average per ${unit}, latest ${monthLabel(convLast.month)}: ${fmt(convLast.price)}`
     : `All customers, all units, average per ${unit}`;
@@ -294,10 +294,10 @@ function chipSpecs(model: ChartModel): ChipSpec[] {
     { id: "own", text: "This customer", name: `This customer's prices, ${unit}`, value: null },
     {
       id: "like",
-      text: "Other customers",
+      text: "All customers",
       name: likeName,
       value: likeLast ? fmt(likeLast.price) : null,
-      title: likeLast ? likeName : undefined,
+      title: "All customers except this one",
     },
     {
       id: "conv",
