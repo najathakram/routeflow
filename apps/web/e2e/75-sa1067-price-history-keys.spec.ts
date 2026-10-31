@@ -151,6 +151,7 @@ async function discoverEditableOrder(page: Page) {
     const res = await page.request.get(`${api}${path}`, { headers, params });
     return res.ok() ? ((await res.json()) as any) : null;
   };
+  const found: string[] = [];
   const list = (await get("/orders", { limit: "50" })) as any;
   const orders: any[] = list?.data ?? list?.orders ?? [];
   for (const o of orders.filter((x) =>
@@ -167,15 +168,13 @@ async function discoverEditableOrder(page: Page) {
         limit: "25",
         excludeOrderId: String(o.id),
       });
-      if ((h?.rows ?? []).length >= 1) {
-        return {
-          orderId: String(o.id),
-          productName: String(li?.productName ?? li?.product?.name ?? ""),
-        };
-      }
+      if ((h?.rows ?? []).length >= 1 && !found.includes(String(o.id))) found.push(String(o.id));
     }
   }
-  throw new Error("the test tenant has no editable order with a priced line that has history");
+  if (found.length === 0) {
+    throw new Error("the test tenant has no editable order with a priced line that has history");
+  }
+  return found;
 }
 
 for (const vp of VIEWPORTS) {
@@ -202,11 +201,8 @@ for (const vp of VIEWPORTS) {
     });
     try {
       const { customer, product } = await discoverPair(page);
-      await page.goto("/orders");
-      await page
-        .getByRole("button", { name: /new order/i })
-        .first()
-        .click();
+      // builder=1 asks for the order builder itself: on a counter-default business "New order" opens the till instead
+      await page.goto("/orders?action=new&builder=1");
       await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
         timeout: 10_000,
       });
@@ -255,24 +251,45 @@ for (const vp of VIEWPORTS) {
     test.setTimeout(150_000);
     await page.setViewportSize({ width: vp.width, height: vp.height });
     await setTenantCookie(context, BASE);
-    const { orderId } = await discoverEditableOrder(page);
-    await page.goto(`/orders/${orderId}`);
-    await page
-      .getByRole("button", { name: /^Edit (Items|order)/ })
-      .first()
-      .click({ timeout: 15_000 });
-    await page.getByRole("button", { name: "Price history" }).first().click({ timeout: 15_000 });
+    const orderIds = await discoverEditableOrder(page);
     const panel = page.getByRole("dialog", { name: "Price history" });
-    await expect(panel).toBeVisible({ timeout: 15_000 });
-    await expect.poll(() => panel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
-    await page.keyboard.press("ArrowDown");
-    await expect(panel.locator('tbody tr[aria-selected="true"]').first()).toBeVisible();
-    await page.keyboard.press("Enter");
-    await expect(panel).toHaveCount(0, { timeout: 5_000 });
-    // never save: leave the edit session
-    await page
-      .getByRole("button", { name: /^Cancel/ })
-      .first()
-      .click({ timeout: 10_000 });
+    // A history row in another unit than the line is shown but cannot be used ("A different unit than this line"), so Enter
+    // rightly does nothing there. Try each candidate line until the newest row is one the line can use.
+    let used = false;
+    for (const orderId of orderIds.slice(0, 6)) {
+      await page.goto(`/orders/${orderId}`);
+      await page
+        .getByRole("button", { name: /^Edit (Items|order)/ })
+        .first()
+        .click({ timeout: 15_000 });
+      const buttons = page.getByRole("button", { name: "Price history" });
+      await expect(buttons.first()).toBeVisible({ timeout: 15_000 });
+      for (let i = 0; i < Math.min(await buttons.count(), 4) && !used; i++) {
+        await buttons.nth(i).click();
+        await expect(panel).toBeVisible({ timeout: 15_000 });
+        await expect
+          .poll(() => panel.evaluate((el) => el.contains(document.activeElement)))
+          .toBe(true);
+        await page.keyboard.press("ArrowDown");
+        const chosen = panel.locator('tbody tr[aria-selected="true"]').first();
+        await expect(chosen).toBeVisible();
+        if (await chosen.getByRole("button", { name: /^Use this price/ }).isEnabled()) {
+          await page.keyboard.press("Enter");
+          // a handler that is never reached leaves the panel open
+          await expect(panel).toHaveCount(0, { timeout: 5_000 });
+          used = true;
+        } else {
+          await page.keyboard.press("Escape");
+          await expect(panel).toHaveCount(0, { timeout: 5_000 });
+        }
+      }
+      // never save: leave the edit session
+      await page
+        .getByRole("button", { name: /^Cancel/ })
+        .first()
+        .click({ timeout: 10_000 });
+      if (used) break;
+    }
+    expect(used, "a line whose newest history row is in the line's own unit").toBe(true);
   });
 }
