@@ -5,7 +5,7 @@ import { PriceHistoryButton } from "./PriceHistory";
 import type {
   PriceHistoryResponse,
   PriceHistoryRow,
-  PriceSummaryEntry,
+  PriceHistorySummary,
 } from "@/lib/api/price-history";
 
 /** SA-1067 M1 (P1-P7): the panel opens with nothing chosen; one Enter never commits a price nobody picked. */
@@ -34,7 +34,7 @@ const row = (over: Partial<PriceHistoryRow> = {}): PriceHistoryRow => ({
   ...over,
 });
 
-const summaries: PriceSummaryEntry[] = [
+const summaries: PriceHistorySummary[] = [
   { unitLabel: "case", last: 13, low: 10, high: 13, qtySold: 8, currentAvgCost: 6.5 },
 ];
 
