@@ -1134,6 +1134,7 @@ if (process.platform !== "win32") {
           "scrubbed-git-env.cjs",
           "heavy-slot.mjs",
           "prisma-fresh.mjs",
+          "verify-result.mjs",
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
