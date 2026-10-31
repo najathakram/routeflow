@@ -411,3 +411,19 @@ describe("SA-1066 F10: the regulated question takes focus on its box, never a bu
     expect(lines()[0]).toHaveTextContent("Sample Cola");
   });
 });
+
+describe("SA-1066 F11: the dim layer fills the screen under a space-y parent", () => {
+  // `[data-scan-pause]` is fixed inset-0 but sits in a space-y-4 column, which gives it margin-top 16px: a white strip.
+  it("the question's overlay root has no top margin", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    expect(openDialog()?.className).toMatch(/(^|\s)!mt-0(\s|$)/);
+  });
+
+  it("the New product window's overlay root has no top margin either", async () => {
+    await missThenCreate();
+    await screen.findByRole("heading", { name: "New product" });
+    expect(openDialog()?.className).toMatch(/(^|\s)!mt-0(\s|$)/);
+  });
+});

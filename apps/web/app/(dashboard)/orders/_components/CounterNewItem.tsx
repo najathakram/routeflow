@@ -113,7 +113,7 @@ function RegulatedQuestion({
       aria-labelledby={titleId}
       data-state="open"
       data-scan-pause
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[200] !mt-0 flex items-center justify-center bg-black/50 p-4"
     >
       <div
         ref={boxRef}
