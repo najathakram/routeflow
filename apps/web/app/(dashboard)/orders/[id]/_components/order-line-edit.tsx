@@ -199,9 +199,6 @@ function substituteDtoUpdate(it: EditItemState): ItemUpdate {
   };
 }
 
-/** An override is any net unit price DIVERGING from the line's base — a discount
- *  below it or an operator upsell above it (same EPS test as `PriceEditRow` and
- *  mobile's `buildOrderItemDiff`; a downward-only test drops upsells). */
 /**
  * The price a line added during an edit starts at. The remembered price replaces the base only when it is a genuine
  * discount (below the tier price) or upsell (above list, chosen by staff: SA-1072) and no contracted tier applies: a stale
@@ -217,6 +214,9 @@ export function addedLineStartPrice(
   return hist.lastPrice < base || isStickyUpsell(hist.stickyPrice, list) ? hist.lastPrice : base;
 }
 
+/** An override is any net unit price DIVERGING from the line's base — a discount
+ *  below it or an operator upsell above it (same EPS test as `PriceEditRow` and
+ *  mobile's `buildOrderItemDiff`; a downward-only test drops upsells). */
 function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolean {
   return Math.abs(it.unitPrice - it.basePrice) > 0.0001;
 }

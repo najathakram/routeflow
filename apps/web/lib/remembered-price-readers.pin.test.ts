@@ -40,8 +40,8 @@ describe("B16: every web use of lastPrice is counted", () => {
     const uses = Object.fromEntries(
       ["app", "components", "lib"]
         .flatMap((d) => sources(join(WEB, d)))
-        .map((f) => [
-          relative(WEB, f),
+        .map((f): [string, number] => [
+          relative(WEB, f).split("\\").join("/"),
           (strip(readFileSync(f, "utf8")).match(/lastPrice/g) ?? []).length,
         ])
         .filter(([, n]) => n > 0),
