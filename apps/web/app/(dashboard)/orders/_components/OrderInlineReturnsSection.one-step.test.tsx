@@ -6,7 +6,7 @@ import {
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { netOfReturn } from "./useCounterInlineReturn";
-import { RETURN_SAVE_BLOCKED } from "./use-order-inline-return-save";
+import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 import type { InlineReturnQuoteResponse } from "@routeflow/types";
 
 /**
@@ -173,5 +173,52 @@ describe("M14: a half-typed credit price blocks the save with its own sentence",
     const draft = handle.current?.getDraft();
     expect(draft?.quoted).toBe(false);
     expect(draft?.problem).toMatch(/^Widget: /);
+  });
+});
+
+describe("review-c MUST 3: a blocked save says why the credit is missing, and it is true", () => {
+  let save: ReturnType<typeof useOrderInlineReturnSave>;
+  const blocked: string[] = [];
+  function SaveHost() {
+    const ref = React.useRef<OrderInlineReturnsSectionHandle>(null);
+    save = useOrderInlineReturnSave(ref, (_why, message) => blocked.push(message));
+    return <OrderInlineReturnsSection ref={ref} customerId="cust-1" reasonContext="counter" />;
+  }
+  async function askFor(qty: string) {
+    renderWithProviders(<SaveHost />);
+    fireEvent.click(screen.getByRole("button", { name: "Returns" }));
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Widget" }));
+    setQty(qty);
+    wait(DEBOUNCE);
+  }
+  const fail = (error: unknown) => {
+    const call = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1];
+    act(() => call[1].onError(error));
+  };
+  beforeEach(() => {
+    blocked.length = 0;
+  });
+
+  it("pending: the fixed 'working out' sentence", async () => {
+    await askFor("3");
+    expect(save.prepare("cust-1", "order-1")).toBeNull();
+    expect(blocked).toEqual([RETURN_SAVE_BLOCKED["needs-quote"]]);
+  });
+
+  it("a refused quote (400): the server's own sentence, not 'working out'", async () => {
+    await askFor("99");
+    fail({ response: { status: 400, data: { message: "That is more than was sold" } } });
+    expect(save.prepare("cust-1", "order-1")).toBeNull();
+    expect(blocked).toEqual(["That is more than was sold"]);
+  });
+
+  it("a quote that failed (500): the section's own 'could not get' sentence", async () => {
+    await askFor("3");
+    fail({ response: { status: 500, data: {} } });
+    expect(save.prepare("cust-1", "order-1")).toBeNull();
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0]).not.toMatch(/working out/i);
+    expect(blocked[0]).toMatch(/quote/i);
   });
 });

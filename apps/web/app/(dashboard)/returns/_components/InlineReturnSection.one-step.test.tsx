@@ -30,6 +30,19 @@ jest.mock("@/lib/api/inline-returns", () => ({
   useInlineReturnQuote: () => ({ mutate: quoteMutate, isPending: false }),
 }));
 
+// the section's scan handler deps are captured (and the real hook still runs), so a scan can be fired without a camera
+let mockScanDeps: { addLineItem: (product: unknown) => unknown } | undefined;
+jest.mock("@/app/(dashboard)/orders/_components/scan/useScanCodeHandler", () => {
+  const actual = jest.requireActual("@/app/(dashboard)/orders/_components/scan/useScanCodeHandler");
+  return {
+    ...actual,
+    useScanCodeHandler: (deps: { addLineItem: (product: unknown) => unknown }) => {
+      mockScanDeps = deps;
+      return actual.useScanCodeHandler(deps);
+    },
+  };
+});
+
 let authRole: string | undefined;
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
@@ -696,5 +709,83 @@ describe("M14 to M16 (SA-1069 A-2)", () => {
     fireEvent.click(optionsToggle("Widget"));
     expect(container.textContent).not.toMatch(/\(s\)/);
     expect(container.textContent).toMatch(/1 piece priced at the customer/);
+  });
+});
+
+describe("review-c on #4036 (T1, four MUSTs and the mutants they left)", () => {
+  it("mutant L: the closed row shows no credit while the next quote is pending", async () => {
+    renderSection();
+    await pick();
+    setQty("10");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk()]));
+    expect(summary("prod-1")).toHaveTextContent("Credit $22.00");
+    setQty("11");
+    expect(summary("prod-1")).not.toHaveTextContent(/Credit/);
+  });
+
+  it("MUST 2: locked, Scan barcode and Undo are disabled, and a scan or a pick adds nothing", async () => {
+    const { rerender, states } = renderSection();
+    await pick();
+    await pick("Gadget");
+    fireEvent.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
+    expect(screen.getByRole("button", { name: /^undo$/i })).toBeEnabled(); // unlocked: Undo works
+    rerender(
+      <InlineReturnSection customerId="cust-1" locked onStateChange={(s) => states.push(s)} />,
+    );
+    expect(screen.getByRole("button", { name: /scan barcode/i })).toBeDisabled();
+    const undo = screen.getByRole("button", { name: /^undo$/i });
+    expect(undo).toBeDisabled();
+    fireEvent.click(undo);
+    expect(qtyInputs()).toHaveLength(1);
+    act(() => {
+      mockScanDeps?.addLineItem(WIDGET); // a scan the camera or wedge delivered after the save
+    });
+    expect(qtyInputs()).toHaveLength(1);
+  });
+
+  it("MUST 4: a second row of one product shows the first row's reason and stock outcome, and takes none of its own", async () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    expect(rows()).toHaveLength(2);
+    const toggles = screen.getAllByRole("button", { name: /options for widget/i });
+    fireEvent.click(toggles[0]);
+    fireEvent.click(toggles[1]);
+    // the first row says DAMAGED: buildCaptureRequest keeps the first row's reason for the merged item
+    fireEvent.change(within(rows()[0]).getByLabelText("Reason (optional)"), {
+      target: { value: "DAMAGED" },
+    });
+    const second = within(rows()[1]);
+    const secondReason = second.getByLabelText("Reason (same as the first row)");
+    expect(secondReason).toBeDisabled();
+    expect((secondReason as HTMLSelectElement).value).toBe("DAMAGED");
+    for (const r of rows()) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Not added to stock",
+      );
+    }
+  });
+
+  it("MUST 4: a first row left on the default reads the default on both rows, whatever the second row once held", async () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    for (const r of screen.getAllByTestId("return-line-prod-1")) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Back to stock",
+      );
+    }
   });
 });

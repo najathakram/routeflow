@@ -73,7 +73,8 @@ export interface InlineReturnSectionState {
   quoteStatus: InlineReturnQuoteStatus;
   /** "Reason for all items". Always set: it starts on the server's own default. */
   captureReason: ReturnReason;
-  /** M14: a line's credit price is half-typed, so nothing was asked: the sentence that says what to fix, else null. */
+  /** Why there is no credit to save: a half-typed credit price (M14), or the sentence for a refused or failed quote, else
+   *  null. The host shows it when a save is blocked, since the section's own copy can be off screen at the till. */
   problem: string | null;
 }
 
@@ -177,7 +178,10 @@ export function InlineReturnSection({
   const quoteStatus: InlineReturnQuoteStatus = quoteOverride ? "current" : live.status;
   // While the next quote is pending the last one stays on screen DIMMED (details only): the credit figure and the host's
   // actions wait for a current one.
-  const problem = live.messageKind === "invalid" ? live.message : null;
+  const problem =
+    !quoteOverride && (live.status === "refused" || live.status === "failed") && live.message
+      ? live.message
+      : null;
   const detailQuote = quote ?? (quoteStatus === "pending" ? live.lastQuote : null);
 
   const { data: productResults } = useProducts(
@@ -244,6 +248,7 @@ export function InlineReturnSection({
   }, [resetToken, entryOrderId, entryOrder?.id, clearRemoved]);
 
   function removeLine(lineKey: string) {
+    if (locked) return;
     const index = lines.findIndex((l) => l.lineKey === lineKey);
     if (index < 0) return;
     const line = lines[index];
@@ -254,7 +259,7 @@ export function InlineReturnSection({
   }
 
   function undoRemove() {
-    if (!removed) return;
+    if (!removed || locked) return;
     const { line, index } = removed;
     setLines((prev) => {
       const at = Math.min(index, prev.length);
@@ -274,6 +279,8 @@ export function InlineReturnSection({
   // B1219: a single fuzzy match is offered here ("Did you mean ...?"), never added unasked.
   const [scanMatches, setScanMatches] = React.useState<any[]>([]);
   const addProduct = (product: any, opts: { focusQty: boolean }) => {
+    // M10: once the return is saved the lines are the saved return's — a scan or a pick adds nothing
+    if (locked) return { created: false };
     const existing = linesRef.current.find((l) => l.productId === product.id);
     const lineKey = existing?.lineKey ?? crypto.randomUUID();
     // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
@@ -356,8 +363,9 @@ export function InlineReturnSection({
       <span className="min-w-0 break-words">Removed {removed.line.productName}</span>
       <button
         type="button"
-        className="min-h-11 shrink-0 px-2 text-sm font-medium text-brand-600 hover:underline"
+        className="min-h-11 shrink-0 px-2 text-sm font-medium text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
         onClick={undoRemove}
+        disabled={locked}
       >
         Undo
       </button>
@@ -376,8 +384,11 @@ export function InlineReturnSection({
             <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
           )}
           {lines.map((line, lineIndex) => {
-            const firstOfProduct =
-              lines.findIndex((l) => l.productId === line.productId) === lineIndex;
+            const firstIndex = lines.findIndex((l) => l.productId === line.productId);
+            const firstOfProduct = firstIndex === lineIndex;
+            // buildCaptureRequest merges rows of one product and keeps the FIRST row's reason, so that is the reason the server
+            // applies (and the stock outcome that follows from it) to every row of the product
+            const ruling = lines[firstIndex];
             const facts =
               firstOfProduct && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
             return (
@@ -392,8 +403,10 @@ export function InlineReturnSection({
                   stale={!quote && !!detailQuote}
                   locked={locked}
                   reasonOptions={REASON_OPTIONS}
-                  reasonLabel={reasonLabel(line.reason)}
-                  stocks={restocksForReason(line.reason || captureReason)}
+                  reasonLabel={reasonLabel(ruling.reason)}
+                  stocks={restocksForReason(ruling.reason || captureReason)}
+                  followsFirst={!firstOfProduct}
+                  firstReason={ruling.reason}
                   canOverrideCredit={canOverrideCredit}
                   needsAlreadyReturnedReason={
                     firstOfProduct &&
@@ -445,6 +458,7 @@ export function InlineReturnSection({
             onError={(message) => toast({ variant: "error", title: message })}
             className="h-10 min-h-[44px] w-10 min-w-[44px] shrink-0"
             title="Scan barcode"
+            disabled={locked}
           />
         </div>
         {scanMatches.length > 0 && (
@@ -503,7 +517,12 @@ export function InlineReturnSection({
             {live.message}
           </p>
           {live.status === "failed" && (
-            <Button className="max-lg:min-h-11" variant="secondary" onClick={live.retry}>
+            <Button
+              type="button"
+              className="max-lg:min-h-11"
+              variant="secondary"
+              onClick={live.retry}
+            >
               Try again
             </Button>
           )}
@@ -587,6 +606,8 @@ function ReturnLine({
   reasonOptions,
   reasonLabel,
   stocks,
+  followsFirst,
+  firstReason,
   canOverrideCredit,
   needsAlreadyReturnedReason,
   onlyBoughtActive,
@@ -610,6 +631,9 @@ function ReturnLine({
   reasonOptions: Array<{ value: ReturnReason; label: string }>;
   reasonLabel: string;
   stocks: boolean;
+  /** A second row of a product the list already holds: its reason is the first row's, so it cannot take its own. */
+  followsFirst: boolean;
+  firstReason: ReturnReason | "";
   canOverrideCredit: boolean;
   needsAlreadyReturnedReason: boolean;
   onlyBoughtActive: boolean;
@@ -624,7 +648,7 @@ function ReturnLine({
   const [userOpen, setUserOpen] = React.useState(false);
   const panelId = React.useId();
   const hasValue =
-    !!line.reason ||
+    (!!line.reason && !followsFirst) ||
     !!line.note ||
     !!line.creditUnitPrice ||
     !!line.overrideReason ||
@@ -757,9 +781,9 @@ function ReturnLine({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Select
             className="max-lg:h-11"
-            label="Reason (optional)"
-            value={line.reason}
-            disabled={locked}
+            label={followsFirst ? "Reason (same as the first row)" : "Reason (optional)"}
+            value={followsFirst ? firstReason : line.reason}
+            disabled={locked || followsFirst}
             onChange={(e) => onChange({ reason: e.target.value as ReturnReason | "" })}
             options={[{ value: "", label: "Use default" }, ...reasonOptions]}
           />

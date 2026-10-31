@@ -244,18 +244,6 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
-    // R-1 M17 (SA-1069 A-2): the same spec's 390 tests on WebKit as an iPhone (the clipped-sentence photo did not reproduce
-    // on Chromium). Needs `npx playwright install webkit`; run it with --project=counter-return-iphone.
-    {
-      name: "counter-return-iphone",
-      testMatch: /75-counter-return.spec.ts/,
-      grep: /(390)/,
-      dependencies: ["setup"],
-      use: {
-        ...devices["iPhone 13"],
-        storageState: path.join(AUTH_DIR, "operator.json"),
-      },
-    },
     // ── Dashboard CLS (PKG-8) ──────────────────────────────────────────────────
     // /dashboard layout shift with every read delayed 2 s; read-only.
     {
@@ -1139,6 +1127,19 @@ export default defineConfig({
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // R-1 M17 (SA-1069 A-2): the counter-return spec's 390 tests on WebKit as an iPhone (the clipped-sentence photo did not
+          // reproduce on Chromium). Local lane only: CI / post-deploy / nightly install chromium only, so WebKit cannot launch there.
+          // Needs `npx playwright install webkit`; run it with --project=counter-return-iphone.
+          {
+            name: "counter-return-iphone",
+            testMatch: /75-counter-return.spec.ts/,
+            grep: /(390)/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["iPhone 13"],
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },

@@ -273,6 +273,18 @@ describe("refund flow", () => {
     expect(slip).toHaveAttribute("data-auto", "false"); // the auto-print preference is off by default
   });
 
+  it("review-c MUST 2 (mutant Y): once the return is saved the list is locked: no Remove, no Scan barcode, no add", async () => {
+    refundReturn.mockRejectedValue({ response: { status: 500, data: {} } });
+    await refundFlow();
+    fireEvent.click(confirmBtn(/^take back items and refund [$]12[.]40$/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await waitFor(() => expect(refundReturn).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /^remove$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /scan barcode/i })).toBeDisabled();
+    expect(screen.getByLabelText(/add another product/i)).toBeDisabled();
+  });
+
   it("Train 4: no slip is offered while the refund is still pending (failed refund)", async () => {
     refundReturn.mockRejectedValue({ response: { status: 500, data: {} } });
     await refundFlow();
