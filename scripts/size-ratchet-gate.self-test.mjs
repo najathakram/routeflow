@@ -98,6 +98,8 @@ function plant(name, { over = null, dropSpec = false } = {}) {
     GATE,
     "apps/api/package.json",
     "apps/api/jest.repo-truth.config.js",
+    // the lane config derives its spec list from this (cross-workspace-lane.spec.ts)
+    "scripts/lib/cross-workspace-specs.cjs",
     "apps/api/tsconfig.json",
   ]) {
     copy(rel);
