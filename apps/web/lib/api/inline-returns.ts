@@ -35,9 +35,8 @@ export type {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 //
 // Both are mutations, not queries: the quote is a read with side-effect-free semantics on
-// the server, but it is deliberately requested on demand ("Get quote" button), never
-// auto-fetched on keystroke — the brief's Step 1 gate is "Get quote enables when any qty >
-// 0", not a debounced live quote.
+// the server. The Returns section asks for it live (useLiveReturnQuote: 350 ms after the last
+// change, one request at a time), so there is no "Get quote" button.
 
 /**
  * POST /returns/inline/quote — read-only, customer-scoped (no orderId). Never writes a

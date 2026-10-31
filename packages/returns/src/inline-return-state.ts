@@ -16,6 +16,25 @@ import type {
   UserRole,
 } from "@routeflow/types";
 
+// ─── R-1 (SA-1069 M7): the default reason, and the reasons that decide stock ────────────────
+
+/** The reason a return is captured under when the operator picks none: the server's own fallback
+ *  (`inline-returns.service.ts`, `dto.reason ?? "EXCESS_ORDER"`). Pinned to it by `returns-restock-parity.spec.ts`. */
+export const DEFAULT_RETURN_REASON = "EXCESS_ORDER" as const satisfies ReturnReason;
+
+/** Reasons where the goods are unsellable, so they are NOT added back to stock. A mirror of the server's
+ *  `NO_RESTOCK_REASONS` (`returns.service.ts`), pinned set-equal by `returns-restock-parity.spec.ts`: the closed
+ *  row's "Back to stock" / "Not added to stock" reads this, and the server decides stock from its own set. */
+export const NO_RESTOCK_REASONS = [
+  "DAMAGED",
+  "QUALITY_ISSUE",
+] as const satisfies readonly ReturnReason[];
+
+/** Whether a return under this reason goes back into stock (the capture sends no `restock`, so the server default holds). */
+export function restocksForReason(reason: ReturnReason | ""): boolean {
+  return !(NO_RESTOCK_REASONS as readonly string[]).includes(reason);
+}
+
 // ─── Step 1: line drafts ─────────────────────────────────────────────────────
 
 /** One product row in "What came back". `boxes`/`pieces` are kept as STRINGS (raw input
@@ -182,6 +201,26 @@ function parseNonNegativeInt(raw: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/**
+ * The row of one product whose reason (and so its stock outcome) the capture applies. `buildCaptureRequest` drops rows with no
+ * quantity and THEN merges the rest, keeping the first merged row's reason, so the ruling row is the first row of the product
+ * WITH a quantity; with none yet, the first row. -1 when the product has no row. The screen reads this, never "first row".
+ */
+export function rulingLineIndex(
+  lines: ReadonlyArray<
+    Pick<InlineReturnLineDraft, "productId"> &
+      Partial<Pick<InlineReturnLineDraft, "boxes" | "pieces">>
+  >,
+  productId: string,
+): number {
+  const withQty = lines.findIndex(
+    (l) =>
+      l.productId === productId &&
+      (parseNonNegativeInt(l.boxes ?? "") > 0 || parseNonNegativeInt(l.pieces ?? "") > 0),
+  );
+  return withQty >= 0 ? withQty : lines.findIndex((l) => l.productId === productId);
+}
+
 /** "Get quote" enables when any line has boxes > 0 or pieces > 0. */
 export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
   return lines.some((l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0);
@@ -283,14 +322,19 @@ export function alreadyReturnedProductIds(quote: InlineReturnQuoteResponse): Set
   return new Set(quote.chunks.filter((c) => c.alreadyReturned).map((c) => c.productId));
 }
 
-/** Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. */
+/**
+ * Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. The reason read is the
+ * ruling row's (the first row with a quantity), the one `buildCaptureRequest` keeps; a reason on a row it drops is not sent.
+ */
 export function missingAlreadyReturnedReasons(
-  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">>,
+  lines: ReadonlyArray<
+    Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason"> &
+      Partial<Pick<InlineReturnLineDraft, "boxes" | "pieces">>
+  >,
   quote: InlineReturnQuoteResponse,
 ): string[] {
   return [...alreadyReturnedProductIds(quote)].filter(
-    (id) =>
-      !lines.some((l) => l.productId === id && (l.alreadyReturnedReason ?? "").trim().length > 0),
+    (id) => !(lines[rulingLineIndex(lines, id)]?.alreadyReturnedReason ?? "").trim(),
   );
 }
 
@@ -359,6 +403,13 @@ export const NOTHING_BOUGHT_BEFORE_MESSAGE =
   "This customer hasn't bought these items before — there's no invoice to return them against.";
 
 /**
+ * The same disabled "Return only what was bought" on a line that WAS bought, every piece of it already returned or credited:
+ * "hasn't bought" would be false there, so it says what is true.
+ */
+export const ALREADY_RETURNED_NOTHING_LEFT_MESSAGE =
+  "What was bought was already returned or credited, so nothing is left to return against an invoice.";
+
+/**
  * #2693: option 3 is only possible when the quote matched at least one piece to an invoice line.
  * With zero covered pieces `dropExcessAndRequote` would build an EMPTY request, so the option is
  * disabled and the re-quote is never sent. The one predicate web and mobile both use.
@@ -394,22 +445,88 @@ export function notBoughtBeforeNames(
   return names;
 }
 
+/**
+ * R-1 (SA-1069 M8): "Return only what was bought" for ONE product. Sets that product's RULING row (the first row with a
+ * quantity, see {@link rulingLineIndex}) to the pieces the quote matched to an invoice line and zeroes any sibling row, so two
+ * rows of one product can never double the credit and the row whose reason and stock outcome capture keeps stays the same row.
+ * Every other product's rows are untouched, and nothing is removed: the operator can type the number back. With nothing
+ * covered for the product the lines come back as they were (the host disables the choice and says why).
+ */
+export function applyCoveredToProduct<L extends InlineReturnLineDraft>(
+  lines: L[],
+  quote: InlineReturnQuoteResponse,
+  productId: string,
+): L[] {
+  const covered = coveredPiecesByProduct(quote).get(productId) ?? 0;
+  if (covered <= 0) return lines;
+  const ruling = rulingLineIndex(lines, productId);
+  return lines.map((l, i) =>
+    l.productId !== productId
+      ? l
+      : { ...l, boxes: "0", pieces: String(i === ruling ? covered : 0) },
+  );
+}
+
+/**
+ * R-1 (SA-1069 M6/M8): everything the quote says about ONE product, so a line's closed row and its options
+ * read it from one place. Display only: each figure is one the server already priced and rounded.
+ */
+export interface LineQuoteFacts {
+  /** Chunks matched to an earlier order's invoice line, newest first as the quote returned them. */
+  covered: InlineReturnQuoteChunk[];
+  /** Chunks past what was bought, split by why: never bought, or already returned or credited. */
+  notOnInvoice: InlineReturnQuoteChunk[];
+  alreadyReturned: InlineReturnQuoteChunk[];
+  /** Pieces in each of the two excess groups. */
+  notOnInvoicePieces: number;
+  alreadyReturnedPieces: number;
+  /** The product's credit as the quote priced it (the server's per-product figure when it sent one). */
+  total: number;
+  /** True when the covered chunks span more than one earlier order. */
+  spansOrders: boolean;
+}
+
+export function lineQuoteFacts(
+  quote: InlineReturnQuoteResponse,
+  productId: string,
+): LineQuoteFacts {
+  const chunks = quote.chunks.filter((c) => c.productId === productId);
+  const covered = chunks.filter((c) => c.sourceOrderId != null);
+  const excess = chunks.filter((c) => c.sourceOrderId == null);
+  const notOnInvoice = excess.filter((c) => !c.alreadyReturned);
+  const alreadyReturned = excess.filter((c) => c.alreadyReturned);
+  const sumPieces = (cs: InlineReturnQuoteChunk[]) => cs.reduce((s, c) => s + c.pieces, 0);
+  const server = quote.productBreakdown?.[productId];
+  return {
+    covered,
+    notOnInvoice,
+    alreadyReturned,
+    notOnInvoicePieces: sumPieces(notOnInvoice),
+    alreadyReturnedPieces: sumPieces(alreadyReturned),
+    total: server ? server.total : sumChunkTotals(chunks).total,
+    spansOrders: new Set(covered.map((c) => c.sourceOrderId)).size > 1,
+  };
+}
+
 export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
   routeRunStopId?: string,
-  /** #2695: the lines the quote came from — a product's credit price override (its FIRST row's,
-   *  the same rule the request merge uses) carries into the re-quote, so the reduced quote and
+  /** #2695: the lines the quote came from — a product's credit price override (its RULING row's,
+   *  the first row with a quantity, the same rule the request merge uses) carries into the re-quote, so the reduced quote and
    *  the capture that follows price the same chunks. */
-  lines: Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason">[] = [],
+  lines: Array<
+    Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason"> &
+      Partial<Pick<InlineReturnLineDraft, "boxes" | "pieces">>
+  > = [],
   /** SA-740: the re-quote stays pinned to the same source sale the first quote was. */
   sourceOrderId?: string,
 ): QuoteInlineReturnRequest {
-  const firstLine = (productId: string) => lines.find((l) => l.productId === productId);
+  const rulingLine = (productId: string) => lines[rulingLineIndex(lines, productId)];
   const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
     .filter(([, pieces]) => pieces > 0)
     .map(([productId, pieces]) => {
-      const line = firstLine(productId);
+      const line = rulingLine(productId);
       return { productId, qty: 1, boxes: 0, pieces, ...(line ? overrideFields(line) : {}) };
     });
   return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);

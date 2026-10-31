@@ -1130,6 +1130,19 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // R-1 M17 (SA-1069 A-2): the counter-return spec's 390 tests on WebKit as an iPhone (the clipped-sentence photo did not
+          // reproduce on Chromium). Local lane only: CI / post-deploy / nightly install chromium only, so WebKit cannot launch there.
+          // Needs `npx playwright install webkit`; run it with --project=counter-return-iphone.
+          {
+            name: "counter-return-iphone",
+            testMatch: /75-counter-return.spec.ts/,
+            grep: /(390)/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["iPhone 13"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "counter-pos-stack",
             testMatch: /(72-counter-pos-stack|75-sa1067-price-history-keys)\.spec\.ts/,

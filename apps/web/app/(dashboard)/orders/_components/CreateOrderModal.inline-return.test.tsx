@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act, fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
+import { RETURN_SAVE_BLOCKED } from "./use-order-inline-return-save";
 
 // #2406 — CreateOrderModal host: the Returns section, and the returnKey/refusal lifecycle
 // around a create-order save that carries an inline return. Modeled on CreateOrderModal.test.tsx
@@ -107,31 +108,66 @@ async function pickCustomer() {
   fireEvent.click(await screen.findByText("Acme Foods"));
 }
 
+// R-1 (SA-1069 A): the Returns section is one render. A search pick adds the line at 1 piece, the reason is one
+// "Reason for all items" select, and the quote is asked by itself 350 ms after the last change to the lines.
 async function openReturnsAndAddLine(pieces: string) {
   fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
   fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-  fireEvent.click(await screen.findByText("Widget"));
-  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Widget" }));
+  setPieces(pieces);
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
 }
 
-async function quoteIt() {
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-  await waitFor(() => expect(quoteMutate).toHaveBeenCalled());
+function setPieces(pieces: string) {
+  fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
+}
+
+function quoteReply(pieces: number) {
+  return {
+    chunks: [
+      {
+        sourceOrderId: "order-1",
+        sourceInvoiceItemId: "inv-1",
+        sourceOrderItemId: "oi-1",
+        productId: "prod-1",
+        pieces,
+        subtotal: pieces,
+        taxAmount: 0,
+        categoryTax: 0,
+        priceSource: "SOURCE_INVOICE",
+        unitPrice: 1,
+      },
+    ],
+    subtotal: pieces,
+    taxAmount: 0,
+    categoryTax: 0,
+    total: pieces,
+    productBreakdown: {},
+    canRefund: false,
+    paidInFull: false,
+    paidMethods: [],
+    paidWithStoreCredit: false,
+    customerIsWalkIn: false,
+  };
+}
+
+// Waits for the debounced quote the section asks for by itself, then answers it. `answered` counts the asks already
+// answered, so a second round (after a discard or an edit) waits for a NEW ask.
+let answered = 0;
+async function quoteIt(pieces = 5) {
+  await waitFor(() => expect(quoteMutate.mock.calls.length).toBeGreaterThan(answered));
+  const calls = quoteMutate.mock.calls;
+  answered = calls.length;
   act(() => {
-    quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess({
-      chunks: [],
-      subtotal: 0,
-      taxAmount: 0,
-      categoryTax: 0,
-      total: 0,
-      productBreakdown: {},
-    });
+    calls[calls.length - 1][1].onSuccess(quoteReply(pieces));
   });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
+  answered = 0;
   mockActiveOrder = undefined;
   mockCustomers = [acme];
   hasInlineReturns = true;
@@ -157,18 +193,7 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    act(() => {
-      quoteMutate.mock.calls[0][1].onSuccess({
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      });
-    });
+    await quoteIt();
 
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
@@ -186,18 +211,7 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    act(() => {
-      quoteMutate.mock.calls[0][1].onSuccess({
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      });
-    });
+    await quoteIt();
 
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     const firstKey = createOrderMutate.mock.calls[0][0].inlineReturn.returnKey;
@@ -226,18 +240,7 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    act(() => {
-      quoteMutate.mock.calls[0][1].onSuccess({
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      });
-    });
+    await quoteIt();
 
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     const firstKey = createOrderMutate.mock.calls[0][0].inlineReturn.returnKey;
@@ -261,18 +264,7 @@ describe("CreateOrderModal — inline return payload on save (#2406)", () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    act(() => {
-      quoteMutate.mock.calls[0][1].onSuccess({
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      });
-    });
+    await quoteIt();
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     act(() =>
       createOrderMutate.mock.calls[0][1].onError({
@@ -340,12 +332,44 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     expect(createOrderMutate.mock.calls[0][0]).not.toHaveProperty("inlineReturn");
   });
 
-  it("expanded but NOT quoted ⇒ the save is blocked (nothing sent)", async () => {
+  it("expanded with the quote still pending ⇒ the save is blocked with the working-it-out message (nothing sent)", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
     await openReturnsAndAddLine("5");
+    // the quote may be asked by now, but nothing has answered it
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     expect(createOrderMutate).not.toHaveBeenCalled();
+    expect(await screen.findByText(RETURN_SAVE_BLOCKED["needs-quote"])).toBeInTheDocument();
+  });
+
+  it("lines changed after the quote ⇒ the save is blocked until the new quote answers, then carries the new quantity", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("5");
+    await quoteIt(5);
+    setPieces("6"); // the quote on screen is no longer for these lines
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate).not.toHaveBeenCalled();
+    expect(await screen.findByText(RETURN_SAVE_BLOCKED["needs-quote"])).toBeInTheDocument();
+
+    await quoteIt(6);
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0].inlineReturn.items).toEqual([
+      { productId: "prod-1", qty: 1, boxes: 0, pieces: 6 },
+    ]);
+  });
+
+  it("a draft nobody chose a reason for saves under EXCESS_ORDER", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Widget" }));
+    setPieces("2");
+    await quoteIt(2);
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    expect(createOrderMutate.mock.calls[0][0].inlineReturn.reason).toBe("EXCESS_ORDER");
   });
 
   it("expanded → quoted → discarded ⇒ no inlineReturn, and re-expanding shows an empty section", async () => {
@@ -374,7 +398,7 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
     fireEvent.click(screen.getByRole("button", { name: /discard return/i }));
     await openReturnsAndAddLine("2");
-    await quoteIt();
+    await quoteIt(2);
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     const second = createOrderMutate.mock.calls[1][0];
     expect(second.inlineReturn.returnKey).not.toBe(first.inlineReturn.returnKey);
@@ -394,7 +418,7 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     };
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pickCustomer();
-    await openReturnsAndAddLine("5"); // lines + reason, but NOT quoted
+    await openReturnsAndAddLine("5"); // lines + reason, but the quote is not answered
     fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
     fireEvent.click(await screen.findByRole("button", { name: /separate/i }));
     expect(createOrderMutate).not.toHaveBeenCalled();

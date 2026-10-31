@@ -264,3 +264,10 @@ checks no horizontal overflow and saves a screenshot under `test-results/`. No b
 asserts that the centre of Boxes, Pieces and Unit Price each hit-tests (`elementFromPoint`) to that input, that Boxes and
 Pieces are at least 44 px, and that the "box" / "pcs" labels are visible. It never saves the form and deletes what it
 created in a `finally`. jsdom cannot see an overlap, so this is the guard for the edit grid's layout.
+
+## `counter-return-iphone` (R-1 M17): local lane only
+
+`playwright.config.ts` registers `counter-return-iphone` (the counter-return spec's 390 tests on WebKit as an iPhone 13) in the same
+local-only block as spec 71. CI, post-deploy and nightly run `npx playwright test` with no project filter and install chromium
+only, so the project is not registered there (`GITHUB_ACTIONS=true` lists none of its tests). Locally it needs
+`npx playwright install webkit`; run it with `--project=counter-return-iphone`.
