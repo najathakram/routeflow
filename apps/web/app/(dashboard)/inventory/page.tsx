@@ -37,6 +37,7 @@ import { INVENTORY_TABS } from "./_components/inventory-tabs";
 import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
+import { lowStockThreshold } from "@routeflow/types";
 import { QuickRestockModal } from "./_components/QuickRestockModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ interface StockItem {
   category?: string;
   unit: string;
   currentStock: number;
+  reorderPoint?: number | null;
   averageCost: number | null;
   totalValue: number | null;
   isActive: boolean;
@@ -317,7 +319,7 @@ function StockTable({
                     "font-medium",
                     item.currentStock <= 0
                       ? "text-danger"
-                      : item.currentStock <= 5
+                      : item.currentStock <= lowStockThreshold(item.reorderPoint)
                         ? "text-warning"
                         : "text-navy",
                   )}
@@ -1601,7 +1603,7 @@ export default function InventoryPage() {
                         const stockColor =
                           s.currentStock <= 0
                             ? "text-danger"
-                            : s.currentStock <= 5
+                            : s.currentStock <= lowStockThreshold(s.reorderPoint)
                               ? "text-warning"
                               : "text-navy/70";
                         const stockLabel =

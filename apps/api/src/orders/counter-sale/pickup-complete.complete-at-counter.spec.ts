@@ -360,6 +360,7 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
       expect(e.getResponse()).toMatchObject({
         code: "COUNTER_COMPLETE_STOP_STARTED",
         message: "The driver has started this stop. Finish it on the route.",
+        runId: "run-1", // W-778: the web dialog links to the route
       });
       expect(calls).toEqual([]);
     },
