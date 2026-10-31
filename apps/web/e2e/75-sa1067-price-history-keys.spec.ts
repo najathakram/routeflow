@@ -1,13 +1,14 @@
 /**
- * SA-1067 M1 / P4 in a real browser: with the price history panel open at the counter, a scanner's digits and Enter use no
- * price (P1), and Down then Enter uses the newest row and closes the panel (P4). Jest cannot see where focus really lands:
- * AnchoredPopover focuses its own shell once placed, so the keys have to be handled there.
+ * SA-1067 M1 / P4 in a real browser, two doors on the price history panel at the counter. P1: a scanner's digits and Enter
+ * use no price (the scan-focus listener sends them to the scan box and the panel stays open). P4: Down then Enter, straight
+ * after the panel opens, uses the newest row and closes it. Jest cannot see where focus really lands: AnchoredPopover
+ * focuses its own shell once placed, so the keys have to be handled there.
  *
  * LOCAL LANE ONLY, same guards as 72: the tenant is put on the in_store_shipping_retailer profile (counter on) and restored
  * row-for-row in afterAll. READ-ONLY otherwise: a customer and a product that already share order history are DISCOVERED over
  * the API (no names are written here), the panel is driven, and the sale is never completed. Needs `npm run local:sa`.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 import { TENANT_SLUG } from "./helpers/constants";
@@ -76,45 +77,58 @@ async function discoverPair(page: Page) {
   throw new Error("the test tenant has no customer with order history for a sellable product");
 }
 
+/** Customer picked, one item on the sale, the price history panel open with focus inside it. */
+async function openPanel(page: Page, context: BrowserContext, vp: (typeof VIEWPORTS)[number]) {
+  await page.setViewportSize({ width: vp.width, height: vp.height });
+  await setTenantCookie(context, BASE);
+  const { customer, product } = await discoverPair(page);
+
+  await page.goto("/orders/counter-sale");
+  const scanField = page.getByLabel("Scan or search items");
+  await expect(scanField).toBeVisible({ timeout: 15_000 });
+  await page.getByLabel("Find a customer").fill(String(customer.businessName).slice(0, 12));
+  await page
+    .getByRole("option", { name: String(customer.businessName) })
+    .first()
+    .click();
+  await scanField.fill(String(product.sku));
+  await scanField.press("Enter");
+  await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
+    timeout: 15_000,
+  });
+
+  await page.getByRole("button", { name: "Price history" }).first().click();
+  const panel = page.getByRole("dialog", { name: "Price history" });
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  // where does focus really land? The shell or something inside it, never outside the panel
+  await expect.poll(() => panel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+  return { panel, scanField };
+}
+
 for (const vp of VIEWPORTS) {
-  test(`P1/P4: the price history panel's keys reach its handler at the counter @ ${vp.name}`, async ({
+  test(`P1: a scanner's digits and Enter with the panel open use no price and leave it open @ ${vp.name}`, async ({
     page,
     context,
   }) => {
     test.setTimeout(120_000);
-    await page.setViewportSize({ width: vp.width, height: vp.height });
-    await setTenantCookie(context, BASE);
-    const { customer, product } = await discoverPair(page);
-
-    await page.goto("/orders/counter-sale");
-    const scanField = page.getByLabel("Scan or search items");
-    await expect(scanField).toBeVisible({ timeout: 15_000 });
-    await page.getByLabel("Find a customer").fill(String(customer.businessName).slice(0, 12));
-    await page
-      .getByRole("option", { name: String(customer.businessName) })
-      .first()
-      .click();
-    await scanField.fill(String(product.sku));
-    await scanField.press("Enter");
-    await expect(page.getByRole("list", { name: "Items" }).getByRole("listitem")).toHaveCount(1, {
-      timeout: 15_000,
-    });
-
-    await page.getByRole("button", { name: "Price history" }).first().click();
-    const panel = page.getByRole("dialog", { name: "Price history" });
-    await expect(panel).toBeVisible({ timeout: 15_000 });
-    // where does focus really land? The shell or something inside it, never outside the panel
-    await expect.poll(() => panel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
-
-    // P1: a scanner's digits and its Enter use no price and leave the panel open
+    const { panel } = await openPanel(page, context, vp);
     await page.keyboard.type("4011");
     await page.keyboard.press("Enter");
     await expect(panel).toBeVisible();
+    // that Enter chose no row
+    await expect(panel.locator('tbody tr[aria-selected="true"]')).toHaveCount(0);
+  });
 
-    // P4: Down then Enter uses the newest row: the panel closes (a handler that is never reached leaves it open)
+  test(`P4: Down then Enter in the panel uses the newest row and closes it @ ${vp.name}`, async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(120_000);
+    const { panel } = await openPanel(page, context, vp);
     await page.keyboard.press("ArrowDown");
-    await expect(panel.locator('[aria-selected="true"]').first()).toBeVisible();
+    await expect(panel.locator('tbody tr[aria-selected="true"]').first()).toBeVisible();
     await page.keyboard.press("Enter");
+    // a handler that is never reached leaves the panel open
     await expect(panel).toHaveCount(0, { timeout: 5_000 });
   });
 }
