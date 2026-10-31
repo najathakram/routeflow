@@ -17,6 +17,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import type { UpdateStaffEmailSettingsRequest } from "@routeflow/types";
 import { MessagingService } from "./messaging.service";
 import { MessagingConfigService } from "./messaging-config.service";
 import { MessagingDeliveriesService } from "./messaging-deliveries.service";
@@ -183,8 +185,14 @@ export class MessagingController {
 
   @Put("staff-email-settings")
   @Roles(UserRole.TENANT_ADMIN)
-  @ApiOperation({ summary: "Replace the staff order-email 'Also send to' list (TENANT_ADMIN)" })
-  updateStaffEmailSettings(@Body() body: { staffCc: string[] }) {
-    return this.staffEmail.update(body);
+  @ApiOperation({
+    summary:
+      "Replace the staff order-email 'Also send to' list and/or switch the emails on or off (TENANT_ADMIN)",
+  })
+  updateStaffEmailSettings(
+    @Body() body: UpdateStaffEmailSettingsRequest,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.staffEmail.update(body, user);
   }
 }

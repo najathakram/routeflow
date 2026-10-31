@@ -8,6 +8,9 @@ import { setTenantCookie } from "@/lib/tenant-cookie";
 import { OP_KEYS, BUYER_KEYS } from "@/lib/auth-keys";
 import { setOpPresenceCookie, setBuyerPresenceCookie } from "@/lib/presence-cookies";
 import { buyerLandingDestination } from "@/lib/google-callback-destination";
+import { documentNav } from "@/lib/document-nav";
+import { postSignInDestination, readAlsoBuyer } from "@/lib/role-choice";
+import { getStoredUser } from "@/lib/auth";
 
 // ─── Error messages shown to the user ────────────────────────────────────────
 
@@ -158,8 +161,14 @@ function GoogleCallbackInner() {
         // the tokens we just stored (see the buyer branch above) — otherwise the
         // dashboard guard bounces the user back to login on the first attempt.
         // All staff roles (operator / customer / driver / admin) land on the
-        // dashboard, which renders a role-appropriate view.
-        window.location.replace("/dashboard");
+        // dashboard, which renders a role-appropriate view. W-839 / SA-937: a
+        // driver who also buys goes through the same role step as the password
+        // login first (the user comes from the token just stored).
+        const staff = getStoredUser();
+        void (staff?.forcePasswordChange ? Promise.resolve(false) : readAlsoBuyer(staff)).then(
+          (alsoBuyer) =>
+            documentNav.replace(postSignInDestination(staff, alsoBuyer, null, "/dashboard")),
+        );
       }
     }
   }, [params, router]);

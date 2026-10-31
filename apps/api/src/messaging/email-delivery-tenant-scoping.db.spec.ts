@@ -17,6 +17,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { EmailDeliveryService } from "../email/email-delivery.service";
 import { MessagingDeliveriesService } from "./messaging-deliveries.service";
 import { StaffOrderEmailService } from "./staff-order-email";
+import { PolicyService } from "../policy/policy.service";
 import { StaffEmailSettingsService } from "./staff-email-settings.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
@@ -87,8 +88,9 @@ describeDb("EmailDelivery tenant scoping (real Postgres)", () => {
     deliveries = new EmailDeliveryService(prisma);
     list = new MessagingDeliveriesService(prisma);
     send = jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" });
-    staff = new StaffOrderEmailService(prisma, { send } as never, deliveries);
-    settings = new StaffEmailSettingsService(prisma, staff);
+    const policies = new PolicyService(prisma); // real, on the real DB: the default policy is "dark"
+    staff = new StaffOrderEmailService(prisma, { send } as never, deliveries, policies);
+    settings = new StaffEmailSettingsService(prisma, staff, policies);
     process.env.STAFF_ORDER_EMAIL = "dark";
   });
 

@@ -3,6 +3,7 @@ import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/render
 import type { MonthlyStatement, StatementLineItem } from "./statement.service";
 import { fmtPdfDate } from "../common/pdf-date";
 
+import { roundMoney } from "@routeflow/pricing";
 /**
  * P5-15: tenant branding shape for the monthly statement PDF header/footer.
  * Mirrors the `TenantInfo` shape loaded by InvoicePdfService — kept as its
@@ -37,8 +38,9 @@ const fmtDateTime = (val: Date | string | null | undefined): string => {
     minute: "2-digit",
   });
 };
-const fmt = (n: number) => `$${Math.abs(n).toFixed(2)}`;
-const fmtSigned = (n: number) => (n < 0 ? `−$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
+const fmt = (n: number) => `$${roundMoney(Math.abs(n)).toFixed(2)}`;
+const fmtSigned = (n: number) =>
+  n < 0 ? `−$${roundMoney(Math.abs(n)).toFixed(2)}` : `$${roundMoney(n).toFixed(2)}`;
 
 const DEFAULT_NAVY = "#1B3A5C";
 const DEFAULT_BRAND = "#3B6FCA";

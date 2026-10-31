@@ -162,7 +162,7 @@ function repricedLineTotal(
       throw new BadRequestException({
         code: API_ERROR_CODES.MONEY_INVARIANT,
         message:
-          `${label} can't be re-priced to $${newPrice.toFixed(2)}: its total would round to $0.00 and its ` +
+          `${label} can't be re-priced to $${roundMoney(newPrice).toFixed(2)}: its total would round to $0.00 and its ` +
           `quantity could not be recovered afterwards. Enter a higher price.`,
       });
     }
@@ -393,7 +393,7 @@ const isBulkRefusal = (e: unknown): e is BulkRefusal =>
 
 type BulkTarget = { id: string; invoiceNumber?: string | null };
 const invoiceLabel = (inv: BulkTarget): string => inv.invoiceNumber || inv.id;
-const money = (n: number): string => `$${n.toFixed(2)}`;
+const money = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
 
 /**
  * SA-683: the refusal codes this flow OWNS. Each guard tags its own 400/409 at the source (MONEY_INVARIANT for
