@@ -30,9 +30,13 @@
 -- There is NO role filter on purpose: the column default stamps {BAD_DEBT} on a new account of EVERY role (a driver, a customer),
 -- not only an operator, and a client generated without BAD_DEBT throws P2023 reading any such row. The version is bumped in the
 -- same UPDATE, as every write to the deny list does.
--- The same UPDATE also applies from DEPLOY ORDER step 3, BEFORE this folder runs, if the rehearsal confirms that the new client
--- stamps its own schema default on user.create (it sends {BAD_DEBT} even while the column default is still '{}'): rows created
--- between the deploy and this folder carry the value too. The SET DEFAULT line is harmless then.
+-- The same UPDATE also applies after the deploy, before this folder runs: the new client stamps its own schema default on
+-- user.create (it sends {BAD_DEBT} even while the column default is still '{}', proven by invoice-write-off-events.db.spec.ts),
+-- so rows created between the deploy and this folder carry the value too. The SET DEFAULT line is harmless then. Run the UPDATE
+-- once more when the old deploy reaches SUCCESS, to strip the value from rows created in the meantime.
+-- After a roll-forward (this folder run again once the deploy that carries BAD_DEBT is back), run this folder's own SET DEFAULT
+-- and UPDATE (the forward statements below) by hand: the folder stays recorded as applied, so `migrate deploy` will not run it
+-- again. The UPDATE is safe to repeat (a row that already denies BAD_DEBT is left alone).
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
