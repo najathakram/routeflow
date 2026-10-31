@@ -15,7 +15,7 @@ PRODUCTION SAFETY CONTEXT — READ BEFORE DOING ANYTHING:
   RULES FOR THIS SESSION:
 
   1. Do not generate any command that runs against Railway directly
-     unless it is: railway run npx prisma migrate deploy
+     unless it is: railway run --service postgres node apps/api/scripts/prod-migrate.mjs
      and I have explicitly asked for a migration to be deployed.
 
   2. Do not modify, call, or reference these scripts in any way:
@@ -56,12 +56,12 @@ PRODUCTION SAFETY CONTEXT — READ BEFORE DOING ANYTHING:
 
 ## Quick reference — safe vs dangerous commands on Railway
 
-| Safe                                    | Dangerous (never)                  |
-| --------------------------------------- | ---------------------------------- |
-| `railway run npx prisma migrate deploy` | `npx prisma migrate reset`         |
-| `railway connect postgres`              | `npx prisma db push --force-reset` |
-| `git push origin master`                | `node DANGER-fresh-data-*.js`      |
-|                                         | `npm run seed`                     |
+| Safe                                                                    | Dangerous (never)                  |
+| ----------------------------------------------------------------------- | ---------------------------------- |
+| `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` | `npx prisma migrate reset`         |
+| `railway connect postgres`                                              | `npx prisma db push --force-reset` |
+| `git push origin master`                                                | `node DANGER-fresh-data-*.js`      |
+|                                                                         | `npm run seed`                     |
 
 ## Pre-session checklist (30 seconds)
 
