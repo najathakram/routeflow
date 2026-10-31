@@ -181,13 +181,13 @@ describe("CreateOrderModal: a new customer in the builder (W-1041)", () => {
   it("MUST 6: Store pickup on a regular order saves on the name alone and stays Store pickup", async () => {
     mockMethods = ["ROUTE", "SHIP", "PICKUP"];
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Store pickup" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pickup later" }));
     await openDoor();
     fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
     await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
     expect(createCustomer.mock.calls[0][0].addresses).toBeUndefined();
     expect(await screen.findByLabelText("Change customer")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Store pickup" }).className).toContain("bg-navy");
+    expect(screen.getByRole("button", { name: "Pickup later" }).className).toContain("bg-navy");
   });
 
   it("MUST 6: with Store pickup offered, Delivery route still asks for the address", async () => {

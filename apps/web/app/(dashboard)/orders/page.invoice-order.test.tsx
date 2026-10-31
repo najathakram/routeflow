@@ -4,10 +4,9 @@ import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import OrdersPage from "./page";
 
 /**
- * Row 331: a store-only business (capabilities.fulfilment: PICKUP only, counter always) gets an "Invoice order"
- * entry beside New order and the counter. New order still opens the counter; the entry opens the builder, which
- * runs in POS mode for such a tenant. `?action=new&builder=1` (also the target of /orders/new) opens the builder
- * even when the counter is the default, with no ship option involved.
+ * Row 331, replaced by W-854 (SA-940 verdict 1): a store-only business carries the one New order, whose Regular order
+ * opens the builder (POS mode for such a tenant), and its phone header keeps Export and Select in a More menu.
+ * `?action=new&builder=1` (also the target of /orders/new) opens the builder even when the counter is the default.
  */
 const push = jest.fn();
 const replace = jest.fn();
@@ -50,45 +49,36 @@ jest.mock("./_components/CreateOrderModal", () => ({
 
 const STORE_ONLY = {
   showButton: true,
-  opensAsCounter: true,
   offerShipInstead: false,
-  offerInvoiceOrder: true,
+  mayUseTill: true,
+  capability: { counter: "always", methods: ["PICKUP"], staffOpensAs: "counter" },
 };
 beforeEach(() => {
   jest.clearAllMocks();
   search = "";
   mockRole = "OPERATOR";
-  gate = {
-    showButton: false,
-    opensAsCounter: false,
-    offerShipInstead: false,
-    offerInvoiceOrder: false,
-  };
+  gate = { showButton: false, offerShipInstead: false, mayUseTill: true };
 });
 
 describe("Orders page — Invoice order entry (row 331)", () => {
-  it("a store-only tenant: Counter sale is the filled primary, Invoice a customer is secondary, no New order", () => {
+  it("a store-only tenant: New order is the filled primary, and its menu reaches both", async () => {
     gate = STORE_ONLY;
     renderWithProviders(<OrdersPage />);
-    // New order went to the same place as Counter sale, so it is gone (UX G7).
-    expect(screen.queryByRole("button", { name: "New order" })).toBeNull();
-    const counter = screen.getByRole("button", { name: "Counter sale" });
-    const invoice = screen.getByRole("button", { name: "Invoice a customer" });
-    expect(counter).toHaveClass("bg-accent-strong");
-    expect(invoice).toHaveClass("bg-paper");
-    fireEvent.click(counter);
-    expect(push).toHaveBeenCalledWith("/orders/counter-sale");
-    expect(screen.queryByTestId("order-builder-open")).toBeNull();
-    fireEvent.click(invoice);
+    const newOrder = screen.getByRole("button", { name: "New order" });
+    expect(newOrder).toHaveClass("bg-accent-strong");
+    expect(screen.queryByRole("button", { name: "Counter sale" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(newOrder);
+    await user.click(await screen.findByRole("menuitem", { name: /regular order/i }));
     expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 
-  it("a store-only tenant: the two actions are 44 px targets below sm, and Export + Select move into a More menu", async () => {
+  it("a store-only tenant: New order is a 44 px target below sm, and Export + Select move into a More menu", async () => {
     gate = STORE_ONLY;
     renderWithProviders(<OrdersPage />);
-    for (const name of ["Counter sale", "Invoice a customer"]) {
-      expect(screen.getByRole("button", { name }).className).toMatch(/max-sm:h-11/);
-    }
+    expect(screen.getByRole("button", { name: "New order" }).className).toMatch(/max-sm:h-11/);
     // The menu trigger only exists below sm, where it is always 44 px.
     const more = screen.getByRole("button", { name: "More actions" });
     expect(more.className).toMatch(/\bh-11\b/);
@@ -103,52 +93,34 @@ describe("Orders page — Invoice order entry (row 331)", () => {
     expect(screen.getByRole("menuitem", { name: "Select" })).toBeInTheDocument();
   });
 
-  it("a store-only tenant's primary trails: [Export][Select][More][Invoice a customer][Counter sale]", () => {
+  it("a store-only tenant's primary trails: [Export][Select][More][New order]", () => {
     gate = STORE_ONLY;
     renderWithProviders(<OrdersPage />);
-    const order = ["Export", "Select", "More actions", "Invoice a customer", "Counter sale"];
+    const order = ["Export", "Select", "More actions", "New order"];
     const names = screen
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
     const positions = order.map((n) => names.findIndex((x) => x === n));
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    // Below sm Export and Select are hidden, which leaves [More][Invoice a customer][Counter sale].
-    // From sm up the More menu is hidden, which leaves [Export][Select][Invoice a customer][Counter sale].
+    // Below sm Export and Select are hidden, which leaves [More][New order].
+    // From sm up the More menu is hidden, which leaves [Export][Select][New order].
   });
 
-  it("a delivery tenant is unchanged: New order is the primary, Export and Select stay inline, no More menu", () => {
+  it("a delivery tenant: New order is the primary, Export and Select stay inline, no More menu", () => {
     gate = {
       showButton: true,
-      opensAsCounter: false,
       offerShipInstead: false,
-      offerInvoiceOrder: false,
+      mayUseTill: true,
+      capability: { counter: "optional", methods: ["ROUTE"], staffOpensAs: "order" },
     };
     renderWithProviders(<OrdersPage />);
     expect(screen.getByRole("button", { name: "New order" })).toHaveClass("bg-accent-strong");
-    expect(screen.getByRole("button", { name: "Counter sale" })).toHaveClass("bg-paper");
+    expect(screen.queryByRole("button", { name: "Counter sale" })).toBeNull();
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
     for (const name of ["Export", "Select"]) {
       expect(screen.getByRole("button", { name }).className).not.toMatch(/max-sm:hidden/);
     }
-  });
-
-  it("any other tenant has no Invoice order button", () => {
-    gate = {
-      showButton: true,
-      opensAsCounter: true,
-      offerShipInstead: true,
-      offerInvoiceOrder: false,
-    };
-    renderWithProviders(<OrdersPage />);
-    expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
-  });
-
-  it("a role that cannot use POS mode does not get the entry", () => {
-    gate = STORE_ONLY;
-    mockRole = "SUPER_ADMIN";
-    renderWithProviders(<OrdersPage />);
-    expect(screen.queryByRole("button", { name: "Invoice a customer" })).toBeNull();
   });
 
   it("?action=new&builder=1 opens the builder even when the counter is the default", () => {
@@ -159,10 +131,11 @@ describe("Orders page — Invoice order entry (row 331)", () => {
     expect(replace).not.toHaveBeenCalledWith("/orders/counter-sale");
   });
 
-  it("?action=new alone still redirects a counter-default tenant to the counter", () => {
+  it("?action=new alone opens the menu on a counter-default tenant", async () => {
     gate = STORE_ONLY;
     search = "action=new";
     renderWithProviders(<OrdersPage />);
-    expect(replace).toHaveBeenCalledWith("/orders/counter-sale");
+    expect(await screen.findAllByRole("menuitem")).toHaveLength(2);
+    expect(replace).not.toHaveBeenCalledWith("/orders/counter-sale");
   });
 });

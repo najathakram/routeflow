@@ -22,6 +22,7 @@ import { undoAmendedPeriodNote } from "@routeflow/types";
 import { refundSuccessToast } from "@/lib/refund-toast";
 import { TENDER_OPTIONS } from "../_components/refund-copy";
 import { RefundSlipAction } from "../_components/RefundSlipAction";
+import { HeldReturnActions } from "../_components/HeldReturnActions";
 import { RETURN_MIXED_UNIT_PRODUCT_COPY, refundErrorMessage } from "@/lib/credit-note-error-copy";
 import { orderedItemQtyText, returnedItemQtyText } from "@/lib/return-line-qty";
 import {
@@ -686,6 +687,11 @@ export default function ReturnDetailPage() {
             </Button>
           )}
         </div>
+      </div>
+
+      {/* SA-1060 PR-1: a held INLINE return waits here for staff to approve or reject it (renders nothing for any other return) */}
+      <div className="space-y-3">
+        <HeldReturnActions ret={ret} />
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">

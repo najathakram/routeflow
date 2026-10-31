@@ -35,9 +35,8 @@ export type {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 //
 // Both are mutations, not queries: the quote is a read with side-effect-free semantics on
-// the server, but it is deliberately requested on demand ("Get quote" button), never
-// auto-fetched on keystroke — the brief's Step 1 gate is "Get quote enables when any qty >
-// 0", not a debounced live quote.
+// the server. The Returns section asks for it live (useLiveReturnQuote: 350 ms after the last
+// change, one request at a time), so there is no "Get quote" button.
 
 /**
  * POST /returns/inline/quote — read-only, customer-scoped (no orderId). Never writes a
@@ -74,6 +73,44 @@ export function useCaptureInlineReturn() {
       qc.invalidateQueries({ queryKey: ["credit-notes"] });
       qc.invalidateQueries({ queryKey: ["returns"] });
     },
+  });
+}
+
+/** What an approve or reject changes: the returns lists, the order, the customer, and (an approve mints one) the credit notes. */
+function refreshAfterHold(
+  qc: ReturnType<typeof useQueryClient>,
+  data: InlineReturnRecord,
+  mintsCredit: boolean,
+) {
+  qc.invalidateQueries({ queryKey: ["returns"] });
+  qc.invalidateQueries({ queryKey: ["orders"] });
+  qc.invalidateQueries({ queryKey: ["customers", data.customerId] });
+  if (mintsCredit) qc.invalidateQueries({ queryKey: ["credit-notes"] });
+}
+
+/**
+ * SA-1060 PR-1: POST /returns/inline/:id/approve — staff approve a held INLINE return (DRIVER_CAP or ALREADY_RETURNED). The server
+ * credits the held amount, so the body carries no amount here; an ALREADY_RETURNED hold needs `reason` (400 coded otherwise).
+ * No money math in the client.
+ */
+export function useApproveInlineReturn() {
+  const qc = useQueryClient();
+  return useMutation<InlineReturnRecord, Error, { id: string; reason?: string }>({
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/returns/inline/${id}/approve`, reason ? { reason } : {}).then((r) => r.data),
+    // the screen shows the server's own refusal sentence; the global toast would stack a generic one on top of it
+    meta: { localErrorToast: true },
+    onSuccess: (data) => refreshAfterHold(qc, data, true),
+  });
+}
+
+/** SA-1060 PR-1: POST /returns/inline/:id/reject — staff decline a held INLINE return; no credit note is ever minted for it. */
+export function useRejectInlineReturn() {
+  const qc = useQueryClient();
+  return useMutation<InlineReturnRecord, Error, { id: string }>({
+    mutationFn: ({ id }) => apiClient.post(`/returns/inline/${id}/reject`, {}).then((r) => r.data),
+    meta: { localErrorToast: true },
+    onSuccess: (data) => refreshAfterHold(qc, data, false),
   });
 }
 

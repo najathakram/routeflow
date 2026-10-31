@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
   Bell,
@@ -52,6 +53,7 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
     status === "CONFIRMED" || status === "OUT_FOR_DELIVERY" || status === "DELIVERED";
   const handedOver = status === "DELIVERED";
   const hasInvoice = invoices.length > 0;
+  const first = invoices[0];
   const invoiceIsDraft = hasInvoice && invoices.some((i) => i.status === "DRAFT");
   const steps = [
     { key: "confirmed", label: POS_COPY.stepConfirmed, done: confirmed },
@@ -104,6 +106,20 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
           ) : (
             s.label
           )}
+          {s.key === "invoice" && first?.invoiceNumber ? (
+            // SA-1071 V1: the number once one exists, as a link to it ("+N" for a mixed order's other invoices). Same 44 px
+            // tap area trick as the Generate step: the padding is the target, the negative margins keep the pill's size.
+            <>
+              {" "}
+              <Link
+                href={`/invoices/${first.id}`}
+                className="-mx-0.5 -my-[14px] min-w-11 px-0.5 py-[14px] text-center underline"
+              >
+                {first.invoiceNumber}
+              </Link>
+              {invoices.length > 1 ? <span>+{invoices.length - 1}</span> : null}
+            </>
+          ) : null}
           {s.done && <span className="sr-only"> (completed)</span>}
           {i === current && <span className="sr-only"> (next step)</span>}
         </li>
@@ -235,7 +251,15 @@ export function PosOrderActions({
         loading={createInvoice.isPending}
         onClick={() =>
           createInvoice.mutate(orderId, {
-            onSuccess: () => toast({ title: POS_COPY.invoiceCreated, variant: "success" }),
+            onSuccess: (made) => {
+              const number = made?.[0]?.invoiceNumber;
+              toast({
+                title: number
+                  ? POS_COPY.invoiceCreatedNamed(number, made.length - 1)
+                  : POS_COPY.invoiceCreated,
+                variant: "success",
+              });
+            },
             onError: (err) =>
               toast({
                 title: codedToastCopy(err) ?? POS_COPY.invoiceFailed,

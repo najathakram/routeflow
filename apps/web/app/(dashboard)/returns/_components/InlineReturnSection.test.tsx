@@ -1,9 +1,14 @@
 import * as React from "react";
 import { act } from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
-import { creditOverrideProblem } from "@routeflow/returns";
+import { NOTHING_BOUGHT_BEFORE_MESSAGE } from "@routeflow/returns";
 import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routeflow/types";
+
+// R-1 (SA-1069 section A): the section is ONE render. The quote is asked on its own RETURN_QUOTE_DEBOUNCE_MS (350 ms)
+// after the last change to the lines; time is faked so that window is exact. The behaviours that are new in the
+// one-step UI are covered in InlineReturnSection.one-step.test.tsx; this file keeps the original (#2406) coverage.
+const DEBOUNCE = 350;
 
 // Same mocking convention as RecordInlineReturnDialog.test.tsx (this section's own extraction
 // source) — mock the hook module directly rather than apiClient.
@@ -22,10 +27,9 @@ jest.mock("@/lib/api/products", () => ({
 }));
 
 const quoteMutate = jest.fn();
-let quoteIsPending = false;
 
 jest.mock("@/lib/api/inline-returns", () => ({
-  useInlineReturnQuote: () => ({ mutate: quoteMutate, isPending: quoteIsPending }),
+  useInlineReturnQuote: () => ({ mutate: quoteMutate, isPending: false }),
 }));
 
 // #2695: the credit price override is role-gated; the real AuthProvider (renderWithProviders) has
@@ -76,13 +80,21 @@ function rejectNextQuote(error: unknown) {
   const call = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1];
   act(() => call[1].onError(error));
 }
+function wait(ms: number) {
+  act(() => {
+    jest.advanceTimersByTime(ms);
+  });
+}
 
 beforeEach(() => {
+  jest.useFakeTimers();
   jest.clearAllMocks();
-  quoteIsPending = false;
   productResults = [PRODUCT];
   authRole = undefined;
   mockEntryOrder = undefined;
+});
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 function renderSection(
@@ -95,24 +107,38 @@ function renderSection(
   return states;
 }
 
+const row = (productId = "prod-1") => screen.getByTestId(`return-line-${productId}`);
+const optionsToggle = (name = "Widget") =>
+  screen.getByRole("button", { name: new RegExp(`options for ${name}`, "i") });
+
+/** Search for a product and pick it from the list: it lands as a line at 1 piece. */
+async function pick(name = "Widget", term = name.slice(0, 3).toLowerCase()) {
+  fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: term } });
+  fireEvent.click(await screen.findByRole("button", { name }));
+}
+
+/** Add Widget, set its pieces and the reason for all items, and let the debounced quote go out. */
 async function addProductAndQuote(pieces: string) {
-  fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-  fireEvent.click(await screen.findByText("Widget"));
+  await pick();
   fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-  await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
+  wait(DEBOUNCE);
+  expect(quoteMutate).toHaveBeenCalledTimes(1);
 }
 
 describe("InlineReturnSection — lines to quote (#2406)", () => {
-  it("shows 'What came back' with no products by default and a disabled Get quote", () => {
+  it("shows 'What came back' with no products by default, no Get quote, and asks nothing", () => {
     renderSection();
     expect(screen.getByText(/what came back/i)).toBeInTheDocument();
     expect(screen.getByText(/no products yet/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /get quote/i })).toBeNull();
+    wait(DEBOUNCE * 3);
+    expect(quoteMutate).not.toHaveBeenCalled();
   });
 
-  it("adding a product, entering qty + reason, and quoting shows covered chunks and forwards state", async () => {
+  it("adding a product, entering qty + reason, quotes by itself, shows covered chunks and forwards state", async () => {
     const states = renderSection();
     await addProductAndQuote("10");
 
@@ -122,15 +148,17 @@ describe("InlineReturnSection — lines to quote (#2406)", () => {
     resolveNextQuote(quoteResponse([chunk()]));
     await screen.findByText(/from an earlier order/i);
     expect(screen.getByText("Net $20.00")).toBeInTheDocument();
-    expect(screen.getByText("$22.00")).toBeInTheDocument(); // subtotal + tax
+    // subtotal + tax, as the summary's Total and as the line's own credit
+    expect(within(screen.getByTestId("return-summary")).getByText("$22.00")).toBeInTheDocument();
+    expect(screen.getByTestId("return-line-summary-prod-1")).toHaveTextContent("Credit $22.00");
 
     const last = states[states.length - 1];
-    expect(last.step).toBe("quote");
+    expect(last.quoteStatus).toBe("current");
     expect(last.captureReason).toBe("DAMAGED");
     expect(last.quote?.chunks).toHaveLength(1);
   });
 
-  it("an excess chunk (not on any invoice) renders with the default 'credit at current price' pick", async () => {
+  it("an excess chunk (not on any invoice) is flagged in words, with the default 'credit at current price' pick", async () => {
     renderSection();
     await addProductAndQuote("16");
     resolveNextQuote(
@@ -139,30 +167,34 @@ describe("InlineReturnSection — lines to quote (#2406)", () => {
         chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 6, subtotal: 15 }),
       ]),
     );
-    await screen.findByText(/not on any invoice/i);
+    expect(await screen.findByTestId("return-line-flag-prod-1")).toHaveTextContent(
+      "6 not on any invoice · Credit at current price",
+    );
+    fireEvent.click(optionsToggle());
     expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
   });
 
-  it("getQuoteEnabled=false disables Get quote even with qty entered (dialog's own carrying-order gate)", async () => {
-    renderSection({ getQuoteEnabled: false });
-    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-    fireEvent.click(await screen.findByText("Widget"));
+  it("getQuoteEnabled=false asks nothing even with qty entered (dialog's own carrying-order gate)", async () => {
+    renderSection({ getQuoteEnabled: false, waitingFor: "Choose the order above." });
+    await pick();
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-    expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
+    wait(DEBOUNCE * 3);
+    expect(quoteMutate).not.toHaveBeenCalled();
+    expect(screen.getByText("Choose the order above.")).toBeInTheDocument();
   });
 });
 
 describe("InlineReturnSection — quote refusal (#2406)", () => {
-  it("shows the API's message inline AND forwards it to onQuoteRefused", async () => {
-    const onQuoteRefused = jest.fn();
-    renderSection({ onQuoteRefused });
+  it("shows the API's message inline as an alert and keeps the lines (no onQuoteRefused any more)", async () => {
+    const states = renderSection();
     await addProductAndQuote("10");
     rejectNextQuote({ response: { status: 400, data: { message: "Cannot quote this customer" } } });
-    await screen.findByText("Cannot quote this customer");
-    expect(onQuoteRefused).toHaveBeenCalledWith("Cannot quote this customer");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cannot quote this customer");
+    expect(states[states.length - 1].quoteStatus).toBe("refused");
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(10);
   });
 
-  it("without onQuoteRefused, still shows the inline error (host reads it via its own UI if it wants to)", async () => {
+  it("shows any other server refusal's message inline too", async () => {
     renderSection();
     await addProductAndQuote("10");
     rejectNextQuote({ response: { status: 409, data: { message: "Server error" } } });
@@ -175,8 +207,7 @@ describe("InlineReturnSection — resetToken (#2406)", () => {
     const { rerender } = renderWithProviders(
       <InlineReturnSection customerId="cust-1" resetToken={0} />,
     );
-    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-    fireEvent.click(await screen.findByText("Widget"));
+    await pick();
     expect(screen.getByText("Widget")).toBeInTheDocument();
 
     rerender(<InlineReturnSection customerId="cust-1" resetToken={1} />);
@@ -189,7 +220,7 @@ describe("InlineReturnSection — hidden (#2406)", () => {
   it("renders nothing while hidden", () => {
     renderWithProviders(<InlineReturnSection customerId="cust-1" hidden />);
     expect(screen.queryByText(/what came back/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /get quote/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/reason for all items/i)).not.toBeInTheDocument();
   });
 });
 
@@ -202,12 +233,17 @@ describe("InlineReturnSection — 'return only what was bought' with nothing bou
         chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 6, subtotal: 15 }),
       ]),
     );
-    await screen.findByText(/not on any invoice/i);
+    expect(await screen.findByTestId("return-line-flag-prod-1")).toHaveTextContent(
+      "not on any invoice",
+    );
+    fireEvent.click(optionsToggle());
     const onlyBought = screen.getByRole("radio", { name: /return only what was bought/i });
     expect(onlyBought).toBeDisabled();
     expect(screen.getByText(/hasn't bought these items before/i)).toBeInTheDocument();
+    expect(screen.getByText(NOTHING_BOUGHT_BEFORE_MESSAGE)).toBeInTheDocument();
 
     fireEvent.click(onlyBought);
+    wait(DEBOUNCE * 2);
     expect(quoteMutate).toHaveBeenCalledTimes(1); // only the original quote, never a re-quote
     expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
     expect(screen.queryByText(/must contain at least 1 elements/i)).not.toBeInTheDocument();
@@ -220,10 +256,8 @@ describe("InlineReturnSection — each line's labels target that line's own fiel
   it("two lines ⇒ two distinct, correctly-labelled Qty inputs", async () => {
     productResults = [PRODUCT, { id: "prod-2", name: "Gadget", unit: "each", unitsPerBox: null }];
     renderSection();
-    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-    fireEvent.click(await screen.findByText("Widget"));
-    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "gad" } });
-    fireEvent.click(await screen.findByText("Gadget"));
+    await pick();
+    await pick("Gadget");
 
     const qty = screen.getAllByLabelText(/^pieces$/i) as HTMLInputElement[];
     expect(qty).toHaveLength(2);
@@ -238,11 +272,10 @@ describe("InlineReturnSection — each line's labels target that line's own fiel
 
 describe("InlineReturnSection — #2695 staff credit price override", () => {
   async function addProduct(pieces: string) {
-    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-    fireEvent.click(await screen.findByText("Widget"));
+    await pick();
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: pieces } });
-    // W-711: the credit price sits behind the line's More
-    fireEvent.click(screen.getByRole("button", { name: /^more for /i }));
+    // W-711: the credit price sits behind the line's options
+    fireEvent.click(optionsToggle());
   }
 
   it.each([["DRIVER"], ["CUSTOMER"], [undefined]])(
@@ -266,8 +299,8 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
       fireEvent.change(screen.getByLabelText(/why the lower price/i), {
         target: { value: "  damaged box " },
       });
-      fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-      await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+      wait(DEBOUNCE);
+      expect(quoteMutate).toHaveBeenCalledTimes(1);
       expect(quoteMutate.mock.calls[0][0].items).toEqual([
         {
           productId: "prod-1",
@@ -283,13 +316,15 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     },
   );
 
-  it("a price without a reason blocks Get quote and says why", async () => {
+  it("a price without a reason sends NO request and says why (a problem message, not a server alert)", async () => {
     authRole = "OPERATOR";
     renderSection();
     await addProduct("4");
     fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "3.50" } });
-    expect(screen.getByRole("button", { name: /get quote/i })).toBeDisabled();
+    wait(DEBOUNCE * 2);
+    expect(quoteMutate).not.toHaveBeenCalled();
     expect(screen.getByText(/widget: say why the credit price is lower/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("the quote shows a lowered line as the server priced it: the new price, the default it replaced, and why", async () => {
@@ -300,8 +335,8 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     fireEvent.change(screen.getByLabelText(/why the lower price/i), {
       target: { value: "dented" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    wait(DEBOUNCE);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
     resolveNextQuote(
       quoteResponse([
         chunk({
@@ -328,13 +363,14 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     fireEvent.change(screen.getByLabelText(/why the lower price/i), {
       target: { value: "dented" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    wait(DEBOUNCE);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
     resolveNextQuote(
       quoteResponse([chunk({ pieces: 4 }), chunk({ sourceOrderId: null, pieces: 2 })]),
     );
     fireEvent.click(await screen.findByLabelText(/return only what was bought/i));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    wait(DEBOUNCE);
+    expect(quoteMutate).toHaveBeenCalledTimes(2);
     expect(quoteMutate.mock.calls[1][0].items).toEqual([
       {
         productId: "prod-1",
@@ -347,15 +383,14 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     ]);
   });
 
-  it("a RETURN_CREDIT_OVER_CAP 400 renders the server's message inline, stays on the lines step and keeps the typed override to fix", async () => {
+  it("a RETURN_CREDIT_OVER_CAP 400 renders the server's message inline, marks the line, keeps the typed override to fix, and a new price asks again", async () => {
     authRole = "OPERATOR";
-    const onQuoteRefused = jest.fn();
-    const states = renderSection({ onQuoteRefused });
+    const states = renderSection();
     await addProduct("4");
     fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "9.99" } });
     fireEvent.change(screen.getByLabelText(/why the lower price/i), { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    wait(DEBOUNCE);
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
     const message =
       "Widget: a credit price can only be lowered — the most this return can credit is $5.00 per unit.";
     rejectNextQuote({
@@ -364,11 +399,16 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
         data: { code: "RETURN_CREDIT_OVER_CAP", productId: "prod-1", message },
       },
     });
-    expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(onQuoteRefused).toHaveBeenCalledWith(message);
-    expect(states[states.length - 1].step).toBe("lines");
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(states[states.length - 1].quoteStatus).toBe("refused");
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText(/credit price/i)).toHaveValue("9.99");
-    expect(screen.getByRole("button", { name: /get quote/i })).toBeEnabled();
+    // fixing the price starts a new quote on its own
+    fireEvent.change(screen.getByLabelText(/credit price/i), { target: { value: "4" } });
+    expect(states[states.length - 1].quoteStatus).toBe("pending");
+    expect(screen.queryByRole("alert")).toBeNull();
+    wait(DEBOUNCE);
+    expect(quoteMutate).toHaveBeenCalledTimes(2);
   });
 
   describe("two prefilled rows of ONE product (a Case line and a pack line on the source order)", () => {
@@ -383,43 +423,48 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
       renderSection({ entryOrderId: "ord-1" });
     };
     const qtyInputs = () => screen.getAllByLabelText(/^pieces$/i);
-    const openAllMore = () =>
+    const openAllOptions = () =>
       screen
-        .getAllByRole("button", { name: /^(more|less) for /i })
+        .getAllByRole("button", { name: /^options for /i })
         .forEach((b) => b.getAttribute("aria-expanded") === "false" && fireEvent.click(b));
-    const priceInputs = () => (openAllMore(), screen.getAllByLabelText(/credit price/i));
-    const reasonInputs = () => (openAllMore(), screen.getAllByLabelText(/why the lower price/i));
-    const quoteButton = () => screen.getByRole("button", { name: /get quote/i });
+    const priceInputs = () => (openAllOptions(), screen.getAllByLabelText(/credit price/i));
+    const reasonInputs = () => (openAllOptions(), screen.getAllByLabelText(/why the lower price/i));
 
-    it("two priced rows with DIFFERENT overrides disable Get quote and say why", async () => {
+    it("two priced rows with DIFFERENT overrides send no request and say why", async () => {
       authRole = "OPERATOR";
       twoRows();
-      await waitFor(() => expect(qtyInputs()).toHaveLength(2));
+      expect(await screen.findAllByLabelText(/^pieces$/i)).toHaveLength(2);
       fireEvent.change(qtyInputs()[0], { target: { value: "1" } });
       fireEvent.change(qtyInputs()[1], { target: { value: "2" } });
       fireEvent.change(priceInputs()[0], { target: { value: "3" } });
       fireEvent.change(reasonInputs()[0], { target: { value: "dented" } });
       // The second row carries no override: one row priced, one not, on the same product.
-      expect(quoteButton()).toBeDisabled();
+      wait(DEBOUNCE * 2);
+      expect(quoteMutate).not.toHaveBeenCalled();
       expect(
         screen.getByText(/two rows of this product have different credit prices/i),
       ).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
     });
 
     it("the same override on both rows quotes ONE merged item carrying it", async () => {
       authRole = "OPERATOR";
       twoRows();
-      await waitFor(() => expect(qtyInputs()).toHaveLength(2));
+      expect(await screen.findAllByLabelText(/^pieces$/i)).toHaveLength(2);
       fireEvent.change(qtyInputs()[0], { target: { value: "1" } });
       fireEvent.change(qtyInputs()[1], { target: { value: "2" } });
       for (const i of [0, 1]) {
         fireEvent.change(priceInputs()[i], { target: { value: "3" } });
         fireEvent.change(reasonInputs()[i], { target: { value: "dented" } });
       }
-      expect(quoteButton()).toBeEnabled();
-      fireEvent.change(screen.getAllByLabelText(/^reason$/i)[0], { target: { value: "DAMAGED" } });
-      fireEvent.click(quoteButton());
-      await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+      expect(
+        screen.queryByText(/two rows of this product have different credit prices/i),
+      ).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+        target: { value: "DAMAGED" },
+      });
+      wait(DEBOUNCE);
+      expect(quoteMutate).toHaveBeenCalledTimes(1);
       expect(quoteMutate.mock.calls[0][0].items).toEqual([
         {
           productId: "prod-1",
@@ -435,16 +480,15 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     it("an UNTOUCHED duplicate row (no quantity) is skipped, not a blocker: the quote sends the touched row only", async () => {
       authRole = "OPERATOR";
       twoRows();
-      await waitFor(() => expect(qtyInputs()).toHaveLength(2));
+      expect(await screen.findAllByLabelText(/^pieces$/i)).toHaveLength(2);
       fireEvent.change(qtyInputs()[0], { target: { value: "2" } });
       fireEvent.change(priceInputs()[0], { target: { value: "3" } });
       fireEvent.change(reasonInputs()[0], { target: { value: "dented" } });
       expect(
         screen.queryByText(/two rows of this product have different credit prices/i),
       ).not.toBeInTheDocument();
-      expect(quoteButton()).toBeEnabled();
-      fireEvent.click(quoteButton());
-      await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+      wait(DEBOUNCE);
+      expect(quoteMutate).toHaveBeenCalledTimes(1);
       expect(quoteMutate.mock.calls[0][0].items).toEqual([
         {
           productId: "prod-1",
@@ -511,8 +555,7 @@ describe("InlineReturnSection — Remove offers Undo, counter reason labels (R7b
     await screen.findByText("Cola 12oz Can");
     fireEvent.click(screen.getAllByRole("button", { name: /^remove$/i })[0]);
     expect(screen.getByRole("button", { name: /^undo$/i })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "col" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Cola 12oz Can" }));
+    await pick("Cola 12oz Can", "col");
     expect(screen.queryByRole("button", { name: /^undo$/i })).toBeNull();
     expect(screen.getAllByText("Cola 12oz Can")).toHaveLength(1);
   });
@@ -521,7 +564,7 @@ describe("InlineReturnSection — Remove offers Undo, counter reason labels (R7b
     mockEntryOrder = COUNTER_ORDER;
     renderSection({ entryOrderId: "order-c" });
     await screen.findByText("Cola 12oz Can");
-    const reason = screen.getByLabelText(/^reason$/i) as HTMLSelectElement;
+    const reason = screen.getByLabelText(/reason for all items/i) as HTMLSelectElement;
     const labels = Array.from(reason.options).map((o) => o.text);
     expect(labels).toEqual(
       expect.arrayContaining([
@@ -543,7 +586,7 @@ describe("InlineReturnSection — Remove offers Undo, counter reason labels (R7b
     mockEntryOrder = { ...COUNTER_ORDER, counterSale: false };
     renderSection({ entryOrderId: "order-c" });
     await screen.findByText("Cola 12oz Can");
-    const reason = screen.getByLabelText(/^reason$/i) as HTMLSelectElement;
+    const reason = screen.getByLabelText(/reason for all items/i) as HTMLSelectElement;
     expect(Array.from(reason.options).map((o) => o.text)).toContain("Customer Refused");
   });
 });

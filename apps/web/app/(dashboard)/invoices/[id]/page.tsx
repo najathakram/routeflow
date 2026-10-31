@@ -2606,6 +2606,10 @@ export default function InvoiceDetailPage() {
               </div>
             </div>
 
+            {/* SA-1071 V2: SA-1058 lists the lines by printed name on every copy; one caption says so (nothing to say for one line) */}
+            {(invoice.items?.length ?? 0) > 1 ? (
+              <p className="mb-2 text-xs text-navy/70">Listed by product name.</p>
+            ) : null}
             {/* Line items table — Ledger surface header */}
             <div className="-mx-8 overflow-x-auto">
               <table className="w-full text-sm">

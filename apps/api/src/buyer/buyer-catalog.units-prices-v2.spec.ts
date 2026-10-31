@@ -87,7 +87,7 @@ describe("BuyerCatalogService — the tile shows the customer-layer price the ca
         .mockResolvedValue([{ productId: "p1", unitRef: "pack", price: String(typedPrice) }]),
     };
     ordersService.getCustomerPriceHistory.mockResolvedValue(
-      history ? { p1: { lastPrice: history, listPriceAtTime: 10 } } : {},
+      history ? { p1: { lastPrice: history, stickyPrice: history, listPriceAtTime: 10 } } : {},
     );
     return ((await service.getCatalog({}, "c1")) as any).data[0].buyerPrice;
   };

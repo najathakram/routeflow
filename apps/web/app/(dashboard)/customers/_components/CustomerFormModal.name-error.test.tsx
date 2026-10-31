@@ -50,9 +50,15 @@ const axiosRefusal = (field: string) =>
     },
   });
 
-/** Radix focuses the dialog's first control once it opens; a submit failure happens AFTER that. */
-const openSettled = () =>
-  waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toHaveFocus());
+/**
+ * SA-1071 C1: a new customer opens with the cursor on the first empty field (Business Name). A submit failure happens AFTER
+ * that, so the form moves focus off it first: the refusal's focus has to be the refusal's, never the open's.
+ */
+const openSettled = async () => {
+  await waitFor(() => expect(screen.getByLabelText(/^Business Name/)).toHaveFocus());
+  screen.getByRole("button", { name: "Close" }).focus();
+  expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+};
 
 beforeEach(() => {
   createError = null;
@@ -101,13 +107,18 @@ describe("CustomerFormModal — refused name (B956)", () => {
     expect(screen.getByLabelText(/^Contact Name/)).toHaveFocus();
   });
 
-  it("an ordinary error does NOT steal focus or scroll", () => {
+  it("an ordinary error does NOT steal focus or scroll", async () => {
     const scrollIntoView = jest.fn();
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const ui = <CustomerFormModal isOpen onClose={jest.fn()} mode="add" />;
+    const { rerender } = renderWithProviders(ui);
+    await openSettled();
     createError = new Error("Email or username already taken");
-    renderWithProviders(<CustomerFormModal isOpen onClose={jest.fn()} mode="add" />);
+    rerender(ui);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(screen.getByLabelText(/^Business Name/)).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
   });
 
   it("update: shows the Contact name copy", () => {

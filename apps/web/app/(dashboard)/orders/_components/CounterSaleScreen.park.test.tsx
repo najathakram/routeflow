@@ -675,6 +675,20 @@ describe("Discard a parked sale", () => {
   });
 });
 
+describe("SA-1071 C3: the walk-in Undo belongs to the sale it was made on", () => {
+  it("resuming a parked walk-in sale ends it, so it can't put the old customer on that sale", async () => {
+    seed("a", { label: "Hold A" }, parkedPayload({ customer: null, walkIn: true }));
+    renderScreen();
+    await pickAcme();
+    fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+    expect(await screen.findByText("Now a walk-in sale.")).toBeInTheDocument();
+    await openList(1);
+    fireEvent.click(resumeBtn("Hold A"));
+    await waitFor(() => expect(itemNames().join(" ")).toContain("Cola"));
+    expect(screen.queryByText("Now a walk-in sale.")).toBeNull();
+  });
+});
+
 describe("price edits on a resumed cart (the existing Complete-time check)", () => {
   const edited = () =>
     parkedPayload({

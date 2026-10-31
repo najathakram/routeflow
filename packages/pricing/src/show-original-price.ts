@@ -4,10 +4,12 @@
  * and every receipt (the live counter receipt, the Today's-sales reprint, the emailed receipt) read the SAME decision.
  *
  * False when the tenant hid original prices (`invoice.hideOriginalPrice`), when there is no original price to show, and for
- * a MANUAL upsell (unitPrice ABOVE originalPrice): the lower base is never exposed to the buyer there. Otherwise (SPECIAL,
- * DISCOUNTED, PROMO, an adjusted MANUAL) the original is struck whenever one is stored. The base is the stored
- * `originalPrice` (the LIST price), never a tier price.
+ * any line charged ABOVE its originalPrice (`isAboveListLine`: a MANUAL upsell or a tier above Retail): the lower base is
+ * never exposed to the buyer there. Otherwise (a saving on SPECIAL, DISCOUNTED, PROMO or an adjusted MANUAL) the original is
+ * struck whenever one is stored. The base is the stored `originalPrice` (the LIST price), never a tier price.
  */
+import { isAboveListLine } from "./pricing";
+
 export type OriginalPriceItem = {
   unitPrice?: number | string | null;
   originalPrice?: number | string | null;
@@ -17,9 +19,6 @@ export type OriginalPriceItem = {
 export function showOriginalPrice(item: OriginalPriceItem, hideOriginalPrice: boolean): boolean {
   if (hideOriginalPrice) return false;
   if (item.originalPrice == null) return false;
-  const original = Number(item.originalPrice);
-  const unitPrice = item.unitPrice != null ? Number(item.unitPrice) : 0;
-  // MANUAL upsell (charged ABOVE the base price): never expose the lower base.
-  if (item.priceType === "MANUAL" && unitPrice > original) return false;
-  return true;
+  // Charged ABOVE the base price: never expose the lower base.
+  return !isAboveListLine(item);
 }

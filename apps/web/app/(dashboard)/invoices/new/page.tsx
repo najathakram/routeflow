@@ -49,6 +49,7 @@ import { useCustomerPriceLayer } from "@/lib/api/useCustomerPriceLayer";
 import { ladderProductOf } from "@/lib/order-line-unit";
 import { correctLayerLevelLines } from "./invoice-layer-correct";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
+import { PDF_PREVIEW_UNAVAILABLE, PdfPreview } from "@/components/PdfPreview";
 import { PriceLayerNotice } from "@/components/PriceLayerNotice";
 import { customerPricingGate, gateNoticeLayer } from "@/lib/customer-pricing-gate";
 import {
@@ -880,6 +881,7 @@ export default function NewInvoicePage() {
     draftToken.current = fresh.data?.updatedAt;
   }
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const previewBlobRef = React.useRef<Blob | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
 
   React.useEffect(() => {
@@ -1836,6 +1838,7 @@ export default function NewInvoicePage() {
         setPreviewUrl(null);
       } else {
         const blob = await fetchPdfBlob(meta.data.url, apiClient);
+        previewBlobRef.current = blob;
         // Replace any previous preview blob URL to avoid memory leaks.
         setPreviewUrl((prev) => {
           if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
@@ -3245,29 +3248,53 @@ export default function NewInvoicePage() {
       {/* Print-ready preview modal */}
       {previewUrl ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 sm:p-6"
           onClick={() => setPreviewUrl(null)}
         >
           <div
-            className="flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+            data-testid="invoice-preview-modal"
+            className="flex h-screen w-full max-w-4xl flex-col overflow-hidden bg-white shadow-2xl supports-[height:100dvh]:h-dvh sm:h-[90vh] sm:rounded-xl sm:supports-[height:100dvh]:h-[90vh]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-surface-border px-5 py-3">
-              <h2 className="text-base font-semibold text-navy">Invoice preview</h2>
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-2 border-b border-surface-border px-3 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5 sm:pt-3">
+              <h2 className="min-w-0 truncate text-base font-semibold text-navy">
+                Invoice preview
+              </h2>
+              <div className="flex shrink-0 items-center gap-2">
                 <Button
                   variant="secondary"
+                  className="shrink-0 max-sm:h-11"
                   onClick={() => setPreviewUrl(null)}
                   disabled={previewLoading}
                 >
                   Close
                 </Button>
-                <Button onClick={handleSendFromPreview} disabled={previewLoading || priceBlocked}>
+                <Button
+                  className="shrink-0 max-sm:h-11"
+                  onClick={handleSendFromPreview}
+                  disabled={previewLoading || priceBlocked}
+                >
                   Send invoice
                 </Button>
               </div>
             </div>
-            <iframe src={previewUrl} className="h-full w-full flex-1" title="Invoice preview" />
+            <PdfPreview
+              src={previewUrl}
+              title="Invoice preview"
+              className="h-full w-full min-h-0 flex-1"
+              getBytes={async () => {
+                if (!previewBlobRef.current) throw new Error("No preview bytes");
+                return previewBlobRef.current;
+              }}
+              fallback={
+                <div className="space-y-3 text-center">
+                  <p className="text-sm text-navy/70">{PDF_PREVIEW_UNAVAILABLE}</p>
+                  <Button variant="secondary" onClick={() => void handleDownload()}>
+                    Download
+                  </Button>
+                </div>
+              }
+            />
           </div>
         </div>
       ) : null}

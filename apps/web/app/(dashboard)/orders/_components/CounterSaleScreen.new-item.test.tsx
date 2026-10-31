@@ -238,6 +238,44 @@ describe("W-1042 save, then scan again", () => {
   });
 });
 
+describe("SA-1071 I1: the regulated question explains itself", () => {
+  const FIRST = "Regulated items need their category and tax set in Products.";
+  const cat = (name: string, active = true) => ({ id: `tc-${name}`, name, active });
+  /** the whole text of the question box, so a missing sentence reads as what is there instead */
+  const questionText = async () => {
+    const heading = await screen.findByText("Is this a licensed or regulated item?");
+    return (heading.closest("[role='dialog']") as HTMLElement).textContent;
+  };
+
+  it("I1: the line names the business's own tracked categories, three and then 'and N more'", async () => {
+    tracked = [cat("Tobacco"), cat("Vapor"), cat("Beer"), cat("Wine"), cat("Spirits")];
+    await missThenCreate();
+    expect(await questionText()).toBe(
+      `Is this a licensed or regulated item?${FIRST} Tracked categories: Tobacco, Vapor, Beer and 2 more.CancelNoYes`,
+    );
+  });
+
+  it("I1: up to three are listed whole, and an inactive category is left out", async () => {
+    tracked = [cat("Tobacco"), cat("Vapor"), cat("Old stuff", false)];
+    await missThenCreate();
+    expect(await questionText()).toContain(`${FIRST} Tracked categories: Tobacco, Vapor.`);
+  });
+
+  it("I1: when the read has not answered, only the first sentence shows", async () => {
+    (apiClient.get as jest.Mock).mockImplementation(async (url: string) => {
+      if (url === "/tracked-categories") return Promise.reject({ response: { status: 500 } });
+      if (url === "/settings") return { data: { taxRate: 0 } };
+      if (url === "/products/categories") return { data: [] };
+      if (url.startsWith("/products/barcode/"))
+        return Promise.reject({ response: { status: 404 } });
+      if (url === "/products") return { data: { data: [] } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    await missThenCreate();
+    expect(await questionText()).toBe(`Is this a licensed or regulated item?${FIRST}CancelNoYes`);
+  });
+});
+
 describe("W-1042 MUST 12: regulated goods", () => {
   it("R10: a tracked business is asked first, and Yes stops: nothing is created, the cart stays", async () => {
     tracked = [TOBACCO];

@@ -1,4 +1,4 @@
-import { readyNoticeOf } from "./ready-for-pickup.notice";
+import { readyNoticeOf, readyPreviewOf } from "./ready-for-pickup.notice";
 
 /** W-1043 (SA-1062 MUST 18-19): the messaging outcomes folded into the one notice. */
 describe("readyNoticeOf", () => {
@@ -30,6 +30,43 @@ describe("readyNoticeOf", () => {
       expect(readyNoticeOf(email({ outcome: "skipped", reason }), ok)).toEqual({
         notice: "FAILED",
       });
+    },
+  );
+});
+
+/** W-1060 (SA-1070 R32): what a press would do now agrees with what the press then reports. */
+describe("readyPreviewOf", () => {
+  const ok = { email: "buyer@acme.test", orderStatusEmails: true };
+  const cases: Array<
+    [string, readonly string[], { email: string | null; orderStatusEmails: boolean }, unknown[]]
+  > = [
+    ["email on, address, opted in", ["EMAIL"], ok, [{ channel: "EMAIL", outcome: "sent" }]],
+    ["no EMAIL rule", ["PORTAL"], ok, [{ channel: "PORTAL", outcome: "sent" }]],
+    [
+      "no address",
+      ["EMAIL"],
+      { email: null, orderStatusEmails: true },
+      [{ channel: "EMAIL", outcome: "skipped", reason: "NO_CONTACT" }],
+    ],
+    [
+      "opted out",
+      ["EMAIL"],
+      { email: "buyer@acme.test", orderStatusEmails: false },
+      [{ channel: "EMAIL", outcome: "skipped", reason: "OPTED_OUT" }],
+    ],
+    [
+      "placeholder address",
+      ["EMAIL"],
+      { email: "x@placeholder.local", orderStatusEmails: true },
+      [{ channel: "EMAIL", outcome: "skipped", reason: "NO_CONTACT" }],
+    ],
+  ];
+  it.each(cases)(
+    "%s: the preview is the notice the press would report",
+    (_n, channels, customer, outcomes) => {
+      expect(readyPreviewOf(channels, customer)).toEqual(
+        readyNoticeOf(outcomes as never, customer),
+      );
     },
   );
 });

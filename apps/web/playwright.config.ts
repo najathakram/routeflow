@@ -1130,6 +1130,19 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // R-1 M17 (SA-1069 A-2): the counter-return spec's 390 tests on WebKit as an iPhone (the clipped-sentence photo did not
+          // reproduce on Chromium). Local lane only: CI / post-deploy / nightly install chromium only, so WebKit cannot launch there.
+          // Needs `npx playwright install webkit`; run it with --project=counter-return-iphone.
+          {
+            name: "counter-return-iphone",
+            testMatch: /75-counter-return.spec.ts/,
+            grep: /(390)/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["iPhone 13"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "counter-pos-stack",
             testMatch: /(72-counter-pos-stack|75-sa1067-price-history-keys)\.spec\.ts/,
@@ -1202,6 +1215,16 @@ export default defineConfig({
           },
           // SA-1042 B9c: return 1 Case through the form, read 200 pcs (1 Case), credit 45.00 (spec 77). It CREATES a product,
           // a customer, an invoice and a credit note with no cleanup, so it is local lane only like 71-76 and 79.
+          // W-1064 (SA-1074): the PDF preview on phone settings. It drafts an invoice, so it is local lane only.
+          {
+            name: "pdf-preview",
+            testMatch: /80-pdf-preview-touch\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "return-by-line",
             testMatch: /77-return-by-line\.spec\.ts/,

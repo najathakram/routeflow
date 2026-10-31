@@ -35,6 +35,7 @@ import { customerPricing } from "../orders/units-prices-v2";
 import { openOrderLinesForProduct } from "../orders/open-order-lines";
 import { salePackOf } from "../sales-facts/sales-facts.rules";
 import {
+  compareMinCustomers,
   comparisonLines,
   mostCommonPack,
   plotUnitsOf,
@@ -53,15 +54,16 @@ export const PRICE_HISTORY_MAX_LIMIT = 100;
  * the parity spec pins the values equal.
  */
 export const PRICE_SUMMARY_MAX_PRODUCTS: typeof SHARED_PRICE_SUMMARY_MAX_PRODUCTS = 50;
-/** `?compare=all` looks back this far over every customer's invoiced sales (this customer's own included, see the cap). */
+/**
+ * The panel's window (`aggregate`): this many days counted back from the NEWEST sale to another customer, not from today
+ * (W-1058 H-2.8). The curve has no date bound; only `COMPARE_INVOICE_CAP` bounds it.
+ */
 export const COMPARE_WINDOW_DAYS = 180;
-/** Fewer distinct other customers than this and the aggregate is withheld (cannot be anonymised). */
-export const COMPARE_MIN_CUSTOMERS = 3;
 /**
  * The one compare read takes the newest this-many invoices of the product across ALL customers, this one's own too (SA-954
- * D7: one read, split in memory). Own invoices therefore share the cap with everyone else's. Own rows feed line 3's mean and
- * nothing else: they never enter `others`, a buyer count or the aggregate, so a heavy buyer can crowd the window but never
- * trip or lift a floor.
+ * D7: one read, split in memory), with no date bound (W-1058 H-2.5): this cap is the only bound on the curve. Own invoices
+ * therefore share the cap with everyone else's. Own rows feed line 3's mean and nothing else: they never enter `others`, a
+ * buyer count or the aggregate, so a heavy buyer can crowd the window but never trip or lift a floor.
  */
 export const COMPARE_INVOICE_CAP = 2000;
 /**
@@ -198,6 +200,11 @@ export class CustomerPriceHistoryService {
       role?: UserRole | null;
       compare?: unknown;
       excludeOrderId?: string | null;
+      /**
+       * The caller's denied permission groups (`operatorDeniedGroups`), read by the controller. Decides the compare
+       * floor (W-1058 H-2.10); undefined for an OPERATOR fails closed.
+       */
+      deniedGroups?: readonly string[];
     },
   ): Promise<PriceHistoryResponse> {
     const tenantId = this.prisma.getTenantId();
@@ -486,6 +493,7 @@ export class CustomerPriceHistoryService {
           productId,
           { productPackNow, unitName },
           plotUnitsOf(kept.map((c) => ({ unitLabel: c.row.unitLabel, pack: c.pack }))),
+          compareMinCustomers(opts.role, opts.deniedGroups),
         ),
       );
     }
@@ -493,10 +501,11 @@ export class CustomerPriceHistoryService {
   }
 
   /**
-   * `?compare=all`: ONE read of every customer's invoiced sales of the product (180 days, newest 2000), split in
-   * memory (SA-954 D7). OTHER customers feed `aggregate` (the most-sold unit's low / median / high) and line 2;
-   * everyone feeds line 3. Reads through Invoice with the tenant. The buyer is selected only to count DISTINCT
-   * buyers and is never returned; the aggregate is null under 3 distinct other buyers (too few to anonymise).
+   * `?compare=all`: ONE read of every customer's invoiced sales of the product (newest 2000, no date bound), split in
+   * memory (SA-954 D7). OTHER customers feed `aggregate` (the most-sold unit's low / median / high over the 180 days back
+   * from the newest sale to another customer) and line 2; everyone feeds line 3. Reads through Invoice with the tenant.
+   * The buyer is selected only to count DISTINCT buyers and is never returned. `minCustomers` is the floor for lines and
+   * panel (`compareMinCustomers`): 0 for normal staff, 3 for an OPERATOR who can list neither orders nor invoices.
    */
   private async compare(
     db: any,
@@ -505,16 +514,15 @@ export class CustomerPriceHistoryService {
     productId: string,
     ctx: { productPackNow: number | null; unitName: string },
     ownPlots: PlotUnit[],
+    minCustomers: number,
   ): Promise<{
     aggregate: PriceHistoryAggregate | null;
     comparison: PriceHistoryComparisonLine[];
   }> {
-    const since = new Date(Date.now() - COMPARE_WINDOW_DAYS * 86_400_000);
     const invoices = (await db.invoice.findMany({
       where: {
         tenantId,
         status: ISSUED_STATUSES,
-        issueDate: { gte: since },
         items: { some: { productId } },
       },
       orderBy: [{ issueDate: "desc" }, { id: "desc" }],
@@ -538,8 +546,14 @@ export class CustomerPriceHistoryService {
     })) as any[];
 
     const sales: ComparisonSale[] = [];
-    type UnitGroup = { prices: number[]; buyers: Set<string>; packs: Array<number | null> };
-    const byUnit = new Map<string, UnitGroup>();
+    type OtherSale = {
+      at: number;
+      price: number;
+      buyer: string;
+      unitLabel: string;
+      pack: number | null;
+    };
+    const others: OtherSale[] = [];
     for (const inv of invoices) {
       const own = inv.customerId === customerId;
       for (const it of inv.items ?? []) {
@@ -560,23 +574,40 @@ export class CustomerPriceHistoryService {
           unitLabel: c.row.unitLabel,
           pack: c.pack,
         });
-        if (own) continue;
-        const g: UnitGroup = byUnit.get(c.row.unitLabel) ?? {
-          prices: [],
-          buyers: new Set<string>(),
-          packs: [],
-        };
-        g.prices.push(c.row.unitPrice);
-        g.buyers.add(inv.customerId);
-        g.packs.push(c.pack);
-        byUnit.set(c.row.unitLabel, g);
+        if (!own)
+          others.push({
+            at: c.at.getTime(),
+            price: c.row.unitPrice,
+            buyer: inv.customerId,
+            unitLabel: c.row.unitLabel,
+            pack: c.pack,
+          });
       }
+    }
+
+    // The panel is a recent figure: the window ends at the newest sale to ANOTHER customer, not at today (H-2.8).
+    type UnitGroup = { prices: number[]; buyers: Set<string>; packs: Array<number | null> };
+    const byUnit = new Map<string, UnitGroup>();
+    let newestAt = -Infinity;
+    for (const o of others) newestAt = Math.max(newestAt, o.at);
+    const windowStart = newestAt - COMPARE_WINDOW_DAYS * 86_400_000;
+    for (const o of others) {
+      if (o.at < windowStart) continue;
+      const g: UnitGroup = byUnit.get(o.unitLabel) ?? {
+        prices: [],
+        buyers: new Set<string>(),
+        packs: [],
+      };
+      g.prices.push(o.price);
+      g.buyers.add(o.buyer);
+      g.packs.push(o.pack);
+      byUnit.set(o.unitLabel, g);
     }
     let best: [string, UnitGroup] | null = null;
     for (const e of byUnit) if (!best || e[1].prices.length > best[1].prices.length) best = e;
 
     let aggregate: PriceHistoryAggregate | null = null;
-    if (best && best[1].buyers.size >= COMPARE_MIN_CUSTOMERS) {
+    if (best && best[1].buyers.size >= Math.max(1, minCustomers)) {
       const sorted = [...best[1].prices].sort((a, b) => a - b);
       aggregate = {
         low: sorted[0],
@@ -584,6 +615,7 @@ export class CustomerPriceHistoryService {
         high: sorted[sorted.length - 1],
         customers: best[1].buyers.size,
         unitLabel: best[0],
+        newestMonth: new Date(newestAt).toISOString().slice(0, 7),
       };
     }
 
@@ -593,7 +625,7 @@ export class CustomerPriceHistoryService {
       const pack = mostCommonPack(best[1].packs);
       if (pack != null) plots = [{ unitLabel: best[0], pack }];
     }
-    return { aggregate, comparison: comparisonLines(sales, plots, COMPARE_MIN_CUSTOMERS) };
+    return { aggregate, comparison: comparisonLines(sales, plots, minCustomers) };
   }
 
   /**

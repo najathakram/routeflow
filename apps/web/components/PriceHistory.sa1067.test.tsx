@@ -52,7 +52,14 @@ const base = (over: Partial<PriceHistoryResponse> = {}): PriceHistoryResponse =>
   ],
   summaries,
   references: { listPrice: 14, tierPrice: 12.5, changeSinceLast: 0.03 },
-  aggregate: { low: 9, median: 11.5, high: 15, customers: 7, unitLabel: "case" },
+  aggregate: {
+    low: 9,
+    median: 11.5,
+    high: 15,
+    customers: 7,
+    unitLabel: "case",
+    newestMonth: "2026-09",
+  },
   ...over,
 });
 

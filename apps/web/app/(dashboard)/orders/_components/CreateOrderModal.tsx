@@ -57,10 +57,12 @@ import {
 import {
   customerLinePrice,
   computeLineSubtotal,
+  isStickyUpsell,
   pendingScanDecision,
   undoPendingTap,
   type DerivedBaseMarker,
   type SellLevel,
+  mayCompleteAtCounter,
 } from "@routeflow/pricing";
 import {
   applyTypedPrice,
@@ -117,7 +119,7 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, COUNTER_COPY, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -391,6 +393,15 @@ export function CreateOrderModal({
   const lineItemsRef = React.useRef(lineItems);
   lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
+  // SA-1071 V3: what the latest chip tap or search pick did, in the scan history's own shape, for one Undo.
+  const [lastPick, setLastPick] = React.useState<ScanHistoryEntry | null>(null);
+  React.useEffect(() => {
+    if (!lastPick) return;
+    const t = window.setTimeout(() => setLastPick(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [lastPick]);
+  // a different customer is a different order: the old pick has nothing left to undo
+  React.useEffect(() => setLastPick(null), [selectedCustomer?.id]);
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
   // ── Custom (unlisted) item inline form ──
@@ -695,9 +706,14 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
-  // W-1043: Store pickup in the regular order. Offered when the business has PICKUP and the till is allowed (the API
-  // refuses PICKUP otherwise); POS mode and a store-only business keep their own switch and behaviour.
-  const storePickupOffered = posAllowed && staffFulfilment.methods.includes("PICKUP");
+  // W-1043: Pickup later in the regular order. Offered where the store hands over and the till is allowed (the API refuses
+  // PICKUP otherwise), so an optional counter gets it too (SA-1069 A-3); POS mode and a store-only business keep their own
+  // switch and behaviour.
+  const storePickupOffered = mayCompleteAtCounter({
+    mayUseTill: posAllowed,
+    methods: staffFulfilment.methods,
+    counter: staffFulfilment.counter,
+  });
   const isPickup = posMode || (storePickupOffered && fulfillPath === "PICKUP");
   // pickForm only knows ROUTE | SHIP (it would turn a PICKUP into SHIP), so PICKUP is carried here, only where it is offered.
   const pickPath = (p?: string | null): FormValues["fulfillPath"] =>
@@ -1011,7 +1027,7 @@ export function CreateOrderModal({
     const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistUpsell = !permanentPrice && isStickyUpsell(histEntry?.stickyPrice, listPrice);
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
@@ -1184,7 +1200,12 @@ export function CreateOrderModal({
   const addPicked = (product: any) => {
     if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
     // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
-    addLineItem(product, undefined, { startOnDefaultUnit: true });
+    const added = addLineItem(product, undefined, { startOnDefaultUnit: true });
+    recordPick(product, added);
+  };
+  const recordPick = (product: any, result: { created: boolean; refused?: boolean }) => {
+    if (result.refused) return;
+    setLastPick({ productId: product.id, created: result.created });
   };
 
   // PKG-4 F09: ArrowUp/Down + Enter on the product results. Nothing is highlighted until an Arrow
@@ -1393,7 +1414,11 @@ export function CreateOrderModal({
   );
   const suggestionActions = useOrderSuggestionActions({
     suggestions: orderSuggestions,
-    addLine: addLineItem,
+    addLine: (product, level, opts) => {
+      const result = addLineItem(product, level, opts);
+      if (!opts.ordered) recordPick(product, result); // "Order again" adds many lines: no single Undo
+      return result;
+    },
     tierFor: tierForProduct,
     toast,
   });
@@ -1951,7 +1976,7 @@ export function CreateOrderModal({
       // Close a merge-vs-separate prompt that led here, so the operator lands back on the
       // Returns section they must fix (never a stale prompt over the blocked form).
       setMergePrompt(null);
-      toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
+      toast({ title: returnSave.blockedMessage(inlineReturn), variant: "error" });
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.
@@ -3085,6 +3110,26 @@ export function CreateOrderModal({
               </button>
             )}
 
+            {lastPick && lineItems.some((li) => li.productId === lastPick.productId) ? (
+              <p
+                role="status"
+                className="flex items-center gap-2 text-xs text-navy/70"
+                data-testid="last-pick-undo"
+              >
+                <span>Item added.</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    undoScan(lastPick);
+                    setLastPick(null);
+                  }}
+                  className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline sm:min-h-0"
+                >
+                  Undo
+                </button>
+              </p>
+            ) : null}
+
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
@@ -3278,7 +3323,7 @@ export function CreateOrderModal({
                           : "text-navy/70 hover:text-navy",
                       )}
                     >
-                      Store pickup
+                      {COUNTER_COPY.pickupLater}
                     </button>
                   )}
                 </div>
