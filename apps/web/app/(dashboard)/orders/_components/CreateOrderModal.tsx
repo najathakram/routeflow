@@ -116,13 +116,13 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import type { BlockedLine } from "@routeflow/types";
+import type { BlockedLine, FulfillPath } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { CustomerSearchPicker } from "./CustomerSearchPicker";
@@ -170,7 +170,7 @@ const schema = z.object({
    *  `.optional()` (not `.default()`) matches `urgent` above — every call site
    *  already supplies an explicit "ROUTE"/"SHIP" value, and `.default()` here
    *  makes the zodResolver's inferred type disagree with useForm<FormValues>. */
-  fulfillPath: z.enum(["ROUTE", "SHIP", "PICKUP"]).optional(),
+  fulfillPath: z.enum(FULFILL_PATH_VALUES).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -181,7 +181,7 @@ type FormValues = z.infer<typeof schema>;
  * before this feature (missing the key) still hydrate fine.
  */
 type DraftPayloadWithFulfillPath = OrderDraftPayload & {
-  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP";
+  fulfillPath?: FulfillPath;
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
