@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useGuardedRouter } from "@/lib/use-guarded-router";
 import { createPortal } from "react-dom";
 import { X, Layers, ChevronUp } from "lucide-react";
-import { Button, cn, useToast } from "@routeflow/ui/web";
+import { Button, Modal, cn, useToast } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useDrafts, useDeleteDraft, type SaleDraft } from "@/lib/api/drafts";
 import { draftSummary, parkedAgo } from "@/lib/drafts";
@@ -96,6 +96,7 @@ function DraftDockInner() {
   const [deleteTarget, setDeleteTarget] = React.useState<SaleDraft | null>(null);
   // A pending scan awaiting the operator's "add to which draft?" choice.
   const [scanPrompt, setScanPrompt] = React.useState<string | null>(null);
+  const promptListRef = React.useRef<HTMLUListElement>(null);
 
   const list = drafts ?? [];
   const hasDrafts = list.length > 0;
@@ -168,6 +169,28 @@ function DraftDockInner() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [hasDrafts]);
+
+  // While the prompt is open its first choice holds focus, and a wedge scanner ends every code with Enter: a burst's Enter
+  // would press that choice. Capture phase, before the button's own activation; a person's Enter (no burst) is untouched.
+  React.useEffect(() => {
+    if (scanPrompt === null) return;
+    let run = 0;
+    let lastKeyTime = 0;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const now = Date.now();
+      if (e.key === "Enter") {
+        if (run >= 6 && now - lastKeyTime < 200) e.preventDefault();
+        run = 0;
+        return;
+      }
+      if (e.key.length === 1) {
+        run = now - lastKeyTime > 200 ? 1 : run + 1;
+        lastKeyTime = now;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [scanPrompt]);
 
   if (!hasDrafts) return null;
 
@@ -299,58 +322,59 @@ function DraftDockInner() {
         loading={deleteDraft.isPending}
       />
 
-      {/* Scan-to-draft prompt — pick which parked draft the scan joins. */}
+      {/* Scan-to-draft prompt — pick which parked draft the scan joins. A Modal (Radix): it names itself, traps Tab, closes on
+          Escape or the backdrop, and its role="dialog" data-state="open" also keeps the scan listener above from firing again. */}
       {scanPrompt && (
-        <div
-          className="fixed inset-0 z-[210] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
-          onClick={() => setScanPrompt(null)}
+        <Modal
+          open
+          onClose={() => setScanPrompt(null)}
+          title="Add scanned item to a draft?"
+          className="max-w-sm !p-0"
+          onOpenAutoFocus={(e) => {
+            // First focus on the first choice, not the close X.
+            e.preventDefault();
+            promptListRef.current?.querySelector("button")?.focus();
+          }}
         >
-          <div
-            className="w-full max-w-sm overflow-hidden rounded-xl border border-surface-border bg-white shadow-modal"
-            onClick={(e) => e.stopPropagation()}
+          <p className="-mt-3 mb-3 px-5 font-mono text-xs text-navy/60">{scanPrompt}</p>
+          <ul
+            ref={promptListRef}
+            className="max-h-[50vh] divide-y divide-surface-border overflow-y-auto border-t border-surface-border"
           >
-            <div className="border-b border-surface-border px-5 py-3.5">
-              <p className="text-sm font-semibold text-navy">Add scanned item to a draft?</p>
-              <p className="mt-0.5 font-mono text-xs text-navy/60">{scanPrompt}</p>
-            </div>
-            <ul className="max-h-[50vh] divide-y divide-surface-border overflow-y-auto">
-              {list.map((draft) => {
-                const { title, itemCount } = draftSummary(draft);
-                return (
-                  <li key={draft.id}>
-                    <button
-                      type="button"
-                      onClick={() => resume(draft, scanPrompt)}
-                      className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-raised"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-navy">
-                          {title}
-                        </span>
-                        <span className="block text-xs text-navy/60">
-                          {itemCount} item{itemCount === 1 ? "" : "s"}
-                        </span>
+            {list.map((draft) => {
+              const { title, itemCount } = draftSummary(draft);
+              return (
+                <li key={draft.id}>
+                  <button
+                    type="button"
+                    onClick={() => resume(draft, scanPrompt)}
+                    className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-raised"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-navy">{title}</span>
+                      <span className="block text-xs text-navy/60">
+                        {itemCount} item{itemCount === 1 ? "" : "s"}
                       </span>
-                      <span className="shrink-0 text-xs font-semibold text-brand-600">Add</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="border-t border-surface-border px-5 py-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setScanPrompt(null);
-                  router.push(newOrderHref(scanPrompt));
-                }}
-                className="text-sm font-medium text-navy/70 hover:text-navy"
-              >
-                Start a new order instead
-              </button>
-            </div>
+                    </span>
+                    <span className="shrink-0 text-xs font-semibold text-brand-600">Add</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="border-t border-surface-border px-5 py-3">
+            <button
+              type="button"
+              onClick={() => {
+                setScanPrompt(null);
+                router.push(newOrderHref(scanPrompt));
+              }}
+              className="text-sm font-medium text-navy/70 hover:text-navy"
+            >
+              Start a new order instead
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   );

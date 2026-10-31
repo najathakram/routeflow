@@ -49,7 +49,7 @@ describe("DraftDock: add a scan to a parked draft", () => {
     burst("0123456789");
     expect(screen.getByText(PROMPT)).toBeInTheDocument();
     expect(screen.getByText("0123456789")).toBeInTheDocument();
-    const prompt = screen.getByText(PROMPT).closest("div")!.parentElement!;
+    const prompt = screen.getByRole("dialog", { name: PROMPT });
     fireEvent.click(within(prompt).getByRole("button", { name: /Acme/ }));
     expect(mockPush).toHaveBeenCalledTimes(1);
     const url = new URL(mockPush.mock.calls[0]![0] as string, "http://x.test");
