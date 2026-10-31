@@ -259,6 +259,23 @@ describe("SA-1067 M4: a capital letter at a desktop till goes to the scan box", 
     },
   );
 
+  it("L1: focus on a line button, the whole wedge code AB12345 reaches the scan box, and its Enter submits all of it", async () => {
+    const user = userEvent.setup();
+    const btn = await withButtonFocused();
+    expect(btn).toHaveFocus();
+    await user.keyboard("AB12345");
+    expect(scanField()).toHaveValue("AB12345"); // the letters are not lost, so 12345 alone is never what is submitted
+    expect(scanField()).toHaveFocus();
+  });
+
+  it("L1b: a capitals code that is a real item, typed from a button, is found and added by its Enter", async () => {
+    const user = userEvent.setup();
+    const btn = await withButtonFocused();
+    expect(btn).toHaveFocus();
+    await user.keyboard("CASE{Enter}");
+    await waitFor(() => expect(screen.getByLabelText("Set quantity of Case")).toHaveValue(2));
+  });
+
   it("L4: Caps Lock on, G then H on a plain button goes to the scan box and does not navigate", async () => {
     const push = jest.fn();
     const handler = createNavShortcutHandler({

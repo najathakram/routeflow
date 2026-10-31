@@ -422,7 +422,7 @@ export function CounterSaleScreen() {
       // (SA-1067 M4: a code that starts with a letter lost it, and its digits then matched a different item). While focus is inside the price history panel (a popover over
       // the till) any printable key but Space is a scan: the whole code, letters included, so its Enter never presses Use.
       // SA-1059: a touch-first device has no standing focus in the scan field, so a wedge's code that starts with a letter would
-      // lose it; there letters are routed too (a desktop stays digits only).
+      // lose it; there every letter is routed (a desktop routes digits and capitals only).
       const routed = document.activeElement?.closest("[data-anchored-popover]")
         ? /^\S$/
         : isTouchFirst()
