@@ -62,7 +62,14 @@ const base = (over: Partial<PriceHistoryResponse> = {}): PriceHistoryResponse =>
   ],
   summaries: [{ unitLabel: "Box", last: 25, low: 24, high: 25, qtySold: 4, currentAvgCost: null }],
   references: { listPrice: null, tierPrice: null, changeSinceLast: null },
-  aggregate: { low: 9, median: 11.5, high: 15, customers: 7, unitLabel: "Box" },
+  aggregate: {
+    low: 9,
+    median: 11.5,
+    high: 15,
+    customers: 7,
+    unitLabel: "Box",
+    newestMonth: "2026-09",
+  },
   comparison: [entry()],
   ...over,
 });
@@ -290,7 +297,7 @@ describe("the three lines look different by shape, not colour alone", () => {
     expect(1.05 / (lum + 0.05)).toBeGreaterThanOrEqual(3);
   });
 
-  it("a month the server withheld is a gap, never bridged; a lone month is a marker", async () => {
+  it("a month with no sale is crossed by one line, and every real month has a marker (W-1058 H-2.2)", async () => {
     serve(
       base({
         comparison: [
@@ -306,9 +313,9 @@ describe("the three lines look different by shape, not colour alone", () => {
     );
     const dialog = await open();
     await settled(dialog);
-    expect(line(dialog, "like").querySelector("polyline")).toBeNull();
-    expect(within(dialog).getAllByTestId("lone-like")).toHaveLength(2);
-    expect(within(dialog).getAllByTestId("lone-conv")).toHaveLength(1);
+    expect(line(dialog, "like").querySelectorAll("polyline")).toHaveLength(1);
+    expect(within(dialog).getAllByTestId("mark-like")).toHaveLength(2);
+    expect(within(dialog).getAllByTestId("mark-conv")).toHaveLength(1);
   });
 });
 
@@ -321,7 +328,7 @@ describe("a line that cannot draw says why (never a silent hide)", () => {
     expect(c).toHaveAttribute("aria-disabled", "true");
     expect(c).not.toBeDisabled();
     expect(c).toHaveAttribute("aria-pressed", "false");
-    const note = "All customers: no average for Box of 12 yet. It needs 3 other buyers in a month.";
+    const note = "All customers: nothing to compare in Box of 12 yet.";
     expect(within(dialog).getByText(note)).toBeInTheDocument();
     expect(c).toHaveAccessibleDescription(note);
     fireEvent.click(c);
@@ -334,9 +341,7 @@ describe("a line that cannot draw says why (never a silent hide)", () => {
     serve(base({ comparison: [entry({ likeForLike: [], converted: [] })] }));
     const dialog = await open();
     await settled(dialog);
-    expect(
-      within(dialog).getAllByText("No averages yet. Each needs 3 other buyers in a month."),
-    ).toHaveLength(1);
+    expect(within(dialog).getAllByText("Nothing to compare yet.")).toHaveLength(1);
     expect(chip(dialog, "like")).toHaveAttribute("aria-disabled", "true");
     expect(chip(dialog, "conv")).toHaveAttribute("aria-disabled", "true");
   });
@@ -380,7 +385,9 @@ describe("a line that cannot draw says why (never a silent hide)", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Price history" }));
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    expect(await within(dialog).findByText(/no average for Box of 12 yet/)).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText(/nothing to compare in Box of 12 yet/),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText("Not sold to this customer before.")).toBeInTheDocument();
   });
 
@@ -391,11 +398,7 @@ describe("a line that cannot draw says why (never a silent hide)", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Price history" }));
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    expect(
-      await within(dialog).findByText(
-        "There aren't enough sales to other customers to show an average yet.",
-      ),
-    ).toBeInTheDocument();
+    expect(await within(dialog).findByText("Nothing to compare yet.")).toBeInTheDocument();
   });
 
   it("the comparison request failed: line 1 stays, the legend says so with Retry", async () => {

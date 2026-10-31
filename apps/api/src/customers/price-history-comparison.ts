@@ -9,16 +9,44 @@ import type { PriceHistoryAveragePoint, PriceHistoryComparisonLine } from "@rout
  *    (`pricePerBaseUnit`, unrounded); each month's mean of those, re-expressed in the plot unit with ONE rounding
  *    (`priceInUnit`). This customer's lines count in the mean, never toward the floor.
  *
- * The floor, for both lines: a month backed by fewer than `minBuyers` distinct OTHER buyers is left out and never
- * bridged. A line whose pack cannot be read from the line is left out of line 3, never guessed (`salePackOf`).
- * Months are UTC calendar months ("YYYY-MM"). No customer id or name leaves this module.
+ * Every month with a value is drawn (W-1058 H-2.1): `minBuyers` is a parameter, 0 for normal staff, so line 2 carries any
+ * month with one other sale and line 3 also carries a month with only this customer's sales. Only months that have a sale
+ * are returned; an empty month is simply absent, never carried or filled in. An OPERATOR who can list neither orders nor
+ * invoices keeps a floor of `COMPARE_MIN_CUSTOMERS_NO_SALES_ACCESS` distinct OTHER buyers per month
+ * (`compareMinCustomers`), because that person cannot read those prices anywhere else. A line whose pack cannot be read
+ * from the line is left out of line 3, never guessed (`salePackOf`). Months are UTC calendar months ("YYYY-MM"). No
+ * customer id or name leaves this module.
  */
+
+/**
+ * The floor for an OPERATOR denied BOTH the ORDERS and FINANCE groups (W-1058 H-2.10): such a person can list neither
+ * orders nor invoices, so a month backed by fewer than this many distinct other buyers could expose one customer's price.
+ */
+export const COMPARE_MIN_CUSTOMERS_NO_SALES_ACCESS = 3;
+
+/**
+ * The floor on lines and panel for this caller, decided on the server (the client is never trusted). Pure: the controller
+ * reads the denials (`operatorDeniedGroups`) and passes them in. TENANT_ADMIN and SUPER_ADMIN have none; an OPERATOR has
+ * `COMPARE_MIN_CUSTOMERS_NO_SALES_ACCESS` when both ORDERS and FINANCE are denied, else none. Fails CLOSED: an OPERATOR
+ * whose denials were not read (`undefined`), and any other or missing role, gets the floor.
+ */
+export function compareMinCustomers(
+  role: string | null | undefined,
+  deniedGroups: readonly string[] | undefined,
+): number {
+  if (role === "TENANT_ADMIN" || role === "SUPER_ADMIN") return 0;
+  if (role === "OPERATOR" && deniedGroups) {
+    const noSalesAccess = deniedGroups.includes("ORDERS") && deniedGroups.includes("FINANCE");
+    return noSalesAccess ? COMPARE_MIN_CUSTOMERS_NO_SALES_ACCESS : 0;
+  }
+  return COMPARE_MIN_CUSTOMERS_NO_SALES_ACCESS;
+}
 export interface ComparisonSale {
   /** The line's unit price (before discounts and free units), as the history rows show it. */
   price: number;
   /** Who bought it: used only to count DISTINCT buyers, never returned. */
   buyer: string;
-  /** This customer's own line: counted in line 3's mean, never toward a floor, never in line 2. */
+  /** This customer's own line: counted in line 3's mean (and drawn there in a month of its own), never toward a floor, never in line 2. */
   own: boolean;
   month: string;
   unitLabel: string;

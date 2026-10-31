@@ -78,11 +78,11 @@ export const NOTE_IDS = {
 
 export const NOTE_COPY = {
   neverSold: "Not sold to this customer before.",
-  neverSoldNoAverages: "There aren't enough sales to other customers to show an average yet.",
-  noAverages: "No averages yet. Each needs 3 other buyers in a month.",
-  likeEmpty: (unit: string) =>
-    `All customers: no average for ${unit} yet. It needs 3 other buyers in a month.`,
-  convEmpty: "All units: no average yet. It needs 3 other buyers in a month.",
+  // W-1058 H-2.9: no note claims a floor of 3; "Nothing to compare yet." stays true for the staff who do have one.
+  neverSoldNoAverages: "Nothing to compare yet.",
+  noAverages: "Nothing to compare yet.",
+  likeEmpty: (unit: string) => `All customers: nothing to compare in ${unit} yet.`,
+  convEmpty: "All units: nothing to compare yet.",
   unavailable: "Averages aren't available.",
   loading: "Loading averages…",
   failed: "Couldn't load the averages.",
