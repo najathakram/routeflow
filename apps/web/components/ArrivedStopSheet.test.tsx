@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ArrivedStopSheet } from "./ArrivedStopSheet";
 
 /**
- * B966: "New order at door" (→ /orders?action=new) and "Collect payment" (→ /finance/payments)
+ * B966: "New order at door" (→ /orders?action=new&builder=1) and "Collect payment" (→ /finance/payments)
  * both land on routes a pure DRIVER is bounced off (RouteGuard DRIVER_ALLOWED = /dashboard,
  * /routes, /settings): dead ends. Drivers place and collect in the native app. Both tiles are
  * hidden for a DRIVER, and so is "Adjust order" (it goes to /orders/:id, bounced the same way);
@@ -69,7 +69,7 @@ describe("ArrivedStopSheet role gating (B966)", () => {
   it("staff navigation is unchanged", () => {
     open();
     fireEvent.click(screen.getByText("New order at door"));
-    expect(push).toHaveBeenCalledWith("/orders?action=new");
+    expect(push).toHaveBeenCalledWith("/orders?action=new&builder=1");
     fireEvent.click(screen.getByText("Collect payment"));
     expect(push).toHaveBeenCalledWith("/finance/payments");
   });

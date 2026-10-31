@@ -61,6 +61,7 @@ import {
   undoPendingTap,
   type DerivedBaseMarker,
   type SellLevel,
+  mayCompleteAtCounter,
 } from "@routeflow/pricing";
 import {
   applyTypedPrice,
@@ -117,7 +118,7 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, COUNTER_COPY, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
@@ -695,9 +696,14 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
-  // W-1043: Store pickup in the regular order. Offered when the business has PICKUP and the till is allowed (the API
-  // refuses PICKUP otherwise); POS mode and a store-only business keep their own switch and behaviour.
-  const storePickupOffered = posAllowed && staffFulfilment.methods.includes("PICKUP");
+  // W-1043: Pickup later in the regular order. Offered where the store hands over and the till is allowed (the API refuses
+  // PICKUP otherwise), so an optional counter gets it too (SA-1069 A-3); POS mode and a store-only business keep their own
+  // switch and behaviour.
+  const storePickupOffered = mayCompleteAtCounter({
+    mayUseTill: posAllowed,
+    methods: staffFulfilment.methods,
+    counter: staffFulfilment.counter,
+  });
   const isPickup = posMode || (storePickupOffered && fulfillPath === "PICKUP");
   // pickForm only knows ROUTE | SHIP (it would turn a PICKUP into SHIP), so PICKUP is carried here, only where it is offered.
   const pickPath = (p?: string | null): FormValues["fulfillPath"] =>
@@ -3276,7 +3282,7 @@ export function CreateOrderModal({
                           : "text-navy/70 hover:text-navy",
                       )}
                     >
-                      Store pickup
+                      {COUNTER_COPY.pickupLater}
                     </button>
                   )}
                 </div>
