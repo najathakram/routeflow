@@ -124,6 +124,31 @@ describe("SA-1071 I2: a server refusal names the problem, once", () => {
   });
 });
 
+describe("SA-1071 I4a: a tap selects the price, so a retype replaces it", () => {
+  const mouseUp = () => {
+    const up = new MouseEvent("mouseup", { bubbles: true, cancelable: true });
+    priceInput().dispatchEvent(up);
+    return up;
+  };
+
+  it("keeps the selection through the mouse-up of the tap that focused it", () => {
+    mount();
+    type(priceInput(), "999.99");
+    const select = jest.spyOn(priceInput(), "select");
+    fireEvent.focus(priceInput());
+    expect(mouseUp().defaultPrevented).toBe(true);
+    expect(select).toHaveBeenCalledTimes(2);
+  });
+
+  it("guard: a later tap in the focused field places the cursor as usual", () => {
+    mount();
+    type(priceInput(), "999.99");
+    fireEvent.focus(priceInput());
+    mouseUp();
+    expect(mouseUp().defaultPrevented).toBe(false);
+  });
+});
+
 describe("SA-1071 I3: a client failure names the field", () => {
   const unitsInput = () => screen.getByPlaceholderText("e.g. 12 (optional)") as HTMLInputElement;
 

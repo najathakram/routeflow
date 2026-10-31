@@ -87,6 +87,7 @@ export function InlineCreateProductModal({
   const nameRef = React.useRef<HTMLInputElement>(null);
   const priceRef = React.useRef<HTMLInputElement>(null);
   const unitsRef = React.useRef<HTMLInputElement>(null);
+  const priceJustFocused = React.useRef(false);
   const unitId = React.useId();
   const nameErrId = React.useId();
   const unitErrId = React.useId();
@@ -465,8 +466,21 @@ export function InlineCreateProductModal({
                   setForm((f) => ({ ...f, pricePerUnit: e.target.value }));
                   setFieldErrors((x) => ({ ...x, price: undefined }));
                 }}
-                // SA-1071 I4: the retype is one step, not select-then-type
-                onFocus={(e) => e.currentTarget.select()}
+                // SA-1071 I4: the retype is one step, not select-then-type. On WebKit the mouse-up of the tap that gave
+                // focus clears the selection, so that one mouse-up keeps it; a later tap places the cursor as usual.
+                onFocus={(e) => {
+                  e.currentTarget.select();
+                  priceJustFocused.current = true;
+                }}
+                onBlur={() => {
+                  priceJustFocused.current = false;
+                }}
+                onMouseUp={(e) => {
+                  if (!priceJustFocused.current) return;
+                  priceJustFocused.current = false;
+                  e.preventDefault();
+                  e.currentTarget.select();
+                }}
                 aria-invalid={priceError ? true : undefined}
                 aria-describedby={priceError || priceHint || priceCheck ? priceNoteId : undefined}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
