@@ -91,6 +91,7 @@ import {
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
+  GENERATE_INVOICE_ID,
   posMoveOptions,
 } from "./_components/PosOrderActions";
 import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
@@ -2035,6 +2036,7 @@ export default function OrderDetailPage() {
                           No invoice has been generated for this order.
                         </p>
                         <Button
+                          id={GENERATE_INVOICE_ID}
                           size="sm"
                           variant={createInvoiceVariant(localStatus, isEditing, isPos)}
                           className="w-full justify-center"

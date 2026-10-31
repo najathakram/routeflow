@@ -26,6 +26,16 @@ type PosOrder = Pick<Order, "invoices"> & { fulfillPath?: string | null };
 /** A VOID invoice is not an invoice for the order's purposes (no step done, nothing to pay or print). */
 const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.status !== "VOID");
 
+/** The Invoice card's Generate Invoice button, which the Invoice step in the progress row takes you to (SA-1066 F01). */
+export const GENERATE_INVOICE_ID = "generate-invoice-button";
+
+function goToGenerateInvoice() {
+  const target = document.getElementById(GENERATE_INVOICE_ID);
+  if (!target) return;
+  target.scrollIntoView({ block: "center" });
+  target.focus({ preventScroll: true });
+}
+
 /**
  * POS-mode order page (SA-763r P-2): Confirmed -> Invoice (draft) -> Handed over. There is no Out-for-delivery
  * step: hand-over IS the completion. The invoice step reads "(draft)" only while a draft invoice exists; with no
@@ -77,7 +87,15 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
         >
           {s.done && <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />}
           {i === current && <Circle className="h-3 w-3" aria-hidden />}
-          {s.label}
+          {s.key === "invoice" && !s.done ? (
+            // F01: no invoice yet, so the step is the way to the card's Generate Invoice button. The padding is the
+            // 44 pt tap area; the negative margin keeps the pill's own height.
+            <button type="button" onClick={goToGenerateInvoice} className="-my-3 py-3 underline">
+              {s.label}
+            </button>
+          ) : (
+            s.label
+          )}
           {s.done && <span className="sr-only"> (completed)</span>}
           {i === current && <span className="sr-only"> (next step)</span>}
         </li>
