@@ -130,7 +130,12 @@ export const INLINE_RETURN_ERROR_CODES = {
 
 /** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
 export const ALREADY_RETURNED_HOLD_REASON = "ALREADY_RETURNED";
-const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
+/**
+ * SA-1060 PR-1: the holds staff can approve or reject. This is the api's one list (a VALUE import of @routeflow/types crashes the
+ * compiled api at boot, so it cannot read the shared copy); the approval screen reads `INLINE_HOLD_REASONS` from @routeflow/types,
+ * and inline-hold-reasons.shared.spec.ts pins the two set-equal.
+ */
+export const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
 const isInlineHold = (reason: string | null | undefined): boolean =>
   reason != null && (INLINE_HOLD_REASONS as readonly string[]).includes(reason);
 
@@ -1281,7 +1286,7 @@ export class InlineReturnsService {
       return this.withParkedReversals(current);
     }
     if (pre.status !== "RECEIVED" || !isInlineHold(pre.holdReason) || pre.creditNoteId) {
-      throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
+      throw new BadRequestException("Only a return awaiting approval can be approved");
     }
     const heldAmountPre = roundMoney(Number(pre.heldAmount ?? 0));
     const requestedPre = dto?.amount != null ? roundMoney(dto.amount) : heldAmountPre;
@@ -1793,7 +1798,7 @@ export class InlineReturnsService {
       data: { status: "REJECTED", approvedById: user.sub, approvedAt: new Date() },
     });
     if (claimed.count === 0) {
-      throw new BadRequestException("Only a driver-cap hold awaiting approval can be rejected");
+      throw new BadRequestException("Only a return awaiting approval can be rejected");
     }
     return this.prisma.forTenant().return.findUnique({ where: { id }, include: { items: true } });
   }
