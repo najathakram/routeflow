@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Eye, EyeOff, History } from "lucide-react";
+import { Eye, EyeOff, History, X } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { AnchoredPopover } from "@/components/AnchoredPopover";
 import {
@@ -14,9 +14,11 @@ import {
   type PriceSummaryEntry,
 } from "@/lib/api/price-history";
 import { fmt } from "@/lib/formatting";
+import { countNoun } from "@/lib/plural";
 import { PriceHistoryChart } from "@/components/price-history/PriceHistoryChart";
 import {
   buildChartModel,
+  monthLabel,
   NOTE_COPY,
   NOTE_IDS,
   type ComparisonState,
@@ -85,6 +87,20 @@ function Skeleton() {
   );
 }
 
+/** Close at every width (44px under sm); AnchoredPopover has no close of its own. Behaves as Escape. */
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close price history"
+      onClick={onClose}
+      className="absolute -right-2 -top-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy sm:-right-1 sm:-top-1 sm:min-h-6 sm:min-w-6"
+    >
+      <X className="h-4 w-4" aria-hidden />
+    </button>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
@@ -96,6 +112,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function PanelBody({
   data,
+  chartRows,
   productName,
   customerName,
   unitHint,
@@ -107,9 +124,12 @@ function PanelBody({
   onCompareChange,
   onCompareRetry,
   onUse,
+  onClose,
   keyRef,
 }: {
   data: PriceHistoryResponse;
+  /** This customer's rows for the chart: the compare query's (up to 100), once ready; the table keeps `data.rows` (25). */
+  chartRows?: PriceHistoryRow[];
   productName: string;
   customerName?: string | null;
   unitHint?: string | null;
@@ -125,6 +145,8 @@ function PanelBody({
   onCompareChange: (on: boolean) => void;
   onCompareRetry: () => void;
   onUse: (price: number) => void;
+  /** The header's close button: it behaves as Escape (focus returns to the trigger). */
+  onClose: () => void;
   /** The panel's key handler, handed up so the popover SHELL (where focus really lands) can call it: a key pressed on a parent never reaches a child's handler. */
   keyRef: React.MutableRefObject<((e: React.KeyboardEvent) => void) | null>;
 }) {
@@ -157,6 +179,10 @@ function PanelBody({
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
     [data.rows, unit],
   );
+  const plotRows = React.useMemo(
+    () => (chartRows ?? data.rows).filter((r) => sameUnit(r.unitLabel, unit)),
+    [chartRows, data.rows, unit],
+  );
   const summary: PriceHistorySummary | undefined = data.summaries.find((s) =>
     sameUnit(s.unitLabel, unit),
   );
@@ -170,12 +196,12 @@ function PanelBody({
     () =>
       buildChartModel({
         unit,
-        rows,
+        rows: plotRows,
         comparison: data.comparison,
         comparisonState,
         panelOpen: compare,
       }),
-    [unit, rows, data.comparison, comparisonState, compare],
+    [unit, plotRows, data.comparison, comparisonState, compare],
   );
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
@@ -224,7 +250,8 @@ function PanelBody({
 
   return (
     <div ref={bodyRef} tabIndex={-1} className="space-y-2 text-xs outline-none">
-      <div>
+      <div className="relative pr-11 sm:pr-7">
+        <CloseButton onClose={onClose} />
         <p className="text-sm font-semibold text-navy">
           Price history · {data.productName || productName}
         </p>
@@ -311,7 +338,9 @@ function PanelBody({
                 <Stat label="High" value={money(agg.high)} />
               </div>
               <p className="mt-1 text-[10px] text-navy/50">
-                Other customers, {agg.customers} in all. Names are never shown.
+                {countNoun(agg.customers, "other customer")}
+                {agg.newestMonth && `, 6 months to ${monthLabel(agg.newestMonth)}`}. Names are never
+                shown.
               </p>
             </>
           ) : compareError ? (
@@ -500,7 +529,8 @@ function Panel({
   // average line, which the chart always draws). Both leave the order being edited out of the history
   // (hunt2 F6).
   const q = usePriceHistory(customerId, productId, true, 25, excludeOrderId);
-  const cmp = usePriceHistory(customerId, productId, true, 25, excludeOrderId, true);
+  // The compare query also carries this customer's rows up to the API's cap (100) for the chart's own line (W-1058 H-2.7).
+  const cmp = usePriceHistory(customerId, productId, true, 100, excludeOrderId, true);
   const shown = q.data
     ? { ...q.data, aggregate: cmp.data?.aggregate ?? null, comparison: cmp.data?.comparison }
     : undefined;
@@ -520,7 +550,8 @@ function Panel({
       {q.isLoading ? (
         <Skeleton />
       ) : q.isError || !shown ? (
-        <div role="alert" className="space-y-2 text-xs text-navy">
+        <div role="alert" className="relative space-y-2 pr-11 text-xs text-navy sm:pr-7">
+          <CloseButton onClose={() => onClose("escape")} />
           <p className="text-sm font-semibold">Price history · {productName}</p>
           <p>Couldn&apos;t load price history.</p>
           <button
@@ -536,6 +567,7 @@ function Panel({
       ) : (
         <PanelBody
           data={shown}
+          chartRows={cmp.data?.rows}
           productName={productName}
           customerName={customerName}
           unitHint={unitHint}
@@ -550,6 +582,7 @@ function Panel({
             onUsePrice(price);
             onClose("use");
           }}
+          onClose={() => onClose("escape")}
           keyRef={keyRef}
         />
       )}

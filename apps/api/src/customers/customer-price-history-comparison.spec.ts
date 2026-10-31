@@ -9,8 +9,9 @@ import { COMPARE_INVOICE_CAP, CustomerPriceHistoryService } from "./customer-pri
  *  - likeForLike (line 2): OTHER customers' lines in the plot unit's name AND pack, monthly mean of the line price;
  *  - converted (line 3): ALL customers' lines with a known pack, in any unit, monthly per-base mean re-expressed in the
  *    plot unit with ONE rounding (F6: 25.11 per Box of 12, never the round-first 25.08).
- * Floor: at least 3 distinct OTHER buyers in the month, for both lines (this customer's lines count in line 3's mean, never
- * toward its floor). A line whose pack cannot be read is left out, never guessed. The plot units come from this
+ * Floor, for an OPERATOR denied ORDERS and FINANCE (W-1058 H-2.10; every other caller has none, see
+ * customer-price-history-curve.spec.ts): at least 3 distinct OTHER buyers in the month, for both lines (this customer's
+ * lines count in line 3's mean, never toward its floor). A line whose pack cannot be read is left out, never guessed. The plot units come from this
  * customer's own rows; with none, the summary unit. `aggregate` stays other-customers-only.
  */
 const PRODUCT = {
@@ -86,10 +87,16 @@ describe("customer price history: comparison (SA-954)", () => {
   /** `own`: this customer's history read; `all`: the compare read (every customer, this one included). */
   const world = (own: unknown[], all: unknown[]) =>
     prisma.invoice.findMany.mockImplementation(async (args: any) =>
-      args.where.issueDate ? all : own,
+      args.where.customerId ? own : all,
     );
+  // These specs pin the FLOOR of 3 distinct other buyers, which is now the rule for an OPERATOR denied both ORDERS and
+  // FINANCE only (W-1058 H-2.10); customer-price-history-curve.spec.ts pins normal staff, who have no floor.
   const run = () =>
-    service.getHistory("c1", "p1", { role: UserRole.OPERATOR, compare: "all" }) as Promise<any>;
+    service.getHistory("c1", "p1", {
+      role: UserRole.OPERATOR,
+      compare: "all",
+      deniedGroups: ["ORDERS", "FINANCE"],
+    }) as Promise<any>;
   const entry = (r: any, label: string, pack: number | null) =>
     (r.comparison ?? []).find((e: any) => e.unitLabel === label && e.unitsPerBox === pack);
 
@@ -234,7 +241,7 @@ describe("customer price history: comparison (SA-954)", () => {
       ];
       let taken = -1;
       prisma.invoice.findMany.mockImplementation(async (args: any) => {
-        if (!args.where.issueDate) return [mine];
+        if (args.where.customerId) return [mine];
         taken = args.take;
         return [...crowd, ...others].slice(0, args.take); // the db's newest-first take
       });
@@ -247,6 +254,7 @@ describe("customer price history: comparison (SA-954)", () => {
         high: 2.3,
         customers: 3,
         unitLabel: "pc",
+        newestMonth: "2026-09",
       });
       const e = entry(r, "pc", null);
       expect(e.likeForLike).toEqual([{ month: "2026-09", average: 2.2 }]);
@@ -258,7 +266,7 @@ describe("customer price history: comparison (SA-954)", () => {
       const mine = sale("c1", piece(2), "28");
       const crowd = Array.from({ length: COMPARE_INVOICE_CAP }, () => sale("c1", piece(2), "28"));
       prisma.invoice.findMany.mockImplementation(async (args: any) =>
-        args.where.issueDate ? crowd.slice(0, args.take) : [mine],
+        args.where.customerId ? [mine] : crowd.slice(0, args.take),
       );
       const r = await run();
       expect(r.aggregate).toBeNull();
@@ -319,7 +327,7 @@ describe("customer price history: comparison (SA-954)", () => {
         unitLabel: "pc",
       });
       expect(Object.keys(r.aggregate).sort()).toEqual(
-        ["customers", "high", "low", "median", "unitLabel"].sort(),
+        ["customers", "high", "low", "median", "newestMonth", "unitLabel"].sort(),
       );
     });
 
@@ -341,17 +349,15 @@ describe("customer price history: comparison (SA-954)", () => {
       );
     });
 
-    it("one compare read, tenant-scoped, over the 180-day window, with no customer filter", async () => {
+    it("one compare read, tenant-scoped, with no customer filter and no date bound (W-1058 H-2.5)", async () => {
       world([], []);
       await run();
       const call = prisma.invoice.findMany.mock.calls
         .map((c: any[]) => c[0])
-        .find((a: any) => a.where.issueDate);
+        .find((a: any) => !a.where.customerId);
       expect(call.where.tenantId).toBe("test-tenant");
       expect(call.where.customerId).toBeUndefined();
-      const days = (Date.now() - call.where.issueDate.gte.getTime()) / 86_400_000;
-      expect(days).toBeGreaterThan(179.9);
-      expect(days).toBeLessThan(180.1);
+      expect(call.where.issueDate).toBeUndefined();
       expect(prisma.invoice.findMany).toHaveBeenCalledTimes(2);
     });
 
