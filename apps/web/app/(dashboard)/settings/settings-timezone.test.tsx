@@ -180,4 +180,17 @@ describe("Settings: time zone", () => {
     expect(value.tagName).toBe("DD");
     expect(value.previousElementSibling).toHaveTextContent("Time zone");
   });
+
+  it("Z-12: the help line says the zone is not set yet on UTC, and not on Chicago", async () => {
+    const NOT_SET = "Not set yet. Dates use UTC until you pick your city.";
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: { ...SAVED, timezone: "UTC" } });
+    const first = renderWithProviders(<SettingsPage />);
+    expect(await screen.findByText(NOT_SET)).toBeInTheDocument();
+    first.unmount();
+    (apiClient.get as jest.Mock).mockResolvedValue({ data: SAVED });
+    renderWithProviders(<SettingsPage />);
+    await screen.findByLabelText("Time zone");
+    await waitFor(() => expect(screen.getByLabelText("Time zone")).toHaveValue("America/Chicago"));
+    expect(screen.queryByText(NOT_SET)).toBeNull();
+  });
 });

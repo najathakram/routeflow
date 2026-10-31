@@ -23,6 +23,14 @@ export function useTenantTimeZoneQuery(enabled = true) {
   };
 }
 
+/**
+ * SA-1067 Z4: "UTC" is the fallback the API writes when nobody picked a zone (`FALLBACK_ZONE`), so it is the one value that
+ * means "not set yet". An unknown zone (still loading, or none sent) is NOT unset: nothing should flash before /settings answers.
+ */
+export function isZoneUnset(zone: string | undefined): boolean {
+  return zone === "UTC";
+}
+
 export function useTenantTimeZone(enabled = true): string | undefined {
   return useTenantTimeZoneQuery(enabled).zone;
 }
