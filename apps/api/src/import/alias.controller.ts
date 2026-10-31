@@ -6,11 +6,13 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { ProductAliasService } from "./product-alias.service";
 import { CreateAliasDto } from "./dto/create-alias.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * Manage learned line-text → product/expense-category aliases (spec §5.3). Lets
  * an operator review and correct what the batch importer has learned.
  * TENANT_ADMIN satisfies @Roles(OPERATOR).
  */
+@RequirePermission("CATALOG")
 @Controller("import/aliases")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)

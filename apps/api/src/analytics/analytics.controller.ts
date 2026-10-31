@@ -8,7 +8,9 @@ import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { AnalyticsService } from "./analytics.service";
 import { DEMAND_RANGES, isDemandRange } from "./demand-range";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // All 16 endpoints on this controller are analytics-only (no DRIVER/CUSTOMER traffic).
+@RequirePermission("REPORTS")
 @Controller("analytics")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
@@ -125,6 +127,7 @@ export class AnalyticsController {
     return this.analyticsService.getPriceHistory(id);
   }
 
+  @RequirePermission("REPORTS", "PRICING")
   @Get("cost-history/:productId")
   getCostHistory(@Param("productId") id: string) {
     return this.analyticsService.getCostHistory(id);

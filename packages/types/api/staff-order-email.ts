@@ -1,7 +1,7 @@
 // WS4 (SA-606) — the tenant-visible staff order-email setting: `GET/PUT /messaging/staff-email-settings`.
 // TENANT_ADMIN writes, OPERATOR reads (addresses masked `j***@host`). `effectiveMode` is READ-ONLY:
-// it is min(platform env STAFF_ORDER_EMAIL, the policy term) — a tenant cannot choose it, so the UI
-// shows a status line, never an off/dark/on radio. The per-user opt-outs are the preferences
+// it is min(platform env STAFF_ORDER_EMAIL, the policy term). The tenant's own choice is `policyMode`
+// (SA-1063): the admin switches it on or off with `mode`; "dark" is never offered, it is the default. The per-user opt-outs are the preferences
 // `staffOrderEmail` / `staffBuyerChangeEmail` ("true" | "false", absent = on), owned by
 // users/me/preferences, not by this endpoint.
 
@@ -15,10 +15,17 @@ export interface StaffEmailSettings {
   /** The optional extra recipients ("Also send to"); masked for an OPERATOR. */
   staffCc: string[];
   effectiveMode: StaffOrderEmailMode;
+  /** The tenant's saved choice (policy `notifications.staffOrderEmail`), whatever the platform ceiling says. */
+  policyMode: StaffOrderEmailMode;
+  /** TENANT_ADMIN only: the addresses the emails go to today (active admins plus "Also send to"). */
+  recipients?: string[];
 }
 
 export interface UpdateStaffEmailSettingsRequest {
-  staffCc: string[];
+  /** Replaces the "Also send to" list. Omit to leave it as it is (when `mode` is sent). */
+  staffCc?: string[];
+  /** The tenant's switch: "on" or "off". Written as an audited policy value. */
+  mode?: "on" | "off";
 }
 
 /** `details.reason` of the 400 `STAFF_CC_INVALID`. */

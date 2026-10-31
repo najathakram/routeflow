@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Info, Pencil } from "lucide-react";
 import { Badge, Card, useToast } from "@routeflow/ui/web";
-import type { NotificationAudience } from "@routeflow/types";
+import { STAFF_ORDER_EMAIL_KIND_VALUES, type NotificationAudience } from "@routeflow/types";
 import {
   useToggleRule,
   type MatrixCell,
@@ -49,6 +49,9 @@ const AUDIENCE_LABEL: Record<NotificationAudience, string> = {
   CUSTOMER: "Your customer",
   STAFF: "Your team",
 };
+
+/** The events the Customer order emails card switches (SA-1063); the rules matrix never lists or promises them. */
+const CUSTOMER_ORDER_EMAIL_EVENTS: ReadonlySet<string> = new Set(STAFF_ORDER_EMAIL_KIND_VALUES);
 
 const GROUP_TITLE: Record<NotificationAudience, string> = {
   CUSTOMER: "Emails to your customers",
@@ -109,7 +112,11 @@ export function NotificationRulesCard({
   if (!status) return null;
 
   const triggered = data.events.filter((e) => e.hasTrigger);
-  const comingSoon = data.events.filter((e) => !e.hasTrigger);
+  // SA-1063: the three customer-order emails to the office are sent from the order routes, not from a trigger, and
+  // their switch is the Customer order emails card, so "Coming soon" must not list them.
+  const comingSoon = data.events.filter(
+    (e) => !e.hasTrigger && !CUSTOMER_ORDER_EMAIL_EVENTS.has(e.eventKey),
+  );
   const hasInternal = triggered.some((e) => e.channels.some((c) => c.channel === "INTERNAL"));
 
   // Channels that can show a switch: live ones and set-up-pending ones (muted). Never "not built".
@@ -315,7 +322,20 @@ export function NotificationRulesCard({
             </ul>
           ) : (
             <p className="mt-1 text-xs text-navy/70">
-              Your team isn&apos;t emailed about orders yet — coming soon.
+              {isAdmin ? (
+                <>
+                  Set these in{" "}
+                  <a
+                    href="#customer-order-emails"
+                    className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                  >
+                    Customer order emails
+                  </a>
+                  , below.
+                </>
+              ) : (
+                "An administrator sets these."
+              )}
             </p>
           )}
         </section>

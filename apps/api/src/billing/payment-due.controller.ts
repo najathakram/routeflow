@@ -18,6 +18,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { PaymentDuePayDto } from "./dto/payment-due-pay.dto";
 import { PaymentDueService } from "./payment-due.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 interface AuthUser {
   tenantId: string | null;
 }
@@ -29,6 +30,7 @@ interface AuthUser {
  * allow-list (read-only-registry.ts): a read-only tenant has no payment due here (the planner refuses a tenant that is
  * not ACTIVE) and the guard refuses the POST; making billing read-only payable is a separate row.
  */
+@PermissionBase("staff banner (row 542), SA-977")
 @ApiTags("billing")
 @ApiBearerAuth()
 @Controller("billing/payment-due")

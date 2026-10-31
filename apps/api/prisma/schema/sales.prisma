@@ -900,8 +900,8 @@ model OrderItem {
   recipeVersion              Int?
   // Scan/insertion order within the order (0-based). Set from the client's item
   // array index at create and preserved/appended on edit, so line display matches
-  // the order items were scanned/added (the invoice already reads in insertion
-  // order). Nullable: legacy rows (pre-migration) and merge/change-request appends
+  // the order items were scanned/added. The receipt and the packing slip read
+  // position, then createdAt, then id (SA-1067 C3). Nullable: legacy rows (pre-migration) and merge/change-request appends
   // leave it null and sort LAST (Postgres NULLS LAST for ASC).
   position                   Int?
   // SA-714 R1 (out-of-stock PR3): PIECES of this line that were sold past available stock

@@ -25,6 +25,7 @@ import {
   ProductSalesQueryDto,
 } from "./dto/product-insights-query.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /** A refused window or a forged cursor is the caller's mistake: 400, never 500. */
 function asHttp(err: unknown): unknown {
   if (err instanceof InsightWindowError || err instanceof InvalidLineCursorError) {
@@ -51,6 +52,7 @@ function drainedOrClosed(res: Response): Promise<void> {
  * `/analytics/*` route (plan A8): the guard trio, OPERATOR (TENANT_ADMIN satisfies it through
  * `ROLE_SATISFIES`) and the dark `flag.analytics`; no buyer access.
  */
+@RequirePermission("REPORTS")
 @Controller("analytics/products")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)

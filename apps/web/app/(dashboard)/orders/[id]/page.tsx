@@ -95,6 +95,7 @@ import {
 } from "./_components/PosOrderActions";
 import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
+import { ReopenDeliveredTier } from "./_components/ReopenDeliveredTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { OrderStaffFlags } from "./_components/OrderStaffFlags";
@@ -1312,22 +1313,10 @@ export default function OrderDetailPage() {
               special-cased UI needed here. */}
           {access.staff && localStatus === "DELIVERED" && (
             <>
-              <ActionTier tier="secondary">
-                <div className="flex flex-col items-start gap-1">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    leftIcon={<RotateCcw className="h-4 w-4" />}
-                    onClick={() => setDemoteTarget("CONFIRMED")}
-                  >
-                    Reopen order
-                  </Button>
-                  <p className="text-[11px] text-navy/50">
-                    Reopening keeps the invoice in sync while you edit. Orders delivered on a route
-                    reopen at their original stop.
-                  </p>
-                </div>
-              </ActionTier>
+              <ReopenDeliveredTier
+                locked={!!order.editItemsLocked}
+                onReopen={() => setDemoteTarget("CONFIRMED")}
+              />
               <ActionTier tier="danger">
                 {renderDeleteOrderAction(
                   "Delete this delivered order? Its delivery record is removed permanently.",

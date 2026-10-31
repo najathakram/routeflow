@@ -10,16 +10,19 @@ import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductUnitsService } from "./product-units.service";
 import { CreateProductUnitDto, UpdateProductUnitDto } from "./dto/product-unit.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Multi-level units (units_v1). The whole surface is plan-flag gated: a tenant without
  * `flag.units_v1` gets the structured PLAN_GATE 403, and no product ever grows a level.
  */
+@RequirePermission("CATALOG")
 @Controller("products/:productId/units")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.units_v1")
 export class ProductUnitsController {
   constructor(private readonly units: ProductUnitsService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   list(@Param("productId") productId: string) {

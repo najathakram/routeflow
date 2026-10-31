@@ -27,10 +27,12 @@ import { UpdateCreditNoteDto } from "./dto/update-credit-note.dto";
 import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
 import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // WP5b (R3b.3, R3b.5): flag.credit_notes ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
 // PLAN_FLAG_ENFORCEMENT switch flips on. Per-handler RolesGuard/@Roles stays as-is —
 // not moved to the class level.
+@RequirePermission("FINANCE")
 @Controller("credit-notes")
 @UseGuards(JwtAuthGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.credit_notes")

@@ -8,6 +8,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RestrictionsSettingsService } from "./restrictions-settings.service";
 import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dto";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 // Reads OPERATOR; the switch, the address policy and the readiness sweep are TENANT_ADMIN
 // (SUPER_ADMIN satisfies it via the RolesGuard hierarchy; OPERATOR gets 403).
 @Controller("settings/restrictions")
@@ -15,6 +16,7 @@ import { UpdateRestrictionsSettingsDto } from "./update-restrictions-settings.dt
 export class RestrictionsSettingsController {
   constructor(private readonly settings: RestrictionsSettingsService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR)
   get() {

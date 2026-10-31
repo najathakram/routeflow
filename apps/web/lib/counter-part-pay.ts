@@ -13,6 +13,19 @@ interface PartPayInput {
   tendered: number;
 }
 
+/**
+ * SA-1067 A-3: what a typed tender must look like to count as money: digits with at most two decimals (`20`, `20.`, `20.50`,
+ * `.5`). Anything else (`28.004011`, `28.4011`, `3E1`, `10.005`, `5,00`, `-5`) is text a scanner or a slip left in the field,
+ * and it reads as no tender at all, so the short-tender refusal stops it instead of a garbled figure being posted.
+ */
+export const PLAIN_MONEY = /^(\d+\.?\d{0,2}|\.\d{1,2})$/;
+
+/** The one reader of a typed tender: the number when the text is plain money, else 0 (nothing tendered). */
+export function tenderAmount(text: string): number {
+  const raw = text.trim();
+  return PLAIN_MONEY.test(raw) ? Number(raw) : 0;
+}
+
 /** True when `tendered` is a real part payment of `total`: more than a cent's worth of nothing, and less than all of it. */
 function isPart(total: number, tendered: number): boolean {
   const paid = roundMoney(tendered);
@@ -108,7 +121,7 @@ export const PART_PAY_CREDIT_PENDING_COPY =
 
 /**
  * An identified customer's CHECK or CARD "Amount paying now" that is typed but is not a positive plain number ("0", "-5",
- * "5,00", "abc") is refused: read as zero it would silently become a FULL payment. Blank (or spaces) is the one way to say
+ * "5,00", "abc", "10.4011" once a scanned code lands after the point) is refused: read as zero it would silently become a FULL payment. Blank (or spaces) is the one way to say
  * "pay in full". With `total`, an amount strictly above it is refused too (exactly the total is a full payment). Applies to nothing else (cash has its own rule; a walk-in has no such field).
  */
 export function partPayAmountProblem(input: {
@@ -122,7 +135,7 @@ export function partPayAmountProblem(input: {
   if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
   const raw = input.tendered.trim();
   if (raw === "") return null;
-  const plain = /^(\d+\.?\d*|\.\d+)$/.test(raw);
+  const plain = PLAIN_MONEY.test(raw);
   if (!plain || !(Number(raw) > 0)) return PART_PAY_AMOUNT_COPY;
   if (input.total !== undefined && roundMoney(Number(raw)) > roundMoney(input.total)) {
     return PART_PAY_OVER_TOTAL_COPY;

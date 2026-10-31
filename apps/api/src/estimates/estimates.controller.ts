@@ -11,9 +11,11 @@ import { ConvertEstimateDto } from "./dto/convert-estimate.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // WP5a (R3b.3, R3b.5): flag.estimates ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
 // PLAN_FLAG_ENFORCEMENT switch flips on.
+@RequirePermission("ORDERS")
 @Controller("estimates")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)

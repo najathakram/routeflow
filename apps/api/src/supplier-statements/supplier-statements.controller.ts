@@ -23,8 +23,10 @@ import { StatementApplyService } from "./statement-apply.service";
 import { ApplyStatementBodyDto } from "./dto/statement.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // AddonGuard passes handlers without @RequireAddon metadata — only the AI scan
 // endpoint is addon-gated; listing/reviewing/applying existing scans is not.
+@RequirePermission("FINANCE")
 @Controller("supplier-statements")
 @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)

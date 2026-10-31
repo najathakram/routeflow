@@ -118,7 +118,9 @@ export class ReceiptService {
         // row 317: the cashier's username only, printed as "Cashier: <name>" (never an email)
         soldBy: { select: { username: true } },
         lineItems: {
-          orderBy: { createdAt: "asc" },
+          // SA-1067 C3: scan order (position), then when added, then id; legacy null positions last. Same order as the
+          // packing slip (createdAt alone left lines made in one write in no fixed order).
+          orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           select: {
             id: true,
             name: true,

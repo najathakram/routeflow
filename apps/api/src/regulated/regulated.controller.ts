@@ -20,10 +20,12 @@ import { ReportQueryDto } from "./dto/report-query.dto";
 import { ResolveParkedReversalDto } from "./dto/resolve-parked-reversal.dto";
 import { REPORT_TEMPLATES } from "./template-registry";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // Categorization stays free; the LEDGER/FILINGS/REPORTS surfaces are the
 // Regulated compliance pack, gated on the tobacco_dealer addon (bridged to the
 // REGULATED_ITEMS SKU). GET /templates stays ungated — the free product forms
 // read it. Guard order matters: AddonGuard reads req.user (set by JwtAuthGuard).
+@RequirePermission("REGULATED")
 @Controller("regulated")
 @UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)

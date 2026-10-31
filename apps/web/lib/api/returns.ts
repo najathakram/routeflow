@@ -1,14 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
+import { isCreateReturnRefusal } from "../return-error-text";
 import type {
   CreateReturnItemDto,
+  CreateReturnLineItemDto,
   FiledPeriod,
   InlineRefundTender,
   ReturnKind,
   UnbilledReturnItem,
 } from "@routeflow/types";
-export type { CreateReturnItemDto, UnbilledReturnItem } from "@routeflow/types";
+export type {
+  CreateReturnItemDto,
+  CreateReturnLineItemDto,
+  UnbilledReturnItem,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +38,17 @@ export interface ReturnItem {
   orderedQty: number;
   unitPrice?: number | null;
   qty: number;
+  /**
+   * SA-1042 B9b: the order line this item names (a snapshot of the line, never the live product), or null for a pooled item.
+   * `qty` is then in that line's own unit, pieces for a modern line.
+   */
+  line?: {
+    unitLabel: string | null;
+    unitsPerBox: number | null;
+    boxes: number | null;
+    pieces: number | null;
+    qty: number;
+  } | null;
   condition?: string;
   notes?: string;
   restock?: boolean;
@@ -130,13 +147,15 @@ export interface CreateReturnDto {
   orderId: string;
   reason: ReturnReason;
   notes?: string;
-  items: CreateReturnItemDto[];
+  /** A pooled item (`qty`), or a line item naming its order line (B9c: the form sends line items only). */
+  items: (CreateReturnItemDto | CreateReturnLineItemDto)[];
 }
 
 export function useCreateReturn() {
   const qc = useQueryClient();
   return useMutation<Return, Error, CreateReturnDto>({
     mutationFn: (dto) => apiClient.post("/returns", dto).then((r) => r.data),
+    meta: { localErrorToast: isCreateReturnRefusal }, // the form toasts these itself, and only it has the sentence
     onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
   });
 }
