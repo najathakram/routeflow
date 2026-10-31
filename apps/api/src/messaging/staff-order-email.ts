@@ -25,9 +25,14 @@ function asMode(v: unknown): StaffOrderEmailMode | null {
   return v === "off" || v === "dark" || v === "on" ? v : null;
 }
 
+/** A stored policy value narrowed to a mode; anything else reads as the default, "dark". */
+export function toStaffOrderEmailMode(v: unknown): StaffOrderEmailMode {
+  return asMode(v) ?? "dark";
+}
+
 export function effectiveStaffOrderEmailMode(
   env: string | undefined,
-  policy: StaffOrderEmailMode,
+  policy: unknown,
 ): StaffOrderEmailMode {
   const ceiling = asMode(env) ?? "dark";
   const pol = asMode(policy) ?? "dark";

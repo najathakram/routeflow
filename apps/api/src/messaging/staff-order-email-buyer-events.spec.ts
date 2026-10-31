@@ -174,7 +174,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
       const h = makeHarness({ policy: "on" });
       const before = Date.now();
       await (await build(h)).notifyBuyerOrderEdited("ord-1");
-      const where = h.models.emailDelivery.findFirst.mock.calls[0][0].where as Row & {
+      const where = h.models.emailDelivery.findFirst.mock.calls[0][0].where as unknown as Row & {
         createdAt: { gte: Date };
       };
       expect(where).toMatchObject({ tenantId: "t1", entityType: "Order", entityId: "ord-1" });

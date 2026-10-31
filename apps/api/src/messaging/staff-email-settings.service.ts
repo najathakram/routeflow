@@ -10,7 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { maskEmail } from "./messaging-deliveries.service";
 import { PolicyService, type PolicyActor } from "../policy/policy.service";
-import { StaffOrderEmailService } from "./staff-order-email";
+import { StaffOrderEmailService, toStaffOrderEmailMode } from "./staff-order-email";
 import { requireTenantContext } from "./require-tenant-context";
 
 /** Local literal copy (the API never value-imports `@routeflow/types`); mirrors the shared
@@ -41,7 +41,9 @@ export class StaffEmailSettingsService {
     return {
       staffCc: isAdmin ? list : list.map(maskEmail),
       effectiveMode: await this.staffEmail.getEffectiveMode(tenantId),
-      policyMode: await this.policies.resolve(tenantId, "notifications.staffOrderEmail", {}),
+      policyMode: toStaffOrderEmailMode(
+        await this.policies.resolve(tenantId, "notifications.staffOrderEmail", {}),
+      ),
       // SA-1063 MUST 12: who gets the email today. Full addresses, TENANT_ADMIN only.
       ...(isAdmin ? { recipients: await this.staffEmail.resolveRecipients(tenantId) } : {}),
     };
