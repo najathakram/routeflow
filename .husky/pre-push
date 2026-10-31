@@ -138,7 +138,9 @@ dirty="$(git status --porcelain 2>/dev/null | head -1)"
 fast_stamp=""
 if [ "$verify_mode" = "fast" ]; then fast_stamp="fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)"; fi
 
-if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
+# W-1045: a marker counts only with the evidence file the gate writes beside it; markers from before the gate (some
+# false) carry none, so they are re-verified once instead of trusted.
+if [ -z "$dirty" ] && [ -f "$marker" ] && [ -f "$marker.json" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
   echo "✓ tree $tree already passed 'npm run verify' locally — skipping (clean tree, unchanged content).${fast_stamp:+ $fast_stamp}"
   exit 0
 fi

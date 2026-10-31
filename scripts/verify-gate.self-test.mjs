@@ -25,8 +25,11 @@ import {
   RESULT_FILE_ENV,
   TREE_KEY_ENV,
   checkResult,
+  clearStage,
+  commitStage,
   isPositiveGreen,
   stageFile,
+  stageRun,
 } from "./lib/verify-result.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -67,6 +70,29 @@ if (mode === "wrong-tree") {
   commitStage(process.env);
   process.exit(0);
 }
+// The gate's own checks, with commitStage bypassed: the stub writes the result file itself.
+if (mode === "forge-nonce") { // a token for another run
+  writeFileSync(process.env.${RESULT_FILE_ENV}, JSON.stringify({ v: 1, nonce: "forged", treeKey: process.env.${TREE_KEY_ENV}, planned: 1, ran: 1 }));
+  process.exit(0);
+}
+if (mode === "forge-short") { // this run's nonce, but fewer calls ran than were planned
+  writeFileSync(process.env.${RESULT_FILE_ENV}, JSON.stringify({ v: 1, nonce: process.env.${NONCE_ENV}, treeKey: process.env.${TREE_KEY_ENV}, planned: 2, ran: 1 }));
+  process.exit(0);
+}
+if (mode === "forge-tree") { // this run's nonce, another tree key
+  writeFileSync(process.env.${RESULT_FILE_ENV}, JSON.stringify({ v: 1, nonce: process.env.${NONCE_ENV}, treeKey: "some-other-tree", planned: 1, ran: 1 }));
+  process.exit(0);
+}
+if (mode === "pass-then-fail") { // a valid token, then the chain fails after it
+  writeStage(process.env, { planned: 1, statuses: [0] });
+  commitStage(process.env);
+  process.exit(3);
+}
+if (mode === "probe-clear") { // exits 9 if the gate left an earlier result or stage in place
+  const { existsSync } = await import("node:fs");
+  const f = process.env.${RESULT_FILE_ENV};
+  process.exit(existsSync(f) || existsSync(f + ".turbo") ? 9 : 0);
+}
 if (mode === "wait") {
   writeFileSync(process.argv[3], String(process.pid));
   setInterval(() => {}, 1000);
@@ -105,6 +131,58 @@ try {
   ok("not green: a string '0' is not a pass", !isPositiveGreen([0, "0"], 2));
   ok("not green: a non-zero status", !isPositiveGreen([0, 1], 2));
   ok("not green: planned count is not an integer", !isPositiveGreen([0], undefined));
+  ok("not green: a run that planned nothing proves nothing", !isPositiveGreen([], 0));
+
+  // ── stageRun / clearStage: the link from "what ran" to "what is written" ─────────────────────
+  const stageEnv = { [RESULT_FILE_ENV]: resultFile, [NONCE_ENV]: "n-stage", [TREE_KEY_ENV]: "t" };
+  rmSync(stageFile(resultFile), { force: true });
+  ok(
+    "stageRun: status 0 and every call green stages the pass",
+    stageRun(stageEnv, { status: 0, statuses: [0, 0], planned: 2 }) === true &&
+      existsSync(stageFile(resultFile)),
+  );
+  rmSync(stageFile(resultFile), { force: true });
+  ok(
+    "stageRun: a non-zero run status stages nothing even if every call reads 0",
+    stageRun(stageEnv, { status: 1, statuses: [0, 0], planned: 2 }) === false &&
+      !existsSync(stageFile(resultFile)),
+  );
+  ok(
+    "stageRun: a run that planned nothing stages nothing",
+    stageRun(stageEnv, { status: 0, statuses: [], planned: 0 }) === false &&
+      !existsSync(stageFile(resultFile)),
+  );
+  ok(
+    "stageRun: outside a hook run (no env) writes nothing",
+    stageRun({}, { status: 0, statuses: [0], planned: 1 }) === false,
+  );
+  writeFileSync(stageFile(resultFile), "{}");
+  clearStage(stageEnv);
+  ok("clearStage removes a stage already on disk", !existsSync(stageFile(resultFile)));
+  writeFileSync(stageFile(resultFile), "{}");
+  clearStage({});
+  ok("clearStage outside a hook run touches nothing", existsSync(stageFile(resultFile)));
+  rmSync(stageFile(resultFile), { force: true });
+
+  // commitStage promotes only a stage that is this run's and complete
+  const putStage = (token) => writeFileSync(stageFile(resultFile), JSON.stringify(token));
+  const mine = { v: 1, nonce: "n-stage", treeKey: "t", planned: 2, ran: 2 };
+  putStage({ ...mine, nonce: "another" });
+  ok("commitStage refuses a stage with another run's nonce", commitStage(stageEnv).ok === false);
+  putStage({ ...mine, treeKey: "other" });
+  ok("commitStage refuses a stage for another tree key", commitStage(stageEnv).ok === false);
+  putStage({ ...mine, ran: 1 });
+  ok(
+    "commitStage refuses a stage that ran fewer calls than planned",
+    commitStage(stageEnv).ok === false,
+  );
+  putStage(mine);
+  ok(
+    "commitStage promotes this run's complete stage",
+    commitStage(stageEnv).ok === true && existsSync(resultFile),
+  );
+  rmSync(resultFile, { force: true });
+  rmSync(stageFile(resultFile), { force: true });
 
   // ── the gate ─────────────────────────────────────────────────────────────────────────────────
   resetFiles();
@@ -152,6 +230,49 @@ try {
   ok(
     "a token for a different tree key (e.g. fast vs full) is refused",
     r.status !== 0 && !existsSync(marker),
+  );
+
+  // Each check below was a mutation that survived the first version of this file: the gate must apply it ITSELF.
+  resetFiles();
+  r = runGate("tree-A", ["forge-nonce"]);
+  ok(
+    "a result file for another run's nonce is refused",
+    r.status !== 0 && !existsSync(marker) && /another run/.test(r.stderr + r.stdout),
+    r.stderr + r.stdout,
+  );
+
+  resetFiles();
+  r = runGate("tree-A", ["forge-short"]);
+  ok(
+    "a result that ran fewer calls than it planned is refused",
+    r.status !== 0 && !existsSync(marker) && /every planned call/.test(r.stderr + r.stdout),
+    r.stderr + r.stdout,
+  );
+
+  resetFiles();
+  r = runGate("tree-A", ["forge-tree"]);
+  ok(
+    "a result for another tree key is refused",
+    r.status !== 0 && !existsSync(marker) && /tree key/.test(r.stderr + r.stdout),
+    r.stderr + r.stdout,
+  );
+
+  resetFiles();
+  r = runGate("tree-A", ["pass-then-fail"]);
+  ok(
+    "a valid token does not outvote a non-zero exit",
+    r.status !== 0 && !existsSync(marker) && /exited 3/.test(r.stderr + r.stdout),
+    r.stderr + r.stdout,
+  );
+
+  resetFiles();
+  writeFileSync(resultFile, "old");
+  writeFileSync(stageFile(resultFile), "old");
+  r = runGate("tree-A", ["probe-clear"]);
+  ok(
+    "the gate clears an earlier result and stage before the run starts",
+    !/exited 9/.test(r.stderr + r.stdout) && /no pass token/.test(r.stderr + r.stdout),
+    r.stderr + r.stdout,
   );
 
   resetFiles();
@@ -225,6 +346,14 @@ try {
   const hook = readFileSync(path.join(ROOT, ".husky", "pre-push"), "utf8");
   ok("pre-push runs the gate", /node scripts\/verify-gate\.mjs run\b/.test(hook));
   ok("pre-push no longer trusts a bare exit code", !/npm run verify \|\| exit 1/.test(hook));
+  ok(
+    "pre-push ends the gate line with `|| exit 1` (without it every refusal becomes a push)",
+    /^node scripts\/verify-gate\.mjs run\b.*\|\| exit 1$/m.test(hook),
+  );
+  ok(
+    "pre-push skips a verified tree only when the marker has its evidence file beside it",
+    /^if \[ -z "\$dirty" \] && \[ -f "\$marker" \] && \[ -f "\$marker\.json" \]/m.test(hook),
+  );
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
   ok(
     "the verify chain ends with the commit step (nothing after it can be skipped unseen)",
@@ -236,8 +365,8 @@ try {
   );
   const vt = readFileSync(path.join(ROOT, "scripts", "verify-turbo.mjs"), "utf8");
   ok(
-    "verify-turbo writes the stage token",
-    /writeStage\(/.test(vt) && /isPositiveGreen|writeStage/.test(vt),
+    "verify-turbo clears any stage at the start of main() and stages through stageRun",
+    /\bclearStage\(process\.env\)/.test(vt) && /\bstageRun\(process\.env, \{/.test(vt),
   );
 } finally {
   rmSync(tmp, { recursive: true, force: true });

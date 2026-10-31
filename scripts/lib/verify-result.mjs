@@ -21,10 +21,15 @@ export const TREE_KEY_ENV = "RF_VERIFY_TREE_KEY";
 export const stageFile = (resultFile) => `${resultFile}.turbo`;
 export const newNonce = () => randomBytes(12).toString("hex");
 
-/** True only when every planned call ran and returned the NUMBER 0. null (signal), undefined and "0" are not a pass. */
+/**
+ * True only when at least one call was planned, every planned call ran and each returned the NUMBER 0. null (signal),
+ * undefined and "0" are not a pass, and neither is a run that planned nothing (VERIFY_EXCLUDE covering the whole scope
+ * proves nothing).
+ */
 export function isPositiveGreen(statuses, planned) {
   return (
     Number.isInteger(planned) &&
+    planned > 0 &&
     Array.isArray(statuses) &&
     statuses.length === planned &&
     statuses.every((s) => s === 0)
@@ -59,6 +64,24 @@ export function writeStage(env, { planned, statuses }) {
     at: new Date().toISOString(),
   });
   return true;
+}
+
+/**
+ * verify-turbo, after the plan ran: stage the pass only when the run's own status is the number 0 AND every planned
+ * call finished green. The one link between "what ran" and "what is written".
+ */
+export function stageRun(env, { status, statuses, planned }) {
+  return status === 0 && writeStage(env, { planned, statuses });
+}
+
+/**
+ * verify-turbo, first thing in main(): drop any stage already on disk. A stage is written only by the run that earned
+ * it, so one found at the start belongs to an earlier or foreign process and must not be promoted by a verify that
+ * then runs nothing or fails quietly. No-op outside a hook run.
+ */
+export function clearStage(env) {
+  const file = env[RESULT_FILE_ENV];
+  if (file) fs.rmSync(stageFile(file), { force: true });
 }
 
 /**
