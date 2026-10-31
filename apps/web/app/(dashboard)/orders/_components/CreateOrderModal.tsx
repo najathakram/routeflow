@@ -170,7 +170,7 @@ const schema = z.object({
    *  `.optional()` (not `.default()`) matches `urgent` above — every call site
    *  already supplies an explicit "ROUTE"/"SHIP" value, and `.default()` here
    *  makes the zodResolver's inferred type disagree with useForm<FormValues>. */
-  fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
+  fulfillPath: z.enum(["ROUTE", "SHIP", "PICKUP"]).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -180,7 +180,9 @@ type FormValues = z.infer<typeof schema>;
  * rather than widening the shared type — fully optional so drafts parked
  * before this feature (missing the key) still hydrate fine.
  */
-type DraftPayloadWithFulfillPath = OrderDraftPayload & { fulfillPath?: "ROUTE" | "SHIP" };
+type DraftPayloadWithFulfillPath = OrderDraftPayload & {
+  fulfillPath?: "ROUTE" | "SHIP" | "PICKUP";
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -688,6 +690,13 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // W-1043: Store pickup in the regular order. Offered when the business has PICKUP and the till is allowed (the API
+  // refuses PICKUP otherwise); POS mode and a store-only business keep their own switch and behaviour.
+  const storePickupOffered = posAllowed && staffFulfilment.methods.includes("PICKUP");
+  const isPickup = posMode || (storePickupOffered && fulfillPath === "PICKUP");
+  // pickForm only knows ROUTE | SHIP (it would turn a PICKUP into SHIP), so PICKUP is carried here, only where it is offered.
+  const pickPath = (p?: string | null): FormValues["fulfillPath"] =>
+    p === "PICKUP" && storePickupOffered ? "PICKUP" : staffFulfilment.pickForm(p);
   // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
   // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
   // POS mode sends the explicit PICKUP path, which does not depend on the delivery settings: never blocked by them.
@@ -696,7 +705,7 @@ export function CreateOrderModal({
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
     selectedCustomer?.id,
-    posMode ? "PICKUP" : fulfillPath,
+    isPickup ? "PICKUP" : fulfillPath,
   );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
@@ -1664,7 +1673,7 @@ export function CreateOrderModal({
   // Fill the builder from a draft payload (a docked server draft, a local copy, or the other device's version after a conflict).
   // Returns the payload exactly as the builder will re-serialize it, so the engine's baseline matches and hydrating itself writes nothing.
   const hydrateFromPayload = (p: DraftPayloadWithFulfillPath): DraftPayload => {
-    const pick = staffFulfilment.pickForm(p.fulfillPath);
+    const pick = pickPath(p.fulfillPath);
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
@@ -1978,7 +1987,9 @@ export function CreateOrderModal({
       items: itemsForSubmit,
       notes: data.notes,
       urgent: posMode ? false : data.urgent,
-      fulfillPath: posMode ? "PICKUP" : staffFulfilment.pickForm(data.fulfillPath),
+      fulfillPath: isPickup
+        ? "PICKUP"
+        : staffFulfilment.pickForm(data.fulfillPath === "PICKUP" ? undefined : data.fulfillPath),
       // POS mode: the delivery-only fields step aside (their values are kept, so switching POS off restores them).
       requestedDeliveryDate: posMode ? undefined : requestedDeliveryDate || undefined,
       orderDate: orderDate || undefined,
@@ -3224,7 +3235,7 @@ export function CreateOrderModal({
               </div>
             )}
 
-            {staffFulfilment.choice && !posMode && (
+            {(staffFulfilment.choice || storePickupOffered) && !posMode && (
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
                 <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
@@ -3241,6 +3252,20 @@ export function CreateOrderModal({
                       {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
                     </button>
                   ))}
+                  {storePickupOffered && (
+                    <button
+                      type="button"
+                      onClick={() => setValue("fulfillPath", "PICKUP")}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === "PICKUP"
+                          ? "bg-navy text-white"
+                          : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      Store pickup
+                    </button>
+                  )}
                 </div>
                 {fulfillPath === "SHIP" && (
                   <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
