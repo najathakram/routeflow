@@ -1273,6 +1273,34 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     expect(undoBtn()).toBeNull();
   });
 
+  it("K3: Undo on a case read takes back one case, not one can", async () => {
+    barcodeFor[PACK24.sku] = () => PACK24;
+    renderPhoneTill();
+    hold(PACK24.sku, 4);
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00"));
+    clock += 700;
+    hold(PACK24.sku, 4);
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$60.00"));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(undoBtn()!);
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00"));
+  });
+
+  it("K3: Undo on a read of 3 takes back all 3", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await wedge("3");
+    clock += 700;
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 4"));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(undoBtn()!);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    expect(lines()).toHaveLength(1);
+  });
+
   it("K4: closing the camera says what happened, until the camera opens again", () => {
     renderPhoneTill();
     expect(screen.queryByText(OFF_CUE)).toBeNull();
