@@ -32,6 +32,7 @@ import { randomUUID } from "crypto";
 import { HttpException } from "@nestjs/common";
 import { InlineReturnsService } from "./inline-returns.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { IdempotencyService } from "../common/idempotency.service";
 import { NumberingService } from "../import/numbering.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -42,25 +43,25 @@ import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
 const RUN = randomUUID().slice(0, 8);
-const BARRIER_MS = 2_500;
+const BARRIER_MS = 1_000;
 const HELD_WAIT_MS = 1_500;
 
 function makeBarrier() {
-  let arrived = 0;
-  let released = false;
+  let inside = 0;
+  let maxInside = 0;
   let release!: () => void;
   const both = new Promise<void>((r) => (release = r));
   return {
     async arrive() {
-      arrived += 1;
-      if (arrived >= 2) {
-        released = true;
-        release();
-      }
+      inside += 1;
+      maxInside = Math.max(maxInside, inside);
+      if (inside >= 2) release();
       await Promise.race([both, new Promise((r) => setTimeout(r, BARRIER_MS))]);
+      inside -= 1;
     },
-    get bothArrived() {
-      return released;
+    /** The most transactions at the barrier AT THE SAME TIME (2 means both read before either wrote). */
+    get maxConcurrent() {
+      return maxInside;
     },
   };
 }
@@ -125,7 +126,7 @@ describeDb(
         numbering,
         { hasAddon: jest.fn().mockResolvedValue(true) } as any,
         {} as any,
-        anything as any,
+        new IdempotencyService(), // REAL: the customer lock is an advisory lock; a mock would make L3 vacuous
       );
     }, 120_000);
 
@@ -384,9 +385,14 @@ describeDb(
           /40P01|deadlock detected/i.test(String((r as PromiseRejectedResult).reason)),
       );
       expect(deadlocks).toEqual([]);
+      expect(
+        results
+          .filter((r) => r.status === "rejected")
+          .map((r) => String((r as PromiseRejectedResult).reason)),
+      ).toEqual([]);
       expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
-      // The second approval waited at the lock, so its barrier timed out: both never read before either wrote.
-      expect(barrier.bothArrived).toBe(false);
+      // The second approval waited at the lock, so it was never at the barrier with the first: both never read before either wrote.
+      expect(barrier.maxConcurrent).toBe(1);
       expect(await w.reversed(source)).toEqual({ qty: -10, net: -100, tax: -20 });
       expect(await w.statuses([r1, r2])).toEqual(["REFUNDED", "REFUNDED"]);
     }, 90_000);
@@ -447,6 +453,11 @@ describeDb(
           /40P01|deadlock detected/i.test(String((r as PromiseRejectedResult).reason)),
       );
       expect(deadlocks).toEqual([]);
+      expect(
+        results
+          .filter((r) => r.status === "rejected")
+          .map((r) => String((r as PromiseRejectedResult).reason)),
+      ).toEqual([]);
       expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
       expect(await w.statuses([a, b])).toEqual(["REFUNDED", "REFUNDED"]);
       expect(await w.reversed(y)).toEqual({ qty: -3, net: -30, tax: -6 });
