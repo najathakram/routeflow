@@ -43,14 +43,47 @@ function callsOf(code: string, name: RegExp): string[] {
 }
 
 const CONFIG_WRITE = /\btenantConfig\s*\.\s*(?:create|upsert)/;
+const CONFIG_UPSERT = /\btenantConfig\s*\.\s*upsert/;
 const TENANT_WRITE = /\btenant\s*\.\s*(?:create|upsert)\b/;
 const NAMES_ZONE = /\btimezone\b/;
 
+/** The expression after `key:` in a call (balanced across ( [ {), up to the comma or close that ends it; "" when absent. */
+function valueOf(call: string, key: string): string {
+  const m = new RegExp("\\b" + key + "\\s*:").exec(call);
+  if (!m) return "";
+  let depth = 0;
+  const start = m.index + m[0].length;
+  let i = start;
+  for (; i < call.length; i++) {
+    const c = call[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      if (depth === 0) break;
+      depth--;
+    } else if (c === "," && depth === 0) break;
+  }
+  return call.slice(start, i);
+}
+
+/**
+ * A create names the zone in its data. An upsert must name it in its `create` block (a zone found only in `update` leaves the
+ * insert on the column default), and must NOT name it in `update` (a re-run would move a zone somebody chose).
+ */
 export function configWritesWithoutZone(file: string, source: string): string[] {
   if (WRITER_ALLOW_LIST.has(file)) return [];
-  return callsOf(stripComments(source), CONFIG_WRITE)
-    .filter((c) => !NAMES_ZONE.test(c))
-    .map((c) => `${file}: ${c.split("\n")[0].trim()} names no timezone`);
+  const out: string[] = [];
+  for (const c of callsOf(stripComments(source), CONFIG_WRITE)) {
+    const head = c.split("\n")[0].trim();
+    if (!CONFIG_UPSERT.test(c)) {
+      if (!NAMES_ZONE.test(c)) out.push(`${file}: ${head} names no timezone`);
+      continue;
+    }
+    if (!NAMES_ZONE.test(valueOf(c, "create")))
+      out.push(`${file}: ${head} create names no timezone`);
+    if (NAMES_ZONE.test(valueOf(c, "update")))
+      out.push(`${file}: ${head} update names a timezone (a re-run would move a chosen zone)`);
+  }
+  return out;
 }
 
 export function tenantWritesWithoutConfig(file: string, source: string): string[] {
@@ -119,6 +152,24 @@ describe("Z-8 self-test: the scanner goes red on planted violations and stays gr
         "await db.tenantConfig.upsert({\n  where: { tenantId },\n  create: { tenantId, ...configUpdate },\n  update: configUpdate,\n});",
       ),
     ).toHaveLength(1);
+  });
+
+  it("a zone found only in `update` is a violation: the insert still takes the column default", () => {
+    expect(
+      configWritesWithoutZone(
+        "x.ts",
+        "await db.tenantConfig.upsert({ where: { tenantId }, create: { tenantId }, update: { timezone: z } });",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("a seed whose `update` names the zone is a violation (a re-seed would overwrite a chosen zone); `update: {}` passes", () => {
+    const seed = (update: string) =>
+      `await prisma.tenantConfig.upsert({ where: { tenantId }, update: ${update}, create: { tenantId, timezone: "America/New_York" } });`;
+    expect(
+      configWritesWithoutZone("prisma/seed.ts", seed('{ timezone: "America/New_York" }')),
+    ).toHaveLength(1);
+    expect(configWritesWithoutZone("prisma/seed.ts", seed("{}"))).toEqual([]);
   });
 
   it("passes writes that name the zone, in any key position, and ignores a comment that only says the word", () => {
