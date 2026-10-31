@@ -1083,6 +1083,7 @@ export function CreateOrderModal({
           ...applyLineUnit(baseLine, orderedUnit, {
             tier: effectiveTier,
             layer: priceLayer.layerOf(product.id),
+            remembered: rememberedOf(product.id),
           }),
           qty: opts!.ordered!.qty.qty,
         }
@@ -1445,7 +1446,13 @@ export function CreateOrderModal({
     retry: retryUnits,
     retrying,
     statusFor: unitStatusFor,
-  } = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct, isStaffRole(authUser?.role));
+  } = useDefaultUnitResolver(
+    lineItems,
+    setLineItems,
+    tierForProduct,
+    isStaffRole(authUser?.role),
+    rememberedOf,
+  );
   const resolvingRef = React.useRef(false);
   /** #2865 case c: the row's pending-unit state (locked qty controls, tap count, loading/failed + Retry). */
   const pendingUnitOf = (li: LineItem) => {
@@ -1469,7 +1476,7 @@ export function CreateOrderModal({
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
-            prefillCustomerId: undefined,
+            prefillCustomerId: memory != null ? selectedCustomer?.id : undefined, // SA-1068 M26
             overrideReason: undefined,
             unitPrice: memory ?? li.specialPrice ?? li.listPrice,
             priceType: memory != null ? "MANUAL" : li.specialPrice != null ? "SPECIAL" : "STANDARD",

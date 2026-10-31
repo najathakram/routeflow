@@ -375,6 +375,34 @@ describeDb(
       expect(cols(await lineOf(after.id))).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
     });
 
+    it("T36 (SA-1068 A-6): a Piece line with no price books the memory, prorated", async () => {
+      const c = await customer({ walkIn: false });
+      const box = await raw.product.create({
+        data: {
+          tenantId,
+          name: `Boxed Widget ${run}`,
+          sku: `bw-${run}`,
+          unit: "box",
+          unitsPerBox: 6,
+          pricePerUnit: "12",
+          currentStock: 1000,
+        },
+      });
+      const order = (item: Record<string, unknown>) =>
+        tenantCtx.run(tenantId, () =>
+          svc.create(
+            { customerId: c.id, items: [{ productId: box.id, ...item }] } as never,
+            staff(),
+            { skipAutoMerge: true } as never,
+          ),
+        ) as Promise<any>;
+      await order({ qty: 6, boxes: 1, pieces: 0, unitPrice: 15 });
+      const piece = await order({ qty: 1, boxes: 0, pieces: 1 });
+      const line = await raw.orderItem.findFirstOrThrow({ where: { orderId: piece.id } });
+      expect(cols(line)).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+      expect(Number(line.subtotal)).toBe(2.5);
+    });
+
     it("S5: the server's price history and a buyer's own order for a named customer still read the memory", async () => {
       const c = await customer();
       await clerkUpsell(c.id);

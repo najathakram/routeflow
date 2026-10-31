@@ -472,6 +472,15 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
       expect((await saved()).unitPrice).toBeUndefined();
     });
 
+    it("T35: typed, then cleared back to A's memory, the line still moves to B's price", async () => {
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "43");
+      typePrice("$43.00 / each", "");
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      await switchToBeta();
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    });
+
     it("M20: a line at A's memory does not follow the order to B", async () => {
       await addWidgetForCustomer();
       expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();

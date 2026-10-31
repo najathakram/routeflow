@@ -1109,6 +1109,7 @@ export default function NewInvoicePage() {
     (fn) => setItems((prev) => updateViews(prev, fn, tierFor)),
     tierFor,
     staff,
+    () => undefined, // SA-1068 M25: a manual invoice carries its price as typed
   );
   const resolvingRef = React.useRef(false);
   // S19b MUST-1: a level pick is priced from the customer layer when its row is there (else the ladder, as master).

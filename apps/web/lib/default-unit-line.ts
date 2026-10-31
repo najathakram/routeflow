@@ -172,10 +172,13 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
   line: T,
   units: readonly ProductUnitLevel[],
   tier: Tier,
+  remembered?: number | null,
 ): T {
   if (!isPendingDefaultUnit(line)) return line;
   const option = defaultOptionFor(line, units, tier);
-  const [only] = option ? applyUnitToLines([line], line.tempId, option, false, tier) : [];
+  const [only] = option
+    ? applyUnitToLines([line], line.tempId, option, false, tier, undefined, remembered)
+    : [];
   return (only as T | undefined) ?? settleOnPack(line);
 }
 
@@ -193,6 +196,8 @@ export interface DefaultUnitDeps {
   unitsKnown: boolean;
   getUnits: (productId: string) => Promise<ProductUnitLevel[]>;
   tierFor: (productId: string) => Tier;
+  /** SA-1068 M25: required, so every caller decides. A derived Piece is a pack line, which the server books at the memory. */
+  rememberedOf: (productId: string) => number | undefined;
 }
 
 /** "Try again" on the blocked message: the shared rule (@routeflow/pricing), kept under its old name for callers. */
@@ -240,7 +245,16 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
       const tier = deps.tierFor(line.productId);
       const option = defaultOptionFor(line, units, tier);
       if (option) {
-        const applied = applyUnitToLinesDetailed(out, line.tempId, option, false, tier);
+        const remembered = deps.rememberedOf(line.productId);
+        const applied = applyUnitToLinesDetailed(
+          out,
+          line.tempId,
+          option,
+          false,
+          tier,
+          undefined,
+          remembered,
+        );
         out = applied.lines;
         if (applied.fold) folds.push(applied.fold);
       } else {

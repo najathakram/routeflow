@@ -90,10 +90,7 @@ export function applyLineUnit<T extends UnitLine>(
   const line = li.derivedBase ? backToPack(li) : li;
   const base = line.packBase ?? snapshot(line);
   if (option.kind === "pack") {
-    // SA-1068 M22: a derived Piece dropped the memory on the way out, so the pack takes it back here.
-    if (!line.packBase) {
-      return li.derivedBase && ctx.remembered != null ? restorePack(line, ctx, false) : line;
-    }
+    if (!line.packBase) return line;
     const back = restorePack(line, ctx, false);
     // S19b: the picker's pack option carries the customer's layer price; a one-time price the operator typed stands.
     return option.layerLine && back.discountedPrice == null
@@ -187,8 +184,8 @@ function restorePack<T extends UnitLine>(
       product: line.tierPrices as unknown as Record<string, unknown>,
       tier: ctx.tier,
       layer: ctx.layer,
-      // SA-1068 M22: not for the derived Piece's start, since a unit line doesn't book the memory
-      remembered: dropOneTime ? undefined : ctx.remembered,
+      // SA-1068 M24: also the derived Piece's start, which the server books as a pack line. One-time prices still drop.
+      remembered: ctx.remembered,
     });
     restored.unitPrice = lp.price;
     if (lp.remembered) {

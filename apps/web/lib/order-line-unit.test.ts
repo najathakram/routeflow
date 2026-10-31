@@ -267,18 +267,59 @@ describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (previe
     const back = applyLineUnit(caseLine, by(opts, ""), { tier: 1 });
     expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
   });
+});
 
-  it("SA-1068 M22: a line at its memory, to a derived Piece and back, returns to the memory", () => {
-    const atMemory = {
-      ...line3,
-      tierPrices: { pricePerUnit: "10.00" },
-      unitPrice: 15,
-      priceType: "MANUAL" as const,
+// A derived Piece has no unitLabel: it reaches the server as a pack line with pieces, so the memory books it.
+describe("SA-1068 A-6: a derived Piece keeps the memory", () => {
+  const box = { unit: "Box", unitsPerBox: 6, pricePerUnit: "12.00" };
+  const opts = buildUnitOptions(box, [level("Case", 24, "40.00")], 1);
+  const atMemory: UnitLine & { tempId: string; productId: string } = {
+    tempId: "t6",
+    productId: "p6",
+    unit: "Box",
+    qty: 6,
+    unitsPerBox: 6,
+    boxes: 1,
+    pieces: 0,
+    sellBy: "case",
+    listPrice: 12,
+    unitPrice: 15,
+    priceType: "MANUAL",
+    tierPrices: { pricePerUnit: "12.00" } as never,
+  };
+  const ctx = { tier: 1, remembered: 15 };
+  const shown = (li: UnitLine) =>
+    computeLineSubtotal({
+      unitPrice: li.unitPrice,
+      qty: li.qty,
+      boxes: li.boxes ?? null,
+      pieces: li.pieces ?? null,
+      unitsPerBox: li.unitsPerBox ?? null,
+    });
+
+  it("T31: to the Piece, the line shows $2.50 and sends nothing", () => {
+    const piece = applyLineUnit(atMemory, by(opts, "Piece"), ctx);
+    expect(piece).toMatchObject({ unitPrice: 15, priceType: "MANUAL", boxes: 0, pieces: 1 });
+    expect(piece.discountedPrice).toBeUndefined();
+    expect(shown(piece)).toBe(2.5);
+  });
+
+  it("T32 guard: back to the pack, the line is at the memory", () => {
+    const piece = applyLineUnit(atMemory, by(opts, "Piece"), ctx);
+    const back = applyLineUnit(piece, by(opts, ""), ctx);
+    expect(back).toMatchObject({ unitPrice: 15, priceType: "MANUAL", boxes: 1, pieces: 0 });
+    expect(back.derivedBase).toBeUndefined();
+  });
+
+  it("T34 guard: a price typed on a Case is gone on the Piece, which shows $2.50", () => {
+    const asCase = {
+      ...applyLineUnit(atMemory, by(opts, "Case"), ctx),
+      discountedPrice: 30,
+      unitPrice: 30,
     };
-    const piece = applyLineUnit(atMemory, by(opts, "Piece"), { tier: 1, remembered: 15 });
-    expect(piece.unitPrice).toBe(10); // a unit line doesn't book the memory
-    const back = applyLineUnit(piece, by(opts, ""), { tier: 1, remembered: 15 });
-    expect(back).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+    const piece = applyLineUnit(asCase, by(opts, "Piece"), ctx);
+    expect(piece.discountedPrice).toBeUndefined();
+    expect(shown(piece)).toBe(2.5);
   });
 });
 
