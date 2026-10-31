@@ -590,6 +590,17 @@ export function CounterSaleScreen() {
   });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
   const customersAnswered = customersData !== undefined && !customersFetching;
+  // SA-1071 C3: Enter before a typed search has answered picks nothing and says so.
+  const [stillSearching, setStillSearching] = React.useState(false);
+  React.useEffect(() => {
+    if (customersAnswered || !customerSearch.trim()) setStillSearching(false);
+  }, [customersAnswered, customerSearch]);
+  // SA-1071 C3: the named customer that "Use Walk-in customer" replaced, kept for one Undo. It lives only while the sale is a
+  // walk-in: any pick, a new sale or a restore ends it.
+  const [walkInUndo, setWalkInUndo] = React.useState<PickedCustomer | null>(null);
+  React.useEffect(() => {
+    if (customer !== null || buyerChoice.kind !== "walk-in") setWalkInUndo(null);
+  }, [customer, buyerChoice.kind]);
   const pickCustomer = (c: PickedCustomer) => {
     if (lineLocked || saleInFlight()) return;
     setCustomer(c);
@@ -1509,6 +1520,7 @@ export function CounterSaleScreen() {
               disabled={lineLocked}
               onWalkIn={() => {
                 if (lineLocked || saleInFlight()) return;
+                setWalkInUndo(customer && !customer.isWalkIn ? customer : null);
                 setCustomer(null);
                 buyerChoice.chooseWalkIn();
               }}
@@ -1520,6 +1532,14 @@ export function CounterSaleScreen() {
             />
             <input
               {...customerListbox.inputProps}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && customerSearch.trim() !== "" && !customersAnswered) {
+                  e.preventDefault();
+                  setStillSearching(true);
+                  return;
+                }
+                customerListbox.inputProps.onKeyDown(e);
+              }}
               ref={customerFindRef}
               aria-label="Find a customer"
               className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
@@ -1529,10 +1549,31 @@ export function CounterSaleScreen() {
               onChange={(e) => {
                 if (lineLocked || saleInFlight()) return;
                 setCustomerSearch(e.target.value);
+                setStillSearching(false);
               }}
             />
             {customer && !customer.isWalkIn ? (
               <CounterCustomerCredit customerId={customer.id} />
+            ) : null}
+            {walkInUndo && customer === null ? (
+              <p
+                role="status"
+                className="flex flex-wrap items-center gap-x-3 text-sm text-brand-700"
+                data-testid="counter-walkin-undo"
+              >
+                <span>Now a walk-in sale.</span>
+                <button
+                  type="button"
+                  className={cn(TAP_TARGET, "underline disabled:opacity-40")}
+                  disabled={lineLocked}
+                  onClick={() => {
+                    if (lineLocked || saleInFlight()) return;
+                    pickCustomer(walkInUndo);
+                  }}
+                >
+                  Undo
+                </button>
+              </p>
             ) : null}
             {reprice.noteText ? (
               <p
@@ -1565,6 +1606,11 @@ export function CounterSaleScreen() {
                 data-testid="ship-who"
               >
                 {COUNTER_SHIP_WALK_IN_CAPTION}
+              </p>
+            ) : null}
+            {stillSearching && !customersAnswered ? (
+              <p role="status" className="text-sm text-navy/70">
+                Still searching
               </p>
             ) : null}
             <CounterCustomerMatches

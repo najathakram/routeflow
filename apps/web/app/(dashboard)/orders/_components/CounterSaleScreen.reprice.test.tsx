@@ -43,10 +43,11 @@ jest.mock("@/lib/barcode-resolve", () => ({
     PRODUCTS[code] ? { product: PRODUCTS[code], source: "sku" } : { notFound: true },
 }));
 const ACME = { id: "c-acme", businessName: "Acme Cafe", pricingTier: 2 };
+let mockCustomersFetching = false; // SA-1071 C3b: the customer search has not answered yet
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
 // The real hook's shape (GET /customers/:id/prices under ["customer-prices", id]) over the mocked client.
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [ACME] } }),
+  useCustomers: () => ({ data: { data: [ACME] }, isFetching: mockCustomersFetching }),
   useCustomerPrices: (customerId: string | undefined) =>
     jest.requireActual("@tanstack/react-query").useQuery({
       queryKey: ["customer-prices", customerId],
@@ -75,6 +76,7 @@ let pricesFor: () => Promise<{ data: unknown }>;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCustomersFetching = false;
   window.localStorage.clear();
   window.sessionStorage.clear();
   pricesFor = async () => ({ data: [] });
@@ -232,5 +234,88 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     const { dto } = mutateAsync.mock.calls[0][0];
     expect(dto.customerId).toBe("c-acme");
     for (const item of dto.items) expect(item).not.toHaveProperty("unitPrice");
+  });
+});
+
+describe("SA-1071 C3: changing the buyer to Walk-in can be undone", () => {
+  /** who the sale is for, and every status line that carries the walk-in sentence */
+  const seen = () => ({
+    buyer: screen
+      .getByTestId("counter-buyer-choice")
+      .textContent?.replace(/Use Walk-in customer/, ""),
+    walkInLines: screen
+      .queryAllByRole("status")
+      .map((n) => n.textContent)
+      .filter((t) => /walk-in sale/i.test(t ?? "")),
+  });
+  const useWalkIn = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+
+  it("C3: Use Walk-in customer shows the line; its Undo brings the customer back and the cart re-prices", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scanBoth();
+    pickAcme();
+    await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
+    useWalkIn();
+    await waitFor(() => expect(total()).toHaveTextContent("$14.50"));
+    expect(seen()).toEqual({ buyer: "Walk-in customer", walkInLines: ["Now a walk-in sale.Undo"] });
+    // base: the only Undo is the price note's, which restores prices and leaves the buyer a walk-in
+    fireEvent.click(screen.getAllByRole("button", { name: "Undo" })[0]);
+    await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
+    expect(seen()).toEqual({ buyer: "Acme Cafe", walkInLines: [] });
+    expect(screen.getByTestId("counter-buyer-choice")).toHaveAttribute("data-kind", "customer");
+    expect(completeBtn()).not.toBeDisabled();
+  });
+
+  it("C3a: the same with an empty cart shows the line too", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    await screen.findByText("Acme Cafe");
+    useWalkIn();
+    await waitFor(() => expect(seen().buyer).toBe("Walk-in customer"));
+    expect(seen().walkInLines).toEqual(["Now a walk-in sale.Undo"]);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(seen().buyer).toBe("Acme Cafe"));
+    expect(seen().walkInLines).toEqual([]);
+  });
+
+  it("C3: picking a customer again takes the line away", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    pickAcme();
+    await screen.findByText("Acme Cafe");
+    useWalkIn();
+    await waitFor(() => expect(seen().walkInLines).toHaveLength(1));
+    pickAcme();
+    await screen.findByText("Acme Cafe");
+    expect(seen().walkInLines).toEqual([]);
+  });
+
+  it("C3: a walk-in that was never a named customer has nothing to undo", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in" }));
+    await waitFor(() => expect(seen().buyer).toBe("Walk-in customer"));
+    expect(seen().walkInLines).toEqual([]);
+  });
+
+  it("C3b: Enter before the typed search has answered says Still searching and picks nothing", async () => {
+    mockCustomersFetching = true;
+    renderWithProviders(<CounterSaleScreen />);
+    const find = screen.getByLabelText("Find a customer");
+    fireEvent.change(find, { target: { value: "acme" } });
+    fireEvent.keyDown(find, { key: "ArrowDown" });
+    fireEvent.keyDown(find, { key: "Enter" });
+    const buyer = screen.getByTestId("counter-buyer-choice");
+    expect({
+      kind: buyer.getAttribute("data-kind"),
+      still: screen.queryAllByText("Still searching").length,
+    }).toEqual({ kind: "none", still: 1 });
+    // the answer arrives: the line goes and the list can be used again
+    mockCustomersFetching = false;
+    fireEvent.change(find, { target: { value: "acme c" } });
+    expect(screen.queryAllByText("Still searching")).toHaveLength(0);
+    fireEvent.keyDown(find, { key: "ArrowDown" });
+    fireEvent.keyDown(find, { key: "Enter" });
+    await screen.findByText("Acme Cafe");
+    expect(screen.getByTestId("counter-buyer-choice")).toHaveAttribute("data-kind", "customer");
   });
 });
