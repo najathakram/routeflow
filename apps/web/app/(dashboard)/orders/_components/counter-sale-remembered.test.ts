@@ -23,6 +23,7 @@ describe("T1: a named customer with a remembered price above list", () => {
     const l = scan(1, undefined, 15);
     expect(l.unitPrice).toBe(15);
     expect(l.priceType).toBe("MANUAL");
+    expect(l.remembered).toBe(true);
     expect(l.listPrice).toBe(10);
   });
 });
@@ -66,7 +67,7 @@ describe("T6: a walk-in cart, the customer picked, then back to walk-in", () => 
       undefined,
       () => 15,
     );
-    expect(named.lines[0]).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+    expect(named.lines[0]).toMatchObject({ unitPrice: 15, priceType: "MANUAL", remembered: true });
     expect(named.changed).toBe(1);
     const back = repriceLines(
       named.lines,
@@ -75,6 +76,7 @@ describe("T6: a walk-in cart, the customer picked, then back to walk-in", () => 
       () => null,
     );
     expect(back.lines[0]).toMatchObject({ unitPrice: 10, priceType: "STANDARD" });
+    expect(back.lines[0].remembered).toBeUndefined();
     expect(back.changed).toBe(1);
   });
 

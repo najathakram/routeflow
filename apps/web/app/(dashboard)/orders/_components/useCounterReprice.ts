@@ -144,7 +144,9 @@ export function useCounterReprice<C extends PickedLike>(deps: {
     setLines((cur) =>
       cur.map((l) => {
         const o = old.find((p) => p.tempId === l.tempId);
-        if (!o) return l;
+        // SA-1068 M12: an unedited line sends no price, so the server books today's rule. A remembered price on either side
+        // of the change means Undo would show a price the server won't charge; the line stays where the rule put it.
+        if (!o || (!o.override && (l.remembered || o.remembered))) return l;
         // POS-5: an edited line's price state (net, tier price, choice) goes back with the prices.
         const { override: _o, tierPrice: _t, priceEdited: _e, ...rest } = l;
         return {
