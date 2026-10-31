@@ -117,7 +117,11 @@ export async function login(username: string, password: string): Promise<AuthRes
   return data;
 }
 
-export async function logout(): Promise<void> {
+/**
+ * End the staff session here: revoke it server-side (best-effort) and clear every staff key, without navigating.
+ * `logout` then goes to /login; W-839's "Shop" goes to the buyer login instead (SA-937 MUST 5: never two live sessions).
+ */
+export async function endStaffSession(): Promise<void> {
   try {
     await apiClient.post("/auth/logout");
   } catch {
@@ -125,12 +129,19 @@ export async function logout(): Promise<void> {
   }
   localStorage.removeItem(OP_KEYS.accessToken);
   localStorage.removeItem(OP_KEYS.refreshToken);
+  // #3731 review 3: the legacy unprefixed staff keys the Google callback still writes for unmigrated readers.
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("refreshToken");
   clearOpPresenceCookie();
   clearTenantCookie();
   // Before the impersonation marker goes: a support session's sign-out must leave the real user's drafts alone.
   clearAllInvoiceDrafts(); // nor an unsaved new invoice (ROW 447)
   clearImpersonation();
   clearAllLiveCarts(); // an unfinished counter sale never outlives its cashier's session
+}
+
+export async function logout(): Promise<void> {
+  await endStaffSession();
   window.location.href = "/login";
 }
 
