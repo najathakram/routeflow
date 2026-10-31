@@ -171,6 +171,34 @@ describe("CounterSaleScreen: a new customer in the sale (W-1041)", () => {
     expect((screen.getByLabelText("Business Name") as HTMLInputElement).value).toBe("");
   });
 
+  it("R9 (SA-1066 F6): while the no-match row offers Add, the buyer question's New customer is not drawn too", () => {
+    renderWithProviders(<CounterSaleScreen />);
+    search("Acme Cafe");
+    expect(screen.getAllByRole("button", { name: /new customer|as a new customer/i })).toHaveLength(
+      1,
+    );
+    expect(
+      screen.getByRole("button", { name: 'Add "Acme Cafe" as a new customer' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New customer" })).toBeNull();
+  });
+
+  it("R9a: nothing typed (or the text cleared) keeps New customer, so no way in is lost", () => {
+    renderWithProviders(<CounterSaleScreen />);
+    expect(screen.getByRole("button", { name: "New customer" })).toBeInTheDocument();
+    search("Acme Cafe");
+    expect(screen.queryByRole("button", { name: "New customer" })).toBeNull();
+    search("");
+    expect(screen.getByRole("button", { name: "New customer" })).toBeInTheDocument();
+  });
+
+  it("F13: Find a customer reads 16 px (text-base) so a phone does not zoom in on focus", () => {
+    renderWithProviders(<CounterSaleScreen />);
+    const field = screen.getByLabelText("Find a customer");
+    expect(field.className).toMatch(/\btext-base\b/);
+    expect(field.className).not.toMatch(/\btext-sm\b/);
+  });
+
   it("R4: Cancel leaves the customer, cart and buyer question as they were", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scanCola();

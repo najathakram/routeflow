@@ -94,7 +94,11 @@ import { CounterCreditOverLimit } from "./CounterCreditOverLimit";
 import { CounterReceiptBody } from "./CounterReceiptBody";
 import { CounterCustomerCredit } from "./CounterCustomerCredit";
 import { CounterGateOffline } from "./CounterGateOffline";
-import { CounterCustomerMatches, useCustomerListbox } from "./CounterCustomerMatches";
+import {
+  CounterCustomerMatches,
+  noMatchAddShows,
+  useCustomerListbox,
+} from "./CounterCustomerMatches";
 import {
   CounterLastSale,
   lastSaleNoteFrom,
@@ -579,6 +583,7 @@ export function CounterSaleScreen() {
     search: customerSearch.trim() || undefined,
   });
   const matches = customerSearch.trim() ? (customersData?.data ?? []).slice(0, 6) : [];
+  const customersAnswered = customersData !== undefined && !customersFetching;
   const pickCustomer = (c: PickedCustomer) => {
     if (lineLocked || saleInFlight()) return;
     setCustomer(c);
@@ -1472,13 +1477,17 @@ export function CounterSaleScreen() {
                 setCustomer(null);
                 buyerChoice.chooseWalkIn();
               }}
-              onNewCustomer={() => door.open()}
+              onNewCustomer={
+                noMatchAddShows(matches.length, customerSearch, customersAnswered)
+                  ? undefined
+                  : () => door.open()
+              }
             />
             <input
               {...customerListbox.inputProps}
               ref={customerFindRef}
               aria-label="Find a customer"
-              className="min-h-[44px] w-full rounded border px-3 py-2 text-sm"
+              className="min-h-[44px] w-full rounded border px-3 py-2 text-base"
               placeholder="Find a customer"
               disabled={lineLocked}
               value={customerSearch}
@@ -1527,7 +1536,7 @@ export function CounterSaleScreen() {
               listbox={customerListbox.listbox}
               search={customerSearch}
               matches={matches as PickedCustomer[]}
-              answered={customersData !== undefined && !customersFetching}
+              answered={customersAnswered}
               disabled={lineLocked}
               onPick={pickCustomer}
               onCreateNew={door.open}
@@ -2100,8 +2109,7 @@ export function CounterSaleScreen() {
               </span>
             ) : (
               <div data-testid="estimated-total-row">
-                {/* F7: one bottom-figure size. On cash it sits above Amount due / Change (which is the big figure), so it stays
-                    small; on any other method it IS the bottom figure and reads at the same size. */}
+                {/* F7: small above cash's big Amount due; on other methods it IS the big bottom figure */}
                 <div
                   className={
                     method === "CASH"

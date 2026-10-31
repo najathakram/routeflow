@@ -8,6 +8,7 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { z } from "zod";
 import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
+import { Building2, User } from "lucide-react";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -498,13 +499,18 @@ export function CustomerFormModal({
                   type="button"
                   onClick={() => setValue("customerType", t, { shouldValidate: false })}
                   className={cn(
-                    "flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
+                    "inline-flex flex-1 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                     customerType === t
                       ? "border-brand-500 bg-brand-50 text-brand-600"
                       : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
                   )}
                 >
-                  {t === "BUSINESS" ? "🏢 Business" : "👤 Individual"}
+                  {t === "BUSINESS" ? (
+                    <Building2 className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <User className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {t === "BUSINESS" ? "Business" : "Individual"}
                 </button>
               ))}
             </div>
