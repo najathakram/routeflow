@@ -608,6 +608,8 @@ export const API_ERROR_CODES = {
   COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
   /** 403 from a promotion create, edit, pause/resume or delete while the business has promotions turned off (SA-1032). Existing promotions stay readable. */
   PROMOTIONS_OFF: "PROMOTIONS_OFF",
+  /** 422 from the products list / ids / CSV when the Low or In-stock filter would match more than LOW_STOCK_ID_CAP products: narrow the filter (SA-1002). */
+  LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   /** 409 from a counter-sale tender, a payment edit or a refund dated inside a window that has been closed (the closed day's totals never move). Record it with today's date instead. */
   COUNTER_SALE_DAY_CLOSED: "COUNTER_SALE_DAY_CLOSED",
   /** 409 from POST /invoices/:id/payments: a CASH payment on a counter sale dated before the latest standing day close would change that closed Z report (body carries `closedThrough`, ISO). Record it with today's date. */
@@ -806,6 +808,11 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /**
+   * 409 from POST /orders/:id/ready-for-pickup (W-1043): the order is not a PICKUP, non-counter order at PENDING or
+   * CONFIRMED (a ROUTE / SHIP order, a counter sale, or one already past Ready). Nothing was written.
+   */
+  ORDER_NOT_READYABLE: "ORDER_NOT_READYABLE",
   /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
   COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
   /**

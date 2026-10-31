@@ -60,7 +60,8 @@
     // and apps/mobile to prove no mirror pricing files exist; package-shape.spec.ts reads the
     // root package.json, turbo.json and each app's Dockerfile — so those paths must be hashed
     // into THIS task's own key. Add an entry here whenever a spec in packages/pricing reaches
-    // outside packages/pricing.
+    // outside packages/pricing. no-hand-rolled-money-rounding.pin.spec.ts (SA-1048) walks scripts/ and
+    // packages/*, so those are hashed here too.
     "@routeflow/pricing#test": {
       "dependsOn": ["^build"],
       "inputs": [
@@ -71,9 +72,12 @@
         "$TURBO_ROOT$/apps/web/**",
         "$TURBO_ROOT$/apps/mobile/**",
         "$TURBO_ROOT$/apps/*/Dockerfile",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/packages/**",
         "$TURBO_ROOT$/turbo.json",
         "!$TURBO_ROOT$/apps/web/.next/**",
-        "!**/node_modules/**"
+        "!**/node_modules/**",
+        "!**/dist/**"
       ],
       "outputs": ["coverage/**"]
     },

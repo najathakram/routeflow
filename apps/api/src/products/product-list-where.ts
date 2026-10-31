@@ -6,9 +6,21 @@ import { StockStatusFilter, type ListProductsDto } from "./dto/list-products.dto
  * portalVisible / section / stockStatus, plus the internal buyer-catalog exclusions). Extracted verbatim from
  * `ProductsService.findAll` so the CSV export filters EXACTLY as the list does.
  */
+/** True when the filter needs the LOW-stock id prefetch before the where can be built. */
+export function needsLowStockIds(query: ListProductsDto): boolean {
+  return (
+    query.stockStatus === StockStatusFilter.LOW || query.stockStatus === StockStatusFilter.IN_STOCK
+  );
+}
+
 export function buildProductListWhere(
   query: ListProductsDto,
-  opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
+  opts?: {
+    excludeTrackedCategoryIds?: string[];
+    andWhere?: Record<string, unknown>[];
+    /** The tenant's LOW-stock ids (`lowStockProductIds`): required when `stockStatus` is LOW or IN_STOCK (SA-1002). */
+    lowStockIds?: string[];
+  },
 ): any {
   const where: any = {};
   if (query.search) {
@@ -85,13 +97,26 @@ export function buildProductListWhere(
     } else {
       where.OR = outOfStock;
     }
-  } else if (query.stockStatus === StockStatusFilter.LOW) {
+  } else if (
+    query.stockStatus === StockStatusFilter.LOW ||
+    query.stockStatus === StockStatusFilter.IN_STOCK
+  ) {
+    // SA-1002: LOW is `active && stock <= (reorderPoint ?? LOW_STOCK_DEFAULT)` (packages/types stock-level.ts). Prisma cannot
+    // compare the Decimal stock to the Int reorder point, so the callers prefetch the ids (low-stock-ids.ts) and IN_STOCK is
+    // the complement on the same rule. A missing prefetch is a bug in the caller, not an empty filter.
+    if (!opts?.lowStockIds) {
+      throw new Error("buildProductListWhere: the LOW / IN_STOCK filter needs opts.lowStockIds");
+    }
     where.isActive = true;
-    // lte:5 covers 0, negatives, and low stock; null check invalid for Decimal in Prisma 7.7
-    where.currentStock = { lte: 5 };
-  } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
-    where.isActive = true;
-    where.currentStock = { gt: 5 };
+    where.AND = [
+      ...(where.AND ?? []),
+      {
+        id:
+          query.stockStatus === StockStatusFilter.LOW
+            ? { in: opts.lowStockIds }
+            : { notIn: opts.lowStockIds },
+      },
+    ];
   }
 
   // Internal-only extra AND clauses (buyer catalog v2 smart collections —

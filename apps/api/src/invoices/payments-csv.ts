@@ -1,5 +1,6 @@
 import { csvCell } from "../common/csv";
 
+import { roundMoney } from "@routeflow/pricing";
 export const PAYMENTS_CSV_HEADER =
   "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
 
@@ -20,8 +21,8 @@ export function buildPaymentsCsv(rows: any[]): string {
       cell(r.invoice?.invoiceNumber ?? ""),
       cell(r.method ?? ""),
       cell(r.reference ?? ""),
-      cell(r.bankCharges != null ? Number(r.bankCharges).toFixed(2) : ""),
-      cell(Number(r.amount).toFixed(2)),
+      cell(r.bankCharges != null ? roundMoney(Number(r.bankCharges)).toFixed(2) : ""),
+      cell(roundMoney(Number(r.amount)).toFixed(2)),
       cell(r.status ?? ""),
     ].join(","),
   );

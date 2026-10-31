@@ -49,9 +49,10 @@ export class UsersController {
     return this.usersService.createOperator(dto);
   }
 
+  /** W-839 / SA-937: the caller's own record plus `alsoBuyer` (getMe); `/:id` below never carries it. */
   @Get("me")
   getMe(@CurrentUser() user: JwtPayload) {
-    return this.usersService.findById(user.sub);
+    return this.usersService.getMe(user.sub);
   }
 
   /** The caller's feature groups (any authenticated staff role). Declared before `:id` so it is not shadowed. */

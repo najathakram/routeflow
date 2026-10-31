@@ -21,6 +21,7 @@ import {
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
+import { PriceHistoryButton } from "@/components/PriceHistory";
 
 // A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
 const UW = unitWords();
@@ -241,6 +242,7 @@ export function CounterLineRow({
   canEditPrices = false,
   priceTier = 1,
   customerName,
+  historyCustomerId = null,
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
@@ -261,6 +263,8 @@ export function CounterLineRow({
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
   customerName?: string;
+  /** W-853: the NAMED customer (never a walk-in) whose past prices the line offers; shown only with `canEditPrices`. */
+  historyCustomerId?: string | null;
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
@@ -272,6 +276,7 @@ export function CounterLineRow({
   hideOriginalPrice?: boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const [historyPick, setHistoryPick] = React.useState<{ value: number } | null>(null);
   const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
   const closeNote = () => {
     setEditing(false);
@@ -326,9 +331,24 @@ export function CounterLineRow({
           customerName={customerName}
           locked={locked}
           onApply={(edit) => onPriceEdit?.(l.tempId, edit)}
+          openWith={historyPick}
           onReset={() => onPriceReset?.(l.tempId)}
           onClosed={onPriceClosed}
         />
+        {canEditPrices && historyCustomerId && l.productId ? (
+          <fieldset disabled={locked} className="contents">
+            <PriceHistoryButton
+              customerId={historyCustomerId}
+              customerName={customerName}
+              productId={l.productId}
+              productName={l.name}
+              unitHint={isBoxedLine(l) ? "case" : l.unit}
+              packHint={l.unitsPerBox ?? null}
+              // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
+              onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
+            />
+          </fieldset>
+        ) : null}
         {edited ? (
           <span
             className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"

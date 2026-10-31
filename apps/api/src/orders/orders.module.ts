@@ -60,6 +60,9 @@ import {
   DefaultFulfilmentCapabilityReader,
   FULFILMENT_CAPABILITY_READER,
 } from "./counter-sale/fulfilment-capability-reader";
+// W-1043: POST /orders/:id/ready-for-pickup (the staff "Ready for pickup" button; awaits the one email).
+import { ReadyForPickupController } from "./ready-for-pickup.controller";
+import { ReadyForPickupService } from "./ready-for-pickup.service";
 import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
 import { StorageModule } from "../storage/storage.module";
@@ -100,6 +103,7 @@ import { StorageModule } from "../storage/storage.module";
     CounterDayCloseController,
     CounterDrawerController,
     PickupCompleteController,
+    ReadyForPickupController,
   ],
   providers: [
     OrdersService,
@@ -115,6 +119,7 @@ import { StorageModule } from "../storage/storage.module";
     QuickKeysService,
     CounterSaleVoidService,
     PickupCompleteService,
+    ReadyForPickupService,
     WalkInCustomerService,
     { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
     OrderBatchShipService,

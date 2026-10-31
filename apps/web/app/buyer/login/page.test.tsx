@@ -25,6 +25,20 @@ describe("BuyerLoginPage", () => {
 
   // B891: the Enter-in-email handler focuses getElementById("buyer-password"); the field's id is
   // explicit, so the useId default can never break it.
+  // W-839 / SA-937 MUST 5: "Shop" on the staff role step opens this page with the staff user's email prefilled.
+  // #3731 review (4): the prefill comes from sessionStorage (read once), never from the URL.
+  it("prefills the email the role step stashed, once; a URL email is ignored", () => {
+    sessionStorage.setItem("rf.buyerLogin.email", "sam@acme.example");
+    const { unmount } = renderWithProviders(<BuyerLoginPage />);
+    expect(screen.getByLabelText("Email")).toHaveValue("sam@acme.example");
+    expect(sessionStorage.getItem("rf.buyerLogin.email")).toBeNull();
+    unmount();
+    searchParams.set("email", "url@acme.example");
+    renderWithProviders(<BuyerLoginPage />);
+    expect(screen.getByLabelText("Email")).toHaveValue("");
+    searchParams.delete("email");
+  });
+
   it("the password field is findable by its explicit id, and its label targets it", () => {
     renderWithProviders(<BuyerLoginPage />);
     const byId = document.getElementById("buyer-password");

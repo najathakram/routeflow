@@ -52,6 +52,12 @@ describe("zMoney", () => {
     expect(zMoney(-1.5)).toBe("-$1.50");
     expect(zMoney(18_941_000)).toBe("$18,941,000.00");
   });
+
+  it("SA-1048 A4: a half cent rounds by roundMoney, away from zero (2.135 -> $2.14, -0.125 -> -$0.13)", () => {
+    expect(zMoney(2.135)).toBe("$2.14");
+    expect(zMoney(1.005)).toBe("$1.01");
+    expect(zMoney(-0.125)).toBe("-$0.13");
+  });
 });
 
 const ZERO_TOTALS = {

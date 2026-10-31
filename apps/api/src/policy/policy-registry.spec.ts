@@ -13,6 +13,7 @@ import { FLAG_KEYS } from "../billing/plan-catalog.constants";
 import {
   POLICY_PILOT_PENDING_ALLOWLIST,
   BUYER_BACKORDER_VISIBILITY_MODES,
+  STAFF_ORDER_EMAIL_POLICY_MODES,
   BUYER_OVERSELL_MODES,
   POLICY_REGISTRY,
   policyJsonSchema,
@@ -212,5 +213,29 @@ describe("orders.buyerOversell (WS9)", () => {
   it("is NOT pilotPending: PolicyOversellReader is its production call site (P1b), and the shrink-only allow-list never grew", () => {
     expect(e?.pilotPending).toBeUndefined();
     expect(POLICY_PILOT_PENDING_ALLOWLIST).not.toContain("orders.buyerOversell");
+  });
+});
+
+describe("notifications.staffOrderEmail (SA-1063)", () => {
+  const e = ENTRIES.find((x) => x.key === "notifications.staffOrderEmail");
+
+  it("is registered as an internal enum defaulting to dark (today: record, never send)", () => {
+    expect(e).toBeDefined();
+    expect(e?.area).toBe("notifications");
+    expect(e?.kind).toBe("enum");
+    expect(e?.default).toBe("dark");
+    expect(STAFF_ORDER_EMAIL_POLICY_MODES).toEqual(["off", "dark", "on"]);
+  });
+
+  it("allows the TENANT scope only and never reaches a buyer client", () => {
+    expect([...(e?.scopes ?? [])]).toEqual(["TENANT"]);
+    expect(e?.clientVisible).toBe(false);
+  });
+
+  it("accepts off, dark and on, and rejects everything else", () => {
+    for (const ok of STAFF_ORDER_EMAIL_POLICY_MODES)
+      expect(e?.schema.safeParse(ok).success).toBe(true);
+    for (const bad of ["On", "true", "enabled", null, 1, true, undefined, ""])
+      expect(e?.schema.safeParse(bad).success).toBe(false);
   });
 });

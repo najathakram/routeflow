@@ -67,6 +67,19 @@ describe("BatchImportService", () => {
       );
     });
 
+    it('SA-1048 R-2: a scanned total with a half cent is stored rounded by roundMoney (2.135 -> "2.14")', async () => {
+      vendorBills.scanInvoice.mockResolvedValue({
+        invoiceNumber: "VB-R2",
+        invoiceDate: "2026-07-01",
+        total: 2.135,
+        items: [{ matchedProductId: "p1", confidence: "high" }],
+      });
+      await scan();
+      expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ total: "2.14" }) }),
+      );
+    });
+
     it("marks NEEDS_REVIEW when a line is unmatched", async () => {
       vendorBills.scanInvoice.mockResolvedValue({
         invoiceNumber: "VB-2",

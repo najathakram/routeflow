@@ -4,6 +4,8 @@ import {
   ProductStatusBadge,
   stockCountLabel,
   getProductStatus,
+  getDetailStockStatus,
+  initialStockFilter,
   stockFilterParams,
 } from "./product-status";
 
@@ -79,5 +81,33 @@ describe("ProductStatusBadge", () => {
     expect(stockCountLabel(4)).toBe("4 in stock");
     expect(stockCountLabel(-2)).toBe("0 in stock · 2 oversold");
     expect(stockCountLabel(null)).toBe("0 in stock");
+  });
+});
+
+describe("SA-1002 (W-925): the badge reads the one rule's threshold (reorder point, else 5)", () => {
+  it.each([
+    [{ isActive: true, currentStock: 15, reorderPoint: 20 }, "LOW"],
+    [{ isActive: true, currentStock: 20, reorderPoint: 20 }, "LOW"],
+    [{ isActive: true, currentStock: 21, reorderPoint: 20 }, "IN_STOCK"],
+    [{ isActive: true, currentStock: 3, reorderPoint: null }, "LOW"],
+    [{ isActive: true, currentStock: 3, reorderPoint: 2 }, "IN_STOCK"],
+    [{ isActive: true, currentStock: 0, reorderPoint: 20 }, "OUT_OF_STOCK"],
+  ])("list %j -> %s", (p, status) => {
+    expect(getProductStatus(p)).toBe(status);
+  });
+  it.each([
+    [[15, true, undefined, 20], "LOW"],
+    [[3, true, undefined, 2], "IN_STOCK"],
+    [[3, true, undefined, null], "LOW"],
+    [[15, true, "FAMILY", 20], "IN_STOCK"],
+    [[0, true, undefined, 20], "OUT_OF_STOCK"],
+    [[15, false, undefined, 20], "OUT_OF_STOCK"],
+  ] as const)("detail %j -> %s", (a, status) => {
+    expect(getDetailStockStatus(a[0], a[1], a[2], a[3])).toBe(status);
+  });
+  it("?lowStock=true opens the Low Stock chip; anything else leaves All", () => {
+    expect(initialStockFilter("true")).toBe("LOW");
+    expect(initialStockFilter("false")).toBe("");
+    expect(initialStockFilter(null)).toBe("");
   });
 });

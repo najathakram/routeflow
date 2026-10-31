@@ -311,11 +311,13 @@ packages/types/api/fulfilment-methods.ts | FulfillPath | 1 | pending:B3 | object
 packages/types/api/fulfilment-methods.ts | OrderStatus | 3 | pending:B3 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY,DELIVERED}
 packages/types/api/fulfilment.ts | FulfillPath | 1 | pending:B3 | union {ROUTE,SHIP,PICKUP}
 packages/types/api/inline-returns.ts | ReturnStatus | 1 | pending:B3 | union {RECEIVED,REFUNDED,REJECTED,CANCELLED}
+packages/types/api/messaging-delivery.ts | NotificationEvent | 1 | subset | array {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER_CANCELLED}: the three emails the office gets about a customer order (SA-1063), the one list the rules card and EMAIL_KIND_VALUES share
 packages/types/api/messaging-matrix.ts | MessageChannel | 1 | pending:B3 | array {EMAIL,WHATSAPP,SMS,PORTAL}
 packages/types/api/misc.ts | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED}
 packages/types/api/permissions.ts | OperatorPermissionGroup | 1 | pending:B3 | object {ORDERS,DISPATCH,CUSTOMERS,CATALOG,PRICING,REGU…
 packages/types/api/permissions.ts | UserRole | 1 | pending:B3 | union {SUPER_ADMIN,TENANT_ADMIN,OPERATOR,DRIVER,CUSTO…
 packages/types/api/products.ts | OrderStatus | 1 | pending:B3 | union {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
+packages/types/api/ready-for-pickup.ts | EmailDeliveryStatus | 1 | derived | ready-for-pickup notice outcome {SENT,NO_EMAIL,OPTED_OUT,OFF,FAILED}; API outcome list, not the Prisma enum
 packages/types/api/ship-state.ts | OrderStatus | 1 | pending:B3 | array {OUT_FOR_DELIVERY,PARTIALLY_DELIVERED,DELIVERED}
 packages/types/api/staff-capabilities.ts | OperatorPermissionGroup | 1 | pending:B3 | union {PRICING,ORDERS,FINANCE}
 packages/types/api/staff-capabilities.ts | UserRole | 2 | pending:B3 | array+union {OPERATOR,TENANT_ADMIN,SUPER_ADMIN}
