@@ -244,6 +244,10 @@ export const REPO_WIDE_PINS = [
     file: "apps/api/src/common/no-single-schema-path.spec.ts",
     why: "scans for single-file schema paths; exempts apps/api/scripts/split-prisma-schema.mjs",
   },
+  {
+    file: "apps/api/src/common/husky-hooks-tracked.spec.ts",
+    why: "reads the git index for .husky and .husky/_ (a hook edit must keep the tracked stubs)",
+  },
 ];
 
 /** Paths whose edit can break a repo-wide pin or a `-script` spec. */
