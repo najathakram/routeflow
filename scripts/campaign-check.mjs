@@ -75,7 +75,7 @@
 //   node scripts/campaign-check.mjs --batch F02                     # just F02
 //   node scripts/campaign-check.mjs --batch F02 --pipeline-dir <dir># + explicit build-plan.md
 //   node scripts/campaign-check.mjs --runs-dir <dir>                # override .campaign/runs
-//   node scripts/campaign-check.mjs --reports-only                  # verify-turbo, inside its slot: force what's missing, no scan
+//   node scripts/campaign-check.mjs --reports-only                  # verify-turbo, inside its slot: force what's unusable, no scan
 //   node scripts/campaign-check.mjs --print-stale                   # read-only: workspaces whose T1 report is missing/partial/stale (one per line)
 //   CAMPAIGN_CHECK_CODE_ROOT=<checkout> node scripts/campaign-check.mjs --landing   # registry:land: code paths under <checkout>, no ledger-commit freshness bound
 //
@@ -735,12 +735,19 @@ function main() {
     fs.rmSync(wsInfo.jsonPath, { force: true });
   }
 
+  // --reports-only runs inside verify's slot, after its plan: nothing else will refresh a report
+  // now, so a missing, stale or partial one is treated as a certain replay and forced. The pre-step
+  // can't settle this: it asks before the queue, and the shared cache can fill during the wait.
+  function replayStatus(gitRoot, pkg, mode) {
+    return mode === "reports" ? { status: "HIT", pkg } : turboDryRunStatus(gitRoot, pkg);
+  }
+
   // R1/R2 (full mode) + R4 (--freshness-only). Runs BEFORE any token indexing — a stale
   // report must never let a claim be discharged (or refused with "no test titled") against
   // proof the report doesn't actually carry any more.
   function checkFreshness(mode) {
     if (!t1Needed) {
-      if (mode === "freshness-only") process.exit(0);
+      if (mode !== "full") process.exit(0);
       return;
     }
 
@@ -795,7 +802,7 @@ function main() {
         // apps/mobile went unrecognized. Ask the SAME turbo dry-run question the stale/partial
         // path below asks, instead of optimistically trusting a missing file will appear.
         const pkg = resolvePkgName(gitRoot, wsInfo);
-        const dryRun = turboDryRunStatus(gitRoot, pkg);
+        const dryRun = replayStatus(gitRoot, pkg, mode);
         if (dryRun.status === "HIT") {
           console.error(
             `campaign-check: ${wsInfo.jsonPath} is MISSING and turbo predicts a cache HIT for ` +
@@ -898,7 +905,7 @@ function main() {
       // would leave the report exactly as unusable as it is right now (stale, or partial —
       // R9: treated identically here).
       const pkg = resolvePkgName(gitRoot, wsInfo);
-      const dryRun = turboDryRunStatus(gitRoot, pkg);
+      const dryRun = replayStatus(gitRoot, pkg, mode);
       if (dryRun.status === "HIT") {
         console.error(block);
         console.error(
@@ -934,7 +941,7 @@ function main() {
       if (anyStaleFull) process.exit(1);
       return;
     }
-    // mode === "freshness-only": R4 always exits here, before any token scan.
+    // "freshness-only" and "reports": R4 always exits here, before any token scan.
     process.exit(anyHitRefusal ? 1 : 0);
   }
 
@@ -1001,13 +1008,18 @@ function main() {
     return;
   }
 
-  if (freshnessOnly && fastVerify) {
+  const reportsOnly = args.includes("--reports-only");
+  if ((freshnessOnly || reportsOnly) && fastVerify) {
     // The pre-step exists to force a real test run when turbo would replay a stale report from cache;
     // a fast verify does not enforce reports locally, so forcing a full run here would defeat it.
     console.log(REPORT_COVERAGE_DEFERRED);
     process.exit(0);
   }
 
+  if (reportsOnly) {
+    checkFreshness("reports");
+    return;
+  }
   if (freshnessOnly) {
     checkFreshness("freshness-only");
     // checkFreshness always exits in freshness-only mode; unreachable, but explicit for clarity.
@@ -1015,13 +1027,6 @@ function main() {
   }
   if (fastVerify) console.log(REPORT_COVERAGE_DEFERRED);
   else checkFreshness("full");
-  if (args.includes("--reports-only")) {
-    // verify-turbo's last step inside its heavy slot: the reports are settled, and the token scan
-    // stays with the plain run at the end of the verify chain.
-    const enforced = t1Needed && !fastVerify;
-    if (enforced && T1_WORKSPACES.some((w) => !fs.existsSync(w.jsonPath))) process.exit(1);
-    return;
-  }
 
   let jestIndex = null;
   if (t1Needed && !fastVerify) {
