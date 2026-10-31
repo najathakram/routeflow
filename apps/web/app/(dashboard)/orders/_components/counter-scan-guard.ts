@@ -24,5 +24,8 @@ export function counterDialogOpen(): boolean {
  */
 export function cameraFrameBlocked(scanEl: HTMLElement | null): boolean {
   if (isTextEntryActive() && document.activeElement !== scanEl) return true;
-  return counterDialogOpen();
+  if (counterDialogOpen()) return true;
+  // W-1042 14b: a menu or popover (the phone menu drawer, AnchoredPopover) is a dialog with no `data-state`. The camera stops
+  // for any dialog that is not closed; `counterDialogOpen()` stays narrow because the key listener shares it.
+  return document.querySelector('[role="dialog"]:not([data-state="closed"])') !== null;
 }
