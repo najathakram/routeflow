@@ -8,7 +8,7 @@ import type { PriceEditLine } from "@/lib/counter-price-edit";
  * only when the shared reason rule (inside `resolveCounterPriceEdit`) asks for a reason or refuses the number. `onApply`
  * stays the one write.
  */
-const plain: PriceEditLine = { tierPrice: 10, listPrice: 10, tier: 1, qty: 2 };
+const plain: PriceEditLine = { tierPrice: 10, listPrice: 10, tier: 1, qty: 2, unitWord: "each" };
 const special: PriceEditLine = { ...plain, tier: 4, isSpecial: true };
 const DIALOG = { name: "Change the price for Cola" };
 
