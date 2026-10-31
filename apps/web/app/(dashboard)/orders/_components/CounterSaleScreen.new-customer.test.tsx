@@ -38,6 +38,12 @@ const NEW_CUSTOMER = {
   isWalkIn: false,
 };
 const createCustomer = jest.fn();
+let mockOfferShip = false;
+const mockSaleMutate = jest.fn();
+jest.mock("@/lib/api/drafts", () => ({
+  ...jest.requireActual("@/lib/api/drafts"),
+  useCreateDraft: () => ({ mutateAsync: jest.fn(), mutate: jest.fn(), isPending: false }),
+}));
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [] } }),
@@ -75,10 +81,19 @@ jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleGate: () => ({
     showButton: true,
     opensAsCounter: true,
-    offerShipInstead: false,
+    offerShipInstead: mockOfferShip,
     capability: { counter: "always" },
   }),
-  useCreateCounterSale: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useCreateCounterSale: () => {
+    const [pending, setPending] = jest.requireActual("react").useState(false);
+    return {
+      mutateAsync: (...args: unknown[]) => {
+        setPending(true);
+        return mockSaleMutate(...args);
+      },
+      isPending: pending,
+    };
+  },
   useCounterSaleByKey: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
@@ -90,6 +105,8 @@ beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
   releasePrices = undefined;
+  mockOfferShip = false;
+  mockSaleMutate.mockReset();
   get.mockImplementation((url: string) =>
     url.startsWith("/customers/")
       ? new Promise((resolve) => {
@@ -181,5 +198,34 @@ describe("CounterSaleScreen: a new customer in the sale (W-1041)", () => {
     const add = screen.queryByRole("button", { name: 'Add "Acme Cafe" as a new customer' });
     expect(add).toBeInTheDocument();
     expect(add).toBeDisabled();
+  });
+
+  it("MUST 8: the Add button is disabled while the sale is posting", async () => {
+    mockSaleMutate.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<CounterSaleScreen />);
+    await scanCola();
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in" }));
+    search("Acme Cafe");
+    const addName = { name: 'Add "Acme Cafe" as a new customer' };
+    expect(screen.queryByRole("button", addName)).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" }));
+    fireEvent.click(completeBtn());
+    await waitFor(() => expect(screen.queryByRole("button", addName)).toBeDisabled());
+    expect(mockSaleMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ship this order instead with a walk-in: the new customer needs an address first", async () => {
+    mockOfferShip = true;
+    renderWithProviders(<CounterSaleScreen />);
+    await scanCola();
+    fireEvent.click(screen.getByRole("button", { name: "Walk-in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ship this order instead" }));
+    search("Acme Cafe");
+    const add = screen.queryByRole("button", { name: 'Add "Acme Cafe" as a new customer' });
+    expect(add).toBeInTheDocument();
+    fireEvent.click(add!);
+    fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    await waitFor(() => expect(screen.queryAllByText("Required").length).toBeGreaterThan(0));
+    expect(createCustomer).not.toHaveBeenCalled();
   });
 });

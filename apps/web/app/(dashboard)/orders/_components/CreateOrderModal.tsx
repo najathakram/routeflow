@@ -595,7 +595,7 @@ export function CreateOrderModal({
     return () => clearTimeout(t);
   }, [productSearch]);
 
-  const { data: customersData } = useCustomers({
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: debouncedCustomerSearch || undefined,
   });
   // A term that looks like a scanned code goes through the candidate-aware
@@ -611,6 +611,9 @@ export function CreateOrderModal({
     includeVariants: true,
   });
 
+  // The search has an answer (not on its way, not failed): only then is "No customers found." (and Add) true.
+  const customersAnswered =
+    debouncedCustomerSearch.length > 0 && customersData !== undefined && !customersFetching;
   const filteredCustomers = React.useMemo(() => {
     if (!debouncedCustomerSearch) return [];
     return (customersData?.data ?? []).slice(0, 8);
@@ -1613,7 +1616,7 @@ export function CreateOrderModal({
       customerListOpen &&
       !selectedCustomer &&
       customerSearch &&
-      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+      (filteredCustomers.length > 0 || customersAnswered)
     ) {
       event.preventDefault();
       setCustomerListOpen(false);
@@ -2676,14 +2679,13 @@ export function CreateOrderModal({
                     setCustomerError("");
                   }}
                   results={filteredCustomers as SelectedCustomer[]}
-                  searched={debouncedCustomerSearch.length > 0}
+                  searched={customersAnswered}
                   listOpen={customerListOpen}
                   onListOpenChange={setCustomerListOpen}
                   onPick={pickCustomer}
                   onCreateNew={newCustomerDoor.open}
                   error={customerError}
                 />
-                {newCustomerDoor.modal}
                 {customerUndo.previous && (
                   <p role="status" className="flex items-center gap-2 text-xs text-navy/70">
                     Customer cleared ({customerUndo.previous.customer.businessName}).
@@ -3286,6 +3288,8 @@ export function CreateOrderModal({
           </section>
         </div>
       </form>
+      {/* Outside the form: a submit inside the customer window must not bubble into the order's. */}
+      {newCustomerDoor.modal}
 
       <InlineCreateProductModal
         isOpen={createProductOpen}

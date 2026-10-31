@@ -568,7 +568,7 @@ export function CounterSaleScreen() {
     customerSearch,
     pickCustomer,
   );
-  const door = useNewCustomerDoor(pickCustomer);
+  const door = useNewCustomerDoor(pickCustomer, shipIntent);
 
   // The fulfilment pre-selection for "Ship this order instead": the customer's own path first, then the staff default.
   const shipPreselected = preselectFulfilment(customer?.fulfillPath, gate.capability) === "SHIP";

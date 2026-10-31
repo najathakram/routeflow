@@ -3,6 +3,8 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 import { apiClient } from "@/lib/api-client";
+import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
+import type { SubscriptionView } from "@routeflow/types";
 
 /**
  * W-1041 (SA-1062 R2, MUSTs 5-7): the builder's customer search offers `Add "<typed>" as a new customer`. The new customer
@@ -47,17 +49,19 @@ jest.mock("@/lib/tenant-features", () => ({
     refetch: jest.fn(),
   }),
 }));
+let mockCustomers: { data?: { data: unknown[] }; isFetching?: boolean; isError?: boolean } = {};
+let mockRefuse = false;
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [] } }),
+  useCustomers: () => mockCustomers,
   useCustomerPrices: () => ({ data: [] }),
   useCustomer: () => ({ data: undefined }),
   useCreateCustomer: () => ({
     mutate: (payload: unknown, opts?: { onSuccess?: (d: unknown) => void }) => {
       createCustomer(payload);
-      opts?.onSuccess?.({ customer: NEW_CUSTOMER, user: {}, tempPassword: "x" });
+      if (!mockRefuse) opts?.onSuccess?.({ customer: NEW_CUSTOMER, user: {}, tempPassword: "x" });
     },
     isPending: false,
-    error: null,
+    error: mockRefuse ? new Error("That name is taken") : null,
     reset: jest.fn(),
   }),
   useUpdateCustomer: () => ({ mutate: jest.fn(), isPending: false, error: null, reset: jest.fn() }),
@@ -124,6 +128,8 @@ const openDoor = async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCustomers = { data: { data: [] } };
+  mockRefuse = false;
   (apiClient.get as jest.Mock).mockImplementation((url: string) =>
     Promise.resolve({ data: url === "/users/me/preferences" ? {} : { taxRate: 0 } }),
   );
@@ -159,5 +165,70 @@ describe("CreateOrderModal: a new customer in the builder (W-1041)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
     await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
     expect(createCustomer.mock.calls[0][0].addresses).toBeUndefined();
+  });
+
+  it("P1: a good save on an empty order raises no order error behind the window", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("switch", { name: /store pickup/i }));
+    await openDoor();
+    fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Add at least one product")).toBeNull();
+  });
+
+  it("P2: a refused save raises no order error behind the window", async () => {
+    mockRefuse = true;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} initialFulfillPath="SHIP" />);
+    await openDoor();
+    type("Business Name", "Acme Cafe");
+    type("Street", "1 Main St");
+    type("City", "Austin");
+    type("ZIP Code", "78701");
+    fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Please select a customer")).toBeNull();
+  });
+
+  it("P3: Enter on the window's own buttons is not cancelled by the order form", async () => {
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await openDoor();
+    const notCancelled = fireEvent.keyDown(screen.getByRole("button", { name: "Cancel" }), {
+      key: "Enter",
+    });
+    expect(notCancelled).toBe(true);
+  });
+
+  it("P4: no Add while the search is still on its way", async () => {
+    mockCustomers = { data: undefined, isFetching: true };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText("Search by business name…"), {
+      target: { value: "Acme Cafe" },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(screen.queryByRole("button", { name: /as a new customer/ })).toBeNull();
+  });
+
+  it("P5: no Add after a failed search", async () => {
+    mockCustomers = { data: undefined, isFetching: false, isError: true };
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText("Search by business name…"), {
+      target: { value: "Acme Cafe" },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(screen.queryByRole("button", { name: /as a new customer/ })).toBeNull();
+  });
+
+  it("guard: read-only keeps the builder's Add drawn but disabled", async () => {
+    const view = { status: "READ_ONLY", billingContactEmail: "dana@example.test" };
+    renderWithProviders(
+      <ReadOnlyGateProvider view={view as unknown as SubscriptionView}>
+        <CreateOrderModal isOpen onClose={jest.fn()} />
+      </ReadOnlyGateProvider>,
+    );
+    fireEvent.change(await screen.findByPlaceholderText("Search by business name…"), {
+      target: { value: "Acme Cafe" },
+    });
+    const add = await screen.findByRole("button", { name: /as a new customer/ });
+    expect(add).toBeDisabled();
   });
 });
