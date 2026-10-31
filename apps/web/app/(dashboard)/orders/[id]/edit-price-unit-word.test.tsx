@@ -7,6 +7,7 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import { EditableLineItems, type EditItemState } from "./_components/order-line-edit";
+import { buildNewLine } from "./scan-level-line";
 
 jest.mock("@/lib/api/product-units", () => ({
   useUnitsEnabled: () => false,
@@ -49,12 +50,18 @@ const line = (id: string, name: string, over: Partial<EditItemState>): EditItemS
     priceType: "STANDARD",
     ...over,
   };
-  return {
+  // buildEditItemFromLine seeds the pack words too (packUnit, packUnitsPerBox) and copies all of them to original*.
+  const seeded: EditItemState = {
     ...state,
-    originalUnit: state.unit,
-    originalPackUnit: state.packUnit ?? state.unit,
-    originalPackUnitsPerBox: state.packUnitsPerBox ?? state.unitsPerBox,
-    originalUnitLabel: state.unitLabel,
+    packUnit: state.packUnit ?? state.unit,
+    packUnitsPerBox: state.packUnitsPerBox ?? state.unitsPerBox ?? undefined,
+  };
+  return {
+    ...seeded,
+    originalUnit: seeded.unit,
+    originalPackUnit: seeded.packUnit,
+    originalPackUnitsPerBox: seeded.packUnitsPerBox,
+    originalUnitLabel: seeded.unitLabel,
   };
 };
 
@@ -212,6 +219,84 @@ describe("order edit: a substituted line's price field follows the substitute (S
       />,
     );
     await substituteTo(user, "Tray Water");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(labelsOf()).toEqual(["Price per Pallet"]);
+  });
+});
+
+// A line the add-product flow built (the real buildNewLine): it has no stored unit words, so Undo must still bring back
+// the word it started with, not the substitute's (review-c, #4035).
+describe("order edit: a NEW line's Undo brings its own word back (SA-1069 U-2)", () => {
+  const newLine = (product: Record<string, unknown>): EditItemState =>
+    buildNewLine(product, {
+      newId: "new-1",
+      startPrice: 18,
+      base: 18,
+      unitScan: false,
+      special: false,
+    }) as unknown as EditItemState;
+
+  it.each([
+    [
+      "a Case of 12",
+      "Price per Case",
+      { id: "p-new", name: "Corn Chips", unit: "Case", unitsPerBox: 12 },
+    ],
+    [
+      "an each product",
+      "Price each",
+      { id: "p-new", name: "Iced Tea", unit: "each", unitsPerBox: null },
+    ],
+  ])("%s: Substitute to lb, then Undo, reads %s again", async (_name, start, product) => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness items={[newLine(product)]} />);
+    expect(labelsOf()).toEqual([start]);
+    expect(await substituteTo(user, "Loose Apples")).toEqual(["Price per lb"]);
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(labelsOf()).toEqual([start]);
+  });
+
+  it("a new Case line cancelled after Substitute, then Undo at Not available, reads Price per Case", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Harness
+        items={[newLine({ id: "p-new", name: "Corn Chips", unit: "Case", unitsPerBox: 12 })]}
+      />,
+    );
+    await substituteTo(user, "Loose Apples");
+    await user.click(screen.getByRole("button", { name: "Not available" }));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(labelsOf()).toEqual(["Price per Case"]);
+  });
+});
+
+// The other Undo site (a substituted line marked Not available), on a stored line: both sites restore every word.
+describe("order edit: Undo at Not available restores a stored line's words (SA-1069 U-2)", () => {
+  it("a Case of 12 swapped to lb, marked Not available, then Undo reads Price per Case", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Harness items={[line("1", "Corn Chips", { unit: "Case" })]} />);
+    await substituteTo(user, "Loose Apples");
+    await user.click(screen.getByRole("button", { name: "Not available" }));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(labelsOf()).toEqual(["Price per Case"]);
+  });
+
+  it("a picked-unit line swapped, marked Not available, then Undo reads its picked unit", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Harness
+        items={[
+          line("1", "Corn Chips", {
+            unit: "Case",
+            unitLabel: "Pallet",
+            unitsPerBox: 480,
+            boxSplit: false,
+          }),
+        ]}
+      />,
+    );
+    await substituteTo(user, "Tray Water");
+    await user.click(screen.getByRole("button", { name: "Not available" }));
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(labelsOf()).toEqual(["Price per Pallet"]);
   });
