@@ -180,6 +180,17 @@ export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
 }
 
+/**
+ * SA-1067 M2b: the largest US bill. A real tender is within one bill of the sale, so a tender this far over it is far more
+ * likely a scanner's code than money; Enter on it arms and a second Enter completes.
+ */
+export const TENDER_ARM_OVER = 100;
+
+/** True when Enter alone must not complete the sale: the tender is `TENDER_ARM_OVER` or more over what's due. */
+export function tenderNeedsSecondEnter(total: number, tendered: number): boolean {
+  return roundMoney(tendered - total) >= TENDER_ARM_OVER;
+}
+
 /** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
 export function amountDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(total - tendered));

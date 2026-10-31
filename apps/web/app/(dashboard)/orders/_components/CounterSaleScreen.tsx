@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useArmedEnter } from "@/lib/armed-enter";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -71,6 +72,7 @@ import {
   paymentMethodOptions,
   preselectFulfilment,
   quickTenderOptions,
+  tenderNeedsSecondEnter,
   readAutoPrint,
   readHeldAttempt,
   resolveTender,
@@ -744,6 +746,17 @@ export function CounterSaleScreen() {
 
   // R7b 1.2 (a): Enter in an EMPTY scan box with lines in the cart moves to the payment (a scanner never sends an empty Enter).
   const tenderRef = React.useRef<HTMLInputElement>(null);
+  // SA-1067 M2b: Enter in Amount tendered completes the sale only when the figure is plausible money; a tender a bill or
+  // more over the total (a scanner's code) arms first. The key names what a second Enter would complete. Amount paying
+  // now needs none: an amount over the total is already refused there, so it can't post.
+  const tenderEnter = useArmedEnter();
+  const tenderKey = JSON.stringify([method, tendered, payTotal]);
+  const onTenderEnter = () =>
+    tenderEnter.press(
+      tenderKey,
+      tenderNeedsSecondEnter(payTotal, tenderedNum),
+      () => void completeSale(false),
+    );
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
   const focusPaymentControl = (el: HTMLElement | null | undefined) => el?.focus();
   // W-709 (538 F24): a short cash tender takes the cashier to the fix. Bumped when complete() refuses with TENDER_SHORT; the
@@ -1864,7 +1877,7 @@ export function CounterSaleScreen() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        void completeSale(false);
+                        onTenderEnter();
                       }
                     }}
                   />
@@ -1912,6 +1925,12 @@ export function CounterSaleScreen() {
                   <CounterPartPayCreditError onRetry={retryCredit} />
                 ) : null}
               </>
+            ) : null}
+
+            {tenderEnter.isArmed(tenderKey) ? (
+              <p role="status" className="text-sm font-medium text-navy">
+                Press Enter again to complete the sale.
+              </p>
             ) : null}
           </section>
 
