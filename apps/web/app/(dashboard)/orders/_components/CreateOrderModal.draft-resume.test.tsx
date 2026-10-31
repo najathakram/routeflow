@@ -3,6 +3,7 @@ import { renderWithProviders, screen, waitFor, act, fireEvent, cleanup } from "@
 import { CreateOrderModal } from "./CreateOrderModal";
 import { createMemoryDraftStorage, setDraftMirrorStorage } from "@/lib/order-draft/storage";
 import { readDraftSubmitKey } from "@routeflow/types/draft-submit-key";
+import { counterCartToDraftPayload } from "@/lib/counter-ship-handoff";
 
 // SA-817 (A): an in-progress staff order survives a connection drop / reload and resumes.
 //   A1 reload + reopen offers "Resume your unsent order?" with the same lines
@@ -21,6 +22,8 @@ jest.mock("@/lib/auth-context", () => {
 });
 
 let mockCustomers: Array<Record<string, unknown>> = [];
+// The customer's remembered prices; the rows without a history leave it unread and empty.
+let mockHistory: Record<string, unknown> = { data: undefined };
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
   useCustomerPrices: (customerId?: string) => ({ data: customerId ? [] : [] }),
@@ -34,7 +37,7 @@ jest.mock("@/lib/api/products", () => ({
 jest.mock("@/lib/api/orders", () => ({
   ...jest.requireActual("@/lib/api/orders"),
   useActiveOrderForCustomer: () => ({ data: undefined }),
-  useCustomerPriceHistory: () => ({ data: undefined }),
+  useCustomerPriceHistory: () => mockHistory,
 }));
 
 const mockCreateDraft = jest.fn();
@@ -171,6 +174,7 @@ beforeEach(() => {
   mockServerDrafts = [];
   mockLoadedDraft = undefined;
   mockProductNow = {};
+  mockHistory = { data: undefined };
   storage = createMemoryDraftStorage();
   setDraftMirrorStorage(storage);
   mockCreateDraft.mockImplementation(() => NEVER()); // the server is unreachable unless a test says otherwise
@@ -311,7 +315,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       _submitKey: "K-PARKED",
     });
 
-    async function seedParked() {
+    async function seedParked(payload: unknown = parked()) {
       const { createDraftMirror } = await import("@/lib/order-draft/mirror");
       const m = createDraftMirror({ storage, tenantId: "t1", userId: "u1" });
       m.write({
@@ -321,7 +325,7 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
         syncedHash: null,
         customerId: "c1",
         customerName: "Acme Foods",
-        payload: parked() as never,
+        payload: payload as never,
       });
       await m.flush();
     }
@@ -382,6 +386,99 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       await screen.findByText("Widget p1");
       await flush();
       expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
+    });
+
+    describe("SA-1068 A-3: a cart shipped from the till, resumed", () => {
+      const customer = { id: "c1", businessName: "Acme Foods", pricingTier: 1 };
+      const tillLine = {
+        tempId: "till-1",
+        productId: "p1",
+        name: "Widget p1",
+        qty: 2,
+        listPrice: 12,
+        unit: "each",
+      };
+      const atMemory = () =>
+        counterCartToDraftPayload(
+          [{ ...tillLine, unitPrice: 15, priceType: "MANUAL" as const }],
+          customer,
+        );
+      const productReads = () =>
+        (apiClient.get as jest.Mock).mock.calls.filter((c) => c[0] === "/products/p1");
+      const resume = async () => {
+        const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await screen.findByText("Resume your unsent order?");
+        fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+        await screen.findByText("Widget p1");
+        await flush();
+        return view;
+      };
+
+      beforeEach(() => {
+        mockProductNow = { p1: { id: "p1", pricePerUnit: "12" } };
+      });
+
+      it("T12: the line stays at its memory, with no note, no price sent and the total the invoice will carry", async () => {
+        mockHistory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: false };
+        await seedParked(atMemory());
+        post.mockResolvedValue({ data: { id: "o1" } });
+        await resume();
+        await waitFor(() => expect(productReads()).toHaveLength(1));
+        await flush();
+        expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+        expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+        expect(screen.getAllByText("$30.00").length).toBeGreaterThan(0);
+
+        fireEvent.click(createBtn());
+        await waitFor(() => expect(orderPosts()).toHaveLength(1));
+        expect(bodyOf(0).items[0]).not.toHaveProperty("unitPrice");
+      });
+
+      it("M14: the re-price waits for the history read", async () => {
+        mockHistory = { data: undefined, isPending: true, isError: false };
+        await seedParked(atMemory());
+        const view = await resume();
+        expect(productReads()).toHaveLength(0);
+
+        mockHistory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: false };
+        view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+        await waitFor(() => expect(productReads()).toHaveLength(1));
+        await flush();
+        expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+      });
+
+      it("M14: a failed history read keeps the line as parked and says so, never a false note", async () => {
+        mockHistory = { data: undefined, isPending: false, isError: true };
+        await seedParked(atMemory());
+        await resume();
+        expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+        expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+        expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+      });
+
+      it("T15: a typed price is sent with its reason", async () => {
+        await seedParked(
+          counterCartToDraftPayload(
+            [
+              {
+                ...tillLine,
+                unitPrice: 8,
+                priceType: "STANDARD",
+                tierPrice: 12,
+                override: { reason: "Damaged box" },
+              },
+            ],
+            customer,
+          ),
+        );
+        post.mockResolvedValue({ data: { id: "o1" } });
+        await resume();
+        expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+
+        fireEvent.click(createBtn());
+        await waitFor(() => expect(orderPosts()).toHaveLength(1));
+        expect(bodyOf(0).items[0]).toMatchObject({ unitPrice: 8, overrideReason: "Damaged box" });
+      });
     });
 
     it("A6: a resumed draft keeps its own submit key", async () => {
