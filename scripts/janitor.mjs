@@ -521,21 +521,56 @@ export function pathPresent(p) {
   }
 }
 
-function findJunctions(dir) {
-  if (!isWindows() || !existsSync(dir)) return [];
-  const out = trySh("powershell", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    // B818: -ErrorVariable + exit 3, so an access-denied subtree (which could hide a junction)
-    // fails the scan instead of being silently skipped.
-    `Get-ChildItem -LiteralPath ${psLiteral(dir)} -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable scanErr | Where-Object { $_.LinkType } | Select-Object -ExpandProperty FullName; if ($scanErr) { exit 3 }`,
-  ]);
-  if (out == null) return null; // PowerShell failed: we do NOT know there are no junctions
-  return out
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+/**
+ * Read-only detection of every Windows junction or symlink under `dir`; never deletes anything.
+ * A Node walk over readdir Dirents that NEVER descends into a link: the PowerShell `Get-ChildItem
+ * -Recurse` it replaces walked INTO every junction target (a lane's node_modules points at the main
+ * checkout's), which took 15+ minutes a tree. A link is reported, not entered, so a link's target
+ * (another tree) is neither scanned nor listed.
+ *
+ * B818 fails CLOSED: any directory that cannot be read, or an entry whose type cannot be settled,
+ * makes the whole scan return null, never a partial list that could hide a junction. The walk is
+ * iterative, so a very deep tree cannot overflow the stack; Node namespaces long Windows paths.
+ * `deps` is for tests; the defaults are the real OS calls.
+ */
+export function findJunctions(
+  dir,
+  {
+    platform = process.platform,
+    exists = existsSync,
+    readdir = readdirSync,
+    lstat = lstatSync,
+  } = {},
+) {
+  if (platform !== "win32" || !exists(dir)) return [];
+  const found = [];
+  const pending = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    let entries;
+    try {
+      entries = readdir(current, { withFileTypes: true });
+    } catch {
+      return null; // an unreadable folder could hide a junction: we do NOT know there is none
+    }
+    for (const entry of entries) {
+      const full = win32.join(current, entry.name);
+      if (entry.isSymbolicLink()) found.push(full);
+      else if (entry.isDirectory()) pending.push(full);
+      else if (!entry.isFile()) {
+        // The file system gave no usable type: settle it with lstat, and fail closed if that fails.
+        let st;
+        try {
+          st = lstat(full);
+        } catch {
+          return null;
+        }
+        if (st.isSymbolicLink()) found.push(full);
+        else if (st.isDirectory()) pending.push(full);
+      }
+    }
+  }
+  return found;
 }
 
 /** The real path of `p` with symlinks in its PARENT folders resolved (the last component kept). */

@@ -11,10 +11,13 @@ import {
   lutimesSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  rmdirSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -70,6 +73,7 @@ import {
   scopePlan,
   removeWorktreePlain,
   resolveListedPaths,
+  findJunctions,
 } from "./janitor.mjs";
 
 // Run inside a git hook, GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE would point every `git -C <tmp>`
@@ -2580,6 +2584,207 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Fast junction scan: a Node walk over readdir Dirents that never descends into a link (the old
+// PowerShell Get-ChildItem -Recurse walked INTO every junction target and took 15+ minutes a tree).
+{
+  // Fake Windows paths are written with "/" and turned into "\" here, so no literal needs escaping.
+  const p = (s) => s.replace(/\//g, "\\");
+  const dirent = (name, kind) => ({
+    name,
+    isFile: () => kind === "file",
+    isDirectory: () => kind === "dir",
+    isSymbolicLink: () => kind === "link",
+  });
+  // A fake tree: { "C:/w": [[name, kind], ...] } (keys are p()-converted). An Error value is thrown by readdir.
+  const fakeFs = (tree, calls = []) => {
+    const byPath = new Map(Object.entries(tree).map(([k, v]) => [p(k), v]));
+    return {
+      platform: "win32",
+      exists: () => true,
+      readdir: (d) => {
+        calls.push(d);
+        const v = byPath.get(d);
+        if (v instanceof Error) throw v;
+        if (!v) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return v.map(([n, k]) => dirent(n, k));
+      },
+      lstat: () => {
+        throw new Error("lstat not expected");
+      },
+    };
+  };
+
+  t("FJ1: a junction or symlink is found, a plain file and folder are not", () => {
+    const tree = {
+      "C:/w": [
+        ["a", "dir"],
+        ["j", "link"],
+        ["f", "file"],
+      ],
+      "C:/w/a": [["s", "link"]],
+    };
+    assert.deepEqual(findJunctions(p("C:/w"), fakeFs(tree)).sort(), [p("C:/w/a/s"), p("C:/w/j")]);
+  });
+  t("FJ2: a junction nested several folders down is found", () => {
+    const tree = {
+      "C:/w": [["a", "dir"]],
+      "C:/w/a": [["b", "dir"]],
+      "C:/w/a/b": [["c", "dir"]],
+      "C:/w/a/b/c": [["deep", "link"]],
+    };
+    assert.deepEqual(findJunctions(p("C:/w"), fakeFs(tree)), [p("C:/w/a/b/c/deep")]);
+  });
+  t("FJ3: a link is never descended into (its target's own links are not listed)", () => {
+    const calls = [];
+    const tree = {
+      "C:/w": [["nm", "link"]],
+      // Only a walker that follows the link would ever read this folder.
+      "C:/w/nm": [
+        ["inner", "link"],
+        ["x", "dir"],
+      ],
+    };
+    assert.deepEqual(findJunctions(p("C:/w"), fakeFs(tree, calls)), [p("C:/w/nm")]);
+    assert.deepEqual(calls, [p("C:/w")], `descended: ${JSON.stringify(calls)}`);
+  });
+  t(
+    "FJ4 (B818): ONE unreadable subtree fails the whole scan closed (null, never a partial list)",
+    () => {
+      const tree = {
+        "C:/w": [
+          ["ok", "dir"],
+          ["denied", "dir"],
+          ["j", "link"],
+        ],
+        "C:/w/ok": [["k", "link"]],
+        "C:/w/denied": Object.assign(new Error("EPERM"), { code: "EPERM" }),
+      };
+      assert.equal(findJunctions(p("C:/w"), fakeFs(tree)), null);
+    },
+  );
+  t("FJ5 (B818): an unreadable ROOT fails closed too", () => {
+    const tree = { "C:/w": Object.assign(new Error("EACCES"), { code: "EACCES" }) };
+    assert.equal(findJunctions(p("C:/w"), fakeFs(tree)), null);
+  });
+  t(
+    "FJ6: an entry of unknown type is lstat'ed, a link there is found, a failed lstat fails closed",
+    () => {
+      const tree = {
+        "C:/w": [
+          ["u", "unknown"],
+          ["f", "file"],
+        ],
+      };
+      const withLstat = (isLink) => ({
+        ...fakeFs(tree),
+        lstat: () => ({ isSymbolicLink: () => isLink, isDirectory: () => false }),
+      });
+      assert.deepEqual(findJunctions(p("C:/w"), withLstat(true)), [p("C:/w/u")]);
+      assert.deepEqual(findJunctions(p("C:/w"), withLstat(false)), []);
+      const broken = {
+        ...fakeFs(tree),
+        lstat: () => {
+          throw new Error("EIO");
+        },
+      };
+      assert.equal(findJunctions(p("C:/w"), broken), null);
+    },
+  );
+  t("FJ7: a missing folder has no junctions; off Windows nothing is scanned", () => {
+    assert.deepEqual(findJunctions(p("C:/gone"), { ...fakeFs({}), exists: () => false }), []);
+    const calls = [];
+    const linux = { ...fakeFs({ "/w": [["j", "link"]] }, calls), platform: "linux" };
+    assert.deepEqual(findJunctions("/w", linux), []);
+    assert.deepEqual(calls, []);
+  });
+  t("FJ8: a very deep tree does not overflow the stack (the walk is iterative)", () => {
+    const tree = {};
+    let d = "C:/w";
+    for (let i = 0; i < 6000; i++) {
+      tree[d] = [["n", "dir"]];
+      d += "/n";
+    }
+    tree[d] = [["end", "link"]];
+    assert.deepEqual(findJunctions(p("C:/w"), fakeFs(tree)), [p(d + "/end")]);
+  });
+
+  // Remove ONE link without following it (a directory junction goes with rmdir, never into its target).
+  const dropLink = (path) => {
+    try {
+      unlinkSync(path);
+    } catch {
+      rmdirSync(path);
+    }
+  };
+  if (process.platform === "win32") {
+    // The real thing: does Node's readdir Dirent report a real junction as a link on this Windows?
+    const root = mkdtempSync(join(tmpdir(), "janitor-fj-"));
+    try {
+      const outside = join(root, "outside");
+      mkdirSync(join(outside, "inner"), { recursive: true });
+      symlinkSync(join(outside, "inner"), join(outside, "innerlink"), "junction"); // lives in the TARGET
+      const tree = join(root, "tree");
+      mkdirSync(join(tree, "a", "b"), { recursive: true });
+      writeFileSync(join(tree, "a", "file.txt"), "x");
+      symlinkSync(outside, join(tree, "top"), "junction");
+      symlinkSync(outside, join(tree, "a", "b", "nested"), "junction");
+      t(
+        "FJ9: REAL junctions (top level and nested) are found; the target's own junction is not",
+        () => {
+          assert.deepEqual(
+            findJunctions(tree).sort(),
+            [join(tree, "a", "b", "nested"), join(tree, "top")].sort(),
+          );
+        },
+      );
+      t("FJ10: REAL file and dir symlinks are found when this account may create them", () => {
+        const fileLink = join(tree, "flink");
+        const dirLink = join(tree, "dlink");
+        try {
+          symlinkSync(join(tree, "a", "file.txt"), fileLink, "file");
+          symlinkSync(join(tree, "a"), dirLink, "dir");
+        } catch (e) {
+          if (e?.code === "EPERM") return; // no symlink privilege here: the junction rows are the case that matters
+          throw e;
+        }
+        const found = findJunctions(tree);
+        assert.ok(found.includes(fileLink) && found.includes(dirLink), JSON.stringify(found));
+        dropLink(fileLink);
+        dropLink(dirLink);
+      });
+      // A path far past MAX_PATH (260): Node namespaces it, so the walk must still reach the bottom.
+      let deep = join(root, "long");
+      while (deep.length < 400) deep = join(deep, "segment-" + "x".repeat(30));
+      mkdirSync(deep, { recursive: true });
+      symlinkSync(outside, join(deep, "bottom"), "junction");
+      t("FJ11: a junction under a path longer than 260 characters is found", () => {
+        assert.deepEqual(findJunctions(join(root, "long")), [join(deep, "bottom")]);
+      });
+      t(
+        "FJ12: after the junctions are unlinked the rescan finds none, and the target survives",
+        () => {
+          for (const l of findJunctions(tree)) dropLink(l);
+          assert.deepEqual(findJunctions(tree), []);
+          assert.ok(
+            existsSync(join(outside, "inner")),
+            "the junction target must survive the unlink",
+          );
+        },
+      );
+    } finally {
+      // Links first, so the recursive rm below can never follow one into `outside`.
+      for (const link of findJunctions(root) ?? []) {
+        try {
+          dropLink(link);
+        } catch {
+          /* best effort */
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 }
 
