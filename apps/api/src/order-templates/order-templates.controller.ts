@@ -6,11 +6,13 @@ import {
   Delete,
   Body,
   Param,
+  Optional,
   Query,
   UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { OrderTemplatesService } from "./order-templates.service";
+import { StaffOrderEmailService } from "../messaging/staff-order-email";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -28,7 +30,11 @@ import { toCustomerOrder } from "../common/staff-only-fields";
 @UseGuards(JwtAuthGuard)
 @Controller("order-templates")
 export class OrderTemplatesController {
-  constructor(private readonly service: OrderTemplatesService) {}
+  constructor(
+    private readonly service: OrderTemplatesService,
+    // SA-1063: a CUSTOMER's generate is a buyer-placed order (optional so the positional specs keep compiling).
+    @Optional() private readonly staffOrderEmail?: StaffOrderEmailService,
+  ) {}
 
   @Get()
   findAll(@CurrentUser() user: JwtPayload, @Query("customerId") customerId?: string) {
@@ -107,6 +113,9 @@ export class OrderTemplatesController {
     @Body() dto?: GenerateTemplateOrderDto,
   ) {
     const order = await this.service.generateOrderForUser(templateId, user, dto);
+    if (user.role === UserRole.CUSTOMER && order?.id) {
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(order.id, { merged: false });
+    }
     // A CUSTOMER gets the customer-facing allowlist of the order it generated; staff get the row itself.
     return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;
   }

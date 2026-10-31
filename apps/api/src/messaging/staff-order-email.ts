@@ -7,15 +7,17 @@ import { EmailDeliveryService } from "../email/email-delivery.service";
 import type { EmailKind } from "../email/email-kinds";
 import { escapeHtml } from "../common/html-escape";
 import { isInternalEmail } from "../common/internal-email";
+import { PolicyService } from "../policy/policy.service";
+import type { StaffOrderEmailPolicyMode } from "../policy/policy-registry";
 
 /**
  * WS4 (SA-606) — staff emails for buyer-placed orders, buyer edits and buyer cancels.
  *
  * Rollout: the platform env ceiling `STAFF_ORDER_EMAIL=off|dark|on` (only the literal off|dark|on are honoured; unset/garbage = "dark") is
- * combined with a policy mode (fixed "dark" until the policy layer lands) and the EFFECTIVE mode
+ * combined with the tenant policy `notifications.staffOrderEmail` (SA-1063) and the EFFECTIVE mode
  * is the minimum of the two: off = nothing, dark = WOULD_SEND audit rows only, on = real sends.
  */
-export type StaffOrderEmailMode = "off" | "dark" | "on";
+export type StaffOrderEmailMode = StaffOrderEmailPolicyMode;
 
 const MODE_RANK: Record<StaffOrderEmailMode, number> = { off: 0, dark: 1, on: 2 };
 
@@ -49,6 +51,9 @@ const OPT_OUT_KEY: Record<StaffEvent, string> = {
   BUYER_ORDER_CANCELLED: "staffBuyerChangeEmail",
 };
 
+/** SA-1063 MUST 9: a buyer may save an order many times; one edit email per order inside this window. */
+export const BUYER_EDIT_EMAIL_WINDOW_MS = 10 * 60 * 1000;
+
 const STAFF_CC_KEY = "notifications.staffCc";
 const STAFF_CC_MAX = 5;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -62,18 +67,22 @@ interface Recipient {
 export class StaffOrderEmailService {
   private readonly logger = new Logger(StaffOrderEmailService.name);
 
-  /** Policy ceiling; "dark" until the policy layer flips it (specs override this field). */
-  policyMode: StaffOrderEmailMode = "dark";
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
     private readonly deliveries: EmailDeliveryService,
+    private readonly policies: PolicyService,
   ) {}
 
-  /** Read-only effective mode (env ceiling read at call time, min with the policy term). */
-  getEffectiveMode(): StaffOrderEmailMode {
-    return effectiveStaffOrderEmailMode(process.env.STAFF_ORDER_EMAIL, this.policyMode);
+  /**
+   * Effective mode for one tenant: the env ceiling (read at call time, the kill switch) min the tenant's
+   * policy. An env of `off` returns before any policy read. A failed or invalid policy read is `dark`.
+   */
+  async getEffectiveMode(tenantId: string): Promise<StaffOrderEmailMode> {
+    const env = process.env.STAFF_ORDER_EMAIL;
+    if (env === "off") return "off";
+    const policy = await this.policies.resolve(tenantId, "notifications.staffOrderEmail", {});
+    return effectiveStaffOrderEmailMode(env, policy);
   }
 
   /** Active tenant admins + up to 5 valid `notifications.staffCc` addresses, deduped. */
@@ -136,8 +145,7 @@ export class StaffOrderEmailService {
     try {
       if (!(event in OPT_OUT_KEY)) return;
       const kind = event as StaffEvent;
-      const mode = this.getEffectiveMode();
-      if (mode === "off") return;
+      if (process.env.STAFF_ORDER_EMAIL === "off") return; // the kill switch: no query at all
 
       const order = (await this.prisma.forTenant().order.findFirst({
         where: { id: ctx.orderId },
@@ -155,6 +163,9 @@ export class StaffOrderEmailService {
         );
         return;
       }
+
+      const mode = await this.getEffectiveMode(tenantId);
+      if (mode === "off") return;
 
       const recipients = await this.resolveRecipientRows(tenantId);
       if (recipients.length === 0) return;
@@ -184,6 +195,96 @@ export class StaffOrderEmailService {
     } catch (err) {
       this.logger.warn(`notifyStaffEvent(${String(event)}) skipped: ${(err as Error)?.message}`);
     }
+  }
+
+  // ─── SA-1063: the buyer-event entry points (each NEVER rejects; call after commit, with `void`) ───────────────
+
+  /** True when the order is a DRAFT, or its status cannot be read (then nothing is sent). */
+  async orderIsDraft(orderId: string): Promise<boolean> {
+    try {
+      const o = (await this.prisma.forTenant().order.findFirst({
+        where: { id: orderId },
+        select: { status: true },
+      })) as { status?: string } | null;
+      return !o || o.status === "DRAFT";
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * A customer placed (or folded into) an order. The event comes from what staff were already told: no delivery
+   * row for the order = STAFF_NEW_ORDER; a row and `merged` = BUYER_ORDER_EDITED; a row and not `merged` = an
+   * idempotent replay, nothing.
+   */
+  async notifyBuyerOrderPlaced(orderId: string, opts: { merged: boolean }): Promise<void> {
+    try {
+      if (process.env.STAFF_ORDER_EMAIL === "off") return;
+      if (!(await this.shouldTell(orderId))) return;
+      if (await this.alreadyTold(orderId, "STAFF_NEW_ORDER")) {
+        if (opts.merged) await this.sendEdited(orderId);
+        return;
+      }
+      await this.notifyStaffEvent(NotificationEvent.STAFF_NEW_ORDER, { orderId });
+    } catch (err) {
+      this.logger.warn(`notifyBuyerOrderPlaced skipped: ${(err as Error)?.message}`);
+    }
+  }
+
+  /** A customer edited an order (one email per order inside BUYER_EDIT_EMAIL_WINDOW_MS). */
+  async notifyBuyerOrderEdited(orderId: string): Promise<void> {
+    try {
+      if (process.env.STAFF_ORDER_EMAIL === "off") return;
+      if (!(await this.shouldTell(orderId))) return;
+      await this.sendEdited(orderId);
+    } catch (err) {
+      this.logger.warn(`notifyBuyerOrderEdited skipped: ${(err as Error)?.message}`);
+    }
+  }
+
+  /** A customer cancelled an order. `wasDraft` is read BEFORE the cancel: a draft sends nothing. */
+  async notifyBuyerOrderCancelled(orderId: string, opts: { wasDraft: boolean }): Promise<void> {
+    try {
+      if (process.env.STAFF_ORDER_EMAIL === "off") return;
+      if (!shouldNotifyStaffOfOrder({ principal: "CUSTOMER", isDraft: opts.wasDraft })) return;
+      await this.notifyStaffEvent(NotificationEvent.BUYER_ORDER_CANCELLED, { orderId });
+    } catch (err) {
+      this.logger.warn(`notifyBuyerOrderCancelled skipped: ${(err as Error)?.message}`);
+    }
+  }
+
+  /** The one named predicate, fed the order's CURRENT status (a draft is never a staff event). */
+  private async shouldTell(orderId: string): Promise<boolean> {
+    return shouldNotifyStaffOfOrder({
+      principal: "CUSTOMER",
+      isDraft: await this.orderIsDraft(orderId),
+    });
+  }
+
+  private async sendEdited(orderId: string): Promise<void> {
+    if (await this.alreadyTold(orderId, "BUYER_ORDER_EDITED", BUYER_EDIT_EMAIL_WINDOW_MS)) return;
+    await this.notifyStaffEvent(NotificationEvent.BUYER_ORDER_EDITED, { orderId });
+  }
+
+  /** One indexed lookup (`[entityType, entityId]`) on the delivery rows: any status counts as "told". */
+  private async alreadyTold(
+    orderId: string,
+    kind: StaffEvent,
+    withinMs?: number,
+  ): Promise<boolean> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return false;
+    const row = await this.prisma.forTenant().emailDelivery.findFirst({
+      where: {
+        tenantId,
+        kind,
+        entityType: "Order",
+        entityId: orderId,
+        ...(withinMs ? { createdAt: { gte: new Date(Date.now() - withinMs) } } : {}),
+      },
+      select: { id: true },
+    });
+    return !!row;
   }
 
   private async optedOutUserIds(

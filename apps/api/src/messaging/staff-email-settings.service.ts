@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type {
   StaffCcInvalidDetails,
   StaffEmailSettings,
@@ -8,6 +9,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { maskEmail } from "./messaging-deliveries.service";
+import { PolicyService, type PolicyActor } from "../policy/policy.service";
 import { StaffOrderEmailService } from "./staff-order-email";
 import { requireTenantContext } from "./require-tenant-context";
 
@@ -29,30 +31,63 @@ export class StaffEmailSettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly staffEmail: StaffOrderEmailService,
+    private readonly policies: PolicyService,
   ) {}
 
   async get(role: string): Promise<StaffEmailSettings> {
-    requireTenantContext(this.prisma);
+    const tenantId = requireTenantContext(this.prisma);
     const list = await this.read();
+    const isAdmin = role === "TENANT_ADMIN";
     return {
-      staffCc: role === "TENANT_ADMIN" ? list : list.map(maskEmail),
-      effectiveMode: this.staffEmail.getEffectiveMode(),
+      staffCc: isAdmin ? list : list.map(maskEmail),
+      effectiveMode: await this.staffEmail.getEffectiveMode(tenantId),
+      policyMode: await this.policies.resolve(tenantId, "notifications.staffOrderEmail", {}),
+      // SA-1063 MUST 12: who gets the email today. Full addresses, TENANT_ADMIN only.
+      ...(isAdmin ? { recipients: await this.staffEmail.resolveRecipients(tenantId) } : {}),
     };
   }
 
-  /** Only `staffCc` is read from the body; any other field is ignored. */
-  async update(body: UpdateStaffEmailSettingsRequest): Promise<StaffEmailSettings> {
-    requireTenantContext(this.prisma);
-    const staffCc = this.validate(body?.staffCc);
-    const db = this.prisma.forTenant();
-    const value = JSON.stringify(staffCc);
-    const existing = await db.systemConfig.findFirst({ where: { key: STAFF_CC_KEY } });
-    if (existing) {
-      await db.systemConfig.update({ where: { id: existing.id }, data: { value } });
-    } else {
-      await (db.systemConfig.create as any)({ data: { key: STAFF_CC_KEY, value } });
+  /**
+   * `staffCc` replaces the "Also send to" list; `mode` ("on" | "off") is the tenant's choice, written through
+   * `PolicyService.set` (append-only, audited as `policy.set`). Any other field is ignored. With neither
+   * field the request is the old invalid list (400).
+   */
+  async update(
+    body: UpdateStaffEmailSettingsRequest,
+    user?: JwtPayload,
+  ): Promise<StaffEmailSettings> {
+    const tenantId = requireTenantContext(this.prisma);
+    const hasMode = body?.mode !== undefined;
+    if (hasMode && body.mode !== "on" && body.mode !== "off") {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: "POLICY_VALUE_INVALID",
+        message: 'The staff order email mode must be "on" or "off".',
+      });
     }
-    return { staffCc, effectiveMode: this.staffEmail.getEffectiveMode() };
+    if (body?.staffCc !== undefined || !hasMode) {
+      const staffCc = this.validate(body?.staffCc);
+      const db = this.prisma.forTenant();
+      const value = JSON.stringify(staffCc);
+      const existing = await db.systemConfig.findFirst({ where: { key: STAFF_CC_KEY } });
+      if (existing) {
+        await db.systemConfig.update({ where: { id: existing.id }, data: { value } });
+      } else {
+        await (db.systemConfig.create as any)({ data: { key: STAFF_CC_KEY, value } });
+      }
+    }
+    if (hasMode) {
+      await this.policies.set({
+        tenantId,
+        key: "notifications.staffOrderEmail",
+        scopeType: "TENANT",
+        scopeId: null,
+        value: body.mode,
+        reason: `Settings → Notifications: staff order email turned ${body.mode}`,
+        actor: actorOf(user),
+      });
+    }
+    return this.get("TENANT_ADMIN");
   }
 
   private async read(): Promise<string[]> {
@@ -94,4 +129,12 @@ export class StaffEmailSettingsService {
       details,
     });
   }
+}
+
+function actorOf(user?: JwtPayload): PolicyActor {
+  return {
+    id: user?.sub ?? null,
+    name: user?.username ?? null,
+    impersonatedBy: user?.impersonatedBy ?? null,
+  };
 }
