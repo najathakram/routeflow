@@ -168,6 +168,9 @@ import { useGenerateTemplateOrderAction } from "@/lib/use-generate-template-orde
 import { CustomerOversellOverride } from "./customer-oversell-override";
 import { CustomerInvoiceUnitControl } from "./CustomerInvoiceUnitControl";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PDF_PREVIEW_UNAVAILABLE, PdfPreview } from "@/components/PdfPreview";
+import { apiClient } from "@/lib/api-client";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { focusRefusedContactField } from "@/lib/refused-text-field";
@@ -1669,7 +1672,13 @@ function DocumentViewer({ doc, onClose }: { doc: CustomerDocument | null; onClos
         </div>
       ) : isPdf ? (
         <div className="h-[75vh]">
-          <iframe src={doc.url} className="h-full w-full border-0" title={doc.originalName} />
+          <PdfPreview
+            src={doc.url}
+            title={doc.originalName}
+            className="h-full w-full border-0"
+            getBytes={() => fetchPdfBlob(doc.url, apiClient)}
+            fallback={<p className="text-sm text-navy/70">{PDF_PREVIEW_UNAVAILABLE}</p>}
+          />
         </div>
       ) : (
         <div className="flex h-48 flex-col items-center justify-center gap-2 text-navy/70">

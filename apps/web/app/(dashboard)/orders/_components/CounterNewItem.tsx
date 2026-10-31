@@ -27,6 +27,21 @@ interface Options {
 
 type Step = "ask" | "stopped" | "form";
 
+/** SA-1071 I1: why the question is asked. */
+export const REGULATED_WHY_COPY = "Regulated items need their category and tax set in Products.";
+
+/** SA-1071 I1: the business's own tracked categories, up to three and "and N more"; null until the read has answered. */
+export function trackedCategoriesLine(
+  rows: ReadonlyArray<{ name: string; active?: boolean }> | undefined,
+  answered: boolean,
+): string | null {
+  if (!answered || !Array.isArray(rows)) return null;
+  const names = rows.filter((c) => c.active !== false && c.name.trim()).map((c) => c.name.trim());
+  if (names.length === 0) return null;
+  const shown = names.slice(0, 3).join(", ");
+  return `Tracked categories: ${shown}${names.length > 3 ? ` and ${names.length - 3} more` : ""}.`;
+}
+
 export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
   const { data: categoryRows, isSuccess } = useTrackedCategories();
   // Unknown (still loading, or the read failed) asks: regulated goods must not slip through on a slow read.
@@ -72,6 +87,7 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
     ) : (
       <RegulatedQuestion
         stopped={request.step === "stopped"}
+        tracked={trackedCategoriesLine(categoryRows, isSuccess)}
         onNo={() => setRequest({ ...request, step: "form" })}
         onYes={() => setRequest({ ...request, step: "stopped" })}
         onClose={close}
@@ -83,16 +99,20 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
 
 function RegulatedQuestion({
   stopped,
+  tracked,
   onNo,
   onYes,
   onClose,
 }: {
   stopped: boolean;
+  /** I1: the tracked-categories sentence, or null when the read has not answered */
+  tracked: string | null;
   onNo: () => void;
   onYes: () => void;
   onClose: () => void;
 }) {
   const titleId = React.useId();
+  const whyId = React.useId();
   // Focus lands on the box itself on open and on the step change (never a button: a wedge's Enter would press it), so the
   // keys that follow cannot reach the field behind. Esc is read at the window so it works wherever focus sits.
   const boxRef = React.useRef<HTMLDivElement>(null);
@@ -111,6 +131,7 @@ function RegulatedQuestion({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
+      aria-describedby={stopped ? undefined : whyId}
       data-state="open"
       data-scan-pause
       className="fixed inset-0 z-[200] !mt-0 flex items-center justify-center bg-black/50 p-4"
@@ -147,6 +168,10 @@ function RegulatedQuestion({
             <h2 id={titleId} className="text-base font-semibold text-navy">
               Is this a licensed or regulated item?
             </h2>
+            <p id={whyId} className="text-sm text-navy/70">
+              {REGULATED_WHY_COPY}
+              {tracked ? ` ${tracked}` : ""}
+            </p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="secondary" className="min-h-[44px]" onClick={onClose}>
                 Cancel

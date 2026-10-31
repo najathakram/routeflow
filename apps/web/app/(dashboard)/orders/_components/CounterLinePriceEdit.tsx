@@ -131,8 +131,30 @@ export function CounterLinePriceEdit({
   const armedEnter = useArmedEnter(editKey);
   const { disarm } = armedEnter;
 
+  // SA-1071 P1: the effect below reads the live props through this ref, so a re-render never re-fires a pick.
+  const live = React.useRef({ line, onApply, onClosed, locked, canEditPrices });
+  live.current = { line, onApply, onClosed, locked, canEditPrices };
+
   React.useEffect(() => {
     if (!openWith) return;
+    // SA-1071 P1: pressing Use is already the confirm. When the shared rule needs no reason and refuses nothing, the pick is
+    // the write (`onApply`, the one write; Reset price is the undo). Otherwise the dialog opens prefilled, as it always did.
+    const cur = live.current;
+    if (!cur.canEditPrices) return;
+    const picked = roundMoney(openWith.value);
+    const resolved = resolveCounterPriceEdit("set", picked, cur.line, "");
+    if (resolved.ok) {
+      if (cur.locked) return;
+      cur.onApply({
+        mode: "set",
+        value: picked,
+        unitPrice: resolved.unitPrice,
+        override: resolved.override,
+      });
+      // the history panel hands focus to a field beside it a tick later; the till's scan field takes it after that
+      const t = setTimeout(() => live.current.onClosed?.(), 0);
+      return () => clearTimeout(t);
+    }
     setMode("set");
     setValue(roundMoney(openWith.value).toFixed(2));
     setReason("");

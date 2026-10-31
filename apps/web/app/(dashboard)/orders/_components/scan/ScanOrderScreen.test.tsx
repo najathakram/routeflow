@@ -1296,3 +1296,23 @@ describe("ScanOrderScreen", () => {
     });
   });
 });
+
+describe("SA-1071 K1a: the builder's scan screen has no held cue", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    localStorage.clear();
+    cameraState = { error: null, torchAvailable: false, torchOn: false };
+  });
+
+  it("a code held in view after it counted shows no 'Move it away' line, here or anywhere on the screen", async () => {
+    setup();
+    await scan("WIDGET");
+    await scan("WIDGET");
+    await scan("WIDGET");
+    await act(async () => {
+      for (let i = 0; i < 12; i += 1) detect("WIDGET");
+    });
+    expect(screen.queryAllByText(/Move it away to add another/)).toHaveLength(0);
+    expect(screen.getByRole("dialog", { name: "Scan items" })).toBeInTheDocument();
+  });
+});

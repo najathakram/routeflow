@@ -28,6 +28,9 @@ export function useCameraScanEngine(): CameraScanEngine {
   return ref.current;
 }
 
+/** SA-1071 K1: how long "Move it away to add another" stays after the last frame of the held code. */
+const HELD_CUE_MS = 1000;
+
 /**
  * SA-1059: the counter's continuous camera. It feeds the SAME scan queue as the wedge (`onCode` -> `scan.submitCamera`), so
  * this component owns only the picture. The engine state and its clock are the screen's (`engine`): they survive this strip
@@ -41,6 +44,7 @@ export function CounterCameraStrip({
   frameBlocked,
   onCode,
   added,
+  onUndo,
   onClose,
   buyer,
 }: {
@@ -50,6 +54,8 @@ export function CounterCameraStrip({
   onCode: (code: string) => void;
   /** The scan box's confirmation ("Added Cola"), drawn on the picture; the status region below the field announces it. */
   added?: string;
+  /** SA-1071 K3: takes the latest read back; drawn beside `added` for as long as it shows. Absent = no button. */
+  onUndo?: () => void;
   /** Close camera (bottom-left): the screen's own toggle. */
   onClose?: () => void;
   /** Who is buying, as one line above the picture (below md only); omitted before the question is answered. */
@@ -66,6 +72,25 @@ export function CounterCameraStrip({
   frameBlockedRef.current = frameBlocked;
   const onCodeRef = React.useRef(onCode);
   onCodeRef.current = onCode;
+  // SA-1071 K1: the same code still in view after it counted. State changes only on the edge: a frame arrives many times a second.
+  const [held, setHeld] = React.useState(false);
+  const heldRef = React.useRef(false);
+  const heldTimerRef = React.useRef<number | null>(null);
+  const setHeldCue = React.useCallback((on: boolean) => {
+    if (heldTimerRef.current !== null) window.clearTimeout(heldTimerRef.current);
+    heldTimerRef.current = null;
+    if (on) heldTimerRef.current = window.setTimeout(() => setHeldCue(false), HELD_CUE_MS);
+    if (heldRef.current !== on) {
+      heldRef.current = on;
+      setHeld(on);
+    }
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (heldTimerRef.current !== null) window.clearTimeout(heldTimerRef.current);
+    },
+    [],
+  );
 
   // Pausing stops the clock; resuming does not start it: the first ACCEPTED frame does (see the clock).
   React.useEffect(() => {
@@ -93,8 +118,11 @@ export function CounterCameraStrip({
         bounds: frame?.bounds,
         aimBox: frame?.aimBox,
         fastRepeat: true,
+        signalHeld: true,
       });
       engine.state = step.next;
+      if (step.held) setHeldCue(true);
+      else if (step.startResolving) setHeldCue(false);
       // The counter's queue owns the waiting, so the engine's own resolve is settled at once.
       while (step.startResolving) {
         onCodeRef.current(step.startResolving);
@@ -102,7 +130,7 @@ export function CounterCameraStrip({
         engine.state = step.next;
       }
     },
-    [clock, engine],
+    [clock, engine, setHeldCue],
   );
 
   const camera = useContinuousScanCamera({ enabled, onDetect: handleFrame });
@@ -119,14 +147,34 @@ export function CounterCameraStrip({
             Camera paused
           </p>
         ) : null}
-        {added ? (
+        {held && enabled && !dropping ? (
           <p
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-12 bottom-2 truncate rounded bg-black/70 px-2 py-1 text-center text-xs font-medium text-white"
-            data-testid="counter-camera-added"
+            role="status"
+            className="pointer-events-none absolute inset-x-0 top-0 bg-black/70 px-2 py-1 text-center text-xs text-white"
+            data-testid="counter-camera-held"
           >
-            {added}
+            Move it away to add another
           </p>
+        ) : null}
+        {added ? (
+          <div className="pointer-events-none absolute inset-x-12 bottom-1 flex items-center justify-center gap-2">
+            <p
+              aria-hidden="true"
+              className="min-w-0 truncate rounded bg-black/70 px-2 py-1 text-center text-xs font-medium text-white"
+              data-testid="counter-camera-added"
+            >
+              {added}
+            </p>
+            {onUndo ? (
+              <button
+                type="button"
+                onClick={onUndo}
+                className="pointer-events-auto flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full bg-white px-3 text-xs font-semibold text-navy"
+              >
+                Undo
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {onClose ? (
           <button

@@ -117,20 +117,27 @@ describe("CustomerFormModal: the door props (W-1041)", () => {
     expect(events).toEqual(["toast", "created", "close"]);
   });
 
-  it("keeps the email visible directly under the name, before the other contact fields", () => {
+  it("shows name, phone and email in that order (SA-1071 C2), with the rest behind More details", () => {
     renderWithProviders(
-      <CustomerFormModal isOpen mode="add" onClose={jest.fn()} onCreated={jest.fn()} />,
+      <CustomerFormModal
+        isOpen
+        mode="add"
+        onClose={jest.fn()}
+        onCreated={jest.fn()}
+        addressRequired={false}
+      />,
     );
     const name = screen.getByLabelText("Business Name");
-    const email = screen.getByLabelText(/^Email/);
     const phone = screen.getByLabelText(/^Phone/);
+    const email = screen.getByLabelText(/^Email/);
+    const more = screen.getByRole("button", { name: "More details" });
     const after = (a: Element, b: Element) =>
       Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(after(name, email)).toBe(true);
-    expect(after(email, phone)).toBe(true);
-    expect(screen.getByText("Contact Details").compareDocumentPosition(email)).toBe(
-      Node.DOCUMENT_POSITION_PRECEDING,
-    );
+    expect(after(name, phone)).toBe(true);
+    expect(after(phone, email)).toBe(true);
+    expect(after(email, more)).toBe(true);
+    expect(email).toBeVisible();
+    expect(screen.getByLabelText("Mobile (optional)")).not.toBeVisible();
   });
 
   it("asks for the address when addressRequired is left true (a delivery order)", async () => {

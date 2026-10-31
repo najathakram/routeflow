@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-pdfjs-fallbacks.mjs",
     "dev": "next dev -H 127.0.0.1",
+    "prebuild": "node scripts/copy-pdfjs-fallbacks.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -40,6 +42,7 @@
     "date-fns": "^4.4.0",
     "lucide-react": "^0.577.0",
     "next": "15.5.28",
+    "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-day-picker": "^9.0.0",
     "react-dom": "^19.3.1",

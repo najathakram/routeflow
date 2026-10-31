@@ -62,7 +62,14 @@ const base = (over: Partial<PriceHistoryResponse> = {}): PriceHistoryResponse =>
   ],
   summaries: [{ unitLabel: "case", last: 13, low: 10, high: 13, qtySold: 8, currentAvgCost: 6.5 }],
   references: { listPrice: 14, tierPrice: 12.5, changeSinceLast: 0.03 },
-  aggregate: { low: 9, median: 11.5, high: 15, customers: 7, unitLabel: "case" },
+  aggregate: {
+    low: 9,
+    median: 11.5,
+    high: 15,
+    customers: 7,
+    unitLabel: "case",
+    newestMonth: "2026-09",
+  },
   ...over,
 });
 
@@ -229,7 +236,7 @@ describe("references, compare, margin, markers", () => {
     );
     expect(panel).toHaveTextContent("$9.00");
     expect(panel).toHaveTextContent("$15.00");
-    expect(panel).toHaveTextContent("7 in all");
+    expect(panel).toHaveTextContent("7 other customers, 6 months to Sep 2026");
     fireEvent.click(within(dialog).getByRole("button", { name: "This customer" }));
     expect(within(dialog).queryByTestId("compare-panel")).not.toBeInTheDocument();
   });

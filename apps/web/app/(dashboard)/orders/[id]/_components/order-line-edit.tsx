@@ -31,6 +31,7 @@ import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
   type CustomerLayerUnit,
+  isStickyUpsell,
   needsOverrideReason,
   normalizeBoxesPieces,
 } from "@routeflow/pricing";
@@ -202,6 +203,21 @@ function substituteDtoUpdate(it: EditItemState): ItemUpdate {
       ? { unitPrice: it.unitPrice, overrideReason: it.overrideReason }
       : {}),
   };
+}
+
+/**
+ * The price a line added during an edit starts at. The remembered price replaces the base only when it is a genuine
+ * discount (below the tier price) or upsell (above list, chosen by staff: SA-1072) and no contracted tier applies: a stale
+ * memory must never outrank a tier price. Mirrors mobile's `addPickedToDraft`.
+ */
+export function addedLineStartPrice(
+  hist: { lastPrice: number; stickyPrice?: number | null } | null | undefined,
+  base: number,
+  list: number,
+  contractedTier: boolean,
+): number {
+  if (contractedTier || hist == null) return base;
+  return hist.lastPrice < base || isStickyUpsell(hist.stickyPrice, list) ? hist.lastPrice : base;
 }
 
 /** An override is any net unit price DIVERGING from the line's base — a discount
@@ -826,17 +842,13 @@ export function EditableLineItems({
       // This customer's contracted price is the line's BASE — pinning the base
       // to list made every tier add look like an operator override, so the
       // server stored it MANUAL instead of resolving the tier as SPECIAL.
-      // Pre-fill the remembered price over it only when it is a genuine
-      // discount (below the tier price) or upsell (above list) and no
-      // contracted tier applies — a stale memory must never outrank a tier
-      // price. Mirrors mobile's `addPickedToDraft`.
-      const list = Number(p.pricePerUnit ?? 0);
       const base = tierPriceFor(p);
-      const hist = priceHistory?.[p.id];
-      const startPrice =
-        !isSpecialTierFor(p) && hist != null && (hist.lastPrice < base || hist.lastPrice > list)
-          ? hist.lastPrice
-          : base;
+      const startPrice = addedLineStartPrice(
+        priceHistory?.[p.id],
+        base,
+        Number(p.pricePerUnit ?? 0),
+        isSpecialTierFor(p),
+      );
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd(
         scan.buildNewLine(p, {

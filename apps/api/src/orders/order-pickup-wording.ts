@@ -32,12 +32,14 @@ function readyVars(order: { orderNumber?: string | null }, pickupLine: string) {
  * pickup"). Its handover fires READY_FOR_PICKUP instead; the messaging path honours the customer's
  * orderStatusEmails opt-out, and a failure never fails the move. Returns whether it handled the change.
  * Fire-and-forget: PATCH :id/status and every older client keep this exactly (the Ready button awaits, below).
+ * `onOutcomes` hears what the engine did (SA-1070: the PATCH path writes the same record the Ready press does).
  */
 export function notifyPickupHandover(
   messaging: Pick<MessagingService, "notifyEvent">,
   order: { fulfillPath?: string | null; customerId: string; orderNumber?: string | null },
   status: string,
   senderId: string | null,
+  onOutcomes?: (outcomes: SendOutcome[] | void) => unknown,
 ): boolean {
   if (!isPickupHandover(order, status)) return false;
   messaging
@@ -46,6 +48,7 @@ export function notifyPickupHandover(
       senderId,
       vars: readyVars(order, ""),
     })
+    .then((outcomes) => onOutcomes?.(outcomes))
     .catch(() => {});
   return true;
 }
