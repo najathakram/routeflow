@@ -1,0 +1,578 @@
+/**
+ * SA-1042 A-4 (I-180) on REAL Postgres: a typed (itemised) credit note on a REGULATED line must fit what the regulated ledger can
+ * still reverse on that order line (`credit-reversal-room.ts`, the one remaining `reverseCreditNoteEntries` clamps to). Run with
+ * `npm run local:test:db` (fresh `rf_dbspec_*` database).
+ *
+ * Fixture (win-heavy's S1 shape): product P on ONE order with two invoices. Lines A and B are each 200 pcs, 50.00 net, 5.00 levy,
+ * both sales booked in the ledger; A's invoice is the LATER one (total 190.00, so a refund lump has room), B's the earlier.
+ *
+ *   R-L1  a pooled 200-pc return is received (REVERSAL on A: -200 / -50 / -5) and refunded (one 50.00 lump, on B's invoice, SA-1051),
+ *         then a typed credit of 50.00 / 200 pcs on A: before the fix ACCEPTED with the item's categoryTax 5.00 while the ledger
+ *         booked nothing (the clamp: A is closed); after: 409 CREDIT_NOTE_OVER_HEADROOM from the A-4 bind, no note, no item, ledger unchanged.
+ *   G-L2  the same return, the typed credit on B (the line with room, B's invoice given room): accepted, the category nets 0 / 0.
+ *   G-L11 G-L2's original totals (B 50.00): observed, no value ruled (SA-1054): which door refuses a typed credit on B and on A.
+ *   G-L3  a pooled 100-pc return, then a typed 100-pc credit on A: accepted and books A's remainder; a 150-pc one: refused.
+ *   G-L4  a rotated invoice item (the credited id differs from the SALE row's): the refusal comes through the order line.
+ *   G-L5  boxed line (5 boxes of 12, B661 pieces): the bind compares in the unit the clamp uses.
+ *   G-L6  filing-period straddle (the SALE sits in an earlier, LOCKED period): the bind reads the same remaining the reversal books.
+ *   G-L7  a line-named return (R-r22's shape): refused (A-3's pinned bind fires first; the A-4 bind would refuse it too).
+ *   G-L8  a line with no live SALE row: accepted, as on master.   G-L9  the S1 shape on a non-regulated product: accepted.
+ *   G-L10 for each accepted credit: the tax the reversal booked equals the levy the items store (within the closing drift).
+ *
+ * Every tenant is a throwaway `qa-a4-<run>-<n>` slug approved by `assertTestTenant`, deleted in FK order in afterAll.
+ */
+import { randomUUID } from "crypto";
+import { Test } from "@nestjs/testing";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { ReturnsService } from "../returns/returns.service";
+import { RegulatedLedgerService } from "./regulated-ledger.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NumberingService } from "../import/numbering.service";
+import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+const RUN = randomUUID().slice(0, 8);
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+interface Shape {
+  qty: number;
+  boxes: number;
+  pack: number;
+  unitPrice: number;
+  net: number;
+  levy: number;
+}
+const PIECES: Shape = { qty: 200, boxes: 20, pack: 10, unitPrice: 0.25, net: 50, levy: 5 };
+const BOXED: Shape = { qty: 60, boxes: 5, pack: 12, unitPrice: 1, net: 60, levy: 6 };
+
+describeDb(
+  "SA-1042 A-4: a typed credit on a regulated line fits what the ledger can still reverse — real Postgres",
+  () => {
+    let prisma: PrismaService;
+    let tenantCtx: TenantContextService;
+    let returns: ReturnsService;
+    let creditNotes: CreditNotesService;
+    let ledger: RegulatedLedgerService;
+    const tenantIds: string[] = [];
+    let seq = 0;
+    let cnSeq = 0;
+
+    beforeAll(async () => {
+      requireLocalDatabaseUrl();
+      tenantCtx = new TenantContextService();
+      prisma = new PrismaService(tenantCtx);
+      await prisma.$connect();
+      const anyMethod = new Proxy(
+        {},
+        {
+          get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()),
+        },
+      );
+      const mod = await Test.createTestingModule({
+        providers: [
+          CreditNotesService,
+          ReturnsService,
+          RegulatedLedgerService,
+          CommissionEngineService,
+          AuditService,
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: EntitlementsService,
+            useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          },
+          { provide: RouteFlowGateway, useValue: anyMethod },
+          {
+            provide: NumberingService,
+            useValue: {
+              reserveNext: jest.fn().mockImplementation(async () => `CN-A4-${RUN}-${++cnSeq}`),
+            },
+          },
+        ],
+      }).compile();
+      returns = mod.get(ReturnsService);
+      creditNotes = mod.get(CreditNotesService);
+      ledger = mod.get(RegulatedLedgerService);
+    });
+
+    afterAll(async () => {
+      const swallow = () => undefined;
+      for (const tenantId of tenantIds) {
+        const where = { where: { tenantId } };
+        await prisma.regulatedSalesLedger.deleteMany(where).catch(swallow);
+        await prisma.regulatedFiling.deleteMany(where).catch(swallow);
+        await prisma.returnItem.deleteMany(where).catch(swallow);
+        await prisma.return.deleteMany(where).catch(swallow);
+        await prisma.creditNoteItem.deleteMany(where).catch(swallow);
+        await prisma.creditNote.deleteMany(where).catch(swallow);
+        await prisma.invoiceItem.deleteMany(where).catch(swallow);
+        await prisma.invoice.deleteMany(where).catch(swallow);
+        await prisma.orderItem.deleteMany(where).catch(swallow);
+        await prisma.order.deleteMany(where).catch(swallow);
+        await prisma.product.deleteMany(where).catch(swallow);
+        await prisma.trackedCategory.deleteMany(where).catch(swallow);
+        await prisma.customer.deleteMany(where).catch(swallow);
+        await prisma.user.deleteMany(where).catch(swallow);
+        await prisma.auditLog.deleteMany(where).catch(swallow);
+        await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+      }
+      await prisma?.$disconnect();
+    });
+
+    /**
+     * Product P, one order, lines A and B of `shape`, two invoices (A's the later). `regulated` false = no tracked category on
+     * the invoice lines and no SALE rows; `bookA` false = A is regulated on the invoice but never booked a SALE (G-L8);
+     * `soldAt` backdates the SALE rows (G-L6).
+     */
+    async function seed(
+      label: string,
+      opts: {
+        shape?: Shape;
+        regulated?: boolean;
+        bookA?: boolean;
+        soldAt?: Date;
+        roomB?: boolean;
+      } = {},
+    ) {
+      const {
+        shape = PIECES,
+        regulated = true,
+        bookA = true,
+        soldAt = new Date(),
+        roomB = false,
+      } = opts;
+      seq += 1;
+      const slug = assertTestTenant(
+        `qa-a4-${RUN}-${seq}-${label}`,
+        "credit-reversal-room-a4.db.spec.ts",
+      );
+      const tenant = await prisma.tenant.create({ data: { slug, name: `a4 ${slug}` } });
+      tenantIds.push(tenant.id);
+      const tenantId = tenant.id;
+      const user = await prisma.user.create({
+        data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+      });
+      const customer = await prisma.customer.create({
+        data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
+      });
+      const category = await prisma.trackedCategory.create({
+        data: { tenantId, name: `A4 category ${slug}` },
+      });
+      const product = await prisma.product.create({
+        data: {
+          tenantId,
+          name: `P ${slug}`,
+          unit: "each",
+          pricePerUnit: shape.unitPrice,
+          unitsPerBox: shape.pack,
+        } as any,
+      });
+      const order = await prisma.order.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderNumber: `ORD-A4-${RUN}-${seq}`,
+          subtotal: shape.net * 2,
+          tax: 0,
+          total: shape.net * 2,
+          status: "DELIVERED",
+        } as any,
+      });
+      const lineShape = {
+        qty: shape.qty,
+        unitPrice: shape.unitPrice,
+        subtotal: shape.net,
+        boxes: shape.boxes,
+        pieces: 0,
+        unitsPerBox: shape.pack,
+      };
+      const mkLine = (position: number) =>
+        prisma.orderItem.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            productId: product.id,
+            name: product.name,
+            position,
+            ...lineShape,
+          } as any,
+        });
+      const lineA = await mkLine(0);
+      const lineB = await mkLine(1);
+      const [idLater, idEarlier] = [randomUUID(), randomUUID()].sort();
+      const invoiceA = await prisma.invoice.create({
+        data: {
+          id: idLater,
+          tenantId,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-A4-${RUN}-${seq}`,
+          status: "SENT",
+          subtotal: shape.net,
+          taxAmount: 0,
+          discount: 0,
+          total: shape.net * 3.8,
+        },
+      });
+      const invoiceB = await prisma.invoice.create({
+        data: {
+          id: idEarlier,
+          tenantId,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-A4-${RUN}-${seq}-B`,
+          status: "SENT",
+          subtotal: shape.net,
+          taxAmount: 0,
+          discount: 0,
+          total: roomB ? shape.net * 3.8 : shape.net,
+          createdAt: new Date(Date.now() - 3_600_000),
+        },
+      });
+      const mkItem = (orderItemId: string, invoiceId: string) =>
+        prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId,
+            orderItemId,
+            productId: product.id,
+            description: "P",
+            ...(regulated ? { trackedCategoryId: category.id, categoryTaxAmount: shape.levy } : {}),
+            ...lineShape,
+          } as any,
+        });
+      const iA = await mkItem(lineA.id, invoiceA.id);
+      const iB = await mkItem(lineB.id, invoiceB.id);
+      if (regulated) {
+        const book = (invoiceId: string, item: typeof iA, orderItemId: string) =>
+          ledger.writeSaleEntries({
+            tenantId,
+            orderId: order.id,
+            invoiceId,
+            soldAt,
+            db: prisma,
+            lines: [
+              {
+                invoiceItemId: item.id,
+                orderItemId,
+                trackedCategoryId: category.id,
+                qty: shape.qty,
+                boxes: shape.boxes,
+                pieces: 0,
+                unitsPerBox: shape.pack,
+                netSales: shape.net,
+                categoryTax: shape.levy,
+              },
+            ],
+          });
+        if (bookA) await book(invoiceA.id, iA, lineA.id);
+        await book(invoiceB.id, iB, lineB.id);
+      }
+      return {
+        tenantId,
+        customerId: customer.id,
+        userId: user.id,
+        orderId: order.id,
+        productId: product.id,
+        categoryId: category.id,
+        shape,
+        lineA,
+        lineB,
+        invoiceA,
+        invoiceB,
+        iA,
+        iB,
+      };
+    }
+    type Seed = Awaited<ReturnType<typeof seed>>;
+
+    /** A return of `qty` pcs of P (naming `lineId`, or no line), received (the ledger reversal) and refunded (the lump). */
+    async function returnAndRefund(s: Seed, qty: number, lineId: string | null = null) {
+      const ret: any = await tenantCtx.run(s.tenantId, () =>
+        returns.create(
+          {
+            orderId: s.orderId,
+            reason: "DAMAGED",
+            items: [{ productId: s.productId, ...(lineId ? { orderItemId: lineId } : {}), qty }],
+          } as any,
+          s.userId,
+        ),
+      );
+      await prisma.return.update({ where: { id: ret.id }, data: { status: "APPROVED" } });
+      await tenantCtx.run(s.tenantId, () => returns.receive(ret.id, s.userId));
+      await tenantCtx.run(s.tenantId, () => returns.processRefund(ret.id));
+      return prisma.creditNote.findFirstOrThrow({
+        where: { tenantId: s.tenantId, status: { not: "VOID" } },
+      });
+    }
+
+    /** A typed credit note on `invoiceId`'s item `itemId`; the error (or null) it answered. */
+    const typedCredit = (
+      s: Seed,
+      invoiceId: string,
+      itemId: string,
+      amount: number,
+      qty?: number,
+    ) =>
+      tenantCtx
+        .run(s.tenantId, () =>
+          creditNotes.create({
+            customerId: s.customerId,
+            invoiceId,
+            amount,
+            reason: "a4 typed credit",
+            items: [{ invoiceItemId: itemId, amount, ...(qty != null ? { qty } : {}) }],
+          } as any),
+        )
+        .then(() => null)
+        .catch((e: any) => e);
+
+    const codeOf = (e: any) => e?.getResponse?.()?.code ?? null;
+    /** Which refusal answered, from the wording each door in credit-notes.service.ts uses (null = accepted). */
+    const doorOf = (e: any) => {
+      if (!e) return null;
+      const m = String(e?.getResponse?.()?.message ?? e?.message ?? "");
+      if (/would exceed invoice total/.test(m)) return "invoice-total";
+      if (/past what it was billed/.test(m)) return "order-billed";
+      if (/after the return already refunded/.test(m)) return "pinned (A-3)";
+      if (/still allow to be credited for the product/.test(m)) return "pool";
+      if (/regulated ledger can still reverse/.test(m)) return "ledger room (A-4)";
+      return `other: ${m}`;
+    };
+    const noteCount = (s: Seed) =>
+      prisma.creditNote.count({ where: { tenantId: s.tenantId, status: { not: "VOID" } } });
+    const itemCount = (s: Seed) => prisma.creditNoteItem.count({ where: { tenantId: s.tenantId } });
+    const ledgerRows = (s: Seed) =>
+      prisma.regulatedSalesLedger.findMany({ where: { tenantId: s.tenantId } });
+    /** Σ(SALE + REVERSAL) of the tenant's category: what the filing would report. */
+    async function filing(s: Seed) {
+      const rows = await ledgerRows(s);
+      return {
+        net: round2(rows.reduce((n, r) => n + Number(r.netSales), 0)),
+        tax: round2(rows.reduce((n, r) => n + Number(r.categoryTax), 0)),
+      };
+    }
+    /** G-L10: the levy the credit notes' regulated items store vs the tax their REVERSAL rows booked. */
+    async function taxAgreement(s: Seed) {
+      const items = await prisma.creditNoteItem.findMany({
+        where: { tenantId: s.tenantId, trackedCategoryId: { not: null } },
+      });
+      const booked = (await ledgerRows(s)).filter(
+        (r) => r.entryType === "REVERSAL" && r.creditNoteId != null,
+      );
+      return {
+        stored: round2(items.reduce((n, i) => n + Number(i.categoryTax), 0)),
+        booked: round2(-booked.reduce((n, r) => n + Number(r.categoryTax), 0)) + 0, // + 0: never -0
+      };
+    }
+
+    it("R-L1: a typed credit on the line a pooled return already closed is CREDIT_NOTE_OVER_HEADROOM, nothing written", async () => {
+      const s = await seed("rl1");
+      const lump = await returnAndRefund(s, 200);
+      expect(Number(lump.amount)).toBe(50);
+      expect(lump.invoiceId).toBe(s.invoiceB.id); // SA-1051: the pooled refund fills the oldest invoice (B) first; the ledger reverses A
+      expect(await filing(s)).toEqual({ net: 50, tax: 5 }); // B only: A's reversal took 50 / 5
+      const before = (await ledgerRows(s)).length;
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      expect(doorOf(err)).toBe("ledger room (A-4)"); // the red comes from the A-4 bind, not another door
+      expect({
+        code: codeOf(err),
+        notes: await noteCount(s),
+        items: await itemCount(s),
+        rows: (await ledgerRows(s)).length - before,
+        filing: await filing(s),
+      }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        notes: 1,
+        items: 0,
+        rows: 0,
+        filing: { net: 50, tax: 5 },
+      });
+    });
+
+    it("G-L2: the same return, then the typed credit on B (the line with room): accepted, the category nets 0 / 0", async () => {
+      const s = await seed("gl2", { roomB: true }); // B's invoice gets room, so its total cap cannot mask the bind (SA-1054)
+      await returnAndRefund(s, 200);
+      const err = await typedCredit(s, s.invoiceB.id, s.iB.id, 50, 200);
+      expect({ code: codeOf(err), notes: await noteCount(s), filing: await filing(s) }).toEqual({
+        code: null,
+        notes: 2,
+        filing: { net: 0, tax: 0 },
+      });
+      expect(await taxAgreement(s)).toEqual({ stored: 5, booked: 5 });
+    });
+
+    it("G-L11 (OBSERVED, no value ruled): G-L2's original totals (B 50.00): which door refuses a typed credit on B and on A, and does any fit", async () => {
+      const s = await seed("gl11"); // B's invoice total stays 50.00: the refund lump (50.00) already uses all of it
+      const lump = await returnAndRefund(s, 200);
+      const ledgerLines = (await ledgerRows(s))
+        .filter((r) => r.entryType === "REVERSAL")
+        .map((r) => (r.orderItemId === s.lineA.id ? "A" : "B"));
+      const full = { onB: await typedCredit(s, s.invoiceB.id, s.iB.id, 50, 200), onA: null as any };
+      full.onA = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      // the smallest typed credit: 1 pc / 0.25 on each line
+      const smallB = await typedCredit(s, s.invoiceB.id, s.iB.id, 0.25, 1);
+      const smallA = await typedCredit(s, s.invoiceA.id, s.iA.id, 0.25, 1);
+      expect({
+        lumpOn: lump.invoiceId === s.invoiceB.id ? "B" : "A",
+        ledgerReversedLine: ledgerLines,
+        fullOnB: doorOf(full.onB),
+        fullOnA: doorOf(full.onA),
+        smallOnB: doorOf(smallB),
+        smallOnA: doorOf(smallA),
+        notes: await noteCount(s),
+      }).toEqual({
+        lumpOn: "B", // the money consumed B ...
+        ledgerReversedLine: ["A"], // ... and the ledger consumed A (F-7)
+        fullOnB: "invoice-total",
+        fullOnA: "ledger room (A-4)",
+        smallOnB: "invoice-total",
+        smallOnA: "ledger room (A-4)",
+        notes: 1, // no typed credit fits either line
+      });
+    });
+
+    it("G-L3: a pooled 100-pc return, then a typed 100-pc credit on A is accepted and books A's remainder", async () => {
+      const s = await seed("gl3a");
+      await returnAndRefund(s, 100);
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 25, 100);
+      expect({ code: codeOf(err), filing: await filing(s) }).toEqual({
+        code: null,
+        filing: { net: 50, tax: 5 }, // B untouched, A reversed 25 + 25
+      });
+      expect(await taxAgreement(s)).toEqual({ stored: 2.5, booked: 2.5 });
+    });
+
+    it("G-L3: a pooled 100-pc return, then a typed 150-pc credit on A is refused (37.50 > the 25.00 A can still reverse)", async () => {
+      const s = await seed("gl3b");
+      await returnAndRefund(s, 100);
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 37.5, 150);
+      expect({ code: codeOf(err), notes: await noteCount(s), items: await itemCount(s) }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        notes: 1,
+        items: 0,
+      });
+    });
+
+    it("G-L4: a rotated invoice item (the SALE row sits under the old id): the refusal comes through the order line", async () => {
+      const s = await seed("gl4");
+      const rotated = await prisma.invoiceItem.create({
+        data: {
+          tenantId: s.tenantId,
+          invoiceId: s.invoiceA.id,
+          orderItemId: s.lineA.id,
+          productId: s.productId,
+          description: "P",
+          trackedCategoryId: s.categoryId,
+          categoryTaxAmount: s.shape.levy,
+          qty: s.shape.qty,
+          unitPrice: s.shape.unitPrice,
+          subtotal: s.shape.net,
+          boxes: s.shape.boxes,
+          pieces: 0,
+          unitsPerBox: s.shape.pack,
+        } as any,
+      });
+      await prisma.invoiceItem.delete({ where: { id: s.iA.id } }); // the ledger has no FK: the SALE row keeps the old id
+      await returnAndRefund(s, 200);
+      const err = await typedCredit(s, s.invoiceA.id, rotated.id, 50, 200);
+      expect({ code: codeOf(err), notes: await noteCount(s), items: await itemCount(s) }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        notes: 1,
+        items: 0,
+      });
+    });
+
+    it("G-L5: boxed line (5 boxes of 12): a pooled 30-pc return, then 30 pcs is accepted (books the remainder), 45 pcs is refused", async () => {
+      const ok = await seed("gl5a", { shape: BOXED });
+      await returnAndRefund(ok, 30);
+      const accepted = await typedCredit(ok, ok.invoiceA.id, ok.iA.id, 30, 30);
+      expect({ code: codeOf(accepted), filing: await filing(ok) }).toEqual({
+        code: null,
+        filing: { net: 60, tax: 6 },
+      });
+      expect(await taxAgreement(ok)).toEqual({ stored: 3, booked: 3 });
+      const over = await seed("gl5b", { shape: BOXED });
+      await returnAndRefund(over, 30);
+      const refused = await typedCredit(over, over.invoiceA.id, over.iA.id, 45, 45);
+      expect({ code: codeOf(refused), items: await itemCount(over) }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        items: 0,
+      });
+    });
+
+    it("G-L6: the SALE sits in an earlier LOCKED period: the same refusal, and a credit that fits books into the current period", async () => {
+      const prev = new Date(
+        Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 10),
+      );
+      const key = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}`;
+      const lock = (s: Seed) =>
+        prisma.regulatedFiling.create({
+          data: {
+            tenantId: s.tenantId,
+            trackedCategoryId: s.categoryId,
+            reportTemplate: "a4-test",
+            periodKey: key,
+            periodStart: new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth(), 1)),
+            periodEnd: new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 1)),
+            status: "LOCKED",
+            lockedAt: new Date(),
+            rows: [],
+          } as any,
+        });
+      const full = await seed("gl6a", { soldAt: prev });
+      await lock(full);
+      await returnAndRefund(full, 200);
+      const refused = await typedCredit(full, full.invoiceA.id, full.iA.id, 50, 200);
+      expect({ code: codeOf(refused), items: await itemCount(full) }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        items: 0,
+      });
+      const part = await seed("gl6b", { soldAt: prev });
+      await lock(part);
+      await returnAndRefund(part, 100);
+      const accepted = await typedCredit(part, part.invoiceA.id, part.iA.id, 25, 100);
+      expect(codeOf(accepted)).toBeNull();
+      expect(await taxAgreement(part)).toEqual({ stored: 2.5, booked: 2.5 });
+    });
+
+    it("G-L7: a line-named return of A, then a typed credit on A: refused (A-3's pinned bind fires first)", async () => {
+      const s = await seed("gl7");
+      await returnAndRefund(s, 200, s.lineA.id);
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      expect({ code: codeOf(err), notes: await noteCount(s), items: await itemCount(s) }).toEqual({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        notes: 1,
+        items: 0,
+      });
+      expect(String(err?.getResponse?.()?.message)).toMatch(/after the return already refunded/);
+    });
+
+    it("G-L8: a regulated invoice line that never booked a SALE row: the typed credit is accepted, the ledger books nothing", async () => {
+      const s = await seed("gl8", { bookA: false });
+      await returnAndRefund(s, 200); // reverses B's booked line only
+      const before = (await ledgerRows(s)).length;
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      expect({ code: codeOf(err), rows: (await ledgerRows(s)).length - before }).toEqual({
+        code: null,
+        rows: 0,
+      });
+      // OBSERVED, not bound: the item stores the levy (5.00) the reversal had no SALE to book against
+      expect(await taxAgreement(s)).toEqual({ stored: 5, booked: 0 });
+    });
+
+    it("G-L9: the S1 shape on a NON-regulated product: accepted, as on master (G-r23 KEPT)", async () => {
+      const s = await seed("gl9", { regulated: false });
+      await returnAndRefund(s, 200);
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 50, 200);
+      expect({ code: codeOf(err), notes: await noteCount(s) }).toEqual({ code: null, notes: 2 });
+      expect(await ledgerRows(s)).toEqual([]);
+    });
+  },
+);
