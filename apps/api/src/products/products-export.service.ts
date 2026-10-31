@@ -12,7 +12,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { tenantSafeParent } from "./product-parent";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { ExportProductsDto } from "./dto/export-products.dto";
-import { buildProductListWhere } from "./product-list-where";
+import { buildProductListWhere, needsLowStockIds } from "./product-list-where";
+import { lowStockProductIds } from "./low-stock-ids";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Most product rows one export streams before the trailing truncation row. */
@@ -124,7 +125,8 @@ export class ProductsExportService {
     query: ExportProductsDto,
     actor: { userId: string | null; ip?: string | null },
   ): AsyncGenerator<string> {
-    const base = buildProductListWhere(query);
+    const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
+    const base = buildProductListWhere(query, { lowStockIds });
     const issueWindow = this.facts.issueWindow(range.fromDay, range.toDay);
     let credits: Map<string, number> | null = null;
     let written = 0;

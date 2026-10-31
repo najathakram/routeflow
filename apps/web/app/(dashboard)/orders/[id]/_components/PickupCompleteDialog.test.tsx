@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { handleMutationError } from "@/lib/mutation-error-toast";
 import { PickupCompleteDialog } from "./PickupCompleteDialog";
@@ -544,7 +545,7 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
   });
 
   // W-776 (SA-925): the pre-check refused before any write: nothing changed, the tender step stays (Cancel + confirm), no Reload
-  it("409 COUNTER_COMPLETE_DAY_CLOSED: says nothing changed and keeps the tender step, not Reload", async () => {
+  it("409 COUNTER_COMPLETE_DAY_CLOSED: says nothing changed and locks the tender step, Close not Reload", async () => {
     balance(25);
     post.mockRejectedValueOnce({
       response: { status: 409, data: { code: "COUNTER_COMPLETE_DAY_CLOSED", message: "raw text" } },
@@ -554,12 +555,12 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
     confirm();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Nothing changed. This register's day is closed. A manager or owner can reopen it.",
+      "Nothing changed. This register's day is closed. Ask a manager or owner to reopen it.",
     );
     expect(screen.queryByText(/Handed over/)).toBeNull();
     expect(screen.queryByText(/raw text/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Close" }).length).toBeGreaterThan(1); // W-778: the footer's one live action
   });
 
   it("409 PICKUP_INVOICE_MISSING: fixed copy, Retry reposts under the SAME key", async () => {
@@ -772,6 +773,13 @@ describe("PickupCompleteDialog — the global error toast", () => {
     "PICKUP_NOT_READY",
     "PICKUP_ONLY",
     "COUNTER_SALE_DAY_CLOSED",
+    "COUNTER_COMPLETE_SHIPPED",
+    "COUNTER_COMPLETE_ON_RUN",
+    "COUNTER_COMPLETE_STOP_STARTED",
+    "COUNTER_COMPLETE_DAY_CLOSED",
+    "COUNTER_COMPLETE_UNAVAILABLE",
+    "ORDER_ON_ACTIVE_RUN",
+    "ORDER_RUN_LINK_CHANGED",
   ])("%s: the dialog's own copy shows and NO global toast fires", async (code) => {
     toast.mockClear();
     post.mockRejectedValueOnce({ response: { status: 409, data: { code } } });
@@ -1118,5 +1126,192 @@ describe("PickupCompleteDialog: Print invoice after the hand-over (SA-1026 B-R2,
     fireEvent.click(await screen.findByRole("button", { name: "Print invoice" }));
     await waitFor(() => expect(printPdfBlob).toHaveBeenCalledTimes(1));
     expect(pdfCalls()).toEqual(["/invoices/i1/pdf"]);
+  });
+});
+
+// W-775 (W-773's client half): a hand-over the API answers with 409 RESTRICTION_WARNING (nothing written, pre-judged before
+// the claim) opens the warning dialog; "Sell anyway" re-sends the SAME hand-over (same key, same body) plus the
+// acknowledgement; "Go back" leaves the dialog as it was. Head: the 409 was only a generic error line, no way to proceed.
+const warning409 = {
+  response: {
+    status: 409,
+    data: {
+      code: "RESTRICTION_WARNING",
+      message: "Some items are restricted.",
+      warningHash: "rw1:abc",
+      lines: [
+        {
+          lineKey: "l:li1",
+          productId: "p1",
+          displayName: "Cola",
+          outcome: "BLOCK",
+          rules: [
+            {
+              id: "r1",
+              states: ["CA"],
+              legal: true,
+              reasonText: "Restriction text for the test.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+};
+
+describe("PickupCompleteDialog — W-775 restriction warning", () => {
+  it("warns, then re-sends the same hand-over with the same key and the acknowledgement", async () => {
+    const user = userEvent.setup();
+    balance(0, "PAID");
+    post.mockRejectedValueOnce(warning409);
+    post.mockResolvedValueOnce(result());
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    expect(await screen.findByText("Restriction text for the test.")).toBeInTheDocument();
+    // not the generic refusal line, and the hand-over is not held as an unknown outcome
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(window.sessionStorage.length).toBe(0);
+    await user.type(screen.getByLabelText(/reason/i), "Owner approved");
+    await user.click(screen.getByRole("button", { name: "Sell anyway" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    const [first, second] = post.mock.calls;
+    expect(second[2].headers["Idempotency-Key"]).toBe(first[2].headers["Idempotency-Key"]);
+    expect(second[1]).toEqual({
+      ...first[1],
+      restrictionOverrides: [{ lineKey: "l:li1", reason: "Owner approved" }],
+      warningHash: "rw1:abc",
+    });
+  });
+
+  it("Go back sends nothing more and shows no error", async () => {
+    const user = userEvent.setup();
+    balance(0, "PAID");
+    post.mockRejectedValueOnce(warning409);
+    mount();
+    await screen.findByText("Paid — nothing to collect");
+    confirm();
+    await screen.findByText("Restriction text for the test.");
+    await user.click(screen.getByRole("button", { name: "Go back" }));
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("Restriction text for the test.")).toBeNull();
+  });
+});
+
+describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 2026-10-24)", () => {
+  const refuse = async (code: string, extra: Record<string, unknown> = {}) => {
+    balance(25);
+    post.mockRejectedValueOnce({ response: { status: 409, data: { code, ...extra } } });
+    const utils = mount({ completeMode: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    await screen.findByRole("alert");
+    return utils;
+  };
+
+  // item 2 + MUST 1: a closed day asks for a reopen and promises no till link (the plain Reopen day has not landed)
+  it("COUNTER_COMPLETE_DAY_CLOSED: asks a manager to reopen it and links nowhere", async () => {
+    await refuse("COUNTER_COMPLETE_DAY_CLOSED");
+    expect(screen.getByRole("alert")).toHaveTextContent("Ask a manager or owner to reopen it.");
+    expect(screen.queryByRole("link", { name: "Open the till" })).toBeNull();
+  });
+
+  // item 6 + B-3: after a hard refusal nothing looks ready to retry
+  it.each([
+    "COUNTER_COMPLETE_DAY_CLOSED",
+    "COUNTER_COMPLETE_STOP_STARTED",
+    "COUNTER_COMPLETE_SHIPPED",
+    "COUNTER_COMPLETE_UNAVAILABLE",
+    "ORDER_ON_ACTIVE_RUN",
+  ])(
+    "%s: no Complete, the tender controls are disabled and Close is the one live action",
+    async (code) => {
+      const { onClose } = await refuse(code);
+      expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Cash" })).toBeDisabled();
+      expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
+      expect(screen.queryByTestId("pickup-change-due")).toBeNull(); // W-778 wording: no "Change $X" beside "Nothing changed"
+      expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(2); // W-778: the header X + the footer's one live action
+      fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+      expect(onClose).toHaveBeenCalled();
+    },
+  );
+
+  // MUST 3: the run link changed under the dialog: Reload is the one live action (a footer Close would hide the stale page)
+  it("ORDER_RUN_LINK_CHANGED: no Complete, controls locked, Reload is the only live action and refetches orders", async () => {
+    const { onClose, invalidate } = await refuse("ORDER_RUN_LINK_CHANGED");
+    expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cash" })).toBeDisabled();
+    expect(screen.getByLabelText("Amount tendered")).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1); // only the header X: the footer action is Reload
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["orders"] });
+    expect(onClose).toHaveBeenCalledTimes(1); // Reload refetches, then closes
+  });
+
+  it("B-3: pressing a method after the refusal does not hide the error", async () => {
+    await refuse("COUNTER_COMPLETE_DAY_CLOSED");
+    fireEvent.click(screen.getByRole("button", { name: "Cash" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Nothing changed.");
+  });
+
+  // item 7: the way out of a started stop
+  it("COUNTER_COMPLETE_STOP_STARTED with a run id: links to the route", async () => {
+    await refuse("COUNTER_COMPLETE_STOP_STARTED", { runId: "run-9" });
+    expect(screen.getByRole("link", { name: "Open the route" })).toHaveAttribute(
+      "href",
+      "/routes/run-9",
+    );
+  });
+
+  it("ORDER_ON_ACTIVE_RUN with a run id: links to the run it must come off", async () => {
+    await refuse("ORDER_ON_ACTIVE_RUN", { runId: "run-4" });
+    expect(screen.getByRole("link", { name: "Open the route" })).toHaveAttribute(
+      "href",
+      "/routes/run-4",
+    );
+  });
+
+  it("COUNTER_COMPLETE_STOP_STARTED without a run id: no route link", async () => {
+    await refuse("COUNTER_COMPLETE_STOP_STARTED");
+    expect(screen.queryByRole("link", { name: "Open the route" })).toBeNull();
+  });
+
+  // item 8: the run confirm is a warning the clerk can answer, not an error
+  it("COUNTER_COMPLETE_ON_RUN: amber warning, no 'Nothing changed', the confirm stays live", async () => {
+    await refuse("COUNTER_COMPLETE_ON_RUN", { driverName: "Sam" });
+    const box = screen.getByRole("alert");
+    expect(box).toHaveTextContent("This order is on Sam's run.");
+    expect(box).not.toHaveTextContent("Nothing changed");
+    expect(box.className).toMatch(/amber/);
+    expect(box.className).not.toMatch(/danger/);
+    expect(screen.getByRole("button", { name: "Take off run and complete" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cash" })).toBeEnabled();
+  });
+
+  // item 5 + B-2: the short-cash line is live
+  it("a short cash amount shows 'Enter at least' as it is typed, and clears when enough", async () => {
+    balance(25);
+    mount({ completeMode: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    const amount = screen.getByLabelText("Amount tendered");
+    fireEvent.change(amount, { target: { value: "3" } });
+    expect(screen.getByTestId("pickup-short-hint")).toHaveTextContent("Enter at least $25.00.");
+    fireEvent.change(amount, { target: { value: "30" } });
+    expect(screen.queryByTestId("pickup-short-hint")).toBeNull();
+  });
+
+  it("B-2: a stale 'Enter at least' error from an empty Complete goes when an amount is chosen", async () => {
+    balance(25);
+    mount({ completeMode: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    // row 312(b): the cash amount starts at the amount due, so an empty Complete means the clerk cleared it first
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter at least $25.00.");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "50" } });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

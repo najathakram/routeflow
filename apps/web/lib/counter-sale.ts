@@ -5,9 +5,11 @@ import {
   type ChargeLine,
   validCustomer,
   validLine,
-  type CategoryTaxType,
 } from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
+import { saleLinesOf, type CartCategory, type CartLine } from "./sale-lines";
+
+export type { CartCategory, CartLine };
 import {
   SALE_ORDER_EXISTS_CODES as ORDER_EXISTS_CODES,
   isDefinitiveSaleRefusal,
@@ -117,26 +119,6 @@ export function preselectFulfilment(
   return cap.staffDefault;
 }
 
-export interface CartLine {
-  unitPrice: number;
-  qty: number;
-  boxes?: number | null;
-  pieces?: number | null;
-  unitsPerBox?: number | null;
-  /** The product's regulated category (levy), snapshotted when the line was added. */
-  trackedCategoryId?: string | null;
-}
-
-/** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
-export interface CartCategory {
-  id?: string;
-  /** the category's name: the levy prints as its own named charge ("CRV deposit") */
-  name?: string;
-  taxType: string;
-  rate: string | number;
-  priceIncludesTax?: boolean | null;
-}
-
 export interface CartTotalsContext {
   /** Tax-exempt customer: $0 of BOTH the sales tax and the levy (RF-079 / RF-4), as on the order and invoice. */
   isTaxExempt?: boolean;
@@ -162,28 +144,10 @@ export function cartTotals(
   /** the levy as named charges, one per regulated category (CQ-08) */
   chargeLines: ChargeLine[];
 } {
-  const t = saleTotals(
-    lines.map((l) => {
-      const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
-      return {
-        unitPrice: l.unitPrice,
-        qty: l.qty,
-        boxes: l.boxes ?? undefined,
-        pieces: l.pieces ?? undefined,
-        unitsPerBox: l.unitsPerBox ?? undefined,
-        category: c
-          ? {
-              id: c.id ?? l.trackedCategoryId,
-              name: c.name,
-              taxType: c.taxType as CategoryTaxType,
-              rate: Number(c.rate),
-              priceIncludesTax: c.priceIncludesTax ?? false,
-            }
-          : null,
-      };
-    }),
-    { taxRate, isTaxExempt: ctx.isTaxExempt === true },
-  );
+  const t = saleTotals(saleLinesOf(lines, ctx.categories), {
+    taxRate,
+    isTaxExempt: ctx.isTaxExempt === true,
+  });
   return {
     subtotal: t.subtotal,
     tax: t.regularTax,
@@ -746,6 +710,26 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  // W-778: the Complete-at-counter refusals are the dialog's own copy too (one message per refusal, never also the generic 409 toast)
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+]);
+/**
+ * W-778: refusals no retry from this dialog can fix (nothing was written). The dialog shows only Close (or Reload) and locks
+ * the tender controls, so nothing looks ready to retry. COUNTER_COMPLETE_ON_RUN is not here: the clerk can confirm it.
+ */
+export const COMPLETE_HARD_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
 ]);
 /** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
 const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([
