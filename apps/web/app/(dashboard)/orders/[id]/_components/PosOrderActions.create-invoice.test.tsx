@@ -3,13 +3,14 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mutate = jest.fn();
+const toastFn = jest.fn();
 jest.mock("@/lib/api/invoices", () => ({
   useCreateInvoiceFromOrder: () => ({ isPending: false, mutate }),
 }));
 jest.mock("@/components/OrderStatusBadge", () => ({ useOrderStatusLabel: () => (s: string) => s }));
 jest.mock("@routeflow/ui/web", () => {
   const actual = jest.requireActual("@routeflow/ui/web");
-  return { ...actual, useToast: () => ({ toast: jest.fn() }) };
+  return { ...actual, useToast: () => ({ toast: (...a: unknown[]) => toastFn(...a) }) };
 });
 
 import { PosOrderActions } from "./PosOrderActions";
@@ -33,7 +34,10 @@ function renderActions(status: string, invoices: Array<{ id: string; status: str
 }
 const create = () => screen.queryByRole("button", { name: "Create invoice" });
 
-beforeEach(() => mutate.mockClear());
+beforeEach(() => {
+  mutate.mockClear();
+  toastFn.mockClear();
+});
 
 /** SA-1066 M2: a Ready (OUT_FOR_DELIVERY) POS order with no invoice can still make one, as a secondary. */
 describe("PosOrderActions: Create invoice at Ready", () => {
@@ -96,5 +100,39 @@ describe("PosOrderActions: Create invoice at Pending", () => {
   it("F02: a VOID invoice is not an invoice, so the button is still offered", () => {
     renderActions("PENDING", [{ id: "i1", status: "VOID" }]);
     expect(create()).toBeInTheDocument();
+  });
+});
+
+/** SA-1071 V1: the toast that says the invoice exists also says which one, from the mutation's own answer. */
+describe("PosOrderActions: Invoice created names the invoice", () => {
+  const created = (answer: unknown) => {
+    renderActions("CONFIRMED");
+    fireEvent.click(create()!);
+    mutate.mock.calls[0][1].onSuccess(answer);
+    return toastFn.mock.calls[0][0];
+  };
+
+  it("V1: one invoice is named", () => {
+    expect(created([{ id: "i9", invoiceNumber: "INV-0009" }])).toMatchObject({
+      title: "Invoice INV-0009 created",
+      variant: "success",
+    });
+  });
+
+  it("V1: a mixed order that came back as several names the first and how many more", () => {
+    expect(
+      created([
+        { id: "i9", invoiceNumber: "INV-0009" },
+        { id: "i10", invoiceNumber: "INV-0010" },
+      ]),
+    ).toMatchObject({ title: "Invoice INV-0009 and 1 more created" });
+  });
+
+  it("V1: an answer with no number keeps the plain sentence", () => {
+    expect(created(undefined)).toMatchObject({ title: "Invoice created" });
+  });
+
+  it("V1: an invoice with no number keeps the plain sentence", () => {
+    expect(created([{ id: "i9" }])).toMatchObject({ title: "Invoice created" });
   });
 });
