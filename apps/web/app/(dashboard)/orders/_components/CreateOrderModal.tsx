@@ -391,6 +391,15 @@ export function CreateOrderModal({
   const lineItemsRef = React.useRef(lineItems);
   lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
+  // SA-1071 V3: what the latest chip tap or search pick did, in the scan history's own shape, for one Undo.
+  const [lastPick, setLastPick] = React.useState<ScanHistoryEntry | null>(null);
+  React.useEffect(() => {
+    if (!lastPick) return;
+    const t = window.setTimeout(() => setLastPick(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [lastPick]);
+  // a different customer is a different order: the old pick has nothing left to undo
+  React.useEffect(() => setLastPick(null), [selectedCustomer?.id]);
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
   // ── Custom (unlisted) item inline form ──
@@ -1184,7 +1193,11 @@ export function CreateOrderModal({
   const addPicked = (product: any) => {
     if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
     // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
-    addLineItem(product, undefined, { startOnDefaultUnit: true });
+    recordPick(product, addLineItem(product, undefined, { startOnDefaultUnit: true }));
+  };
+  const recordPick = (product: any, result: { created: boolean; refused?: boolean }) => {
+    if (result.refused) return;
+    setLastPick({ productId: product.id, created: result.created });
   };
 
   // PKG-4 F09: ArrowUp/Down + Enter on the product results. Nothing is highlighted until an Arrow
@@ -1393,7 +1406,11 @@ export function CreateOrderModal({
   );
   const suggestionActions = useOrderSuggestionActions({
     suggestions: orderSuggestions,
-    addLine: addLineItem,
+    addLine: (product, level, opts) => {
+      const result = addLineItem(product, level, opts);
+      if (!opts.ordered) recordPick(product, result); // "Order again" adds many lines: no single Undo
+      return result;
+    },
     tierFor: tierForProduct,
     toast,
   });
@@ -3084,6 +3101,26 @@ export function CreateOrderModal({
                 Add custom item
               </button>
             )}
+
+            {lastPick && lineItems.some((li) => li.productId === lastPick.productId) ? (
+              <p
+                role="status"
+                className="flex items-center gap-2 text-xs text-navy/70"
+                data-testid="last-pick-undo"
+              >
+                <span>Item added.</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    undoScan(lastPick);
+                    setLastPick(null);
+                  }}
+                  className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline sm:min-h-0"
+                >
+                  Undo
+                </button>
+              </p>
+            ) : null}
 
             {/* Line items list */}
             {lineItems.length > 0 ? (
