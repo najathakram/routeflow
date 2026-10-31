@@ -68,6 +68,11 @@ export interface ScanEngineStep {
   indicator: "on" | "off" | null;
   /** True when this step's accepted scan found the pending buffer full and was NOT queued: surface it. */
   dropped?: boolean;
+  /**
+   * SA-1071 K1, OPT-IN (`ContinuousFrameOptions.signalHeld`): the code in this frame was already accepted and is still in view,
+   * so the gate dropped it. The count is right to ignore it; the person holding it deserves to know. Never set without the option.
+   */
+  held?: true;
 }
 
 /** The empty/idle engine — no code ever tracked, buffer at rest. */
@@ -162,6 +167,8 @@ export interface ContinuousFrameOptions {
    * counts again - the accepted cost of the 0.6 s ruling (owner, 2026-10-15; 0.3 s double-counted holds on slow phones). Default off: every other scan screen stays on the 09-24 rule.
    */
   fastRepeat?: boolean;
+  /** SA-1071 K1: report `held` on a frame the gate drops because the same code is still in view. Default off. */
+  signalHeld?: boolean;
 }
 
 /** The absence that makes a repeat of the code just accepted a new scan on the order builder. */
@@ -241,6 +248,9 @@ export function continuousFrameScanned(
       next: { ...state, gate: gated.state, steady: nextSteady },
       startResolving: null,
       indicator: null,
+      ...(opts.signalHeld && code.trim() && hasBeenAccepted(state.gate, code, opts.candidatesOf)
+        ? { held: true as const }
+        : {}),
     };
   }
   const wasResolving = state.buffer.isResolving;

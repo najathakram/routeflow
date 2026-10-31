@@ -1,5 +1,5 @@
 import * as React from "react";
-import { TAP_TARGET, cn } from "@routeflow/ui/web";
+import { TAP_TARGET, buttonVariants, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money, unitWords } from "@routeflow/pricing";
 import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
@@ -29,6 +29,12 @@ const wordsOf = (l: SaleLine) => unitWords({ packLabel: l.packLabel, baseUnitLab
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
 const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
+
+/** SA-1071 P2: History reads as Change price's sibling; `[&>span]` is its word. */
+const HISTORY_BTN = cn(
+  buttonVariants({ variant: "secondary", size: "sm" }),
+  "min-h-[44px] min-w-[44px] gap-1 lg:min-h-0 lg:min-w-0 [&>span]:text-[12.5px] [&>span]:text-navy",
+);
 
 /** W-717: the note buttons are secondary to the steppers, so they drop the border (one weight per role, not six equal boxes). */
 const LINE_BTN_QUIET = cn(
@@ -347,6 +353,8 @@ export function CounterLineRow({
               unitHint={isBoxedLine(l) ? "case" : l.unit}
               packHint={l.unitsPerBox ?? null}
               label="History"
+              // SA-1071 P2: the same button as Change price beside it, at the same heights.
+              className={HISTORY_BTN}
               // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
               onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
             />

@@ -504,6 +504,20 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
       });
       const row = page.getByTestId("counter-bar-tender");
       if (width < 768) {
+        // SA-1071 K2: the row is drawn only while the Payment section is off screen (behind or below the bar)
+        await page.evaluate(() => document.getElementById("main-content")?.scrollTo(0, 0));
+        const paymentOnScreen = await page
+          .getByRole("region", { name: "Payment" })
+          .evaluate((el) => {
+            const bar = document.querySelector('[data-testid="counter-checkout-bar"]');
+            const limit = bar ? bar.getBoundingClientRect().top : window.innerHeight;
+            const r = el.getBoundingClientRect();
+            return r.top < limit && r.bottom > 0;
+          });
+        if (paymentOnScreen) {
+          await expect(row).toBeHidden();
+          return;
+        }
         await expect(row).toBeVisible();
         await expect(row).toContainText("Cash");
         await row.click(); // Change payment: the Payment section scrolls into view

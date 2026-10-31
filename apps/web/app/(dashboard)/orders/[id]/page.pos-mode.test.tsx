@@ -108,7 +108,8 @@ describe("POS order page: progress", () => {
     await open("DELIVERED", { invoices: INV("SENT") });
     const items = steps();
     expect(items.map((i) => i.getAttribute("data-done"))).toEqual(["true", "true", "true"]);
-    expect(items[1]).toHaveTextContent(/^Invoice \(completed\)$/);
+    // SA-1071 V1: the step now names the invoice (a link to it) once one exists
+    expect(items[1]).toHaveTextContent(/^Invoice INV-1 \(completed\)$/);
   });
 
   it("a counter sale and a ROUTE order get no POS progress", async () => {
@@ -304,6 +305,6 @@ describe("POS order page: Ready for pickup, VOID invoices, a11y, hand-over label
     fireEvent.click(screen.getByRole("button", { name: /^Create invoice$/ }));
     await waitFor(() => expect(has(/^Create invoice$/)).toBe(false));
     expect(has(/^Hand over$/)).toBe(true);
-    expect(steps()[1]).toHaveTextContent("Invoice (draft) (completed)");
+    expect(steps()[1]).toHaveTextContent("Invoice (draft) INV-1 (completed)"); // SA-1071 V1: names the invoice
   });
 });
