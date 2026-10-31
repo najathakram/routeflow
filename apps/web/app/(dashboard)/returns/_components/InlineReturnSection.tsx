@@ -660,7 +660,7 @@ function ReturnLine({
   const hasExcess = !!facts && facts.notOnInvoicePieces > 0;
   const hasAlreadyReturned = !!facts && facts.alreadyReturnedPieces > 0;
   const coveredPieces = facts ? facts.covered.reduce((s, c) => s + c.pieces, 0) : 0;
-  const showExcessChoice = hasExcess || onlyBoughtActive;
+  const showExcessChoice = hasExcess || hasAlreadyReturned || onlyBoughtActive;
   const onlyPossible = onlyBoughtAvailable && (onlyBoughtActive || coveredPieces > 0);
 
   const summaryWords = [
@@ -760,12 +760,16 @@ function ReturnLine({
 
       <button
         type="button"
-        className="mt-2 flex min-h-11 w-full items-center justify-between gap-2 text-left text-sm text-navy/70 hover:text-navy disabled:cursor-not-allowed disabled:opacity-60"
+        className="mt-2 flex min-h-11 w-full items-center justify-between gap-2 text-left text-sm text-navy/70 hover:text-navy aria-disabled:cursor-not-allowed"
         aria-expanded={open}
         aria-controls={panelId}
-        disabled={forced}
+        // forced open: the toggle does nothing but stays a button, so the summary it holds keeps its colour and its place in the
+        // focus order
+        aria-disabled={forced}
         title={forced ? "Clear these fields to hide them" : undefined}
-        onClick={() => setUserOpen((v) => !v)}
+        onClick={() => {
+          if (!forced) setUserOpen((v) => !v);
+        }}
       >
         <span data-testid={`return-line-summary-${line.productId}`} className="min-w-0">
           <span className="sr-only">Options for {line.productName}: </span>

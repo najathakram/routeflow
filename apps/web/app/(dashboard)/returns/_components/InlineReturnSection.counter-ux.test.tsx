@@ -134,17 +134,21 @@ describe("InlineReturnSection — returns say what happens (W-711)", () => {
     expect(toggle()).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("the toggle is not a dead button: while a field holds a value it is disabled and the options stay open", async () => {
+  it("the toggle is not a dead button: while a field holds a value it does nothing and the options stay open", async () => {
     renderWithProviders(<InlineReturnSection customerId="cust-1" />);
     await addWidget();
     fireEvent.click(toggle());
     fireEvent.change(screen.getByLabelText(/note \(optional\)/i), { target: { value: "dented" } });
-    expect(toggle()).toBeDisabled();
+    // review-b Low 1: aria-disabled, not disabled, so the summary in it is not dimmed or dropped from the focus order
+    expect(toggle()).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(toggle());
     expect(toggle()).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText(/note \(optional\)/i)).toBeVisible();
     // clearing the value frees it again
     fireEvent.change(screen.getByLabelText(/note \(optional\)/i), { target: { value: "" } });
-    expect(toggle()).toBeEnabled();
+    expect(toggle()).toHaveAttribute("aria-disabled", "false");
+    fireEvent.click(toggle());
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
   });
 
   it("a DRIVER (or no role) opening the options never sees the staff Credit price field", async () => {

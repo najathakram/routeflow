@@ -528,6 +528,19 @@ describe("R-12 M9: a decision that is not optional opens by itself", () => {
     expect(last().lines[0].alreadyReturnedReason).toBe("Customer returned a second batch");
   });
 
+  it("review-b FAIL 3: a line past what was bought because it was already returned is offered 'Return only what was bought'", async () => {
+    authRole = "OPERATOR";
+    renderSection();
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(alreadyReturned());
+    const only = within(row("prod-1")).getByRole("radio", { name: /return only what was bought/i });
+    expect(only).toBeEnabled();
+    fireEvent.click(only);
+    expect(qtyInputs()[0].value).toBe("4");
+  });
+
   it("a driver is told the return is held, with no reason to type", async () => {
     authRole = "DRIVER";
     renderSection();
@@ -547,7 +560,11 @@ describe("R-12 M9: a decision that is not optional opens by itself", () => {
       target: { value: "Dented" },
     });
     expect(optionsToggle("Widget")).toHaveAttribute("aria-expanded", "true");
-    expect(optionsToggle("Widget")).toBeDisabled();
+    // review-b Low 1: forced open does not disable the toggle, so the summary it holds is neither dimmed nor out of focus order
+    expect(optionsToggle("Widget")).toHaveAttribute("aria-disabled", "true");
+    expect(optionsToggle("Widget")).toBeEnabled();
+    fireEvent.click(optionsToggle("Widget"));
+    expect(optionsToggle("Widget")).toHaveAttribute("aria-expanded", "true");
   });
 });
 
