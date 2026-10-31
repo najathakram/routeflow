@@ -315,7 +315,9 @@ export function NotificationRulesCard({
             </ul>
           ) : (
             <p className="mt-1 text-xs text-navy/70">
-              Your team isn&apos;t emailed about orders yet — coming soon.
+              {isAdmin
+                ? "Emails to your team about customer orders are set in Customer order emails, below."
+                : "An administrator sets emails to your team about customer orders."}
             </p>
           )}
         </section>

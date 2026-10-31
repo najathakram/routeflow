@@ -376,12 +376,22 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(senderState.enabledArg).toBe(true);
   });
 
-  it("T22 the team group says plainly that nothing is emailed to the team yet", () => {
+  it("T22 the team group points an admin to the Customer order emails card (SA-1063)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     const team = screen
       .getByRole("heading", { name: "Emails to your team" })
       .closest("section") as HTMLElement;
-    expect(within(team).getByText(/your team isn't emailed about orders yet/i)).toBeInTheDocument();
+    expect(within(team).getByText(/set in customer order emails, below/i)).toBeInTheDocument();
+    expect(within(team).queryByText(/coming soon/i)).toBeNull();
+  });
+
+  it("T22b an operator is told an administrator sets them", () => {
+    mockRole = "OPERATOR";
+    renderWithProviders(<NotificationsSettingsTab />);
+    const team = screen
+      .getByRole("heading", { name: "Emails to your team" })
+      .closest("section") as HTMLElement;
+    expect(within(team).getByText(/an administrator sets emails/i)).toBeInTheDocument();
   });
 
   it("T17 the loading state is an accessible status region", () => {
