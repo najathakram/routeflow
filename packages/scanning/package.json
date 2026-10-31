@@ -21,6 +21,7 @@
     "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "test": "jest",
+    "test:repo-truth": "node ../../scripts/run-cross-workspace-specs.mjs",
     "lint": "tsc --noEmit -p tsconfig.json",
     "check-types": "tsc --noEmit -p tsconfig.json"
   },

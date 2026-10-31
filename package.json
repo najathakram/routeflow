@@ -56,6 +56,7 @@
     "prepare": "husky",
     "bogo-check": "node scripts/bogo-live-check.mjs",
     "janitor": "node scripts/janitor.mjs",
+    "train:precheck": "node scripts/train-precheck.mjs",
     "janitor:apply": "node scripts/janitor.mjs --apply",
     "janitor:preflight": "node scripts/janitor.mjs --preflight",
     "janitor:stale-branches": "node scripts/janitor.mjs --stale-branches",

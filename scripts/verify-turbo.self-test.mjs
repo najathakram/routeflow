@@ -2073,5 +2073,50 @@ check(
   ],
   [true, true, []],
 );
+
+// XW: every workspace that defines test:repo-truth gets the always-run lane (cross-workspace-lane.spec.ts). A web-only
+// diff used to run only the api lane, whose hand-kept list missed api-error-codes-parity.
+{
+  const repoTruth = ["@routeflow/api", "@routeflow/web", "@routeflow/mobile"];
+  const lane = (plan) =>
+    plan.calls.filter((c) => c.args[0] === "test:repo-truth").map((c) => c.args);
+  const want = [
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/web",
+      "--filter=@routeflow/mobile",
+    ],
+  ];
+  check(
+    "XW1 AFFECTED: the lane runs every repo-truth workspace, on a diff that selects only web",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, repoTruth })),
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: true, repoTruth })),
+    ],
+    [want, want],
+  );
+  check(
+    "XW2 FAST: the lane runs every repo-truth workspace, FULL (no changedSince), on a web-only diff",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, repoTruth })),
+      planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, repoTruth }).calls.find(
+        (c) => c.args[0] === "test:repo-truth",
+      ).changedSince,
+    ],
+    [want, undefined],
+  );
+  check(
+    "XW3 an excluded workspace is dropped from the lane; the default stays api only",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, excluded: [WEB], repoTruth })),
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false })),
+    ],
+    [
+      [["test:repo-truth", "--filter=@routeflow/api", "--filter=@routeflow/mobile"]],
+      [["test:repo-truth", "--filter=@routeflow/api"]],
+    ],
+  );
+}
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

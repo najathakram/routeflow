@@ -164,7 +164,19 @@
         // graph-core.spec.ts reads the graph overlay: .graphifyignore + the packages' "source" exports
         // (scripts/** is already hashed above).
         "$TURBO_ROOT$/.graphifyignore",
-        "$TURBO_ROOT$/packages/*/package.json"
+        "$TURBO_ROOT$/packages/*/package.json",
+        // Every other workspace a derived cross-workspace spec reads (scripts/lib/cross-workspace-specs.cjs;
+        // cross-workspace-lane.spec.ts fails if a spec reads a directory not hashed here). Without these a parity
+        // spec could replay a cached green after the source it reads changed.
+        "$TURBO_ROOT$/apps/control/**",
+        "$TURBO_ROOT$/apps/web/**",
+        "$TURBO_ROOT$/apps/mobile/**",
+        "$TURBO_ROOT$/packages/config/**",
+        "$TURBO_ROOT$/packages/pricing/**",
+        "$TURBO_ROOT$/packages/returns/**",
+        "$TURBO_ROOT$/packages/scanning/**",
+        "$TURBO_ROOT$/packages/types/**",
+        "$TURBO_ROOT$/packages/ui/**"
       ],
       "outputs": []
     },

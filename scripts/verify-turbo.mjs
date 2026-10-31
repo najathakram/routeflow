@@ -37,6 +37,9 @@ import {
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
+import { createRequire } from "node:module";
+
+const { workspacesWithScript } = createRequire(import.meta.url)("./lib/cross-workspace-specs.cjs");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -140,6 +143,8 @@ export function excludedLine(excluded) {
     : null;
 }
 
+const API_NAME = "@routeflow/api";
+
 /**
  * Pure planner for every turbo call a run makes (no spawn, no env), so the self-test can assert the
  * exact argv for FULL/AFFECTED x unsplit/split x excluded/not. `splitJest` is "JEST_MAX_WORKERS is
@@ -155,9 +160,16 @@ export function excludedLine(excluded) {
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, pins = null }) {
+export function planTurboCalls({
+  scope,
+  excluded = [],
+  splitJest,
+  fast = false,
+  pins = null,
+  repoTruth: repoTruthNames = [API_NAME],
+}) {
   const drop = new Set(excluded);
-  if (fast) return withPins(planFastCalls({ scope, drop, excluded }), pins, drop);
+  if (fast) return withPins(planFastCalls({ scope, drop, excluded, repoTruthNames }), pins, drop);
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -176,10 +188,10 @@ export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, 
         };
   }
   const filters = scope.workspaces.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
-  const API = "@routeflow/api";
   const calls = [];
-  // Only apps/api defines test:repo-truth today; a second workspace adding one must be added here.
-  const repoTruth = drop.has(API) ? [] : ["--filter=" + API];
+  // Every workspace that defines test:repo-truth (the caller derives the names from the workspaces' package.json;
+  // default api only) runs it on every affected push, whatever the diff touched.
+  const repoTruth = repoTruthNames.filter((w) => !drop.has(w)).map((w) => "--filter=" + w);
   if (!splitJest) {
     if (filters.length)
       calls.push({ jest: false, args: ["check-types", "lint", "test", ...filters] });
@@ -209,8 +221,7 @@ export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, 
  * `changedSince` is set on call 2 ONLY — never on a `jest: false` call and never on a tripwire.
  */
 const PRICING = "@routeflow/pricing";
-function planFastCalls({ scope, drop, excluded }) {
-  const API = "@routeflow/api";
+function planFastCalls({ scope, drop, excluded, repoTruthNames = [API_NAME] }) {
   const calls = [];
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
@@ -231,7 +242,8 @@ function planFastCalls({ scope, drop, excluded }) {
   if (filters.length) calls.push({ jest: false, args: ["check-types", "lint", ...filters] });
   if (related.length) calls.push({ jest: true, changedSince: true, args: ["test", ...related] });
   if (selected.includes(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
-  if (!drop.has(API)) calls.push({ jest: true, args: ["test:repo-truth", `--filter=${API}`] });
+  const repoTruth = repoTruthNames.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
+  if (repoTruth.length) calls.push({ jest: true, args: ["test:repo-truth", ...repoTruth] });
   return {
     calls,
     note: calls.length
@@ -525,6 +537,7 @@ export async function main() {
     splitJest: Boolean(JEST_MAX_WORKERS),
     fast: runMode.fast,
     pins,
+    repoTruth: workspacesWithScript(ROOT, "test:repo-truth").map((w) => w.name),
   });
   if (plan.note) console.log(plan.note);
   // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's
