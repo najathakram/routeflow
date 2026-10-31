@@ -1423,33 +1423,30 @@ describe("promotion zero-price guard (2026-08-20 $0.00 incident)", () => {
 
 describe("pricing — upsell direction & sticky effective price", () => {
   describe("isAboveListLine", () => {
+    // The rule ignores the type, so the rows name it through a variable: the parameter doesn't declare it.
+    const line = (
+      priceType: string,
+      unitPrice: number | string,
+      originalPrice: number | string | null,
+    ) => ({ priceType, unitPrice, originalPrice });
+
     it("true for a MANUAL upsell and for a tier above Retail", () => {
-      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: 10 })).toBe(true);
-      expect(isAboveListLine({ priceType: "SPECIAL", unitPrice: 12, originalPrice: 10 })).toBe(
-        true,
-      );
+      expect(isAboveListLine(line("MANUAL", 12, 10))).toBe(true);
+      expect(isAboveListLine(line("SPECIAL", 12, 10))).toBe(true);
     });
 
     it("false for any line at or below its base", () => {
-      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 8, originalPrice: 10 })).toBe(false);
-      expect(isAboveListLine({ priceType: "SPECIAL", unitPrice: 8, originalPrice: 10 })).toBe(
-        false,
-      );
-      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 10, originalPrice: 10 })).toBe(
-        false,
-      );
+      expect(isAboveListLine(line("MANUAL", 8, 10))).toBe(false);
+      expect(isAboveListLine(line("SPECIAL", 8, 10))).toBe(false);
+      expect(isAboveListLine(line("MANUAL", 10, 10))).toBe(false);
     });
 
     it("false when no original price is stored", () => {
-      expect(isAboveListLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: null })).toBe(
-        false,
-      );
+      expect(isAboveListLine(line("MANUAL", 12, null))).toBe(false);
     });
 
     it("coerces Decimal-like string fields", () => {
-      expect(
-        isAboveListLine({ priceType: "SPECIAL", unitPrice: "12.50", originalPrice: "10.00" }),
-      ).toBe(true);
+      expect(isAboveListLine(line("SPECIAL", "12.50", "10.00"))).toBe(true);
     });
   });
 
