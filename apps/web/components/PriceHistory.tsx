@@ -555,11 +555,14 @@ export function PriceHistoryButton({
   focusSelector,
   className,
   excludeOrderId,
+  label,
 }: {
   customerId?: string | null;
   customerName?: string | null;
   productId?: string | null;
   productName: string;
+  /** A visible word beside the clock (SA-1066 F07). Part of the same button; the accessible name stays "Price history". */
+  label?: string;
   /** The unit being entered (case / piece / ...), so history and "Use" never cross units. */
   unitHint?: string | null;
   /** The line's pack size (units per box), so a price from a different pack is never offered. */
@@ -636,10 +639,12 @@ export function PriceHistoryButton({
         }}
         className={cn(
           "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0 lg:min-w-0",
+          label && "w-auto gap-1 px-1",
           className,
         )}
       >
         <History className="h-3.5 w-3.5" aria-hidden />
+        {label && <span className="text-[11px] font-medium">{label}</span>}
       </button>
       {open && ready && anchor && (
         <Panel
