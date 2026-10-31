@@ -1,11 +1,11 @@
 {
-  "nextId": 361,
+  "nextId": 364,
   "activeCount": 52,
-  "archivedCount": 294,
+  "archivedCount": 297,
   "maxEntries": 52,
   "maxBytes": 81920,
-  "updatedAt": "2026-10-31T04:17:35.499Z",
+  "updatedAt": "2026-10-31T12:08:14.565Z",
   "schemaVersion": 1,
-  "note": "2026-10-31 (coordinator, bookkeeping for W30b and W31): no new entry; extended the Guard of L-359 (pre-check runs api-error-codes-parity and permission-coverage) and of L-357 (read visibility first; replace an idle watchdog only when PRIVATE). Register stays at 52/52.",
+  "note": "2026-10-31 (coordinator, bookkeeping for W32, W33 and train U): new L-361 (watchdog deadline per pid, grep -a), L-362 (slot job runs the launching tree's scripts), L-363 (timing specs under load); extended L-357 (no private flip during hosted CI), L-355 (remerge-diff empty), L-264 (W33 required-field composition). Archived L-190 (superseded by L-288), L-184 (promoted into CLAUDE.md deploy flow), L-205 (fix shipped). Register stays at 52/52.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged. 2026-09-15 owner ruling (via lead c4): bytes stay load-bearing at 65,536; maxEntries 64 -> 52 so the two caps agree (~1.24 KB average entry)."
 }

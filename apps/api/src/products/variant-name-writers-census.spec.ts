@@ -209,6 +209,11 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "test fixture: seeds a standalone product for the order-stock db specs (B284), never production",
     standalone: true,
   },
+  "src/inventory/testing/sa802-world.ts": {
+    blocks: { "afterAll:create": 1 },
+    why: "test fixture: seeds a standalone product for the SA-802 / SA-828 db specs (qa-sa802-*), never production",
+    standalone: true,
+  },
   "src/orders/testing/units-fold-db-harness.ts": {
     blocks: { "seedFoldTenant:create": 1 },
     why: "test fixture: seeds standalone products for the D3 units-fold db specs (qa-ufold-* tenants), never production",

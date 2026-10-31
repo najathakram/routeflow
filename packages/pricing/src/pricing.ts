@@ -1171,6 +1171,19 @@ export function decideStaffOverride(input: {
 }
 
 /**
+ * SA-1068: the ONE rule for a customer's remembered price. Only a remembered price ABOVE the product's list is a sticky
+ * upsell (a premium tier above list is the customer's normal price, not an upsell); null, below or equal to list is not.
+ * The server's buyer-merge pricing and the units v2 Customer view call this, and the till's display reads the same answer
+ * through `customerLinePrice`, so the screen never shows a price the server will not charge.
+ */
+export function isStickyUpsell(
+  remembered: number | string | null | undefined,
+  listPrice: number,
+): boolean {
+  return remembered != null && Number(remembered) > listPrice;
+}
+
+/**
  * A customer's EFFECTIVE buyer price for a product. An operator's remembered
  * upsell — a saved override net price ABOVE the catalog LIST price — is sticky and
  * overrides the tier everywhere the buyer is priced (catalog, cart, checkout). A
@@ -1184,9 +1197,9 @@ export function effectiveBuyerPrice(
   rememberedPrice: number | null | undefined,
 ): number {
   const tier = Number(tierPrice) || 0;
-  if (rememberedPrice == null) return tier;
-  const remembered = Number(rememberedPrice);
-  return remembered > Number(listPrice) ? roundMoney(remembered) : tier;
+  return isStickyUpsell(rememberedPrice, Number(listPrice))
+    ? roundMoney(Number(rememberedPrice))
+    : tier;
 }
 
 // ─── Qty display: boxes + pieces split ────────────────────────────────────────
