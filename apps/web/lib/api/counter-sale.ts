@@ -44,8 +44,12 @@ export function useCounterSaleGate(options?: { enabled?: boolean }) {
   // Fail-closed flag for the builder's POS path: false while the read is pending AND after it errors (deniedGroups is
   // [] in both, which would read as "nothing denied"). Everyone but an OPERATOR has nothing to read: true.
   const permsKnown = !checkPermissions || perms.data !== undefined;
-  const mayUseTill =
-    checkPermissions && perms.data ? staffMay(role, "USE_POS_MODE", deniedGroups) : true;
+  // SA-940 A-2: the same rule the server's till guard applies. A known role other than OPERATOR has no denials to read, so
+  // a raw platform token isn't offered a till the server refuses; impersonation carries TENANT_ADMIN. An OPERATOR whose
+  // read is pending or failed, and an unknown role, stay offered.
+  const mayUseTill = checkPermissions
+    ? !perms.data || staffMay(role, "USE_POS_MODE", deniedGroups)
+    : !role || staffMay(role, "USE_POS_MODE", []);
   const baseGate = enabled ? counterSaleGate(cap) : { showButton: false, offerShipInstead: false };
   const gate = { ...baseGate, showButton: baseGate.showButton && mayUseTill && !permsPending };
   return {

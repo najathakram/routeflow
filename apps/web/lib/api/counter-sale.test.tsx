@@ -272,10 +272,21 @@ describe("useCounterSaleGate: BO-07 till permission (an operator whose admin tur
     expect(result.current).toMatchObject({ mayUseTill: true });
   });
 
-  it.each(["TENANT_ADMIN", "SUPER_ADMIN"])("%s: no permissions fetch at all", async (role) => {
-    authUser = { role };
+  it("TENANT_ADMIN: no permissions fetch at all", async () => {
+    authUser = { role: "TENANT_ADMIN" };
     const { result } = render();
     expect(result.current).toMatchObject({ showButton: true, mayUseTill: true });
+    expect(permissionCalls()).toBe(0);
+  });
+
+  it("SA-940 A-2: a raw SUPER_ADMIN reads the server's till rule, with no permissions fetch", async () => {
+    authUser = { role: "SUPER_ADMIN" };
+    const { result } = render();
+    expect(result.current).toMatchObject({
+      showButton: false,
+      mayUseTill: false,
+      permsKnown: true,
+    });
     expect(permissionCalls()).toBe(0);
   });
 

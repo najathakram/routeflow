@@ -100,6 +100,25 @@ describe("Dashboard header: one New order", () => {
     expect(push).toHaveBeenLastCalledWith("/orders/counter-sale");
   });
 
+  it("W54: a raw SUPER_ADMIN on a store-only business has no sale control", () => {
+    authRole = "SUPER_ADMIN";
+    fulfilment = STORE_ONLY;
+    renderWithProviders(<DashboardPage />);
+    expect(saleControls()).toEqual([]);
+    expect(screen.queryByTestId("new-order-open")).toBeNull();
+  });
+
+  it("W56: a raw SUPER_ADMIN on a delivery business with a counter goes to the builder, no menu", () => {
+    authRole = "SUPER_ADMIN";
+    fulfilment = OPTIONAL;
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryByTestId("new-order-open")).toBeNull();
+    expect(screen.getByRole("link", { name: "New order" })).toHaveAttribute(
+      "href",
+      "/orders?action=new&builder=1",
+    );
+  });
+
   it("guard: New invoice and New route stay", () => {
     renderWithProviders(<DashboardPage />);
     expect(screen.getByRole("link", { name: /new invoice/i })).toBeInTheDocument();

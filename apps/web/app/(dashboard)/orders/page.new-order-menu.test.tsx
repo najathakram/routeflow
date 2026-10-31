@@ -98,8 +98,9 @@ const saleButtons = () =>
     .queryAllByRole("button")
     .map((b) => b.textContent?.trim())
     .filter((t) => t === "New order" || t === "Counter sale" || t === "Invoice a customer");
-const menuWords = () =>
-  screen.getAllByRole("menuitem").map((item) => item.querySelector("span")?.textContent);
+const menuWordsOf = (items: HTMLElement[]) =>
+  items.map((item) => item.querySelector("span")?.textContent);
+const menuWords = () => menuWordsOf(screen.getAllByRole("menuitem"));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -196,6 +197,58 @@ describe("Orders header: one New order", () => {
     renderWithProviders(<OrdersPage />);
     expect(saleButtons()).not.toContain("Invoice a customer");
     expect(saleButtons()).not.toContain("New order");
+  });
+
+  describe("the gate agrees with the server's till rule (SA-940 A-2)", () => {
+    it("W54: a raw SUPER_ADMIN on a store-only business has no sale control", async () => {
+      mockRole = "SUPER_ADMIN";
+      features = loaded(STORE_ONLY);
+      search = "action=new";
+      renderWithProviders(<OrdersPage />);
+      expect(saleButtons()).toEqual([]);
+      expect(screen.queryByTestId("new-order-open")).toBeNull();
+      await waitFor(() => expect(replace).toHaveBeenCalled());
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(screen.queryByTestId("order-builder-open")).toBeNull();
+    });
+
+    it("W56: a raw SUPER_ADMIN on a delivery business with a counter opens the builder, no menu", async () => {
+      mockRole = "SUPER_ADMIN";
+      features = loaded(OPTIONAL);
+      renderWithProviders(<OrdersPage />);
+      expect(screen.queryByTestId("new-order-open")).toBeNull();
+      await userEvent.setup().click(newOrder()!);
+      expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("W55 guard: a tenant admin, which is what an impersonation session carries, keeps the menu", async () => {
+      mockRole = "TENANT_ADMIN";
+      features = loaded(STORE_ONLY);
+      renderWithProviders(<OrdersPage />);
+      await userEvent.setup().click(screen.getByTestId("new-order-open"));
+      expect(menuWordsOf(await screen.findAllByRole("menuitem"))).toEqual([
+        "Counter sale",
+        "Regular order",
+      ]);
+    });
+
+    it("W57 guard: an operator with permissions pending waits", () => {
+      features = loaded(OPTIONAL);
+      perms = { isLoading: true };
+      renderWithProviders(<OrdersPage />);
+      expect(newOrder()).toBeDisabled();
+      expect(screen.queryByTestId("new-order-open")).toBeNull();
+    });
+
+    it("W57 guard: an operator whose permissions read failed gets the builder", async () => {
+      features = loaded(OPTIONAL);
+      perms = { isLoading: false, data: undefined };
+      renderWithProviders(<OrdersPage />);
+      expect(screen.queryByTestId("new-order-open")).toBeNull();
+      await userEvent.setup().click(newOrder()!);
+      expect(screen.getByTestId("order-builder-open")).toBeInTheDocument();
+    });
   });
 
   it("a read-only menu business has a disabled button", () => {
