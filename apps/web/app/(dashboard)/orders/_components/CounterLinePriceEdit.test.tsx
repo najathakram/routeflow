@@ -119,7 +119,7 @@ describe("CounterLinePriceEdit: the dialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("Enter in the number field applies (a set price, with a trimmed reason)", () => {
+  it("Submitting the form (Apply) applies (a set price, with a trimmed reason)", () => {
     const { onApply } = mount();
     open();
     fireEvent.change(field("Price per item"), { target: { value: "7.25" } });

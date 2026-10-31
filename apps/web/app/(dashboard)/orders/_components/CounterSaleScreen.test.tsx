@@ -2177,15 +2177,19 @@ describe("CounterSaleScreen: held attempt hardening", () => {
     expect(window.sessionStorage.length).toBe(0);
   });
 
-  it("MUST3: the cash amount sent is rounded to cents", async () => {
+  it("MUST3: a typed half cent (10.005) is refused, and plain cents (10.50) are sent as typed", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("012345678905");
     await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50"));
+    // SA-1067 A-3: a half cent is not a tender. The rounding itself is pinned on the write in counter-part-pay.test.ts.
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.005" } });
     fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
+    expect(await screen.findByText("Enter at least $2.50.")).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-    expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(roundMoney(10.005));
-    expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(10.01);
+    expect(mutateAsync.mock.calls[0][0].dto.payment.amount).toBe(roundMoney(10.5));
   });
 
   it("SHOULD a: a double click on Complete & show receipt sends ONE POST", async () => {

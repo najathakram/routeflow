@@ -1132,7 +1132,7 @@ export default defineConfig({
           },
           {
             name: "counter-pos-stack",
-            testMatch: /72-counter-pos-stack\.spec\.ts/,
+            testMatch: /(72-counter-pos-stack|75-sa1067-price-history-keys)\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useArmedEnter } from "@/lib/armed-enter";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -71,6 +72,7 @@ import {
   paymentMethodOptions,
   preselectFulfilment,
   quickTenderOptions,
+  tenderNeedsSecondEnter,
   readAutoPrint,
   readHeldAttempt,
   resolveTender,
@@ -165,6 +167,7 @@ import {
   creditMayApply,
   isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
+  tenderAmount,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
@@ -416,15 +419,16 @@ export function CounterSaleScreen() {
     if (receipt || locked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-      // digits only: letters are the g-then-x navigation shortcuts. While focus is inside the price history panel (a popover over
+      // digits and CAPITAL letters on a desktop: the g-then-x navigation shortcuts are lowercase and a wedge's code is capitals
+      // (SA-1067 M4: a code that starts with a letter lost it, and its digits then matched a different item). While focus is inside the price history panel (a popover over
       // the till) any printable key but Space is a scan: the whole code, letters included, so its Enter never presses Use.
       // SA-1059: a touch-first device has no standing focus in the scan field, so a wedge's code that starts with a letter would
-      // lose it; there letters are routed too (a desktop stays digits only).
+      // lose it; there every letter is routed (a desktop routes digits and capitals only).
       const routed = document.activeElement?.closest("[data-anchored-popover]")
         ? /^\S$/
         : isTouchFirst()
           ? /^[0-9A-Za-z]$/
-          : /^[0-9]$/;
+          : /^[0-9A-Z]$/;
       if (!routed.test(e.key)) return;
       const scanEl = scanRef.current;
       if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
@@ -559,7 +563,7 @@ export function CounterSaleScreen() {
     categories.get(l.trackedCategoryId)?.requiresLicense === true;
   const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
-  const tenderedNum = Number(tendered) || 0;
+  const tenderedNum = tenderAmount(tendered);
   // W-863: a named customer's inline return nets against the sale; `payTotal` is what the till asks for.
   const namedCustomer = customer !== null && !customer.isWalkIn;
   const ret = useCounterInlineReturn(totals.total, namedCustomer, setError);
@@ -744,6 +748,16 @@ export function CounterSaleScreen() {
 
   // R7b 1.2 (a): Enter in an EMPTY scan box with lines in the cart moves to the payment (a scanner never sends an empty Enter).
   const tenderRef = React.useRef<HTMLInputElement>(null);
+  // SA-1067 M2b: Enter in Amount tendered completes the sale only when the figure is plausible money; a tender a bill or
+  // more over the total (a scanner's code) arms first. The key names what a second Enter would complete. Amount paying
+  // now needs none: an amount over the total is already refused there, so it can't post.
+  const tenderKey = JSON.stringify([method, tendered, payTotal]);
+  const tenderEnter = useArmedEnter(tenderKey); // any change of method, figure or total ends the arm (A-2)
+  const onTenderEnter = () =>
+    tenderEnter.press(
+      tenderNeedsSecondEnter(payTotal, tenderedNum),
+      () => void completeSale(false),
+    );
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
   const focusPaymentControl = (el: HTMLElement | null | undefined) => el?.focus();
   // W-709 (538 F24): a short cash tender takes the cashier to the fix. Bumped when complete() refuses with TENDER_SHORT; the
@@ -1864,7 +1878,7 @@ export function CounterSaleScreen() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        void completeSale(false);
+                        onTenderEnter();
                       }
                     }}
                   />
@@ -1912,6 +1926,12 @@ export function CounterSaleScreen() {
                   <CounterPartPayCreditError onRetry={retryCredit} />
                 ) : null}
               </>
+            ) : null}
+
+            {tenderEnter.armed ? (
+              <p role="status" className="text-sm font-medium text-navy">
+                Press Enter again to complete the sale.
+              </p>
             ) : null}
           </section>
 
