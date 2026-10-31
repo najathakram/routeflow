@@ -37,7 +37,12 @@ jest.mock("@/lib/api/addons", () => ({
 }));
 let counterButton = false;
 jest.mock("@/lib/api/counter-sale", () => ({
-  useCounterSaleGate: () => ({ showButton: counterButton }),
+  useCounterSaleGate: () => ({
+    showButton: counterButton,
+    mayUseTill: true,
+    permsKnown: true,
+    capability: counterButton ? { counter: "optional", methods: ["ROUTE"] } : undefined,
+  }),
 }));
 jest.mock("@/lib/stock-label", () => ({ unitsLabel: () => "" }));
 let loading = true;
@@ -222,7 +227,7 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     [
       "/invoices/new",
       "/routes/create",
-      "/orders?action=new",
+      "/orders?action=new&builder=1",
       "/finance",
       "/invoices?status=OVERDUE",
       "/orders",
@@ -259,18 +264,19 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     );
     expect(link?.getAttribute("href")).toBe("/finance/reports?report=ar-aging");
   });
-  it("Counter sale link shows for operator and customer only when the gate says so", () => {
+  it("New order offers the menu for operator and customer only when the gate says so", () => {
     counterButton = true;
     const a = renderWithProviders(<DashboardPage />);
-    expect(hrefs(a.container)).toContain("/orders/counter-sale");
+    expect(a.queryByTestId("new-order-open")).not.toBeNull();
     a.unmount();
     authUser = { id: "u1", role: "CUSTOMER", tenantSlug: "acme" };
     const b = renderWithProviders(<DashboardPage />);
-    expect(hrefs(b.container)).toContain("/orders/counter-sale");
+    expect(b.queryByTestId("new-order-open")).not.toBeNull();
     b.unmount();
     counterButton = false;
     const c = renderWithProviders(<DashboardPage />);
-    expect(hrefs(c.container)).not.toContain("/orders/counter-sale");
+    expect(c.queryByTestId("new-order-open")).toBeNull();
+    expect(hrefs(c.container)).toContain("/orders?action=new&builder=1");
   });
   it("tenant admin renders the same as operator", () => {
     authUser = { id: "u1", role: "TENANT_ADMIN", tenantSlug: "acme" };
@@ -298,7 +304,7 @@ describe("D5 no feature lost: per-role cards, links and gates (loaded)", () => {
     const { container } = renderWithProviders(<DashboardPage />);
     expect(labelsShown()).toEqual(["Overdue invoices", "Active orders"]);
     const h = hrefs(container);
-    expect(h).toContain("/orders?action=new");
+    expect(h).toContain("/orders?action=new&builder=1");
     expect(h).toContain("/orders");
     expect(screen.getByText("Recent orders")).toBeTruthy();
   });

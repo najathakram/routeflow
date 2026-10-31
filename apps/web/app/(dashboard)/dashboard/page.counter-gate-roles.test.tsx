@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
 import DashboardPage from "./page";
 
 /**
@@ -65,11 +66,13 @@ describe("Dashboard counter entry by role (cached always capability)", () => {
     authRole = role;
     renderWithProviders(<DashboardPage />);
     expect(screen.queryByText("Counter sale")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-order-open")).toBeNull();
   });
 
-  it("OPERATOR: Counter sale entry is shown", () => {
+  it("OPERATOR: Counter sale entry is shown", async () => {
     authRole = "OPERATOR";
     renderWithProviders(<DashboardPage />);
-    expect(screen.getByText("Counter sale")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByTestId("new-order-open"));
+    expect(await screen.findByRole("menuitem", { name: /counter sale/i })).toBeInTheDocument();
   });
 });

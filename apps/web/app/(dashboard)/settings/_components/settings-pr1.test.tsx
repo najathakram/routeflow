@@ -42,7 +42,10 @@ jest.mock("@/lib/api/addons", () => ({
 }));
 jest.mock("@/lib/api/counter-sale", () => ({
   ...jest.requireActual("@/lib/api/counter-sale"),
-  useCounterSaleGate: () => ({ showButton: mockCounter, capability: {} }),
+  useCounterSaleGate: () => ({
+    showButton: mockCounter,
+    capability: { counter: mockCounter ? "optional" : "off" },
+  }),
 }));
 jest.mock("@/lib/api/restrictions-settings", () => ({
   useRestrictionsSettings: () => ({ data: { enabled: true }, isLoading: false, isError: false }),

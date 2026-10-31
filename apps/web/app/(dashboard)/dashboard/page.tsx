@@ -42,7 +42,8 @@ import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
-import { quickCreateRule } from "@/lib/counter-sale";
+import { isStoreOnly, newOrderEntry } from "@/lib/counter-sale";
+import { NewOrderButton } from "../orders/_components/NewOrderButton";
 import { ORDER_STATUS_VALUES, lowStockThreshold, staffMay } from "@routeflow/types";
 import type { OrderStatusValue } from "@routeflow/types";
 import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
@@ -655,8 +656,16 @@ export default function DashboardPage() {
   const counterGate = useCounterSaleGate({
     enabled: user?.role !== "CUSTOMER" && user?.role !== "DRIVER",
   });
-  // Row 344 (follows row 331): the SAME store-only header rule as the Orders page, from the same gate.
-  const quickCreate = quickCreateRule(counterGate);
+  // W-854: the SAME one New order as the Orders header, from the same gate. Its menu opens here, in place.
+  const newOrder = {
+    entry: newOrderEntry(counterGate),
+    capability: counterGate.capability,
+    builderHref: "/orders?action=new&builder=1",
+    onCounterSale: () => router.push("/orders/counter-sale"),
+    onRegularOrder: () => router.push("/orders?action=new&builder=1"),
+    leftIcon: <Plus className="h-3.5 w-3.5" />,
+    size: "sm",
+  } as const;
   // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
   // pill AND the route/driver cards it reveals) must use the same condition as
   // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
@@ -979,7 +988,7 @@ export default function DashboardPage() {
               href="/invoices/new"
               size="sm"
               variant="secondary"
-              className={cn(quickCreate.storeOnly && "max-sm:h-11")}
+              className={cn(isStoreOnly(counterGate.capability) && "max-sm:h-11")}
             >
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New invoice
@@ -990,39 +999,7 @@ export default function DashboardPage() {
                 New route
               </Button>
             )}
-            {/* Store-only tenant: the SAME rule as the Orders header. New Order would open the counter too, so the
-                header is Invoice a customer (secondary) + Counter sale (primary); `builder=1` opens the builder
-                itself where the counter is the default. */}
-            {/* BO-07: the builder's PICKUP path is the till, so a denied operator does not see it (the server refuses it too). */}
-            {quickCreate.storeOnly &&
-            counterGate.permsKnown &&
-            staffMay(user?.role, "USE_POS_MODE", counterGate.deniedGroups ?? []) ? (
-              <WriteButton
-                href="/orders?action=new&builder=1"
-                size="sm"
-                variant="secondary"
-                className="max-sm:h-11"
-              >
-                Invoice a customer
-              </WriteButton>
-            ) : null}
-            {counterGate.showButton ? (
-              <WriteButton
-                href="/orders/counter-sale"
-                size="sm"
-                // A store-only business has one place to ring a sale: the counter is the filled primary.
-                variant={quickCreate.counterIsPrimary ? "primary" : "secondary"}
-                className={cn(quickCreate.storeOnly && "max-sm:h-11")}
-              >
-                Counter sale
-              </WriteButton>
-            ) : null}
-            {quickCreate.showNewOrder ? (
-              <WriteButton href="/orders?action=new" size="sm" variant="primary">
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New order
-              </WriteButton>
-            ) : null}
+            <NewOrderButton {...newOrder} />
           </div>
           <ReadOnlyHint />
         </div>
@@ -1032,15 +1009,7 @@ export default function DashboardPage() {
       {!isDriver && !isOperator && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
-          {counterGate.showButton ? (
-            <WriteButton href="/orders/counter-sale" size="sm" variant="secondary">
-              Counter sale
-            </WriteButton>
-          ) : null}
-          <WriteButton href="/orders?action=new" size="sm" variant="secondary">
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            New order
-          </WriteButton>
+          <NewOrderButton {...newOrder} />
           <ReadOnlyHint className="basis-full text-xs text-slate-600" />
         </div>
       )}
