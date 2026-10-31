@@ -26,7 +26,8 @@ export const lineQtyLabel = (l: SaleLine): string => {
 };
 
 /**
- * The register line's quantity: `lineQtyLabel`'s shape in the tenant's pack word (`unitWords`), then the pack size. A boxed line
+ * The register line's quantity: `lineQtyLabel`'s shape in the words the caller passes (the row builds them from the line's own
+ * `packLabel` / `baseLabel`, SA-934 A-1; a line without them reads Box / pcs), then the pack size. A boxed line
  * with whole boxes only reads "1 box of 24"; with loose pieces "1 box + 3 pcs · box of 24" (so the pack is always named).
  * The receipt keeps `lineQtyLabel` unchanged. Money is never derived here.
  */
@@ -46,7 +47,8 @@ export const registerQtyLabel = (l: SaleLine, words: UnitWords): string => {
 };
 
 /**
- * The selling unit a box step moves by, always visible on the stepper: "1 Box (24 pcs)" in the tenant's pack and base words.
+ * The selling unit a box step moves by, always visible on the stepper: "1 Box (24 pcs)" in the words passed in, which the row
+ * takes from the line's own labels ("1 Case (24 trays)"); a line without labels reads Box / pcs.
  * Display only: the step itself is `stepLine`, which re-splits through `normalizeBoxesPieces`.
  */
 export const sellingUnitLabel = (l: SaleLine, words: UnitWords): string => {
