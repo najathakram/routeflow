@@ -22,8 +22,8 @@ jest.mock("@/lib/auth-context", () => {
 });
 
 let mockCustomers: Array<Record<string, unknown>> = [];
-// The customer's remembered prices; the rows without a history leave it unread and empty.
-let mockHistory: Record<string, unknown> = { data: undefined };
+// The customer's remembered prices; the rows without a memory read an empty history.
+let mockHistory: Record<string, unknown> = { data: {} };
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: mockCustomers } }),
   useCustomerPrices: (customerId?: string) => ({ data: customerId ? [] : [] }),
@@ -174,7 +174,7 @@ beforeEach(() => {
   mockServerDrafts = [];
   mockLoadedDraft = undefined;
   mockProductNow = {};
-  mockHistory = { data: undefined };
+  mockHistory = { data: {} };
   storage = createMemoryDraftStorage();
   setDraftMirrorStorage(storage);
   mockCreateDraft.mockImplementation(() => NEVER()); // the server is unreachable unless a test says otherwise
@@ -447,11 +447,22 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
         expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
       });
 
-      it("M14: a failed history read keeps the line as parked and says so, never a false note", async () => {
+      it("T17: a failed history read keeps the line as parked and says so, never a false note", async () => {
         mockHistory = { data: undefined, isPending: false, isError: true };
         await seedParked(atMemory());
         await resume();
         expect(await screen.findByTestId("prices-not-refreshed")).toBeInTheDocument();
+        expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+        expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
+      });
+
+      it("T16: a failed refetch keeps the cached memories, so the re-price still runs on them", async () => {
+        mockHistory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: true };
+        await seedParked(atMemory());
+        await resume();
+        await waitFor(() => expect(productReads()).toHaveLength(1));
+        await flush();
+        expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
         expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
         expect(screen.getByText("$15.00 / each")).toBeInTheDocument();
       });

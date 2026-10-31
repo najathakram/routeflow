@@ -1780,7 +1780,8 @@ export function CreateOrderModal({
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
     repriceAfterResumeRef.current = false;
-    if (priceHistoryRead.isError) {
+    // SA-1068 A-4: the read has settled, so no data means it failed. Test the data: a failed refetch keeps its cached memories.
+    if (priceHistory === undefined) {
       // Unknown memories: a re-price could put a remembered line on a tier the server won't book, under a false note.
       setPricesNotRefreshed(true);
       return;
