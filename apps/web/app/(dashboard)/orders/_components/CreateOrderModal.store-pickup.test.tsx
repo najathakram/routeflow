@@ -36,7 +36,13 @@ let mockLoadedDraft: unknown = undefined;
 let mockActive: unknown = undefined;
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({
-    data: { data: [{ id: "c1", businessName: "Acme Foods", pricingTier: 2 }] },
+    data: {
+      data: [
+        { id: "c1", businessName: "Acme Foods", pricingTier: 2 },
+        { id: "c2", businessName: "Beta Bakery", pricingTier: 2, fulfillPath: "ROUTE" },
+        { id: "c3", businessName: "Gamma Grocers", pricingTier: 2, fulfillPath: "ROUTE" },
+      ],
+    },
   }),
   useCustomerPrices: () => ({ data: [] }),
   useCustomer: () => ({ data: undefined }),
@@ -227,5 +233,61 @@ describe("CreateOrderModal: Store pickup in the regular order", () => {
     fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
     await waitFor(() => expect(orderPosts().length).toBe(1));
     expect(orderPosts()[0][1].fulfillPath).toBe("PICKUP");
+  });
+
+  // SA-1062 A-3 (R2a-R2d): a Store pickup the clerk chose beats the customer's default when a customer is
+  // picked or changed afterwards. Delivery route, Ship via carrier and POS mode are unchanged.
+  async function openBare() {
+    mockResolve.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      product: { id: "p1", name: "Widget p1", pricePerUnit: "9.99", unit: "each" },
+    });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} onViewOrder={jest.fn()} />);
+  }
+  async function pick(search: string, name: string) {
+    fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+      target: { value: search },
+    });
+    fireEvent.click(await screen.findByText(name));
+    await screen.findByRole("button", { name: "Change customer" });
+  }
+  async function addLineAndSubmit(label: RegExp) {
+    capturedOnScan!("111");
+    await screen.findByText("Widget p1");
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await waitFor(() => expect(orderPosts().length).toBe(1));
+    return orderPosts()[0][1].fulfillPath;
+  }
+
+  it("R2a: Store pickup, then a ROUTE customer is picked: the order stays PICKUP", async () => {
+    await openBare();
+    fireEvent.click(storePickup()[0]);
+    await pick("Beta", "Beta Bakery");
+    expect(await addLineAndSubmit(/^create order$/i)).toBe("PICKUP");
+  });
+
+  it("R2b: Store pickup, customer A, then customer B: the order stays PICKUP", async () => {
+    await openBare();
+    fireEvent.click(storePickup()[0]);
+    await pick("Beta", "Beta Bakery");
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    await pick("Gamma", "Gamma Grocers");
+    expect(await addLineAndSubmit(/^create order$/i)).toBe("PICKUP");
+  });
+
+  it("R2c (guard): Ship via carrier, then a ROUTE customer is picked: the order is ROUTE", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP", "PICKUP"] });
+    await openBare();
+    fireEvent.click(await screen.findByRole("button", { name: "Ship via carrier" }));
+    await pick("Beta", "Beta Bakery");
+    expect(await addLineAndSubmit(/^create order$/i)).toBe("ROUTE");
+  });
+
+  it("R2d (guard): POS mode, a ROUTE customer is picked: the order posts PICKUP", async () => {
+    mockPrefs = { "orders.posMode": "true" };
+    await openBare();
+    await pick("Beta", "Beta Bakery");
+    expect(await addLineAndSubmit(/^confirm and invoice$/i)).toBe("PICKUP");
   });
 });

@@ -777,7 +777,7 @@ export function CreateOrderModal({
   // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
   const pickCustomer = (c: SelectedCustomer) => {
     setSelectedCustomer(c);
-    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    if (fulfillPath !== "PICKUP") setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setCustomerListOpen(true);
