@@ -36,7 +36,7 @@ curl -fsS https://<api-domain>/api/v1/health        # expect {"status":"ok",...}
 - **Wrong client IP / rate-limit / CORS oddities**: `main.ts` sets `trust proxy = 2` for Railway's
   LB + CDN; CORS uses `CORS_ORIGINS` + `CORS_WILDCARD_DOMAINS`.
 - **DB schema drift after deploy**: expected — deploys do **not** migrate. Apply intentionally with
-  `railway run npx prisma migrate deploy` (see db-migration skill). Never reset.
+  `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (see db-migration skill). Never reset.
 
 ## Rollback
 
