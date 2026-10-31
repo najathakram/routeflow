@@ -34,6 +34,7 @@ import {
 } from "@/lib/return-line-qty";
 import { createReturnErrorText } from "@/lib/return-error-text";
 import { ReturnLineCountCell } from "./_components/ReturnLineCountCell";
+import { INLINE_HOLD_REASONS } from "@routeflow/types";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { FindSaleByNumber } from "./_components/FindSaleByNumber";
@@ -492,6 +493,8 @@ export default function ReturnsPage() {
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [reasonFilter, setReasonFilter] = React.useState("");
+  // SA-1060 PR-1: the INLINE returns held for staff (DRIVER_CAP / ALREADY_RETURNED) that nobody has approved or rejected yet
+  const [waitingApproval, setWaitingApproval] = React.useState(false);
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
@@ -501,7 +504,9 @@ export default function ReturnsPage() {
   const LIMIT = 20;
 
   const { data, isLoading, isError, refetch } = useReturns({
-    status: statusFilter || undefined,
+    status: waitingApproval ? "RECEIVED" : statusFilter || undefined,
+    kind: waitingApproval ? "INLINE" : undefined,
+    holdReason: waitingApproval ? INLINE_HOLD_REASONS.join(",") : undefined,
     reason: reasonFilter || undefined,
     search: debouncedSearch || undefined,
     page,
@@ -533,11 +538,12 @@ export default function ReturnsPage() {
   const totalPages = meta?.totalPages ?? 1;
   useClampPage(setPage, page, meta?.totalPages);
 
-  const hasActiveFilters = !!(statusFilter || reasonFilter || search);
+  const hasActiveFilters = !!(statusFilter || reasonFilter || search || waitingApproval);
 
   function clearFilters() {
     setStatusFilter("");
     setReasonFilter("");
+    setWaitingApproval(false);
     setSearch("");
     setPage(1);
   }
@@ -604,11 +610,12 @@ export default function ReturnsPage() {
               key={o.value || "all"}
               onClick={() => {
                 setStatusFilter(o.value);
+                setWaitingApproval(false);
                 setPage(1);
               }}
               className={cn(
                 "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-                statusFilter === o.value
+                statusFilter === o.value && !waitingApproval
                   ? "border-navy bg-navy text-white"
                   : "border-surface-border bg-white text-navy hover:bg-surface-raised",
               )}
@@ -626,6 +633,26 @@ export default function ReturnsPage() {
               )}
             </button>
           ))}
+
+          {hasInlineReturns && (
+            <button
+              type="button"
+              aria-pressed={waitingApproval}
+              onClick={() => {
+                setWaitingApproval((on) => !on);
+                setStatusFilter("");
+                setPage(1);
+              }}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                waitingApproval
+                  ? "border-navy bg-navy text-white"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+              )}
+            >
+              Waiting for approval
+            </button>
+          )}
 
           <select
             value={reasonFilter}

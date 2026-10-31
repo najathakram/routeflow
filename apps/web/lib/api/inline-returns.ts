@@ -77,6 +77,44 @@ export function useCaptureInlineReturn() {
   });
 }
 
+/** What an approve or reject changes: the returns lists, the order, the customer, and (an approve mints one) the credit notes. */
+function refreshAfterHold(
+  qc: ReturnType<typeof useQueryClient>,
+  data: InlineReturnRecord,
+  mintsCredit: boolean,
+) {
+  qc.invalidateQueries({ queryKey: ["returns"] });
+  qc.invalidateQueries({ queryKey: ["orders"] });
+  qc.invalidateQueries({ queryKey: ["customers", data.customerId] });
+  if (mintsCredit) qc.invalidateQueries({ queryKey: ["credit-notes"] });
+}
+
+/**
+ * SA-1060 PR-1: POST /returns/inline/:id/approve — staff approve a held INLINE return (DRIVER_CAP or ALREADY_RETURNED). The server
+ * credits the held amount, so the body carries no amount here; an ALREADY_RETURNED hold needs `reason` (400 coded otherwise).
+ * No money math in the client.
+ */
+export function useApproveInlineReturn() {
+  const qc = useQueryClient();
+  return useMutation<InlineReturnRecord, Error, { id: string; reason?: string }>({
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/returns/inline/${id}/approve`, reason ? { reason } : {}).then((r) => r.data),
+    // the screen shows the server's own refusal sentence; the global toast would stack a generic one on top of it
+    meta: { localErrorToast: true },
+    onSuccess: (data) => refreshAfterHold(qc, data, true),
+  });
+}
+
+/** SA-1060 PR-1: POST /returns/inline/:id/reject — staff decline a held INLINE return; no credit note is ever minted for it. */
+export function useRejectInlineReturn() {
+  const qc = useQueryClient();
+  return useMutation<InlineReturnRecord, Error, { id: string }>({
+    mutationFn: ({ id }) => apiClient.post(`/returns/inline/${id}/reject`, {}).then((r) => r.data),
+    meta: { localErrorToast: true },
+    onSuccess: (data) => refreshAfterHold(qc, data, false),
+  });
+}
+
 /**
  * POS-4b: POST /returns/inline/:id/refund — pay a REFUND-resolution capture back (the standard
  * POST /returns/:id/refund refuses an inline return). Plain call (not a hook) so
