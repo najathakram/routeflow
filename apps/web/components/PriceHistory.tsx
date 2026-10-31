@@ -85,11 +85,31 @@ function Skeleton() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  onUse,
+}: {
+  label: string;
+  value: string;
+  /** SA-1066 F08: set when a usable row carries this figure; the figure then does what that row's Use does. */
+  onUse?: () => void;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-wide text-navy/50">{label}</div>
-      <div className="font-mono text-xs text-navy">{value}</div>
+      {onUse ? (
+        <button
+          type="button"
+          aria-label={`Use the ${label.toLowerCase()} price (${value})`}
+          onClick={onUse}
+          className="min-h-11 font-mono text-xs text-brand-600 underline sm:min-h-0"
+        >
+          {value}
+        </button>
+      ) : (
+        <div className="font-mono text-xs text-navy">{value}</div>
+      )}
     </div>
   );
 }
@@ -180,6 +200,11 @@ function PanelBody({
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
+  // F08: a summary figure is usable only when a row carries that price and the line can use that row (same gate as its Use).
+  const summaryUse = (price: number | null | undefined) =>
+    price != null && rows.some((r) => r.unitPrice === price && canUse(r))
+      ? () => onUse(price)
+      : undefined;
   const marginCell = (r: PriceHistoryRow) =>
     !showCost
       ? MASK
@@ -337,8 +362,8 @@ function PanelBody({
 
       {!neverSold && (
         <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
-          <Stat label="Last" value={money(summary?.last)} />
-          <Stat label="Low" value={money(summary?.low)} />
+          <Stat label="Last" value={money(summary?.last)} onUse={summaryUse(summary?.last)} />
+          <Stat label="Low" value={money(summary?.low)} onUse={summaryUse(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
           <Stat label="Qty invoiced" value={String(summary?.qtySold ?? 0)} />
           {data.costVisible && (
@@ -576,11 +601,14 @@ export function PriceHistoryButton({
   focusSelector,
   className,
   excludeOrderId,
+  label,
 }: {
   customerId?: string | null;
   customerName?: string | null;
   productId?: string | null;
   productName: string;
+  /** A visible word beside the clock (SA-1066 F07). Part of the same button; the accessible name stays "Price history". */
+  label?: string;
   /** The unit being entered (case / piece / ...), so history and "Use" never cross units. */
   unitHint?: string | null;
   /** The line's pack size (units per box), so a price from a different pack is never offered. */
@@ -657,10 +685,12 @@ export function PriceHistoryButton({
         }}
         className={cn(
           "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0 lg:min-w-0",
+          label && "w-auto gap-1 px-1",
           className,
         )}
       >
         <History className="h-3.5 w-3.5" aria-hidden />
+        {label && <span className="text-[11px] font-medium text-navy/70">{label}</span>}
       </button>
       {open && ready && anchor && (
         <Panel

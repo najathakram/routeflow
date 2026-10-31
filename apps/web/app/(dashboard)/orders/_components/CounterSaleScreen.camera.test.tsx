@@ -924,6 +924,49 @@ describe("MUST 10: opening the strip brings the scan bar to the top of the scrol
     expect(scrollTo).toHaveBeenCalledWith({ top: 500, behavior: "smooth" });
   });
 
+  // SA-1066 F44: the strip's scroll must not leave the page where it put it. jsdom has no scroll, so this proves the CALL;
+  // the browser row reads `#main-content`.scrollTop before opening and after Close camera (they must be equal).
+  describe("F44: closing the strip puts the page back where it was", () => {
+    it("closing scrolls the container back to the scrollTop it had when the strip opened", () => {
+      layout({ barTop: 505, scrollHeight: 3000, scrollTop: 242 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      expect(scrollTo).toHaveBeenLastCalledWith({
+        top: 242 + (505 - MAIN_TOP),
+        behavior: "smooth",
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+      expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 242, behavior: "auto" });
+    });
+
+    it("a page that never moved (scrollTop 0) goes back to 0", () => {
+      layout({ barTop: 505, scrollHeight: 3000, scrollTop: 0 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: "auto" });
+    });
+
+    it("leaving the till with the strip open scrolls nothing (the next page owns the scroller)", () => {
+      layout({ barTop: 505, scrollHeight: 3000, scrollTop: 242 });
+      const { unmount } = renderTill(<CounterSaleScreen />);
+      openCamera();
+      scrollTo.mockClear();
+      unmount();
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("from md up nothing was moved, so nothing is put back", () => {
+      setTouchFirst(true, false, true);
+      layout({ barTop: 505, scrollHeight: 1000, scrollTop: 242 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+  });
+
   describe("coming back from a receipt, and a cart that changes", () => {
     const sellOneAndFinish = async () => {
       barcodeFor["200000000001"] = () => COLA;

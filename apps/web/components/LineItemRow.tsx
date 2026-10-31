@@ -231,6 +231,7 @@ export function LineItemRow({
       onUsePrice={customerPriceHistory.onUsePrice}
       excludeOrderId={customerPriceHistory.excludeOrderId}
       focusSelector="[data-line-price-input]"
+      label="History"
     />
   );
   return (
@@ -364,9 +365,6 @@ export function LineItemRow({
             {historyButton && (
               <>
                 {historyButton}
-                <span className="hidden whitespace-nowrap text-[10px] text-navy/60 sm:inline">
-                  Price history
-                </span>
                 <PriceChips
                   entry={customerPriceHistory?.summary?.[li.productId]}
                   unitHint={

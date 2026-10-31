@@ -346,6 +346,7 @@ export function CounterLineRow({
               productName={l.name}
               unitHint={isBoxedLine(l) ? "case" : l.unit}
               packHint={l.unitsPerBox ?? null}
+              label="History"
               // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
               onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
             />

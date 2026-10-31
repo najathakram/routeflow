@@ -91,6 +91,8 @@ import {
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
+  GENERATE_INVOICE_ID,
+  INVOICE_CARD_ID,
   posMoveOptions,
 } from "./_components/PosOrderActions";
 import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
@@ -1915,7 +1917,10 @@ export default function OrderDetailPage() {
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
           {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
-            <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
+            <Card
+              id={INVOICE_CARD_ID}
+              title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}
+            >
               {/* r4 F07: always mounted (empty), so the sentence is read out when it appears. */}
               <p
                 role="status"
@@ -2024,6 +2029,7 @@ export default function OrderDetailPage() {
                           No invoice has been generated for this order.
                         </p>
                         <Button
+                          id={GENERATE_INVOICE_ID}
                           size="sm"
                           variant={createInvoiceVariant(localStatus, isEditing, isPos)}
                           className="w-full justify-center"
