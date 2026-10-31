@@ -146,7 +146,7 @@ export function lineLeftText(line: OrderLineForPieces, pieces: number, factor: n
     pieces: pieces % per,
     unitLabel: line.unitLabel,
   });
-  return `${pieces} pcs (${text})`;
+  return text === `${pieces} pcs` ? text : `${pieces} pcs (${text})`;
 }
 
 /**

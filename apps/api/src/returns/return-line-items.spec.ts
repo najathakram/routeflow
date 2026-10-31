@@ -174,6 +174,13 @@ describe("lineLeftText (rule 5)", () => {
     expect(lineLeftText(lineA as any, 200, 1)).toBe("200 pcs (1 Case)");
   });
 
+  it("A-8: under one box left reads the pieces once, as the form does", () => {
+    const loose = { id: "L", productId: P, qty: 5, boxes: null, pieces: 5, unitsPerBox: 10 } as any;
+    expect(lineLeftText(loose, 5, 1)).toBe("5 pcs");
+    expect(lineLeftText(lineB as any, 5, 1)).toBe("5 pcs");
+    expect(lineLeftText(lineB as any, 25, 1)).toBe("25 pcs (2 boxes + 5 pcs)");
+  });
+
   it("A-8: a unit line reads its own word, one or many, and a part count stays true", () => {
     const unit = { id: "U", productId: P, qty: 10, unitLabel: "Case", unitsPerBox: 1 } as any;
     expect(lineLeftText(unit, 5, 1)).toBe("5 Cases");
