@@ -984,3 +984,37 @@ describe("review-b on #4036 at d2d62cf335: 'Return only what was bought' keeps t
     expect(sent?.pieces).toBe(2);
   });
 });
+
+describe("sweep of first-row reads (Lead, #4036): scan, focus and credit price follow the ruling row", () => {
+  const twoRows = () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+  };
+
+  it("a repeat scan with the count on row 2 adds to row 2, so row 1 never becomes the ruling row", async () => {
+    twoRows();
+    const { last } = renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("3", 1);
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    fireEvent.change(within(rows()[1]).getByLabelText("Reason (optional)"), {
+      target: { value: "DAMAGED" },
+    });
+    act(() => {
+      mockScanDeps?.addLineItem(WIDGET);
+    });
+    expect(qtyInputs()[1].value).toBe("4");
+    expect(qtyInputs()[0].value).toBe("");
+    expect(last().lines[1].reason).toBe("DAMAGED");
+    for (const r of rows()) {
+      expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
+        "Not added to stock",
+      );
+    }
+  });
+});

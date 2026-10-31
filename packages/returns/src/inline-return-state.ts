@@ -207,13 +207,16 @@ function parseNonNegativeInt(raw: string): number {
  * WITH a quantity; with none yet, the first row. -1 when the product has no row. The screen reads this, never "first row".
  */
 export function rulingLineIndex(
-  lines: Pick<InlineReturnLineDraft, "productId" | "boxes" | "pieces">[],
+  lines: ReadonlyArray<
+    Pick<InlineReturnLineDraft, "productId"> &
+      Partial<Pick<InlineReturnLineDraft, "boxes" | "pieces">>
+  >,
   productId: string,
 ): number {
   const withQty = lines.findIndex(
     (l) =>
       l.productId === productId &&
-      (parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0),
+      (parseNonNegativeInt(l.boxes ?? "") > 0 || parseNonNegativeInt(l.pieces ?? "") > 0),
   );
   return withQty >= 0 ? withQty : lines.findIndex((l) => l.productId === productId);
 }
@@ -330,9 +333,8 @@ export function missingAlreadyReturnedReasons(
   >,
   quote: InlineReturnQuoteResponse,
 ): string[] {
-  const draft = lines.map((l) => ({ ...l, boxes: l.boxes ?? "", pieces: l.pieces ?? "" }));
   return [...alreadyReturnedProductIds(quote)].filter(
-    (id) => !(draft[rulingLineIndex(draft, id)]?.alreadyReturnedReason ?? "").trim(),
+    (id) => !(lines[rulingLineIndex(lines, id)]?.alreadyReturnedReason ?? "").trim(),
   );
 }
 
@@ -510,18 +512,21 @@ export function dropExcessAndRequote(
   customerId: string,
   quote: InlineReturnQuoteResponse,
   routeRunStopId?: string,
-  /** #2695: the lines the quote came from — a product's credit price override (its FIRST row's,
-   *  the same rule the request merge uses) carries into the re-quote, so the reduced quote and
+  /** #2695: the lines the quote came from — a product's credit price override (its RULING row's,
+   *  the first row with a quantity, the same rule the request merge uses) carries into the re-quote, so the reduced quote and
    *  the capture that follows price the same chunks. */
-  lines: Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason">[] = [],
+  lines: Array<
+    Pick<InlineReturnLineDraft, "productId" | "creditUnitPrice" | "overrideReason"> &
+      Partial<Pick<InlineReturnLineDraft, "boxes" | "pieces">>
+  > = [],
   /** SA-740: the re-quote stays pinned to the same source sale the first quote was. */
   sourceOrderId?: string,
 ): QuoteInlineReturnRequest {
-  const firstLine = (productId: string) => lines.find((l) => l.productId === productId);
+  const rulingLine = (productId: string) => lines[rulingLineIndex(lines, productId)];
   const items: QuoteInlineReturnItem[] = [...coveredPiecesByProduct(quote).entries()]
     .filter(([, pieces]) => pieces > 0)
     .map(([productId, pieces]) => {
-      const line = firstLine(productId);
+      const line = rulingLine(productId);
       return { productId, qty: 1, boxes: 0, pieces, ...(line ? overrideFields(line) : {}) };
     });
   return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);

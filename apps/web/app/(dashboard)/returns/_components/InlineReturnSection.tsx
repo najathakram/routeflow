@@ -283,7 +283,7 @@ export function InlineReturnSection({
   const addProduct = (product: any, opts: { focusQty: boolean }) => {
     // M10: once the return is saved the lines are the saved return's — a scan or a pick adds nothing
     if (locked) return { created: false };
-    const existing = linesRef.current.find((l) => l.productId === product.id);
+    const existing = linesRef.current[rulingLineIndex(linesRef.current, product.id)];
     const lineKey = existing?.lineKey ?? crypto.randomUUID();
     // the product sits in the Undo slot: adding it again replaces that, so it is never in the list twice
     if (removed?.line.productId === product.id) clearRemoved();

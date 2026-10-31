@@ -1190,3 +1190,25 @@ describe("missingAlreadyReturnedReasons follows the ruling row (review-c on #403
     expect(missingAlreadyReturnedReasons([row("", "", "typed"), row("", "")], quote)).toEqual([]);
   });
 });
+
+describe("sweep of first-row reads (Lead, #4036): dropExcessAndRequote reads the ruling row's credit price", () => {
+  it("a blank first row's price is not carried; the row that counts sets it", () => {
+    const covered = chunk({ productId: "p1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [
+      { productId: "p1", boxes: "", pieces: "", creditUnitPrice: "1.00", overrideReason: "stale" },
+      { productId: "p1", boxes: "", pieces: "6", creditUnitPrice: "2.50", overrideReason: "ok" },
+    ];
+    const req = dropExcessAndRequote("cust-1", quoteResponse([covered]), undefined, lines);
+    expect(req.items).toEqual([
+      expect.objectContaining({ productId: "p1", pieces: 4, creditUnitPrice: 2.5 }),
+    ]);
+    expect(req.items[0]).toMatchObject({ overrideReason: "ok" });
+  });
+
+  it("rows with no quantity fields (the old shape) still read the first row", () => {
+    const covered = chunk({ productId: "p1", sourceOrderId: "order-1", pieces: 4 });
+    const lines = [{ productId: "p1", creditUnitPrice: "3.00", overrideReason: "x" }];
+    const req = dropExcessAndRequote("cust-1", quoteResponse([covered]), undefined, lines);
+    expect(req.items[0]).toMatchObject({ creditUnitPrice: 3 });
+  });
+});
