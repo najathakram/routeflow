@@ -313,7 +313,7 @@ export function InlineCreateProductModal({
                 />
               </div>
             </div>
-            <div data-field="unit">
+            <div>
               <label className="mb-1 block text-xs font-medium text-navy">Unit *</label>
               <UnitCombobox
                 required

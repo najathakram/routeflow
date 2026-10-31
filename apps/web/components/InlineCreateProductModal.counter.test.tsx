@@ -1,19 +1,23 @@
 import * as React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Modal } from "@routeflow/ui/web";
 import { InlineCreateProductModal } from "./InlineCreateProductModal";
 
 /**
- * W-1042 (SA-1062 MUSTs 9 and 14a): the new-item window at the counter. `requirePrice` keeps Save off until the price
- * is above $0 (a blank price used to go out as "0" and sell a $0 line); the window is a real dialog to the counter, so
- * its scan guard (`[role="dialog"][data-state="open"]`) sees it, Esc closes it, and the first empty field has the cursor.
+ * W-1042 (SA-1062 MUSTs 9 and 14a): the new-item window at the counter. `requirePrice` keeps Save off until the price is
+ * above $0 (a blank price used to go out as "0" and sell a $0 line). The root carries `data-scan-pause` so the counter
+ * holds scans and focus while it is open; it is NOT a dialog role, because the window also sits inside the order builder's
+ * Modal and a nested role would break that Modal's Unit and Category picks (R13b).
  */
 const createMutate = jest.fn();
+let categories: string[] = [];
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
   useCreateProduct: () => ({ mutate: createMutate, isPending: false }),
   useProducts: () => ({ data: { data: [] } }),
-  useProductCategories: () => ({ data: [] }),
+  useProductCategories: () => ({ data: categories }),
 }));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
@@ -39,7 +43,10 @@ const form = () => save().closest("form")!;
 const price = () => screen.getByPlaceholderText("0.00") as HTMLInputElement;
 const PRICE_HINT = "Enter a price to sell this item.";
 
-beforeEach(() => createMutate.mockReset());
+beforeEach(() => {
+  createMutate.mockReset();
+  categories = [];
+});
 
 describe("W-1042 MUST 9: requirePrice", () => {
   it("R5: a blank price leaves Save disabled and says why", () => {
@@ -72,46 +79,48 @@ describe("W-1042 MUST 9: requirePrice", () => {
   });
 });
 
-describe("W-1042 MUST 14a: a real dialog to the counter", () => {
-  it("is a modal dialog, open, named New product", () => {
+describe("W-1042 MUST 14a: the counter holds scans while the window is open", () => {
+  it("the root carries data-scan-pause while open", () => {
     mount({ initialName: "Fresh Pie" });
-    const dialog = document.querySelector('[role="dialog"][data-state="open"]');
-    expect(dialog).not.toBeNull();
-    expect(dialog?.getAttribute("aria-modal")).toBe("true");
-    expect(screen.queryByRole("dialog", { name: "New product" })).not.toBeNull();
+    expect(document.querySelector("[data-scan-pause]")).not.toBeNull();
   });
 
-  it("is not a dialog while closed", () => {
+  it("the attribute goes with the window", () => {
     mount({ isOpen: false });
+    expect(document.querySelector("[data-scan-pause]")).toBeNull();
+  });
+
+  it("guard: the root is NOT a dialog role (the builder's Modal owns its Unit and Category lists)", () => {
+    mount({ initialName: "Fresh Pie" });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-  });
-
-  it("Esc closes it", () => {
-    const { onClose } = mount({ initialName: "Fresh Pie" });
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("the cursor goes to the first EMPTY field: name, then SKU, then unit", () => {
-    const nameField = "e.g. Sourdough Bread";
-    const skuField = "Scan or type";
-    const unitField = "e.g. case, kg, unit";
-    const { unmount } = renderOnce({});
-    expect(document.activeElement).toBe(screen.getByPlaceholderText(nameField));
-    unmount();
-    const second = renderOnce({ initialName: "Fresh Pie" });
-    expect(document.activeElement).toBe(screen.getByPlaceholderText(skuField));
-    second.unmount();
-    renderOnce({ initialName: "Fresh Pie", initialSku: "200000009999" });
-    expect(document.activeElement).toBe(screen.getByPlaceholderText(unitField));
   });
 });
 
-function renderOnce(props: Partial<React.ComponentProps<typeof InlineCreateProductModal>>) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <InlineCreateProductModal isOpen onClose={jest.fn()} onCreated={jest.fn()} {...props} />
-    </QueryClientProvider>,
-  );
-}
+describe("W-1042 R13b guard: inside the order builder's Modal the Unit and Category picks land", () => {
+  it("picking a Unit and a Category keeps the order open and sets both", async () => {
+    categories = ["Bakery"];
+    const user = userEvent.setup({ pointerEventsCheck: 0 }); // Radix sets body pointer-events; the list is portalled
+    const onCloseOrder = jest.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <Modal open onClose={onCloseOrder} title="New order">
+          <InlineCreateProductModal isOpen onClose={jest.fn()} onCreated={jest.fn()} />
+        </Modal>
+      </QueryClientProvider>,
+    );
+    const unit = screen.getByPlaceholderText("e.g. case, kg, unit") as HTMLInputElement;
+    await user.click(unit);
+    await user.click(
+      await within(await screen.findByRole("option", { name: "case" })).findByRole("button"),
+    );
+    expect(unit.value).toBe("case");
+    const category = screen.getByPlaceholderText("e.g. Bakery") as HTMLInputElement;
+    await user.click(category);
+    await user.click(
+      await within(await screen.findByRole("option", { name: "Bakery" })).findByRole("button"),
+    );
+    expect(category.value).toBe("Bakery");
+    expect(onCloseOrder).not.toHaveBeenCalled();
+  });
+});

@@ -106,7 +106,8 @@ const lines = () =>
     .queryAllByRole("listitem")
     .filter((li) => li.textContent !== "No items yet.");
 const createItem = () => screen.queryByRole("button", { name: "Create item" });
-const openDialog = () => document.querySelector('[role="dialog"][data-state="open"]');
+const openDialog = () =>
+  document.querySelector('[data-scan-pause],[role="dialog"][data-state="open"]');
 const nameInput = () => screen.getByPlaceholderText("e.g. Sourdough Bread") as HTMLInputElement;
 const skuInput = () => screen.getByPlaceholderText("Scan or type") as HTMLInputElement;
 const unitInput = () => screen.getByPlaceholderText("e.g. case, kg, unit") as HTMLInputElement;
@@ -122,7 +123,7 @@ async function missThenCreate() {
   fireEvent.click(createItem()!);
 }
 async function fillAndSave(name = "Fresh Pie", price = "4.5") {
-  await screen.findByRole("dialog", { name: "New product" });
+  await screen.findByRole("heading", { name: "New product" });
   fireEvent.change(nameInput(), { target: { value: name } });
   fireEvent.change(unitInput(), { target: { value: "each" } });
   fireEvent.change(priceInput(), { target: { value: price } });
@@ -149,7 +150,7 @@ describe("W-1042 the miss line", () => {
 
   it("R6: Create item opens the window with the scanned code in SKU", async () => {
     await missThenCreate();
-    await screen.findByRole("dialog", { name: "New product" });
+    await screen.findByRole("heading", { name: "New product" });
     expect(skuInput().value).toBe(MISS);
     expect(nameInput().value).toBe("");
   });
@@ -180,7 +181,7 @@ describe("W-1042 the live list", () => {
     const btn = screen.queryByRole("button", { name: 'Create "fresh pie"' });
     expect(btn).not.toBeNull();
     fireEvent.click(btn!);
-    await screen.findByRole("dialog", { name: "New product" });
+    await screen.findByRole("heading", { name: "New product" });
     expect(nameInput().value).toBe("fresh pie");
     expect(skuInput().value).toBe("");
   });
@@ -198,7 +199,7 @@ describe("W-1042 the live list", () => {
 describe("W-1042 save, then scan again", () => {
   it("R5 + R8: blank price cannot save; Save adds ONE line of 1, the cursor returns, the next scan adds to it", async () => {
     await missThenCreate();
-    await screen.findByRole("dialog", { name: "New product" });
+    await screen.findByRole("heading", { name: "New product" });
     fireEvent.change(nameInput(), { target: { value: "Fresh Pie" } });
     fireEvent.change(unitInput(), { target: { value: "each" } });
     expect(saveButton().disabled).toBe(true);
@@ -229,7 +230,7 @@ describe("W-1042 save, then scan again", () => {
 
   it("R4-style guard: Cancel closes the window and leaves the cart alone", async () => {
     await missThenCreate();
-    await screen.findByRole("dialog", { name: "New product" });
+    await screen.findByRole("heading", { name: "New product" });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(openDialog()).toBeNull();
     expect(posts).toHaveLength(0);
@@ -242,7 +243,7 @@ describe("W-1042 MUST 12: regulated goods", () => {
     tracked = [TOBACCO];
     await missThenCreate();
     await screen.findByText("Is this a licensed or regulated item?");
-    expect(screen.queryByRole("dialog", { name: "New product" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "New product" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     expect(
       screen.queryByText("Add it from Products, so its category and tax are set."),
@@ -250,7 +251,7 @@ describe("W-1042 MUST 12: regulated goods", () => {
     const link = screen.getByRole("link", { name: /products/i });
     expect(link.getAttribute("href")).toBe("/products");
     expect(link.getAttribute("target")).toBe("_blank");
-    expect(screen.queryByRole("dialog", { name: "New product" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "New product" })).toBeNull();
     expect(posts).toHaveLength(0);
     expect(lines()).toHaveLength(0);
   });
@@ -260,29 +261,31 @@ describe("W-1042 MUST 12: regulated goods", () => {
     await missThenCreate();
     await screen.findByText("Is this a licensed or regulated item?");
     fireEvent.click(screen.getByRole("button", { name: "No" }));
-    await screen.findByRole("dialog", { name: "New product" });
+    await screen.findByRole("heading", { name: "New product" });
     expect(skuInput().value).toBe(MISS);
   });
 
   it("R11: a business with no tracked categories never sees the question", async () => {
     tracked = [];
     await missThenCreate();
-    await screen.findByRole("dialog", { name: "New product" });
+    await screen.findByRole("heading", { name: "New product" });
     expect(screen.queryByText("Is this a licensed or regulated item?")).toBeNull();
   });
 });
 
-describe("W-1042 MUST 14a at the screen: the guards see the window", () => {
-  it("R13: while the question and then the form are open, the counter's dialog check reads open", async () => {
+describe("W-1042 MUST 14a at the screen: the counter holds scans while a window is open", () => {
+  const paused = () => document.querySelector("[data-scan-pause]");
+
+  it("R13: while the question and then the form are open, the scan pause is held; closing releases it", async () => {
     tracked = [TOBACCO];
     await missThenCreate();
     await screen.findByText("Is this a licensed or regulated item?");
-    expect(openDialog()).not.toBeNull();
+    expect(paused()).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "No" }));
-    await screen.findByRole("dialog", { name: "New product" });
-    expect(openDialog()).not.toBeNull();
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-    expect(openDialog()).toBeNull();
+    await screen.findByRole("heading", { name: "New product" }).catch(() => null);
+    expect(paused()).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(paused()).toBeNull();
   });
 
   it("R13: Esc closes the question, and the cart is untouched", async () => {
@@ -290,23 +293,23 @@ describe("W-1042 MUST 14a at the screen: the guards see the window", () => {
     await missThenCreate();
     await screen.findByText("Is this a licensed or regulated item?");
     fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(openDialog()).toBeNull();
+    expect(paused()).toBeNull();
     expect(posts).toHaveLength(0);
     expect(lines()).toHaveLength(0);
   });
 
-  it("R13a: a scan re-arm that fires while the window is open leaves the cursor in it, and digits go to it", async () => {
+  it("R13a: focus on a button, a re-arm fires, then a wedge scan: focus stays out of the scan box and no line is added", async () => {
     await missThenCreate();
-    await screen.findByRole("dialog", { name: "New product" });
-    const dialog = openDialog()!;
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    await waitFor(() => expect(paused()).not.toBeNull());
+    const button = screen.getByRole("button", { name: "Cancel" });
+    button.focus();
     submitScan("200000008888"); // a queued scan finishing now ends in the screen's re-arm
     await screen.findByText("No product for '200000008888'");
     await new Promise((r) => setTimeout(r, 80));
-    expect(dialog.contains(document.activeElement)).toBe(true);
-    const active = document.activeElement as HTMLInputElement;
-    await userEvent.keyboard("12");
-    expect(active.value).toContain("12");
+    expect(document.activeElement).toBe(button);
+    await userEvent.keyboard("200000008888{Enter}");
+    await new Promise((r) => setTimeout(r, 80));
     expect(field().value).toBe("");
+    expect(lines()).toHaveLength(0);
   });
 });

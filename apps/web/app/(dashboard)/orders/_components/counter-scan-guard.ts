@@ -5,9 +5,17 @@ import { isTextEntryActive } from "@/lib/refocus-scanner";
  * (the key listener in CounterSaleScreen) and the camera strip's frame check, so the two can never disagree about it.
  */
 
-/** A Radix dialog is open (a price edit, a confirm, the return flow): scans and redirected keys wait for it. */
+/**
+ * W-1042: a window that is not a dialog role holds the scan with `data-scan-pause` (the new-item window: it also sits inside
+ * the order builder's Radix Modal, where a nested role would break the Unit and Category lists).
+ */
+export function scanPauseHeld(): boolean {
+  return document.querySelector("[data-scan-pause]") !== null;
+}
+
+/** A Radix dialog is open (a price edit, a confirm, the return flow), or a scan pause is held: scans and redirected keys wait. */
 export function counterDialogOpen(): boolean {
-  return document.querySelector('[role="dialog"][data-state="open"]') !== null;
+  return document.querySelector('[role="dialog"][data-state="open"]') !== null || scanPauseHeld();
 }
 
 /**

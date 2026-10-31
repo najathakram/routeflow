@@ -37,10 +37,16 @@ export function useCounterNewItem({ allowed, add, refocus, onAdded }: Options) {
   allowedRef.current = allowed;
 
   const open = (text: string) => setRequest({ text, step: asks ? "ask" : "form" });
-  const close = () => {
-    setRequest(null);
-    refocus();
-  };
+  const close = () => setRequest(null);
+  // The cursor goes back once the window is really gone: `refocus` waits while a scan pause is held.
+  const wasOpenRef = React.useRef(false);
+  React.useEffect(() => {
+    if (request) wasOpenRef.current = true;
+    else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      refocus();
+    }
+  }, [request, refocus]);
   const created = (product: any) => {
     if (!allowedRef.current) return; // the sale locked meanwhile: the item exists, the search finds it
     add(product, scanLevelForHit(product.sku ?? "", product), 1);
@@ -96,6 +102,7 @@ function RegulatedQuestion({
       aria-modal="true"
       aria-labelledby={titleId}
       data-state="open"
+      data-scan-pause
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4"
     >
       <div className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl">
