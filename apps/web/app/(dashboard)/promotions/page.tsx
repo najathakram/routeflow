@@ -26,6 +26,7 @@ import {
   type PromotionRule,
   type ZeroPriceImpact,
 } from "@routeflow/pricing";
+import { promotionsOn } from "@routeflow/types";
 import {
   usePromotions,
   useCreatePromotion,
@@ -686,7 +687,7 @@ export default function PromotionsPage() {
   const { data: promotions, isLoading, isError } = usePromotions();
   // SA-1032: off in the back office → the list stays readable, nothing can be created or changed.
   const { data: tenantFeatures } = useTenantFeatures();
-  const promotionsOff = tenantFeatures?.modes?.promotions === "off";
+  const promotionsOff = !promotionsOn(tenantFeatures?.modes?.promotions);
   // DELIBERATE fetch-all (the one `limit: 0` left on this page). The $0.00 guard scans EVERY active product's
   // list price against every saved rule (row warnings) and the rule being typed (live count); the API offers no
   // impact-scan endpoint (it only refuses at save), so there is no narrower read that keeps the guard whole.

@@ -33,3 +33,18 @@ describe("DemoteReasonModal wording", () => {
     expect(screen.getByRole("heading", { name: "Return to Pending" })).toBeInTheDocument();
   });
 });
+
+describe("DemoteReasonModal: W-778 focus", () => {
+  it("opens with the cursor in the Reason box", () => {
+    render(
+      <DemoteReasonModal
+        open
+        onClose={() => undefined}
+        onConfirm={() => undefined}
+        loading={false}
+        targetStatus="CONFIRMED"
+      />,
+    );
+    expect(document.activeElement).toBe(screen.getByPlaceholderText(/Customer called/));
+  });
+});

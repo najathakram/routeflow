@@ -1,5 +1,5 @@
 import { renderHook } from "@testing-library/react";
-import { useStaffFulfilment, useFulfilmentCaps } from "./fulfilment-caps";
+import { useStaffFulfilment, useFulfilmentCaps, useOrderStatusLabel } from "./fulfilment-caps";
 
 // Gating reads ONLY capabilities.fulfilment. Anything unknown (loading, error, an API without the block)
 // is the UNSET shape = today's behaviour: ROUTE + SHIP offered (picker shown), ROUTE default, no buyer choice.
@@ -39,5 +39,29 @@ describe("useFulfilmentCaps / useStaffFulfilment", () => {
     data = { capabilities: { fulfilment: caps({ staffDefault: "SHIP" }) } };
     expect(renderHook(() => useStaffFulfilment()).result.current.pick("ROUTE")).toBe("ROUTE");
     expect(renderHook(() => useStaffFulfilment()).result.current.pick(null)).toBe("SHIP");
+  });
+});
+
+// W-1043 (SA-1062 MUST 21) R20: an account with no fulfilment mode set keeps today's words, except for a PICKUP
+// order: an explicit PICKUP is possible on any account (POS mode), so the order's own path decides.
+describe("useOrderStatusLabel on an account with no mode set", () => {
+  const label = () => renderHook(() => useOrderStatusLabel()).result.current;
+
+  it("a PICKUP order reads Ready for pickup / Picked up", () => {
+    data = undefined;
+    expect(label()("OUT_FOR_DELIVERY", "Out for delivery", "PICKUP")).toBe("Ready for pickup");
+    expect(label()("DELIVERED", "Delivered", "PICKUP")).toBe("Picked up");
+  });
+
+  it("a status the pickup table does not rename keeps today's word", () => {
+    data = undefined;
+    expect(label()("CONFIRMED", "Confirmed", "PICKUP")).toBe("Confirmed");
+  });
+
+  it("SHIP and ROUTE orders, and an order with no path, stay as pinned", () => {
+    data = undefined;
+    expect(label()("OUT_FOR_DELIVERY", "Out for delivery", "SHIP")).toBe("Out for delivery");
+    expect(label()("OUT_FOR_DELIVERY", "Out for delivery", "ROUTE")).toBe("Out for delivery");
+    expect(label()("OUT_FOR_DELIVERY", "Out for delivery")).toBe("Out for delivery");
   });
 });
