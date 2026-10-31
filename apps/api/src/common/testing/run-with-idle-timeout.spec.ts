@@ -62,6 +62,45 @@ describe("runWithIdleTimeout", () => {
     expect(res.timedOut).toBe("max");
   });
 
+  // Linux: SIGTERM reaches the direct child only, and 'close' waits for EVERY holder of its pipes. A grandchild
+  // that inherited stdio kept them open, so a silent child was never reported at the idle limit (or the ceiling).
+  // The helper must END the wait itself: SIGKILL after a grace, destroy the pipes, resolve.
+  it("resolves at the idle limit even when a grandchild holds the child's pipes open", async () => {
+    const res = await runWithIdleTimeout(
+      node,
+      [
+        "-e",
+        'const gc=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>{},15000)"],{stdio:"inherit"});' +
+          'console.log("gc "+gc.pid);setInterval(()=>{},1000);',
+      ],
+      { idleMs: 300, graceMs: 300 },
+    );
+    try {
+      expect(res.timedOut).toBe("idle");
+      expect(res.elapsedMs).toBeLessThan(5_000);
+    } finally {
+      const pid = Number(/gc (\d+)/.exec(res.stdout)?.[1]);
+      if (pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  }, 20_000);
+
+  it("resolves when the child ignores SIGTERM: SIGKILL follows the grace", async () => {
+    const res = await runWithIdleTimeout(
+      node,
+      ["-e", 'process.on("SIGTERM",()=>{});console.log("deaf");setInterval(()=>{},1000);'],
+      { idleMs: 300, graceMs: 300 },
+    );
+    expect(res.timedOut).toBe("idle");
+    expect(res.stdout).toContain("deaf");
+    expect(res.elapsedMs).toBeLessThan(5_000);
+  }, 20_000);
+
   it("rejects an idle window that is not a positive number", async () => {
     await expect(runWithIdleTimeout(node, ["-e", "0"], { idleMs: 0 })).rejects.toThrow(/idleMs/);
   });
