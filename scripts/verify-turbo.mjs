@@ -20,7 +20,7 @@ import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
-import { isPositiveGreen, writeStage } from "./lib/verify-result.mjs";
+import { RESULT_FILE_ENV, clearStage, stageRun } from "./lib/verify-result.mjs";
 import {
   FAST_VERIFY_BANNER,
   REPO_WIDE_PINS,
@@ -429,6 +429,8 @@ export function finishRun({ fast, status, log = console.log }) {
 }
 
 export async function main() {
+  // W-1045: any pass stage already on disk was not written by THIS run; a run that then runs nothing must not inherit it.
+  clearStage(process.env);
   const defaults = chooseVerifyDefaults({
     totalMemBytes: totalmem(),
     env: process.env,
@@ -562,8 +564,11 @@ export async function main() {
   );
   // W-1045: under the pre-push hook a pass is a written token, not an exit code. Only a run in which every planned call
   // returned the number 0 writes it (scripts/lib/verify-result.mjs); the chain's last link promotes it.
-  if (status === 0 && isPositiveGreen(ran, plan.calls.length))
-    writeStage(process.env, { planned: plan.calls.length, statuses: ran });
+  const staged = stageRun(process.env, { status, statuses: ran, planned: plan.calls.length });
+  if (!staged && status === 0 && process.env[RESULT_FILE_ENV])
+    console.log(
+      "verify-turbo: no pass token written (nothing was planned, or a call did not finish green).",
+    );
   // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
   process.exit(finishRun({ fast: runMode.fast, status }));
 }

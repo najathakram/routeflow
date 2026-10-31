@@ -171,9 +171,11 @@ function isUnder(root, p, pathImpl = path) {
 // This file runs INSIDE the pre-push hook, which exports RF_VERIFY_MODE=fast (and a held heavy-slot
 // token), and a developer may have FULL_VERIFY / CI / VERIFY_EXCLUDE / JEST_MAX_WORKERS set: any of
 // them would silently change the plan a fixture's main() runs. So no ambient verify knob reaches a
-// spawned script; a case sets what it needs explicitly on top.
+// spawned script; a case sets what it needs explicitly on top. The W-1045 gate exports its nonce, result path and tree
+// key around the whole chain too: a nested main() that inherited them would write the pass stage with the REAL nonce
+// before the real verify-turbo runs (proven on Linux, where these cases run).
 const AMBIENT_VERIFY_KNOBS =
-  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
 const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
   Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
 
@@ -1108,6 +1110,68 @@ if (process.platform !== "win32") {
       [3, 2],
     );
 
+    // VT1-VT5 (W-1045): the pass token verify-turbo stages for the pre-push gate. A hook run exports the three
+    // RF_VERIFY_* names around the whole chain; the real main() runs here with them set explicitly (VT2-VT5) or only
+    // in the OUTER process (VT1, the leak the T2 read proved on Linux).
+    const stageDir = mkdtempSync(join(tmpdir(), "verify-stage-"));
+    try {
+      const tokenFile = join(stageDir, "rf-verify-result");
+      const stage = `${tokenFile}.turbo`;
+      const tokenEnv = {
+        RF_VERIFY_RESULT_FILE: tokenFile,
+        RF_VERIFY_NONCE: "nonce-under-test",
+        RF_VERIFY_TREE_KEY: "tree-under-test",
+      };
+      const staged = () => (existsSync(stage) ? JSON.parse(readFileSync(stage, "utf8")) : null);
+
+      rmSync(stage, { force: true });
+      const savedTok = Object.fromEntries(Object.keys(tokenEnv).map((k) => [k, process.env[k]]));
+      Object.assign(process.env, tokenEnv);
+      try {
+        runMain({});
+      } finally {
+        for (const [k, v] of Object.entries(savedTok)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+      check(
+        "VT1 a nested main() does not inherit the gate's nonce: no stage is written from the outer env",
+        staged(),
+        null,
+      );
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv });
+      const green = staged();
+      check(
+        "VT2 a fully green run stages the pass: this run's nonce and tree key, every planned call counted",
+        [green?.nonce, green?.treeKey, green?.planned, green?.ran],
+        ["nonce-under-test", "tree-under-test", 1, 1],
+      );
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "7" });
+      check("VT3 a run whose call exits non-zero stages nothing", staged(), null);
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "0,3", JEST_MAX_WORKERS: "2" });
+      check("VT4 one failed call in a split run stages nothing", staged(), null);
+
+      writeFileSync(
+        stage,
+        JSON.stringify({ v: 1, nonce: "someone-else", treeKey: "x", planned: 1, ran: 1 }),
+      );
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "7" });
+      check(
+        "VT5 a stage already on disk is cleared at the start, so a failing run cannot inherit it",
+        staged(),
+        null,
+      );
+    } finally {
+      rmSync(stageDir, { recursive: true, force: true });
+    }
+
     // AFFECTED needs a real scoped decision, so main() runs from a scratch repo that holds a copy of
     // the script and its lib, a feature branch one apps/api file ahead of origin/master, and no
     // campaign-check (staleWorkspaces fails open to []). Same B420 discipline as runMoveFixture:
@@ -1234,6 +1298,21 @@ if (process.platform !== "win32") {
     rmSync(stubDir, { recursive: true, force: true });
   }
 }
+
+// VT0 (W-1045): runs on every platform, unlike the main() cases above. The gate's nonce, result path and tree key are
+// ambient verify state: cleanVerifyEnv must drop each, or a nested verify-turbo would stage a pass with the real nonce.
+check(
+  "VT0 cleanVerifyEnv drops RF_VERIFY_RESULT_FILE, RF_VERIFY_NONCE and RF_VERIFY_TREE_KEY",
+  Object.keys(
+    cleanVerifyEnv({
+      RF_VERIFY_RESULT_FILE: "f",
+      RF_VERIFY_NONCE: "n",
+      RF_VERIFY_TREE_KEY: "t",
+      KEEP_ME: "1",
+    }),
+  ),
+  ["KEEP_ME"],
+);
 
 // HS: every heavy local entry point takes the machine-wide slot INSIDE the script (so root
 // package.json, which busts every turbo cache when edited, never changes). A future heavy entry point
