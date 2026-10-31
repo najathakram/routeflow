@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { IDLE_RUN_MAX_MS, runWithIdleTimeout } from "./testing/run-with-idle-timeout";
 
 // scripts/heavy-slot.self-test.mjs is a plain node script (the machine-wide heavy-job slot), and
 // nothing in `npm run verify` runs it directly because root package.json is not touched by this
@@ -9,8 +9,11 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/heavy-slot.self-test.mjs");
 
-// The child is ~1 s of tiny `node` spawns; the generous default is for a heavily loaded host.
-const CHILD_TIMEOUT_MS = 120_000;
+// The child is ~1 s of tiny `node` spawns and prints a line per check. It is ended only when it goes this
+// long WITHOUT output (stuck), never for total time: under a full verify it is merely slow, and a test of
+// the slot must not fail because the slot is in use. It never touches the real slot dir (every case runs
+// in a temp dir), so a holder elsewhere cannot make it wait; only CPU starvation slows it.
+const IDLE_MS = 90_000;
 
 // The self-test builds its own explicit envs; this only keeps a CI / slot setting of the host
 // running jest (or a verify that holds a slot right now) from leaking into its process.
@@ -31,18 +34,18 @@ function scrubbedEnv(): NodeJS.ProcessEnv {
 describe("heavy-slot self-test contract", () => {
   it(
     "exits 0 with no failures",
-    () => {
-      const res = spawnSync(process.execPath, [SCRIPT], {
+    async () => {
+      const res = await runWithIdleTimeout(process.execPath, [SCRIPT], {
         cwd: REPO_ROOT,
-        encoding: "utf8",
-        timeout: CHILD_TIMEOUT_MS,
+        idleMs: IDLE_MS,
         env: scrubbedEnv(),
       });
+      expect(res.timedOut).toBeNull();
       expect(res.signal).toBeNull();
       expect(res.stdout).not.toMatch(/\bFAIL\b/);
       expect(res.status).toBe(0);
       expect(res.stdout).toMatch(/heavy-slot self-test: \d+ passed, 0 failed/);
     },
-    CHILD_TIMEOUT_MS + 30_000,
+    IDLE_RUN_MAX_MS + 30_000,
   );
 });

@@ -92,12 +92,16 @@ const fixtureGitEnv = () => ({
 let pass = 0;
 const failures = [];
 
+// One mark per case: the jest wrapper ends this process only after a long silence (not after a fixed total time), so
+// it needs output to tell a slow run under load from a stuck one.
 function t(name, fn) {
   try {
     fn();
     pass++;
+    process.stdout.write(".");
   } catch (err) {
     failures.push(`${name}: ${err.message}`);
+    process.stdout.write("F");
   }
 }
 
@@ -2583,7 +2587,7 @@ t("paths: a listed orphan dir or stray file is reported, never removed", () => {
   }
 }
 
-console.log(`janitor self-test: ${pass} passed, ${failures.length} failed`);
+console.log(`\njanitor self-test: ${pass} passed, ${failures.length} failed`);
 if (failures.length) {
   for (const f of failures) console.error(`  FAIL ${f}`);
   process.exit(1);
