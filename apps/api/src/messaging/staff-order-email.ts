@@ -59,6 +59,15 @@ const OPT_OUT_KEY: Record<StaffEvent, string> = {
 /** SA-1063 MUST 9: a buyer may save an order many times; one edit email per order inside this window. */
 export const BUYER_EDIT_EMAIL_WINDOW_MS = 10 * 60 * 1000;
 
+/** SA-1063 A-1 MUST 7b: the most pending orders read before a sweep (a cart is never this deep). */
+export const PENDING_ORDERS_READ_MAX = 50;
+
+/** An order the customer already had pending before a sweep ran: what A-1 needs to see which one got folded. */
+export interface PendingOrderRef {
+  id: string;
+  orderNumber: string;
+}
+
 const STAFF_CC_KEY = "notifications.staffCc";
 const STAFF_CC_MAX = 5;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -146,7 +155,10 @@ export class StaffOrderEmailService {
    * method REFUSES without one (it must equal `order.tenantId`). Wrap the call in the tenant context
    * runner — `ctx.run(order.tenantId, () => notifyStaffEvent(...))` — never call it bare from a job.
    */
-  async notifyStaffEvent(event: NotificationEvent, ctx: { orderId: string }): Promise<void> {
+  async notifyStaffEvent(
+    event: NotificationEvent,
+    ctx: { orderId: string; replaces?: string[] },
+  ): Promise<void> {
     try {
       if (!(event in OPT_OUT_KEY)) return;
       const kind = event as StaffEvent;
@@ -182,7 +194,7 @@ export class StaffOrderEmailService {
         entityType: "Order",
         entityId: ctx.orderId,
       };
-      const content = mode === "on" ? this.render(kind, order) : null;
+      const content = mode === "on" ? this.render(kind, order, ctx.replaces) : null;
 
       for (const r of recipients) {
         try {
@@ -218,16 +230,66 @@ export class StaffOrderEmailService {
   }
 
   /**
-   * A customer placed (or folded into) an order. The event comes from what staff were already told: no delivery
-   * row for the order = STAFF_NEW_ORDER; a row and `merged` = BUYER_ORDER_EDITED; a row and not `merged` = an
-   * idempotent replay, nothing.
+   * The customer's PENDING orders, read BEFORE a sweep (SA-1063 A-1 MUST 7b). The sweep keeps the newest order and
+   * deletes the folded ones, so this is the only way to name them afterwards. Never rejects: a failed read gives
+   * `[]` and the office gets today's new-order email. Env `off` gives `[]` with no query.
    */
-  async notifyBuyerOrderPlaced(orderId: string, opts: { merged: boolean }): Promise<void> {
+  async pendingOrdersOf(customerId: string | null | undefined): Promise<PendingOrderRef[]> {
+    try {
+      if (process.env.STAFF_ORDER_EMAIL === "off" || !customerId) return [];
+      const rows = (await this.prisma.forTenant().order.findMany({
+        where: { customerId, status: "PENDING" },
+        select: { id: true, orderNumber: true },
+        orderBy: { createdAt: "desc" },
+        take: PENDING_ORDERS_READ_MAX,
+      })) as Array<{ id: string; orderNumber: string | null }>;
+      return rows.map((r) => ({ id: r.id, orderNumber: String(r.orderNumber ?? r.id) }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The same read for a route that only has the signed-in user (a template generate as CUSTOMER). */
+  async pendingOrdersForUser(userId: string | null | undefined): Promise<PendingOrderRef[]> {
+    try {
+      if (process.env.STAFF_ORDER_EMAIL === "off" || !userId) return [];
+      const customer = (await this.prisma.forTenant().customer.findFirst({
+        where: { userId },
+        select: { id: true },
+      })) as { id: string } | null;
+      return customer ? await this.pendingOrdersOf(customer.id) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * A customer placed (or folded into) an order. The event comes from what staff were already told (delivery rows;
+   * "told" is a STAFF_NEW_ORDER or a BUYER_ORDER_EDITED row, any status):
+   *   survivor not told, an order it replaced was  -> BUYER_ORDER_EDITED naming both numbers (A-1: the new order wins the fold)
+   *   survivor not told, nothing replaced          -> STAFF_NEW_ORDER
+   *   survivor told, an order was folded or `merged` -> the plain edit email
+   *   survivor told, nothing folded, not `merged`   -> nothing (an idempotent replay)
+   * `pendingBefore` is the customer's pending orders read before the sweep; routes with no sweep pass `[]`.
+   */
+  async notifyBuyerOrderPlaced(
+    orderId: string,
+    opts: { merged: boolean; pendingBefore: PendingOrderRef[] },
+  ): Promise<void> {
     try {
       if (process.env.STAFF_ORDER_EMAIL === "off") return;
       if (!(await this.shouldTell(orderId))) return;
-      if (await this.alreadyTold(orderId, "STAFF_NEW_ORDER")) {
-        if (opts.merged) await this.sendEdited(orderId);
+      const told = await this.alreadyToldAny(orderId);
+      const folded = await this.foldedAway(orderId, opts.pendingBefore);
+      if (told) {
+        if (folded.length > 0 || opts.merged) await this.sendEdited(orderId);
+        return;
+      }
+      if (folded.length > 0) {
+        await this.notifyStaffEvent(NotificationEvent.BUYER_ORDER_EDITED, {
+          orderId,
+          replaces: folded.map((p) => p.orderNumber),
+        });
         return;
       }
       await this.notifyStaffEvent(NotificationEvent.STAFF_NEW_ORDER, { orderId });
@@ -271,6 +333,60 @@ export class StaffOrderEmailService {
     await this.notifyStaffEvent(NotificationEvent.BUYER_ORDER_EDITED, { orderId });
   }
 
+  /** Told = a new-order or an edit row for the order, any status (a survivor's first row can be the edit row). */
+  private async alreadyToldAny(orderId: string): Promise<boolean> {
+    return (
+      (await this.alreadyTold(orderId, "STAFF_NEW_ORDER")) ||
+      (await this.alreadyTold(orderId, "BUYER_ORDER_EDITED"))
+    );
+  }
+
+  /**
+   * Orders of `pendingBefore` that the sweep folded into `survivorId`: not the survivor, no longer an order, and the
+   * office was told about them. An order that still exists was not folded (a deferred sweep, another path).
+   */
+  private async foldedAway(
+    survivorId: string,
+    pendingBefore: PendingOrderRef[],
+  ): Promise<PendingOrderRef[]> {
+    try {
+      return await this.readFoldedAway(survivorId, pendingBefore);
+    } catch (err) {
+      // Over-tell, never drop: without the fold facts the office still gets the plain email.
+      this.logger.warn(`foldedAway read failed: ${(err as Error)?.message}`);
+      return [];
+    }
+  }
+
+  private async readFoldedAway(
+    survivorId: string,
+    pendingBefore: PendingOrderRef[],
+  ): Promise<PendingOrderRef[]> {
+    const others = pendingBefore.filter((p) => p.id !== survivorId);
+    const tenantId = this.prisma.getTenantId();
+    if (others.length === 0 || !tenantId) return [];
+    const ids = others.map((p) => p.id);
+    const db = this.prisma.forTenant();
+    const still = (await db.order.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    })) as Array<{ id: string }>;
+    const stillThere = new Set(still.map((o) => o.id));
+    const gone = others.filter((p) => !stillThere.has(p.id));
+    if (gone.length === 0) return [];
+    const rows = (await db.emailDelivery.findMany({
+      where: {
+        tenantId,
+        kind: { in: ["STAFF_NEW_ORDER", "BUYER_ORDER_EDITED"] },
+        entityType: "Order",
+        entityId: { in: gone.map((p) => p.id) },
+      },
+      select: { entityId: true },
+    })) as Array<{ entityId: string | null }>;
+    const toldIds = new Set(rows.map((r) => r.entityId));
+    return gone.filter((p) => toldIds.has(p.id));
+  }
+
   /** One indexed lookup (`[entityType, entityId]`) on the delivery rows: any status counts as "told". */
   private async alreadyTold(
     orderId: string,
@@ -309,14 +425,22 @@ export class StaffOrderEmailService {
     return out;
   }
 
-  private render(kind: StaffEvent, order: Record<string, any>): { subject: string; html: string } {
+  private render(
+    kind: StaffEvent,
+    order: Record<string, any>,
+    replaces?: string[],
+  ): { subject: string; html: string } {
     const number = String(order.orderNumber ?? order.id);
     const customer = String(order.customer?.businessName ?? order.customer?.name ?? "A customer");
     // The STORED total, never recomputed from line items (money discipline).
     const total = roundMoney(Number(order.total)).toFixed(2);
     const urgent = order.urgent === true || order.isUrgent === true;
-    const headline =
-      kind === "STAFF_NEW_ORDER"
+    // A-1: a fold into a new number is one edit-kind email naming both; every other email is unchanged.
+    const replaced =
+      kind === "BUYER_ORDER_EDITED" && replaces && replaces.length > 0 ? replaces : null;
+    const headline = replaced
+      ? `Order ${number} replaces ${replaced.join(", ")}`
+      : kind === "STAFF_NEW_ORDER"
         ? `New order ${number}`
         : kind === "BUYER_ORDER_EDITED"
           ? `Order ${number} was edited by the customer`
@@ -324,6 +448,7 @@ export class StaffOrderEmailService {
     const subject = `${urgent ? "[URGENT] " : ""}${headline} - ${customer}`;
     const html =
       `<p>${escapeHtml(headline)}.</p>` +
+      (replaced ? "<p>The customer's orders were combined.</p>" : "") +
       `<p>Customer: ${escapeHtml(customer)}<br>Order: ${escapeHtml(number)}<br>` +
       `Total: $${escapeHtml(total)}</p>`;
     return { subject, html };

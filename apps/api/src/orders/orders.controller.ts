@@ -27,7 +27,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrderStatus, UserRole } from "@prisma/client";
-import { StaffOrderEmailService } from "../messaging/staff-order-email";
+import { StaffOrderEmailService, type PendingOrderRef } from "../messaging/staff-order-email";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { CreateSaleDto } from "./dto/create-sale.dto";
@@ -72,9 +72,14 @@ export class OrdersController {
   private readonly logger = new Logger(OrdersController.name);
 
   /** SA-1063: after the commit, off the request path. Only a CUSTOMER principal is a buyer event. */
-  private tellOfficeOfCustomerOrder(user: JwtPayload, orderId: string, merged: boolean): void {
+  private tellOfficeOfCustomerOrder(
+    user: JwtPayload,
+    orderId: string,
+    merged: boolean,
+    pendingBefore: PendingOrderRef[],
+  ): void {
     if (user.role === UserRole.CUSTOMER) {
-      void this.staffOrderEmail?.notifyBuyerOrderPlaced(orderId, { merged });
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(orderId, { merged, pendingBefore });
     }
   }
 
@@ -431,6 +436,12 @@ export class OrdersController {
       // SA-923: a discount keeps this order apart ONCE; persisting skipAutoMerge would opt it out of every future merge.
       { skipAutoMerge: choice === "separate", ...(separateForDiscount && { separateOnce: true }) },
     );
+    // SA-1063 A-1: the customer's pending orders BEFORE the sweep. The sweep keeps the newest order and deletes the
+    // folded ones, so this read is how the office email can name them. It never rejects.
+    const pendingBefore =
+      user.role === UserRole.CUSTOMER && created.customerId
+        ? ((await this.staffOrderEmail?.pendingOrdersOf(created.customerId)) ?? [])
+        : [];
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.
     if (!isStaff && created.customerId) {
@@ -450,7 +461,9 @@ export class OrdersController {
           { lockMode: "try", actor: user },
         );
         if (merged) {
-          this.tellOfficeOfCustomerOrder(user, merged.id, true);
+          // The sweep returns the lone order when nothing folded: that is the created order, not a merge
+          // (a replay of the same Idempotency-Key lands here too and must not read as an edit).
+          this.tellOfficeOfCustomerOrder(user, merged.id, merged.id !== created.id, pendingBefore);
           return this.forCaller(user, merged);
         }
       } catch (e) {
@@ -460,7 +473,7 @@ export class OrdersController {
         );
       }
     }
-    this.tellOfficeOfCustomerOrder(user, created.id, false);
+    this.tellOfficeOfCustomerOrder(user, created.id, false, pendingBefore);
     return this.forCaller(user, created);
   }
 

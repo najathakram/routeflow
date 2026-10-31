@@ -33,7 +33,9 @@ import { OrderTemplatesService } from "../order-templates/order-templates.servic
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { from, lastValueFrom } from "rxjs";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StaffOrderEmailService } from "../messaging/staff-order-email";
 import { EmailService } from "../email/email.service";
@@ -115,6 +117,8 @@ describe("SA-1063 BuyerController tells the office", () => {
   beforeEach(async () => {
     staff = {
       notifyBuyerOrderPlaced: jest.fn().mockResolvedValue(undefined),
+      pendingOrdersOf: jest.fn().mockResolvedValue([]),
+      pendingOrdersForUser: jest.fn().mockResolvedValue([]),
       notifyBuyerOrderEdited: jest.fn().mockResolvedValue(undefined),
       notifyBuyerOrderCancelled: jest.fn().mockResolvedValue(undefined),
       orderIsDraft: jest.fn().mockResolvedValue(false),
@@ -124,19 +128,37 @@ describe("SA-1063 BuyerController tells the office", () => {
 
   it("POST buyer/orders, no open order: placed for the new order, not merged", async () => {
     await controller.createOrder(dto() as never, CTX as never);
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-new", { merged: false });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-new", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("POST buyer/orders, the sweep folds it into an older order: that order, merged true", async () => {
     svc.mergeAllPendingForCustomer.mockResolvedValue({ id: "ord-older", lineItems: [] });
     await controller.createOrder(dto() as never, CTX as never);
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-older", { merged: true });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-older", {
+      merged: true,
+      pendingBefore: [],
+    });
+  });
+
+  it("POST buyer/orders, the sweep hands back the created order itself (nothing folded, or a replay): merged false (R5)", async () => {
+    svc.mergeAllPendingForCustomer.mockResolvedValue({ id: "ord-new", lineItems: [] });
+    await controller.createOrder(dto() as never, CTX as never);
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-new", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("POST buyer/orders, forceNew: placed for the new order (no sweep runs)", async () => {
     await controller.createOrder({ ...dto(), forceNew: true } as never, CTX as never);
     expect(svc.mergeAllPendingForCustomer).not.toHaveBeenCalled();
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-new", { merged: false });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-new", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("POST buyer/orders, the cart folds into the open order: that order, merged true", async () => {
@@ -147,7 +169,10 @@ describe("SA-1063 BuyerController tells the office", () => {
     });
     await controller.createOrder(dto() as never, CTX as never);
     expect(svc.updateOrderItems).toHaveBeenCalled();
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-open", { merged: true });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-open", {
+      merged: true,
+      pendingBefore: [],
+    });
   });
 
   it("POST buyer/orders, a replayed submit: the same order, merged false (R5)", async () => {
@@ -159,7 +184,10 @@ describe("SA-1063 BuyerController tells the office", () => {
     svc.findOrderIdByIdempotencyKey.mockResolvedValue({ orderId: "ord-open", verified: true });
     await controller.createOrder(dto() as never, CTX as never, "key-1");
     expect(svc.updateOrderItems).not.toHaveBeenCalled();
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-open", { merged: false });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-open", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("PATCH buyer/orders/:id/items: edited, after the edit", async () => {
@@ -190,7 +218,10 @@ describe("SA-1063 BuyerController tells the office", () => {
 
   it("R9: POST buyer/templates/:id/reorder: placed for the generated order", async () => {
     await controller.reorderFromTemplate("tpl-1", CTX as never);
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-tpl", { merged: false });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-tpl", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("the response never waits for the email", async () => {
@@ -207,12 +238,13 @@ describe("SA-1063 BuyerController tells the office", () => {
   });
 });
 
-describe("SA-1063 R14: the ambient tenant survives the void (real TenantContextService)", () => {
+describe("SA-1063 R14: the ambient tenant survives the void (real BuyerTenantInterceptor)", () => {
   afterEach(() => {
     delete process.env.STAFF_ORDER_EMAIL;
   });
 
-  it("a buyer cancel inside the tenant context still writes the office's rows", async () => {
+  /** The route's own tenant wiring: the interceptor the buyer controller is decorated with, run for real. */
+  function build() {
     process.env.STAFF_ORDER_EMAIL = "dark";
     const tenantCtx = new TenantContextService();
     const models = {
@@ -251,8 +283,22 @@ describe("SA-1063 R14: the ambient tenant survives the void (real TenantContextS
     const orders = { changeStatus: jest.fn().mockResolvedValue({ id: "ord-1" }) };
     const controller = Object.create(BuyerController.prototype) as BuyerController;
     Object.assign(controller, { ordersService: orders, staffOrderEmail: real });
+    const interceptor = new BuyerTenantInterceptor(tenantCtx);
+    const http = {
+      switchToHttp: () => ({ getRequest: () => ({ buyerCustomer: { tenantId: "t1" } }) }),
+    };
+    const throughInterceptor = () =>
+      lastValueFrom(
+        interceptor.intercept(http as never, {
+          handle: () => from(controller.cancelOrder("ord-1", CTX as never)),
+        }),
+      );
+    return { controller, deliveries, throughInterceptor };
+  }
 
-    await tenantCtx.run("t1", () => controller.cancelOrder("ord-1", CTX as never));
+  it("a buyer cancel through BuyerTenantInterceptor still writes the office's rows", async () => {
+    const { deliveries, throughInterceptor } = build();
+    await throughInterceptor();
     await flush();
     await flush();
 
@@ -264,5 +310,13 @@ describe("SA-1063 R14: the ambient tenant survives the void (real TenantContextS
         entityId: "ord-1",
       }),
     );
+  });
+
+  it("the same cancel with no tenant context writes nothing (the interceptor is what makes the row)", async () => {
+    const { controller, deliveries } = build();
+    await controller.cancelOrder("ord-1", CTX as never);
+    await flush();
+    await flush();
+    expect(deliveries.record).not.toHaveBeenCalled();
   });
 });

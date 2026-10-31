@@ -40,17 +40,38 @@ describe("StaffOrderEmailCard (SA-1063)", () => {
   it("shows the business switch off by default (dark reads as off) and no personal row", async () => {
     serve(settings());
     renderWithProviders(<StaffOrderEmailCard />);
-    const sw = await screen.findByRole("switch", { name: "Customer order emails" });
+    const sw = await screen.findByRole("switch", { name: "Email your team about customer orders" });
     expect(sw).toHaveAttribute("aria-checked", "false");
     expect(screen.queryByRole("switch", { name: "Email me about customer orders" })).toBeNull();
-    expect(screen.queryByText(/goes to/i)).toBeNull();
+  });
+
+  it("shows where the emails would go while the switch is off (rollout needs the address on screen)", async () => {
+    serve(settings());
+    renderWithProviders(<StaffOrderEmailCard />);
+    expect(await screen.findByText("owner@acme.test")).toBeInTheDocument();
+    expect(screen.getByText(/goes to/i)).toBeInTheDocument();
+  });
+
+  it("says there is no address, and what to do, while the switch is off too", async () => {
+    serve(settings({ recipients: [] }));
+    renderWithProviders(<StaffOrderEmailCard />);
+    expect(await screen.findByText(/add one to send these emails/i)).toBeInTheDocument();
+  });
+
+  it("the switch is named by its visible label (voice control says what it sees)", async () => {
+    serve(settings());
+    renderWithProviders(<StaffOrderEmailCard />);
+    await screen.findByRole("switch", { name: "Email your team about customer orders" });
+    expect(screen.getByText("Email your team about customer orders")).toBeInTheDocument();
   });
 
   it('turning it on sends mode "on" and nothing else', async () => {
     serve(settings());
     put.mockResolvedValue({ data: settings({ policyMode: "on" }) });
     renderWithProviders(<StaffOrderEmailCard />);
-    fireEvent.click(await screen.findByRole("switch", { name: "Customer order emails" }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "Email your team about customer orders" }),
+    );
     await waitFor(() =>
       expect(put).toHaveBeenCalledWith("/messaging/staff-email-settings", { mode: "on" }),
     );
@@ -77,7 +98,7 @@ describe("StaffOrderEmailCard (SA-1063)", () => {
   it("when on with no admin address: says there is nowhere to send", async () => {
     serve(settings({ policyMode: "on", effectiveMode: "on", recipients: [] }));
     renderWithProviders(<StaffOrderEmailCard />);
-    expect(await screen.findByText(/nowhere to go/i)).toBeInTheDocument();
+    expect(await screen.findByText(/add one to send these emails/i)).toBeInTheDocument();
   });
 
   it("personal row: on by default, and opting out writes both preferences as the string false", async () => {
@@ -107,7 +128,9 @@ describe("StaffOrderEmailCard (SA-1063)", () => {
     serve(settings());
     put.mockRejectedValue(new Error("boom"));
     renderWithProviders(<StaffOrderEmailCard />);
-    fireEvent.click(await screen.findByRole("switch", { name: "Customer order emails" }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "Email your team about customer orders" }),
+    );
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: "error" })),
     );

@@ -63,6 +63,32 @@ describe("SA-1063: every customer order write route tells the office", () => {
     has("order-templates/order-templates.controller.ts", "POST :id/generate");
   });
 
+  // A-1 (10a): the sweep keeps the NEWEST order and deletes the older ones, so a route whose create can fold must
+  // read the customer's pending orders BEFORE it creates, or the office cannot be told which number replaced which.
+  it("10a: the four handlers whose create can fold read the pending orders before the sweep", () => {
+    const folds: Array<[string, string, RegExp]> = [
+      ["buyer/buyer.controller.ts", "POST orders", /pendingOrdersOf\(/],
+      ["buyer/buyer.controller.ts", "POST templates/:id/reorder", /pendingOrdersOf\(/],
+      ["orders/orders.controller.ts", "POST /", /pendingOrdersOf\(/],
+      [
+        "order-templates/order-templates.controller.ts",
+        "POST :id/generate",
+        /pendingOrdersForUser\(/,
+      ],
+    ];
+    for (const [file, route, read_] of folds) {
+      const h = handlers(file).find((x) => x.route === route);
+      expect(h).toBeDefined();
+      const body = h!.body;
+      const readAt = body.search(read_);
+      const writeAt = body.search(
+        /(ordersService\.create\(|templatesService\.generateOrder\(|service\.generateOrderForUser\()/,
+      );
+      expect(`${file} ${route} read=${readAt >= 0}`).toBe(`${file} ${route} read=true`);
+      expect(writeAt).toBeGreaterThanOrEqual(0);
+    }
+  });
+
   it("add-all-low delegates to POST buyer/orders and calls no order write itself", () => {
     const h = handlers("buyer/buyer.controller.ts").find((x) => x.route.includes("add-all-low"));
     expect(h).toBeDefined();

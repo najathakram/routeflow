@@ -112,9 +112,14 @@ export class OrderTemplatesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto?: GenerateTemplateOrderDto,
   ) {
+    // SA-1063 A-1: the buyer's pending orders BEFORE generating (the sweep inside folds older ones into the new order).
+    const pendingBefore =
+      user.role === UserRole.CUSTOMER
+        ? ((await this.staffOrderEmail?.pendingOrdersForUser(user.sub)) ?? [])
+        : [];
     const order = await this.service.generateOrderForUser(templateId, user, dto);
     if (user.role === UserRole.CUSTOMER && order?.id) {
-      void this.staffOrderEmail?.notifyBuyerOrderPlaced(order.id, { merged: false });
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(order.id, { merged: false, pendingBefore });
     }
     // A CUSTOMER gets the customer-facing allowlist of the order it generated; staff get the row itself.
     return user.role === UserRole.CUSTOMER ? toCustomerOrder(order) : order;

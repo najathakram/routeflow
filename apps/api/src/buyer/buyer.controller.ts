@@ -826,7 +826,10 @@ export class BuyerController {
         const mergedOrderId = merged.orderId;
         // B1094: a replayed submit already had its sweep when it first landed.
         if (merged.replayed) {
-          void this.staffOrderEmail?.notifyBuyerOrderPlaced(mergedOrderId, { merged: false });
+          void this.staffOrderEmail?.notifyBuyerOrderPlaced(mergedOrderId, {
+            merged: false,
+            pendingBefore: [],
+          });
           return toCustomerOrder(
             await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
           );
@@ -855,7 +858,10 @@ export class BuyerController {
         }
 
         // SA-1063: after the commit and the sweep, off the request path, for the surviving order.
-        void this.staffOrderEmail?.notifyBuyerOrderPlaced(mergedOrderId, { merged: true });
+        void this.staffOrderEmail?.notifyBuyerOrderPlaced(mergedOrderId, {
+          merged: true,
+          pendingBefore: [],
+        });
         // Return the updated order
         return toCustomerOrder(
           await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
@@ -892,7 +898,10 @@ export class BuyerController {
       // order. A duplicate tap then met a changed cart in assertReplayOfCart (409 / cart mismatch). A
       // kept-apart order has nothing to consolidate; the pending order is untouched and the key stays on
       // THIS order, so a duplicate submit replays it (create()'s key replay).
-      void this.staffOrderEmail?.notifyBuyerOrderPlaced(created.id, { merged: false });
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(created.id, {
+        merged: false,
+        pendingBefore: [],
+      });
       return toCustomerOrder(created);
     }
     // Newly-created order may share a customer with pre-existing PENDINGs —
@@ -902,6 +911,9 @@ export class BuyerController {
     // POST-COMMIT (see ../orders/merge-contention.ts): `created` exists already, so contention
     // must not become the response — the buyer would be told their order failed and would place
     // a second one. Return the unconsolidated order; the hourly sweep folds it later.
+    // SA-1063 A-1: the pending orders BEFORE the sweep. It keeps the newest order and deletes the folded ones, so
+    // this read is how the office email names them. It never rejects.
+    const pendingBefore = (await this.staffOrderEmail?.pendingOrdersOf(ctx.customerId)) ?? [];
     let merged: Awaited<ReturnType<OrdersService["mergeAllPendingForCustomer"]>> | null = null;
     try {
       merged = await this.ordersService.mergeAllPendingForCustomer(
@@ -917,9 +929,12 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    // SA-1063: the surviving order (the sweep may have folded this cart into an older one staff know).
+    // SA-1063: the surviving order. The sweep keeps the NEWEST order, so a fold usually makes this new order the
+    // survivor and deletes the older ones (`pendingBefore` names them). `merged` is the created order itself when
+    // nothing folded, so only a different id is a merge.
     void this.staffOrderEmail?.notifyBuyerOrderPlaced((merged ?? created).id, {
-      merged: merged != null,
+      merged: merged != null && merged.id !== created.id,
+      pendingBefore,
     });
     return toCustomerOrder(merged ?? created);
   }
@@ -1185,9 +1200,14 @@ export class BuyerController {
     // The generated order goes back to the buyer: the customer-facing allowlist, never the staff row. Lines a
     // selling restriction hides from this buyer are left out and listed in `skipped` (BuyerReorderSkipped).
     const outcome: { skipped: BuyerReorderSkippedLine[] } = { skipped: [] };
+    // SA-1063 A-1: the pending orders BEFORE generating (the sweep inside folds older ones into the new order).
+    const pendingBefore = (await this.staffOrderEmail?.pendingOrdersOf(ctx.customerId)) ?? [];
     const generated = await this.templatesService.generateOrder(id, false, allowOversell, outcome);
     if (generated?.id)
-      void this.staffOrderEmail?.notifyBuyerOrderPlaced(generated.id, { merged: false }); // SA-1063
+      void this.staffOrderEmail?.notifyBuyerOrderPlaced(generated.id, {
+        merged: false,
+        pendingBefore,
+      }); // SA-1063
     const order = toCustomerOrder(generated);
     return order ? { ...order, skipped: outcome.skipped } : order;
   }

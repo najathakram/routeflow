@@ -90,7 +90,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
     it("R1: env on + policy on, no earlier row -> one real STAFF_NEW_ORDER mail per admin", async () => {
       process.env.STAFF_ORDER_EMAIL = "on";
       const h = makeHarness({ policy: "on" });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(h.email.send).toHaveBeenCalledTimes(2);
       expect(sentKinds(h)).toEqual(["STAFF_NEW_ORDER", "STAFF_NEW_ORDER"]);
       expect(h.deliveries.record).not.toHaveBeenCalled();
@@ -99,7 +99,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
     it("R2: policy at its default (dark) -> WOULD_SEND per admin, no mail", async () => {
       process.env.STAFF_ORDER_EMAIL = "on";
       const h = makeHarness();
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(recorded(h).map((r) => r.status)).toEqual(["WOULD_SEND", "WOULD_SEND"]);
       expect(h.email.send).not.toHaveBeenCalled();
     });
@@ -107,7 +107,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
     it("R3: env dark + policy on -> WOULD_SEND, no mail (the ceiling holds)", async () => {
       process.env.STAFF_ORDER_EMAIL = "dark";
       const h = makeHarness({ policy: "on" });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(recorded(h).map((r) => r.status)).toEqual(["WOULD_SEND", "WOULD_SEND"]);
       expect(h.email.send).not.toHaveBeenCalled();
     });
@@ -115,7 +115,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
     it("R4: env off -> no rows, no mail, and no query or policy read at all", async () => {
       process.env.STAFF_ORDER_EMAIL = "off";
       const h = makeHarness({ policy: "on" });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(h.deliveries.record).not.toHaveBeenCalled();
       expect(h.email.send).not.toHaveBeenCalled();
       expect(h.models.order.findFirst).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
     it("R5: a row already exists and the cart did not fold (an idempotent replay) -> nothing", async () => {
       process.env.STAFF_ORDER_EMAIL = "on";
       const h = makeHarness({ policy: "on", told: { STAFF_NEW_ORDER: true } });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(h.email.send).not.toHaveBeenCalled();
       expect(h.deliveries.record).not.toHaveBeenCalled();
     });
@@ -133,7 +133,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
     it("R6: a row exists and the cart folded into it -> BUYER_ORDER_EDITED, not a second new-order mail", async () => {
       process.env.STAFF_ORDER_EMAIL = "on";
       const h = makeHarness({ policy: "on", told: { STAFF_NEW_ORDER: true } });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: true });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: true, pendingBefore: [] });
       expect(sentKinds(h)).toEqual(["BUYER_ORDER_EDITED", "BUYER_ORDER_EDITED"]);
     });
 
@@ -143,14 +143,14 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
         policy: "on",
         told: { STAFF_NEW_ORDER: true, BUYER_ORDER_EDITED: true },
       });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: true });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: true, pendingBefore: [] });
       expect(h.email.send).not.toHaveBeenCalled();
     });
 
     it("R10: a DRAFT order is no event", async () => {
       process.env.STAFF_ORDER_EMAIL = "on";
       const h = makeHarness({ policy: "on", status: "DRAFT" });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(h.email.send).not.toHaveBeenCalled();
       expect(h.deliveries.record).not.toHaveBeenCalled();
     });
@@ -226,7 +226,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
       const h = makeHarness({ policy: "on" });
       h.email.send.mockRejectedValue(new Error("smtp down"));
       await expect(
-        (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false }),
+        (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] }),
       ).resolves.toBeUndefined();
     });
 
@@ -235,14 +235,16 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
       const h = makeHarness({ policy: "on" });
       h.models.emailDelivery.findFirst.mockRejectedValue(new Error("db down"));
       const svc = await build(h);
-      await expect(svc.notifyBuyerOrderPlaced("ord-1", { merged: false })).resolves.toBeUndefined();
+      await expect(
+        svc.notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] }),
+      ).resolves.toBeUndefined();
       await expect(svc.notifyBuyerOrderEdited("ord-1")).resolves.toBeUndefined();
     });
 
     it("R13: an invalid policy value reads as dark -> WOULD_SEND, no mail", async () => {
       process.env.STAFF_ORDER_EMAIL = "on";
       const h = makeHarness({ policy: "bogus" });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(recorded(h).map((r) => r.status)).toEqual(["WOULD_SEND", "WOULD_SEND"]);
       expect(h.email.send).not.toHaveBeenCalled();
     });
@@ -253,7 +255,7 @@ describe("SA-1063 StaffOrderEmailService buyer events", () => {
         policy: "on",
         prefs: [{ userId: "u1", key: "staffOrderEmail", value: "false" }],
       });
-      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false });
+      await (await build(h)).notifyBuyerOrderPlaced("ord-1", { merged: false, pendingBefore: [] });
       expect(recorded(h).find((r) => r.toAddress === "admin1@example.com")?.status).toBe(
         "OPTED_OUT",
       );

@@ -13,6 +13,8 @@ const DRIVER = { sub: "u-d", role: "DRIVER", tenantId: "t1" } as never;
 function staffEmailMock() {
   return {
     notifyBuyerOrderPlaced: jest.fn().mockResolvedValue(undefined),
+    pendingOrdersOf: jest.fn().mockResolvedValue([]),
+    pendingOrdersForUser: jest.fn().mockResolvedValue([]),
     notifyBuyerOrderEdited: jest.fn().mockResolvedValue(undefined),
     notifyBuyerOrderCancelled: jest.fn().mockResolvedValue(undefined),
     orderIsDraft: jest.fn().mockResolvedValue(false),
@@ -41,14 +43,30 @@ describe("SA-1063 OrdersController CUSTOMER routes", () => {
   it("POST orders/ as CUSTOMER: placed for the created order, not merged", async () => {
     const { staff, controller } = build();
     await controller.create({ items: [] } as never, CUSTOMER);
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-1", { merged: false });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-1", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("POST orders/ as CUSTOMER: the sweep's surviving order is the one named, merged true", async () => {
     const { orders, staff, controller } = build();
     orders.mergeAllPendingForCustomer.mockResolvedValue({ id: "ord-older", lineItems: [] });
     await controller.create({ items: [] } as never, CUSTOMER);
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-older", { merged: true });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-older", {
+      merged: true,
+      pendingBefore: [],
+    });
+  });
+
+  it("R5: the sweep hands back the created order itself (nothing folded, or a replayed key): merged false", async () => {
+    const { orders, staff, controller } = build();
+    orders.mergeAllPendingForCustomer.mockResolvedValue({ id: "ord-1", lineItems: [] });
+    await controller.create({ items: [] } as never, CUSTOMER);
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-1", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("R10: POST orders/ as OPERATOR or DRIVER tells nobody", async () => {
@@ -122,7 +140,10 @@ describe("SA-1063 OrderTemplatesController generate", () => {
   it("R9: POST order-templates/:id/generate as CUSTOMER -> placed", async () => {
     const { staff, controller } = build();
     await controller.generateOrder("tpl-1", CUSTOMER);
-    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-9", { merged: false });
+    expect(staff.notifyBuyerOrderPlaced).toHaveBeenCalledWith("ord-9", {
+      merged: false,
+      pendingBefore: [],
+    });
   });
 
   it("R10: the same route as OPERATOR tells nobody", async () => {

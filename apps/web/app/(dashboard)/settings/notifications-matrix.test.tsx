@@ -98,6 +98,26 @@ function makeConfig(over: Record<string, unknown> = {}) {
           cell("INTERNAL", { enabled: false, ruleId: "rule-ls", unavailable: "NO_TRIGGER" }),
         ],
       },
+      // SA-1063: sent by the order routes and switched by the Customer order emails card, never "coming soon".
+      ...(
+        [
+          ["STAFF_NEW_ORDER", "New order (staff)", "STAFF"],
+          ["BUYER_ORDER_EDITED", "Order edited (buyer)", "STAFF"],
+          ["BUYER_ORDER_CANCELLED", "Order cancelled (buyer)", "STAFF"],
+        ] as const
+      ).map(([eventKey, label, audience]) => ({
+        eventKey,
+        label,
+        audience,
+        hasTrigger: false,
+        channels: [
+          cell("INTERNAL", {
+            enabled: false,
+            ruleId: "rule-" + eventKey,
+            unavailable: "NO_TRIGGER",
+          }),
+        ],
+      })),
     ],
     settings: {
       quietHoursEnabled: false,
@@ -212,6 +232,14 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(within(soon).getByText("Payment reminder")).toBeInTheDocument();
     expect(within(soon).getByText("Low stock")).toBeInTheDocument();
     expect(within(soon).queryAllByRole("switch")).toHaveLength(0);
+  });
+
+  it("SA-1063: the three customer-order emails are not listed under Coming soon (their switch is live)", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    const soon = screen.getByText(/^coming soon$/i).closest("details") as HTMLElement;
+    for (const label of ["New order (staff)", "Order edited (buyer)", "Order cancelled (buyer)"]) {
+      expect(within(soon).queryByText(label)).toBeNull();
+    }
   });
 
   it("apple-ux: 'Low stock' under Coming soon points an admin to the live daily digest below", () => {
@@ -381,7 +409,10 @@ describe("Notifications page — grouped list (#1965)", () => {
     const team = screen
       .getByRole("heading", { name: "Emails to your team" })
       .closest("section") as HTMLElement;
-    expect(within(team).getByText(/set in customer order emails, below/i)).toBeInTheDocument();
+    expect(within(team).getByRole("link", { name: "Customer order emails" })).toHaveAttribute(
+      "href",
+      "#customer-order-emails",
+    );
     expect(within(team).queryByText(/coming soon/i)).toBeNull();
   });
 
@@ -391,7 +422,7 @@ describe("Notifications page — grouped list (#1965)", () => {
     const team = screen
       .getByRole("heading", { name: "Emails to your team" })
       .closest("section") as HTMLElement;
-    expect(within(team).getByText(/an administrator sets emails/i)).toBeInTheDocument();
+    expect(within(team).getByText(/an administrator sets these/i)).toBeInTheDocument();
   });
 
   it("T17 the loading state is an accessible status region", () => {

@@ -37,7 +37,7 @@ export function StaffOrderEmailCard() {
             variant: "success",
             title: on ? "Customer order emails turned off" : "Customer order emails turned on",
           }),
-        onError: () => toast({ variant: "error", title: "Couldn't save, please try again" }),
+        onError: () => toast({ variant: "error", title: "Couldn't save. Try again." }),
       },
     );
   }
@@ -76,28 +76,28 @@ export function StaffOrderEmailCard() {
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
               <div className="text-sm font-medium text-navy">
-                Email the office about customer orders
+                Email your team about customer orders
               </div>
-              <div className="text-xs text-navy/55">
-                When a customer places, changes or cancels an order, we send an email.
+              <div className="text-xs text-navy/70">
+                Sends an email when a customer places, changes, or cancels an order.
               </div>
             </div>
             <MiniSwitch
               checked={on}
               disabled={update.isPending}
-              ariaLabel="Customer order emails"
+              ariaLabel="Email your team about customer orders"
               onToggle={onToggleBusiness}
             />
           </div>
 
-          {on && recipients.length > 0 && (
-            <p className="text-xs text-navy/70">
+          {recipients.length > 0 && (
+            <p className="break-words text-xs text-navy/70">
               <span className="font-medium text-navy">Goes to</span> {recipients.join(", ")}
             </p>
           )}
-          {on && recipients.length === 0 && (
+          {recipients.length === 0 && (
             <p role="status" className="text-xs text-navy/70">
-              No administrator has an email address, so these emails have nowhere to go.
+              No administrator has an email address. Add one to send these emails.
             </p>
           )}
           {notStarted && (
@@ -110,7 +110,7 @@ export function StaffOrderEmailCard() {
             <div className="flex items-center justify-between gap-4 border-t border-surface-border pt-4">
               <div className="min-w-0">
                 <div className="text-sm font-medium text-navy">Email me about customer orders</div>
-                <div className="text-xs text-navy/55">Applies to you only.</div>
+                <div className="text-xs text-navy/70">Applies to you only.</div>
               </div>
               <MiniSwitch
                 checked={personalOn}
