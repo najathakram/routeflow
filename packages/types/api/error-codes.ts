@@ -806,6 +806,11 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /**
+   * 409 from POST /orders/:id/ready-for-pickup (W-1043): the order is not a PICKUP, non-counter order at PENDING or
+   * CONFIRMED (a ROUTE / SHIP order, a counter sale, or one already past Ready). Nothing was written.
+   */
+  ORDER_NOT_READYABLE: "ORDER_NOT_READYABLE",
   /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
   COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
   /**
