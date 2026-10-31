@@ -205,4 +205,49 @@ describe("A5 - resume re-prices for display and flags what moved", () => {
     );
     expect(twice.lines[0]).toMatchObject({ unitPrice: 14, priceChangedFrom: 10 });
   });
+
+  describe("SA-1068 M14: the customer's remembered price", () => {
+    const atMemory = (over: Partial<ResumeLine> = {}) =>
+      line({ unitPrice: 15, priceType: "MANUAL", tierPrices: { pricePerUnit: 12 }, ...over });
+    const memory = (price: number | null) => () => price;
+
+    it("T12: a line at its memory stays there, with no note and no price to send", () => {
+      const r = repriceResumedLines([atMemory()], tier1, undefined, memory(15));
+      expect(r.changed).toBe(0);
+      expect(r.lines[0]).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });
+      expect(r.lines[0].priceChangedFrom).toBeUndefined();
+      expect(r.lines[0].discountedPrice).toBeUndefined();
+    });
+
+    it("a memory saved since the order was parked moves the line up, and the note is true", () => {
+      const r = repriceResumedLines(
+        [line({ unitPrice: 12, tierPrices: { pricePerUnit: 12 } })],
+        tier1,
+        undefined,
+        memory(15),
+      );
+      expect(r.lines[0]).toMatchObject({
+        unitPrice: 15,
+        priceType: "MANUAL",
+        priceChangedFrom: 12,
+      });
+    });
+
+    it("no memory, or one at or below list, prices from the tier", () => {
+      for (const price of [null, 11, 12]) {
+        const r = repriceResumedLines([atMemory()], tier1, undefined, memory(price));
+        expect(r.lines[0]).toMatchObject({ unitPrice: 12, priceType: "STANDARD" });
+      }
+    });
+
+    it("the customer's layer row beats the memory, as it does on the server", () => {
+      const r = repriceResumedLines(
+        [atMemory()],
+        tier1,
+        () => [{ ref: "pack", label: null, price: 13, listPrice: 12, aboveList: true }] as never,
+        memory(15),
+      );
+      expect(r.lines[0].unitPrice).toBe(13);
+    });
+  });
 });

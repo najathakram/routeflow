@@ -109,11 +109,15 @@ export interface ResumeRepriceResult<T extends ResumeLine> {
  * Left exactly as typed: an unlisted line, a unit line (its own picker prices it), a line with no tier snapshot, and any
  * staff override (`DISCOUNTED`, or a one-time `discountedPrice`) together with its `overrideReason`. A line whose price moved gets the
  * new price, its classification, and `priceChangedFrom` (the parked price) for the "Price changed since you started" note.
+ *
+ * SA-1068 M14: `rememberedOf` is the customer's remembered price, which the server books for a plain line. `customerLinePrice`
+ * decides, as it does at the till, so a line at its memory stays there with no note. The request still carries no price for it.
  */
 export function repriceResumedLines<T extends ResumeLine>(
   lines: readonly T[],
   tierFor: (productId: string) => number,
   layerOf?: (productId: string) => readonly CustomerLayerUnit[] | undefined,
+  rememberedOf?: (productId: string) => number | null | undefined,
 ): ResumeRepriceResult<T> {
   let changed = 0;
   const next = lines.map((li) => {
@@ -123,6 +127,7 @@ export function repriceResumedLines<T extends ResumeLine>(
       product: li.tierPrices as Record<string, unknown>,
       tier: tierFor(li.productId),
       layer: layerOf?.(li.productId),
+      remembered: rememberedOf?.(li.productId),
     });
     if (withinStaffOverrideTolerance(lp.price, li.unitPrice)) return li;
     changed += 1;

@@ -544,7 +544,8 @@ export function CreateOrderModal({
 
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
-  const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+  const priceHistoryRead = useCustomerPriceHistory(selectedCustomer?.id);
+  const priceHistory = priceHistoryRead.data;
   // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
   // This screen creates a new order, so there is no order of its own to exclude.
   const { data: priceSummary } = usePriceSummary(
@@ -850,6 +851,7 @@ export function CreateOrderModal({
           product: li.tierPrices as unknown as Record<string, unknown>,
           tier,
           layer: priceLayer.layerOf(li.productId),
+          remembered: priceHistory?.[li.productId]?.lastPrice, // SA-1068 M15: what the server books for this plain line
         });
         const tierPrice = lp.price;
         const priceType = lp.priceType;
@@ -867,7 +869,7 @@ export function CreateOrderModal({
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig]);
+  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig, priceHistory]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -1771,15 +1773,23 @@ export function CreateOrderModal({
     cartJson: string;
   } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
-  const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
+  // SA-1068 M14: the remembered prices are part of the customer's price read, so the re-price waits for them too.
+  const resumePricesReady =
+    priceLayer.ready && customerPricesData !== undefined && !priceHistoryRead.isPending;
   React.useEffect(() => {
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
     repriceAfterResumeRef.current = false;
+    if (priceHistoryRead.isError) {
+      // Unknown memories: a re-price could put a remembered line on a tier the server won't book, under a false note.
+      setPricesNotRefreshed(true);
+      return;
+    }
     const tierFor = tierForProduct; // the one tier chain this modal prices with
     const layerOf = priceLayer.enabled
       ? (productId: string) => priceLayer.layerOf(productId)
       : undefined;
+    const rememberedOf = (productId: string) => priceHistory?.[productId]?.lastPrice;
     void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
       apiClient.get(`/products/${id}`).then((r) => r.data),
     ).then((fresh) => {
@@ -1787,7 +1797,12 @@ export function CreateOrderModal({
       if (fresh.byProduct.size === 0) return;
       setLineItems(
         (prev) =>
-          repriceResumedLines(withFreshTierPrices(prev, fresh.byProduct), tierFor, layerOf).lines,
+          repriceResumedLines(
+            withFreshTierPrices(prev, fresh.byProduct),
+            tierFor,
+            layerOf,
+            rememberedOf,
+          ).lines,
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

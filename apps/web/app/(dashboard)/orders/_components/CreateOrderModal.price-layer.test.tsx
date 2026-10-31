@@ -18,6 +18,8 @@ let mockScanV2 = true;
 let activeOrder: Record<string, unknown> | undefined;
 let layer: LayerState;
 let history: Record<string, { lastPrice: number }> | undefined;
+// One reference across renders, as a settled query gives: a new array would re-run every effect and hide a missing dependency.
+const mockNoCustomerPrices = { data: [] };
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
 const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 3 };
 const rerenderModal = (view: { rerender: (ui: React.ReactElement) => void }) =>
@@ -60,7 +62,7 @@ jest.mock("@/lib/tenant-features", () => ({
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [cust, custB] } }),
-  useCustomerPrices: () => ({ data: [] }),
+  useCustomerPrices: () => mockNoCustomerPrices,
   useCustomer: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/products", () => ({
@@ -203,6 +205,53 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     expect(createOrderMutate).toHaveBeenCalledTimes(1);
     expect(sentItem().overrideReason).toBeUndefined();
     expect(screen.queryByText("Checking this customer's prices…")).not.toBeInTheDocument();
+  });
+
+  describe("SA-1068 M15: a line scanned before the customer", () => {
+    const scanThenPickAcme = async () => {
+      history = undefined; // no customer yet, so no memory
+      const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      capturedOnScan!("111");
+      await screen.findByText("Widget");
+      return view;
+    };
+    const pickAcme = async () => {
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+    };
+
+    beforeEach(() => {
+      cust.pricingTier = 1; // Retail: list $42 is the tier price
+    });
+
+    it("T13: a customer with a memory puts the line on it, and no price is sent", async () => {
+      await scanThenPickAcme();
+      history = { "prod-1": { lastPrice: 45 } };
+      await pickAcme();
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+      );
+      saveDraft();
+      expect(sentItem().unitPrice).toBeUndefined();
+    });
+
+    it("T14: a customer with no memory leaves the tier price", async () => {
+      await scanThenPickAcme();
+      await pickAcme();
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+    });
+
+    it("M15: a history that arrives after the pick moves the line", async () => {
+      const view = await scanThenPickAcme();
+      await pickAcme();
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+      history = { "prod-1": { lastPrice: 45 } };
+      view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+    });
   });
 
   it.each([true, false])(

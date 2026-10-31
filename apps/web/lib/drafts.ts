@@ -18,6 +18,7 @@ export interface DraftLineItem {
   listPrice: number;
   specialPrice?: number;
   discountedPrice?: number;
+  overrideReason?: string;
   unitPrice: number;
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number;
