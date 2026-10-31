@@ -16,7 +16,9 @@
  * transaction for this customer (the specific race those source-order locks close for
  * STANDARD's single-order case), and a source order's INVOICE lines — the only thing capture
  * reads from it — are immutable once issued on every path capture can reach. Documented rather
- * than silently assumed.
+ * than silently assumed. The lock also covers approve() (SA-1060 A-3, which then takes the carrying
+ * and source orders itself); receive() and the parked resolve() are outside it and hold the source
+ * order instead.
  *
  * Opus review (BLOCK) fix round, same PR: HIGH-1/2/4 restructure the capture→issue relationship
  * (see `issueCreditInTx`'s doc comment and `sumInlineReturnCredit`'s), HIGH-3 moves approve's
@@ -47,6 +49,7 @@ import {
   creditPaymentTargets,
   lockCreditNotes,
   lockOrderRow,
+  lockOrderRows,
 } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
@@ -1104,7 +1107,7 @@ export class InlineReturnsService {
    * Lock contract (SA-706c): the caller holds the Return AND the carrying Order (FOR UPDATE)
    * before this runs — the intent insert below takes KEY SHARE on the Order and settle upgrades
    * it. Every entry: captureInTx (its first statement locks the Order), issueCredit() and
-   * approve() (`lockOrderRow` right after the Return lock).
+   * approve() (`lockCustomerInTx`, the Return, then `lockOrderRows` over the carrying and source orders; SA-1060 A-3).
    */
   private async issueCreditInTx(
     tx: any,
@@ -1315,6 +1318,9 @@ export class InlineReturnsService {
 
     let minted: any;
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
+      // SA-1060 A-3 (B841): the customer return lock is the tx's FIRST statement, as capture and the order create/edit paths take
+      // it, so an approval and a capture for one customer serialize. House order: advisory -> Return -> Orders (SA-214).
+      await this.lockCustomerInTx(tx, pre.customerId);
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
       const fresh = await tx.return.findFirst({
         where: { id, kind: "INLINE" },
@@ -1328,8 +1334,13 @@ export class InlineReturnsService {
       ) {
         return { skipped: true as const };
       }
-      // SA-706c: as issueCredit() — the Order right after the Return, before restock/mint/insert.
-      await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-1060 A-3: the carrying Order AND every source order, one statement in id order, right after the Return and before
+      // restock / ledger reversal / mint, as refund() does. Two approvals (or an approval and receive()) can no longer both
+      // reverse one sale from the same stale read.
+      await lockOrderRows(tx, tenantId, [
+        fresh.orderId,
+        ...fresh.items.map((i: any) => i.sourceOrderId).filter(Boolean),
+      ]);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
