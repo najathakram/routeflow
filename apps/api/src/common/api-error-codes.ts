@@ -770,6 +770,8 @@ export const API_ERROR_CODES = {
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
+  /** 422 from the products list / ids / CSV when the Low or In-stock filter would match more than LOW_STOCK_ID_CAP products: narrow the filter (SA-1002). */
+  LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
   ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
 } as const satisfies Record<string, ApiErrorCode>;

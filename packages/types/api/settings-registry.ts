@@ -122,6 +122,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   ].map((k) => cfg(`route.${k}`, "#route-defaults")),
   cfg("invoice.defaultTerms", "/settings?tab=invoicing"),
   cfg("invoice.hideOriginalPrice", "/settings?tab=invoicing"),
+  cfg("invoice.hideBarcodes", "/settings?tab=invoicing"),
   cfg("invoice.depositDefaultPercent", "/settings?tab=invoicing"),
   {
     key: "invoice.depositCollectAtOrder",
