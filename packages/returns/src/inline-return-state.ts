@@ -16,6 +16,25 @@ import type {
   UserRole,
 } from "@routeflow/types";
 
+// ─── R-1 (SA-1069 M7): the default reason, and the reasons that decide stock ────────────────
+
+/** The reason a return is captured under when the operator picks none: the server's own fallback
+ *  (`inline-returns.service.ts`, `dto.reason ?? "EXCESS_ORDER"`). Pinned to it by `returns-restock-parity.spec.ts`. */
+export const DEFAULT_RETURN_REASON = "EXCESS_ORDER" as const satisfies ReturnReason;
+
+/** Reasons where the goods are unsellable, so they are NOT added back to stock. A mirror of the server's
+ *  `NO_RESTOCK_REASONS` (`returns.service.ts`), pinned set-equal by `returns-restock-parity.spec.ts`: the closed
+ *  row's "Back to stock" / "Not added to stock" reads this, and the server decides stock from its own set. */
+export const NO_RESTOCK_REASONS = [
+  "DAMAGED",
+  "QUALITY_ISSUE",
+] as const satisfies readonly ReturnReason[];
+
+/** Whether a return under this reason goes back into stock (the capture sends no `restock`, so the server default holds). */
+export function restocksForReason(reason: ReturnReason | ""): boolean {
+  return !(NO_RESTOCK_REASONS as readonly string[]).includes(reason);
+}
+
 // ─── Step 1: line drafts ─────────────────────────────────────────────────────
 
 /** One product row in "What came back". `boxes`/`pieces` are kept as STRINGS (raw input
@@ -392,6 +411,70 @@ export function notBoughtBeforeNames(
     }
   }
   return names;
+}
+
+/**
+ * R-1 (SA-1069 M8): "Return only what was bought" for ONE product. Sets that product's FIRST row to the
+ * pieces the quote matched to an invoice line and zeroes any sibling row (the same first-row rule as
+ * {@link applyCoveredPiecesToLines}, so two rows of one product can never double the credit). Every other
+ * product's rows are untouched, and nothing is removed: the operator can type the number back. With nothing
+ * covered for the product the lines come back as they were (the host disables the choice and says why).
+ */
+export function applyCoveredToProduct<L extends InlineReturnLineDraft>(
+  lines: L[],
+  quote: InlineReturnQuoteResponse,
+  productId: string,
+): L[] {
+  const covered = coveredPiecesByProduct(quote).get(productId) ?? 0;
+  if (covered <= 0) return lines;
+  let seen = false;
+  return lines.map((l) => {
+    if (l.productId !== productId) return l;
+    const isFirst = !seen;
+    seen = true;
+    return { ...l, boxes: "0", pieces: String(isFirst ? covered : 0) };
+  });
+}
+
+/**
+ * R-1 (SA-1069 M6/M8): everything the quote says about ONE product, so a line's closed row and its options
+ * read it from one place. Display only: each figure is one the server already priced and rounded.
+ */
+export interface LineQuoteFacts {
+  /** Chunks matched to an earlier order's invoice line, newest first as the quote returned them. */
+  covered: InlineReturnQuoteChunk[];
+  /** Chunks past what was bought, split by why: never bought, or already returned or credited. */
+  notOnInvoice: InlineReturnQuoteChunk[];
+  alreadyReturned: InlineReturnQuoteChunk[];
+  /** Pieces in each of the two excess groups. */
+  notOnInvoicePieces: number;
+  alreadyReturnedPieces: number;
+  /** The product's credit as the quote priced it (the server's per-product figure when it sent one). */
+  total: number;
+  /** True when the covered chunks span more than one earlier order. */
+  spansOrders: boolean;
+}
+
+export function lineQuoteFacts(
+  quote: InlineReturnQuoteResponse,
+  productId: string,
+): LineQuoteFacts {
+  const chunks = quote.chunks.filter((c) => c.productId === productId);
+  const covered = chunks.filter((c) => c.sourceOrderId != null);
+  const excess = chunks.filter((c) => c.sourceOrderId == null);
+  const notOnInvoice = excess.filter((c) => !c.alreadyReturned);
+  const alreadyReturned = excess.filter((c) => c.alreadyReturned);
+  const sumPieces = (cs: InlineReturnQuoteChunk[]) => cs.reduce((s, c) => s + c.pieces, 0);
+  const server = quote.productBreakdown?.[productId];
+  return {
+    covered,
+    notOnInvoice,
+    alreadyReturned,
+    notOnInvoicePieces: sumPieces(notOnInvoice),
+    alreadyReturnedPieces: sumPieces(alreadyReturned),
+    total: server ? server.total : sumChunkTotals(chunks).total,
+    spansOrders: new Set(covered.map((c) => c.sourceOrderId)).size > 1,
+  };
 }
 
 export function dropExcessAndRequote(

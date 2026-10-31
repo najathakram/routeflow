@@ -917,3 +917,164 @@ describe("extractRefusalMessage: READ_ONLY", () => {
     );
   });
 });
+
+// ─── R-1 (SA-1069 section A): one-step return capture ─────────────────────────────────────────
+// Reached through `pkg.` so a missing export is a red test on the wrong value, not a failed import.
+describe("R-1 M7: the default reason and the reasons that decide stock", () => {
+  it("DEFAULT_RETURN_REASON is the server's own fallback, EXCESS_ORDER", () => {
+    expect(pkg.DEFAULT_RETURN_REASON).toBe("EXCESS_ORDER");
+  });
+
+  it("DAMAGED and QUALITY_ISSUE are not added back to stock; every other reason is", () => {
+    expect(pkg.restocksForReason("DAMAGED")).toBe(false);
+    expect(pkg.restocksForReason("QUALITY_ISSUE")).toBe(false);
+    for (const reason of ["WRONG_ITEM", "CUSTOMER_REFUSED", "EXCESS_ORDER"]) {
+      expect(pkg.restocksForReason(reason)).toBe(true);
+    }
+  });
+
+  it("an empty reason (none chosen) reads as restocking, the same as the server's default path", () => {
+    expect(pkg.restocksForReason("")).toBe(true);
+  });
+});
+
+describe("R-1 M8: applyCoveredToProduct, 'return only what was bought' for ONE line", () => {
+  const covered = (productId: string, pieces: number) =>
+    chunk({ productId, sourceOrderId: "order-1", pieces });
+  const excess = (productId: string, pieces: number) =>
+    chunk({ productId, sourceOrderId: null, sourceInvoiceItemId: null, pieces });
+
+  it("R-4: two lines past what was bought, trim one: only that line changes", () => {
+    const lines = [
+      line({ productId: "prod-1", pieces: "10", note: "A" }),
+      line({ productId: "prod-2", productName: "Gadget", pieces: "8", note: "B" }),
+    ];
+    const quote = quoteResponse([
+      covered("prod-1", 4),
+      excess("prod-1", 6),
+      covered("prod-2", 3),
+      excess("prod-2", 5),
+    ]);
+    const result = pkg.applyCoveredToProduct(lines, quote, "prod-1");
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ productId: "prod-1", boxes: "0", pieces: "4", note: "A" });
+    expect(result[1]).toBe(lines[1]); // the other line is the same object, untouched
+  });
+
+  it("two rows of one product: the first row takes the covered pieces and the sibling is zeroed, never doubled", () => {
+    const lines = [
+      line({ productId: "prod-1", pieces: "3", note: "A" }),
+      line({ productId: "prod-1", pieces: "7", note: "B" }),
+    ];
+    const result = pkg.applyCoveredToProduct(
+      lines,
+      quoteResponse([covered("prod-1", 4)]),
+      "prod-1",
+    );
+    expect(result.map((l: InlineReturnLineDraft) => l.pieces)).toEqual(["4", "0"]);
+  });
+
+  it("nothing covered: the lines come back as they were, so the host can disable the choice", () => {
+    const lines = [line({ productId: "prod-1", pieces: "6" })];
+    const result = pkg.applyCoveredToProduct(lines, quoteResponse([excess("prod-1", 6)]), "prod-1");
+    expect(result).toBe(lines);
+  });
+
+  it("keeps a line the caller extended with its own fields (web's lineKey)", () => {
+    const lines = [{ ...line({ productId: "prod-1", pieces: "10" }), lineKey: "k1" }];
+    const result = pkg.applyCoveredToProduct(
+      lines,
+      quoteResponse([covered("prod-1", 4)]),
+      "prod-1",
+    );
+    expect(result[0]).toMatchObject({ lineKey: "k1", pieces: "4" });
+  });
+});
+
+describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () => {
+  it("splits covered, never-bought and already-returned pieces and reports the product's credit", () => {
+    const quote = quoteResponse([
+      chunk({
+        productId: "prod-1",
+        sourceOrderId: "order-1",
+        pieces: 4,
+        subtotal: 8,
+        taxAmount: 1,
+      }),
+      chunk({
+        productId: "prod-1",
+        sourceOrderId: null,
+        sourceInvoiceItemId: null,
+        pieces: 2,
+        subtotal: 5,
+        taxAmount: 0,
+      }),
+      chunk({
+        productId: "prod-1",
+        sourceOrderId: null,
+        sourceInvoiceItemId: null,
+        pieces: 1,
+        subtotal: 2,
+        taxAmount: 0,
+        alreadyReturned: true,
+      }),
+      chunk({ productId: "prod-2", pieces: 9, subtotal: 99, taxAmount: 9 }),
+    ]);
+    const facts = pkg.lineQuoteFacts(quote, "prod-1");
+    expect(facts.covered).toHaveLength(1);
+    expect(facts.notOnInvoicePieces).toBe(2);
+    expect(facts.alreadyReturnedPieces).toBe(1);
+    expect(facts.total).toBe(16); // 8 + 1 + 5 + 2: prod-2's chunk is not in it
+    expect(facts.spansOrders).toBe(false);
+  });
+
+  it("prefers the server's own per-product total when the quote carries one", () => {
+    const quote = {
+      ...quoteResponse([chunk({ productId: "prod-1", subtotal: 20, taxAmount: 2 })]),
+      productBreakdown: {
+        "prod-1": { chunks: [], subtotal: 20, taxAmount: 2, categoryTax: 0, total: 22.5 },
+      },
+    };
+    expect(pkg.lineQuoteFacts(quote, "prod-1").total).toBe(22.5);
+  });
+
+  it("says when the covered chunks come from more than one earlier order", () => {
+    const quote = quoteResponse([
+      chunk({ productId: "prod-1", sourceOrderId: "order-1", pieces: 2 }),
+      chunk({ productId: "prod-1", sourceOrderId: "order-2", pieces: 2 }),
+    ]);
+    expect(pkg.lineQuoteFacts(quote, "prod-1").spansOrders).toBe(true);
+  });
+
+  it("a product the quote has no chunk for has nothing", () => {
+    const facts = pkg.lineQuoteFacts(quoteResponse([chunk()]), "prod-9");
+    expect(facts.covered).toEqual([]);
+    expect(facts.total).toBe(0);
+  });
+});
+
+describe("R-7: the capture body is byte-equal to what master sent for the same lines", () => {
+  it("quantities, per-line reason and note, the staff override and the already-returned reason, in wire order", () => {
+    const req = pkg.buildCaptureRequest({
+      customerId: "cust-1",
+      orderId: "order-1",
+      returnKey: "key-1",
+      reason: "EXCESS_ORDER",
+      sourceOrderId: "sale-1",
+      lines: [
+        line({ productId: "prod-1", boxes: "2", pieces: "3", reason: "DAMAGED", note: " dented " }),
+        line({
+          productId: "prod-2",
+          pieces: "4",
+          creditUnitPrice: "1.50",
+          overrideReason: "Scuffed",
+          alreadyReturnedReason: "Second batch",
+        }),
+        line({ productId: "prod-3", boxes: "0", pieces: "0" }), // no quantity: never sent
+      ],
+    });
+    expect(JSON.stringify(req)).toBe(
+      '{"customerId":"cust-1","orderId":"order-1","items":[{"productId":"prod-1","qty":1,"boxes":2,"pieces":3,"reason":"DAMAGED","condition":"dented"},{"productId":"prod-2","qty":1,"boxes":0,"pieces":4,"alreadyReturnedReason":"Second batch","creditUnitPrice":1.5,"overrideReason":"Scuffed"}],"returnKey":"key-1","reason":"EXCESS_ORDER","sourceOrderId":"sale-1"}',
+    );
+  });
+});

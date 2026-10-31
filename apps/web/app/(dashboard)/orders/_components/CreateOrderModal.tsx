@@ -1949,7 +1949,7 @@ export function CreateOrderModal({
       // Close a merge-vs-separate prompt that led here, so the operator lands back on the
       // Returns section they must fix (never a stale prompt over the blocked form).
       setMergePrompt(null);
-      toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
+      toast({ title: returnSave.blockedMessage(inlineReturn), variant: "error" });
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.

@@ -29,6 +29,7 @@ import {
   useInlineReturnQuote,
 } from "@/lib/api/inline-returns";
 import { useOptionalAuth } from "@/lib/auth-context";
+import { countNoun } from "@/lib/plural";
 import type {
   InlineReturnQuoteResponse,
   InlineReturnRecord,
@@ -41,7 +42,7 @@ import {
   buildCaptureRequest,
   canOverrideReturnCredit,
   missingAlreadyReturnedReasons,
-  DEFAULT_EXCESS_OPTION,
+  DEFAULT_RETURN_REASON,
   extractRefusalMessage,
   keyReusedReturnOf,
   buildQuoteRequest,
@@ -67,8 +68,6 @@ import {
 } from "./refund-copy";
 import { confirmRefusal, walkInStoreCreditRefused } from "./quote-guards";
 import { InlineReturnSection, type InlineReturnSectionState } from "./InlineReturnSection";
-
-const REASON_HINT_ID = "return-reason-hint";
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -174,11 +173,11 @@ export function RecordInlineReturnDialog({
   const [result, setResult] = React.useState<InlineReturnRecord | null>(null);
   const [openSeq, setOpenSeq] = React.useState(0);
   const [sectionState, setSectionState] = React.useState<InlineReturnSectionState>({
-    step: "lines",
     lines: [],
     quote: null,
-    excessOption: DEFAULT_EXCESS_OPTION,
-    captureReason: "",
+    quoteStatus: "none",
+    captureReason: DEFAULT_RETURN_REASON,
+    problem: null,
   });
   // One UUID per capture ATTEMPT — held in a ref (not state) so a re-render never regenerates
   // it, and reused unchanged across a retry of the SAME attempt (SA-071a #2, corrected
@@ -473,7 +472,7 @@ export function RecordInlineReturnDialog({
        *  for real; InlineReturnSection below is NOT: it keeps running (hidden) across a
        *  refusal/success screen so "Back" resumes with the SAME lines/quote already typed
        *  or fetched (see the file-header note) — passing `hidden` instead of unmounting. */}
-      {phase === "capture" && !orderId && sectionState.step === "lines" && (
+      {phase === "capture" && !orderId && (
         <div className="mb-4">
           <Select
             className="max-lg:h-11"
@@ -490,17 +489,17 @@ export function RecordInlineReturnDialog({
         </div>
       )}
       <InlineReturnSection
-        reasonHintId={REASON_HINT_ID}
         hidden={phase !== "capture"}
         customerId={customerId}
         entryOrderId={orderId}
         sourceOrderId={sourceOrderId}
         resetToken={openSeq}
         getQuoteEnabled={!!carryingOrderId}
+        waitingFor="Choose which order this credit applies to."
         onStateChange={setSectionState}
         quoteOverride={serverQuote ?? requoteOverride}
         totalOnly={!!serverQuote}
-        hideBack={!!saved}
+        locked={!!saved}
         refusal={walkInNoRefund ? REFUND_COPY.walkInNoRefund : undefined}
         // The money sentence: under the Total only when there is no choice block (a walk-in's one sentence, or no refund
         // offered); with the Store credit / Refund choice it sits with the radio and follows it (mm-ux 93.8%).
@@ -542,7 +541,7 @@ export function RecordInlineReturnDialog({
             />
           ) : null
         }
-        renderLinesActions={() => (
+        renderActions={() => (
           <Button className="max-lg:min-h-11" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -593,18 +592,12 @@ export function RecordInlineReturnDialog({
             )
           ) : (
             <>
-              {!sectionState.captureReason ? (
-                <p id={REASON_HINT_ID} className="self-center text-sm text-navy/70">
-                  Choose a reason to continue
-                </p>
-              ) : null}
               <Button
                 className="max-lg:min-h-11"
                 disabled={
                   refunding ||
                   requoting ||
                   requoteMutation.isPending ||
-                  !sectionState.captureReason ||
                   // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
                   (!!sectionState.quote &&
                     canOverrideReturnCredit(role) &&
@@ -623,10 +616,6 @@ export function RecordInlineReturnDialog({
             </>
           )
         }
-        onQuoteRefused={(message) => {
-          setRefusalMessage(message);
-          setPhase("refused");
-        }}
       />
 
       {phase === "success" && result && (
@@ -699,12 +688,15 @@ export function RecordInlineReturnDialog({
             >
               <p className="text-sm font-medium text-navy">Ledger reversal parked</p>
               <p className="text-xs text-navy/70">
-                The store credit and refund are recorded, but {result.parkedReversals.pieces}{" "}
-                piece(s) across {result.parkedReversals.count} line(s) were not taken off the
-                regulated sales ledger. The original sale&apos;s pack size is unknown, so the system
-                could not work out the reversal safely. The period cannot be filed until this is
-                resolved. Next step: open the regulated report, supply the pack size for the parked
-                line(s), and resolve them.
+                The store credit and refund are recorded, but{" "}
+                {countNoun(result.parkedReversals.pieces, "piece")} across{" "}
+                {countNoun(result.parkedReversals.count, "line")}{" "}
+                {result.parkedReversals.pieces === 1 ? "was" : "were"} not taken off the regulated
+                sales ledger. The original sale&apos;s pack size is unknown, so the system could not
+                work out the reversal safely. The period cannot be filed until this is resolved.
+                Next step: open the regulated report, supply the pack size for the parked{" "}
+                {result.parkedReversals.count === 1 ? "line" : "lines"}, and resolve{" "}
+                {result.parkedReversals.count === 1 ? "it" : "them"}.
               </p>
             </div>
           )}

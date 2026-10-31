@@ -26,6 +26,8 @@ export interface OrderInlineReturnsDraft {
   captureReason: ReturnReason | "";
   /** SA-484i: a return rides the save only once it has been QUOTED. */
   quoted: boolean;
+  /** M14: a half-typed credit price, as the sentence to show; the save is blocked with it. */
+  problem: string | null;
 }
 
 export interface OrderInlineReturnsSectionHandle {
@@ -51,6 +53,8 @@ export interface OrderInlineReturnsSectionProps {
   /** #2647: the return already recorded under this capture key (a key-reused 409): shown as a
    *  link, so the operator checks what was credited before returning anything else. */
   refusalReturn?: { returnId: string; returnNumber: string | null } | null;
+  /** The words of the reason list: the till says what happened at the register. Defaults to the entry order's. */
+  reasonContext?: "counter" | "delivery";
   /** W-863: the quoted return's total as the draft changes (0 with no quote), so a host that tenders can net it. */
   onQuoteTotalChange?: (total: number) => void;
 }
@@ -59,7 +63,7 @@ export const OrderInlineReturnsSection = React.forwardRef<
   OrderInlineReturnsSectionHandle,
   OrderInlineReturnsSectionProps
 >(function OrderInlineReturnsSection(
-  { customerId, entryOrderId, refusalMessage, refusalReturn, onQuoteTotalChange },
+  { customerId, entryOrderId, refusalMessage, refusalReturn, reasonContext, onQuoteTotalChange },
   ref,
 ) {
   const hasInlineReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
@@ -87,7 +91,12 @@ export const OrderInlineReturnsSection = React.forwardRef<
       getDraft: () => {
         const state = stateRef.current;
         if (!expandedRef.current || !state || !hasAnyQtyEntered(state.lines)) return null;
-        return { lines: state.lines, captureReason: state.captureReason, quoted: !!state.quote };
+        return {
+          lines: state.lines,
+          captureReason: state.captureReason,
+          quoted: state.quoteStatus === "current",
+          problem: state.problem,
+        };
       },
       reset: discard,
       generation: () => genRef.current,
@@ -141,6 +150,7 @@ export const OrderInlineReturnsSection = React.forwardRef<
           resetToken={resetToken}
           // the return's credit note is held for THIS order first, so it is not "for the next order"
           creditContext="thisOrder"
+          reasonContext={reasonContext}
           onStateChange={(state) => {
             stateRef.current = state;
             onQuoteTotalChange?.(state.quote?.total ?? 0);
