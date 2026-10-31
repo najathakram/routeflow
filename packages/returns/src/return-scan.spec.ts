@@ -79,3 +79,35 @@ describe("#2694 applyReturnScan", () => {
     expect(JSON.stringify(input)).toBe(snapshot);
   });
 });
+
+describe("sweep of first-row reads (Lead, #4036): a repeat scan adds to the ruling row", () => {
+  it("count on row 2, row 1 blank: the piece goes to row 2 so row 1 does not become the ruling row", () => {
+    const blank = {
+      ...makeLine({
+        productId: "p-widget",
+        productName: "Widget",
+        unit: "ea",
+        unitsPerBox: null,
+        boxes: "",
+        pieces: "",
+        reason: "",
+        note: "",
+      }),
+    };
+    const counted = {
+      ...makeLine({
+        productId: "p-widget",
+        productName: "Widget",
+        unit: "ea",
+        unitsPerBox: null,
+        boxes: "",
+        pieces: "3",
+        reason: "DAMAGED",
+        note: "",
+      }),
+    };
+    const { lines, created } = applyReturnScan<KeyedLine>([blank, counted], widget, makeLine);
+    expect(created).toBe(false);
+    expect(lines.map((l) => l.pieces)).toEqual(["", "4"]);
+  });
+});

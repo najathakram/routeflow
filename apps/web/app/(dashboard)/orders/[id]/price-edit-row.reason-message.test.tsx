@@ -11,6 +11,7 @@ function Harness({ price = 9, isSpecial = true }: { price?: number; isSpecial?: 
   const [reason, setReason] = React.useState("");
   return (
     <PriceEditRow
+      unitWord="case"
       basePrice={12}
       unitPrice={price}
       originalUnitPrice={10}

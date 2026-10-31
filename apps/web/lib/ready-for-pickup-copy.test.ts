@@ -1,4 +1,10 @@
-import { readyForPickupCopy } from "./ready-for-pickup-copy";
+import {
+  readyForPickupCopy,
+  readyLineCopy,
+  readyStageOf,
+  readyWhen,
+  toldOnceCopy,
+} from "./ready-for-pickup-copy";
 
 /** W-1043 (SA-1062 MUST 19) R16: the five sentences staff read, word for word. Only SENT is a success. */
 describe("readyForPickupCopy", () => {
@@ -39,5 +45,77 @@ describe("readyForPickupCopy", () => {
       text: "Ready for pickup. Email sent.",
       success: true,
     });
+  });
+});
+
+/** W-1060 (SA-1070 rule 6): the one line's words and its one action, per state. */
+describe("readyLineCopy / toldOnceCopy", () => {
+  const AT = "2026-10-31T14:14:00.000Z";
+  const rec = (preview: object, last: object | null) => ({ preview, last }) as never;
+
+  it("a SENT send names the address and the time; Send again only once Ready", () => {
+    const r = rec(
+      { notice: "SENT", email: "b@acme.test" },
+      { notice: "SENT", email: "b@acme.test", at: AT },
+    );
+    expect(readyLineCopy(r, "READY", "UTC")).toEqual({
+      text: "Ready email sent to b@acme.test, Oct 31, 2:14 PM.",
+      action: "SEND_AGAIN",
+    });
+    expect(readyLineCopy(r, "CAN_PRESS", "UTC")?.action).toBeNull();
+  });
+  it("a FAILED send offers Send email once Ready", () => {
+    const r = rec({ notice: "SENT", email: "b@acme.test" }, { notice: "FAILED", at: AT });
+    expect(readyLineCopy(r, "READY", "UTC")).toEqual({
+      text: "The ready email didn't send, Oct 31, 2:14 PM.",
+      action: "SEND_EMAIL",
+    });
+  });
+  it.each([
+    [{ notice: "SENT", email: "b@acme.test" }, "Marking ready emails b@acme.test."],
+    [{ notice: "NO_EMAIL" }, "No email on file, so marking ready tells nobody."],
+    [{ notice: "OPTED_OUT" }, "This customer turned off order emails."],
+    [{ notice: "OFF" }, "Your order emails are off."],
+  ])("no record: the preview %j reads %s", (preview, text) => {
+    expect(readyLineCopy(rec(preview, null), "CAN_PRESS", "UTC")).toEqual({ text, action: null });
+  });
+  it.each(["DELIVERED", "CANCELLED", "DRAFT"])(
+    "an order that is %s promises nothing about a press: no record, no line",
+    (status) => {
+      const r = rec({ notice: "SENT", email: "b@acme.test" }, null);
+      expect(readyLineCopy(r, readyStageOf(status), "UTC")).toBeNull();
+    },
+  );
+  it("a finished order keeps the line of what it was sent, with no button", () => {
+    const r = rec(
+      { notice: "SENT", email: "b@acme.test" },
+      { notice: "SENT", email: "b@acme.test", at: AT },
+    );
+    expect(readyLineCopy(r, readyStageOf("DELIVERED"), "UTC")).toEqual({
+      text: "Ready email sent to b@acme.test, Oct 31, 2:14 PM.",
+      action: null,
+    });
+  });
+  it.each([
+    ["PENDING", "CAN_PRESS"],
+    ["CONFIRMED", "CAN_PRESS"],
+    ["OUT_FOR_DELIVERY", "READY"],
+    ["DELIVERED", "OTHER"],
+    ["CANCELLED", "OTHER"],
+    ["DRAFT", "OTHER"],
+    [undefined, "OTHER"],
+  ])("readyStageOf(%s) is %s", (status, stage) => {
+    expect(readyStageOf(status)).toBe(stage);
+  });
+  it("a zone Intl does not know falls back to UTC instead of throwing", () => {
+    expect(readyWhen(AT, "Not/AZone")).toEqual({ day: "Oct 31", time: "2:14 PM" });
+  });
+  it("toldOnce names the address, or the customer when there is none", () => {
+    expect(toldOnceCopy({ toldOnce: true, email: "b@acme.test", at: AT }, "Acme")).toBe(
+      "Ready for pickup. b@acme.test was already emailed, so no new email went.",
+    );
+    expect(toldOnceCopy({ toldOnce: true, at: AT }, "Acme")).toBe(
+      "Ready for pickup. Acme was already emailed, so no new email went.",
+    );
   });
 });

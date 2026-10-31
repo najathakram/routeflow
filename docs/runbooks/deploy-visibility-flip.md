@@ -193,7 +193,8 @@ touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces t
    `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 2. **Push, let CI go green, merge the PR to `master`** (squash). The `master` push triggers
    Railway's own auto-deploy — nothing in this routine drives that.
-3. **Wait until BOTH deployments (`@routeflow/api` and `@routeflow/web`) reach `SUCCESS`** — never
+3. **Wait until every service status on the merge commit (root, api, web, mobile) is `SUCCESS`**
+   (`gh api repos/najathakram/routeflow/commits/<sha>/status`: none failure or pending; L-360) — never
    flip on `BUILDING` (see Failure modes: that is not a safe flip point, only timing luck made it
    look like one). `SUCCESS` typically lands ≈2.5 minutes after the merge:
 
@@ -228,6 +229,26 @@ touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces t
 5. **Read the visibility back in a retry loop and confirm `PRIVATE`** before moving on — a network
    error from `gh repo edit` can leave the repo public while printing nothing useful.
 
+### Window rules from landed trains (2026-10-31)
+
+- **Never flip private while a train's hosted CI run is in progress, unless the watchdog forces it.**
+  A GitHub-hosted job was cancelled about 3 minutes after the flip, mid-run: every real step had
+  passed and only the post-run step was cancelled. **A cancelled run is not green** — read the run's
+  conclusion, not its step list (L-337, L-357). A second short window may re-run the failed job.
+- **A docs-only PR has no checks to wait for.** When the whole diff sits inside `ci.yml`
+  `paths-ignore` (`**.md`, `.claude/**`), no CI or Migration replay check ever appears, so the gate is
+  not a green check: it is the posted PASS at the exact head sha, base `master`, `MERGEABLE` and
+  `CLEAN`. Then squash with `gh pr merge --squash --match-head-commit <sha>` (no trailer).
+- **`Migration replay` is path-filtered, so it may never exist for a train.** The workflow
+  (`db-migrations.yml`) runs only when a PR touches its `paths:` (`apps/api/prisma/**`, the DB-spec
+  helpers and the other files it lists). A train that changes none of them has no such run, and a
+  window script must not wait for one: list the checks that exist at the head sha (L-337) and wait
+  for those.
+- **An unattended wait-then-go wrapper for public, push or merge is refused.** The auto-mode
+  classifier blocks a script that waits on a condition and then makes the repo public, pushes or merges
+  by itself. Run the window script with the Lead's explicit go already in hand, so each step is an
+  authorized action and not a deferred one.
+
 > **Owner authorization (2026-07-31):** the assistant IS authorized to perform the visibility
 > flips as part of this routine — a brief public window for CI is an accepted trade-off.
 
@@ -254,7 +275,7 @@ touches the real repo or `local-assets/`. `VISIBILITY_DEADMAN_GH_BIN` replaces t
   skipped run) leaves it SKIPPED. Dispatch it: `gh workflow run "Migration replay" --ref <branch>`
   — never close/reopen the PR, which restarts CI under cancel-in-progress.
 - **`railway deployment list` prints stale rows first.** After a merge, wait for NEW deployment
-  ids for BOTH services to reach a terminal state (SUCCESS) before flipping private; an old
+  ids for every service (api, web, mobile, root status) to reach a terminal state (SUCCESS) before flipping private; an old
   SKIPPED/SUCCESS row at the top is not your deploy (Window 14, 2026-09-10).
 
 - **The container boots, then crashes — prod 502 with every gate green** (#702 → #703, Window 16,

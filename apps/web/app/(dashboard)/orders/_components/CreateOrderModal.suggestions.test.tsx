@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { CreateOrderModal } from "./CreateOrderModal";
 
@@ -63,6 +63,7 @@ const ol = (productId: string, o: Record<string, unknown> = {}) => ({
 });
 
 let mockSuggestions: unknown;
+let mockSearchProducts: unknown[] = [];
 let mockTier = 2; // tier 1 = no special price, so the last-given pre-fill applies (as for a manual add)
 let mockLastGiven: Record<string, { lastPrice: number }> | undefined;
 const mockApiGet = jest.fn();
@@ -75,7 +76,7 @@ jest.mock("@/lib/api/customers", () => ({
 }));
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
-  useProducts: () => ({ data: { data: [] } }),
+  useProducts: () => ({ data: { data: mockSearchProducts } }),
   useCreateProduct: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/lib/api/orders", () => ({
@@ -168,6 +169,7 @@ const suggestions = (o: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   mockSuggestions = suggestions();
+  mockSearchProducts = [];
   mockLastGiven = undefined;
   mockTier = 2;
   mockApiGet.mockImplementation((url: string) =>
@@ -529,5 +531,70 @@ describe("when there is nothing to suggest", () => {
     fireEvent.click(await screen.findByText("Acme Foods"));
     await waitFor(() => expect(mockApiGet).toHaveBeenCalledWith("/customers/c1/order-suggestions"));
     expect(screen.queryByTestId("order-suggestions")).not.toBeInTheDocument();
+  });
+});
+
+/** SA-1071 V3: a chip tap and a search pick leave the same one-step Undo a scan does (the builder's own `undoScan` rule). */
+describe("Undo on every add (SA-1071 V3)", () => {
+  const tapCola = () =>
+    fireEvent.click(
+      within(screen.getByTestId("order-suggestions")).getByRole("button", { name: /Sample Cola/ }),
+    );
+  const undo = () => screen.queryByRole("button", { name: "Undo" });
+  const removes = () => screen.queryAllByTitle("Remove");
+
+  it("V3: a chip tap says what was added and Undo takes the new line back", async () => {
+    await openWithCustomer();
+    tapCola();
+    await waitFor(() => expect(removes()).toHaveLength(1));
+    const note = await screen.findByTestId("last-pick-undo");
+    expect(note).toHaveTextContent("Item added.Undo");
+    expect(note.getAttribute("role")).toBe("status");
+    fireEvent.click(undo()!);
+    await waitFor(() => expect(removes()).toHaveLength(0));
+    expect(screen.queryByTestId("last-pick-undo")).toBeNull();
+  });
+
+  it("V3: a second tap still adds one more (r5 N07), and one Undo takes that one back, not the line", async () => {
+    await openWithCustomer();
+    tapCola();
+    await waitFor(() => expect(removes()).toHaveLength(1));
+    tapCola();
+    await waitFor(() => expect(screen.getByTestId("last-pick-undo")).toBeInTheDocument());
+    fireEvent.click(undo()!);
+    await act(async () => {});
+    expect(removes()).toHaveLength(1);
+    expect(screen.queryByTestId("last-pick-undo")).toBeNull();
+  });
+
+  it("V3: a search pick leaves the same Undo", async () => {
+    mockSearchProducts = [soda];
+    await openWithCustomer();
+    fireEvent.change(screen.getByPlaceholderText("Search by name, SKU or scan barcode…"), {
+      target: { value: "soda" },
+    });
+    fireEvent.click(await screen.findByText("Sample Soda"));
+    await waitFor(() => expect(removes()).toHaveLength(1));
+    expect(await screen.findByTestId("last-pick-undo")).toHaveTextContent("Item added.Undo");
+    fireEvent.click(undo()!);
+    await waitFor(() => expect(removes()).toHaveLength(0));
+  });
+
+  it("V3: removing the line by hand takes the Undo away", async () => {
+    await openWithCustomer();
+    tapCola();
+    await waitFor(() => expect(removes()).toHaveLength(1));
+    expect(await screen.findByTestId("last-pick-undo")).toBeInTheDocument(); // there to begin with
+    fireEvent.click(removes()[0]);
+    await waitFor(() => expect(screen.queryByTestId("last-pick-undo")).toBeNull());
+  });
+
+  it("V3: Order again adds many lines and leaves no single Undo", async () => {
+    await openWithCustomer();
+    fireEvent.click(screen.getByRole("button", { name: "Order again" }));
+    const menu = await screen.findByRole("list", { name: "Choose a recent order" });
+    fireEvent.click(within(menu).getByRole("button", { name: /ORD-o2/ }));
+    await waitFor(() => expect(removes().length).toBeGreaterThan(0));
+    expect(screen.queryByTestId("last-pick-undo")).toBeNull();
   });
 });

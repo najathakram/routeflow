@@ -137,11 +137,9 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
       const productName = page.getByText(product.name, { exact: true });
       await expect(productName).toBeVisible({ timeout: 15_000 });
       const lineRow = productName.locator(
-        'xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]',
+        'xpath=ancestor::div[.//*[(starts-with(normalize-space(text()),"Price per ") or normalize-space(text())="Price each")]][1]',
       );
-      const unitPriceInput = lineRow
-        .getByText("Unit price", { exact: true })
-        .locator("xpath=..//input");
+      const unitPriceInput = lineRow.getByText(/^Price (per .+|each)$/).locator("xpath=..//input");
       // Sanity: the line really did resolve to the tier price, not list.
       await expect(unitPriceInput).toHaveValue(tier3Price.toFixed(2), { timeout: 10_000 });
 
@@ -274,7 +272,9 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
     await page.goto(`/orders/${order.id}`);
     const lineRow = page
       .getByText(plainProduct.name, { exact: true })
-      .locator('xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]');
+      .locator(
+        'xpath=ancestor::div[.//*[(starts-with(normalize-space(text()),"Price per ") or normalize-space(text())="Price each")]][1]',
+      );
     await expect(lineRow).toBeVisible({ timeout: 15_000 });
 
     await lineRow.getByRole("button", { name: "Substitute", exact: true }).click();
@@ -308,7 +308,9 @@ test.describe("Order-edit SPECIAL-tier reason required (B465 fix round 2)", () =
     await page.goto(`/orders/${order.id}`);
     const specialLineRow = page
       .getByText(specialProduct.name, { exact: true })
-      .locator('xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]');
+      .locator(
+        'xpath=ancestor::div[.//*[(starts-with(normalize-space(text()),"Price per ") or normalize-space(text())="Price each")]][1]',
+      );
     await expect(specialLineRow).toBeVisible({ timeout: 15_000 });
     await specialLineRow.getByRole("button", { name: "Substitute", exact: true }).click();
     await page.getByPlaceholder("Search products…").fill(plainProduct.name);

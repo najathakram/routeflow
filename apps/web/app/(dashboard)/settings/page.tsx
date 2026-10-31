@@ -112,6 +112,7 @@ import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal"
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
+import { isZoneUnset } from "@/lib/tenant-timezone";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -167,6 +168,8 @@ function BusinessProfileTab() {
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
   });
+  // SA-1067 Z4: said only to the admin who can pick the city, and from the SAVED zone (not the field being typed in).
+  const zoneUnset = canEditTimeZone && isZoneUnset(savedSettings?.timezone);
 
   const saveSettings = useMutation({
     // `timezone` rides along only when an admin actually changed it.
@@ -375,7 +378,7 @@ function BusinessProfileTab() {
                 list="settings-timezone-zones"
                 autoComplete="off"
                 id="settings-timezone"
-                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
+                aria-describedby={`settings-timezone-help${zoneUnset ? " settings-timezone-unset" : ""}${errors.timezone ? " settings-timezone-error" : ""}`}
                 register={register("timezone", {
                   onBlur: (e) => {
                     // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
@@ -397,6 +400,11 @@ function BusinessProfileTab() {
           <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
             Applies to receipts and today&apos;s sales from now on
           </p>
+          {zoneUnset ? (
+            <p id="settings-timezone-unset" className="mt-1 text-xs text-navy/70">
+              Not set yet. Dates use UTC until you pick your city.
+            </p>
+          ) : null}
         </div>
       </Card>
 

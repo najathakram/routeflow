@@ -666,7 +666,9 @@ async function main() {
       data: { slug: TENANT_SLUG, name: "Test RouteFlow", status: "ACTIVE", plan: "PROFESSIONAL" },
     });
     await prisma.tenantConfig
-      .create({ data: { tenantId: tenant.id, businessName: "Test RouteFlow" } })
+      .create({
+        data: { tenantId: tenant.id, businessName: "Test RouteFlow", timezone: "America/New_York" },
+      })
       .catch(() => {});
     console.log(`  ✓ Created tenant "${TENANT_SLUG}" (id: ${tenant.id})`);
   } else {

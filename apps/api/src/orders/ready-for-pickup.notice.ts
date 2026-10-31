@@ -22,3 +22,19 @@ export function readyNoticeOf(
   if (email.reason === "OPTED_OUT" || !customer.orderStatusEmails) return { notice: "OPTED_OUT" };
   return { notice: "FAILED" };
 }
+
+/**
+ * What a Ready press would do for this customer right now (SA-1070 rule 5), in the order of `readyNoticeOf`: the
+ * a send would not use EMAIL, switched off or no active copy (OFF), no usable address (NO_EMAIL), the buyer turned order
+ * emails off (OPTED_OUT), otherwise the email goes (SENT, to the address). `channels` is `sendChannels(READY_FOR_PICKUP)`.
+ */
+export function readyPreviewOf(
+  channels: readonly string[],
+  customer: { email: string | null; orderStatusEmails: boolean },
+): ReadyForPickupDone {
+  if (!channels.includes("EMAIL")) return { notice: "OFF" };
+  const address = customer.email && !isInternalEmail(customer.email) ? customer.email : null;
+  if (!address) return { notice: "NO_EMAIL" };
+  if (!customer.orderStatusEmails) return { notice: "OPTED_OUT" };
+  return { notice: "SENT", email: address };
+}

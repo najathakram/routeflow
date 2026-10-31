@@ -35,7 +35,7 @@ export function useCounterInlineReturn(
   onBlocked: (message: string) => void,
 ) {
   const ref = React.useRef<OrderInlineReturnsSectionHandle>(null);
-  const save = useOrderInlineReturnSave(ref, (why) => onBlocked(RETURN_SAVE_BLOCKED[why]));
+  const save = useOrderInlineReturnSave(ref, (_why, message) => onBlocked(message));
   const [credit, setCredit] = React.useState(0);
   const net = netOfReturn(saleTotal, named ? credit : 0);
   return {
@@ -92,6 +92,7 @@ export function CounterReturnsMount({
       key={customerId}
       ref={ret.ref}
       customerId={customerId}
+      reasonContext="counter"
       refusalMessage={ret.refusalMessage}
       refusalReturn={ret.refusalReturn}
       onQuoteTotalChange={ret.setCredit}

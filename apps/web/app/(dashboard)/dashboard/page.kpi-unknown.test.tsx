@@ -7,6 +7,7 @@ import DashboardPage from "./page";
 // Like the customer page's CreditLimitPanel, an unknown figure is "—", never a zero; and the counts come
 // from the server's own `meta.total` (exact), never from counting a capped list.
 
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

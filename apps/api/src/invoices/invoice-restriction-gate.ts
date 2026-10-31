@@ -73,6 +73,29 @@ export function create(
 }
 
 /**
+ * A document revived whole (unvoid, SA-272): every distinct catalog product is judged with NO delta, keyed by its first
+ * line ("l:<lineId>"), with the document's own lines held (their pre-void stamps cover, row 510).
+ */
+export function whole(
+  tenant: string,
+  customerId: string,
+  items: Held,
+  actor: Actor,
+  ack: Ack,
+  sale: Sale,
+): SellableLinesArgs {
+  const seen = new Set<string>();
+  return {
+    ...base(tenant, customerId, actor, ack, sale, items),
+    lines: items.flatMap((it, i) => {
+      if (!it.productId || seen.has(it.productId)) return [];
+      seen.add(it.productId);
+      return [{ productId: it.productId, lineKey: it.id ? `l:${it.id}` : `n:${i}` }];
+    }),
+  };
+}
+
+/**
  * The DRAFT item edit: the netted lines (per product), each keyed by the first payload entry of its product that names no
  * line, i.e. the line the edit adds ("n:<index>"); a product with no such entry is keyed by its first entry ("l:<id>" for a
  * kept line, else "n:<index>"). The invoice's held lines ride along for coverage.

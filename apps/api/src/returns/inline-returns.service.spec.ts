@@ -1322,6 +1322,14 @@ describe("InlineReturnsService", () => {
       items: [{ productId: "prod-1", qty: 6, restock: true, sourceOrderId: "src-order-1" }],
     };
 
+    it("SA-1060 PR-1: a return that is not a hold is refused in words that fit every hold, not 'driver-cap'", async () => {
+      prisma.return.findFirst.mockResolvedValue({ ...HELD, holdReason: null });
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.message).toBe("Only a return awaiting approval can be approved");
+      expect(err.message).not.toMatch(/driver-cap/i);
+    });
+
     it("HIGH-4: approving restocks + reverses the ledger NOW (deferred from capture), then mints the full held amount", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
@@ -1591,6 +1599,12 @@ describe("InlineReturnsService", () => {
     it("refuses when there is nothing to reject (claim matches 0 rows)", async () => {
       prisma.return.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.reject("ret-held", OPERATOR)).rejects.toThrow(BadRequestException);
+    });
+
+    it("SA-1060 PR-1: the refusal does not name the driver cap, since ALREADY_RETURNED holds are rejectable too", async () => {
+      prisma.return.updateMany.mockResolvedValue({ count: 0 });
+      const err: any = await service.reject("ret-held", OPERATOR).catch((e: unknown) => e);
+      expect(err.message).toBe("Only a return awaiting approval can be rejected");
     });
   });
 

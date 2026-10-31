@@ -111,6 +111,9 @@ export function buildNewLine(
     cancelled: false,
     // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
     unit: p.unit ?? "",
+    // Undo after a Substitute restores the line's own word (restoredUnitWords). A new line has no pack word or picked
+    // unit to restore, so those come back unset, as they started; the selling word needs its own copy.
+    originalUnit: p.unit ?? "",
     priceType,
     ...(o.startOnDefaultUnit ? { startOnDefaultUnit: true } : {}),
   };
