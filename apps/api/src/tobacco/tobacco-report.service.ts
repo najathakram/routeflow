@@ -306,12 +306,12 @@ export class TobaccoReportService {
         "",
         "",
         totals.totalQtyPurchased,
-        totals.totalPurchaseValue.toFixed(2),
+        roundMoney(totals.totalPurchaseValue).toFixed(2),
         totals.totalQtySold,
-        totals.totalSalesValue.toFixed(2),
-        totals.totalTaxCollected.toFixed(2),
+        roundMoney(totals.totalSalesValue).toFixed(2),
+        roundMoney(totals.totalTaxCollected).toFixed(2),
         totals.endingStockQty,
-        totals.endingStockValue.toFixed(2),
+        roundMoney(totals.endingStockValue).toFixed(2),
       ].join(","),
     ];
     return lines.join("\n") + "\n";

@@ -55,7 +55,7 @@ type PriorLine = { orderItemId?: string | null; qty?: unknown; subtotal?: unknow
  * line count differs). A no-op re-sync of an unchanged invoice is 0.
  */
 export function countLinesChanged(prior: PriorLine[], next: PriorLine[]): number {
-  const money = (v: unknown) => Math.round(Number(v ?? 0) * 100);
+  const money = (v: unknown) => roundMoney(Number(v ?? 0));
   const key = (l: PriorLine, i: number) => l.orderItemId ?? `#${i}`;
   const before = new Map(prior.map((l, i) => [key(l, i), l]));
   const after = new Map(next.map((l, i) => [key(l, i), l]));

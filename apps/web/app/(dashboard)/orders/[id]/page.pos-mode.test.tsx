@@ -194,16 +194,21 @@ describe("POS order page: Ready for pickup, VOID invoices, a11y, hand-over label
     expect(has(/^Create invoice$/)).toBe(false);
   });
 
-  it("Ready for pickup sends the customer notification step (PATCH status OUT_FOR_DELIVERY)", async () => {
-    patch.mockResolvedValue({ data: {} });
+  it("Ready for pickup posts the one server step (POST ready-for-pickup, never a bare status PATCH)", async () => {
+    post.mockResolvedValue({ data: { notice: "SENT", email: "buyer@acme.test" } });
     await open("CONFIRMED", { invoices: INV("DRAFT") });
     fireEvent.click(screen.getByRole("button", { name: /^Ready for pickup$/ }));
-    await waitFor(() =>
-      expect(patch).toHaveBeenCalledWith(
-        "/orders/o1/status",
-        expect.objectContaining({ status: "OUT_FOR_DELIVERY" }),
-      ),
-    );
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/orders/o1/ready-for-pickup"));
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("a PENDING order offers Ready for pickup as well as Confirm order, and Ready posts straight away", async () => {
+    post.mockResolvedValue({ data: { notice: "NO_EMAIL" } });
+    await open("PENDING");
+    expect(has(/^Confirm order$/)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /^Ready for pickup$/ }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/orders/o1/ready-for-pickup"));
+    expect(patch).not.toHaveBeenCalled();
   });
 
   it("no Ready for pickup once handed over", async () => {

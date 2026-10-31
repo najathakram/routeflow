@@ -8,6 +8,16 @@ import PromotionsPage from "./page";
  */
 
 let mockMode: string | undefined = "off";
+// SA-1032 rule 3: the page reads the mode through the shared promotionsOn, never its own "off".
+// Undefined → the real helper; a test sets a value to prove the page obeys the helper.
+const mockPromotionsOn = jest.fn<boolean | undefined, [string | null | undefined]>();
+jest.mock("@routeflow/types", () => {
+  const actual = jest.requireActual("@routeflow/types");
+  return {
+    ...actual,
+    promotionsOn: (mode?: string | null) => mockPromotionsOn(mode) ?? actual.promotionsOn(mode),
+  };
+});
 
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 jest.mock("@routeflow/ui/web", () => ({
@@ -72,5 +82,17 @@ describe("promotions page with promotions off (SA-1032)", () => {
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
     expect(screen.getByTitle("Edit")).toBeInTheDocument();
     expect(screen.getByTitle("Delete")).toBeInTheDocument();
+  });
+
+  it("SA-1032 rule 3: the page decides through the shared promotionsOn", () => {
+    mockMode = "on";
+    mockPromotionsOn.mockReturnValue(false);
+    try {
+      renderWithProviders(<PromotionsPage />);
+      expect(mockPromotionsOn).toHaveBeenCalledWith("on");
+      expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    } finally {
+      mockPromotionsOn.mockReset();
+    }
   });
 });

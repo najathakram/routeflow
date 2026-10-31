@@ -2,7 +2,7 @@ import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { attributeCreditNote, attributeExternalRefund } from "../sales-facts/sales-facts.rules";
-import { localInstantWindow, startOfLocalDay, tenantTodayDay } from "./calendar-date";
+import { startOfLocalDay, tenantPeriod, tenantTodayDay } from "./calendar-date";
 import {
   externalSplitWhere,
   groupSplitTax,
@@ -230,6 +230,27 @@ export const ACCRUAL_CREDIT_NOTE_FILTER = {
  */
 export const EXTERNAL_REFUND_FILTER = { refundMethod: "EXTERNAL_REFUND" } as const;
 
+/**
+ * The filter for a REAL-INSTANT column (`CreditNote.createdAt`, `Return.refundedAt`, `Invoice.writtenOffAt`) given the report's
+ * calendar-day `window` (the one the calendar columns use). With the tenant's zone it is that period's `instants` (SA-906,
+ * `tenantPeriod`): a credit at 23:30 local on the last day stays in that window, one at 22:00 local the day before stays out.
+ * No zone = the window as given (today's UTC behaviour exactly). The all-time sentinel (year 9999) has no day arithmetic: its
+ * instant end is now.
+ */
+export function eventWindowOf(
+  window: { gte: Date; lte: Date },
+  timeZone?: string | null,
+  now: Date = new Date(),
+): { gte: Date; lte?: Date; lt?: Date } {
+  if (!timeZone) return window;
+  const fromDay = window.gte.toISOString().slice(0, 10);
+  if (window.lte.getUTCFullYear() >= 9999) {
+    return { gte: startOfLocalDay(fromDay, timeZone), lte: now };
+  }
+  return tenantPeriod({ fromDay, toDay: window.lte.toISOString().slice(0, 10) }, timeZone, now)
+    .instants;
+}
+
 /** Inclusive date window — `lte` matches the `dateRange()` callers. */
 export interface AccrualWindow {
   gte: Date;
@@ -253,9 +274,10 @@ export async function fetchAccrualNetSales(
   // function puts it in every where-clause explicitly.
   tenantId: string,
   window: AccrualWindow,
-  opts?: { customerId?: string },
+  opts?: { customerId?: string; timeZone?: string | null },
 ): Promise<AccrualNetSales> {
   const customerFilter = opts?.customerId ? { customerId: opts.customerId } : {};
+  const eventWindow = eventWindowOf(window, opts?.timeZone); // credits and refunds are instants (SA-906)
 
   const [invoiceAgg, creditNoteAgg, returnAgg, externalTax, noteReturnTax] = await Promise.all([
     db.invoice.aggregate({
@@ -273,7 +295,7 @@ export async function fetchAccrualNetSales(
     db.creditNote.aggregate({
       where: {
         tenantId,
-        createdAt: window,
+        createdAt: eventWindow,
         ...ACCRUAL_CREDIT_NOTE_FILTER,
         ...customerFilter,
       },
@@ -282,7 +304,7 @@ export async function fetchAccrualNetSales(
     // `refundMethod` is load-bearing: a CN-method return is already netted via the CreditNote read above. SA-840: a
     // refund returns the tax too; the two reads after this one take that tax back out (see refund-net-terms.ts).
     db.return.aggregate({
-      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window, ...customerFilter },
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: eventWindow, ...customerFilter },
       _sum: { refundAmount: true },
     }),
     sumSplitTax(
@@ -290,11 +312,11 @@ export async function fetchAccrualNetSales(
       externalSplitWhere({
         tenantId,
         ...EXTERNAL_REFUND_FILTER,
-        refundedAt: window,
+        refundedAt: eventWindow,
         ...customerFilter,
       }),
     ),
-    sumSplitTax(db, noteReturnWhere({ tenantId, refundedAt: window, ...customerFilter })),
+    sumSplitTax(db, noteReturnWhere({ tenantId, refundedAt: eventWindow, ...customerFilter })),
   ]);
 
   const sumTotal = Number(invoiceAgg._sum.total ?? 0);
@@ -312,7 +334,9 @@ export async function fetchAccrualNetSalesByCustomer(
   db: AccrualSalesDb,
   tenantId: string,
   window: AccrualWindow,
+  opts?: { timeZone?: string | null },
 ): Promise<Map<string, AccrualNetSales>> {
+  const eventWindow = eventWindowOf(window, opts?.timeZone); // credits and refunds are instants (SA-906)
   const [invoiceRows, creditNoteRows, returnRows, externalTax, noteReturnTax] = await Promise.all([
     db.invoice.groupBy({
       by: ["customerId"],
@@ -321,19 +345,19 @@ export async function fetchAccrualNetSalesByCustomer(
     }),
     db.creditNote.groupBy({
       by: ["customerId"],
-      where: { tenantId, createdAt: window, ...ACCRUAL_CREDIT_NOTE_FILTER },
+      where: { tenantId, createdAt: eventWindow, ...ACCRUAL_CREDIT_NOTE_FILTER },
       _sum: { amount: true },
     }),
     db.return.groupBy({
       by: ["customerId"],
-      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window },
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: eventWindow },
       _sum: { refundAmount: true },
     }),
     groupSplitTax(
       db,
-      externalSplitWhere({ tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window }),
+      externalSplitWhere({ tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: eventWindow }),
     ),
-    groupSplitTax(db, noteReturnWhere({ tenantId, refundedAt: window })),
+    groupSplitTax(db, noteReturnWhere({ tenantId, refundedAt: eventWindow })),
   ]);
 
   const gross = new Map<string, number>();
@@ -414,14 +438,7 @@ async function fetchAccrualNetRows(
   // on it): a credit at 23:30 local on the last day stays in that window, one at 22:00 local the day before the window stays
   // out. Invoices keep their calendar issueDate window. No zone = the window as given. The all-time sentinel (year 9999) has
   // no day arithmetic: its instant end is now.
-  const eventWindow: { gte: Date; lte?: Date; lt?: Date } = (() => {
-    if (!opts.timeZone) return window;
-    const fromDay = window.gte.toISOString().slice(0, 10);
-    if (window.lte.getUTCFullYear() >= 9999) {
-      return { gte: startOfLocalDay(fromDay, opts.timeZone), lte: new Date() };
-    }
-    return localInstantWindow(fromDay, window.lte.toISOString().slice(0, 10), opts.timeZone);
-  })();
+  const eventWindow = eventWindowOf(window, opts.timeZone);
   const [invoices, creditNotes, returns, noteReturns] = await Promise.all([
     db.invoice.findMany({
       where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
@@ -626,9 +643,14 @@ export async function fetchBadDebtExpense(
   db: AccrualSalesDb,
   tenantId: string,
   window: AccrualWindow,
+  opts?: { timeZone?: string | null },
 ): Promise<number> {
   const invoices = await db.invoice.findMany({
-    where: { tenantId, status: InvoiceStatus.WRITTEN_OFF, writtenOffAt: window },
+    where: {
+      tenantId,
+      status: InvoiceStatus.WRITTEN_OFF,
+      writtenOffAt: eventWindowOf(window, opts?.timeZone), // an instant (SA-906)
+    },
     select: {
       total: true,
       taxAmount: true,

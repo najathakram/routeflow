@@ -23,11 +23,17 @@ describe("products/[id]/page.tsx — family wiring (WS8)", () => {
   });
 
   it("B2 (#2919): a FAMILY shows no stock or sell UI — no Out-of-Stock badge, no Stock & Cost card, no Make variant", () => {
-    // the header badge reads getStockStatus, which answers IN_STOCK (no badge) for a FAMILY
-    expect(src).toMatch(
-      /function getStockStatus\([^)]*kind\?: string\)[^{]*\{\s*if \(kind === "FAMILY"\) return "IN_STOCK"/,
+    // the header badge reads getDetailStockStatus, which answers IN_STOCK (no badge) for a FAMILY
+    const status = fs.readFileSync(
+      path.join(__dirname, "..", "_components", "product-status.tsx"),
+      "utf8",
     );
-    expect(src).toMatch(/getStockStatus\(currentStock, product\.isActive, product\.kind\)/);
+    expect(status).toMatch(
+      /function getDetailStockStatus\([^)]*kind\?: string[^)]*\)[^{]*\{\s*if \(kind === "FAMILY"\) return "IN_STOCK"/,
+    );
+    expect(src).toMatch(
+      /getDetailStockStatus\(\s*currentStock,\s*product\.isActive,\s*product\.kind,/,
+    );
     // the Stock & Cost card (Set cost, movements) is not rendered for a family
     expect(src).toMatch(/product\.kind !== "FAMILY" && \(\s*<ProductStockCostCard/);
     // "Make variant of…" is not offered on a family
