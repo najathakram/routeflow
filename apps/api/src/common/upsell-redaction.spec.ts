@@ -22,6 +22,23 @@ describe("redactUpsellForCustomer", () => {
     expect(li.product).not.toHaveProperty("averageCost");
   });
 
+  it("B18 (SA-1072): a tier line above list reads as a plain price to the customer", () => {
+    const line = { priceType: "SPECIAL", unitPrice: "12.00", originalPrice: "10.00" };
+    redactUpsellForCustomer({ lineItems: [line] });
+    expect(line.originalPrice).toBeNull();
+    expect(line.priceType).toBe("STANDARD");
+    expect(line.unitPrice).toBe("12.00");
+  });
+
+  it.each(["SPECIAL", "DISCOUNTED"])(
+    "B19 (SA-1072): a %s line below list keeps its saving",
+    (priceType) => {
+      const line = { priceType, unitPrice: "8.00", originalPrice: "10.00" };
+      redactUpsellForCustomer({ lineItems: [line] });
+      expect(line).toEqual({ priceType, unitPrice: "8.00", originalPrice: "10.00" });
+    },
+  );
+
   it("leaves a DISCOUNT line intact so the buyer keeps seeing their savings", () => {
     const order = {
       lineItems: [{ priceType: "DISCOUNTED", unitPrice: 8, originalPrice: 10, product: null }],

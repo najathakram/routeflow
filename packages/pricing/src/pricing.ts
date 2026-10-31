@@ -1090,10 +1090,16 @@ export interface PriceOverrideLine {
   originalPrice?: number | string | null;
 }
 
-/** True when a line is an operator MANUAL override priced ABOVE the catalog base. */
-export function isUpsellLine(line: PriceOverrideLine): boolean {
-  if (line.priceType !== "MANUAL" || line.originalPrice == null) return false;
-  return Number(line.unitPrice) > Number(line.originalPrice);
+/**
+ * SA-1072: true when a line is charged ABOVE its stored catalog base, whatever its type: a staff upsell (MANUAL) or a tier
+ * above Retail (SPECIAL). The ONE rule for hiding the lower base from the customer, on documents and on their reads.
+ */
+export function isAboveListLine(line: {
+  unitPrice?: number | string | null;
+  originalPrice?: number | string | null;
+}): boolean {
+  if (line.originalPrice == null) return false;
+  return Number(line.unitPrice ?? 0) > Number(line.originalPrice);
 }
 
 /** The half-cent band inside which a typed price IS the baseline (no repricing decision). */
@@ -1144,7 +1150,7 @@ export type StaffOverrideDecision =
  *     (originalPrice null) — at the clean baseline, never the incoming near-miss float;
  *   - a real change on a special-tier line with no reason ⇒ refused;
  *   - otherwise an override: below list ⇒ DISCOUNTED, at or above list ⇒ MANUAL (an upsell above
- *     list — see {@link isUpsellLine}), originalPrice = list, the price rounded to cents.
+ *     list — see {@link isAboveListLine}), originalPrice = list, the price rounded to cents.
  * Pure: the caller resolves the tier and list prices and whether a reason is on file.
  */
 export function decideStaffOverride(input: {

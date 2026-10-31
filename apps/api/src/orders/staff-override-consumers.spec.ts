@@ -5,7 +5,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { isUpsellLine } from "@routeflow/pricing";
+import { isAboveListLine } from "@routeflow/pricing";
 import { redactUpsellLines } from "../common/upsell-redaction";
 import { EmailService } from "../email/email.service";
 import { showOriginalPrice } from "../invoices/invoice-pdf-item";
@@ -15,10 +15,10 @@ const upsell = { priceType: "MANUAL", unitPrice: 8, originalPrice: 6 };
 const legacyManualBelow = { priceType: "MANUAL", unitPrice: 4, originalPrice: 6 };
 
 describe("staff-override consumers (#2716c)", () => {
-  it("isUpsellLine: a below-list edit is not an upsell before (MANUAL) or after (DISCOUNTED)", () => {
-    expect(isUpsellLine(discounted)).toBe(false);
-    expect(isUpsellLine(legacyManualBelow)).toBe(false);
-    expect(isUpsellLine(upsell)).toBe(true);
+  it("isAboveListLine: a below-list edit is not above list before (MANUAL) or after (DISCOUNTED)", () => {
+    expect(isAboveListLine(discounted)).toBe(false);
+    expect(isAboveListLine(legacyManualBelow)).toBe(false);
+    expect(isAboveListLine(upsell)).toBe(true);
   });
 
   it("buyer redaction: DISCOUNTED keeps its struck list price; MANUAL-above-list is still redacted", () => {
