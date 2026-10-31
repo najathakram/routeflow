@@ -136,7 +136,7 @@ function RegulatedQuestion({
                 href="/products"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex min-h-[44px] items-center rounded-lg bg-brand-500 px-4 text-sm font-medium text-white"
+                className="inline-flex min-h-[44px] items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white"
               >
                 Open Products
               </Link>

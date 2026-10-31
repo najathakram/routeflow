@@ -208,7 +208,7 @@ export function InlineCreateProductModal({
       // W-1042: the counter reads this and holds scans and focus while the window is open. Not a dialog role: this
       // window also sits inside the order builder's Modal, and a nested role would break its Unit and Category picks.
       data-scan-pause
-      className="fixed inset-0 z-[200] !mt-0 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[200] !mt-0 flex items-center justify-center bg-black/50 p-4 max-md:[&_input]:text-base max-md:[&_select]:text-base max-md:[&_textarea]:text-base"
     >
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         {/* Header */}
@@ -294,7 +294,7 @@ export function InlineCreateProductModal({
           )}
 
           {/* ── SKU (barcode scanner) + Unit ── */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">SKU / Barcode</label>
               <div className="flex gap-2">

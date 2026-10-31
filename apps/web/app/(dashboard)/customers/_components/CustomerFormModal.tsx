@@ -456,7 +456,7 @@ export function CustomerFormModal({
           ? "Fill in the details to create a new customer account."
           : "Update the customer's information below."
       }
-      className="max-w-2xl"
+      className="max-w-2xl max-md:[&_input]:text-base max-md:[&_select]:text-base max-md:[&_textarea]:text-base"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>

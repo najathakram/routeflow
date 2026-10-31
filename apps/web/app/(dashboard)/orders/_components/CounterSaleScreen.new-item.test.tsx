@@ -427,3 +427,15 @@ describe("SA-1066 F11: the dim layer fills the screen under a space-y parent", (
     expect(openDialog()?.className).toMatch(/(^|\s)!mt-0(\s|$)/);
   });
 });
+
+describe("SA-1066 F14: Open Products reads white on a darker teal", () => {
+  it("the link is bg-brand-600, not the lighter bg-brand-500", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    const link = screen.getByRole("link", { name: /open products/i });
+    expect(link.className).toMatch(/(^|\s)bg-brand-600(\s|$)/);
+    expect(link.className).not.toMatch(/bg-brand-500/);
+  });
+});
