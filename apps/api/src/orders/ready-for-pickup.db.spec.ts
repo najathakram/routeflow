@@ -46,7 +46,9 @@ describeDb("W-1060 Ready for pickup record — real Postgres", () => {
   let n = 0;
 
   // Spies: the Ready email (messaging.notify), the push, the completion email, and the status-change events.
-  const readyEmail = jest.fn(async (..._a: unknown[]) => [{ channel: "EMAIL", outcome: "sent" }]);
+  const readyEmail = jest.fn(async (..._a: unknown[]): Promise<Array<Record<string, unknown>>> => [
+    { channel: "EMAIL", outcome: "sent" },
+  ]);
   const pushes = jest.fn(async (..._a: unknown[]) => undefined);
   const events = jest.fn(async (..._a: unknown[]) => undefined);
   const completionEmail = jest.fn(async (..._a: unknown[]) => ({ delivered: true }));
