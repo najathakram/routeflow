@@ -235,3 +235,94 @@ describe("SA-1067 M1: the history panel opens with no row chosen", () => {
     expect(onUse).not.toHaveBeenCalled();
   });
 });
+
+describe("SA-1067 A-4: the highlighted row stays in view", () => {
+  // jsdom has no layout and no scrollIntoView; the mock records which element it was called on and with what
+  const scrollIntoView = jest.fn();
+  const original = Element.prototype.scrollIntoView;
+  beforeEach(() => {
+    scrollIntoView.mockClear();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+  afterAll(() => {
+    Element.prototype.scrollIntoView = original;
+  });
+
+  // 25 rows (the query's limit), oldest first, price = day number, so the panel lists 25 down to 1
+  const longHistory = () =>
+    base({
+      rows: Array.from({ length: 25 }, (_, i) =>
+        row({
+          date: new Date(Date.UTC(2026, 8, 1 + i)).toISOString(),
+          unitPrice: i + 1,
+          orderId: `o${i}`,
+          invoiceId: `i${i}`,
+          invoiceNumber: `INV-${i + 1}`,
+        }),
+      ),
+    });
+  const openLong = async (user: ReturnType<typeof userEvent.setup>) => {
+    mockGet.mockResolvedValue({ data: longHistory() });
+    renderBtn();
+    screen.getByLabelText("price input").focus();
+    await user.keyboard("{Alt>}h{/Alt}");
+    const dialog = await screen.findByRole("dialog", { name: "Price history" });
+    await within(dialog).findByText("INV-25");
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    dialog.focus(); // where a browser leaves focus: the shell
+    return dialog;
+  };
+  const lastScrolled = () => scrollIntoView.mock.contexts[scrollIntoView.mock.contexts.length - 1];
+
+  it("P4c: 25 rows, focus on the shell, Down 12 times: the 12th row is scrolled into view, block nearest", async () => {
+    const user = userEvent.setup();
+    const dialog = await openLong(user);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    await user.keyboard("{ArrowDown>12/}");
+    const rows = bodyRows(dialog);
+    expect(rows[11]).toHaveAttribute("aria-selected", "true");
+    expect(lastScrolled()).toBe(rows[11]);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+  });
+
+  it("P4d: then Up: the 11th row is scrolled into view", async () => {
+    const user = userEvent.setup();
+    const dialog = await openLong(user);
+    await user.keyboard("{ArrowDown>12/}{ArrowUp}");
+    const rows = bodyRows(dialog);
+    expect(rows[10]).toHaveAttribute("aria-selected", "true");
+    expect(lastScrolled()).toBe(rows[10]);
+  });
+
+  it("P4e: the panel opened with no key pressed scrolls nothing, and a unit change that clears the choice does not either", async () => {
+    const user = userEvent.setup();
+    await openLong(user);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("the scrolled element is a table row, never a unit tab (both carry aria-selected)", async () => {
+    mockGet.mockResolvedValue({
+      data: base({
+        rows: [
+          row({ unitLabel: "case", orderId: "a", invoiceNumber: "INV-A" }),
+          row({ unitLabel: "each", unitsPerBox: 1, orderId: "b", invoiceNumber: "INV-B" }),
+        ],
+        summaries: [
+          { unitLabel: "case", last: 10, low: 10, high: 10, qtySold: 2, currentAvgCost: 6 },
+          { unitLabel: "each", last: 1, low: 1, high: 1, qtySold: 2, currentAvgCost: 0.5 },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderBtn();
+    screen.getByLabelText("price input").focus();
+    await user.keyboard("{Alt>}h{/Alt}");
+    const dialog = await screen.findByRole("dialog", { name: "Price history" });
+    await within(dialog).findAllByRole("tab");
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    dialog.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(lastScrolled()).toBeInstanceOf(HTMLTableRowElement);
+  });
+});

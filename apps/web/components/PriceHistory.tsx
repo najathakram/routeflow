@@ -191,6 +191,14 @@ function PanelBody({
   const neverSold = rows.length === 0;
   // A different unit is a different list: the old index points at some other row.
   React.useEffect(() => setActive(-1), [unit]);
+  // SA-1067 A-4: the arrow keys' preventDefault stops the shell's native scroll, so the highlight keeps its row on screen. Read
+  // from tbody: the unit tabs carry aria-selected too. `nearest` leaves a row already in view alone.
+  React.useEffect(() => {
+    if (active < 0) return;
+    bodyRef.current
+      ?.querySelector<HTMLElement>('tbody tr[aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [active]);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (rows.length === 0) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
