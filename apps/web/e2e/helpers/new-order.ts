@@ -10,6 +10,9 @@ import { expect, type Page } from "@playwright/test";
  */
 export async function openRegularOrderBuilder(page: Page): Promise<void> {
   const trigger = page.getByRole("button", { name: /new order/i }).first();
+  // While the counter answer loads the button is disabled and has no test id; reading it then
+  // would call a menu a plain button.
+  await expect(trigger).toBeEnabled({ timeout: 10_000 });
   const isMenu = (await trigger.getAttribute("data-testid")) === "new-order-open";
   await trigger.click();
   if (isMenu) {
