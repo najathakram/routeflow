@@ -91,7 +91,7 @@ describe("HeldReturnActions: Approve and Reject send what the API takes", () => 
   });
 });
 
-describe("HeldReturnActions: a refusal shows the server's sentence", () => {
+describe("HeldReturnActions: a refusal shows fixed copy, never the server's text", () => {
   const refuse = (response: unknown) => {
     renderWithProviders(<HeldReturnActions ret={held()} />);
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
@@ -99,14 +99,22 @@ describe("HeldReturnActions: a refusal shows the server's sentence", () => {
     approveMutate.mock.calls[0][1].onError({ response });
   };
 
-  it("a 4xx refusal is shown as sent", async () => {
-    refuse({
-      status: 409,
-      data: { message: "Nothing changed. A walk-in return is refunded at the till." },
-    });
+  it("a 409 says a walk-in return is refunded at the till", async () => {
+    refuse({ status: 409, data: { message: "server text that must not show" } });
     expect(
-      await screen.findByText("Nothing changed. A walk-in return is refunded at the till."),
+      await screen.findByText(
+        "This return can't be approved. A walk-in return is refunded at the till, not credited.",
+      ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/must not show/)).toBeNull();
+  });
+
+  it("a 400 says the return is no longer waiting", async () => {
+    refuse({ status: 400, data: { message: "Only a return awaiting approval can be approved" } });
+    expect(
+      await screen.findByText("This return isn't waiting for approval anymore. Refresh the page."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/awaiting approval can be/)).toBeNull();
   });
 
   it("anything else keeps the retry line", async () => {

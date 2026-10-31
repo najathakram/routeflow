@@ -15,17 +15,17 @@ import type { Return } from "@/lib/api/returns";
  */
 const REASON_MAX = 200;
 
-/** The server's own sentence for a refusal (4xx), as sent; anything else keeps the retry line. */
-function refusalText(err: unknown): string {
-  const r = (err as { response?: { status?: number; data?: { message?: unknown } } } | null)
-    ?.response;
-  const sentence = r?.data?.message;
-  return r?.status !== undefined &&
-    r.status >= 400 &&
-    r.status < 500 &&
-    typeof sentence === "string"
-    ? sentence
-    : "Please try again.";
+/**
+ * Fixed copy for a refusal, chosen by status. The server's own text is never shown (the B986 ratchet: no raw server message in the
+ * UI). A 409 on approve is a walk-in return, which is refunded at the till and never turned into credit.
+ */
+function refusalText(err: unknown, action: "approve" | "reject"): string {
+  const status = (err as { response?: { status?: number } } | null)?.response?.status;
+  if (status === 404) return "This return isn't here anymore. Refresh the page.";
+  if (status === 400) return "This return isn't waiting for approval anymore. Refresh the page.";
+  if (status === 409 && action === "approve")
+    return "This return can't be approved. A walk-in return is refunded at the till, not credited.";
+  return "Please try again.";
 }
 
 const WHY: Record<string, string> = {
@@ -62,7 +62,7 @@ export function HeldReturnActions({ ret }: { ret: Return }) {
       onError: (err) =>
         toast({
           title: "Couldn't approve this return",
-          description: refusalText(err),
+          description: refusalText(err, "approve"),
           variant: "error",
         }),
     });
@@ -79,7 +79,7 @@ export function HeldReturnActions({ ret }: { ret: Return }) {
         onError: (err) =>
           toast({
             title: "Couldn't reject this return",
-            description: refusalText(err),
+            description: refusalText(err, "reject"),
             variant: "error",
           }),
       },
