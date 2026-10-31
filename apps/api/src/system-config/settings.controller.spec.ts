@@ -330,7 +330,7 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
     const result = await controller.updateInvoiceSettings({ creditAutoApplyOnSend: true });
     expect(prisma.tenantConfig.upsert).toHaveBeenCalledWith({
       where: { tenantId: "test-tenant" },
-      create: { tenantId: "test-tenant", creditAutoApplyOnSend: true },
+      create: { tenantId: "test-tenant", timezone: "UTC", creditAutoApplyOnSend: true }, // SA-1067 Z2: the zone is named, never the column default
       update: { creditAutoApplyOnSend: true },
     });
     expect(result.creditAutoApplyOnSend).toBe(true);

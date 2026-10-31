@@ -830,6 +830,7 @@ async function main() {
     data: {
       tenantId: tenant.id,
       businessName: "E2E Test RouteFlow",
+      timezone: "America/New_York",
     },
   });
 
@@ -1014,7 +1015,7 @@ async function seedQaLiteTenant() {
     },
   });
   await prisma.tenantConfig.create({
-    data: { tenantId: tenant.id, businessName: "QA Lite Plan" },
+    data: { tenantId: tenant.id, businessName: "QA Lite Plan", timezone: "America/New_York" },
   });
   await prisma.user.create({
     data: {

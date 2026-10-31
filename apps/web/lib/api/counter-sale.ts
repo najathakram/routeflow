@@ -100,6 +100,9 @@ export function useCreateCounterSale() {
       markOrderCreatedHere(res.orderNumber);
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });
+      // SA-1068: the sale may have set or renewed this customer's remembered price; the next sale reads it, so refetch now.
+      if (vars.dto.customerId)
+        void qc.invalidateQueries({ queryKey: ["orders", "price-history", vars.dto.customerId] });
       // SA-837b item 3: an unrecorded payment may be re-sent with "Record anyway" (the same sale, the same key).
       if (res.paymentRecorded === false)
         rememberCounterSale(res.orderId, vars.idempotencyKey, vars.dto);

@@ -122,9 +122,11 @@ describe("TrackedCategory writer inventory (Row 430)", () => {
       if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(p);
       return /\.ts$/.test(e.name) && !/(\.spec|\.db\.spec)\.ts$/.test(e.name) ? [p] : [];
     });
-  /** Not production code: the shared Prisma mock (src/testing) and one DB-spec cleanup harness, each with its reason. */
+  /** Not production code: the shared Prisma mock (src/testing) and two DB-spec cleanup fixtures, each with its reason. */
   const NOT_PRODUCTION: Record<string, string> = {
     "inventory/testing/count-db-harness.ts":
+      "DB-spec fixture cleanup (deleteMany of the throwaway tenant's rows)",
+    "inventory/testing/sa802-world.ts":
       "DB-spec fixture cleanup (deleteMany of the throwaway tenant's rows)",
     "orders/testing/units-fold-db-harness.ts":
       "DB-spec fixture setup and cleanup of the throwaway fold tenant's rows",

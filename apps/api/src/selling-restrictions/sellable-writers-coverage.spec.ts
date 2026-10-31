@@ -89,6 +89,7 @@ const TABLE: Record<string, Row> = {
   [inv("create")]: G,
   [inv("update")]: G,
   [inv("duplicate")]: G,
+  [inv("unvoidInvoice")]: G, // row 460 (SA-272): a revived VOID invoice is a new sale of the whole document
   // F2: the one place a DRAFT order's billing is judged; createSplitInvoices + createPartialFromOrder call it.
   "invoices/draft-order-restrictions.ts::assertDraftOrderSellable": G,
   [inv("createSplitInvoices")]: X(
@@ -150,7 +151,7 @@ const TABLE: Record<string, Row> = {
 /** The RATCHET: how many rows are still PENDING. Lower it in the PR that flips a row to GUARDED. */
 const PENDING_BASELINE = 0; // was 2: createSplitInvoices + importInvoices both EXEMPT with written reasons (F-05 #2093 split/import PR)
 /** GUARDED + PENDING: reclassifying a PENDING row to EXEMPT (an escape, not progress) must change THIS. */
-const ENFORCEMENT_POINTS = 14; // W-774: +1 (staffSellable, the shared STAFF judge); was 13: row 510: +1 (the fulfil-path switch, updateFulfillPath), -1 (assertOrderlessSellable folded back into create / duplicate, which carry the 510 gate); was 13: L8 +1 (assertOrderlessSellable); was 12: F2b: rejudgeDraftOrderInTx only COMPARES in the tx (409), it is not an enforcement point; was 13: +1 (F2b); was 12: +1 (F1 iii: assertBuyerMayFile); was 11: +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
+const ENFORCEMENT_POINTS = 15; // row 460: +1 (unvoidInvoice); W-774: +1 (staffSellable, the shared STAFF judge); was 13: row 510: +1 (the fulfil-path switch, updateFulfillPath), -1 (assertOrderlessSellable folded back into create / duplicate, which carry the 510 gate); was 13: L8 +1 (assertOrderlessSellable); was 12: F2b: rejudgeDraftOrderInTx only COMPARES in the tx (409), it is not an enforcement point; was 13: +1 (F2b); was 12: +1 (F1 iii: assertBuyerMayFile); was 11: +1 (F2: assertDraftOrderSellable); was 10: -2 (#2093 split/import EXEMPT); prior -2 (completeWithPayment/reopenStop) + -2 (merge/consolidate, SA-255)
 const CHOKE_POINT = ["assertLinesSellable", "checkLinesSellable"];
 /**
  * Free functions that WRAP the choke point and are themselves classified GUARDED above (so the table proves each
