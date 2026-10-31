@@ -125,6 +125,40 @@ describe("SA-1067 M1: the history panel opens with no row chosen", () => {
     expect(onUse).toHaveBeenCalledWith(13);
   });
 
+  it("P4b: focus on the popover shell (where a browser leaves it), Down then Enter uses row 0 (13)", async () => {
+    const user = userEvent.setup();
+    const dialog = await openPanel(user);
+    dialog.focus(); // AnchoredPopover focuses its own shell once placed; the keys must reach the handler from there
+    expect(dialog).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(bodyRows(dialog)[0]).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Enter}");
+    expect(onUse).toHaveBeenCalledTimes(1);
+    expect(onUse).toHaveBeenCalledWith(13);
+  });
+
+  it("P3b: focus on the shell, a pointer resting on a row, Enter commits nothing; the keys are live (Down then Enter then uses row 0)", async () => {
+    const user = userEvent.setup();
+    const dialog = await openPanel(user);
+    dialog.focus();
+    await user.hover(bodyRows(dialog)[2]);
+    await user.keyboard("{Enter}");
+    expect(onUse).not.toHaveBeenCalled();
+    await user.keyboard("{ArrowDown}{Enter}"); // proves the handler was reached at all, so the line above means something
+    expect(onUse).toHaveBeenCalledWith(13);
+  });
+
+  it("P1c: focus on the shell, a scanner's 4011 then Enter commits nothing and keeps the panel; Down then Enter still works", async () => {
+    const user = userEvent.setup();
+    const dialog = await openPanel(user);
+    dialog.focus();
+    await user.keyboard("4011{Enter}");
+    expect(onUse).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Price history" })).toBeInTheDocument();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onUse).toHaveBeenCalledWith(13);
+  });
+
   it("ArrowUp from nothing chosen lands on the newest row as well", async () => {
     const user = userEvent.setup();
     const dialog = await openPanel(user);

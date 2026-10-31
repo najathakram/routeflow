@@ -107,6 +107,7 @@ function PanelBody({
   onCompareChange,
   onCompareRetry,
   onUse,
+  keyRef,
 }: {
   data: PriceHistoryResponse;
   productName: string;
@@ -124,6 +125,8 @@ function PanelBody({
   onCompareChange: (on: boolean) => void;
   onCompareRetry: () => void;
   onUse: (price: number) => void;
+  /** The panel's key handler, handed up so the popover SHELL (where focus really lands) can call it: a key pressed on a parent never reaches a child's handler. */
+  keyRef: React.MutableRefObject<((e: React.KeyboardEvent) => void) | null>;
 }) {
   const [showCost, setShowCost] = React.useState(false);
   // -1 = nothing chosen. A scanner's keyboard ends in Enter and cannot press arrows, so Enter alone must never commit a row.
@@ -204,13 +207,15 @@ function PanelBody({
     }
   };
 
+  React.useEffect(() => {
+    keyRef.current = onKeyDown;
+    return () => {
+      keyRef.current = null;
+    };
+  });
+
   return (
-    <div
-      ref={bodyRef}
-      tabIndex={-1}
-      onKeyDown={onKeyDown}
-      className="space-y-2 text-xs outline-none"
-    >
+    <div ref={bodyRef} tabIndex={-1} className="space-y-2 text-xs outline-none">
       <div>
         <p className="text-sm font-semibold text-navy">
           Price history · {data.productName || productName}
@@ -468,6 +473,8 @@ function Panel({
   excludeOrderId?: string | null;
 }) {
   const [compare, setCompare] = React.useState(false);
+  // SA-1067 P4: AnchoredPopover focuses its own shell once placed, so Down and Enter arrive there, not on the panel body.
+  const keyRef = React.useRef<((e: React.KeyboardEvent) => void) | null>(null);
   // Two requests, so a failed or slow comparison never takes the customer's own rows away: the base
   // history is always shown; `?compare=all` is a separate query that only adds the aggregate (and its
   // average line, which the chart always draws). Both leave the order being edited out of the history
@@ -488,6 +495,7 @@ function Panel({
       onClose={(r) => onClose(r ?? "escape")}
       label="Price history"
       width={520}
+      onKeyDown={(e) => keyRef.current?.(e)}
     >
       {q.isLoading ? (
         <Skeleton />
@@ -522,6 +530,7 @@ function Panel({
             onUsePrice(price);
             onClose("use");
           }}
+          keyRef={keyRef}
         />
       )}
     </AnchoredPopover>
