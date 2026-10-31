@@ -46,7 +46,12 @@ function build(
     products?: Array<ReturnType<typeof product>>;
     units?: Array<Record<string, unknown>>;
     /** OrderItem rows the sticky-price history query reads (newest first, one per product). */
-    history?: Array<{ productId: string; unitPrice: string; originalPrice: string }>;
+    history?: Array<{
+      productId: string;
+      unitPrice: string;
+      originalPrice: string;
+      priceType?: string;
+    }>;
   } = {},
 ) {
   const db = {
@@ -299,7 +304,14 @@ describe("CustomerUnitPricesService pack price parity with resolveBuyerLinePrice
       history:
         remembered == null
           ? []
-          : [{ productId: PRODUCT_ID, unitPrice: String(remembered), originalPrice: "24.00" }],
+          : [
+              {
+                productId: PRODUCT_ID,
+                unitPrice: String(remembered),
+                originalPrice: "24.00",
+                priceType: "MANUAL",
+              },
+            ],
     });
     const pack = (await svc.get(CUSTOMER_ID, { productId: PRODUCT_ID })).products[0].rows.find(
       (r) => r.ref === "pack",
@@ -313,15 +325,32 @@ describe("CustomerUnitPricesService pack price parity with resolveBuyerLinePrice
   it("a price typed for the customer still shows as theirs, not the remembered upsell", async () => {
     const { svc } = await build({
       typed: [{ productId: PRODUCT_ID, unitRef: "pack", price: "25.00" }],
-      history: [{ productId: PRODUCT_ID, unitPrice: "27.00", originalPrice: "24.00" }],
+      history: [
+        { productId: PRODUCT_ID, unitPrice: "27.00", originalPrice: "24.00", priceType: "MANUAL" },
+      ],
     });
     const pack = (await svc.get(CUSTOMER_ID)).products[0].rows.find((r) => r.ref === "pack")!;
     expect(pack).toEqual(expect.objectContaining({ price: 25, source: "customer" }));
   });
 
+  it("B11 (SA-1072): a tier price remembered from a SPECIAL line shows as the tier, not as history", async () => {
+    const { svc } = await build({
+      history: [
+        { productId: PRODUCT_ID, unitPrice: "27.00", originalPrice: "24.00", priceType: "SPECIAL" },
+      ],
+    });
+    const pack = (await svc.get(CUSTOMER_ID, { productId: PRODUCT_ID })).products[0].rows.find(
+      (r) => r.ref === "pack",
+    )!;
+    expect(pack.source).not.toBe("history");
+    expect(pack.price).toBe(24);
+  });
+
   it("the remembered price only moves the pack row, never a smaller unit", async () => {
     const { svc } = await build({
-      history: [{ productId: PRODUCT_ID, unitPrice: "27.00", originalPrice: "24.00" }],
+      history: [
+        { productId: PRODUCT_ID, unitPrice: "27.00", originalPrice: "24.00", priceType: "MANUAL" },
+      ],
     });
     const rows = (await svc.get(CUSTOMER_ID, { productId: PRODUCT_ID })).products[0].rows;
     expect(rows.find((r) => r.ref === "pack")!.source).toBe("history");

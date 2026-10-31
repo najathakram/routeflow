@@ -286,7 +286,7 @@ describe("S19: a BUYER replace-all prices a pack line from the customer layer (p
     v2On = true;
     typed(["pack", 9]);
     jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
-      "prod-a": { lastPrice: 15, listPriceAtTime: 12 },
+      "prod-a": { lastPrice: 15, stickyPrice: 15, listPriceAtTime: 12 },
     });
     await replace();
     expect(created()[0]).toMatchObject({ unitPrice: 9, priceType: "SPECIAL", originalPrice: 12 });
@@ -296,7 +296,7 @@ describe("S19: a BUYER replace-all prices a pack line from the customer layer (p
     v2On = false;
     typed(["pack", 9]);
     jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
-      "prod-a": { lastPrice: 15, listPriceAtTime: 12 },
+      "prod-a": { lastPrice: 15, stickyPrice: 15, listPriceAtTime: 12 },
     });
     await replace();
     expect(created()[0]).toMatchObject({ unitPrice: 15, priceType: "MANUAL" });

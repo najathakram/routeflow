@@ -181,7 +181,7 @@ export function priceReplacedLine(a: {
   buyerPromos: PromotionRule[];
   qtyPieces: number;
   qtyUnits: number;
-  lastPrice: number | null;
+  stickyPrice: number | null;
   denomination: { boxes: number | null; pieces: number | null; unitsPerBox: number };
 }): {
   priced: KeptOverride["price"];
@@ -222,7 +222,7 @@ export function priceReplacedLine(a: {
         a.buyerPromos,
         a.group?.qtyPieces ?? a.qtyPieces,
         a.group?.qtyUnits ?? a.qtyUnits,
-        a.lastPrice,
+        a.stickyPrice,
         // REG-B109: the exact denomination this line bills with.
         a.group?.denomination ?? a.denomination,
         a.layer,

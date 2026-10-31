@@ -426,10 +426,21 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       oneProduct();
       prisma.customerPrice.findMany.mockResolvedValue([]);
       ordersService.getCustomerPriceHistory.mockResolvedValue({
-        p1: { lastPrice: 12, listPriceAtTime: 10 }, // upsold to 12 above list 10
+        p1: { lastPrice: 12, stickyPrice: 12, listPriceAtTime: 10 }, // upsold to 12 above list 10
       });
       const res = (await service.getCatalog({}, "c1")) as any;
       expect(res.data[0].buyerPrice).toBe(12); // sticky upsell, never the list 10
+    });
+
+    it("B9 (SA-1072): a tier price remembered from a SPECIAL line is not an upsell", async () => {
+      gated([]);
+      oneProduct();
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      ordersService.getCustomerPriceHistory.mockResolvedValue({
+        p1: { lastPrice: 12, stickyPrice: null, listPriceAtTime: 10 },
+      });
+      const res = (await service.getCatalog({}, "c1")) as any;
+      expect(res.data[0].buyerPrice).toBe(10);
     });
 
     it("does NOT stick a remembered discount below list (keeps the tier price)", async () => {
@@ -437,7 +448,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       oneProduct();
       prisma.customerPrice.findMany.mockResolvedValue([]);
       ordersService.getCustomerPriceHistory.mockResolvedValue({
-        p1: { lastPrice: 8, listPriceAtTime: 10 }, // a one-time discount
+        p1: { lastPrice: 8, stickyPrice: 8, listPriceAtTime: 10 }, // a one-time discount
       });
       const res = (await service.getCatalog({}, "c1")) as any;
       expect(res.data[0].buyerPrice).toBe(10); // tier-1 list; a discount never sticks

@@ -22,3 +22,20 @@ describe("SA-1068 M4: one remembered-price rule", () => {
     },
   );
 });
+
+/** B16 (SA-1072): `lastPrice` is what the screen shows as "Last:". Nothing on the server may price a line from it. */
+describe("SA-1072: no server read prices a line from lastPrice", () => {
+  const sources = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) return sources(full);
+      return e.name.endsWith(".ts") && !e.name.endsWith(".spec.ts") ? [full] : [];
+    });
+
+  it("walks non-spec sources for ?.lastPrice", () => {
+    const hits = sources(SRC).filter((f) =>
+      /\?\.lastPrice\b/.test(strip(fs.readFileSync(f, "utf8"))),
+    );
+    expect(hits.map((f) => path.relative(SRC, f))).toEqual([]);
+  });
+});
