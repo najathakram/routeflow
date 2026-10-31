@@ -174,6 +174,8 @@ export const POLICY_REGISTRY = [
   }),
   entry<StaffOrderEmailPolicyMode>({
     key: "notifications.staffOrderEmail",
+    // SA-1063 item 13 / R15 (A-2): the office email switch stays account-admin only.
+    group: "ADMIN",
     area: "notifications",
     kind: "enum",
     schema: z.enum(STAFF_ORDER_EMAIL_POLICY_MODES),
