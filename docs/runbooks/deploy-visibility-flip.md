@@ -67,7 +67,7 @@ past the deadline, so a dead launch machine no longer leaves the window open. A 
 past its deadline, a missing or malformed one, or one for another repo is ignored. The timer writes
 exactly one line per decision to `~/.routeflow/ops/visibility-timer.log`; check it after a window.
 
-One watchdog at a time (#2076). A second start finds the lock (`local-assets/visibility-watchdog.lock`). If the old watchdog's repo reads PRIVATE and the new deadline is later, the old one has no window left to guard: the new start stops it, logs a `takeover` line and arms. Otherwise (PUBLIC, unknown, or an earlier deadline) it
+One watchdog at a time (#2076). A second start finds the lock (`local-assets/visibility-watchdog.lock`). If the old watchdog's repo reads PRIVATE and the new deadline is later, the old one has no window left to guard: the new start stops it, logs a `takeover` line and arms. An old watchdog blocked in a slow `gh` call can take about 3 minutes to stop, and is killed after that, so wait for your own pid's `start` line; the new deadline stands. Otherwise (PUBLIC, unknown, or an earlier deadline) it
 prints the running pid and its deadline, logs a `refused` line and exits 3; pass `--replace` to stop
 the old one and take over (the older watchdog's earlier deadline would otherwise flip the repo private
 inside the new window). A lock is treated as STALE and taken over (nothing is killed) when its pid is
