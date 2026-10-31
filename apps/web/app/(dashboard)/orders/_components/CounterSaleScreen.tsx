@@ -152,6 +152,7 @@ import { useCounterScanFocus } from "./useCounterScanFocus";
 import { CounterReceiptActions } from "./CounterReceiptActions";
 import { CounterTodaysSales } from "./CounterTodaysSales";
 import { ParkedSales } from "./ParkedSales";
+import { DraftDockSlot } from "@/components/DraftDockSlot";
 import { QuickKeysGrid } from "./QuickKeysGrid";
 import { CounterCheckDetails } from "./CounterCheckDetails";
 import {
@@ -1448,6 +1449,7 @@ export function CounterSaleScreen() {
           onParked={resetSale}
           onRestore={restoreParked}
         />
+        <DraftDockSlot />
         {gate.offerShipInstead ? (
           <WriteButton
             className="min-h-[44px]"
