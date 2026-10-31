@@ -310,6 +310,8 @@ enum OperatorPermissionGroup {
   FINANCE
   NOTIFICATIONS
   REPORTS
+  /// SA-1050: write off / reinstate a bad-debt invoice. The first group denied by default.
+  BAD_DEBT
 }
 
 // ─── Models (tenancy) ───────────────────────────────────────────────────────────────────
@@ -350,6 +352,7 @@ model User {
   stockMovements       StockMovement[]
   stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
   stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
+  invoiceWriteOffEvents InvoiceWriteOffEvent[] @relation("InvoiceWriteOffBy")
   stockCountLines      StockCountLine[]
   expenses             Expense[]
   messages             Message[]

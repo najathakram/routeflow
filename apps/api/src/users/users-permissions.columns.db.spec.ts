@@ -85,7 +85,7 @@ describeDb("User feature-group columns — real Postgres", () => {
     expect(row.permissionsVersion).toBe(1);
   });
 
-  it("the database enum carries exactly the nine groups", async () => {
+  it("the database enum carries exactly the ten groups, BAD_DEBT last", async () => {
     const rows = await prisma.$queryRaw<Array<{ label: string }>>`
       SELECT e.enumlabel AS label
         FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
