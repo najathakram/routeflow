@@ -289,7 +289,7 @@ function DraftDockInner() {
         </div>
       )}
 
-      {/* The till's chips: the same Resume / Discard rows, a transient panel under the button. Outside mousedown and
+      {/* The till's chips: the same Resume / Discard rows, a transient panel under the button. Outside pointerdown and
           Escape fold it (Escape also hands focus back to the button); it flips and clamps on screen by itself. */}
       {till && slot && draftsBtn && !collapsed && (
         <AnchoredPopover
