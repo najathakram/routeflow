@@ -1429,7 +1429,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             actions like Save Defaults / Save Changes. The install banner is NOT mounted
             here: it is fixed bottom-4, so a shell mount covered every staff screen with a
             bottom action (the till's Complete buttons on an iPhone). Install is offered on
-            the staff home (dashboard/page.tsx) and /get-the-app instead (SA-1069 A-2 P-1). */}
+            the staff home (dashboard/page.tsx) instead (SA-1069 A-2 P-1). */}
         <main
           id="main-content"
           tabIndex={-1}
