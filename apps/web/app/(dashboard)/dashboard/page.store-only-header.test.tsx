@@ -3,15 +3,11 @@ import { renderWithProviders, screen } from "@/test-utils/render";
 import DashboardPage from "./page";
 
 /**
- * Row 344 (follow-up of row 331): the dashboard header follows the SAME store-only rule the Orders header does
- * (UX G7), read from the one capability gate and the one shared helper (`quickCreateRule`):
- *  - a store-only business (capabilities.fulfilment: PICKUP only, counter always): Counter sale is the FILLED
- *    primary and trails, New order is gone (it went to the same place as Counter sale), New invoice stays secondary,
- *    and the two actions are 44 px targets below `sm`;
- *  - a delivery business is unchanged: Counter sale secondary, New order the filled primary, no 44 px override.
- * Row 344a (polish): a store-only business that may use POS mode also gets "Invoice a customer" (the builder intent,
- * `builder=1`: a bare `action=new` redirects a counter-default tenant straight back to the till), also a 44 px target.
+ * Row 344, replaced by W-854 (SA-940 verdict 1, one rule for every business): a store-only business carries the same one
+ * filled New order as any other, its menu lists Counter sale first, New invoice stays secondary, and its actions are
+ * 44 px targets below `sm`.
  */
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
@@ -82,38 +78,25 @@ beforeEach(() => {
 });
 
 describe("Dashboard header — the store-only rule (row 344, follows row 331)", () => {
-  it("a store-only tenant: Counter sale is the filled primary, there is no New order, New invoice stays secondary", () => {
+  it("a store-only tenant: New order is the filled primary and trails, New invoice stays secondary", () => {
     fulfilment = STORE_ONLY;
     renderWithProviders(<DashboardPage />);
-    expect(screen.queryByRole("link", { name: /new order/i })).toBeNull();
-    const counter = screen.getByRole("link", { name: "Counter sale" });
-    const invoice = screen.getByRole("link", { name: /new invoice/i });
-    expect(counter).toHaveClass("bg-accent-strong");
-    expect(invoice).toHaveClass("bg-paper");
-    expect(counter).toHaveAttribute("href", "/orders/counter-sale");
-    // The primary trails: [New invoice][Counter sale].
-    const order = screen
-      .getAllByRole("link")
-      .map((l) => l.textContent?.trim())
-      .filter((t) => t === "New invoice" || t === "Counter sale");
-    expect(order).toEqual(["New invoice", "Counter sale"]);
+    const newOrder = screen.getByTestId("new-order-open");
+    expect(newOrder).toHaveClass("bg-accent-strong");
+    expect(screen.getByRole("link", { name: /new invoice/i })).toHaveClass("bg-paper");
+    expect(screen.queryByRole("link", { name: "Counter sale" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: /new invoice/i }).compareDocumentPosition(newOrder) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("a store-only tenant: both actions are 44 px targets below sm", () => {
     fulfilment = STORE_ONLY;
     renderWithProviders(<DashboardPage />);
-    for (const name of [/new invoice/i, "Invoice a customer", "Counter sale"]) {
-      expect(screen.getByRole("link", { name }).className).toMatch(/max-sm:h-11/);
-    }
-  });
-
-  it("a store-only tenant: Invoice a customer opens the builder intent, beside Counter sale", () => {
-    fulfilment = STORE_ONLY;
-    renderWithProviders(<DashboardPage />);
-    const invoice = screen.getByRole("link", { name: "Invoice a customer" });
-    // builder=1: ?action=new alone would redirect this tenant straight back to the counter.
-    expect(invoice).toHaveAttribute("href", "/orders?action=new&builder=1");
-    expect(invoice).toHaveClass("bg-paper");
+    expect(screen.getByRole("link", { name: /new invoice/i }).className).toMatch(/max-sm:h-11/);
+    expect(screen.getByTestId("new-order-open").className).toMatch(/max-sm:h-11/);
   });
 
   it("a store-only tenant: every other shortcut stays (New invoice, New route)", () => {
@@ -127,20 +110,11 @@ describe("Dashboard header — the store-only rule (row 344, follows row 331)", 
     expect(screen.getByRole("link", { name: "New route" })).toBeInTheDocument();
   });
 
-  it("a store-only tenant's role that cannot use POS mode gets no Invoice a customer", () => {
-    fulfilment = STORE_ONLY;
-    authRole = "SUPER_ADMIN";
-    renderWithProviders(<DashboardPage />);
-    expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "New order" })).toBeNull();
-  });
-
-  it("a delivery tenant is unchanged: New order is the filled primary, Counter sale secondary, no 44 px override", () => {
+  it("a delivery tenant: New order is the filled primary, no 44 px override on New invoice", () => {
     fulfilment = DELIVERY;
     renderWithProviders(<DashboardPage />);
-    const newOrder = screen.getByRole("link", { name: /new order/i });
-    expect(newOrder).toHaveClass("bg-accent-strong");
-    expect(screen.getByRole("link", { name: "Counter sale" })).toHaveClass("bg-paper");
+    expect(screen.getByTestId("new-order-open")).toHaveClass("bg-accent-strong");
+    expect(screen.queryByRole("link", { name: "Counter sale" })).toBeNull();
     expect(screen.getByRole("link", { name: /new invoice/i }).className).not.toMatch(/max-sm:h-11/);
     expect(screen.queryByRole("link", { name: "Invoice a customer" })).toBeNull();
   });

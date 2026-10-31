@@ -6,6 +6,7 @@ import { cn } from "@routeflow/ui/web";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { PriceHistoryButton } from "@/components/PriceHistory";
+import { priceFieldLabel } from "@/lib/product-unit-label";
 import { EDIT_CONTROL_H } from "./edit-line-controls";
 
 // ─── Per-line price / discount editor (DRAFT only) ────────────────────────────
@@ -24,6 +25,7 @@ export function PriceEditRow({
   floor,
   isSpecial,
   history,
+  unitWord,
 }: {
   basePrice: number;
   unitPrice: number;
@@ -34,6 +36,8 @@ export function PriceEditRow({
    *  so that comparison flagged every untouched SPECIAL line. */
   originalUnitPrice?: number;
   overrideReason?: string;
+  /** SA-1069 U-2, REQUIRED so the compiler finds every site: the word this price is quoted per ("Case"). */
+  unitWord: string;
   onPriceChange: (netPrice: number) => void;
   onReasonChange: (reason: string) => void;
   unitCost?: number | null;
@@ -115,7 +119,7 @@ export function PriceEditRow({
     // r4 Q29: the 44px indent (the product-name column) is sm and up; on a phone every row of the card starts at one edge.
     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs sm:ml-11">
       <label className="flex items-center gap-1.5 text-navy/70">
-        <span>Unit price</span>
+        <span>{priceFieldLabel(unitWord)}</span>
         <span
           className={cn(
             EDIT_CONTROL_H,

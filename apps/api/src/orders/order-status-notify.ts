@@ -4,7 +4,12 @@ import type { NotificationsService } from "../notifications/notifications.servic
 import type { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { orderConfirmedVars } from "../messaging/order-confirmed-copy";
-import { notifyPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
+import {
+  isPickupHandover,
+  notifyPickupHandover,
+  pickupOutForDeliveryPush,
+} from "./order-pickup-wording";
+import { readyRecord, recordPatchSend } from "./ready-for-pickup.record";
 import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
 import { shippedPushCopy } from "./shipped-push-copy";
 
@@ -31,6 +36,12 @@ export async function notifyOrderStatusChange(
   p: { order: any; updated: any; status: OrderStatus; userSub: string | null | undefined },
 ): Promise<void> {
   const { order, updated, status, userSub } = p;
+  // SA-1070 (W-1060): a pickup handover tells the customer once. A SENT `order.ready_for_pickup` row (the Ready press
+  // writes it too) means neither the push nor the email goes again; the status has already moved.
+  if (isPickupHandover(order, status)) {
+    const told = await readyRecord(deps.prisma, deps.prisma.getTenantId?.(), order.id);
+    if (told.lastSent) return;
+  }
   // Fire-and-forget push notifications for key status transitions
   const notifMap: Partial<Record<OrderStatus, { title: string; body: string }>> = {
     [OrderStatus.CONFIRMED]: {
@@ -80,7 +91,13 @@ export async function notifyOrderStatusChange(
     [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
   };
   // A PICKUP handover fires READY_FOR_PICKUP instead of the driver-named template (order-pickup-wording.ts).
-  const pickupHandled = notifyPickupHandover(deps.messaging, order, status, userSub || null);
+  const pickupHandled = notifyPickupHandover(
+    deps.messaging,
+    order,
+    status,
+    userSub || null,
+    (outcomes) => recordPatchSend(deps, order, userSub, outcomes),
+  );
   const messagingEvent = pickupHandled ? undefined : messagingEventMap[status];
   if (
     messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&

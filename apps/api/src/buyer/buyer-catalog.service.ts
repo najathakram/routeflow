@@ -85,7 +85,7 @@ export class BuyerCatalogService {
   }
 
   /**
-   * The customer's remembered override prices per product (their last agreed
+   * The customer's remembered sticky prices per product (their last agreed
    * operator price). Used to make a sticky UPSELL the effective buyer price so the
    * catalog never reveals the lower base — see {@link effectiveBuyerPrice}.
    */
@@ -259,7 +259,7 @@ export class BuyerCatalogService {
           effectiveBuyerPrice(
             getTierPrice(p, effectiveTier),
             Number(p.pricePerUnit),
-            priceHist[p.id]?.lastPrice ?? null,
+            priceHist[p.id]?.stickyPrice ?? null,
           );
 
         // Dot pager: presign up to the first 4 images (HMAC-local, no network).
@@ -456,7 +456,7 @@ export class BuyerCatalogService {
       effectiveBuyerPrice(
         getTierPrice(product, effectiveTier),
         Number(product.pricePerUnit),
-        priceHist[product.id]?.lastPrice ?? null,
+        priceHist[product.id]?.stickyPrice ?? null,
       );
 
     // First entry corresponds to thumbnailUrl (same key, first image) — findOne
@@ -493,7 +493,7 @@ export class BuyerCatalogService {
           effectiveBuyerPrice(
             getTierPrice(v, cpMap.get(v.id) ?? defaultTier),
             Number(v.pricePerUnit),
-            priceHist[v.id]?.lastPrice ?? null,
+            priceHist[v.id]?.stickyPrice ?? null,
           ),
         unit: v.unit,
         // Promo inputs — a variant row's price must go through the same
@@ -607,7 +607,7 @@ export class BuyerCatalogService {
           effectiveBuyerPrice(
             getTierPrice(f.product, effectiveTier),
             Number(f.product.pricePerUnit),
-            priceHist[f.productId]?.lastPrice ?? null,
+            priceHist[f.productId]?.stickyPrice ?? null,
           ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
         imageKeys: signableImageKeys(f.productId, f.product.imageKeys),

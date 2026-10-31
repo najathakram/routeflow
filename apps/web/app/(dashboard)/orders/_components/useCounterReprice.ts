@@ -71,7 +71,7 @@ export function useCounterReprice<C extends PickedLike>(deps: {
   const historyRef = React.useRef(history.data);
   historyRef.current = history.data;
   const rememberedOf = React.useCallback(
-    (productId: string): number | null => historyRef.current?.[productId]?.lastPrice ?? null,
+    (productId: string): number | null => historyRef.current?.[productId]?.stickyPrice ?? null,
     [],
   );
   // The remembered prices of the cart's products: a refetch that changes one re-prices the cart.

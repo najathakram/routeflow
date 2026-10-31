@@ -17,7 +17,7 @@ type LayerState = {
 let mockScanV2 = true;
 let activeOrder: Record<string, unknown> | undefined;
 let layer: LayerState;
-let history: Record<string, { lastPrice: number }> | undefined;
+let history: Record<string, { lastPrice: number; stickyPrice?: number | null }> | undefined;
 // One reference across renders, as a settled query gives: a new array would re-run every effect and hide a missing dependency.
 const mockNoCustomerPrices = { data: [] };
 let customerPrices: { data: { productId: string; pricingTier: number }[] } = mockNoCustomerPrices;
@@ -231,7 +231,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
 
     it("T13: a customer with a memory puts the line on it, and no price is sent", async () => {
       await scanThenPickAcme();
-      history = { "prod-1": { lastPrice: 45 } };
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
       await pickAcme();
       expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
       await waitFor(() =>
@@ -251,7 +251,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
       const view = await scanThenPickAcme();
       await pickAcme();
       expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
-      history = { "prod-1": { lastPrice: 45 } };
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
       view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
       expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
     });
@@ -358,7 +358,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
 
     beforeEach(() => {
       mockScanV2 = false;
-      history = { "prod-1": { lastPrice: 45 } };
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
     });
 
     it("T18: tier 1, typing list shows list and sends it", async () => {
@@ -415,7 +415,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
       cust.pricingTier = 1;
       history = undefined;
       const view = await addWidgetForCustomer();
-      history = { "prod-1": { lastPrice: 45 } };
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
       rerenderModal(view);
       expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
       typePrice("$45.00 / each", "42");
@@ -428,7 +428,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
       mockScanV2 = true;
       history = undefined;
       const view = await addWidgetForCustomer();
-      history = { "prod-1": { lastPrice: 45 } };
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
       rerenderModal(view);
       expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
       openEditor("$45.00 / each");
@@ -468,7 +468,7 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
 
     it("T29 guard: a memory below list is no sticky price, clearing returns to list", async () => {
       cust.pricingTier = 1;
-      history = { "prod-1": { lastPrice: 40 } };
+      history = { "prod-1": { lastPrice: 40, stickyPrice: 40 } };
       await addWidgetForCustomer();
       typePrice("$40.00 / each", "");
       expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
@@ -497,8 +497,8 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
         ...widget,
         product: { ...widget.product, priceTier2: "38", priceTier3: "36" },
       };
-      const A = { "prod-1": { lastPrice: 45 } };
-      const B = { "prod-1": { lastPrice: 50 } };
+      const A = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+      const B = { "prod-1": { lastPrice: 50, stickyPrice: 50 } };
       type View = { rerender: (ui: React.ReactElement) => void };
       const shows = (price: string) => screen.findByText(`$${price}.00 / each`);
       const land = (view: View, read: typeof history) => {

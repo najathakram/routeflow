@@ -197,7 +197,7 @@ export interface DefaultUnitDeps {
   getUnits: (productId: string) => Promise<ProductUnitLevel[]>;
   tierFor: (productId: string) => Tier;
   /** SA-1068 M25: required, so every caller decides. A derived Piece is a pack line, which the server books at the memory. */
-  rememberedOf: (productId: string) => number | undefined;
+  rememberedOf: (productId: string) => number | null | undefined;
 }
 
 /** "Try again" on the blocked message: the shared rule (@routeflow/pricing), kept under its old name for callers. */

@@ -24,7 +24,11 @@ const DELIVERY_PROGRESS_STATUSES = new Set([
 ]);
 
 /** The read-only row's props for one order line — exported so the mapping is testable. */
-export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowReadOnlyProps {
+export function lineRowProps(
+  li: OrderItem,
+  orderStatus: string,
+  fulfillPath?: string | null,
+): LineItemRowReadOnlyProps {
   return {
     displayName: orderLineName(li) ?? "Custom item",
     sku: li.product?.sku ?? null,
@@ -40,7 +44,7 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
     freeUnits: li.promoFreeUnits ?? null,
     priceType: li.priceType ?? null,
     originalPrice: li.originalPrice ?? null,
-    lineStatus: displayLineStatus(li, orderStatus),
+    lineStatus: displayLineStatus(li, orderStatus, fulfillPath) ?? undefined,
     deliveredQty: li.deliveredQty ?? null,
     showDeliveryProgress: DELIVERY_PROGRESS_STATUSES.has(orderStatus),
     note: li.notes ?? null,
@@ -59,10 +63,13 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
 export function OrderLineItemCards({
   lineItems,
   orderStatus,
+  fulfillPath,
   total,
 }: {
   lineItems: OrderItem[];
   orderStatus: string;
+  /** The order's path: a default line on an open PICKUP order shows no status badge (SA-1066 F15). */
+  fulfillPath?: string | null;
   total: number;
 }) {
   const [expanded, setExpanded] = React.useState(false);
@@ -87,7 +94,7 @@ export function OrderLineItemCards({
           <LineItemRowReadOnly
             key={li.id}
             className="px-6"
-            {...lineRowProps(li, orderStatus)}
+            {...lineRowProps(li, orderStatus, fulfillPath)}
             footer={<RestrictionOverrideNote line={li} />}
           />
         ))}

@@ -452,6 +452,19 @@ describe("invoice-pdf-item — BOGO/promo line display (T-B103, R9, REG-B103)", 
       true,
     );
   });
+
+  it("B17 (SA-1072): a tier price above list never strikes the lower list price", () => {
+    expect(
+      showOriginalPrice({ unitPrice: 12, originalPrice: 10, priceType: "SPECIAL" }, false),
+    ).toBe(false);
+  });
+
+  it.each(["SPECIAL", "DISCOUNTED"])(
+    "B19 (SA-1072): a %s line below list still strikes it",
+    (priceType) => {
+      expect(showOriginalPrice({ unitPrice: 8, originalPrice: 10, priceType }, false)).toBe(true);
+    },
+  );
 });
 
 describe("invoice-pdf-item — qty cell text (B653)", () => {

@@ -17,6 +17,7 @@ window.HTMLElement.prototype.scrollIntoView = jest.fn();
 const createOrderMutate = jest.fn();
 const mockApiGet = jest.fn();
 // Mutable so a test can put the mutation in its error state (the modal's inline API-error banner).
+let mockPriceHistory: Record<string, unknown> | undefined;
 let mockCreateOrderError: unknown = null;
 // Mutable so a test can put a customer in the picker / give them per-product tier prices.
 let mockCustomers: Array<Record<string, unknown>> = [];
@@ -40,7 +41,7 @@ jest.mock("@/lib/api/orders", () => ({
     reset: jest.fn(),
   }),
   useActiveOrderForCustomer: () => ({ data: undefined }),
-  useCustomerPriceHistory: () => ({ data: undefined }),
+  useCustomerPriceHistory: () => ({ data: mockPriceHistory }),
 }));
 jest.mock("@/lib/api/drafts", () => ({
   useCreateDraft: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
@@ -205,6 +206,54 @@ const pickCustomer = async (name: string) => {
   });
   fireEvent.click(await screen.findByText(name));
 };
+
+describe("CreateOrderModal - the remembered price pre-fill (SA-1072)", () => {
+  const priceControl = () =>
+    screen.getAllByLabelText("Change price")[0].closest("button, [role=button]") as HTMLElement;
+  const scanned = async (pricingTier: number) => {
+    mockCustomers = [{ ...acme, pricingTier }];
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer("Acme Foods");
+    capturedOnScan!("111");
+    await screen.findByText("Widget");
+    return priceControl().textContent;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCustomerPrices = [];
+    mockScanV2 = false;
+    mockUnitsEnabled = false;
+    mockProductUnits = [];
+    mockResolveProductByCode.mockResolvedValue(tiered);
+    mockApiGet.mockResolvedValue({ data: { taxRate: 0 } });
+  });
+  afterEach(() => {
+    mockPriceHistory = undefined;
+  });
+
+  it("B13: a tier price remembered from a SPECIAL line doesn't pre-fill", async () => {
+    mockPriceHistory = { "prod-1": { lastPrice: 12, stickyPrice: null, listPriceAtTime: 10 } };
+    expect(await scanned(1)).toContain("$10.00");
+  });
+
+  it("B15 guard: a real upsell still pre-fills", async () => {
+    mockPriceHistory = { "prod-1": { lastPrice: 12, stickyPrice: 12, listPriceAtTime: 10 } };
+    expect(await scanned(1)).toContain("$12.00");
+  });
+
+  it("B15 guard: a discount below the tier still pre-fills", async () => {
+    mockPriceHistory = { "prod-1": { lastPrice: 7, stickyPrice: null, listPriceAtTime: 10 } };
+    expect(await scanned(1)).toContain("$7.00");
+  });
+
+  it('B15 guard: "Last:" still shows the remembered tier price', async () => {
+    mockPriceHistory = { "prod-1": { lastPrice: 12, stickyPrice: null, listPriceAtTime: 10 } };
+    await scanned(1);
+    fireEvent.click(priceControl());
+    expect(await screen.findByText(/Last: \$12\.00/)).toBeInTheDocument();
+  });
+});
 
 describe("CreateOrderModal - price history button (real onTapPrice configuration)", () => {
   beforeEach(() => {

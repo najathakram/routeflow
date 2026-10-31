@@ -16,6 +16,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
 import { apiBase, operatorAccessToken } from "./helpers/api";
+import { openRegularOrderBuilder } from "./helpers/new-order";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "";
 const SEARCH = "Search by name, SKU or scan barcode…";
@@ -78,13 +79,7 @@ for (const vp of VIEWPORTS) {
       await page.goto("/orders");
       const { term, name } = await discoverFuzzyTerm(page);
 
-      await page
-        .getByRole("button", { name: /new order/i })
-        .first()
-        .click();
-      await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
-        timeout: 10_000,
-      });
+      await openRegularOrderBuilder(page);
       const search = page.getByPlaceholder(SEARCH);
       const picker = page.getByRole("group", { name: /did you mean/i });
       const lines = page.getByTitle("Remove");

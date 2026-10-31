@@ -117,7 +117,7 @@ describeDb("B467 — InlineReturnsService.approve() rollback atomicity, real Pos
       numbering,
       addonService: { hasAddon: async () => true },
       quoteService: {} as InlineReturnsQuoteService, // never called by approve()
-      idempotency: new IdempotencyService(), // never called by approve() (no lock taken here)
+      idempotency: new IdempotencyService(), // approve() takes the customer lock through it (SA-1060 A-3)
     });
 
     tenantId = (await raw.tenant.create({ data: { slug, name: `B467 Approve ${slug}` } })).id;

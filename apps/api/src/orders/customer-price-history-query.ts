@@ -5,7 +5,10 @@ import type { PrismaService } from "../prisma/prisma.service";
 /** A tenant-scoped Prisma client: what `prisma.forTenant()` returns. */
 export type PriceHistoryDb = ReturnType<PrismaService["forTenant"]>;
 
-export type CustomerPriceHistory = Record<string, { lastPrice: number; listPriceAtTime: number }>;
+export type CustomerPriceHistory = Record<
+  string,
+  { lastPrice: number; stickyPrice: number | null; listPriceAtTime: number }
+>;
 
 /**
  * A customer's remembered per-product price (the "sticky" price): the most recently saved non-promo, non-unit-aware
@@ -18,6 +21,10 @@ export type CustomerPriceHistory = Record<string, { lastPrice: number; listPrice
  * SA-1068: a walk-in has no remembered price. Every counter walk-in sale shares ONE customer record, so one clerk's
  * above-list one-off would reach strangers. `Customer.isWalkIn` is `Boolean?` and most customers hold null, so the
  * filter keeps null AND false; a plain `isWalkIn: false` (or `{ not: true }`) would drop every null customer's memory.
+ *
+ * SA-1072: `lastPrice` is what the screen shows as "Last:". `stickyPrice` is what may price a line: the same newest row's
+ * price when staff chose it (MANUAL), else null. A tier price above Retail comes back here as SPECIAL, and the number
+ * alone can't tell it from an upsell. It's never "the newest MANUAL row": a newer line below list ends an upsell.
  */
 export async function loadCustomerPriceHistory(
   db: PriceHistoryDb,
@@ -41,6 +48,7 @@ export async function loadCustomerPriceHistory(
       productId: true,
       unitPrice: true,
       originalPrice: true,
+      priceType: true,
     },
   });
 
@@ -51,6 +59,8 @@ export async function loadCustomerPriceHistory(
         item.productId as string,
         {
           lastPrice: roundMoney(Number(item.unitPrice)),
+          stickyPrice:
+            item.priceType === PriceType.MANUAL ? roundMoney(Number(item.unitPrice)) : null,
           listPriceAtTime: roundMoney(Number(item.originalPrice)),
         },
       ]),

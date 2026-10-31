@@ -212,7 +212,7 @@ export class CustomerUnitPricesService {
           });
           const cell = (t: number) => roundMoney(row.cells.find((c) => c.tier === t)?.value ?? 0);
           // Sticky upsell: billing charges a remembered price ABOVE list on the pack, ahead of tier and promotions.
-          const remembered = history[p.id]?.lastPrice;
+          const remembered = history[p.id]?.stickyPrice;
           const sticky =
             row.kind === "pack" &&
             (resolved.source === "tier" || resolved.source === "list") &&
@@ -223,7 +223,7 @@ export class CustomerUnitPricesService {
             factor: row.factor,
             kind: row.kind,
             code: unitCodeOf(codes, row.ref),
-            price: sticky ? roundMoney(remembered) : resolved.price,
+            price: sticky ? roundMoney(Number(remembered)) : resolved.price,
             listPrice: cell(1),
             tierPrice: cell(tier),
             source: sticky ? "history" : resolved.source,

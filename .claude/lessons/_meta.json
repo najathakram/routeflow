@@ -1,11 +1,11 @@
 {
-  "nextId": 364,
+  "nextId": 367,
   "activeCount": 52,
-  "archivedCount": 297,
+  "archivedCount": 300,
   "maxEntries": 52,
   "maxBytes": 81920,
-  "updatedAt": "2026-10-31T12:08:14.565Z",
+  "updatedAt": "2026-10-31T16:11:40.288Z",
   "schemaVersion": 1,
-  "note": "2026-10-31 (coordinator, bookkeeping for W32, W33 and train U): new L-361 (watchdog deadline per pid, grep -a), L-362 (slot job runs the launching tree's scripts), L-363 (timing specs under load); extended L-357 (no private flip during hosted CI), L-355 (remerge-diff empty), L-264 (W33 required-field composition). Archived L-190 (superseded by L-288), L-184 (promoted into CLAUDE.md deploy flow), L-205 (fix shipped). Register stays at 52/52.",
+  "note": "2026-10-31 (coordinator, bookkeeping for trains V and X): new L-364 (a static pin that scans source text must read template literals; fix the source shape, never the pin, in a train), L-365 (a scoped jest run beside a running verify overwrites the campaign report with a partial one), L-366 (a wrapper accepts only what its inner guard accepts; the guard is never widened). Archived L-176 (its loud half is L-358 build packages first, L-262 per-install client and L-354 own tree setup; the quiet half, a stale dist giving wrong money with no error, now rides on L-358), L-193 (a narrow bugs.mjs id-renumber trap; the record-to-ledger mirror it led to is pinned by bugs.mjs self-test T13b/R9 and the sync --check step), L-167 (fix shipped as the shared buildListWhere builder; the rule survives in future-proof/references/SEAMS.md under Copies that drift and in the same-filtered-set reviewer question, and its title is an incident id). Register stays at 52/52.",
   "notes": "2026-09-13 owner ruling: maxBytes 40,960 -> 49,152 so the 40-entry cap is the binding constraint (40 x ~1.05 KB); the byte cap had made the entry cap unreachable and left no eligible archive candidate. maxEntries 40 -> 48 in the same ruling: with bytes raised the entry cap became binding at 40/40 with no eligible archive candidate, so bytes alone unblocked nothing. 2026-09-14 owner ruling: maxBytes 49,152 -> 65,536 (register hit 49,142 after two waves in one day with no eligible archive candidate); maxEntries stays 48. House rule: an author trims any entry over 1.5 KB before it lands; never shorten a live entry afterwards. 2026-09-14 owner ruling: maxEntries 48 -> 64 to match the 65,536-byte cap (register reached 47/48 after the W1 wave); author-trim rule (>1.5 KB) unchanged. 2026-09-15 owner ruling (via lead c4): bytes stay load-bearing at 65,536; maxEntries 64 -> 52 so the two caps agree (~1.24 KB average entry)."
 }

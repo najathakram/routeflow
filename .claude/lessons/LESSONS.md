@@ -86,6 +86,13 @@
 
 ## tooling
 
+### L-365 · 2026-10-31 · tooling · a scoped jest run in a tree whose verify is still running overwrites the campaign report with a partial one; run pre-checks first or elsewhere
+
+- **Symptom:** a verify finished with every Turbo task passed (10 of 10, no `Failed:` line at the start of a line) and still exited 1: its trailing `campaign-check` failed.
+- **Root cause:** a scoped jest run in the same tree, started while verify was running, overwrote the gitignored `.campaign/runs/<workspace>.json` with a report of only the specs it ran; `campaign-check` then read that partial report. Grepping the log for the word "Failed" also matches test names.
+- **Lesson:** **Never run jest in a tree while its verify runs: order pre-check items before the verify, or run them in another worktree. If it happened, regenerate the report with that workspace's full suite and re-run `node scripts/campaign-check.mjs` alone; the Lead may accept the verify on that evidence without a full rerun. Judge a verify by Turbo's `Failed:` line at line start, never by grep for the word.**
+- **Guard:** the by-hand train pre-check orders its scoped jest items before the verify and runs none beside it. Cf. [[L-359]].
+
 ### L-362 · 2026-10-31 · tooling · a heavy-slot job runs the scripts of the tree it was started from; start it from the tree whose scripts you want
 
 - **Symptom:** a slot waiter started from the main checkout used its stale `scripts/lib/heavy-slot.mjs`, which lacked the capped-label rule, and blocked the queue for jobs that the newer script would have let through.
@@ -104,7 +111,7 @@
 
 - **Symptom:** the api type-check on a freshly installed train tree reported 913 diagnostics (baseline 551), nearly all "Cannot find module '@routeflow/pricing'".
 - **Root cause:** `@routeflow/pricing`, `returns` and `scanning` resolve their types from `dist/`; `npm ci --ignore-scripts` builds nothing, so every importer fails.
-- **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect.**
+- **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect. After a `packages/*` change lands or is edited, rebuild `dist/` in every tree that tests against it: web specs import the built `dist`, so a stale one fails silently with wrong money figures, not an error (archived L-176).**
 - **Guard:** the train check script runs the package builds first, then api and web check-types.
 
 ### L-354 · 2026-10-29 · tooling · a worktree whose hooks directory is missing runs no hooks and says nothing; every tree-making path installs them and a push checks they exist
@@ -128,59 +135,6 @@
 - **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
 - **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
 
-### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
-
-- **Symptom:** renumbering 17 filed bug records (to dodge an id collision) then running
-  `bugs.mjs index` scrambled every shifted row's `symptom`/`filedAt` onto the WRONG finding — the
-  new id briefly carried one finding's title with a different finding's symptom text.
-- **Root cause:** catalogue-only fields (`symptom`, `filedAt`) have no home in a record's own
-  front matter, so `index` cannot re-derive them — it carries forward whatever the PRIOR
-  catalogue row held at that SAME id, which after a rename is a stale, orphaned row.
-- **Lesson:** **`bugs.mjs index`/`expand` carry a catalogue-only field forward by id lookup, not
-  by identity — renaming a record's file to change its id does NOT bring these fields with it.
-  To renumber, pull each row's ORIGINAL entry from git history, remap only `id`, and splice it
-  back directly; never trust `index`'s carry-forward across an id change. Diff for net-zero
-  before committing any bulk-id rewrite.**
-- **Recurred 2026-10-02:** marking bugs fixed with `move` + `already-fixed` writes the ledger but leaves each record's `closed:` flag to the refresh. Run `node scripts/campaign/bugs.mjs sync`, then the read-only `sync --check` ("N record(s) mirror the ledger") and the full `self-test`, before the commit; `campaign-check` does not cover the record-to-ledger mirror. #3062 skipped it and master's self-test (T13b/R9) stayed red until #3067.
-- **Guard:** none yet — propose a `bugs.mjs renumber <old> <new>` command doing the safe remap
-  atomically, or a self-test asserting `index` refuses/warns on a renamed fixture.
-  The record-to-ledger mirror is pinned by `bugs.mjs self-test` T13b/R9 (run by `common/bugs-self-test-script.spec.ts`).
-
-### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
-
-- **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
-  MAIN checkout's — a stale compiled `@routeflow/pricing` dist threw a missing-function error.
-  RECURRED 2026-09-22, twice: after a `@routeflow/pricing` change landed on master, other
-  worktrees' `packages/pricing/dist` stayed stale, so api/web tests there imported the OLD money
-  math and silently produced wrong zeros or drift instead of an error — same root cause, a
-  quieter failure shape (wrong numbers, not a thrown missing-function error). RECURRED a third
-  time, 2026-09-23 (B660 PR B lane, `apps/web` + `@routeflow/returns`, same worktree/session, no
-  master-sync involved): editing `packages/returns/src/*.ts` had zero effect on a web dialog test
-  (still failing on the PRE-fix value) though the package's own source-direct suite passed —
-  `apps/web`'s jest config has no `moduleNameMapper` for `@routeflow/returns` (unlike
-  `apps/mobile`'s), so it resolves via `node_modules` → `package.json`'s `main`/`types` → the
-  STALE PREBUILT `dist/index.js`. Fixed by `npm run build -w packages/returns`; not a pipeline
-  risk since turbo's task graph rebuilds it correctly during `npm run verify`.
-- **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
-  back to whatever the main checkout last had installed/built — never a guarantee of freshness.
-  The third recurrence adds a distinct wrinkle: even within one freshly-`npm ci`'d worktree, a
-  consumer's jest config may resolve a package via prebuilt `dist` instead of live `src` absent a
-  `moduleNameMapper` override — inconsistent per app, so one app going green proves nothing about
-  another.
-- **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
-  `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
-  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
-  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
-  values) as easily as it fails loudly (a missing-function throw). Same rule applies mid-session,
-  same worktree: after editing a
-  workspace package's own `src`, before trusting a DIFFERENT app's test result against it, check
-  that app's jest config for a `moduleNameMapper` override — absent one, `npm run build -w <pkg>`
-  first.**
-- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
-  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
-  `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
-  consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
-
 ### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
 
 - **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
@@ -189,6 +143,20 @@
 - **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
 
 ## testing
+
+### L-366 · 2026-10-31 · testing · a wrapper must accept only values its inner guard accepts; a safety guard is never widened to fit the wrapper
+
+- **Symptom:** a full DB lane run with `RF_DBSPEC_HOST=127.0.0.2` failed 441 of 444 suites after a long wait, each with "Refusing to run DB-backed specs against a target that is not provably local".
+- **Root cause:** `scripts/local-db-specs.mjs` accepts `localhost` or any 127.x.x.x address, but `requireLocalDatabaseUrl` (`apps/api/src/common/testing/db-spec.ts`) allows only localhost, 127.0.0.1, ::1 and postgres. The wrapper passed its own check and the inner guard then refused every suite. The host was chosen to route around a relay holding a port, which is an environment fault.
+- **Lesson:** **Every value a wrapper accepts must also pass the guard behind it: share one allow-list, or pin the wrapper's accepted set against the guard. A safety guard is never edited inside a train; an environment fault (a relay holding a port) is fixed, or routed around on another host, not by widening the guard.**
+- **Guard:** none yet; a spec pinning the wrapper's accepted hosts against the guard is a named follow-up. Cf. [[L-363]].
+
+### L-364 · 2026-10-31 · testing · a static pin that scans source text must read every shape the repo writes, template literals included; fix the source shape, never the pin, inside a train
+
+- **Symptom:** the date-input size pin (`apps/web/app/globals-date-input.static.test.ts`, #2080) went red on the assembled train: the new product-count window's date input read as unsized, although its shared class constant carries `w-full`. The member that added the input never ran that pin: it is red at that member's own head too, so this is the case in [[L-323]], not a composition surprise.
+- **Root cause:** the pin collects string literals only (`ts.isStringLiteralLike`). A class constant written as a template literal with a substitution (`${TALL}` inside the string) is invisible to it, and no earlier input used that shape, so the pin's own spec never fed it one.
+- **Lesson:** **A pin that reads source text must handle every shape the repo writes (template expressions included), and its own spec must feed it the repo's real shapes. When a static pin goes red on a new file inside a train, change the source to a shape the pin reads (string concatenation, same classes); never edit the pin or its spec in the train.**
+- **Guard:** the by-hand train pre-check set runs the web static pins (`apps/web/app/*.static.test.ts`) before the long verify, so a red surfaces early. Cf. [[L-322]], [[L-323]].
 
 ### L-363 · 2026-10-31 · testing · a timing-based spec goes red under slot load and passes alone; record it, rerun on the same tree, rule per spec, and never edit it inside a train
 
@@ -258,7 +226,7 @@
 - **Symptom:** a worktree that shared `node_modules` with another tree (symlinked or hoisted) ran specs and queries against the OTHER tree's generated Prisma client, so a green run said nothing about this tree's `schema/*.prisma`.
 - **Root cause:** `prisma generate` writes the client into `node_modules/.prisma`, so a shared install serves whichever schema its owner last generated, and mocked specs accept any shape; trusting the green run was the mistake.
 - **Lesson:** **In the tree under test run `npx prisma generate` from `apps/api` after the install, and prove any changed `select`/`include`/`where` with an executed query against a database migrated from THAT tree's `prisma/migrations` (`npm run local:migrate`, then the DB lane). A link to another tree's `node_modules` is fine for docs-only work and never for code that touches the schema.**
-- **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. [[L-176]]. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
+- **Guard:** none automatic; the install order in [[L-254]] (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`), `npm run local:drift` against the compose DB, and the executed-query rule. Cf. archived L-176. Extended 2026-10-21: a DB-backed spec that needs reference data (a published plan catalog) passed on a seeded dev database and failed in CI's fresh replay database. A DB spec seeds the reference data it needs through the shipped idempotent publishers, behind the local-DB guard, and is proved once against an empty migrated database.
 
 ## domain
 
@@ -351,7 +319,7 @@
 - **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
 - **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
 - **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
-- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. [[L-167]].
+- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. archived L-167.
 
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 
@@ -360,19 +328,6 @@
 - **Lesson:** **Read the guard value after taking the lock, compare, and write the new value in that same transaction. A guard stamped after commit is a log, not a guard.**
 - **Guard:** none automatic; DB specs that race two callers against one row. Cf. [[L-239]].
 - **Recurrence 2026-10-18 (B1234):** the delivered-line lock ran on the locked rows but decided whether it applied from the order status read before the lock, so a delivery landing in between skipped it. Applicability is guard state too: read it under the lock. Unit + DB stale-read cases now pin it.
-
-### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
-
-- **Symptom:** three separately-reported bugs all traced to the same root cause — a
-  customer-list filter predicate living in more than one place.
-- **Root cause:** `findAll`'s `where` clause and `exportCustomers`'s hand-rolled one had drifted
-  apart, and neither was consulted by the removed-customer guard.
-- **Lesson:** **When an entity has more than one read/export/guard path, its filter predicate
-  belongs in exactly ONE shared builder consumed by all of them — call-site-specific copies will
-  silently drift, and each drift surfaces as its own "unrelated" bug report.**
-- **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the status-change
-  guards; a test asserting every consumer calls the _same_ function reference (not just a
-  matching result) is flagged, not yet added.
 
 ### L-072 · 2026-09-03 · domain · wave E `imp-10b`
 

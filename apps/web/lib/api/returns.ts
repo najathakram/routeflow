@@ -79,6 +79,10 @@ export interface Return {
   logs?: ReturnLog[];
   createdAt: string;
   updatedAt: string;
+  /** SA-1060 PR-1: why an INLINE return is waiting for staff (see INLINE_HOLD_REASONS in @routeflow/types); null/absent when it is not held. */
+  holdReason?: string | null;
+  /** The credit held back until approval. A Prisma Decimal: JSON carries it as a string; show it, never compute with it. */
+  heldAmount?: number | string | null;
   /** Populated once a CREDIT_NOTE refund has minted store credit for this return. */
   creditNoteId?: string;
   creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
@@ -125,6 +129,8 @@ export function useReturns(params?: {
   /** #2406: STANDARD (default, unchanged) | INLINE | ALL. The order-detail panel passes
    *  "ALL" so a captured INLINE return (every return that flow records) shows up. */
   kind?: "STANDARD" | "INLINE" | "ALL";
+  /** SA-1060 PR-1: comma list of INLINE_HOLD_REASONS; the held-returns filter ("Waiting for approval"). */
+  holdReason?: string;
 }) {
   return useQuery<PaginatedResponse<Return>>({
     queryKey: ["returns", params],

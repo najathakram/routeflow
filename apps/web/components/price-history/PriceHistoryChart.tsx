@@ -18,8 +18,10 @@ import {
  * dotted, one muted colour, so shape tells them apart. Every number is the server's; nothing here converts.
  *
  * One price scale and one time axis cover every non-empty line, whether it is switched on or off, so turning a line
- * off never makes the others jump. A reference line joins only consecutive months (a month under the floor is a gap,
- * never bridged), and a lone month is a marker.
+ * off never makes the others jump. A reference line is ONE polyline over the months the server sent, oldest to newest,
+ * straight across a month with no sale, with a marker on every real month (a stretch with no marker is no sales). It
+ * ends at its newest month, never extended to today (W-1058 H-2.2 / H-2.3). The first and last month are named under
+ * the plot.
  */
 const PAD_X = 4;
 const PAD_Y = 6;
@@ -53,23 +55,7 @@ function useChartSize(ref: React.RefObject<HTMLElement | null>) {
     mq.addEventListener?.("change", apply);
     return () => mq.removeEventListener?.("change", apply);
   }, []);
-  return { w, h: tall ? 96 : 80 };
-}
-
-const monthIndex = (m: string) => {
-  const [y, mo] = m.split("-").map(Number);
-  return y! * 12 + (mo ?? 1) - 1;
-};
-
-/** Runs of consecutive months: a gap (a month the server withheld) starts a new run. */
-function runsOf<P extends { month: string }>(pts: P[]): P[][] {
-  const runs: P[][] = [];
-  for (const p of pts) {
-    const last = runs[runs.length - 1];
-    if (last && monthIndex(p.month) - monthIndex(last[last.length - 1]!.month) === 1) last.push(p);
-    else runs.push([p]);
-  }
-  return runs;
+  return { w, h: tall ? 96 : 140 };
 }
 
 const visibility = (on: boolean): React.CSSProperties =>
@@ -105,6 +91,9 @@ function Swatch({ line, className }: { line: LineId; className?: string }) {
     </svg>
   );
 }
+
+/** A timestamp's UTC month, as the server buckets months ("2026-09"). */
+const monthKeyOf = (t: number) => new Date(t).toISOString().slice(0, 7);
 
 function Plot({
   model,
@@ -144,14 +133,13 @@ function Plot({
 
   const label = [
     on.own && drawn("own") && `this customer, ${model.own.length} sales`,
-    on.like && drawn("like") && "other customers' monthly average",
+    on.like && drawn("like") && "all customers' monthly average, except this one",
     on.conv && drawn("conv") && "all customers, all units, monthly average",
   ]
     .filter(Boolean)
     .join("; ");
 
   const refGroup = (id: "like" | "conv", pts: RefPoint[]) => {
-    const runs = runsOf(pts);
     const shown = on[id] && drawn(id);
     return (
       <g
@@ -161,24 +149,24 @@ function Plot({
         className="text-navy/60 motion-reduce:!transition-none"
         style={visibility(shown)}
       >
-        {runs.map((run, i) =>
-          run.length > 1 ? (
-            <polyline
-              key={i}
-              points={poly(run)}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={STROKE[id].width}
-              strokeDasharray={STROKE[id].dash}
-              strokeLinecap={id === "conv" ? "round" : "butt"}
-              strokeLinejoin="round"
-            />
-          ) : id === "like" ? (
+        {pts.length > 1 && (
+          <polyline
+            points={poly(pts)}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={STROKE[id].width}
+            strokeDasharray={STROKE[id].dash}
+            strokeLinecap={id === "conv" ? "round" : "butt"}
+            strokeLinejoin="round"
+          />
+        )}
+        {pts.map((p, i) =>
+          id === "like" ? (
             <rect
               key={i}
-              data-testid="lone-like"
-              x={pt(run[0]!).x - 2.5}
-              y={pt(run[0]!).y - 2.5}
+              data-testid="mark-like"
+              x={pt(p).x - 2.5}
+              y={pt(p).y - 2.5}
               width="5"
               height="5"
               fill="white"
@@ -188,9 +176,9 @@ function Plot({
           ) : (
             <circle
               key={i}
-              data-testid="lone-conv"
-              cx={pt(run[0]!).x}
-              cy={pt(run[0]!).y}
+              data-testid="mark-conv"
+              cx={pt(p).x}
+              cy={pt(p).y}
               r="2.5"
               fill="white"
               stroke="currentColor"
@@ -203,71 +191,83 @@ function Plot({
   };
 
   const ownShown = on.own && drawn("own");
+  const first = monthLabel(monthKeyOf(t0));
+  const last = monthLabel(monthKeyOf(t1));
   return (
-    <div ref={box} className="relative" style={{ height: h }}>
-      <svg
-        role="img"
-        aria-label={anyOn ? `Price over time: ${label}` : "Price over time: every line is off"}
-        width={w}
-        height={h}
-        viewBox={`0 0 ${w} ${h}`}
-        className="block max-w-full"
-      >
-        {drawn("conv") && refGroup("conv", model.conv)}
-        {drawn("like") && refGroup("like", model.like)}
-        {drawn("own") && (
-          <g
-            data-testid="line-own"
-            data-on={ownShown ? "true" : "false"}
-            aria-hidden
-            className="text-brand-500 motion-reduce:!transition-none"
-            style={visibility(ownShown)}
-          >
-            {model.own.length > 1 && (
-              <polyline
-                points={poly(model.own)}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={STROKE.own.width}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            )}
-            {model.own.map((p, i) => (
-              <circle
-                key={`d${i}`}
-                data-testid="own-dot"
-                cx={pt(p).x}
-                cy={pt(p).y}
-                r="2.5"
-                fill="currentColor"
-              />
-            ))}
-            {model.own.map(
-              (p, i) =>
-                p.type &&
-                PRICE_TYPE_TAG[p.type] && (
-                  <circle
-                    key={`m${i}`}
-                    data-testid="price-marker"
-                    cx={pt(p).x}
-                    cy={pt(p).y}
-                    r="3.5"
-                    fill="none"
-                    stroke={p.type === "SPECIAL" ? "#059669" : "#d97706"}
-                    strokeWidth="1.5"
-                  />
-                ),
-            )}
-          </g>
+    <>
+      <div ref={box} className="relative" style={{ height: h }}>
+        <svg
+          role="img"
+          aria-label={anyOn ? `Price over time: ${label}` : "Price over time: every line is off"}
+          width={w}
+          height={h}
+          viewBox={`0 0 ${w} ${h}`}
+          className="block max-w-full"
+        >
+          {drawn("conv") && refGroup("conv", model.conv)}
+          {drawn("like") && refGroup("like", model.like)}
+          {drawn("own") && (
+            <g
+              data-testid="line-own"
+              data-on={ownShown ? "true" : "false"}
+              aria-hidden
+              className="text-brand-500 motion-reduce:!transition-none"
+              style={visibility(ownShown)}
+            >
+              {model.own.length > 1 && (
+                <polyline
+                  points={poly(model.own)}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={STROKE.own.width}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              )}
+              {model.own.map((p, i) => (
+                <circle
+                  key={`d${i}`}
+                  data-testid="own-dot"
+                  cx={pt(p).x}
+                  cy={pt(p).y}
+                  r="2.5"
+                  fill="currentColor"
+                />
+              ))}
+              {model.own.map(
+                (p, i) =>
+                  p.type &&
+                  PRICE_TYPE_TAG[p.type] && (
+                    <circle
+                      key={`m${i}`}
+                      data-testid="price-marker"
+                      cx={pt(p).x}
+                      cy={pt(p).y}
+                      r="3.5"
+                      fill="none"
+                      stroke={p.type === "SPECIAL" ? "#059669" : "#d97706"}
+                      strokeWidth="1.5"
+                    />
+                  ),
+              )}
+            </g>
+          )}
+        </svg>
+        {!anyOn && (
+          <p className="absolute inset-0 flex items-center justify-center text-[11px] text-navy/70">
+            {NOTE_COPY.turnOn}
+          </p>
         )}
-      </svg>
-      {!anyOn && (
-        <p className="absolute inset-0 flex items-center justify-center text-[11px] text-navy/70">
-          {NOTE_COPY.turnOn}
-        </p>
-      )}
-    </div>
+      </div>
+      <div
+        data-testid="chart-axis"
+        aria-hidden
+        className="flex justify-between text-[10px] text-navy/60"
+      >
+        <span>{first}</span>
+        {last !== first && <span>{last}</span>}
+      </div>
+    </>
   );
 }
 
@@ -276,6 +276,8 @@ interface ChipSpec {
   text: string;
   name: string;
   value: string | null;
+  /** The newest month of a reference line, shown with its value. */
+  month: string | null;
   title?: string;
 }
 
@@ -285,25 +287,33 @@ function chipSpecs(model: ChartModel): ChipSpec[] {
   const likeLast = model.canDraw.like ? last(model.like) : undefined;
   const convLast = model.canDraw.conv ? last(model.conv) : undefined;
   const likeName = likeLast
-    ? `Other customers' average, ${unit}, latest ${monthLabel(likeLast.month)}: ${fmt(likeLast.price)}`
-    : `Other customers' average, ${unit}`;
+    ? `All customers' average except this one, ${unit}, latest ${monthLabel(likeLast.month)}: ${fmt(likeLast.price)}`
+    : `All customers' average except this one, ${unit}`;
   const convName = convLast
     ? `All customers, all units, average per ${unit}, latest ${monthLabel(convLast.month)}: ${fmt(convLast.price)}`
     : `All customers, all units, average per ${unit}`;
   return [
-    { id: "own", text: "This customer", name: `This customer's prices, ${unit}`, value: null },
+    {
+      id: "own",
+      text: "This customer",
+      name: `This customer's prices, ${unit}`,
+      value: null,
+      month: null,
+    },
     {
       id: "like",
-      text: "Other customers",
+      text: "All customers",
       name: likeName,
       value: likeLast ? fmt(likeLast.price) : null,
-      title: likeLast ? likeName : undefined,
+      month: likeLast ? monthLabel(likeLast.month) : null,
+      title: "All customers except this one",
     },
     {
       id: "conv",
       text: "All units",
       name: convName,
       value: convLast ? fmt(convLast.price) : null,
+      month: convLast ? monthLabel(convLast.month) : null,
       title: convLast ? convName : undefined,
     },
   ];
@@ -367,6 +377,7 @@ export function PriceHistoryChart({
               />
               <span>{c.text}</span>
               {c.value && can && <span className="ml-1 font-mono">{c.value}</span>}
+              {c.month && can && <span className="text-navy/60">{c.month}</span>}
             </button>
           );
         })}

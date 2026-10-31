@@ -446,7 +446,11 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       });
 
       it("T12: the line stays at its memory, with no note, no price sent and the total the invoice will carry", async () => {
-        mockHistory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: false };
+        mockHistory = {
+          data: { p1: { lastPrice: 15, stickyPrice: 15 } },
+          isPending: false,
+          isError: false,
+        };
         await seedParked(atMemory());
         post.mockResolvedValue({ data: { id: "o1" } });
         await resume();
@@ -467,7 +471,11 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
         const view = await resume();
         expect(productReads()).toHaveLength(0);
 
-        mockHistory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: false };
+        mockHistory = {
+          data: { p1: { lastPrice: 15, stickyPrice: 15 } },
+          isPending: false,
+          isError: false,
+        };
         view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await waitFor(() => expect(productReads()).toHaveLength(1));
         await flush();
@@ -484,7 +492,11 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       });
 
       it("T16: a failed refetch keeps the cached memories, so the re-price still runs on them", async () => {
-        mockHistory = { data: { p1: { lastPrice: 15 } }, isPending: false, isError: true };
+        mockHistory = {
+          data: { p1: { lastPrice: 15, stickyPrice: 15 } },
+          isPending: false,
+          isError: true,
+        };
         await seedParked(atMemory());
         await resume();
         await waitFor(() => expect(productReads()).toHaveLength(1));
@@ -523,15 +535,18 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
       describe("a line the builder parked, linked to its customer", () => {
         const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 2 };
         const columns = { pricePerUnit: "42", priceTier2: "38", priceTier3: "36" };
-        const read = (data?: Record<string, { lastPrice: number }>, isError = false) => ({
+        const read = (
+          data?: Record<string, { lastPrice: number; stickyPrice: number }>,
+          isError = false,
+        ) => ({
           data,
           isPending: false,
           isError,
         });
         const failed = read(undefined, true);
         const out = { data: undefined, isPending: true, isError: false };
-        const memory = read({ p1: { lastPrice: 45 } });
-        const memoryNow = read({ p1: { lastPrice: 50 } });
+        const memory = read({ p1: { lastPrice: 45, stickyPrice: 45 } });
+        const memoryNow = read({ p1: { lastPrice: 50, stickyPrice: 50 } });
         const shows = (price: string) => screen.findByText(`$${price}.00 / each`);
         const note = (from: string, to: string) =>
           waitFor(() =>
@@ -739,6 +754,59 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
             expect(await shows("50")).toBeInTheDocument();
             noNote();
           });
+        });
+      });
+
+      // SA-1072 A-1: a tier above Retail is the tier, not a memory. List $12, tier $14, the newest row SPECIAL, so
+      // `stickyPrice` is null however high `lastPrice` reads.
+      describe("a line on a tier above Retail, newest row SPECIAL", () => {
+        const aboveRetail = { ...customer, pricingTier: 2 };
+        const parkedAtTier = () =>
+          counterCartToDraftPayload(
+            [{ ...tillLine, unitPrice: 14, priceType: "SPECIAL" as const }],
+            aboveRetail,
+          );
+        const savedLine = async () => {
+          const [rec] = await localRecords();
+          return (rec.payload as unknown as { lineItems: Record<string, unknown>[] }).lineItems[0];
+        };
+
+        describe.each([
+          ["B20, the builder", false],
+          ["B21, scan_v2", true],
+        ])("%s", (_, scanV2) => {
+          beforeEach(() => {
+            mockScanV2 = scanV2;
+            mockProductNow = { p1: { id: "p1", pricePerUnit: "12", priceTier2: "14" } };
+          });
+
+          it.each([
+            ["at today's tier", 14],
+            ["at an older tier", 13],
+          ])(
+            "newest row %s: the line takes the tier, no note, no price sent",
+            async (_row, last) => {
+              mockHistory = {
+                data: { p1: { lastPrice: last, stickyPrice: null } },
+                isPending: false,
+                isError: false,
+              };
+              await seedParked(parkedAtTier());
+              await resume();
+              await waitFor(() => expect(productReads()).toHaveLength(1));
+              await flush();
+              expect(screen.getByText("$14.00 / each")).toBeInTheDocument();
+              expect(screen.queryByTestId("price-changed-note")).not.toBeInTheDocument();
+              await waitFor(async () =>
+                expect(await savedLine()).toMatchObject({ unitPrice: 14, priceType: "SPECIAL" }),
+              );
+
+              post.mockResolvedValue({ data: { id: "o1" } });
+              fireEvent.click(createBtn());
+              await waitFor(() => expect(orderPosts()).toHaveLength(1));
+              expect(bodyOf(0).items[0]).not.toHaveProperty("unitPrice");
+            },
+          );
         });
       });
     });

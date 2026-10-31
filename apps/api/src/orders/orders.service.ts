@@ -53,7 +53,10 @@ import {
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
-import { loadCustomerPriceHistory } from "./customer-price-history-query";
+import {
+  loadCustomerPriceHistory,
+  type CustomerPriceHistory,
+} from "./customer-price-history-query";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
@@ -545,9 +548,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * product's price it would price a plain pack line at the Case price (2 boxes at $450 each),
    * and `distinct: productId` would let a newer Case row shadow a real pack override.
    */
-  async getCustomerPriceHistory(
-    customerId: string,
-  ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
+  async getCustomerPriceHistory(customerId: string): Promise<CustomerPriceHistory> {
     const history = await loadCustomerPriceHistory(this.prisma.forTenant(), customerId);
     // S19 R3 (SA-811a): a pack in the customer layer pre-fills the resolver's price, never the last-given one.
     return omitCustomerLayerHistory(this, customerId, history);
@@ -1695,7 +1696,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // is honored verbatim, so they can still sell at list for one order.
         const rememberedForLine =
           user.role === UserRole.CUSTOMER || overridePrice == null
-            ? (priceHistory[item.productId]?.lastPrice ?? null)
+            ? (priceHistory[item.productId]?.stickyPrice ?? null)
             : null;
         const resolved = this.resolveBuyerLinePrice(
           product,
@@ -3035,7 +3036,7 @@ export class OrdersService implements OnApplicationBootstrap {
               buyerPromos,
               qtyPieces,
               qtyUnits,
-              lastPrice: buyerPriceHistory[item.productId]?.lastPrice ?? null,
+              stickyPrice: buyerPriceHistory[item.productId]?.stickyPrice ?? null,
               denomination: { boxes, pieces, unitsPerBox: upb },
             });
             const made = await tx.orderItem.create({
@@ -4877,7 +4878,7 @@ export class OrdersService implements OnApplicationBootstrap {
               buyerPromos,
               qtyPieces,
               qtyUnits,
-              priceHistory[product.id]?.lastPrice ?? null,
+              priceHistory[product.id]?.stickyPrice ?? null,
               // REG-B109: the exact denomination this line bills with below.
               { boxes: split.boxes, pieces: split.pieces, unitsPerBox: upb },
               crPc.layer(product),

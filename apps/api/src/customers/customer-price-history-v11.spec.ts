@@ -83,8 +83,14 @@ describe("CustomerPriceHistoryService v1.1", () => {
     service = mod.get(CustomerPriceHistoryService);
   });
 
+  // The aggregate's older specs pin the floor of 3 other customers, now the rule for an OPERATOR denied ORDERS and FINANCE
+  // (W-1058 H-2.10); customer-price-history-curve.spec.ts pins normal staff (no floor).
   const run = (o: { compare?: string } = {}) =>
-    service.getHistory("c1", "p1", { role: UserRole.OPERATOR, compare: o.compare });
+    service.getHistory("c1", "p1", {
+      role: UserRole.OPERATOR,
+      compare: o.compare,
+      deniedGroups: ["ORDERS", "FINANCE"],
+    });
 
   describe("references", () => {
     it("tierPrice goes through the real getTierPrice with the customer's default tier", async () => {
@@ -203,12 +209,12 @@ describe("CustomerPriceHistoryService v1.1", () => {
     // SA-954 D7: the compare read is ONE read of every customer (this one included); the "other customers" split is in memory.
     const withOthers = (rows: unknown[]) =>
       prisma.invoice.findMany.mockImplementation(async (args: any) =>
-        args.where.issueDate ? rows : [inv("a", "2026-06-10T00:00:00Z", 10)],
+        args.where.customerId ? [inv("a", "2026-06-10T00:00:00Z", 10)] : rows,
       );
     const othersCall = () =>
       prisma.invoice.findMany.mock.calls
         .map((c: any[]) => c[0])
-        .find((a: any) => a.where.issueDate);
+        .find((a: any) => !a.where.customerId);
 
     it("is absent without ?compare and issues no extra invoice query", async () => {
       const r = await run();
@@ -216,7 +222,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
       expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1);
     });
 
-    it("low/median/high over OTHER customers, excluding this one, tenant-scoped, 180 days", async () => {
+    it("low/median/high over OTHER customers, excluding this one, tenant-scoped, no date bound", async () => {
       withOthers([other("c2", 8), other("c3", 12), other("c4", 10), other("c5", 14)]);
       const r = await run({ compare: "all" });
       expect(r.aggregate).toMatchObject({
@@ -230,9 +236,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
       expect(call.where.customerId).toBeUndefined();
       expect(call.where.tenantId).toBe("test-tenant");
       expect(call.where.status).toBeDefined();
-      const days = (Date.now() - call.where.issueDate.gte.getTime()) / 86_400_000;
-      expect(days).toBeGreaterThan(179.9);
-      expect(days).toBeLessThan(180.1);
+      expect(call.where.issueDate).toBeUndefined();
     });
 
     it("never leaks a customer id or name", async () => {
@@ -240,12 +244,12 @@ describe("CustomerPriceHistoryService v1.1", () => {
       const r = await run({ compare: "all" });
       expect(JSON.stringify(r.aggregate)).not.toMatch(/secret|customerId|businessName|name/i);
       expect(Object.keys(r.aggregate!).sort()).toEqual(
-        ["customers", "high", "low", "median", "unitLabel"].sort(),
+        ["customers", "high", "low", "median", "newestMonth", "unitLabel"].sort(),
       );
       expect(JSON.stringify(othersCall().select)).not.toMatch(/businessName|customer:/);
     });
 
-    it("is null with fewer than 3 distinct other customers (2 customers, many invoices)", async () => {
+    it("an OPERATOR denied ORDERS and FINANCE: null with fewer than 3 distinct other customers (2 customers, many invoices)", async () => {
       withOthers([other("c2", 8), other("c2", 9), other("c3", 12), other("c3", 13)]);
       expect((await run({ compare: "all" })).aggregate).toBeNull();
       withOthers([]);
@@ -578,13 +582,17 @@ describe("CustomerPriceHistoryService v1.1", () => {
         getHistory: jest.fn().mockResolvedValue({}),
         getPriceSummary: jest.fn().mockResolvedValue({}),
       };
-      const c = new CustomerPriceHistoryController(svc as any);
-      const user = { role: UserRole.OPERATOR } as any;
+      const prismaMock = {
+        user: { findFirst: jest.fn().mockResolvedValue({ deniedPermissionGroups: [] }) },
+      };
+      const c = new CustomerPriceHistoryController(svc as any, prismaMock as any);
+      const user = { role: UserRole.OPERATOR, sub: "u1", tenantId: "t1" } as any;
       await c.getPriceHistory("c1", "p1", "10", "all", user);
       expect(svc.getHistory).toHaveBeenCalledWith("c1", "p1", {
         limit: "10",
         compare: "all",
         role: UserRole.OPERATOR,
+        deniedGroups: [],
       });
       await c.getPriceSummary("c1", "a,b", user);
       expect(svc.getPriceSummary).toHaveBeenCalledWith("c1", "a,b", { role: UserRole.OPERATOR });
@@ -592,7 +600,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
 
     it("price-summary passes the edited order's id through as excludeOrderId (hunt2 F6)", async () => {
       const svc = { getPriceSummary: jest.fn().mockResolvedValue({}) };
-      const c = new CustomerPriceHistoryController(svc as any);
+      const c = new CustomerPriceHistoryController(svc as any, {} as any);
       const user = { role: UserRole.OPERATOR } as any;
       await c.getPriceSummary("c1", "a,b", user, "3f2c7a54-1b2c-4d5e-8f90-1234567890ab");
       expect(svc.getPriceSummary).toHaveBeenCalledWith("c1", "a,b", {

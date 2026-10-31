@@ -41,6 +41,7 @@ jest.mock("@/lib/api/customers", () => ({
         { id: "c1", businessName: "Acme Foods", pricingTier: 2 },
         { id: "c2", businessName: "Beta Bakery", pricingTier: 2, fulfillPath: "ROUTE" },
         { id: "c3", businessName: "Gamma Grocers", pricingTier: 2, fulfillPath: "ROUTE" },
+        { id: "c4", businessName: "Delta Depot", pricingTier: 2, fulfillPath: "SHIP" },
       ],
     },
   }),
@@ -131,7 +132,7 @@ const account = (over: Record<string, unknown>) => ({
   consistent: true,
   ...over,
 });
-const storePickup = () => screen.queryAllByRole("button", { name: "Store pickup" });
+const storePickup = () => screen.queryAllByRole("button", { name: "Pickup later" });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -148,6 +149,39 @@ beforeEach(() => {
     Promise.resolve({ data: url === "/orders" ? { id: "o1", orderNumber: "SO-1" } : [] }),
   );
   localStorage.clear();
+});
+
+describe("CreateOrderModal: Pickup later on an optional counter (SA-1069 A-3)", () => {
+  const later = () => screen.queryAllByRole("button", { name: "Pickup later" });
+
+  it("a business with an optional counter and no PICKUP method is offered Pickup later", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP"], counter: "optional" });
+    await openWithLine();
+    expect(later()).toHaveLength(1);
+    fireEvent.click(later()[0]);
+    fireEvent.click(screen.getByRole("button", { name: /^create order$/i }));
+    await waitFor(() => expect(orderPosts().length).toBe(1));
+    expect(orderPosts()[0][1].fulfillPath).toBe("PICKUP");
+  });
+
+  it("a business with PICKUP reads Pickup later on the segment too", async () => {
+    await openWithLine();
+    expect(later()).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Store pickup" })).toBeNull();
+  });
+
+  it("guard: no counter and no PICKUP method, no pickup", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP"], counter: "off" });
+    await openWithLine();
+    expect(later()).toHaveLength(0);
+  });
+
+  it("guard: an operator denied the till isn't offered it", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP"], counter: "optional" });
+    mockDenied = ["ORDERS"];
+    await openWithLine();
+    expect(later()).toHaveLength(0);
+  });
 });
 
 describe("CreateOrderModal: Store pickup in the regular order", () => {
@@ -289,5 +323,14 @@ describe("CreateOrderModal: Store pickup in the regular order", () => {
     await openBare();
     await pick("Beta", "Beta Bakery");
     expect(await addLineAndSubmit(/^confirm and invoice$/i)).toBe("PICKUP");
+  });
+
+  it("R2e (guard): POS mode, a SHIP customer, POS switched off: the path followed the customer", async () => {
+    caps = account({ methods: ["ROUTE", "SHIP", "PICKUP"] });
+    mockPrefs = { "orders.posMode": "true" };
+    await openBare();
+    await pick("Delta", "Delta Depot");
+    fireEvent.click(await screen.findByRole("switch", { name: /store pickup/i }));
+    expect(await addLineAndSubmit(/^create order$/i)).toBe("SHIP");
   });
 });

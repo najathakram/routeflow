@@ -8,7 +8,7 @@ import { lineTotalAt, type PriceEditLine } from "@/lib/counter-price-edit";
  * amount / set to one net unit price through the shared helper, and owns no sale state: Apply hands the result
  * to `onApply`, Cancel and Escape change nothing.
  */
-const plain: PriceEditLine = { tierPrice: 10, listPrice: 10, tier: 1, qty: 2 };
+const plain: PriceEditLine = { tierPrice: 10, listPrice: 10, tier: 1, qty: 2, unitWord: "each" };
 const boxed: PriceEditLine = {
   tierPrice: 24,
   listPrice: 24,
@@ -17,6 +17,7 @@ const boxed: PriceEditLine = {
   boxes: 2,
   pieces: 3,
   unitsPerBox: 12,
+  unitWord: "box",
 };
 
 function mount(over: Partial<CounterLinePriceEditProps> = {}) {
@@ -206,7 +207,13 @@ describe("CounterLinePriceEdit: the dialog", () => {
   );
 
   it("a special-tier customer's real change needs a reason (named in the copy); with one it applies", () => {
-    const special: PriceEditLine = { tierPrice: 8, listPrice: 10, tier: 3, qty: 1 };
+    const special: PriceEditLine = {
+      tierPrice: 8,
+      listPrice: 10,
+      tier: 3,
+      qty: 1,
+      unitWord: "each",
+    };
     const { onApply } = mount({ line: special, customerName: "Acme Foods" });
     open();
     fireEvent.change(field("Price per item"), { target: { value: "6" } });
@@ -224,7 +231,13 @@ describe("CounterLinePriceEdit: the dialog", () => {
 
   // CQ-14: the label must not promise "optional" on a line the rule then refuses without one.
   it("labels the reason (required) on a special-tier line and (optional) on a standard one", () => {
-    const special: PriceEditLine = { tierPrice: 8, listPrice: 10, tier: 2, qty: 1 };
+    const special: PriceEditLine = {
+      tierPrice: 8,
+      listPrice: 10,
+      tier: 2,
+      qty: 1,
+      unitWord: "each",
+    };
     const a = mount({ line: special });
     open();
     expect(field("Reason (required)")).toHaveAttribute("aria-required", "true");
