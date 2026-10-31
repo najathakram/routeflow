@@ -3187,18 +3187,24 @@ const capture = (fn) => {
 // blocked behind a LIVE holder (BUGS_TEST_WAIT_MARKER), and only then releases `first`. So the
 // overlap under test is guaranteed to have happened however loaded the host is; load can only make
 // it slower. Returns the `node <orchestrator> …` argv string and the marker path (overlap proof).
-function gatedRaceArgv(tmp, first, second) {
-  const orchestrator = join(tmp, "gated-race.mjs");
-  const specFile = join(tmp, "gated-race.json");
-  const marker = join(tmp, "race-waiting.marker");
-  writeFileSync(specFile, JSON.stringify({ first, second }));
+// `opts.lock` is the lock DIRECTORY the race is over (default: the catalogue's); `opts.tag` keeps the
+// scratch files of a second race in one tmp dir apart from the first's; `opts.minHoldMs` is a FLOOR on
+// how long the holder keeps the lock after the waiter is provably blocked (for a check that needs the
+// hold to outlast a fixed threshold): load can only lengthen it, never cut it short.
+function gatedRaceArgv(tmp, first, second, opts = {}) {
+  const lock = opts.lock ?? `${CATALOGUE()}.lock`;
+  const tag = opts.tag ?? "";
+  const orchestrator = join(tmp, `gated-race${tag}.mjs`);
+  const specFile = join(tmp, `gated-race${tag}.json`);
+  const marker = join(tmp, `race-waiting${tag}.marker`);
+  writeFileSync(specFile, JSON.stringify({ first, second, minHoldMs: opts.minHoldMs ?? 0 }));
   writeFileSync(
     orchestrator,
     [
       'import { spawn } from "node:child_process";',
       'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
       "const [script, root, ownerFile, marker, release, specFile] = process.argv.slice(2);",
-      'const { first, second } = JSON.parse(readFileSync(specFile, "utf8"));',
+      'const { first, second, minHoldMs } = JSON.parse(readFileSync(specFile, "utf8"));',
       "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
       "const until = async (fn) => {",
       "  const end = Date.now() + 60000;",
@@ -3220,6 +3226,7 @@ function gatedRaceArgv(tmp, first, second) {
       "if (!(await until(() => existsSync(ownerFile)))) console.error('gated-race: the first process never took the lock');",
       "const two = run(second, { BUGS_TEST_WAIT_MARKER: marker });",
       "if (!(await until(() => existsSync(marker)))) console.error('gated-race: the second process was never blocked behind the first');",
+      "else if (minHoldMs > 0) await sleep(minHoldMs); // a floor, only once the waiter is provably blocked",
       'writeFileSync(release, "go"); // always release, even if a wait above timed out',
       "console.log(JSON.stringify(await Promise.all([one, two])));",
     ].join("\n"),
@@ -3228,14 +3235,14 @@ function gatedRaceArgv(tmp, first, second) {
     orchestrator,
     SCRIPT_PATH,
     tmp,
-    ownerPath(`${CATALOGUE()}.lock`),
+    ownerPath(lock),
     marker,
-    join(tmp, "race-release"),
+    join(tmp, `race-release${tag}`),
     specFile,
   ]
     .map((a) => JSON.stringify(a))
     .join(" ");
-  return { argv, marker, lockPath: `${CATALOGUE()}.lock` };
+  return { argv, marker, lockPath: lock };
 }
 
 // Which lock the waiter announced it was blocked behind (null = it never blocked).
@@ -5934,60 +5941,13 @@ cmds["self-test"] = () => {
         ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"],
       );
 
-      // The spec is passed as a FILE, never as a shell argument: execSync goes
-      // through cmd.exe on win32, which does not understand the backslash
-      // escaping JSON needs inside a quoted argument.
-      const specPath = join(tmp, "race-spec.json");
-      const orchestrator = join(tmp, "concurrent-prove.mjs");
-      writeFileSync(
-        orchestrator,
-        [
-          'import { spawn } from "node:child_process";',
-          'import { readFileSync } from "node:fs";',
-          "const [script, root, spec] = process.argv.slice(2);",
-          'const jobs = JSON.parse(readFileSync(spec, "utf8"));',
-          "const run = (job) =>",
-          "  new Promise((res) => {",
-          "    const start = () => {",
-          "      const p = spawn(process.execPath, [script, ...job.args], {",
-          "        env: {",
-          "          ...process.env,",
-          "          BUGS_ROOT: root,",
-          '          BUGS_SELF_TEST: "1",',
-          "          BUGS_TEST_STALL_MS: String(job.stall),",
-          "        },",
-          '        stdio: ["ignore", "pipe", "pipe"],',
-          "      });",
-          '      let out = "";',
-          '      p.stdout.on("data", (d) => (out += d));',
-          '      p.stderr.on("data", (d) => (out += d));',
-          '      p.on("close", (code) => res({ code, out }));',
-          "    };",
-          "    if (job.delay) setTimeout(start, job.delay);",
-          "    else start();",
-          "  });",
-          "const results = await Promise.all(jobs.map(run));",
-          "console.log(JSON.stringify(results));",
-        ].join("\n"),
-      );
-      const race = (jobs) => {
-        writeFileSync(specPath, JSON.stringify(jobs));
-        const argv = [orchestrator, SCRIPT_PATH, tmp, specPath]
-          .map((a) => JSON.stringify(a))
-          .join(" ");
-        try {
-          return {
-            code: 0,
-            out: execSync(`node ${argv}`, {
-              encoding: "utf8",
-              stdio: ["ignore", "pipe", "pipe"],
-              timeout: 240000,
-            }),
-          };
-        } catch (e) {
-          return { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
-        }
-      };
+      // B588 shape, for the shard lock: the first writer HOLDS the lock until released, the harness
+      // starts the second only once the hold is on disk (owner.json), and releases the first only once
+      // the second has announced it is blocked behind a LIVE holder (BUGS_TEST_WAIT_MARKER). The overlap
+      // is therefore guaranteed however loaded the host is; load can only make it slower. (A fixed stall
+      // plus a start delay hoped two cold node starts would land inside it, and passed vacuously when
+      // they did not: both rows land without any overlap too.) The spec is passed as a FILE by
+      // gatedRaceArgv, never as a shell argument: execSync goes through cmd.exe on win32.
       const proveArgs = (id, pr) => [
         "prove",
         id,
@@ -5996,17 +5956,43 @@ cmds["self-test"] = () => {
         "--proof",
         `REG-${id} jest: writer ${id} asserts its own row`,
       ];
+      const gatedProve = (first, second, opts) => {
+        const race = gatedRaceArgv(
+          tmp,
+          { args: proveArgs(...first) },
+          { args: proveArgs(...second) },
+          { lock: lockPath("F01"), ...opts },
+        );
+        let raced;
+        try {
+          raced = {
+            code: 0,
+            out: execSync("node " + race.argv, {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 240000,
+            }),
+          };
+        } catch (e) {
+          raced = { code: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+        }
+        return { ...raced, race };
+      };
 
-      const raced = race([
-        { args: proveArgs("B1", 701), stall: 300 },
-        { args: proveArgs("B2", 702), stall: 300 },
-      ]);
+      const raced = gatedProve(["B1", 701], ["B2", 702], { tag: "-prove" });
       check("concurrent prove: the orchestrator exited 0", raced.code, 0);
       const children = JSON.parse(raced.out.trim().split("\n").pop());
       check(
         "concurrent prove: BOTH child processes exited 0",
         children.map((c) => c.code),
         [0, 0],
+      );
+      // The overlap itself, which the race used to assume: the second writer was provably blocked
+      // behind the first one's live hold when the first was released.
+      check(
+        "concurrent prove: the second writer was provably BLOCKED behind the first (the overlap happened)",
+        blockedBehind(raced.race),
+        lockPath("F01"),
       );
       // The assertion the lock exists for. Without it the later writer's
       // `{ ...row }` spread of its stale read puts the other row back to queued.
@@ -6028,18 +6014,21 @@ cmds["self-test"] = () => {
       // waiter used to rm the lockdir at 5s, take it, and let the original
       // holder write its pre-theft snapshot back over the thief's committed
       // row — two writers inside one critical section, both exiting 0. The
-      // holder stalls 6s (past that old threshold); the waiter starts 800ms in
-      // with no stall of its own, so it MUST sit through the whole hold.
-      const slow = race([
-        { args: proveArgs("B3", 703), stall: 6000 },
-        { args: proveArgs("B4", 704), stall: 0, delay: 800 },
-      ]);
+      // waiter is provably blocked first; the holder then keeps the lock for
+      // at least 6s MORE (a floor past that old threshold, measured from the
+      // moment the waiter began waiting), so the waiter MUST sit through it.
+      const slow = gatedProve(["B3", 703], ["B4", 704], { tag: "-live", minHoldMs: 6000 });
       check("live holder: the orchestrator exited 0", slow.code, 0);
       const slowKids = JSON.parse(slow.out.trim().split("\n").pop());
       check(
         "live holder: BOTH child processes exited 0",
         slowKids.map((c) => c.code),
         [0, 0],
+      );
+      check(
+        "live holder: the waiter was provably BLOCKED behind the live hold for the whole floor",
+        blockedBehind(slow.race),
+        lockPath("F01"),
       );
       // Compared as the offending line (null = none) so a red run names WHY the lock was broken.
       check(
