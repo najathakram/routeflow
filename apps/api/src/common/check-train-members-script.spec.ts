@@ -7,6 +7,7 @@ import * as path from "path";
 
 const SCRIPT = path.resolve(__dirname, "../../../../scripts/check-train-members.mjs");
 const TRAIN_PR = 40;
+const BOARD = 3686;
 
 let dir: string;
 let fakeGh: string;
@@ -18,10 +19,43 @@ const FILES: Record<string, string[]> = {
   3: ["apps/web/app/thing/page.test.tsx", "apps/web/e2e/thing.spec.ts"], // tests only, not UI
   4: ["apps/mobile/app/(driver)/route.tsx"], // UI
 };
-const COMMENTS: Record<string, number> = { 1001: 1, 1004: 4, 2000: TRAIN_PR, 2001: 2 };
+/** The head of PR n. Each PR's commits end here, so a read that names it is at the exact sha. */
+const head = (n: number) => `abc${n}def`.padEnd(40, "0");
+const old = (n: number) => `fed${n}cba`.padEnd(40, "0");
+const short = (sha: string) => sha.slice(0, 10);
+const textRead = (n: number, sha = head(n)) => `text and type, #${n} at ${short(sha)}`;
+const walk = `apple-ux walk of #${TRAIN_PR} at ${short(head(TRAIN_PR))}`;
+
+const COMMENTS: Record<string, { on: number; body: string }> = {
+  1001: { on: 1, body: textRead(1) },
+  1004: { on: 4, body: textRead(4) },
+  1101: { on: BOARD, body: textRead(1) }, // the board, where reviews go
+  1102: { on: BOARD, body: textRead(2) }, // the board, about another PR
+  1103: { on: 1, body: "text and type, #1, looks fine" }, // no sha
+  1104: { on: 1, body: textRead(1, old(1)) }, // an older commit
+  1105: { on: 1, body: `logic PASS, #1 at ${short(head(1))}` }, // no text read in it
+  2000: { on: TRAIN_PR, body: walk },
+  2001: { on: 2, body: textRead(2) },
+  2002: { on: BOARD, body: walk },
+  2003: { on: 1, body: `apple-ux walk, #1 at ${short(head(1))}, #4 at ${short(head(4))}` },
+  2004: { on: BOARD, body: `apple-ux walk, #1 at ${short(head(1))}` }, // silent on #4
+  2005: { on: TRAIN_PR, body: `apple-ux walk of #${TRAIN_PR}` }, // no sha
+};
+const COMMITS: Record<string, Array<[string, number]>> = Object.fromEntries(
+  [1, 2, 3, 4, TRAIN_PR].map((n) => [
+    n,
+    [
+      [old(n), 1],
+      [head(n), 1],
+    ],
+  ]),
+);
 
 function writeFixture(over: Record<string, unknown> = {}) {
-  fs.writeFileSync(fixture, JSON.stringify({ files: FILES, comments: COMMENTS, ...over }));
+  fs.writeFileSync(
+    fixture,
+    JSON.stringify({ files: FILES, comments: COMMENTS, commits: COMMITS, ...over }),
+  );
 }
 
 function table(rows: Array<[string, string, string]>) {
@@ -71,10 +105,19 @@ beforeAll(() => {
       "if (f.down) { console.error('dial tcp: connection refused'); process.exit(1); }",
       "if (args[0] === 'pr' && args[1] === 'view') { console.log(f.body); process.exit(0); }",
       "const files = /pulls\\/(\\d+)\\/files/.exec(args[1] ?? '');",
-      "if (files) { console.log((f.files[files[1]] ?? []).join('\\n')); process.exit(0); }",
+      // One page unless the caller asks for them all, as gh does.
+      "const page = (rows) => (args.includes('--paginate') ? rows : rows.slice(0, 1));",
+      "if (files) { console.log(page(f.files[files[1]] ?? []).join('\\n')); process.exit(0); }",
+      "const commits = /pulls\\/(\\d+)\\/commits/.exec(args[1] ?? '');",
+      "if (commits && f.commits[commits[1]]) {",
+      "  console.log(page(f.commits[commits[1]].map((c) => c.join(' '))).join('\\n'));",
+      "  process.exit(0);",
+      "}",
       "const comment = /issues\\/comments\\/(\\d+)/.exec(args[1] ?? '');",
-      "if (comment && f.comments[comment[1]] !== undefined) {",
-      "  console.log(`https://api.github.com/repos/acme/app/issues/${f.comments[comment[1]]}`);",
+      "if (comment && f.comments[comment[1]]) {",
+      "  const { on, body } = f.comments[comment[1]];",
+      "  const url = `https://api.github.com/repos/acme/app/issues/${on}`;",
+      "  console.log(JSON.stringify({ issue_url: url, body }));",
       "  process.exit(0);",
       "}",
       "console.error('gh: Not Found (HTTP 404)');",
@@ -91,7 +134,7 @@ afterAll(() => {
 beforeEach(() => writeFixture());
 
 describe("before assembly: the draft body", () => {
-  it("passes when every UI member cites a text-type comment on its own PR", () => {
+  it("passes when every UI member cites a text read that names it at its head", () => {
     const res = check(
       table([
         ["#1", "1001", ""],
@@ -124,6 +167,48 @@ describe("before assembly: the draft body", () => {
 
   it("works the UI question out from the files, so a blank tests-only member passes", () => {
     expect(check(table([["#3", "", ""]])).code).toBe(0);
+  });
+
+  it("counts a read on the board as well as on the member PR", () => {
+    expect(check(table([["#1", "1101", ""]])).code).toBe(0);
+  });
+
+  it("fails a read on the board that names another PR", () => {
+    const res = check(table([["#1", "1102", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#1: text-type comment 1102 does not name #1");
+  });
+
+  it("fails a read that names no commit of the PR", () => {
+    const res = check(table([["#1", "1103", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#1: text-type comment 1103 names no commit of #1");
+  });
+
+  it("fails a read at an older commit, because the work after it went unread", () => {
+    const res = check(table([["#1", "1104", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain(
+      `#1: text-type comment 1104 reads ${short(old(1))}, 1 commit(s) behind ${short(head(1))}`,
+    );
+  });
+
+  it("carries a read over a merge, which adds no work of the PR's own", () => {
+    const commits = {
+      ...COMMITS,
+      1: [
+        [old(1), 1],
+        [head(1), 2],
+      ],
+    };
+    writeFixture({ commits });
+    expect(check(table([["#1", "1104", ""]])).code).toBe(0);
+  });
+
+  it("fails a comment that is not a text read", () => {
+    const res = check(table([["#1", "1105", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#1: text-type comment 1105 does not read as a text read");
   });
 
   it("fails an id that is a comment on another PR, or on no PR", () => {
@@ -218,14 +303,37 @@ describe("--landing: after the merged-tree walk", () => {
     expect(res.out).toContain('#1: apple-ux cell "good · High 0 · report 2000" has no score');
   });
 
-  it("needs a report on the train PR, cited the same way by every UI member", () => {
+  it("counts a report on the train, on the board, or on a member, if it names the head", () => {
+    expect(ux("95 · High 0 · report 2000").code).toBe(0);
+    expect(ux("95 · High 0 · report 2002").code).toBe(0);
+    expect(ux("95 · High 0 · report 2003").code).toBe(0);
+  });
+
+  it("fails a report that leaves out a UI member, or names no sha", () => {
+    let res = ux("95 · High 0 · report 2004");
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#4: report 2004 does not name #4");
+    res = ux("95 · High 0 · report 2005");
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#1: report 2005 does not name #1");
+  });
+
+  it("needs a report, in a place that counts, cited the same way by every UI member", () => {
     let res = ux("95 · High 0");
     expect(res.code).toBe(1);
     expect(res.out).toContain("#1: apple-ux cell cites no report");
 
+    res = ux("95 · High 0 · report 2001");
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("report 2001 is on #2");
+
     res = ux("95 · High 0 · report 1001");
     expect(res.code).toBe(1);
-    expect(res.out).toContain(`report 1001 is not a comment on train #${TRAIN_PR}`);
+    expect(res.out).toContain("report 1001 does not read as an apple-ux read");
+
+    res = ux("95 · High 0 · report 9999");
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("report 9999 does not exist");
 
     res = landing(
       table([
@@ -245,6 +353,121 @@ describe("--landing: after the merged-tree walk", () => {
 
   it("passes a train with no UI member", () => {
     expect(landing(table([["#2", "", ""]])).code).toBe(0);
+  });
+});
+
+describe("false passes", () => {
+  const five = (file: string) => {
+    writeFixture({ files: { ...FILES, 5: [file] }, commits: { ...COMMITS, 5: [[head(5), 1]] } });
+    return check(table([["#5", "", ""]]));
+  };
+
+  it.each([
+    "apps/web/lib/generic-toast-copy.ts",
+    "packages/types/counter-copy.ts",
+    "apps/mobile/lib/labels.ts",
+    "apps/mobile/components/Row.ts",
+    "packages/ui/src/native/tokens.ts",
+    "packages/ui/src/web/thing.css",
+    "packages/ui/src/web/Thing.tsx",
+    "apps/web/tailwind.config.ts",
+    "apps/api/src/invoices/invoice-pdf-template.tsx",
+  ])("reads %s as UI, so a blank cell fails", (file) => {
+    const res = five(file);
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#5: UI member with no text-type comment id");
+  });
+
+  it.each([
+    "apps/api/src/orders/orders.service.ts",
+    "apps/api/src/orders/copy-order.ts",
+    "packages/types/api/orders.ts",
+    "apps/web/lib/README.md",
+    "apps/web/mocks/thing.tsx",
+  ])("reads %s as not UI", (file) => {
+    expect(five(file).code).toBe(0);
+  });
+
+  it("finds a UI file past the first page of a large PR", () => {
+    writeFixture({ files: { ...FILES, 5: ["apps/api/a.ts", "apps/web/components/B.tsx"] } });
+    const res = check(table([["#5", "", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#5: UI member with no text-type comment id");
+  });
+
+  it("reads every commit of a large PR, so a later one can't hide", () => {
+    const commits = {
+      ...COMMITS,
+      1: [
+        [head(1), 1],
+        [old(1), 1],
+      ],
+    };
+    writeFixture({ commits });
+    const res = check(table([["#1", "1001", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("1 commit(s) behind");
+  });
+
+  it.each(["7", "https://github.com/acme/app/pull/7", ""])(
+    'fails a row whose PR cell is "%s", which would drop the member silently',
+    (cell) => {
+      const res = check(
+        table([
+          ["#1", "1001", ""],
+          [cell, "", ""],
+        ]),
+      );
+      expect(res.code).toBe(1);
+      expect(res.out).toContain(`PR cell "${cell}" has no #<n>`);
+    },
+  );
+
+  it("still leaves a train commit row out, by name or by sha", () => {
+    const res = check(
+      table([
+        ["#1", "1001", ""],
+        ["`abc1234`", "", ""],
+      ]),
+    );
+    expect(res.code).toBe(0);
+  });
+
+  it("fails a cell with two PRs, because it would check only the first", () => {
+    const res = check(table([["#1, #4", "1001", ""]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain('PR cell "#1, #4" names 2 PRs');
+  });
+
+  it("does not let an escaped pipe shift the cells", () => {
+    const res = check(
+      ["| note | PR | text-type | apple-ux |", "|---|---|---|---|", "| a\\|1001 | #1 | | |"].join(
+        "\n",
+      ),
+    );
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#1: UI member with no text-type comment id");
+  });
+
+  it.each([
+    [["--pr", String(TRAIN_PR), "--landin"], "unknown flag --landin"],
+    [["--landing", "--pr", String(TRAIN_PR), "--dry"], "unknown flag --dry"],
+    [["-", "-x"], "unknown flag -x"],
+    [["-", "other.md"], "more than one body: other.md"],
+  ])("exits 2 on %j, rather than run a weaker check", (args, message) => {
+    const res = run(args, table([["#1", "1001", ""]]));
+    expect(res.code).toBe(2);
+    expect(res.out).toContain(message);
+    expect(res.out).toContain("usage:");
+  });
+
+  it("fails a score over 100, and a cell with two High counts", () => {
+    let res = landing(table([["#1", "1001", "999 · High 0 · report 2000"]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("has no score");
+    res = landing(table([["#1", "1001", "95 · High 0 · High 3 · report 2000"]]));
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("#1: apple-ux cell has 2 High counts");
   });
 });
 
