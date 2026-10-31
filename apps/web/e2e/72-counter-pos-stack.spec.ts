@@ -448,6 +448,14 @@ test.describe("R7b till: change due note and the keyboard path to pay", () => {
     await expect(page.getByLabel("Amount tendered")).toBeFocused();
     await page.keyboard.type("1000");
     await page.keyboard.press("Enter");
+    // SA-1067 M2b: a tender $100 or more over the total arms on the first Enter; a second Enter completes the sale
+    await page
+      .getByText("Press Enter again to complete the sale.")
+      .waitFor({ state: "visible", timeout: 2_000 })
+      .then(
+        () => page.keyboard.press("Enter"),
+        () => undefined,
+      );
     await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
   });
 
