@@ -197,7 +197,7 @@ function PanelBody({
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
   // F08: a summary figure is usable only when a row carries that price and the line can use that row (same gate as its Use).
-  const useFor = (price: number | undefined) =>
+  const summaryUse = (price: number | null | undefined) =>
     price != null && rows.some((r) => r.unitPrice === price && canUse(r))
       ? () => onUse(price)
       : undefined;
@@ -346,8 +346,8 @@ function PanelBody({
 
       {!neverSold && (
         <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
-          <Stat label="Last" value={money(summary?.last)} onUse={useFor(summary?.last)} />
-          <Stat label="Low" value={money(summary?.low)} onUse={useFor(summary?.low)} />
+          <Stat label="Last" value={money(summary?.last)} onUse={summaryUse(summary?.last)} />
+          <Stat label="Low" value={money(summary?.low)} onUse={summaryUse(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
           <Stat label="Qty invoiced" value={String(summary?.qtySold ?? 0)} />
           {data.costVisible && (

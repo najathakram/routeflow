@@ -69,7 +69,7 @@ const history = (
       currentAvgCost: null,
     },
   ],
-  references: null,
+  references: { listPrice: null, tierPrice: null, changeSinceLast: null },
 });
 
 const open = async (data: PriceHistoryResponse, onUsePrice = jest.fn(), unitHint = "case") => {
