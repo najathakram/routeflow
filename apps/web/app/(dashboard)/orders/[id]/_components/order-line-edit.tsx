@@ -43,6 +43,7 @@ import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "../scan-level-line";
 import { storedPackBasis } from "../stored-pack-basis";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { priceFieldUnitWord } from "@/lib/product-unit-label";
 import { derivedUnitPatch } from "@/lib/edit-line-derived-unit";
 import type { UnitOption } from "@/lib/unit-options";
 
@@ -1246,6 +1247,7 @@ export function EditableLineItems({
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
+              unitWord={priceFieldUnitWord(item)}
               // B465 fix round 5: a substitution's own baseline wins over the
               // REPLACED product's originalUnitPrice — same resolution as
               // needsSpecialTierReason, so the required-field styling and the

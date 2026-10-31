@@ -9,7 +9,7 @@ describe("CounterLinePriceEdit: footer tap targets", () => {
       <CounterLinePriceEdit
         canEditPrices
         name="Cola"
-        line={{ tierPrice: 10, listPrice: 10, tier: 1, qty: 2 }}
+        line={{ tierPrice: 10, listPrice: 10, tier: 1, qty: 2, unitWord: "each" }}
         onApply={jest.fn()}
         onClosed={jest.fn()}
         onReset={jest.fn()}

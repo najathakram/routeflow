@@ -32,6 +32,7 @@ function Harness({
   const [price, setPrice] = React.useState(10);
   return (
     <PriceEditRow
+      unitWord="case"
       basePrice={12}
       unitPrice={price}
       originalUnitPrice={10}
