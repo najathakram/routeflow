@@ -20,6 +20,7 @@ import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
+import { isPositiveGreen, writeStage } from "./lib/verify-result.mjs";
 import {
   FAST_VERIFY_BANNER,
   REPO_WIDE_PINS,
@@ -409,11 +410,15 @@ export function planPins({ fast, files, excluded = [], specs }) {
   };
 }
 
-/** Runs every planned call in order (never short-circuits); the first non-zero status is the run's. */
-export async function executePlan(calls, runCall) {
-  const statuses = [];
-  for (const c of calls) statuses.push(await runCall(c));
-  return statuses.find((s) => s !== 0) ?? 0;
+/**
+ * Runs every planned call in order (never short-circuits); the first non-zero status is the run's. A status that is not
+ * a number (null from a signal) is a failure, never a pass: `null ?? 0` used to read as green (W-1045). `ran` receives
+ * every status so the caller can prove all planned calls finished green.
+ */
+export async function executePlan(calls, runCall, ran = []) {
+  for (const c of calls) ran.push(await runCall(c));
+  const i = ran.findIndex((s) => s !== 0); // not find(): an undefined status must not look like "none"
+  return i === -1 ? 0 : typeof ran[i] === "number" ? ran[i] : 1;
 }
 
 /**
@@ -553,13 +558,17 @@ export async function main() {
   }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
+  const ran = [];
   const status = await withHeavySlot({ label: "verify" }, async () => {
-    const planned = await executePlan(plan.calls, (c) =>
-      c.jest
-        ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
-        : c.pins
-          ? pinJest(c)
-          : turbo(c.args),
+    const planned = await executePlan(
+      plan.calls,
+      (c) =>
+        c.jest
+          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+          : c.pins
+            ? pinJest(c)
+            : turbo(c.args),
+      ran,
     );
     if (!settlesReports({ fast: runMode.fast, status: planned, env: process.env })) return planned;
     const settled = await spawnAsync(
@@ -569,6 +578,11 @@ export async function main() {
     );
     return settled.status ?? 1;
   });
+  // W-1045: under the pre-push hook a pass is a written token, not an exit code. Only a run in which every planned call
+  // returned the number 0, and whose reports settled, writes it (scripts/lib/verify-result.mjs); the chain's last link
+  // promotes it.
+  if (status === 0 && isPositiveGreen(ran, plan.calls.length))
+    writeStage(process.env, { planned: plan.calls.length, statuses: ran });
   // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
   process.exit(finishRun({ fast: runMode.fast, status }));
 }

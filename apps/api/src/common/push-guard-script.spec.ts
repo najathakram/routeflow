@@ -275,7 +275,7 @@ describe("push-guard.mjs contract (B897)", () => {
     const guardAt = hook.indexOf("scripts/push-guard.mjs");
     expect(guardAt).toBeGreaterThan(-1);
     expect(guardAt).toBeLessThan(hook.indexOf('if [ "$SKIP_VERIFY" = "1" ]'));
-    expect(guardAt).toBeLessThan(hook.indexOf("npm run verify || exit 1"));
+    expect(guardAt).toBeLessThan(hook.indexOf("scripts/verify-gate.mjs run"));
     expect(hook).toMatch(/refs="\$\(cat\)"/);
   });
 });

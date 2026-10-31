@@ -1146,6 +1146,7 @@ if (process.platform !== "win32") {
           "scrubbed-git-env.cjs",
           "heavy-slot.mjs",
           "prisma-fresh.mjs",
+          "verify-result.mjs",
         ]) {
           put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
         }
@@ -1695,7 +1696,7 @@ check(
     "FV7a hook asks scripts/verify-mode.mjs, before the marker comparison and before `npm run verify`",
     at("scripts/verify-mode.mjs") > -1 &&
       at("scripts/verify-mode.mjs") < at('[ -f "$marker" ]') &&
-      at("scripts/verify-mode.mjs") < at("npm run verify || exit 1"),
+      at("scripts/verify-mode.mjs") < at("scripts/verify-gate.mjs run"),
     true,
   );
   check(
@@ -1820,7 +1821,7 @@ check(
     [
       hook.includes(`fast_stamp="${STAMP}"`),
       /not proof|\$fast_stamp|\$\{fast_stamp\}/.test(skipLine),
-      /npm run verify \|\| exit 1[\s\S]*fast_stamp/.test(hook),
+      /verify-gate\.mjs run[\s\S]*fast_stamp/.test(hook),
     ],
     [true, true, true],
   );
@@ -1954,9 +1955,22 @@ check(
     [await executePlan(calls, run), ran, await executePlan([{ id: "z" }], async () => 0)],
     [1, ["a", "pin", "c"], 0],
   );
+  {
+    // W-1045: `null ?? 0` read a signal-killed call as green. A non-number status is a failure, and `ran` gets every one.
+    const got = [];
+    check(
+      "FR7a (W-1045) a null status from a killed call is a failure, never a pass; ran records every status",
+      [
+        await executePlan([{}, {}], async () => null, got),
+        got,
+        await executePlan([{}], async () => undefined),
+      ],
+      [1, [null, null], 1],
+    );
+  }
   check(
     "FR7b main() delegates the tail to executePlan and finishRun",
-    (({ vt }) => [/executePlan\(plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
+    (({ vt }) => [/executePlan\(\s*plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
       vt: readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8"),
     }),
     [true, true],
