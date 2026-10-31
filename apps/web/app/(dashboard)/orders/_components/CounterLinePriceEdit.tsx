@@ -91,6 +91,8 @@ function refusalCopy(
       return "Use at most two decimals, like 12.5.";
     case "AMOUNT_OVER_PRICE":
       return `That's more than the price. Enter ${money(max ?? 0)} or less.`;
+    case "OVER_LIMIT":
+      return `That's over the limit. Enter ${money(max ?? 0)} or less.`;
     case "REASON_REQUIRED":
       return `Add a reason. ${customerName?.trim() || "This customer"} has a special price on this item.`;
   }

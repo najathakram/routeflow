@@ -22,6 +22,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
+import { MAX_UNIT_PRICE } from "@routeflow/pricing";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
 // $25,664,510.89 order — all line items totalled cleanly through the API
@@ -49,7 +50,7 @@ export class OrderItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
   /** One-time discount price override — operator-supplied, not stored in CustomerPrice */
-  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(MAX_UNIT_PRICE) unitPrice?: number;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   @IsOptional() @IsString() @MaxLength(2000) itemNote?: string;
   @IsOptional() @IsString() @MaxLength(200) substitution?: string;

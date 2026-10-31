@@ -145,4 +145,27 @@ describe("SA-1067 M2a: the price dialog's Enter arms, a second Enter applies", (
     expect(onApply).toHaveBeenCalledTimes(1);
     expect(onApply.mock.calls[0][0]).toMatchObject({ mode: "percent", value: 50, unitPrice: 5 });
   });
+
+  it("D11: 1000000 applies by click; 1000000.01 and a scanned 123456789012 are refused as over the limit, with no preview", async () => {
+    const user = userEvent.setup();
+    const { onApply } = mount();
+    const price = await openDialog(user);
+    await user.type(price, "1000000");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onApply.mock.calls[0][0]).toMatchObject({ unitPrice: 1000000 });
+
+    for (const over of ["1000000.01", "123456789012"]) {
+      onApply.mockClear();
+      const again = await openDialog(user);
+      await user.type(again, over);
+      expect(screen.queryByText(/New price/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+      expect(onApply).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "That's over the limit. Enter $1,000,000.00 or less.",
+      );
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+    }
+  });
 });
