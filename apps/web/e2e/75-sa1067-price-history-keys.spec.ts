@@ -132,3 +132,147 @@ for (const vp of VIEWPORTS) {
     await expect(panel).toHaveCount(0, { timeout: 5_000 });
   });
 }
+
+/**
+ * The same panel opens from two other doors, and where focus lands depends on the door, so P4 is driven at each one.
+ * BUILDER (the Create Order window on /orders): "Use this price" there sets the line's price in the open window.
+ * ORDER DETAIL (Edit Items on an editable order): the price goes into the edit session; the edit is CANCELLED, never saved.
+ * Nothing is written to the tenant: the builder may park a draft on close, which is deleted again below.
+ */
+const PRODUCT_SEARCH = "Search by name, SKU or scan barcode…";
+
+/** An editable order whose customer has price history for one of its products (other than the order itself), found by reading. */
+async function discoverEditableOrder(page: Page) {
+  await page.goto("/orders");
+  const token = await operatorAccessToken(page);
+  const api = `${apiBase(page.url())}/api/v1`;
+  const headers = { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+  const get = async (path: string, params?: Record<string, string>) => {
+    const res = await page.request.get(`${api}${path}`, { headers, params });
+    return res.ok() ? ((await res.json()) as any) : null;
+  };
+  const list = (await get("/orders", { limit: "50" })) as any;
+  const orders: any[] = list?.data ?? list?.orders ?? [];
+  for (const o of orders.filter((x) =>
+    ["DRAFT", "PENDING", "CONFIRMED"].includes(String(x?.status)),
+  )) {
+    const full = await get(`/orders/${o.id}`);
+    const customerId = full?.customerId ?? o.customerId;
+    const items: any[] = full?.items ?? full?.lineItems ?? [];
+    if (!customerId) continue;
+    for (const li of items) {
+      const productId = li?.productId ?? li?.product?.id;
+      if (!productId) continue;
+      const h = await get(`/customers/${customerId}/products/${productId}/price-history`, {
+        limit: "25",
+        excludeOrderId: String(o.id),
+      });
+      if ((h?.rows ?? []).length >= 1) {
+        return {
+          orderId: String(o.id),
+          productName: String(li?.productName ?? li?.product?.name ?? ""),
+        };
+      }
+    }
+  }
+  throw new Error("the test tenant has no editable order with a priced line that has history");
+}
+
+for (const vp of VIEWPORTS) {
+  test(`P4 at the builder: Down then Enter in the panel closes it @ ${vp.name}`, async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: vp.width, height: vp.height });
+    await setTenantCookie(context, BASE);
+    const parked: string[] = [];
+    const pending: Array<Promise<void>> = [];
+    page.on("response", (resp) => {
+      if (resp.request().method() !== "POST" || !/\/api\/v1\/drafts(\?.*)?$/.test(resp.url()))
+        return;
+      pending.push(
+        resp
+          .json()
+          .then((b: { id?: string }) => {
+            if (resp.ok() && b?.id) parked.push(b.id);
+          })
+          .catch(() => {}),
+      );
+    });
+    try {
+      const { customer, product } = await discoverPair(page);
+      await page.goto("/orders");
+      await page
+        .getByRole("button", { name: /new order/i })
+        .first()
+        .click();
+      await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
+        timeout: 10_000,
+      });
+      await page
+        .getByPlaceholder("Search by business name…")
+        .fill(String(customer.businessName).slice(0, 14));
+      await page
+        .locator('input[placeholder="Search by business name…"] ~ ul li button')
+        .filter({ hasText: String(customer.businessName) })
+        .first()
+        .click({ timeout: 10_000 });
+      await page.getByPlaceholder(PRODUCT_SEARCH).fill(String(product.sku));
+      await page
+        .locator(`input[placeholder="${PRODUCT_SEARCH}"] ~ ul > li > button`)
+        .filter({ hasNotText: "Create new product" })
+        .first()
+        .click({ timeout: 10_000 });
+
+      await page.getByRole("button", { name: "Price history" }).first().click({ timeout: 15_000 });
+      const panel = page.getByRole("dialog", { name: "Price history" });
+      await expect(panel).toBeVisible({ timeout: 15_000 });
+      await expect
+        .poll(() => panel.evaluate((el) => el.contains(document.activeElement)))
+        .toBe(true);
+      await page.keyboard.press("ArrowDown");
+      await expect(panel.locator('tbody tr[aria-selected="true"]').first()).toBeVisible();
+      await page.keyboard.press("Enter");
+      await expect(panel).toHaveCount(0, { timeout: 5_000 });
+    } finally {
+      await Promise.all(pending.splice(0));
+      const token = await operatorAccessToken(page).catch(() => "");
+      for (const id of parked.splice(0)) {
+        await page.request
+          .delete(`${apiBase(page.url())}/api/v1/drafts/${id}`, {
+            headers: { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG },
+          })
+          .catch(() => {});
+      }
+    }
+  });
+
+  test(`P4 at order detail: Down then Enter in the panel closes it, edit cancelled @ ${vp.name}`, async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: vp.width, height: vp.height });
+    await setTenantCookie(context, BASE);
+    const { orderId } = await discoverEditableOrder(page);
+    await page.goto(`/orders/${orderId}`);
+    await page
+      .getByRole("button", { name: /^Edit (Items|order)/ })
+      .first()
+      .click({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Price history" }).first().click({ timeout: 15_000 });
+    const panel = page.getByRole("dialog", { name: "Price history" });
+    await expect(panel).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => panel.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    await expect(panel.locator('tbody tr[aria-selected="true"]').first()).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(panel).toHaveCount(0, { timeout: 5_000 });
+    // never save: leave the edit session
+    await page
+      .getByRole("button", { name: /^Cancel/ })
+      .first()
+      .click({ timeout: 10_000 });
+  });
+}
