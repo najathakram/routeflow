@@ -191,7 +191,7 @@ describe("PriceHistoryButton — popover behaviour", () => {
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     expect(within(dialog).getByText("Price history · Sample Cola 24pk")).toBeInTheDocument();
     expect(within(dialog).getByText("Customer: Acme Foods")).toBeInTheDocument();
-    for (const label of ["Last", "Low", "High", "Qty sold"])
+    for (const label of ["Last", "Low", "High", "Qty invoiced"])
       expect(within(dialog).getByText(label)).toBeInTheDocument();
     expect(within(dialog).getByText("$12.90", { selector: "div" })).toBeInTheDocument(); // low
     expect(within(dialog).getByText("not invoiced yet")).toBeInTheDocument();
@@ -213,7 +213,7 @@ describe("PriceHistoryButton — cost visibility", () => {
     renderButton();
     await openPanel();
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
-    await within(dialog).findByText("Qty sold");
+    await within(dialog).findByText("Qty invoiced");
     expect(within(dialog).queryByText("Avg cost")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("Avg cost now")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /show cost/i })).not.toBeInTheDocument();
