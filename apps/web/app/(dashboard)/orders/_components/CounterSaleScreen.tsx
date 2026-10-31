@@ -624,6 +624,7 @@ export function CounterSaleScreen() {
       n,
       reprice.tierFor(product.id),
       reprice.layerOf(product.id),
+      reprice.rememberedOf(product.id),
     );
     if (next === prev) {
       setError(QTY_TOO_LARGE_COPY);
@@ -931,7 +932,13 @@ export function CounterSaleScreen() {
     if (!undo || lineLocked || saleInFlight()) return;
     // A customer pick may have re-priced the cart while the line sat in the undo window: price it for them too (an edited price is kept).
     setLines(
-      (prev) => repriceLines(restoreLine(prev, undo), reprice.tierFor, reprice.layerOf).lines,
+      (prev) =>
+        repriceLines(
+          restoreLine(prev, undo),
+          reprice.tierFor,
+          reprice.layerOf,
+          reprice.rememberedOf,
+        ).lines,
     );
     dropUndo();
     refocus();
