@@ -6,6 +6,7 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 import { ReadyForPickupService } from "./ready-for-pickup.service";
 
 /**
@@ -20,6 +21,7 @@ import { ReadyForPickupService } from "./ready-for-pickup.service";
 export class ReadyForPickupController {
   constructor(private readonly ready: ReadyForPickupService) {}
 
+  @RequirePermission("ORDERS", "DISPATCH")
   @Post(":id/ready-for-pickup")
   @HttpCode(HttpStatus.OK)
   @UseGuards(RolesGuard)

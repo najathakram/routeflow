@@ -820,13 +820,13 @@ describe("MUST 9/10 and C12: the camera button is for touch-first devices only",
     expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
   });
 
-  it("C12: not touch-first, there is no camera button, the scan field autofocuses, and a letter is not routed", () => {
+  it("C12: not touch-first, there is no camera button, the scan field autofocuses, and a lowercase letter is not routed (SA-1067 M4: a capital is)", () => {
     setTouchFirst(false);
     renderTill(<CounterSaleScreen />);
     expect(screen.queryByRole("button", { name: "Scan with camera" })).toBeNull();
     expect(document.activeElement).toBe(scanField());
     scanField().blur();
-    fireEvent.keyDown(document.body, { key: "A" });
+    fireEvent.keyDown(document.body, { key: "a" });
     expect(document.activeElement).not.toBe(scanField());
     fireEvent.keyDown(document.body, { key: "7" });
     expect(document.activeElement).toBe(scanField());

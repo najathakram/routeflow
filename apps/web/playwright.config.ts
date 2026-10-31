@@ -1132,7 +1132,7 @@ export default defineConfig({
           },
           {
             name: "counter-pos-stack",
-            testMatch: /72-counter-pos-stack\.spec\.ts/,
+            testMatch: /(72-counter-pos-stack|75-sa1067-price-history-keys)\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],
@@ -1184,6 +1184,17 @@ export default defineConfig({
           {
             name: "units-pallet-ladder-sale",
             testMatch: /79-units-pallet-ladder-sale\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
+          // SA-1042 B9c: return 1 Case through the form, read 200 pcs (1 Case), credit 45.00 (spec 77). It CREATES a product,
+          // a customer, an invoice and a credit note with no cleanup, so it is local lane only like 71-76 and 79.
+          {
+            name: "return-by-line",
+            testMatch: /77-return-by-line\.spec\.ts/,
             dependencies: ["setup"],
             use: {
               ...devices["Desktop Chrome"],

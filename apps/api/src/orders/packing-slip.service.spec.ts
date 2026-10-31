@@ -34,6 +34,15 @@ function build(rows: any[], tenantId: string | null = "t1") {
 }
 
 describe("PackingSlipService.generate", () => {
+  // SA-1067 C-7 / C-8: lines made in one write share a createdAt, so the slip reads position first (null last on ASC).
+  it("C-7: reads the lines by position, then createdAt, then id", async () => {
+    const { svc, findMany } = build([full("a")]);
+    await svc.generate(["a"]);
+    const arg = findMany.mock.calls[0][0];
+    const lines = (arg.select ?? arg.include).lineItems;
+    expect(lines.orderBy).toEqual([{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }]);
+  });
+
   it("includes SHIP orders in request order, skips non-SHIP / cancelled / foreign with outcomes", async () => {
     const { svc, storage } = build([
       full("a"),

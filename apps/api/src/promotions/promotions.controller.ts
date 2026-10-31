@@ -7,6 +7,8 @@ import { PromotionsService } from "./promotions.service";
 import { CreatePromotionDto } from "./dto/create-promotion.dto";
 import { UpdatePromotionDto } from "./dto/update-promotion.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("PRICING")
 @Controller("promotions")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)

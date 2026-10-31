@@ -44,6 +44,8 @@ import { UpdateInvoiceTermsDto } from "./dto/update-invoice-terms.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
+@RequirePermission("FINANCE")
 @Controller("invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
@@ -58,6 +60,7 @@ export class InvoicesController {
     return this.invoicesService.create(dto, user, { warnSite: "invoices.manual" }); // SA-982 PR-2: a client write
   }
 
+  @RequirePermission("FINANCE", "ORDERS")
   @Post("from-order/:orderId")
   @Roles(UserRole.OPERATOR)
   createFromOrder(@Param("orderId") orderId: string) {
@@ -69,6 +72,7 @@ export class InvoicesController {
    * time) picks which OrderItem rows + how many of each to bill on this invoice, plus a
    * due date. Each call increments OrderItem.invoicedQty so the order can't be over-billed.
    */
+  @RequirePermission("FINANCE", "ORDERS", "DISPATCH")
   @Post("from-order/:orderId/partial")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   createPartialFromOrder(@Param("orderId") orderId: string, @Body() dto: CreatePartialInvoiceDto) {
@@ -124,6 +128,7 @@ export class InvoicesController {
     return this.invoicesService.findPaymentById(paymentId);
   }
 
+  @RequirePermission("FINANCE", "DISPATCH")
   @Post("payments/:paymentId/image")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
@@ -177,6 +182,7 @@ export class InvoicesController {
     });
   }
 
+  @RequirePermission("FINANCE", "ORDERS")
   @Get(":id")
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
@@ -262,6 +268,7 @@ export class InvoicesController {
     return this.invoicesService.duplicate(id, user, dto);
   }
 
+  @RequirePermission("FINANCE", "ORDERS")
   @Get(":id/pdf")
   async getPdf(
     @Param("id") id: string,

@@ -26,11 +26,13 @@ import { CounterSaleTodayDto } from "./counter-sale-today.dto";
 import { CounterSaleTodayService } from "./counter-sale-today.service";
 import { QuickKeysService } from "./quick-keys.service";
 
+import { RequirePermission } from "../../auth/permissions/permission.decorators";
 /**
  * POST /orders/counter-sale — staff ring up an over-the-counter (PICKUP) sale: order + invoice +
  * payment in one call. OPERATOR admits TENANT_ADMIN through RolesGuard's hierarchy. The
  * `Idempotency-Key` header is REQUIRED (400 IDEMPOTENCY_KEY_REQUIRED), same character rules as POST /orders.
  */
+@RequirePermission("ORDERS")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)

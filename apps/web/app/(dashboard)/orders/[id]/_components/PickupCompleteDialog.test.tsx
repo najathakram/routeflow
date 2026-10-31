@@ -598,15 +598,37 @@ describe("PickupCompleteDialog — the API's pickup codes", () => {
   });
 });
 
-describe("PickupCompleteDialog — tender rounding", () => {
-  it("sends roundMoney(tendered) as the cash amount, like the till", async () => {
+describe("PickupCompleteDialog — tender reads as money (SA-1067 A-3)", () => {
+  const SHORT = "Enter at least $5.00.";
+  // The rounding stays in counterPaymentAmount (counter-part-pay.test.ts); a typed half cent is not a tender, so it is refused here.
+  it("a typed half cent (10.005) is refused with the short line and nothing is posted", async () => {
     balance(5);
     mount({ total: 5 });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.005" } });
     confirm();
+    expect(await screen.findByText(SHORT)).toBeVisible();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("A3-5: due $5.00, Cash, 10.4011 (a code typed after 10.40) and confirm: no post, the short line shows", async () => {
+    balance(5);
+    mount({ total: 5 });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.4011" } });
+    confirm();
+    expect(await screen.findByText(SHORT)).toBeVisible();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("plain money (10.50) still posts its own cents", async () => {
+    balance(5);
+    mount({ total: 5 });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.50" } });
+    confirm();
     await waitFor(() => expect(post).toHaveBeenCalled());
-    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 10.01 } });
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 10.5 } });
   });
 });
 

@@ -726,11 +726,11 @@ describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan b
     expect(await observed()).toEqual(SCANNED("123456789012"));
   });
 
-  it("R13l: ArrowDown then Enter use row 1's price in the dialog; nothing is priced until Apply", async () => {
+  it("R13l: two ArrowDowns then Enter use row 1's price in the dialog; nothing is priced until Apply", async () => {
     HISTORY["p-cola"] = COLA_HISTORY; // two rows: 9.00 and 8.004
     const user = userEvent.setup();
     await openPanel();
-    await user.keyboard("{ArrowDown}{Enter}");
+    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
     await waitFor(() => expect(priceDialogs()).toHaveLength(1));
     expect(screen.getByRole("textbox", { name: "Price per item" })).toHaveValue("8.00");
     expect(total()).toHaveTextContent("$10.00");

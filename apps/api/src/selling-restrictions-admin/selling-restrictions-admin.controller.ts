@@ -27,6 +27,7 @@ import { CreateRestrictionDto } from "./dto/create-restriction.dto";
 import { LiftRestrictionDto } from "./dto/lift-restriction.dto";
 import { BULK_RESTRICTION_MAX, BulkRestrictionDto, LiftBatchDto } from "./dto/bulk-restriction.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 const STATUSES = Object.fromEntries(RESTRICTION_STATUSES.map((s) => [s, s]));
 
 // Reads: OPERATOR. Writes: OPERATOR too (owner 10-07: operators are near-admins); TENANT_ADMIN
@@ -38,6 +39,7 @@ const STATUSES = Object.fromEntries(RESTRICTION_STATUSES.map((s) => [s, s]));
 export class SellingRestrictionsAdminController {
   constructor(private readonly rules: SellingRestrictionsAdminService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR)
   @ApiOperation({
@@ -61,6 +63,7 @@ export class SellingRestrictionsAdminController {
     return this.rules.list(status);
   }
 
+  @RequirePermission("REGULATED")
   @Post()
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "Create one selling restriction for a category or a product (audited)" })
@@ -69,6 +72,7 @@ export class SellingRestrictionsAdminController {
     return this.rules.create(dto, user);
   }
 
+  @RequirePermission("REGULATED")
   @Post("bulk")
   @Roles(UserRole.OPERATOR)
   @ApiOperation({
@@ -79,6 +83,7 @@ export class SellingRestrictionsAdminController {
     return this.rules.bulkCreate(dto, user);
   }
 
+  @RequirePermission("REGULATED")
   @Post("lift-batch")
   @Roles(UserRole.OPERATOR)
   @HttpCode(HttpStatus.OK)
@@ -90,6 +95,7 @@ export class SellingRestrictionsAdminController {
     return this.rules.liftBatch(dto, user);
   }
 
+  @RequirePermission("REGULATED")
   @Post(":id/lift")
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "Lift one rule now (audited); 409 if it was already lifted" })

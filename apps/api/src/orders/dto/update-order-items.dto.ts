@@ -18,6 +18,7 @@ import { AppliedCreditNoteDto } from "./create-order.dto";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
+import { MAX_UNIT_PRICE } from "@routeflow/pricing";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -88,7 +89,7 @@ class UpdateOrderItemDto {
   @IsOptionalNotNull()
   @IsNumber()
   @Min(0)
-  @Max(1_000_000)
+  @Max(MAX_UNIT_PRICE)
   unitPrice?: number;
 
   @IsOptional()
