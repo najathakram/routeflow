@@ -401,14 +401,15 @@ check(
   true,
 );
 // SP8: adding a stale workspace to the filter regenerates its report only on a turbo cache MISS —
-// on a HIT turbo replays without running jest. The `--freshness-only` pre-step forces a real run on
-// a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the order.
+// on a HIT turbo replays without running jest. In CI the `--freshness-only` pre-step forces a real
+// run on a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the
+// order. Locally it defers to `--reports-only`, which verify-turbo runs inside its slot.
 {
   const chain = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.verify;
   const fresh = chain.indexOf("--freshness-only");
   const scoped = chain.indexOf("verify-turbo.mjs");
   check(
-    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (forces a real run on a cache HIT)",
+    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (in CI it forces a real run on a cache HIT)",
     fresh !== -1 && scoped !== -1 && fresh < scoped,
     true,
   );

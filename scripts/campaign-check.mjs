@@ -736,10 +736,15 @@ function main() {
   }
 
   // --reports-only runs inside verify's slot, after its plan: nothing else will refresh a report
-  // now, so a missing, stale or partial one is treated as a certain replay and forced. The pre-step
-  // can't settle this: it asks before the queue, and the shared cache can fill during the wait.
+  // now, so a missing, stale or partial one is treated as a certain replay and forced.
+  //
+  // So on a local verify the pre-step asks turbo nothing, and leaves the report to that step. Its
+  // answer can't speak for verify's run: it asks before the queue, while the shared cache can fill
+  // during the wait, and its dry run has no `--maxWorkers`, which changes the task hash. A HIT here
+  // would also force a run outside any slot. CI has no slot and no such step, so it still asks.
   function replayStatus(gitRoot, pkg, mode) {
-    return mode === "reports" ? { status: "HIT", pkg } : turboDryRunStatus(gitRoot, pkg);
+    if (mode === "reports") return { status: "HIT", pkg };
+    return process.env.CI ? turboDryRunStatus(gitRoot, pkg) : { status: "DEFERRED", pkg };
   }
 
   // R1/R2 (full mode) + R4 (--freshness-only). Runs BEFORE any token indexing — a stale
@@ -803,7 +808,11 @@ function main() {
         // path below asks, instead of optimistically trusting a missing file will appear.
         const pkg = resolvePkgName(gitRoot, wsInfo);
         const dryRun = replayStatus(gitRoot, pkg, mode);
-        if (dryRun.status === "HIT") {
+        if (dryRun.status === "DEFERRED") {
+          console.log(
+            `campaign-check: ${wsInfo.ws}.json is missing; verify settles it inside its heavy slot`,
+          );
+        } else if (dryRun.status === "HIT") {
           console.error(
             `campaign-check: ${wsInfo.jsonPath} is MISSING and turbo predicts a cache HIT for ` +
               `${dryRun.pkg}#test — a cache replay would leave it missing forever (it is not a ` +
@@ -906,7 +915,11 @@ function main() {
       // R9: treated identically here).
       const pkg = resolvePkgName(gitRoot, wsInfo);
       const dryRun = replayStatus(gitRoot, pkg, mode);
-      if (dryRun.status === "HIT") {
+      if (dryRun.status === "DEFERRED") {
+        console.log(
+          `campaign-check: ${wsInfo.ws}.json is ${reason}; verify settles it inside its heavy slot`,
+        );
+      } else if (dryRun.status === "HIT") {
         console.error(block);
         console.error(
           `  turbo would replay ${dryRun.pkg}#test from cache, so this verify cannot refresh the report`,

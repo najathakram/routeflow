@@ -521,7 +521,7 @@ export async function main() {
     if (scope.stale?.length) {
       console.log(
         `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
-          `their tests join the run (turbo regenerates the report on a cache miss; the --freshness-only pre-step forces a real run on a hit). No enforcement is relaxed.`,
+          `their tests join the run (turbo regenerates the report on a cache miss; on a hit, campaign-check --reports-only forces a real run inside the slot). No enforcement is relaxed.`,
       );
     }
   }
