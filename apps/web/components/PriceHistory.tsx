@@ -329,7 +329,7 @@ function PanelBody({
           <Stat label="Last" value={money(summary?.last)} />
           <Stat label="Low" value={money(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
-          <Stat label="Qty sold" value={String(summary?.qtySold ?? 0)} />
+          <Stat label="Qty invoiced" value={String(summary?.qtySold ?? 0)} />
           {data.costVisible && (
             <Stat label="Avg cost now" value={costCell(summary?.currentAvgCost ?? null)} />
           )}

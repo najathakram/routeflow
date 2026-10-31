@@ -400,7 +400,12 @@ export function CounterSaleScreen() {
     if (receipt || locked) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
-      if (!/^[0-9]$/.test(e.key)) return; // digits only: letters are the g-then-x navigation shortcuts
+      // digits only: letters are the g-then-x navigation shortcuts. While focus is inside the price history panel (a popover over
+      // the till) any printable key but Space is a scan: the whole code, letters included, so its Enter never presses Use.
+      const routed = document.activeElement?.closest("[data-anchored-popover]")
+        ? /^\S$/
+        : /^[0-9]$/;
+      if (!routed.test(e.key)) return;
       const scanEl = scanRef.current;
       if (!scanEl || document.activeElement === scanEl || isTextEntryActive()) return;
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
@@ -1604,6 +1609,7 @@ export function CounterSaleScreen() {
                 canEditPrices={mayEditPrices}
                 priceTier={reprice.tierFor(l.productId)}
                 customerName={customer?.businessName}
+                historyCustomerId={customer && !customer.isWalkIn ? customer.id : null}
                 onPriceEdit={editPrice}
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}
