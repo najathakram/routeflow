@@ -74,6 +74,30 @@ describe("useReadyForPickupAction", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
+  it("W-1060: a customer already emailed (toldOnce) moves the page on and says so in a toast that fades", async () => {
+    post.mockResolvedValue({
+      data: { toldOnce: true, email: "buyer@acme.test", at: "2026-10-31T14:14:00.000Z" },
+    });
+    const { result } = run();
+    act(() => result.current.press());
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    const arg = toast.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      title: "Ready for pickup. buyer@acme.test was already emailed, so no new email went.",
+      variant: "success",
+    });
+    expect(arg.duration).toBeUndefined();
+  });
+
+  it("W-1060: resend posts { resend: true } and reads its answer like a press", async () => {
+    post.mockResolvedValue({ data: { notice: "SENT", email: "buyer@acme.test" } });
+    const { result } = run();
+    act(() => result.current.resend());
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/orders/ord-1/ready-for-pickup", { resend: true });
+    expect(toast.mock.calls[0][0].title).toBe("Ready for pickup. Email sent to buyer@acme.test.");
+  });
+
   it("a refusal goes to the page's error handler and shows no notice", async () => {
     const err = new Error("409");
     post.mockRejectedValue(err);
