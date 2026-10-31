@@ -30,6 +30,7 @@ export const POS_COPY = {
   stepInvoice: "Invoice",
   stepHandedOver: "Handed over",
   readyForPickup: "Ready for pickup",
+  confirmOrder: "Confirm order",
   createInvoice: "Create invoice",
   handOver: "Hand over",
   recordPayment: "Record payment",
