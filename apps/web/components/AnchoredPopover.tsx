@@ -51,7 +51,8 @@ export function AnchoredPopover({
       const below = window.innerHeight - r.bottom - 8;
       const above = r.top - 8;
       const flip = h > below && above > below;
-      const top = flip ? Math.max(8, r.top - 4 - Math.min(h, above)) : r.bottom + 4;
+      const wanted = flip ? r.top - 4 - h : r.bottom + 4;
+      const top = Math.max(8, Math.min(wanted, window.innerHeight - h - 8));
       // `position: fixed` resolves against a transformed host, not the viewport.
       const o = host === document.body ? { top: 0, left: 0 } : host.getBoundingClientRect();
       setPos({ top: top - o.top, left: left - o.left });

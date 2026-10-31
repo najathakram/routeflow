@@ -1,6 +1,14 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, within, fireEvent } from "@/test-utils/render";
+import {
+  renderWithProviders,
+  screen,
+  waitFor,
+  within,
+  fireEvent,
+  render,
+} from "@/test-utils/render";
 import { PriceHistoryButton } from "./PriceHistory";
+import { AnchoredPopover } from "./AnchoredPopover";
 import type {
   PriceHistoryComparisonLine,
   PriceHistoryResponse,
@@ -180,5 +188,65 @@ describe("H7: tapping the trigger while open closes once", () => {
     fireEvent.mouseDown(trigger);
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Price history" })).toBeNull());
+  });
+});
+
+describe("H8: the popover stays inside the viewport (jsdom has no layout, so the geometry is mocked)", () => {
+  const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+  const realInner = window.innerHeight;
+  afterEach(() => {
+    if (realHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", realHeight);
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: realInner });
+  });
+
+  /** Renders the popover for an anchor spanning `top`..`bottom` and returns its placed `top` / `bottom`. */
+  const place = (opts: { h: number; innerHeight: number; top: number; bottom: number }) => {
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get: () => opts.h,
+    });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: opts.innerHeight });
+    const anchor = document.createElement("button");
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: opts.top,
+        bottom: opts.bottom,
+        left: 20,
+        right: 120,
+        width: 100,
+        height: opts.bottom - opts.top,
+        x: 20,
+        y: opts.top,
+      }) as DOMRect;
+    document.body.appendChild(anchor);
+    render(
+      <AnchoredPopover anchor={anchor} onClose={jest.fn()} label="Pop">
+        <p>body</p>
+      </AnchoredPopover>,
+    );
+    const top = parseFloat(screen.getByRole("dialog", { name: "Pop" }).style.top);
+    return { top, bottom: top + opts.h };
+  };
+
+  it("390x844, h=591, trigger 398-442: neither side fits, so it clamps to 245 and the bottom is on screen", () => {
+    const { top, bottom } = place({ h: 591, innerHeight: 844, top: 398, bottom: 442 });
+    expect(top).toBe(245);
+    expect(bottom).toBe(836);
+    expect(bottom).toBeLessThanOrEqual(844 - 8);
+  });
+
+  it("enough room below: it sits 4px under the trigger", () => {
+    const { top } = place({ h: 300, innerHeight: 844, top: 100, bottom: 144 });
+    expect(top).toBe(148);
+  });
+
+  it("flips above when below is short and above has room: top = r.top - 4 - h", () => {
+    const { top } = place({ h: 300, innerHeight: 844, top: 700, bottom: 744 });
+    expect(top).toBe(396);
+  });
+
+  it("taller than the viewport: the top floors at 8", () => {
+    const { top } = place({ h: 900, innerHeight: 844, top: 398, bottom: 442 });
+    expect(top).toBe(8);
   });
 });
