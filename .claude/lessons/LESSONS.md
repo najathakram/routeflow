@@ -83,6 +83,7 @@
 - **Recurrence (2026-10-17, units-v2-3):** a merge that makes a parameter REQUIRED must re-run every spec and call site that passes it on the merged tree, not only the files the PR touched; run the full check-types ratchet plus the specs that import the changed function before the train is cut.
 - **Recurrence (2026-10-18, fixes-4):** members that each passed alone broke combined: one member's component began calling `useSearchParams` while another's page test mocked `next/navigation` without it (a mock misses a new hook call), and a third's picker output grew past what a Linux pipe flushes. Run the FULL web and api suites on the combined train tree, not only each member's own set.
 - **Recurrence (2026-10-31, W33):** one member made `group` required on every policy registry entry while an already-landed key had none; api check-types failed only on the assembled tree, and the composition pre-check was the first catch. Run the api check-types ratchet and the repo-truth lane (`permission-coverage`, the policy-registry spec) on the assembled train before verify (cf. [[L-359]]).
+- **Recurrence (2026-10-31, train Z):** a member made `unitWord` required on the price-edit line type while another member's test fixture still built the old shape, so web `tsc` failed only on the assembled tree; and a member that added a dependency (`pdfjs-dist`) left the train tree without it, so the same `tsc` failed on a missing module. Run `npm ci` in the train tree when any member touches `package.json` or the lockfile, then the web and api type-check, before verify; a required-field fix goes in as one named train commit, never an edit inside a member merge.
 
 ## tooling
 
@@ -393,7 +394,7 @@
 - **Symptom:** a train merge showed api and web SUCCESS while the mobile service failed. A gate that named "both services" would have called the landing done.
 - **Root cause:** the deploy gate counted two services, but the commit carries one status per Railway service (api, web, mobile and the root), and mobile builds from the same packages and lockfile.
 - **Lesson:** **Read every status context on the merge commit (`gh api repos/<owner>/<repo>/commits/<sha>/status`). A landing is done when none is failure or pending, and a failed one is read before anything else ships.**
-- **Guard:** the window script prints every context and stops on any failure; the runbook wording is owed.
+- **Guard:** the window script prints every context and stops on any failure; the runbook wording is owed. Extended 2026-10-31 (train Y): the script also waits until NO service is pending before it flips private (the Y script flipped on the web failure while api and mobile were still building); the Z merge script's `wait_settled` does this and its EXIT trap waits the same way.
 
 ### L-357 · 2026-10-30 · deploy · size a public window as merges plus deploys; start every CI run when the window opens
 

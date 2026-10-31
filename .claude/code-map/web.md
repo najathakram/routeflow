@@ -50,6 +50,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-31-v.md](web/landing-2026-10-31-v.md) | Train V (5a75a5e72..56b0991a8): Count / Adjust window and Adjust reason, warned unvoid, time zone prompt, till shows the remembered price |
 | [web/landing-2026-10-31-x.md](web/landing-2026-10-31-x.md) | Train X (b6fa8f21a..5503f21974): stepper in the selling unit, Drafts button on the till, pickup wording, Invoice step and Create invoice, one Escape per layer, History word |
 | [web/landing-2026-10-31-y.md](web/landing-2026-10-31-y.md) | Train Y (5503f21974..09600c8c59): install banner on home only, one New order menu (`newOrderEntry`), price field names its unit |
+| [web/landing-2026-10-31-z.md](web/landing-2026-10-31-z.md) | Train Z (e134d6bd5..ccf3eb39d): ReadyEmailLine, price curve, HeldReturnActions, PdfPreview, stickyPrice, live return quote |
 | [web/landing-2026-10-22-w4.md](web/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: orders apple-ux r3/r4 train, buyer cart, import Family UI, counter till/returns, payment key dialogs |
 | [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |
