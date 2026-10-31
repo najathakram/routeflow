@@ -260,8 +260,22 @@ const PIN_TRIGGERS = [
   /-script\.spec\.ts$/,
 ];
 
-export function repoPinsNeeded(files) {
-  return (files ?? []).some((f) => PIN_TRIGGERS.some((re) => re.test(f.replaceAll("\\", "/"))));
+/**
+ * `crossScript` = the `-script` specs that read ANOTHER workspace ([{ file, reads }], from the derived list in
+ * scripts/lib/cross-workspace-specs.cjs). An edit under a directory such a spec reads needs it too, though no
+ * PIN_TRIGGER matches: `--changedSince` follows imports, not fs reads, so nothing else would run it.
+ */
+export function repoPinsNeeded(files, crossScript = []) {
+  const norm = (files ?? []).map((f) => f.replaceAll("\\", "/"));
+  return (
+    norm.some((f) => PIN_TRIGGERS.some((re) => re.test(f))) ||
+    norm.some((f) => readByCrossScript(f, crossScript).length > 0)
+  );
+}
+
+/** The cross-workspace `-script` specs whose read directories contain `file` (a "/"-separated repo path). */
+function readByCrossScript(file, crossScript) {
+  return crossScript.filter((s) => s.reads.some((dir) => file.startsWith(`${dir}/`)));
 }
 
 /**
@@ -316,7 +330,7 @@ export function loadScriptSpecs(root) {
  * `files` null (diff not computable) selects ALL ("all"): fail closed. Returns
  * { files: string[] | "all", line }, one line with the count and why.
  */
-export function selectScriptSpecs({ files, specs }) {
+export function selectScriptSpecs({ files, specs, crossScript = [] }) {
   if (files === null) {
     return {
       files: "all",
@@ -354,6 +368,14 @@ export function selectScriptSpecs({ files, specs }) {
     if (hit) {
       related.push(s.file);
       why.push(`${name} (${hit.base})`);
+      continue;
+    }
+    // Reads another workspace: an edit anywhere under what it reads selects it, named or not.
+    const reader = crossScript.find((c) => s.file === c.file);
+    const touched = reader && changed.find((f) => readByCrossScript(f, [reader]).length > 0);
+    if (touched) {
+      related.push(s.file);
+      why.push(`${name} (reads ${reader.reads.find((d) => touched.startsWith(`${d}/`))})`);
     }
   }
   const picked = [...always.map((s) => s.file), ...related];

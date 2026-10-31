@@ -176,7 +176,16 @@
         "$TURBO_ROOT$/packages/returns/**",
         "$TURBO_ROOT$/packages/scanning/**",
         "$TURBO_ROOT$/packages/types/**",
-        "$TURBO_ROOT$/packages/ui/**"
+        "$TURBO_ROOT$/packages/ui/**",
+        "$TURBO_ROOT$/apps/api/**",
+        // The wildcards above reach into generated trees. A dependency install, a Next build, a compiled package
+        // or a Jest cache is not source: hashing one makes the key change when the lane merely RUNS (the api Jest
+        // cache is rewritten by every run), so the cache never hits.
+        "!**/node_modules/**",
+        "!**/.next/**",
+        "!**/dist/**",
+        "!**/.turbo/**",
+        "!**/.jest-cache/**"
       ],
       "outputs": []
     },

@@ -73,6 +73,7 @@ import {
   LOW_MEM_THRESHOLD_BYTES,
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
+  loadCrossScriptSpecs,
   planPins,
   planTurboCalls,
 } from "./verify-turbo.mjs";
@@ -2050,6 +2051,30 @@ check(
     "R3C-k an empty spec list fails closed to all, with a reason",
     [none.scriptSpecs, /no -script specs/.test(none.scriptLine ?? "")],
     ["all", true],
+  );
+  // R3C-l: a -script spec that reads ANOTHER workspace (inferred-goods-rate-parity-script reads apps/mobile) is not
+  // related by name to an apps/mobile edit, and no PIN_TRIGGER matches that path: it must be selected by what it reads.
+  const xSpec = "src/common/xread-script.spec.ts";
+  const xSpecs = [S("xread-script.spec.ts", "mentions none of the changed names"), ...specs];
+  const cross = [{ file: xSpec, reads: ["apps/mobile"] }];
+  const xPlan = (files, crossScript) =>
+    planPins({ fast: true, files, excluded: [], specs: xSpecs, crossScript });
+  check(
+    "R3C-l an edit under a directory a cross-workspace -script spec reads runs the pins and selects it",
+    (({ pins, scriptSpecs }) => [pins, scriptSpecs])(xPlan(["apps/mobile/lib/a.ts"], cross)),
+    [true, [AUDIT, xSpec]],
+  );
+  check(
+    "R3C-l2 the same edit with no cross list plans no pins (the old miss); an edit elsewhere still plans none",
+    [xPlan(["apps/mobile/lib/a.ts"], []).pins, xPlan(["apps/web/app/page.tsx"], cross).pins],
+    [null, null],
+  );
+  check(
+    "R3C-l3 the real repo derives its cross-workspace -script specs (inferred-goods-rate-parity is one)",
+    loadCrossScriptSpecs(ROOT).some((c) =>
+      /inferred-goods-rate-parity-script.spec.ts$/.test(c.file),
+    ),
+    true,
   );
   // (e) FR2 covers every pin that walks apps/api/scripts
   const walkers = REPO_WIDE_PINS.filter((p) => /apps\/api\/scripts/.test(p.why)).map((p) =>

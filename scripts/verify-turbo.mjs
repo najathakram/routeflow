@@ -39,7 +39,20 @@ import {
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
 import { createRequire } from "node:module";
 
-const { workspacesWithScript } = createRequire(import.meta.url)("./lib/cross-workspace-specs.cjs");
+const { workspacesWithScript, findCrossWorkspaceSpecs } = createRequire(import.meta.url)(
+  "./lib/cross-workspace-specs.cjs",
+);
+
+/**
+ * The api `-script` specs that read another workspace, as { file, reads } (derived, never hand-kept). The api unit
+ * and repo-truth lanes skip `-script` specs (they run serially), so these reach a fast push only through the pins
+ * call: `planPins` selects one when the diff touches a directory it reads.
+ */
+export function loadCrossScriptSpecs(root) {
+  return (findCrossWorkspaceSpecs(root)["apps/api"] ?? [])
+    .filter((s) => s.spec.endsWith("-script.spec.ts"))
+    .map((s) => ({ file: s.spec, reads: s.reads }));
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -402,7 +415,7 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * cannot be computed (`files` null) runs the pins rather than skipping them. VERIFY_EXCLUDE naming
  * api drops the pins (they are api specs), with no line. `pins: null` means "plan none".
  */
-export function planPins({ fast, files, excluded = [], specs }) {
+export function planPins({ fast, files, excluded = [], specs, crossScript }) {
   if (!fast || excluded.includes("@routeflow/api")) return { pins: null, line: null };
   if (files === null) {
     return {
@@ -411,8 +424,13 @@ export function planPins({ fast, files, excluded = [], specs }) {
       line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and ALL -script specs run (fail closed).",
     };
   }
-  if (!repoPinsNeeded(files)) return { pins: null, line: null };
-  const picked = selectScriptSpecs({ files, specs: specs ?? loadScriptSpecs(ROOT) });
+  const cross = crossScript ?? loadCrossScriptSpecs(ROOT);
+  if (!repoPinsNeeded(files, cross)) return { pins: null, line: null };
+  const picked = selectScriptSpecs({
+    files,
+    specs: specs ?? loadScriptSpecs(ROOT),
+    crossScript: cross,
+  });
   return {
     pins: true,
     scriptSpecs: picked.files,
