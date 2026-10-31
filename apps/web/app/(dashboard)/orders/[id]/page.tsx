@@ -1166,7 +1166,7 @@ export default function OrderDetailPage() {
           {isPos && access.staff && !isEditing && order.fulfillPath === "PICKUP" && (
             <ReadyEmailLine
               orderId={order.id}
-              ready={localStatus === "OUT_FOR_DELIVERY"}
+              status={localStatus}
               customerName={order.customer?.businessName}
               onError={(err) => guardError(() => ready.resend())(err)}
             />

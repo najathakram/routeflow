@@ -84,15 +84,28 @@ const PREVIEW_TEXT: Record<Exclude<ReadyForPickupNotice, "SENT" | "FAILED">, str
 };
 
 /**
- * The line's words per state. `ready` = the order is already Ready for pickup (the only time Send again / Send email can
- * act). A SENT or FAILED last send speaks for itself; otherwise the line says what marking ready would do, and is
- * silent once the order is Ready (nothing left to promise). The switches are exhaustive: a sixth notice fails the build.
+ * Where the order stands for this line: `CAN_PRESS` (Pending or Confirmed: Ready for pickup is on screen), `READY` (Out
+ * for delivery, the pickup order's Ready: the only time Send again / Send email can act), or `OTHER` (Draft, Delivered,
+ * Cancelled: no press is coming, so no promise about one).
+ */
+export type ReadyStage = "CAN_PRESS" | "READY" | "OTHER";
+export function readyStageOf(status: string | null | undefined): ReadyStage {
+  if (status === "PENDING" || status === "CONFIRMED") return "CAN_PRESS";
+  if (status === "OUT_FOR_DELIVERY") return "READY";
+  return "OTHER";
+}
+
+/**
+ * The line's words per state. A SENT or FAILED last send speaks for itself (the record stays on a finished order, with its
+ * button only at `READY`); otherwise the line says what marking ready would do, and only while a press is possible
+ * (`CAN_PRESS`). The switches are exhaustive: a sixth notice fails the build.
  */
 export function readyLineCopy(
   record: ReadyForPickupRecord,
-  ready: boolean,
+  stage: ReadyStage,
   timeZone?: string,
 ): ReadyLine | null {
+  const ready = stage === "READY";
   const last = record.last;
   if (last && (last.notice === "SENT" || last.notice === "FAILED")) {
     const when = readyWhen(last.at, timeZone);
@@ -110,7 +123,7 @@ export function readyLineCopy(
       action: ready ? "SEND_EMAIL" : null,
     };
   }
-  if (ready) return null;
+  if (stage !== "CAN_PRESS") return null;
   const p = record.preview;
   switch (p.notice) {
     case "SENT":

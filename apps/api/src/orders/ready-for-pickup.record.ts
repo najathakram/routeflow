@@ -13,17 +13,18 @@ export const READY_FOR_PICKUP_ACTION = "order.ready_for_pickup";
 export const READY_RECORD_ROWS = 20;
 
 /**
- * Every notice a row can carry. A local copy on purpose: `@routeflow/types` resolves to raw TypeScript at runtime, so the
+ * Every notice a row can carry. A local copy on purpose (typed `Record<ReadyForPickupNotice, true>`, so a sixth shared notice is a compile error here): `@routeflow/types` resolves to raw TypeScript at runtime, so the
  * compiled API (`node dist/main.js`) may import only types from it. ready-for-pickup.record.spec.ts pins this list
  * set-equal to the shared READY_FOR_PICKUP_NOTICE_VALUES, so it cannot drift.
  */
-export const READY_RECORD_NOTICES: readonly ReadyForPickupNotice[] = [
-  "SENT",
-  "NO_EMAIL",
-  "OPTED_OUT",
-  "OFF",
-  "FAILED",
-];
+const NOTICE_KEYS: Record<ReadyForPickupNotice, true> = {
+  SENT: true,
+  NO_EMAIL: true,
+  OPTED_OUT: true,
+  OFF: true,
+  FAILED: true,
+};
+export const READY_RECORD_NOTICES = Object.keys(NOTICE_KEYS) as ReadyForPickupNotice[];
 
 const log = new Logger("ReadyForPickupRecord");
 

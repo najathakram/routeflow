@@ -4,7 +4,7 @@ import * as React from "react";
 import { Button } from "@routeflow/ui/web";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useReadyForPickupRecord } from "@/lib/api/ready-for-pickup";
-import { readyLineCopy, readyWhen } from "@/lib/ready-for-pickup-copy";
+import { readyLineCopy, readyStageOf, readyWhen } from "@/lib/ready-for-pickup-copy";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
 import { useReadyForPickupAction } from "./use-ready-for-pickup";
 
@@ -15,13 +15,13 @@ import { useReadyForPickupAction } from "./use-ready-for-pickup";
  */
 export function ReadyEmailLine({
   orderId,
-  ready,
+  status,
   customerName,
   onError,
 }: {
   orderId: string;
-  /** The order is already Ready for pickup (status OUT_FOR_DELIVERY). */
-  ready: boolean;
+  /** The order's status: the preview shows only while Ready for pickup can be pressed, the buttons only once Ready. */
+  status: string | null | undefined;
   customerName: string | null | undefined;
   onError: (err: unknown) => void;
 }) {
@@ -30,7 +30,7 @@ export function ReadyEmailLine({
   const [confirming, setConfirming] = React.useState(false);
   const action = useReadyForPickupAction({ orderId, customerName, onReady: () => {}, onError });
   if (!data?.preview) return null; // not the record shape (no staff access, or a stale answer): say nothing
-  const line = readyLineCopy(data, ready, zone);
+  const line = readyLineCopy(data, readyStageOf(status), zone);
   if (!line) return null;
   const sentAt = data.last ? readyWhen(data.last.at, zone) : null;
   const send = () => {
@@ -39,7 +39,9 @@ export function ReadyEmailLine({
   };
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-navy/70">
-      <p data-testid="ready-email-line">{line.text}</p>
+      <p data-testid="ready-email-line" className="min-w-0 break-words">
+        {line.text}
+      </p>
       {line.action && (
         <Button
           variant="ghost"

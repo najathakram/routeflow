@@ -25,11 +25,11 @@ describe("ReadyEmailLine", () => {
   const AT = "2026-10-31T14:14:00.000Z";
   const send = (preview: Record<string, unknown>, last: Record<string, unknown> | null) =>
     get.mockResolvedValue({ data: { preview, last } });
-  const line = (p: { ready?: boolean } = {}) =>
+  const line = (p: { status?: string } = {}) =>
     renderWithProviders(
       <ReadyEmailLine
         orderId="ord-1"
-        ready={p.ready ?? false}
+        status={p.status ?? "CONFIRMED"}
         customerName="Acme"
         onError={jest.fn()}
       />,
@@ -91,7 +91,7 @@ describe("ReadyEmailLine", () => {
     ["no record, emails off", { notice: "OFF" }, null, false, "Your order emails are off.", null],
   ])("R33 %s", async (_name, preview, last, ready, text, button) => {
     send(preview, last);
-    line({ ready });
+    line({ status: ready ? "OUT_FOR_DELIVERY" : "CONFIRMED" });
     expect(await screen.findByTestId("ready-email-line")).toHaveTextContent(text);
     if (button) expect(screen.getByRole("button", { name: button })).toBeInTheDocument();
     else expect(screen.queryByRole("button")).toBeNull();
@@ -99,10 +99,36 @@ describe("ReadyEmailLine", () => {
 
   it("says nothing once the order is Ready with no email behind it", async () => {
     send({ notice: "NO_EMAIL" }, null);
-    line({ ready: true });
+    line({ status: "OUT_FOR_DELIVERY" });
     await waitFor(() => expect(get).toHaveBeenCalled());
     expect(screen.queryByTestId("ready-email-line")).toBeNull();
   });
+
+  // A finished order has no Ready button, so it promises no email: only a record of what was sent stays.
+  it.each(["DELIVERED", "CANCELLED", "DRAFT"])(
+    '%s with no record says nothing (no false "Marking ready emails")',
+    async (status) => {
+      send({ notice: "SENT", email: "buyer@acme.test" }, null);
+      line({ status });
+      await waitFor(() => expect(get).toHaveBeenCalled());
+      expect(screen.queryByTestId("ready-email-line")).toBeNull();
+    },
+  );
+
+  it.each(["DELIVERED", "CANCELLED"])(
+    "%s keeps the line of what was sent, with no button",
+    async (status) => {
+      send(
+        { notice: "SENT", email: "buyer@acme.test" },
+        { notice: "SENT", email: "buyer@acme.test", at: AT },
+      );
+      line({ status });
+      expect(await screen.findByTestId("ready-email-line")).toHaveTextContent(
+        "Ready email sent to buyer@acme.test, Oct 31, 2:14 PM.",
+      );
+      expect(screen.queryByRole("button")).toBeNull();
+    },
+  );
 
   it("R34: Send again asks first, naming the address and the first send; Cancel posts nothing", async () => {
     send(
@@ -110,7 +136,7 @@ describe("ReadyEmailLine", () => {
       { notice: "SENT", email: "buyer@acme.test", at: AT },
     );
     const user = userEvent.setup();
-    line({ ready: true });
+    line({ status: "OUT_FOR_DELIVERY" });
     await user.click(await screen.findByRole("button", { name: "Send again" }));
     expect(await screen.findByText("Email this customer again?")).toBeInTheDocument();
     expect(
@@ -127,7 +153,7 @@ describe("ReadyEmailLine", () => {
     );
     post.mockResolvedValue({ data: { notice: "SENT", email: "buyer@acme.test" } });
     const user = userEvent.setup();
-    line({ ready: true });
+    line({ status: "OUT_FOR_DELIVERY" });
     await user.click(await screen.findByRole("button", { name: "Send again" }));
     const dialog = await screen.findByRole("dialog");
     await user.click(
@@ -141,7 +167,7 @@ describe("ReadyEmailLine", () => {
     send({ notice: "SENT", email: "buyer@acme.test" }, { notice: "FAILED", at: AT });
     post.mockResolvedValue({ data: { notice: "SENT", email: "buyer@acme.test" } });
     const user = userEvent.setup();
-    line({ ready: true });
+    line({ status: "OUT_FOR_DELIVERY" });
     await user.click(await screen.findByRole("button", { name: "Send email" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Email this customer again?")).toBeNull();

@@ -1,6 +1,7 @@
 import {
   readyForPickupCopy,
   readyLineCopy,
+  readyStageOf,
   readyWhen,
   toldOnceCopy,
 } from "./ready-for-pickup-copy";
@@ -57,15 +58,15 @@ describe("readyLineCopy / toldOnceCopy", () => {
       { notice: "SENT", email: "b@acme.test" },
       { notice: "SENT", email: "b@acme.test", at: AT },
     );
-    expect(readyLineCopy(r, true, "UTC")).toEqual({
+    expect(readyLineCopy(r, "READY", "UTC")).toEqual({
       text: "Ready email sent to b@acme.test, Oct 31, 2:14 PM.",
       action: "SEND_AGAIN",
     });
-    expect(readyLineCopy(r, false, "UTC")?.action).toBeNull();
+    expect(readyLineCopy(r, "CAN_PRESS", "UTC")?.action).toBeNull();
   });
   it("a FAILED send offers Send email once Ready", () => {
     const r = rec({ notice: "SENT", email: "b@acme.test" }, { notice: "FAILED", at: AT });
-    expect(readyLineCopy(r, true, "UTC")).toEqual({
+    expect(readyLineCopy(r, "READY", "UTC")).toEqual({
       text: "The ready email didn't send, Oct 31, 2:14 PM.",
       action: "SEND_EMAIL",
     });
@@ -76,7 +77,35 @@ describe("readyLineCopy / toldOnceCopy", () => {
     [{ notice: "OPTED_OUT" }, "This customer turned off order emails."],
     [{ notice: "OFF" }, "Your order emails are off."],
   ])("no record: the preview %j reads %s", (preview, text) => {
-    expect(readyLineCopy(rec(preview, null), false, "UTC")).toEqual({ text, action: null });
+    expect(readyLineCopy(rec(preview, null), "CAN_PRESS", "UTC")).toEqual({ text, action: null });
+  });
+  it.each(["DELIVERED", "CANCELLED", "DRAFT"])(
+    "an order that is %s promises nothing about a press: no record, no line",
+    (status) => {
+      const r = rec({ notice: "SENT", email: "b@acme.test" }, null);
+      expect(readyLineCopy(r, readyStageOf(status), "UTC")).toBeNull();
+    },
+  );
+  it("a finished order keeps the line of what it was sent, with no button", () => {
+    const r = rec(
+      { notice: "SENT", email: "b@acme.test" },
+      { notice: "SENT", email: "b@acme.test", at: AT },
+    );
+    expect(readyLineCopy(r, readyStageOf("DELIVERED"), "UTC")).toEqual({
+      text: "Ready email sent to b@acme.test, Oct 31, 2:14 PM.",
+      action: null,
+    });
+  });
+  it.each([
+    ["PENDING", "CAN_PRESS"],
+    ["CONFIRMED", "CAN_PRESS"],
+    ["OUT_FOR_DELIVERY", "READY"],
+    ["DELIVERED", "OTHER"],
+    ["CANCELLED", "OTHER"],
+    ["DRAFT", "OTHER"],
+    [undefined, "OTHER"],
+  ])("readyStageOf(%s) is %s", (status, stage) => {
+    expect(readyStageOf(status)).toBe(stage);
   });
   it("a zone Intl does not know falls back to UTC instead of throwing", () => {
     expect(readyWhen(AT, "Not/AZone")).toEqual({ day: "Oct 31", time: "2:14 PM" });
