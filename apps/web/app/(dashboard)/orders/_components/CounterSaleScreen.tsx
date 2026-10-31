@@ -167,6 +167,7 @@ import {
   creditMayApply,
   isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
+  tenderAmount,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 
@@ -562,7 +563,7 @@ export function CounterSaleScreen() {
     categories.get(l.trackedCategoryId)?.requiresLicense === true;
   const licenseNeeded = lines.some(needsLicense);
   const discounts = discountsTotal(lines, settings?.hideOriginalPrice === true); // POS-5: the `Discounts` row (display only; the total already includes it)
-  const tenderedNum = Number(tendered) || 0;
+  const tenderedNum = tenderAmount(tendered);
   // W-863: a named customer's inline return nets against the sale; `payTotal` is what the till asks for.
   const namedCustomer = customer !== null && !customer.isWalkIn;
   const ret = useCounterInlineReturn(totals.total, namedCustomer, setError);

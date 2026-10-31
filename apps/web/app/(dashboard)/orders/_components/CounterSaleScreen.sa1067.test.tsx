@@ -303,3 +303,92 @@ describe("SA-1067 M4: a capital letter at a desktop till goes to the scan box", 
     expect(scanField()).toHaveFocus();
   });
 });
+
+describe("SA-1067 A-3: a tender that does not read as money is refused, never posted", () => {
+  const SHORT = "Enter at least $12.50.";
+  const tenderField = () => screen.getByLabelText("Amount tendered");
+
+  it.each([
+    ["X1", "28.004011"], // 28.00 then a scanned 4011
+    ["X1b", "28.00123456789012"], // 28.00 then a scanned 12-digit code
+    ["X2b", "3E1"], // reads as 30 to Number()
+  ])(
+    "%s: walk-in cash, %s then Enter: no post, no hint, the short line, the text kept",
+    async (_row, text) => {
+      const user = userEvent.setup();
+      renderTill(<CounterSaleScreen />);
+      await scanCase();
+      await user.type(tenderField(), `${text}{Enter}`);
+      expect(posted()).toBe(0);
+      expect(hint()).toBeNull();
+      expect(await screen.findByText(SHORT)).toBeInTheDocument();
+      expect(tenderField()).toHaveValue(text);
+    },
+  );
+
+  it("X2: 28. then a scanned 4011, Enter, then Enter again: no post at either", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    await user.type(tenderField(), "28.4011{Enter}");
+    expect(posted()).toBe(0);
+    await user.keyboard("{Enter}");
+    expect(posted()).toBe(0);
+    expect(hint()).toBeNull();
+  });
+
+  it("A3-1/A3-2: an identified customer on Cash, 10.00 then 4011 and 10. then 4011: no post (a short cash tender is a part payment, a garbled one is not)", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    for (const text of ["10.004011", "10.4011"]) {
+      await user.clear(tenderField());
+      await user.type(tenderField(), `${text}{Enter}`);
+      expect(posted()).toBe(0);
+    }
+    expect(await screen.findByText(SHORT)).toBeInTheDocument();
+  });
+
+  it("A3-3: an identified customer on Card, Amount paying now 10. then 4011, Enter: no post, the amount refusal", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    await user.type(screen.getByLabelText("Amount paying now"), "10.4011{Enter}");
+    expect(posted()).toBe(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Enter an amount above zero, or leave it empty to pay in full.",
+    );
+  });
+
+  it("A3-4: walk-in cash 28.4011 and a click on Complete: no post, the short line", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    await user.type(tenderField(), "28.4011");
+    complete();
+    expect(posted()).toBe(0);
+    expect(await screen.findByText(SHORT)).toBeInTheDocument();
+  });
+
+  it("A3-6 (guard): 20.50 Enter posts on one Enter with no hint", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    await user.type(tenderField(), "20.50{Enter}");
+    await waitFor(() => expect(posted()).toBe(1));
+    expect(hint()).toBeNull();
+    expect(mutateAsync.mock.calls[0][0].dto.payment).toEqual({ method: "CASH", amount: 20.5 });
+  });
+
+  it("A3-7 (guard): an empty field and Enter shows the short line", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    await user.type(tenderField(), "{Enter}");
+    expect(posted()).toBe(0);
+    expect(await screen.findByText(SHORT)).toBeInTheDocument();
+  });
+});
