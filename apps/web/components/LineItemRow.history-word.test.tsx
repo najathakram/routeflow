@@ -62,4 +62,15 @@ describe("F07: the line's clock icon carries the word History", () => {
     expect(screen.getByRole("button", { name: "Price history" }).className).toMatch(/min-h-11/);
     expect(screen.getByRole("button", { name: "Price history" }).className).toMatch(/min-w-11/);
   });
+
+  // jsdom has no layout or colour maths: the browser row measured 4.49:1 at navy/60, so the word takes the next token up
+  it("the word is navy/70, one step above the icon's navy/60 (contrast 4.5:1 or better)", () => {
+    renderWithProviders(
+      <ul>
+        <LineItemRow {...props()} />
+      </ul>,
+    );
+    const word = within(screen.getByRole("button", { name: "Price history" })).getByText("History");
+    expect(word.className).toMatch(/text-navy\/70/);
+  });
 });

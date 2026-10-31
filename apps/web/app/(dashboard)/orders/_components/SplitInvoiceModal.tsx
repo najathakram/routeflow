@@ -199,7 +199,7 @@ export function SplitInvoiceModal({
                               [it.id]: Number.isNaN(v) ? 0 : Math.min(Math.max(0, v), remaining),
                             }));
                           }}
-                          className="w-24 rounded border border-surface-border px-2 py-1 text-right text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          className="w-24 rounded border border-surface-border px-2 py-1 text-right text-base focus:outline-none sm:text-sm focus:ring-1 focus:ring-brand-500"
                         />
                         {overById[it.id] && (
                           <p id={leftId} role="status" className="mt-1 text-xs text-amber-700">

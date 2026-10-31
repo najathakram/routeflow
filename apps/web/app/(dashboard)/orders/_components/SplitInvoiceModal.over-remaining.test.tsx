@@ -60,4 +60,12 @@ describe("SplitInvoiceModal: a quantity above what is left (F04)", () => {
     expect(id).toBeTruthy();
     expect(document.getElementById(id!)).toHaveTextContent("Only 1 case left to invoice");
   });
+
+  // jsdom has no layout: iOS zooms a field under 16px, so the class is the contract (16px below sm, 14px from sm up)
+  it("the quantity box is 16px on a phone and 14px from sm up", () => {
+    const box = renderModal({ qty: 1, unitPrice: 18, subtotal: 18 });
+    expect(box.className).toMatch(/(^|\s)text-base(\s|$)/);
+    expect(box.className).toMatch(/sm:text-sm/);
+    expect(box.className).not.toMatch(/(^|\s)text-sm(\s|$)/);
+  });
 });

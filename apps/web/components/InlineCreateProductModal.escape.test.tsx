@@ -67,6 +67,17 @@ describe("FL1: Escape closes the New product window", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229", { keyCode: 229 }],
+  ])("an Escape that cancels an IME composition (%s) does not close the window", (_n, init) => {
+    const onClose = mount();
+    fireEvent.keyDown(name(), { key: "Escape", ...init });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(name(), { key: "Escape" }); // the next, plain Escape still closes
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("a closed window listens to nothing", () => {
     const onClose = mount(false);
     fireEvent.keyDown(document.body, { key: "Escape" });
@@ -99,6 +110,9 @@ describe("FL1: Escape closes the New product window", () => {
  */
 describe("FL1: inside the real builder Modal, one Escape closes one layer", () => {
   const builderClosed = jest.fn();
+  // The builder's real wiring is `<Modal onEscapeKeyDown={handleEscape}>`: Radix calls it, from its document-capture listener,
+  // for every Escape that reaches it. The spy sees what the builder would.
+  const builderEscape = jest.fn();
   function Builder() {
     const [order, setOrder] = React.useState(true);
     const [win, setWin] = React.useState(true);
@@ -109,6 +123,7 @@ describe("FL1: inside the real builder Modal, one Escape closes one layer", () =
           builderClosed();
           setOrder(false);
         }}
+        onEscapeKeyDown={builderEscape}
         title="New order"
       >
         <InlineCreateProductModal
@@ -121,6 +136,7 @@ describe("FL1: inside the real builder Modal, one Escape closes one layer", () =
   }
   beforeEach(() => {
     builderClosed.mockClear();
+    builderEscape.mockClear();
     mockProducts.length = 0;
     mockProducts.push({ id: "p1", name: "Sample Cola", isActive: true });
   });
@@ -140,12 +156,19 @@ describe("FL1: inside the real builder Modal, one Escape closes one layer", () =
     expect(input).not.toHaveAttribute("aria-controls");
     expect(windowOpen()).toBe(true);
     expect(builderClosed).not.toHaveBeenCalled();
+    // the builder's handler is reached (no stopPropagation here, the list must get the key) but sees it marked handled
+    expect(builderEscape).toHaveBeenCalledTimes(1);
+    expect(builderEscape.mock.calls[0][0].defaultPrevented).toBe(true);
 
+    builderEscape.mockClear();
     fireEvent.keyDown(input, { key: "Escape" }); // 2: the window only
     expect(windowOpen()).toBe(false);
     expect(builderClosed).not.toHaveBeenCalled();
+    // stopPropagation: the key never reaches the builder's Radix listener, so nothing of the builder's runs on it
+    expect(builderEscape).not.toHaveBeenCalled();
 
     fireEvent.keyDown(document.body, { key: "Escape" }); // 3: the builder's own
+    expect(builderEscape).toHaveBeenCalledTimes(1);
     expect(builderClosed).toHaveBeenCalledTimes(1);
   });
 

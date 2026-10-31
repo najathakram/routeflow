@@ -66,3 +66,26 @@ describe("F01: the step's button is a 44 x 44 tap area that leaves the pill heig
     expect(cls).toEqual(expect.arrayContaining(["px-0.5", "-mx-0.5"]));
   });
 });
+
+/**
+ * F01 (review): a VOID invoice is not an invoice for the step, but the page still counts it, so it draws no Generate Invoice
+ * button. The step then takes you to the Invoice card instead of answering with nothing.
+ */
+describe("F01: an order with only a voided invoice", () => {
+  it("scrolls to the Invoice card when there is no Generate Invoice button", () => {
+    render(
+      <>
+        <PosProgress
+          order={{ invoices: [{ id: "i1", status: "VOID" }] } as never}
+          status="CONFIRMED"
+        />
+        <section id="invoice-card" tabIndex={-1}>
+          Invoice
+        </section>
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: POS_COPY.stepInvoice }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById("invoice-card"));
+  });
+});

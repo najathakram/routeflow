@@ -671,7 +671,7 @@ export function PriceHistoryButton({
         )}
       >
         <History className="h-3.5 w-3.5" aria-hidden />
-        {label && <span className="text-[11px] font-medium">{label}</span>}
+        {label && <span className="text-[11px] font-medium text-navy/70">{label}</span>}
       </button>
       {open && ready && anchor && (
         <Panel

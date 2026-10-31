@@ -29,11 +29,15 @@ const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.s
 /** The Invoice card's Generate Invoice button, which the Invoice step in the progress row takes you to (SA-1066 F01). */
 export const GENERATE_INVOICE_ID = "generate-invoice-button";
 
+/** The Invoice card itself: where the step lands when no Generate Invoice button is drawn (only a voided invoice exists). */
+export const INVOICE_CARD_ID = "invoice-card";
+
 function goToGenerateInvoice() {
-  const target = document.getElementById(GENERATE_INVOICE_ID);
+  const button = document.getElementById(GENERATE_INVOICE_ID);
+  const target = button ?? document.getElementById(INVOICE_CARD_ID);
   if (!target) return;
   target.scrollIntoView({ block: "center" });
-  target.focus({ preventScroll: true });
+  if (button) button.focus({ preventScroll: true });
 }
 
 /**
