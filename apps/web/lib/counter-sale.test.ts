@@ -63,36 +63,25 @@ const cap = (over: Partial<FulfilmentCapability>): FulfilmentCapability => ({
 });
 
 describe("counterSaleGate: reads capabilities.fulfilment only (SA-650)", () => {
-  it("always: the button AND New order opens as the counter sale", () => {
+  it("always: the till is offered", () => {
     expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP"] }))).toEqual({
       showButton: true,
-      opensAsCounter: true,
       offerShipInstead: false,
-      offerInvoiceOrder: true, // PICKUP is the only method: a store-only business (row 331)
     });
   });
   it("always + SHIP in methods: 'Ship this order instead' is offered", () => {
     expect(counterSaleGate(cap({ counter: "always", methods: ["PICKUP", "SHIP"] }))).toMatchObject({
-      opensAsCounter: true,
       offerShipInstead: true,
-      offerInvoiceOrder: false, // it can ship, so the normal builder is already reachable
     });
   });
-  it("optional: the button only; never opens as the counter, never offers the ship switch", () => {
+  it("optional: the till; never the ship switch", () => {
     expect(counterSaleGate(cap({ counter: "optional", methods: ["SHIP"] }))).toEqual({
       showButton: true,
-      opensAsCounter: false,
       offerShipInstead: false,
-      offerInvoiceOrder: false,
     });
   });
   it("off, missing or still loading: nothing", () => {
-    const none = {
-      showButton: false,
-      opensAsCounter: false,
-      offerShipInstead: false,
-      offerInvoiceOrder: false,
-    };
+    const none = { showButton: false, offerShipInstead: false };
     expect(counterSaleGate(cap({ counter: "off" }))).toEqual(none);
     expect(counterSaleGate(undefined)).toEqual(none);
     expect(counterSaleGate(null)).toEqual(none);

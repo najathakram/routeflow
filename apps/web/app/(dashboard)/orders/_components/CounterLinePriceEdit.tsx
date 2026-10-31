@@ -59,13 +59,13 @@ const MODES: ReadonlyArray<{ mode: PriceEditMode; label: string }> = [
 ];
 
 /** The word a plain line is priced per: its own unit ("case"); "each", "unit" or none read as "item". */
-function plainUnitWord(word: string | undefined): string {
-  const w = (word ?? "").trim().toLowerCase();
+function plainUnitWord(word: string): string {
+  const w = word.trim().toLowerCase();
   return !w || w === "each" || w === "unit" ? "item" : w;
 }
 
-function fieldLabel(mode: PriceEditMode, boxed: boolean, word?: string): string {
-  const unit = boxed ? "box" : plainUnitWord(word);
+function fieldLabel(mode: PriceEditMode, word: string): string {
+  const unit = plainUnitWord(word);
   if (mode === "set") return `Price per ${unit}`;
   if (mode === "percent") return "Percent off";
   return `Amount off per ${unit}`;
@@ -144,7 +144,7 @@ export function CounterLinePriceEdit({
   if (!canEditPrices) return null;
 
   const boxed = isBoxedLine(line);
-  const unitWord = boxed ? "box" : plainUnitWord(line.unitWord);
+  const unitWord = plainUnitWord(line.unitWord);
   // CQ-14: the label says what Apply will do. The reason is required for exactly the lines the shared rule
   // (`decideStaffOverride`, which `resolveCounterPriceEdit` runs) refuses without one: a special-tier line.
   const reasonRequired = line.isSpecial ?? isSpecialTier(line.tier);
@@ -269,7 +269,7 @@ export function CounterLinePriceEdit({
 
           <Input
             ref={valueRef}
-            label={fieldLabel(mode, boxed, line.unitWord)}
+            label={fieldLabel(mode, line.unitWord)}
             type="text"
             inputMode="decimal"
             autoComplete="off"

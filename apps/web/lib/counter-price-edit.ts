@@ -35,8 +35,11 @@ export interface PriceEditLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
-  /** the line's own selling-unit word ("case"); label only. Absent, "each" or "unit" read as "item". */
-  unitWord?: string;
+  /**
+   * SA-1069 U-2, REQUIRED so the compiler finds every site: the word this line's price is quoted per, for the field label only
+   * ("box" for a boxed line until U-1 gives the till a unit; "lb" for a plain one). "each", "unit" or blank read as "item".
+   */
+  unitWord: string;
 }
 
 export type PriceEditResult =

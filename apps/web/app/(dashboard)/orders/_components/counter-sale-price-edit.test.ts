@@ -126,7 +126,8 @@ describe("editedLineFigures / discountsTotal", () => {
 
   it("the dialog quotes the price per the line's own unit word (case stays case)", () => {
     expect(priceEditLineOf({ ...plain, unit: "case" }, 1).unitWord).toBe("case");
-    expect(priceEditLineOf(plain, 1)).not.toHaveProperty("unitWord");
+    // a plain line with no unit of its own still names a word ("unit"): U-2 makes `unitWord` required
+    expect(priceEditLineOf(plain, 1).unitWord).toBe("unit");
   });
 
   it("a raised price is Price changed and adds nothing to Discounts", () => {

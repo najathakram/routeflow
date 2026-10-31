@@ -8,7 +8,7 @@ import type { PriceEditLine } from "@/lib/counter-price-edit";
  * SA-1067 M2a (D1-D10, D12): Enter in the price dialog arms; a second Enter on the SAME value applies. A scanner types a
  * code and its Enter, so it can only arm. Apply by pointer, or Tab to Apply and Enter, commits at once.
  */
-const plain: PriceEditLine = { tierPrice: 10, listPrice: 10, tier: 1, qty: 2 };
+const plain: PriceEditLine = { tierPrice: 10, listPrice: 10, tier: 1, qty: 2, unitWord: "each" };
 const special: PriceEditLine = { ...plain, tier: 4, isSpecial: true };
 const HINT = "Press Enter again to apply.";
 
