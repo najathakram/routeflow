@@ -98,8 +98,9 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
   onPick: (customer: C) => void;
   /** keyboard state from `useCustomerListbox`; without it the list is click-only */
   listbox?: CustomerListbox;
-  /** W-1041: offers `Add "<typed>" as a new customer` under "No customers found"; without it the line stands alone. */
-  onCreateNew?: (name: string) => void;
+  /** W-1041: offers `Add "<typed>" as a new customer` under "No customers found"; without it the line stands alone. The
+   *  button is passed so the window can hand focus back to it (F21): a click does not focus a button in Safari. */
+  onCreateNew?: (name: string, opener: HTMLElement) => void;
 }) {
   if (matches.length > 0) {
     if (listbox && !listbox.open) return null;
@@ -157,7 +158,7 @@ export function CounterCustomerMatches<C extends CustomerMatch>({
             variant="secondary"
             className="min-h-[44px] w-full sm:w-auto"
             disabled={disabled}
-            onClick={() => onCreateNew(search.trim())}
+            onClick={(e) => onCreateNew(search.trim(), e.currentTarget)}
           >
             Add &quot;{search.trim()}&quot; as a new customer
           </WriteButton>
