@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterLineRow } from "./CounterLineRow";
@@ -11,7 +12,7 @@ import { CounterSaleScreen } from "./CounterSaleScreen";
  * W-853 (SA-1021 as amended by SA-1022, SA-940 rule 19): a counter line shows the SAME `PriceHistoryButton` as Create Order
  * when a NAMED customer is picked and the person may edit prices (`mayEditPrices`, the one gate). A walk-in, no customer, or no
  * grant shows nothing and makes no history request. "Use this price" goes through `editPrice` -> `applyPriceEdit`, the path a
- * typed price takes: the special-price reason is asked at Charge, the locked guard holds, and nothing prefills the till.
+ * typed price takes: the dialog asks for the special-price reason, Charge asks again if the customer changes, the locked guard holds, and nothing prefills the till.
  */
 
 type MockUser = { id: string; tenantSlug: string; role?: string } | null | undefined;
@@ -52,7 +53,17 @@ const WATER = {
   unit: "case",
   unitsPerBox: 12,
 };
-const PRODUCTS: Record<string, unknown> = { COLA, JUICE, WATER };
+/** a 24-pack at 48.00 a box, its base word "each": the line's unit hint must still read as the case */
+const CRATE = {
+  id: "p-crate",
+  name: "Crate",
+  pricePerUnit: 48,
+  priceTier2: 40,
+  priceTier3: 36,
+  unit: "each",
+  unitsPerBox: 24,
+};
+const PRODUCTS: Record<string, unknown> = { COLA, JUICE, WATER, CRATE };
 jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
   resolveProductByCode: async (code: string) =>
@@ -116,6 +127,7 @@ const HISTORY: Record<string, unknown[]> = {
     historyRow({ unitPrice: 8.004, invoiceNumber: "INV-2" }),
   ],
   "p-juice": [historyRow({ unitPrice: 4.5 })],
+  "p-crate": [historyRow({ unitPrice: 36, unitLabel: "case", unitsPerBox: 24, salePack: 24 })],
   "p-water": [
     historyRow({ unitPrice: 21, unitLabel: "case", unitsPerBox: 12, salePack: 12 }),
     historyRow({
@@ -202,7 +214,12 @@ beforeEach(() => {
   });
 });
 
-const NAME: Record<string, string> = { COLA: "Cola", JUICE: "Juice", WATER: "Water" };
+const NAME: Record<string, string> = {
+  COLA: "Cola",
+  JUICE: "Juice",
+  WATER: "Water",
+  CRATE: "Crate",
+};
 const scan = async (text: string) => {
   const field = screen.getByLabelText("Scan or search items");
   fireEvent.change(field, { target: { value: text } });
@@ -422,6 +439,77 @@ describe("W-853 Use this price opens the price dialog; Apply is the one write", 
     expect(within(lineOf("Cola")).getByTestId("line-price-chip").textContent).toBe(typedChip);
     expect(within(lineOf("Cola")).queryAllByTestId("line-price-chip")).toHaveLength(1);
     expect(await charge()).toEqual(typedItem);
+  });
+
+  it("SA-942 MUST 13: a history BOX price on a 24-pack line of 1 box + 6 pieces is computeLineSubtotal, never qty x price", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("CRATE");
+    for (let i = 0; i < 6; i++) {
+      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Crate" }));
+    }
+    await waitFor(() => expect(total()).toHaveTextContent("$60.00")); // 48 + 6 x (48/24)
+    await pick("Beta Deli");
+    await chooseHistoryPrice("Crate", "$36.00");
+    expect(screen.getByRole("textbox", { name: "Price per box" })).toHaveValue("36.00");
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const builder = computeLineSubtotal({
+      unitPrice: 36,
+      qty: 30,
+      boxes: 1,
+      pieces: 6,
+      unitsPerBox: 24,
+    });
+    expect(builder).toBe(45); // 36 + 6 x 1.50, not 30 x 36
+    expect(total()).toHaveTextContent("$45.00");
+    expect(await charge()).toMatchObject({
+      productId: "p-crate",
+      boxes: 1,
+      pieces: 6,
+      qty: 30,
+      unitPrice: 36,
+    });
+  });
+
+  it("a dialog left on Percent off, with a reason and an error in it, opens from history clean: 9.00 is a price, not 9% off", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    fireEvent.click(screen.getByRole("button", { name: "Change price for Cola" }));
+    await priceDialog();
+    fireEvent.click(screen.getByRole("radio", { name: "Percent off" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Percent off" }), {
+      target: { value: "abc" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (required)" }), {
+      target: { value: "Left over" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await chooseHistoryPrice("Cola", "$9.00");
+    expect(priceField()).toHaveValue("9.00");
+    expect(screen.getByRole("textbox", { name: "Reason (required)" })).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Set price" })).toBeChecked();
+  });
+
+  it("SA-1021 C9(b): a history price applied for a plain customer, then a special-tier customer: Charge asks for the reason and nothing is sent", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    await chooseHistoryPrice("Cola", "$9.00");
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await pick("Acme Cafe");
+    await waitFor(() => expect(screen.getByTestId("counter-reprice-note")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.click(completeBtn());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Add a reason for Cola. Acme Cafe has a special price on it.",
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 
   it("Cancel from a history Use leaves the line untouched, and the next plain Change price opens empty", async () => {
