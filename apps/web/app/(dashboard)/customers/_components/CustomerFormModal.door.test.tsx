@@ -47,6 +47,31 @@ beforeEach(() => {
 const create = () => fireEvent.click(screen.getByRole("button", { name: "Create Customer" }));
 
 describe("CustomerFormModal: the door props (W-1041)", () => {
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "   "],
+  ])(
+    "a %s business name flags only the business name, not the optional contact name",
+    async (_label, value) => {
+      renderWithProviders(
+        <CustomerFormModal
+          isOpen
+          mode="add"
+          onClose={jest.fn()}
+          onCreated={jest.fn()}
+          addressRequired={false}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("Business Name"), { target: { value } });
+      create();
+      await waitFor(() =>
+        expect(screen.getByText("Business name is required")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("Contact name is required")).not.toBeInTheDocument();
+      expect(createMutate).not.toHaveBeenCalled();
+    },
+  );
+
   it("prefills the typed search into the business name", () => {
     renderWithProviders(
       <CustomerFormModal isOpen mode="add" onClose={jest.fn()} initialName="Acme Cafe" />,

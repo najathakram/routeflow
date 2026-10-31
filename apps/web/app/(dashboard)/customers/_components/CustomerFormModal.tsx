@@ -247,7 +247,8 @@ export function CustomerFormModal({
     resolver: (values, context, options) =>
       zodResolver(customerSchema)(
         door && values.customerType === "BUSINESS" && !values.contactName?.trim()
-          ? { ...values, contactName: values.businessName }
+          ? // A blank business name always fails on businessName, so the stand-in is never submitted.
+            { ...values, contactName: values.businessName?.trim() ? values.businessName : "-" }
           : values,
         context,
         options,
