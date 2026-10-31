@@ -241,4 +241,53 @@ describe("stock writers read the LOCKED row, not the pre-tx read (SA-767 L-2)", 
     expect(adj.avgCostAfter.toString()).toBe("5");
     expect(lockedBefore(prisma.product.update, 1)).toBe(true);
   });
+
+  it("countProduct SET is counted minus the LOCKED stock, written as the helper's fold (SA-828)", async () => {
+    // validation read + the date gate's flag read: 100 on hand; by the time the lock is granted a sale left 70.
+    // The count is DATED: since row 563 (#3673) the gate reads product flags only for a person-chosen
+    // date, so an undated count has no flag read (the twin below).
+    prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100), unitsPerBox: null }));
+    prisma.product.findMany
+      .mockResolvedValueOnce([row({ currentStock: D(100) })])
+      .mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.countProduct(
+      "prod-1",
+      {
+        mode: "SET",
+        parts: [{ quantity: 90 }],
+        reason: "COUNT_CORRECTION",
+        effectiveDate: "2026-10-01",
+      } as any,
+      "u-1",
+    );
+
+    // SA-927: one absolute write of the helper's fold (locked 70 + 20), never an increment
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
+    const movement = stock.written()[0];
+    expect(movement.quantity.toString()).toBe("20");
+    expect(movement.stockAfter.toString()).toBe("90");
+    // findMany calls: 1 the SA-802 date gate's flag read, 2 the locked read.
+    expect(lockedBefore(prisma.product.findMany, 2)).toBe(true);
+    // the up-front statement, then the helper's re-lock of the same row (held already: a no-op)
+    expect(lockCalls()).toHaveLength(2);
+  });
+
+  it("an undated countProduct SET: the first findMany IS the locked read (no date-gate read)", async () => {
+    prisma.product.findUnique.mockResolvedValue(row({ currentStock: D(100), unitsPerBox: null }));
+    prisma.product.findMany.mockResolvedValue([row({ currentStock: D(70) })]);
+    prisma.product.update.mockResolvedValue({ currentStock: D(90) });
+
+    await service.countProduct(
+      "prod-1",
+      { mode: "SET", parts: [{ quantity: 90 }], reason: "COUNT_CORRECTION" } as any,
+      "u-1",
+    );
+
+    expect(prisma.product.update.mock.calls[0][0].data.currentStock.toString()).toBe("90");
+    expect(prisma.product.findMany).toHaveBeenCalledTimes(1);
+    expect(lockedBefore(prisma.product.findMany, 1)).toBe(true);
+    expect(lockCalls()).toHaveLength(2);
+  });
 });
