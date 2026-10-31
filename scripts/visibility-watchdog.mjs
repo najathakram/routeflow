@@ -64,17 +64,29 @@
 //
 // SINGLE INSTANCE (#2076)
 // A lock file beside the log (`local-assets/visibility-watchdog.lock`) records the running watchdog's
-// pid, repo and deadline. A second start finds the live pid, prints it and its deadline, logs a
-// `refused` line and exits 3. `--replace` stops the recorded pid first (SIGTERM, only after the pid's
+// pid, repo and deadline. A second start finds the live pid and reads the visibility of the repo that
+// watchdog guards. PRIVATE, with this start's deadline later than the old one's: there is no window for
+// the old one to guard, so it is stopped and the new start takes over, with a `takeover` log line
+// (a lock left by a finished window cost 15 minutes on 2026-10-30). PUBLIC or unknown, or an earlier
+// deadline (a window its opener has still to open would lose its cover): the start prints the pid and
+// deadline, logs a `refused` line naming the read and exits 3. `--replace` skips the read and stops the
+// recorded pid first (SIGTERM, only after the pid's
 // command line is confirmed to name this script: `ps` on POSIX, Win32_Process on Windows, so a
 // recycled pid is never killed) and then takes the lock. A lock is STALE, and simply taken over
 // without killing anything, when its pid is dead, when the pid now belongs to ANOTHER process, or
 // when its deadline plus the ~16 min retry budget has passed: a watchdog killed by Stop-Process or a
 // reboot leaves its lock behind, and refusing then would open the public window with no watchdog.
 // The one exception is an "unknown" identity (the `ps` / CIM check itself could not run): that is NOT
-// stale. It is treated as a live watchdog and REFUSES (exit 3, a `refused` log line, `--replace` never
-// kills it) until the deadline plus the retry budget has passed, so the operator investigates instead
+// stale. It is treated as a live watchdog and REFUSES (exit 3, a `refused` log line, neither a takeover
+// nor `--replace` kills it) until the deadline plus the retry budget has passed, so the operator investigates instead
 // of the script guessing. Only a positive "other" or "gone" answer, or an overdue lock, is taken over.
+//
+// A signal cannot be taken back, so a stop always ends with the new start armed. Node cannot run the
+// SIGTERM handler while the old watchdog is blocked in a sync `gh` call, so the new start waits out the
+// longest such stretch (~3 min), then SIGKILLs it after confirming the pid is still a watchdog. The new
+// deadline stands: time spent waiting comes out of the sleep, and the flip still lands on it. The lock
+// is re-read after the visibility read and after a stop, so a lock another start took meanwhile is never
+// removed and its old pid is never signalled.
 //
 // The lock is removed on exit and on SIGINT/SIGTERM. Two watchdogs must never coexist: the OLDER one's earlier deadline would flip the
 // repo private inside the newer one's public window.
@@ -106,7 +118,7 @@
 // One line per event, appended to `local-assets/visibility-watchdog.log`
 // (created if missing; gitignored — see .gitignore's "local-assets/" section)
 // and also printed to stdout:
-//   <ISO timestamp> start|attempt|verified|error <detail>
+//   <ISO timestamp> start|takeover|refused|attempt|verified|error <detail>
 // The `start` line reports the visibility read at launch, before the wait
 // even begins (`visibility=<X>`) — if it is already PRIVATE the watchdog
 // keeps running anyway, since the public window it guards against may still
@@ -124,7 +136,7 @@
 // If git cannot be run (not installed, not a repository), this falls back to
 // the `__dirname`-derived repo root — the previous behaviour.
 //
-// TEST-ONLY OVERRIDES (four; honoured ONLY inside a Jest worker — see
+// TEST-ONLY OVERRIDES (five; honoured ONLY inside a Jest worker — see
 // apps/api/src/common/visibility-watchdog-script.spec.ts)
 // Each is read through `testOverride()`, which mirrors
 // `SCHEMA_DRIFT_PRISMA_CLI` in apps/api/scripts/schema-drift.mjs: the value is
@@ -150,6 +162,8 @@
 //                                           attempts, so specs don't sleep for real
 //                                           minutes. A malformed or non-numeric value
 //                                           falls back to that default list.
+//   VISIBILITY_WATCHDOG_STOP_WAIT_MS       How long a stop waits on SIGTERM before SIGKILL,
+//                                           so a spec need not wait out the real ~3 min.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -172,6 +186,10 @@ const DEFAULT_ATTEMPT_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
 // left to kill it). SIGKILL because a hung `gh` may not honour SIGTERM.
 const GH_TIMEOUT_MS = 60_000;
 const GIT_TIMEOUT_MS = 10_000;
+// The longest a watchdog can sit in sync calls, unable to run its SIGTERM handler: the first `gh` view
+// plus the two marker calls, the `git` root lookup, and a margin.
+const STOP_WAIT_MS = 3 * GH_TIMEOUT_MS + GIT_TIMEOUT_MS + 5_000;
+const KILL_WAIT_MS = 5_000;
 
 // ─── test-only overrides ──────────────────────────────────────────────────────────────────────
 // Mirrors SCHEMA_DRIFT_PRISMA_CLI in apps/api/scripts/schema-drift.mjs: honoured ONLY inside a
@@ -349,6 +367,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function stopWaitMs() {
+  const parsed = Number(testOverride("VISIBILITY_WATCHDOG_STOP_WAIT_MS"));
+  return parsed > 0 ? parsed : STOP_WAIT_MS;
+}
+
 function readVisibility(repo) {
   const viewResult = runGh(["repo", "view", repo, "--json", "visibility"]);
   if (!viewResult.error && viewResult.status === 0) {
@@ -442,16 +465,34 @@ function identify(pid) {
   return /visibility-watchdog/.test(res.stdout || "") ? "watchdog" : "other";
 }
 
-/** SIGTERM and wait. A process that is already gone (ESRCH) counts as stopped. */
-async function terminate(pid) {
+async function stopped(pid, waitMs) {
+  const end = Date.now() + waitMs;
+  while (pidAlive(pid) && Date.now() < end) await sleep(100);
+  return !pidAlive(pid);
+}
+
+/**
+ * SIGTERM and wait, then SIGKILL. A process that is already gone (ESRCH) counts as stopped. The signal
+ * cannot be taken back: refusing here would leave a process that dies later with its lock, and nothing
+ * armed. So once it is sent, a watchdog that is still alive is stopped for certain.
+ */
+async function terminate(pid, waitMs) {
   try {
     process.kill(pid, "SIGTERM");
   } catch (err) {
     if (err.code === "ESRCH") return true;
     throw err;
   }
-  for (let i = 0; i < 50 && pidAlive(pid); i++) await sleep(100);
-  return !pidAlive(pid);
+  if (await stopped(pid, waitMs)) return true;
+  const identity = identify(pid); // never SIGKILL a recycled pid
+  if (identity !== "watchdog") return identity !== "unknown";
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (err) {
+    if (err.code === "ESRCH") return true;
+    throw err;
+  }
+  return stopped(pid, KILL_WAIT_MS);
 }
 
 function releaseLock() {
@@ -474,8 +515,21 @@ function createLock(file, content) {
   }
 }
 
+/**
+ * Whether a start may stop a confirmed live watchdog without --replace, and what it read. Only a
+ * PRIVATE read with a later deadline: anything else is a window that watchdog may still be guarding.
+ */
+function takeoverDecision({ held, repo, deadline }) {
+  const visibility = readVisibility(held.repo ?? repo) ?? "unknown";
+  if (visibility !== "PRIVATE") return { takeover: false, read: `visibility=${visibility}` };
+  if (!(Date.parse(deadline) > Date.parse(held.deadline ?? ""))) {
+    return { takeover: false, read: `visibility=${visibility}, but it holds a later deadline` };
+  }
+  return { takeover: true, read: `visibility=${visibility}` };
+}
+
 /** Take the lock, or report who holds it. {ok:true} | {ok:false, message}. */
-async function acquireLock({ repo, deadline, replace }) {
+async function acquireLock({ repo, deadline, replace, waitMs }) {
   const file = lockFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const mine =
@@ -506,10 +560,18 @@ async function acquireLock({ repo, deadline, replace }) {
       const stale = who2 === "other" || who2 === "gone" || overdue;
       if (!stale) {
         if (!replace) {
-          return {
-            ok: false,
-            message: `already running: ${who}. Pass --replace to stop it and take over.`,
-          };
+          const { takeover, read } =
+            who2 === "watchdog"
+              ? takeoverDecision({ held, repo, deadline })
+              : { takeover: false, read: "visibility=not read, its identity is unconfirmed" };
+          if (!takeover) {
+            return {
+              ok: false,
+              message: `already running: ${who}, ${read}. Pass --replace to stop it and take over.`,
+            };
+          }
+          if (readLock()?.pid !== held.pid) continue; // it moved during the read: judge it again
+          log("takeover", `stopping ${who}: ${read}`);
         }
         if (who2 !== "watchdog") {
           return {
@@ -517,12 +579,14 @@ async function acquireLock({ repo, deadline, replace }) {
             message: `lock names ${who} but this could not be confirmed as a visibility-watchdog; not killing it. Remove ${file} by hand if it is stale.`,
           };
         }
-        if (!(await terminate(held.pid))) {
+        if (!(await terminate(held.pid, waitMs))) {
           return { ok: false, message: `could not stop ${who}.` };
         }
       }
     }
-    fs.rmSync(file, { force: true }); // dead or reused pid (stale), or just replaced: retake
+    // Dead or reused pid (stale), or just replaced: retake. Only the lock judged above, since another
+    // start may have taken it during the wait.
+    if (readLock()?.pid === held.pid) fs.rmSync(file, { force: true });
   }
   return { ok: false, message: `could not acquire ${file}` };
 }
@@ -583,8 +647,9 @@ async function main({ minutes, repo, replace, windowMarker }) {
   const openedAt = new Date().toISOString();
   const deadline = new Date(Date.now() + waitMs).toISOString();
 
-  // One watchdog at a time, decided BEFORE the first `gh` call or log line.
-  const lock = await acquireLock({ repo, deadline, replace });
+  // One watchdog at a time, decided BEFORE the first `gh` call or log line. Only a live holder
+  // makes one of each, for the takeover decision.
+  const lock = await acquireLock({ repo, deadline, replace, waitMs: stopWaitMs() });
   if (!lock.ok) {
     // Written to the log too: the runbook launches discard stderr, so a refusal that only reaches
     // stderr is silent, and the window would open with no watchdog and no trace of why.
@@ -609,16 +674,11 @@ async function main({ minutes, repo, replace, windowMarker }) {
   // Keep running even if already PRIVATE — the public window this watchdog
   // guards against may still open later in the deploy flow.
 
-  // The marker write is best-effort and must never delay the flip: whatever time it took (two
-  // bounded `gh` calls) is deducted from the wait, so the flip still lands at `deadline`.
-  let markerMs = 0;
-  if (windowMarker) {
-    const markerStart = Date.now();
-    writeWindowMarker({ repo, openedAt, deadline });
-    markerMs = Date.now() - markerStart;
-  }
+  // The marker write is best-effort and must never delay the flip: the wait runs to `deadline`, so
+  // the time it took (two bounded `gh` calls) and any takeover wait come out of the sleep.
+  if (windowMarker) writeWindowMarker({ repo, openedAt, deadline });
 
-  await sleep(Math.max(0, waitMs - markerMs));
+  await sleep(Math.max(0, Date.parse(deadline) - Date.now()));
 
   let lastErrorDetail = "no successful read-back";
 
