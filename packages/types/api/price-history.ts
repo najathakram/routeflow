@@ -59,7 +59,7 @@ export interface PriceHistoryReferences {
   listPrice: number | null;
   /** The customer's current tier / special price in the row unit (the order-create resolver). */
   tierPrice: number | null;
-  /** (last - previous) / previous for the same unit, 4 decimal places; null with < 2 rows or a 0 previous. */
+  /** (the customer's last price - the one before it) / the one before it, same unit, 4 decimal places; not today's price. Null with < 2 rows or a 0 previous. */
   changeSinceLast: number | null;
 }
 

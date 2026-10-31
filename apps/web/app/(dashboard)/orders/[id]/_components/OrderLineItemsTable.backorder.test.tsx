@@ -103,11 +103,11 @@ describe("R3: backorder pill in the line's own unit, on its own line", () => {
   });
   it("the meaning is visible text beside the pill, not only a hover title (table)", () => {
     table(caseLine());
-    expect(screen.getByText("Ships when stock arrives")).toBeVisible();
+    expect(screen.getByText("Available when stock arrives")).toBeVisible();
   });
   it("the meaning is visible text beside the pill (card renderer)", () => {
     render(<LineItemRowReadOnly {...lineRowProps(caseLine(), "PENDING")} />);
-    expect(screen.getByText("Ships when stock arrives")).toBeVisible();
+    expect(screen.getByText("Available when stock arrives")).toBeVisible();
   });
   it("the hover title also reads in cases", () => {
     table(caseLine());
@@ -128,7 +128,7 @@ describe("R3: backorder pill in the line's own unit, on its own line", () => {
   });
   it("no pill, no hint, when nothing is backordered", () => {
     table(caseLine({ backorderedPieces: "0" }));
-    expect(screen.queryByText("Ships when stock arrives")).toBeNull();
+    expect(screen.queryByText("Available when stock arrives")).toBeNull();
   });
 });
 

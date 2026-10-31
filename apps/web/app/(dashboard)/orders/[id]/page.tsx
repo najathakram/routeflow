@@ -75,6 +75,8 @@ import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
+import { createInvoiceVariant } from "./_components/create-invoice-variant";
+import { creditSelectionsFromOrder, formatDateOnly } from "./order-detail-helpers";
 import { ActionTier } from "./_components/ActionTier";
 import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useScrollAfterSave } from "./_components/use-scroll-after-save";
@@ -89,6 +91,8 @@ import {
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
+  GENERATE_INVOICE_ID,
+  INVOICE_CARD_ID,
   posMoveOptions,
 } from "./_components/PosOrderActions";
 import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
@@ -141,29 +145,6 @@ import {
 } from "./_components/order-line-edit";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-
-/**
- * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
- * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
- */
-function formatDateOnly(iso: string): string {
-  const [y, m, d] = iso.split("T")[0].split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-/** Map the order's stored credit-note intents into the picker's selection shape. */
-function creditSelectionsFromOrder(o: {
-  orderCreditNotes?: Array<{ creditNoteId: string; amount?: number | string | null }>;
-}): CreditSelection[] {
-  return (o.orderCreditNotes ?? []).map((oc) => ({
-    creditNoteId: oc.creditNoteId,
-    amount: oc.amount != null ? Number(oc.amount) : undefined,
-  }));
-}
 
 export default function OrderDetailPage() {
   const params = useParams();
@@ -1654,12 +1635,14 @@ export default function OrderDetailPage() {
               <OrderLineItemCards
                 lineItems={order.lineItems}
                 orderStatus={order.status}
+                fulfillPath={order.fulfillPath}
                 total={total}
               />
             ) : (
               <OrderLineItemsTable
                 lineItems={order.lineItems}
                 orderStatus={order.status}
+                fulfillPath={order.fulfillPath}
                 total={total}
               />
             )}
@@ -1934,7 +1917,10 @@ export default function OrderDetailPage() {
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
           {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
-            <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
+            <Card
+              id={INVOICE_CARD_ID}
+              title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}
+            >
               {/* r4 F07: always mounted (empty), so the sentence is read out when it appears. */}
               <p
                 role="status"
@@ -2043,10 +2029,9 @@ export default function OrderDetailPage() {
                           No invoice has been generated for this order.
                         </p>
                         <Button
+                          id={GENERATE_INVOICE_ID}
                           size="sm"
-                          // One filled primary leads the page: while PENDING that is Confirm Order
-                          // (apple-ux r3 Q16), so invoicing is secondary until the order is confirmed.
-                          variant={localStatus === "PENDING" || isEditing ? "secondary" : "primary"}
+                          variant={createInvoiceVariant(localStatus, isEditing, isPos)}
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
                           disabled={isEditing}

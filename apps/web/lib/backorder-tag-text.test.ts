@@ -30,7 +30,7 @@ describe("backorderTagText", () => {
     expect(backorderTagText(3)).toBe("Backorder · 3 pcs");
   });
   it("says what the tag means, as a separate visible sentence", () => {
-    expect(BACKORDER_HINT).toBe("Ships when stock arrives");
+    expect(BACKORDER_HINT).toBe("Available when stock arrives");
   });
 });
 

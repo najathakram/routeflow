@@ -157,6 +157,17 @@ describe("adding a product — one per pick, merging (#2696; was LANE-S step 10'
     expect(mockToast).not.toHaveBeenCalled();
   });
 
+  it("R11 (SA-1066 F9): the added row is scrolled `nearest` and keeps 10rem clear below it, past the docked draft bar and the footer", async () => {
+    const scroll = window.HTMLElement.prototype.scrollIntoView as jest.Mock;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pick("Sample Cola");
+    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+    const row = lineFor("Sample Cola");
+    await waitFor(() => expect(scroll.mock.instances).toContain(row));
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    expect(row.className).toMatch(/\bscroll-mb-40\b/);
+  });
+
   it("adding the same product again MERGES +1 into one line and says so", async () => {
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
     await pick("Sample Cola");

@@ -444,18 +444,21 @@ export default function EditInvoicePage() {
   const pendingMirrorOrderId =
     invoice && isPendingMirrorInvoice(invoice) ? (invoice.orderId ?? null) : null;
   const pendingMirrorOrderNo = invoice?.order?.orderNumber ?? "";
+  // A pickup order is handed over, never delivered (SA-1066 M3); nothing else is read, no shared type changes.
+  const pendingMirrorMoment =
+    invoice?.order?.fulfillPath === "PICKUP" ? "handed over" : "delivered";
   React.useEffect(() => {
     if (!pendingMirrorOrderId) return;
     // The toast provider lives in the dashboard layout, so it survives the navigation and the order
     // page shows the reason. Fixed copy only — nothing from the URL is ever echoed.
     toast({
       title: `This invoice mirrors order ${pendingMirrorOrderNo}`,
-      description: "It can't be edited until the order is delivered — edit the order instead.",
+      description: `It can't be edited until the order is ${pendingMirrorMoment} — edit the order instead.`,
       duration: 8000,
     });
     router.replace(`/orders/${pendingMirrorOrderId}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity is unstable; fire once per mirror
-  }, [pendingMirrorOrderId, pendingMirrorOrderNo, router]);
+  }, [pendingMirrorOrderId, pendingMirrorOrderNo, pendingMirrorMoment, router]);
 
   // Customer tier pricing (mirrors invoices/new): every product-selection path
   // below should price at this customer's tier, not the raw catalog price.

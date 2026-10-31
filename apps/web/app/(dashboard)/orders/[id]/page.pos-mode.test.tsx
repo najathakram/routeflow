@@ -60,7 +60,21 @@ const order = (status: string, extra: Record<string, unknown> = {}) => ({
 const open = async (status: string, extra: Record<string, unknown> = {}) => {
   seedSession("OPERATOR");
   get.mockImplementation((url: string) =>
-    Promise.resolve({ data: url === "/orders/o1" ? order(status, extra) : [] }),
+    Promise.resolve({
+      data:
+        url === "/orders/o1"
+          ? order(status, extra)
+          : // The till-only Hand over button reads the operator's permissions; this one holds every group.
+            url === "/users/me/permissions"
+            ? {
+                role: "OPERATOR",
+                isAccountAdmin: false,
+                groups: ["PRICING", "ORDERS", "FINANCE"],
+                version: 1,
+                mode: "shadow",
+              }
+            : [],
+    }),
   );
   render(
     <Providers>
@@ -78,12 +92,13 @@ beforeEach(() => jest.clearAllMocks());
 afterEach(() => seedSession(null));
 
 describe("POS order page: progress", () => {
-  it("CONFIRMED with no invoice: Confirmed done, Invoice (draft) is the current step", async () => {
+  it("CONFIRMED with no invoice: Confirmed done, Invoice (no draft yet) is the current step", async () => {
     await open("CONFIRMED");
     const [a, b, c] = steps();
     expect(a).toHaveTextContent("Confirmed");
     expect(a).toHaveAttribute("data-done", "true");
-    expect(b).toHaveTextContent("Invoice (draft)");
+    expect(b).toHaveTextContent(/^Invoice/);
+    expect(b).not.toHaveTextContent("(draft)");
     expect(b).toHaveAttribute("aria-current", "step");
     expect(c).toHaveTextContent("Handed over");
     expect(c).toHaveAttribute("data-done", "false");
@@ -123,6 +138,35 @@ describe("POS order page: one primary per state", () => {
     expect(has(/^Create invoice$/)).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: /^Hand over$/ }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("R2: Ready, no invoice: Create invoice is a secondary beside Hand over, the one filled primary", async () => {
+    await open("OUT_FOR_DELIVERY");
+    const hand = await screen.findByRole("button", { name: /^Hand over$/ });
+    expect(hand).toHaveClass("bg-accent-strong");
+    const create = screen.getByRole("button", { name: /^Create invoice$/ });
+    expect(create).not.toHaveClass("bg-accent-strong");
+    const panel = screen.getByRole("button", { name: /^Generate Invoice \(full order\)$/ });
+    expect(panel).not.toHaveClass("bg-accent-strong");
+  });
+
+  it("R2b: Ready, no invoice: Hand over still opens the pickup dialog", async () => {
+    await open("OUT_FOR_DELIVERY");
+    fireEvent.click(await screen.findByRole("button", { name: /^Hand over$/ }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("R2a: Ready with an invoice: no Create invoice", async () => {
+    await open("OUT_FOR_DELIVERY", { invoices: INV("DRAFT") });
+    await screen.findByRole("button", { name: /^Hand over$/ });
+    expect(has(/^Create invoice$/)).toBe(false);
+  });
+
+  it("R2c: a delivery order out for delivery: no row Create invoice, the panel button stays the filled primary", async () => {
+    await open("OUT_FOR_DELIVERY", { fulfillPath: "ROUTE" });
+    expect(has(/^Create invoice$/)).toBe(false);
+    const panel = screen.getByRole("button", { name: /^Generate Invoice \(full order\)$/ });
+    expect(panel).toHaveClass("bg-accent-strong");
   });
 
   it("DELIVERED, unpaid invoice: Record payment is the primary and links to the invoice", async () => {
