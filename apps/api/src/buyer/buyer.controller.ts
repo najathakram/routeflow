@@ -321,6 +321,19 @@ export class BuyerController {
     return this.customersService.getAccountStatement(ctx.customerId, { staff: false });
   }
 
+  @Get("account-statement/pdf")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Render the buyer's open-balance statement PDF + return its signed URL",
+  })
+  async getAccountStatementPdf(@CurrentBuyerCustomer() ctx: any) {
+    // The customer comes from the buyer's seller link, never from the request; the PDF is built customer-shaped.
+    const url = await this.statementPdfService.generateCurrent(ctx.customerId);
+    return { url };
+  }
+
   @Get("statements")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)

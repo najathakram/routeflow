@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import type { AxiosInstance } from "axios";
 import { Printer } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
@@ -26,7 +27,17 @@ const isTouchDevice = (): boolean => {
   }
 };
 
-export function StatementPrintButton({ customerId }: { customerId: string }) {
+/**
+ * The print control, over where the signed URL comes from (`getUrl`) and the client that fetches the bytes (`client`): the
+ * staff button below and the buyer portal's twin differ only in those two.
+ */
+export function StatementPrintControl({
+  getUrl,
+  client,
+}: {
+  getUrl: () => Promise<string>;
+  client: AxiosInstance;
+}) {
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
   const [openUrl, setOpenUrl] = React.useState<string | null>(null);
@@ -36,11 +47,11 @@ export function StatementPrintButton({ customerId }: { customerId: string }) {
   async function run() {
     setBusy(true);
     try {
-      const url = await fetchAccountStatementPdfUrl(customerId);
+      const url = await getUrl();
       if (touch) {
         setOpenUrl(url);
       } else {
-        printPdfBlob(await fetchPdfBlob(url, apiClient));
+        printPdfBlob(await fetchPdfBlob(url, client));
       }
     } catch {
       // The sheet stays open, with its figures, so the person can try again.
@@ -80,4 +91,9 @@ export function StatementPrintButton({ customerId }: { customerId: string }) {
       ) : null}
     </div>
   );
+}
+
+export function StatementPrintButton({ customerId }: { customerId: string }) {
+  const getUrl = React.useCallback(() => fetchAccountStatementPdfUrl(customerId), [customerId]);
+  return <StatementPrintControl getUrl={getUrl} client={apiClient} />;
 }
