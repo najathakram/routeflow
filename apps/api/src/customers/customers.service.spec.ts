@@ -1462,57 +1462,6 @@ describe("CustomersService", () => {
       expect(result.overdueAmount).toBe(150);
     });
 
-    it("findAll: customer Open balance excludes VOID payments", async () => {
-      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.invoice.findMany.mockResolvedValue([
-        {
-          customerId: "cust-1",
-          status: "SENT",
-          total: 100,
-          dueDate: null,
-          payments: [
-            { amount: 100, status: "VOID" },
-            { amount: 40, status: "PAID" },
-          ],
-        },
-      ]);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      // 100 − 40 (VOID ignored) = 60, not 0.
-      expect((result.data[0] as any).openBalance).toBe(60);
-    });
-
-    it("exportCustomers: CSV Open Balance column excludes VOID payments", async () => {
-      prisma.customer.findMany.mockResolvedValue([
-        {
-          ...MOCK_CUSTOMER,
-          customerType: "RETAIL",
-          user: { status: "ACTIVE" },
-          advancePayments: [],
-        },
-      ]);
-      prisma.invoice.findMany.mockResolvedValue([
-        {
-          customerId: "cust-1",
-          status: "SENT",
-          total: 100,
-          dueDate: null,
-          payments: [
-            { amount: 100, status: "VOID" },
-            { amount: 25, status: "PAID" },
-          ],
-        },
-      ]);
-
-      const csv = await service.exportCustomers({});
-      const dataLine = csv.split("\n")[1];
-      // Open Balance 75.00, Credits 0.00 → row tail ",75.00,0.00" (VOID's 100 ignored).
-      expect(dataLine).toContain(",75.00,0.00");
-    });
-
     // B808: the apply path checks the advance's customer against the invoice's and the route's.
     const apOf = (balance: number) => ({ id: "ap-1", balance, customerId: "cust-1" });
     const applyAdv = (invoiceId: string) =>

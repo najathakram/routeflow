@@ -120,6 +120,18 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
     expect((await listed()).openBalance).toBe(60);
   });
 
+  it("the CSV Open Balance column also ignores a VOID payment (balance, not total)", async () => {
+    prisma.invoice.findMany.mockImplementation(
+      rows([
+        inv("cust-1", "SENT", 100, [
+          { amount: 100, status: "VOID" },
+          { amount: 25, status: "PAID" },
+        ]),
+      ]),
+    );
+    expect(await csvTail()).toContain(",75.00,0.00");
+  });
+
   it("the sum is cents, never float dust (0.1 + 0.2 → 0.3)", async () => {
     prisma.invoice.findMany.mockImplementation(
       rows([inv("cust-1", "SENT", 0.1), inv("cust-1", "SENT", 0.2)]),
