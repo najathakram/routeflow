@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { Badge, cn } from "@routeflow/ui/web";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, isAboveListLine } from "@routeflow/pricing";
 import { lineBackorderPieces } from "@routeflow/types";
 import { BackorderTag } from "@/components/BackorderTag";
 import { invoiceLineQtyText, isUnitLine } from "@/lib/invoice-line-unit";
@@ -165,7 +165,10 @@ export function OrderLineItemsTable({
                 <div className="flex flex-col items-end gap-0.5 max-md:items-start">
                   {li.priceType === "SPECIAL" ? (
                     <>
-                      <span className="strike text-xs">{formatMoney(li.originalPrice)}</span>
+                      {/* a tier above Retail is charged over its list: the Special pill stays, the lower list is not struck */}
+                      {!isAboveListLine(li) && (
+                        <span className="strike text-xs">{formatMoney(li.originalPrice)}</span>
+                      )}
                       <span className="money text-emerald-600">{formatMoney(li.unitPrice)}</span>
                       <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                         Special

@@ -64,9 +64,9 @@ const DATA_BLOCK = new RegExp(
 const ASSIGN = new RegExp(`(?:\\.|\\[\\s*["'])${KEY}["']?\\s*\\]?\\s*[-+*]?=(?!=)`);
 const RAW_SQL = new RegExp(`\\bSET\\b[^;\`]{0,400}"?${KEY}"?\\s*=`, "i");
 // `pricePerUnit: <value>` that is not a select flag, a type member, an orderBy direction or a where operator.
-// The lookahead sits right after the colon and skips the spaces itself: with `\\s*` before it the engine backtracks to zero
-// spaces, the lookahead then sees " true", and a select flag (`pricePerUnit: true`) was flagged (W-930 slice 1).
 const KEY_VALUE = new RegExp(
+  // The exclusion sits right after the colon and owns the whitespace: a trailing `\s*` outside it backtracks to
+  // zero spaces, the lookahead then sees the space, and `pricePerUnit: true` was never excluded.
   `\\b${KEY}\\s*:(?!\\s*(?:true\\b|false\\b|["'](?:asc|desc)["']|\\{|(?:number|string|boolean|unknown|any|null|Numeric|Decimal|Prisma\\.Decimal)\\b))`,
 );
 const SHORTHAND = new RegExp(`[{,]\\s*${KEY}\\s*[,}]`);
@@ -190,9 +190,20 @@ describe("SA-795 (h): writers of the pack price columns", () => {
     expect(PACK_WRITE_PATH_COMPLETE).toBe(false);
   });
 
+  it("a select flag is not a writer, a real pack-price write is (the KEY_VALUE exclusion bites)", () => {
+    const select =
+      "x.product.findMany({ select: { pricePerUnit: true, priceTier2: true } }); db.product.update(a);";
+    const write = "db.product.update({ where: { id }, data: { pricePerUnit: 5 } });";
+    expect(writesPackColumns(select)).toBe(false);
+    expect(writesPackColumns(write)).toBe(true);
+    expect(KEY_VALUE.test("pricePerUnit: true")).toBe(false);
+    expect(KEY_VALUE.test("pricePerUnit:true")).toBe(false);
+    expect(KEY_VALUE.test("pricePerUnit: price")).toBe(true);
+  });
+
   describe("the detector (W-930 slice 1)", () => {
     const UPDATE = "await db.product.update({ where: { id } });";
-    it("a select flag, a type member and an orderBy direction do not trip (red on master: the lookahead backtracked)", () => {
+    it("a select flag, a type member and an orderBy direction do not trip", () => {
       for (const src of [
         `${UPDATE} const r = await db.product.findMany({ select: { pricePerUnit: true, priceTier2: true } });`,
         `${UPDATE} const r = await db.product.findFirst({ select: { packAuto: true } });`,

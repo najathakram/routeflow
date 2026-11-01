@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Store } from "lucide-react";
-import { PLANS, routes, site } from "../lib/site";
+import { PLANS, routes } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
 import { FAQ } from "../components/faq";
 
@@ -14,18 +15,11 @@ import { FAQ } from "../components/faq";
 
 const route = routes.find((r) => r.slug === "pricing")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/pricing",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/pricing" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/pricing",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 export default function PricingPage() {
   return (

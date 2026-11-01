@@ -24,11 +24,11 @@ import { tenantSlugFromHostname } from "../lib/tenant-host";
 // spec.md's copy table (h1 exact strings), the 6 routes T5a/T5b/T5c pin.
 const H1_BY_ROUTE: Record<string, string> = {
   "/login": "Welcome back.",
-  "/signup": "Your next chapter starts here.",
+  "/signup": "Try it free for 14 days.",
   "/forgot-password": "Reset your password",
   "/reset-password": "Choose a new password",
   "/buyer/login": "Welcome back.",
-  "/buyer/register": "Your next chapter starts here.",
+  "/buyer/register": "Create your retailer account.",
 };
 
 const DESKTOP_ROUTES = Object.keys(H1_BY_ROUTE);

@@ -6,6 +6,7 @@ import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { CasesPiecesInput } from "./CasesPiecesInput";
 import {
   computeLineSubtotal,
+  isAboveListLine,
   perUnitPrice,
   pillLabel,
   unitWords,
@@ -313,9 +314,12 @@ export function LineItemRow({
             >
               {li.priceType === "SPECIAL" ? (
                 <>
-                  <span className="text-xs text-navy/70 line-through">
-                    {formatMoney(li.listPrice)}
-                  </span>
+                  {/* above its list (a tier over Retail) the lower list is not struck; the pill stays */}
+                  {!isAboveListLine({ unitPrice: li.unitPrice, originalPrice: li.listPrice }) && (
+                    <span className="text-xs text-navy/70 line-through">
+                      {formatMoney(li.listPrice)}
+                    </span>
+                  )}
                   <span className="text-xs font-medium text-emerald-600">
                     {formatMoney(li.unitPrice)} / {priceUnit}
                   </span>
