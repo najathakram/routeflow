@@ -29,7 +29,8 @@ export function firstRunErrorLine(error: unknown): string | null {
     return "Orders are with the carrier right now. Try again once they're delivered.";
   }
   if (code === API_ERROR_CODES.FIRST_RUN_EMPTY) return "Choose at least one.";
-  return "We couldn't set up your account. Try again.";
+  // Not every refusal can be retried (a 403 stays a 403), so this line promises nothing but a way to reach us.
+  return `We couldn't set up your account. If this keeps happening, email ${CHANGE_LATER_EMAIL}.`;
 }
 
 function NextStep({ href, children }: { href: string; children: React.ReactNode }) {
@@ -82,11 +83,14 @@ export function FirstRunCard({ status }: { status: FirstRunStatus | undefined })
         </h2>
         <fieldset
           aria-labelledby="first-run-title"
-          className="mt-3 space-y-2"
+          className="mt-3"
           aria-describedby={tried && none ? "first-run-none" : undefined}
         >
           {TICKS.map(({ key, label }) => (
-            <label key={key} className="flex cursor-pointer items-center gap-2 text-sm text-navy">
+            <label
+              key={key}
+              className="flex min-h-[44px] cursor-pointer items-center gap-2 text-sm text-navy"
+            >
               <input
                 type="checkbox"
                 className="h-4 w-4"
@@ -127,12 +131,12 @@ export function FirstRunCard({ status }: { status: FirstRunStatus | undefined })
   const counter = status.counter;
   return (
     <Card data-testid="first-run-done">
-      <h2 className="text-base font-semibold text-navy">Your account is ready.</h2>
-      {result === "kept" && (
-        <p className="mt-1 text-sm text-navy/70">
-          Your account is already set up, so we left it as it is.
-        </p>
-      )}
+      {/* A kept setup is not "ready": the owner is told it may be half set up (COPY 2q), so the heading never claims it. */}
+      <h2 className="text-base font-semibold text-navy">
+        {result === "kept"
+          ? "Your account is already set up, so we left it as it is."
+          : "Your account is ready."}
+      </h2>
       <p className="mt-1 text-sm text-navy/70">
         Your Workspace ID is <span className="font-mono font-medium">{status.workspaceId}</span>.
         You&apos;ll need it to sign in.
@@ -140,11 +144,11 @@ export function FirstRunCard({ status }: { status: FirstRunStatus | undefined })
       <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">
         <NextStep href="/products">Add your products</NextStep>
         <NextStep href="/customers">Add your customers</NextStep>
+        <NextStep href="/orders/new">Take your first order</NextStep>
         {delivers && <NextStep href={STORE_STATE_HREF}>Add your business address</NextStep>}
         {delivers && <NextStep href="/drivers">Add a driver</NextStep>}
         {delivers && <NextStep href="/routes/create">Plan your first route</NextStep>}
         {counter && <NextStep href="/orders/counter-sale">Start a counter sale</NextStep>}
-        <NextStep href="/orders/new">Take your first order</NextStep>
       </ul>
     </Card>
   );

@@ -6,6 +6,7 @@ import {
   type FirstRunStatus,
 } from "@routeflow/types";
 import { apiClient } from "../api-client";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export type { FirstRunAnswer, FirstRunResult, FirstRunStatus };
 
@@ -29,6 +30,8 @@ export function useFirstRun(enabled: boolean) {
 export function useAnswerFirstRun() {
   const qc = useQueryClient();
   return useMutation<FirstRunResult, Error, FirstRunAnswer>({
+    // The card words every refusal itself (a closed question just goes away), so the global error toast stays quiet.
+    meta: { localErrorToast: true } satisfies LocalErrorToastOption,
     mutationFn: (answer) =>
       apiClient.post("/settings/fulfilment/first-run", answer).then((r) => r.data),
     onSuccess: () => {

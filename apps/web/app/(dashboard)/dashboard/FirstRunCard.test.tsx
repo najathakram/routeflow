@@ -3,6 +3,7 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import userEvent from "@testing-library/user-event";
 import { API_ERROR_CODES } from "@routeflow/types";
 import type { FirstRunStatus } from "@routeflow/types";
+import { createTestQueryClient } from "@/test-utils/render";
 import { FirstRunCard, firstRunErrorLine } from "./FirstRunCard";
 
 /**
@@ -52,6 +53,17 @@ describe("FirstRunCard", () => {
     );
   });
 
+  it("each tick row is at least 44px tall (a finger target, not just the 16px box)", () => {
+    renderWithProviders(<FirstRunCard status={base} />);
+    for (const name of [
+      "We deliver with our own trucks",
+      "We ship by carrier",
+      "Customers pick up or buy at the counter",
+    ]) {
+      expect(screen.getByLabelText(name).closest("label")).toHaveClass("min-h-[44px]");
+    }
+  });
+
   it("nothing ticked: says 'Choose at least one.' and sends nothing", async () => {
     renderWithProviders(<FirstRunCard status={base} />);
     await userEvent.click(screen.getByRole("button", { name: "Set up my account" }));
@@ -82,8 +94,13 @@ describe("FirstRunCard", () => {
     await userEvent.click(screen.getByLabelText("We deliver with our own trucks"));
     await userEvent.click(screen.getByRole("button", { name: "Set up my account" }));
     expect(
-      await screen.findByText("Your account is already set up, so we left it as it is."),
+      await screen.findByRole("heading", {
+        name: "Your account is already set up, so we left it as it is.",
+      }),
     ).toBeInTheDocument();
+    // A kept setup may be half set up (the owner is told so): it is never also called "ready".
+    expect(screen.queryByText("Your account is ready.")).not.toBeInTheDocument();
+    expect(screen.getByText("acme-trial")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -139,10 +156,42 @@ describe("FirstRunCard", () => {
       expect(screen.getByRole("link", { name: "Take your first order" })).toBeInTheDocument();
     });
 
+    it("lists the steps in COPY 2p order: products, customers, first order, then the delivery and counter steps", () => {
+      renderWithProviders(<FirstRunCard status={done({ delivery: true, counter: true })} />);
+      expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual([
+        "Add your products",
+        "Add your customers",
+        "Take your first order",
+        "Add your business address",
+        "Add a driver",
+        "Plan your first route",
+        "Start a counter sale",
+      ]);
+    });
+
     it("goes away once a first order exists", () => {
       renderWithProviders(<FirstRunCard status={done({ shipping: true, hasOrder: true })} />);
       expect(shown()).toBe(false);
     });
+  });
+});
+
+describe("useAnswerFirstRun errors", () => {
+  it("opts out of the global toast (the card words every refusal, and a closed question shows none)", async () => {
+    mockPost.mockRejectedValue({
+      response: { status: 409, data: { code: API_ERROR_CODES.FIRST_RUN_CLOSED } },
+    });
+    const seen: unknown[] = [];
+    const queryClient = createTestQueryClient();
+    queryClient.getMutationCache().subscribe((e) => {
+      if (e.type === "updated" && e.action.type === "error") seen.push(e.mutation.meta);
+    });
+    renderWithProviders(<FirstRunCard status={base} />, { queryClient });
+    await userEvent.click(screen.getByLabelText("We ship by carrier"));
+    await userEvent.click(screen.getByRole("button", { name: "Set up my account" }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]).toEqual({ localErrorToast: true });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 
@@ -152,9 +201,12 @@ describe("firstRunErrorLine", () => {
       firstRunErrorLine({ response: { data: { code: API_ERROR_CODES.FIRST_RUN_CLOSED } } }),
     ).toBeNull();
   });
-  it("anything else gets one plain line", () => {
-    expect(firstRunErrorLine(new Error("boom"))).toBe(
-      "We couldn't set up your account. Try again.",
+  it("anything else gets one plain line that does not promise a retry (a 403 stays a 403)", () => {
+    const line = firstRunErrorLine({ response: { status: 403, data: { code: "FORBIDDEN" } } });
+    expect(line).toBe(
+      "We couldn't set up your account. If this keeps happening, email hello@routeflow.info.",
     );
+    expect(line).not.toMatch(/try again/i);
+    expect(firstRunErrorLine(new Error("boom"))).toBe(line);
   });
 });
