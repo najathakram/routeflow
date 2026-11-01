@@ -83,6 +83,7 @@
 - **Recurrence (2026-10-17, units-v2-3):** a merge that makes a parameter REQUIRED must re-run every spec and call site that passes it on the merged tree, not only the files the PR touched; run the full check-types ratchet plus the specs that import the changed function before the train is cut.
 - **Recurrence (2026-10-18, fixes-4):** members that each passed alone broke combined: one member's component began calling `useSearchParams` while another's page test mocked `next/navigation` without it (a mock misses a new hook call), and a third's picker output grew past what a Linux pipe flushes. Run the FULL web and api suites on the combined train tree, not only each member's own set.
 - **Recurrence (2026-10-31, W33):** one member made `group` required on every policy registry entry while an already-landed key had none; api check-types failed only on the assembled tree, and the composition pre-check was the first catch. Run the api check-types ratchet and the repo-truth lane (`permission-coverage`, the policy-registry spec) on the assembled train before verify (cf. [[L-359]]).
+- **Recurrence (2026-10-31, train Z):** a member made `unitWord` required on the price-edit line type while another member's test fixture still built the old shape, so web `tsc` failed only on the assembled tree; and a member that added a dependency (`pdfjs-dist`) left the train tree without it, so the same `tsc` failed on a missing module. Run `npm ci` in the train tree when any member touches `package.json` or the lockfile, then the web and api type-check, before verify; a required-field fix goes in as one named train commit, never an edit inside a member merge.
 
 ## tooling
 
@@ -372,19 +373,14 @@
 - **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
 - **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit. Fixed in `apps/control` (`Referrer-Policy: same-origin`; `originOk` accepts `Origin: null` only with `Sec-Fetch-Site: same-origin`), pinned by `apps/control/test/login-origin.spec.ts`.
 
-### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
-
-- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
-  ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
-- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
-  also the least private transport HTTP offers.
-- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
-  a URL query string — use a fragment (`#`, never sent to the server) for a client-side handoff,
-  or a POST body for a server-side one.**
-- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
-  named query params on any new route.
-
 ## deploy
+
+### L-367 · 2026-10-31 · deploy · a hosted job's timeout is sized from its measured stages with headroom; a cancelled run is read by its annotation, and a local verify red mid-chain hides every later step
+
+- **Symptom:** train Y's hosted CI run was `cancelled` after 30 minutes. Turbo's 32 tasks had finished in 25m23s and the script self-tests that run after them were cut off at the job's limit. No test was red. The two trains before it had taken about 24 and 28 minutes in the same job. A cancelled run is not green, so the first public window was spent and a second one was needed. In the same train the local verify exited 1 on one self-test in the middle of the `&&` chain, so every step after it, including the final campaign-check, had never run.
+- **Root cause:** the Verify job's `timeout-minutes: 30` was set when the suite was smaller; each landing grew it, the earlier trains sat a few minutes under the limit, and the next, larger train crossed it. `cancelled` looks like a manual or concurrency cancel; only the check-run annotation ("exceeded the maximum execution time") says it was the limit. For the local chain, `&&` stops at the first non-zero exit, so a load flake in the middle silently skips the tail.
+- **Lesson:** **Size a hosted job's `timeout-minutes` from the measured duration of its slowest stage chain plus about 50% headroom, and re-measure when a train grows the suite. Read a `cancelled` job by its annotations before calling it red: a timeout is a one-line CI config fix, not a code defect. Read a failed local verify by which step stopped the chain, and run every step after it by hand before accepting the verify.**
+- **Guard:** Verify timeout raised 30 to 45 in `ci.yml` (train Y); no automatic check yet. Cf. [[L-357]], [[L-363]].
 
 ### L-361 · 2026-10-31 · deploy · a window script reads the watchdog deadline from the log line of the pid it started, and reads that log with `grep -a`
 
@@ -398,7 +394,7 @@
 - **Symptom:** a train merge showed api and web SUCCESS while the mobile service failed. A gate that named "both services" would have called the landing done.
 - **Root cause:** the deploy gate counted two services, but the commit carries one status per Railway service (api, web, mobile and the root), and mobile builds from the same packages and lockfile.
 - **Lesson:** **Read every status context on the merge commit (`gh api repos/<owner>/<repo>/commits/<sha>/status`). A landing is done when none is failure or pending, and a failed one is read before anything else ships.**
-- **Guard:** the window script prints every context and stops on any failure; the runbook wording is owed.
+- **Guard:** the window script prints every context and stops on any failure; the runbook wording is owed. Extended 2026-10-31 (train Y): the script also waits until NO service is pending before it flips private (the Y script flipped on the web failure while api and mobile were still building); the Z merge script's `wait_settled` does this and its EXIT trap waits the same way.
 
 ### L-357 · 2026-10-30 · deploy · size a public window as merges plus deploys; start every CI run when the window opens
 

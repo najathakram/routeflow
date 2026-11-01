@@ -4609,3 +4609,15 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the status-change
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
+
+### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
+
+- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
+  ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
+- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
+  also the least private transport HTTP offers.
+- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
+  a URL query string — use a fragment (`#`, never sent to the server) for a client-side handoff,
+  or a POST body for a server-side one.**
+- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
+  named query params on any new route.
