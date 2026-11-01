@@ -11,6 +11,7 @@
     "lint": "next lint",
     "check-types": "tsc --noEmit",
     "test": "jest",
+    "test:repo-truth": "node ../../scripts/run-cross-workspace-specs.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "PLAYWRIGHT_HEADED=1 playwright test --headed",
     "test:e2e:ui": "playwright test --ui",

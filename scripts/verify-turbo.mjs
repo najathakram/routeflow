@@ -20,6 +20,7 @@ import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnAsync, withHeavySlot } from "./lib/heavy-slot.mjs";
+import { RESULT_FILE_ENV, clearStage, stageRun } from "./lib/verify-result.mjs";
 import {
   FAST_VERIFY_BANNER,
   REPO_WIDE_PINS,
@@ -37,6 +38,22 @@ import {
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
+import { createRequire } from "node:module";
+
+const { workspacesWithScript, findCrossWorkspaceSpecs } = createRequire(import.meta.url)(
+  "./lib/cross-workspace-specs.cjs",
+);
+
+/**
+ * The api `-script` specs that read another workspace, as { file, reads } (derived, never hand-kept). The api unit
+ * and repo-truth lanes skip `-script` specs (they run serially), so these reach a fast push only through the pins
+ * call: `planPins` selects one when the diff touches a directory it reads.
+ */
+export function loadCrossScriptSpecs(root) {
+  return (findCrossWorkspaceSpecs(root)["apps/api"] ?? [])
+    .filter((s) => s.spec.endsWith("-script.spec.ts"))
+    .map((s) => ({ file: s.spec, reads: s.reads }));
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -140,6 +157,8 @@ export function excludedLine(excluded) {
     : null;
 }
 
+const API_NAME = "@routeflow/api";
+
 /**
  * Pure planner for every turbo call a run makes (no spawn, no env), so the self-test can assert the
  * exact argv for FULL/AFFECTED x unsplit/split x excluded/not. `splitJest` is "JEST_MAX_WORKERS is
@@ -155,9 +174,16 @@ export function excludedLine(excluded) {
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, pins = null }) {
+export function planTurboCalls({
+  scope,
+  excluded = [],
+  splitJest,
+  fast = false,
+  pins = null,
+  repoTruth: repoTruthNames = [API_NAME],
+}) {
   const drop = new Set(excluded);
-  if (fast) return withPins(planFastCalls({ scope, drop, excluded }), pins, drop);
+  if (fast) return withPins(planFastCalls({ scope, drop, excluded, repoTruthNames }), pins, drop);
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -176,10 +202,10 @@ export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, 
         };
   }
   const filters = scope.workspaces.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
-  const API = "@routeflow/api";
   const calls = [];
-  // Only apps/api defines test:repo-truth today; a second workspace adding one must be added here.
-  const repoTruth = drop.has(API) ? [] : ["--filter=" + API];
+  // Every workspace that defines test:repo-truth (the caller derives the names from the workspaces' package.json;
+  // default api only) runs it on every affected push, whatever the diff touched.
+  const repoTruth = repoTruthNames.filter((w) => !drop.has(w)).map((w) => "--filter=" + w);
   if (!splitJest) {
     if (filters.length)
       calls.push({ jest: false, args: ["check-types", "lint", "test", ...filters] });
@@ -209,8 +235,7 @@ export function planTurboCalls({ scope, excluded = [], splitJest, fast = false, 
  * `changedSince` is set on call 2 ONLY — never on a `jest: false` call and never on a tripwire.
  */
 const PRICING = "@routeflow/pricing";
-function planFastCalls({ scope, drop, excluded }) {
-  const API = "@routeflow/api";
+function planFastCalls({ scope, drop, excluded, repoTruthNames = [API_NAME] }) {
   const calls = [];
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
@@ -231,7 +256,8 @@ function planFastCalls({ scope, drop, excluded }) {
   if (filters.length) calls.push({ jest: false, args: ["check-types", "lint", ...filters] });
   if (related.length) calls.push({ jest: true, changedSince: true, args: ["test", ...related] });
   if (selected.includes(PRICING)) calls.push({ jest: true, args: ["test", `--filter=${PRICING}`] });
-  if (!drop.has(API)) calls.push({ jest: true, args: ["test:repo-truth", `--filter=${API}`] });
+  const repoTruth = repoTruthNames.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
+  if (repoTruth.length) calls.push({ jest: true, args: ["test:repo-truth", ...repoTruth] });
   return {
     calls,
     note: calls.length
@@ -390,7 +416,7 @@ export function chooseVerifyDefaults({ totalMemBytes, env, cpus }) {
  * cannot be computed (`files` null) runs the pins rather than skipping them. VERIFY_EXCLUDE naming
  * api drops the pins (they are api specs), with no line. `pins: null` means "plan none".
  */
-export function planPins({ fast, files, excluded = [], specs }) {
+export function planPins({ fast, files, excluded = [], specs, crossScript }) {
   if (!fast || excluded.includes("@routeflow/api")) return { pins: null, line: null };
   if (files === null) {
     return {
@@ -399,8 +425,13 @@ export function planPins({ fast, files, excluded = [], specs }) {
       line: "+ REPO PINS: cannot diff against origin/master, so the pin specs and ALL -script specs run (fail closed).",
     };
   }
-  if (!repoPinsNeeded(files)) return { pins: null, line: null };
-  const picked = selectScriptSpecs({ files, specs: specs ?? loadScriptSpecs(ROOT) });
+  const cross = crossScript ?? loadCrossScriptSpecs(ROOT);
+  if (!repoPinsNeeded(files, cross)) return { pins: null, line: null };
+  const picked = selectScriptSpecs({
+    files,
+    specs: specs ?? loadScriptSpecs(ROOT),
+    crossScript: cross,
+  });
   return {
     pins: true,
     scriptSpecs: picked.files,
@@ -409,11 +440,26 @@ export function planPins({ fast, files, excluded = [], specs }) {
   };
 }
 
-/** Runs every planned call in order (never short-circuits); the first non-zero status is the run's. */
-export async function executePlan(calls, runCall) {
-  const statuses = [];
-  for (const c of calls) statuses.push(await runCall(c));
-  return statuses.find((s) => s !== 0) ?? 0;
+/**
+ * Runs every planned call in order (never short-circuits); the first non-zero status is the run's. A status that is not
+ * a number (null from a signal) is a failure, never a pass: `null ?? 0` used to read as green (W-1045). `ran` receives
+ * every status so the caller can prove all planned calls finished green.
+ */
+export async function executePlan(calls, runCall, ran = []) {
+  for (const c of calls) ran.push(await runCall(c));
+  const i = ran.findIndex((s) => s !== 0); // not find(): an undefined status must not look like "none"
+  return i === -1 ? 0 : typeof ran[i] === "number" ? ran[i] : 1;
+}
+
+/**
+ * Whether this run settles its campaign reports inside the slot. campaign-check's pre-step predicts
+ * a cache miss before the queue, and the shared turbo cache can fill during the wait, so turbo
+ * replays the task and no report is written. The check at the end of the chain then forces those
+ * tests outside any slot, where the slot log can't see the load. A fast run enforces no reports,
+ * a failed plan has already lost, and CI holds no slot, so its end-of-chain check does this.
+ */
+export function settlesReports({ fast, status, env }) {
+  return status === 0 && !fast && !env.CI;
 }
 
 /** The last line of a fast run is the not-proof stamp; any other run prints nothing new. */
@@ -424,6 +470,8 @@ export function finishRun({ fast, status, log = console.log }) {
 }
 
 export async function main() {
+  // W-1045: any pass stage already on disk was not written by THIS run; a run that then runs nothing must not inherit it.
+  clearStage(process.env);
   const defaults = chooseVerifyDefaults({
     totalMemBytes: totalmem(),
     env: process.env,
@@ -503,7 +551,7 @@ export async function main() {
     if (scope.stale?.length) {
       console.log(
         `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
-          `their tests join the run (turbo regenerates the report on a cache miss; the --freshness-only pre-step forces a real run on a hit). No enforcement is relaxed.`,
+          `their tests join the run (turbo regenerates the report on a cache miss; on a hit, campaign-check --reports-only forces a real run inside the slot). No enforcement is relaxed.`,
       );
     }
   }
@@ -525,6 +573,7 @@ export async function main() {
     splitJest: Boolean(JEST_MAX_WORKERS),
     fast: runMode.fast,
     pins,
+    repoTruth: workspacesWithScript(ROOT, "test:repo-truth").map((w) => w.name),
   });
   if (plan.note) console.log(plan.note);
   // Fail fast BEFORE queueing for the slot: a generated Prisma client that predates this checkout's
@@ -542,15 +591,34 @@ export async function main() {
   }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
-  const status = await withHeavySlot({ label: "verify" }, () =>
-    executePlan(plan.calls, (c) =>
-      c.jest
-        ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
-        : c.pins
-          ? pinJest(c)
-          : turbo(c.args),
-    ),
-  );
+  const ran = [];
+  const status = await withHeavySlot({ label: "verify" }, async () => {
+    const planned = await executePlan(
+      plan.calls,
+      (c) =>
+        c.jest
+          ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
+          : c.pins
+            ? pinJest(c)
+            : turbo(c.args),
+      ran,
+    );
+    if (!settlesReports({ fast: runMode.fast, status: planned, env: process.env })) return planned;
+    const settled = await spawnAsync(
+      process.execPath,
+      [join(ROOT, "scripts", "campaign-check.mjs"), "--reports-only"],
+      { cwd: ROOT, stdio: "inherit" },
+    );
+    return settled.status ?? 1;
+  });
+  // W-1045: under the pre-push hook a pass is a written token, not an exit code. Only a run in which every planned call
+  // returned the number 0, and whose reports settled, writes it (scripts/lib/verify-result.mjs); the chain's last link
+  // promotes it.
+  const staged = stageRun(process.env, { status, statuses: ran, planned: plan.calls.length });
+  if (!staged && status === 0 && process.env[RESULT_FILE_ENV])
+    console.log(
+      "verify-turbo: no pass token written (nothing was planned, or a call did not finish green).",
+    );
   // Last line of a fast run: a related-tests-only pass is not a merge-ready claim.
   process.exit(finishRun({ fast: runMode.fast, status }));
 }

@@ -17,9 +17,14 @@ type LayerState = {
 let mockScanV2 = true;
 let activeOrder: Record<string, unknown> | undefined;
 let layer: LayerState;
-let history: Record<string, { lastPrice: number }> | undefined;
+let history: Record<string, { lastPrice: number; stickyPrice?: number | null }> | undefined;
+// One reference across renders, as a settled query gives: a new array would re-run every effect and hide a missing dependency.
+const mockNoCustomerPrices = { data: [] };
+let customerPrices: { data: { productId: string; pricingTier: number }[] } = mockNoCustomerPrices;
 const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 3 };
 const custB = { id: "c2", businessName: "Beta Bakery", pricingTier: 3 };
+const custC = { id: "c3", businessName: "Cedar Cafe", pricingTier: 2 };
+const custD = { id: "c4", businessName: "Dune Deli", pricingTier: 2 };
 const rerenderModal = (view: { rerender: (ui: React.ReactElement) => void }) =>
   view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
 
@@ -59,8 +64,8 @@ jest.mock("@/lib/tenant-features", () => ({
   }),
 }));
 jest.mock("@/lib/api/customers", () => ({
-  useCustomers: () => ({ data: { data: [cust, custB] } }),
-  useCustomerPrices: () => ({ data: [] }),
+  useCustomers: () => ({ data: { data: [cust, custB, custC, custD] } }),
+  useCustomerPrices: () => customerPrices,
   useCustomer: () => ({ data: undefined }),
 }));
 jest.mock("@/lib/api/products", () => ({
@@ -205,6 +210,53 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     expect(screen.queryByText("Checking this customer's prices…")).not.toBeInTheDocument();
   });
 
+  describe("SA-1068 M15: a line scanned before the customer", () => {
+    const scanThenPickAcme = async () => {
+      history = undefined; // no customer yet, so no memory
+      const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      capturedOnScan!("111");
+      await screen.findByText("Widget");
+      return view;
+    };
+    const pickAcme = async () => {
+      fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+        target: { value: "Acm" },
+      });
+      fireEvent.click(await screen.findByText("Acme Foods"));
+    };
+
+    beforeEach(() => {
+      cust.pricingTier = 1; // Retail: list $42 is the tier price
+    });
+
+    it("T13: a customer with a memory puts the line on it, and no price is sent", async () => {
+      await scanThenPickAcme();
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+      await pickAcme();
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /save as draft/i })).toBeEnabled(),
+      );
+      saveDraft();
+      expect(sentItem().unitPrice).toBeUndefined();
+    });
+
+    it("T14: a customer with no memory leaves the tier price", async () => {
+      await scanThenPickAcme();
+      await pickAcme();
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+    });
+
+    it("M15: a history that arrives after the pick moves the line", async () => {
+      const view = await scanThenPickAcme();
+      await pickAcme();
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+      view.rerender(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+    });
+  });
+
   it.each([true, false])(
     "B755: a price pre-filled from customer A's history does not follow the order to customer B (scan_v2 %s)",
     async (scanV2) => {
@@ -294,6 +346,298 @@ describe("CreateOrderModal - the customer's price layer (S19b slice B)", () => {
     const item = await saved();
     expect(item.unitPrice).toBeUndefined();
     expect(item.overrideReason).toBeUndefined();
+  });
+
+  // SA-1068 A-5: what the line shows is what the request books. List $42, tier 3 $38, memory $45.
+  describe("SA-1068 A-5: a remembered price above list", () => {
+    const typePrice = (shown: string, value: string) => {
+      openEditor(shown);
+      fireEvent.change(screen.getByLabelText("Price"), { target: { value } });
+      closeEditor();
+    };
+
+    beforeEach(() => {
+      mockScanV2 = false;
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+    });
+
+    it("T18: tier 1, typing list shows list and sends it", async () => {
+      cust.pricingTier = 1;
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "42");
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBe(42);
+    });
+
+    it("T19: tier 1, typing then clearing returns to the memory and sends nothing", async () => {
+      cust.pricingTier = 1;
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "43");
+      typePrice("$43.00 / each", "");
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    // The tier baseline it keeps is T21: the tier price needs no reason.
+    it("T20: tier 3, a new line starts at the memory and sends nothing", async () => {
+      await addWidgetForCustomer();
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T21: tier 3, typing the tier price shows it and sends it, with no reason asked", async () => {
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "38");
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+      const item = await saved();
+      expect(item.unitPrice).toBe(38);
+      expect(item.overrideReason).toBeUndefined();
+    });
+
+    it("T22: tier 3, typing then clearing returns to the memory and sends nothing", async () => {
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "43");
+      typePrice("$43.00 / each", "");
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T23: a failed history read, typing list still sends it", async () => {
+      cust.pricingTier = 1;
+      history = undefined;
+      await addWidgetForCustomer();
+      typePrice("$42.00 / each", "42");
+      expect((await saved()).unitPrice).toBe(42);
+    });
+
+    it("T24: a line moved to its memory keeps its baseline, so list needs no reason and is sent", async () => {
+      mockScanV2 = true;
+      cust.pricingTier = 1;
+      history = undefined;
+      const view = await addWidgetForCustomer();
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+      rerenderModal(view);
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      typePrice("$45.00 / each", "42");
+      const item = await saved();
+      expect(item.unitPrice).toBe(42);
+      expect(item.overrideReason).toBeUndefined();
+    });
+
+    it("M21: the customer effect keeps the tier baseline, so list on a tier 3 line asks a reason", async () => {
+      mockScanV2 = true;
+      history = undefined;
+      const view = await addWidgetForCustomer();
+      history = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+      rerenderModal(view);
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      openEditor("$45.00 / each");
+      fireEvent.change(screen.getByLabelText("Price"), { target: { value: "42" } });
+      expect(await screen.findByLabelText("Reason (required)")).toBeInTheDocument();
+    });
+
+    it("T26: a line at its memory has the memory as the box's placeholder", async () => {
+      await addWidgetForCustomer();
+      openEditor("$45.00 / each");
+      expect(screen.getByLabelText("Price")).toHaveAttribute("placeholder", "45.00");
+    });
+
+    it("T27 guard: no memory, typing list sends nothing and asks no reason", async () => {
+      cust.pricingTier = 1;
+      history = {};
+      await addWidgetForCustomer();
+      typePrice("$42.00 / each", "42");
+      openEditor("$42.00 / each");
+      expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
+      closeEditor();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T28 guard: a layer row beats the memory, typing its price then clearing sends nothing", async () => {
+      layer = layerReady([packRow({})]);
+      await addWidgetForCustomer();
+      typePrice("$33.00 / each", "33");
+      openEditor("$33.00 / each");
+      expect(screen.queryByLabelText(/Reason/)).not.toBeInTheDocument();
+      closeEditor();
+      typePrice("$33.00 / each", "34");
+      typePrice("$34.00 / each", "");
+      expect(await screen.findByText("$33.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T29 guard: a memory below list is no sticky price, clearing returns to list", async () => {
+      cust.pricingTier = 1;
+      history = { "prod-1": { lastPrice: 40, stickyPrice: 40 } };
+      await addWidgetForCustomer();
+      typePrice("$40.00 / each", "");
+      expect(await screen.findByText("$42.00 / each")).toBeInTheDocument();
+      expect((await saved()).unitPrice).toBeUndefined();
+    });
+
+    it("T35: typed, then cleared back to A's memory, the line still moves to B's price", async () => {
+      await addWidgetForCustomer();
+      typePrice("$45.00 / each", "43");
+      typePrice("$43.00 / each", "");
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      await switchToBeta();
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    });
+
+    it("M20: a line at A's memory does not follow the order to B", async () => {
+      await addWidgetForCustomer();
+      expect(await screen.findByText("$45.00 / each")).toBeInTheDocument();
+      await switchToBeta();
+      expect(await screen.findByText("$38.00 / each")).toBeInTheDocument();
+    });
+
+    // List $42, tier 2 $38, tier 3 $36. A's memory is $45, B's is $50, C has none, D is on tier 3 for this product.
+    describe("SA-1068 A-7 M27: a linked line follows its customer", () => {
+      const stocked = {
+        ...widget,
+        product: { ...widget.product, priceTier2: "38", priceTier3: "36" },
+      };
+      const A = { "prod-1": { lastPrice: 45, stickyPrice: 45 } };
+      const B = { "prod-1": { lastPrice: 50, stickyPrice: 50 } };
+      type View = { rerender: (ui: React.ReactElement) => void };
+      const shows = (price: string) => screen.findByText(`$${price}.00 / each`);
+      const land = (view: View, read: typeof history) => {
+        history = read;
+        rerenderModal(view);
+      };
+      const switchTo = async (name: string, read: typeof history) => {
+        history = read; // the mock has one read: what's here at the switch is what's cached, undefined is still out
+        fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+        fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+          target: { value: name.slice(0, 3) },
+        });
+        fireEvent.click(await screen.findByText(name));
+      };
+
+      beforeEach(() => {
+        mockResolveProductByCode.mockResolvedValue(stocked);
+        cust.pricingTier = 2;
+        custB.pricingTier = 2;
+        customerPrices = mockNoCustomerPrices;
+      });
+      afterEach(() => {
+        custB.pricingTier = 3;
+        customerPrices = mockNoCustomerPrices;
+      });
+
+      const walks: [string, (view: View) => Promise<void>][] = [
+        [
+          "T37: to B with the read out, then it lands",
+          async (view) => {
+            await switchTo("Beta Bakery", undefined);
+            await shows("38");
+            land(view, B);
+            await shows("50");
+          },
+        ],
+        [
+          "T38: to B cached, then to C with no memory",
+          async () => {
+            await switchTo("Beta Bakery", B);
+            await shows("50");
+            await switchTo("Cedar Cafe", {});
+            await shows("38");
+          },
+        ],
+        [
+          "T39: to C with no memory, then back to A",
+          async () => {
+            await switchTo("Cedar Cafe", {});
+            await shows("38");
+            await switchTo("Acme Foods", A);
+            await shows("45");
+          },
+        ],
+        [
+          "T40: to C with no memory, then on to B",
+          async () => {
+            await switchTo("Cedar Cafe", {});
+            await shows("38");
+            await switchTo("Beta Bakery", B);
+            await shows("50");
+          },
+        ],
+        [
+          "T41: to B with the read out, back to A before it lands",
+          async () => {
+            await switchTo("Beta Bakery", undefined);
+            await shows("38");
+            await switchTo("Acme Foods", A);
+            await shows("45");
+          },
+        ],
+        [
+          "T42: to D, the history lands first and the customer's prices last",
+          async (view) => {
+            await switchTo("Dune Deli", undefined);
+            await shows("38");
+            land(view, {});
+            await shows("38");
+            customerPrices = { data: [{ productId: "prod-1", pricingTier: 3 }] };
+            rerenderModal(view);
+            await shows("36");
+          },
+        ],
+      ];
+
+      it.each(walks)("%s, and nothing is sent", async (_, walk) => {
+        const view = await addWidgetForCustomer();
+        await shows("45");
+        await walk(view);
+        expect((await saved()).unitPrice).toBeUndefined();
+      });
+
+      it.each(walks)("T45 guard, scan_v2 on: %s", async (_, walk) => {
+        mockScanV2 = true;
+        const view = await addWidgetForCustomer();
+        await shows("45");
+        await walk(view);
+        expect((await saved()).unitPrice).toBeUndefined();
+      });
+
+      it("T54 guard: with no resume, a failed history read still lets the customer's prices land", async () => {
+        await addWidgetForCustomer().then(async (view) => {
+          await shows("45");
+          await switchTo("Dune Deli", undefined);
+          await shows("38");
+          customerPrices = { data: [{ productId: "prod-1", pricingTier: 3 }] };
+          rerenderModal(view);
+          await shows("36");
+        });
+        expect((await saved()).unitPrice).toBeUndefined();
+      });
+
+      it("T43 guard: a price typed while the read is out stands when it lands", async () => {
+        const view = await addWidgetForCustomer();
+        await shows("45");
+        await switchTo("Beta Bakery", undefined);
+        await shows("38");
+        openEditor("$38.00 / each");
+        fireEvent.change(screen.getByLabelText("Price"), { target: { value: "30" } });
+        fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: "dented cans" } });
+        closeEditor();
+        await shows("30");
+        land(view, B);
+        await new Promise((r) => setTimeout(r, 50));
+        await shows("30");
+        expect((await saved()).unitPrice).toBe(30);
+      });
+
+      it("T44 guard: a Retail price pre-filled at $45 stands when A is picked again", async () => {
+        cust.pricingTier = 1;
+        await addWidgetForCustomer();
+        await shows("45");
+        await switchTo("Acme Foods", A);
+        await new Promise((r) => setTimeout(r, 50));
+        await shows("45");
+        expect((await saved()).unitPrice).toBe(45);
+      });
+    });
   });
 
   it("B755 MUST 2: A's last price equal to B's tier price leaves a plain line (no stale stamp or override)", async () => {

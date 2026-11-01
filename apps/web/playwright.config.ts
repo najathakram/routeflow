@@ -1214,6 +1214,16 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // SA-1071 A-2: the 16px field rule on touch, desktop unchanged. Read-only.
+          {
+            name: "ios-zoom",
+            testMatch: /81-ios-zoom-touch\.spec\.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           // SA-1042 B9c: return 1 Case through the form, read 200 pcs (1 Case), credit 45.00 (spec 77). It CREATES a product,
           // a customer, an invoice and a credit note with no cleanup, so it is local lane only like 71-76 and 79.
           // W-1064 (SA-1074): the PDF preview on phone settings. It drafts an invoice, so it is local lane only.

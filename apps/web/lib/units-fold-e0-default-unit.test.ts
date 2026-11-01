@@ -79,6 +79,7 @@ const depsOf = (unitsEnabled: boolean, getUnits: DefaultUnitDeps["getUnits"]): D
   unitsKnown: true,
   getUnits,
   tierFor: () => 1,
+  rememberedOf: () => undefined,
 });
 const noRows = () => jest.fn(async (): Promise<ProductUnitLevel[]> => []);
 
@@ -132,7 +133,13 @@ function harness(initial: Array<DefaultUnitLine & { productName: string }>) {
   return renderHook(
     () => {
       const [lines, setLines] = React.useState(initial);
-      const r = useDefaultUnitResolver(lines, setLines, () => 1, true);
+      const r = useDefaultUnitResolver(
+        lines,
+        setLines,
+        () => 1,
+        true,
+        () => undefined,
+      );
       return { lines, ...r };
     },
     { wrapper },

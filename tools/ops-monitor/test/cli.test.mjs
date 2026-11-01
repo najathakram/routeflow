@@ -440,7 +440,7 @@ test(
       assert.match(subs[1], /^ops\(testbox\): item\.new/);
       r = await run("sync", "--json");
       assert.equal(r.code, 0, r.stderr);
-      assert.deepEqual(JSON.parse(r.stdout), { ran: false, reason: "generated" });
+      assert.deepEqual(JSON.parse(r.stdout), { ran: false, reason: "generated", freed: [] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -497,3 +497,95 @@ test(
     }
   },
 );
+
+test("blocked-by: set, refused when unknown, flagged by sync, cleared by a word", T, async () => {
+  const mk = async (...more) => {
+    const r = await rf(
+      "item",
+      "new",
+      "--title",
+      "Blocked by test",
+      "--type",
+      "chore",
+      "--json",
+      ...more,
+    );
+    assert.equal(r.code, 0, r.stderr);
+    return JSON.parse(r.stdout).events[0].item;
+  };
+  const blocker = await mk("--status", "building");
+  const held = await mk("--blocked-by", blocker);
+  assert.deepEqual(JSON.parse((await rf("item", "show", held, "--json")).stdout).blockedBy, [
+    blocker,
+  ]);
+
+  const typo = await rf("item", "edit", held, "--blocked-by", "W-99999");
+  assert.equal(typo.code, 2);
+  assert.match(typo.stderr, /unknown item W-99999/);
+
+  let s = await rf("sync", "--dry", "--json");
+  assert.deepEqual(JSON.parse(s.stdout).freed, []);
+  assert.equal((await rf("status", blocker, "live")).code, 0);
+  s = await rf("sync", "--dry", "--json");
+  assert.deepEqual(JSON.parse(s.stdout).freed, [
+    { id: held, title: "Blocked by test", blockers: [{ id: blocker, status: "live" }] },
+  ]);
+  s = await rf("sync", "--dry");
+  assert.match(s.stdout, new RegExp("FREE TO START: " + held + " \\(" + blocker + " live\\)"));
+
+  assert.equal((await rf("item", "edit", held, "--blocked-by", "-")).code, 0);
+  assert.deepEqual(JSON.parse((await rf("sync", "--dry", "--json")).stdout).freed, []);
+});
+
+test("event link prints the title and refuses a PR that shares no word with it", T, async () => {
+  const fake = join(tmp, "fake-gh.mjs");
+  writeFileSync(
+    fake,
+    [
+      "const n = process.argv[4];",
+      'if (n === "9") process.exit(1);',
+      'console.log(n === "7" ? "fix(web): hide barcodes" : "chore: unrelated cleanup");',
+    ].join(String.fromCharCode(10)),
+  );
+  env.RF_GH_CMD = JSON.stringify([process.execPath, fake]);
+  try {
+    const r = await rf(
+      "item",
+      "new",
+      "--title",
+      "Barcodes on invoices",
+      "--type",
+      "chore",
+      "--json",
+    );
+    const id = JSON.parse(r.stdout).events[0].item;
+    const links = async () => JSON.parse((await rf("item", "show", id, "--json")).stdout).links.prs;
+
+    const good = await rf("event", "link", id, "--pr", "7");
+    assert.equal(good.code, 0, good.stderr);
+    assert.match(good.stdout, new RegExp("linked " + id + " .Barcodes on invoices."));
+
+    const bad = await rf("event", "link", id, "--pr", "8");
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /PR #8 "chore: unrelated cleanup" shares no word/);
+    assert.match(bad.stderr, /Barcodes on invoices/);
+    assert.match(bad.stderr, /--force/);
+    assert.deepEqual(await links(), [7]);
+
+    assert.equal((await rf("event", "link", id, "--pr", "8", "--force")).code, 0);
+    assert.deepEqual(await links(), [7, 8]);
+
+    const unread = await rf("event", "link", id, "--pr", "9");
+    assert.equal(unread.code, 0, unread.stderr);
+    assert.match(unread.stderr, /could not read PR #9/);
+
+    const unknown = await rf("event", "link", "W-99999", "--pr", "7");
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.stderr, /unknown item W-99999/);
+
+    const branchOnly = await rf("event", "link", id, "--branch", "feat/x");
+    assert.equal(branchOnly.code, 0, branchOnly.stderr);
+  } finally {
+    delete env.RF_GH_CMD;
+  }
+});

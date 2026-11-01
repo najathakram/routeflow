@@ -11,6 +11,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { BUG_ID_RE, DONE_STATUSES } from "./schema.mjs";
+import { freedItems } from "./next.mjs";
 import {
   parsePlanTrains,
   parseRegisterReport,
@@ -466,7 +467,8 @@ export async function runSync({
     pulled = await store.tryWithSpecsLock(pull, { home });
   }
   if (!pulled.ran) return { ran: false, reason: "busy" };
-  const state = fold(store.readAllEvents(dir));
+  const stored = store.readAllEvents(dir);
+  const state = fold(stored);
   const planDir = join(dir, "releases");
   let planName = null;
   try {
@@ -494,6 +496,8 @@ export async function runSync({
     summary: out.summary,
     refused: out.refused,
     collisions: out.collisions,
+    // Read after this pass's events: a register row going live here frees its dependants now.
+    freed: freedItems(out.events.length ? fold([...stored, ...out.events]) : state),
     appended: 0,
     pushed: false,
     warnings: [],
