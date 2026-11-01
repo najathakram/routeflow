@@ -9,6 +9,7 @@ import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
+import { customerPricingGate } from "@/lib/customer-pricing-gate";
 import { countNoun } from "@/lib/plural";
 import { formatMoney } from "@/lib/format";
 import { orderBuilderTotals } from "@/lib/order-builder-totals";
@@ -376,7 +377,8 @@ export function CreateOrderModal({
   const [customerError, setCustomerError] = React.useState("");
 
   // Customer per-product tier overrides
-  const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
+  const customerPricesRead = useCustomerPrices(selectedCustomer?.id);
+  const { data: customerPricesData } = customerPricesRead;
   const cpMap = React.useMemo(() => {
     const map = new Map<string, number | null>();
     (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier ?? null));
@@ -1830,8 +1832,13 @@ export function CreateOrderModal({
   } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
   // SA-1068 M14: the remembered prices are part of the customer's price read, so the re-price waits for them too.
-  const resumePricesReady =
-    priceLayer.ready && customerPricesData !== undefined && !priceHistoryRead.isPending;
+  // SA-1076 A-1: the one gate reads this, so a plan without customer prices is an empty read, not a failure
+  const pricingGate = customerPricingGate({
+    customerQuery: { data: selectedCustomer }, // already picked, so nothing to wait for
+    customerPricesQuery: customerPricesRead,
+    priceLayer,
+  });
+  const resumePricesReady = priceLayer.ready && !pricingGate.pending && !priceHistoryRead.isPending;
   // SA-1076: the resume's product read can land after a customer change, so it prices from these, not the effect's capture.
   const pricingNowRef = React.useRef({ tierForProduct, priceLayer, rememberedOf });
   pricingNowRef.current = { tierForProduct, priceLayer, rememberedOf };
@@ -1839,7 +1846,7 @@ export function CreateOrderModal({
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
     // SA-1068 A-4: the read has settled, so no data means it failed. Test the data: a failed refetch keeps its cached memories.
-    if (priceHistory === undefined) {
+    if (priceHistory === undefined || pricingGate.readFailed) {
       // Unknown memories: a re-price could put a remembered line on a tier the server won't book, under a false note.
       setPricesNotRefreshed(true);
       return;

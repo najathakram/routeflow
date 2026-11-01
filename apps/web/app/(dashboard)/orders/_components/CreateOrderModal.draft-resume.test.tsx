@@ -1061,6 +1061,112 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
               await settlesAt({ ...atNote, price: "$38.00 / each", note: null });
             });
           });
+
+          it("T38: a PLAN_GATE 403 is an empty read, so the resume runs and writes the note", async () => {
+            await parkLineAtMemory();
+            realReads(() => Promise.reject(planGate), memoryAt50);
+            await resume();
+            await settlesAt(atNote);
+          });
+
+          it("T39: PLAN_GATE 403, no memory, the catalog moved: the new price, with the note", async () => {
+            await parkLine(read({}));
+            mockProductNow = { p1: { id: "p1", ...columns, priceTier2: "40" } };
+            realReads(
+              () => Promise.reject(planGate),
+              () => Promise.resolve({ data: {} }),
+            );
+            await resume();
+            await settlesAt({
+              price: "$40.00 / each",
+              note: "$38.00 → $40.00",
+              notice: false,
+              productReads: 1,
+            });
+          });
+
+          it("T36: a failed read keeps the parked price and says so", async () => {
+            await parkLineAtMemory();
+            realReads(offline, memoryAt50);
+            await resume();
+            await settlesAt(atNotice);
+          });
+
+          it("T37: fails on A and on B, B's memory lands: the notice stays up over a line linked to A", async () => {
+            const payload = await parkLineAtMemory();
+            storage = createMemoryDraftStorage();
+            setDraftMirrorStorage(storage);
+            await seedParked({
+              ...payload,
+              lineItems: [{ ...payload.lineItems[0], prefillCustomerId: "c1" }],
+            });
+            realReads(offline, memoryAt50);
+            await resume();
+            await settlesAt(atNotice);
+
+            fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+            fireEvent.change(screen.getByPlaceholderText("Search by business name…"), {
+              target: { value: "Bet" },
+            });
+            fireEvent.click(await screen.findByText("Beta Bakery"));
+            await flush();
+            await settlesAt({ ...atNotice, price: "$38.00 / each" });
+          });
+
+          it("T37: the same on a plain line: it waits at its parked price under the notice", async () => {
+            await parkLineAtMemory();
+            realReads(offline, memoryAt50);
+            await resume();
+            await settlesAt(atNotice);
+
+            await changeTo("Beta Bakery");
+            await flush();
+            await settlesAt(atNotice);
+          });
+
+          it("T40 guard: a refetch that recovers finishes the resume and clears the notice", async () => {
+            await parkLineAtMemory();
+            realReads(offline, memoryAt50);
+            const view = await resume();
+            await settlesAt(atNotice);
+
+            let land!: (answer: unknown) => void;
+            mockPricesAnswer = () => new Promise((r) => (land = r));
+            await act(async () => {
+              void view.queryClient.invalidateQueries({ queryKey: ["customer-prices", "c1"] });
+            });
+            await flush();
+            land({ data: [] });
+            await settlesAt(atNote);
+          });
+
+          describe("T41 guard, scan_v2 on", () => {
+            it("T36: a failed read keeps the parked price and says so", async () => {
+              await parkLineAtMemory();
+              mockScanV2 = true;
+              realReads(offline, memoryAt50);
+              await resume();
+              await settlesAt(atNotice);
+            });
+
+            it("T38: a PLAN_GATE 403 is an empty read", async () => {
+              await parkLineAtMemory();
+              mockScanV2 = true;
+              realReads(() => Promise.reject(planGate), memoryAt50);
+              await resume();
+              await settlesAt(atNote);
+            });
+          });
+
+          it("T42 guard: a failed layer read shows the layer's copy only, one notice", async () => {
+            await parkLineAtMemory();
+            mockLayerFailed = true;
+            realReads(() => Promise.resolve({ data: [] }), memoryAt50);
+            await resume();
+            await flush();
+            expect(screen.getByTestId("order-price-layer-failed")).toBeInTheDocument();
+            expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
+          });
         });
       });
 
