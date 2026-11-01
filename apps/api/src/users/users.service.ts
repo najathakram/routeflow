@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { AuditService } from "../audit/audit.service";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { OPERATOR_DEFAULT_DENIED_GROUPS } from "../auth/permissions/operator-default-denied";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { SUPPORT_SESSION_REFUSAL_MESSAGE } from "../auth/guards/no-impersonation.guard";
 import { assertNotWalkIn } from "../customers/walk-in-protected";
@@ -344,12 +345,28 @@ export class UsersService {
     const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
+    // SA-1050 A-5: a row that ENTERS the operator role starts without the groups the owner keeps off by default.
+    // The server decides this from the stored row, never from the DTO; a row that already denies every one of them
+    // writes neither the list nor the version.
+    const deniedNow = user.deniedPermissionGroups ?? [];
+    const defaultDenied =
+      roleChanged && dto.role === UserRole.OPERATOR
+        ? OPERATOR_DEFAULT_DENIED_GROUPS.filter((g) => !deniedNow.includes(g))
+        : [];
+
     // An EXPLICIT field pick, never a spread of the body (SA-726 M5): whatever a caller manages to put on
-    // the DTO, only these three columns are ever written here. `status`, `canActAsDriver`, `tenantId` and
-    // the permission columns have their own endpoints. Email and username are omitted unless they
-    // actually changed; a change writes the normalized value.
+    // the DTO, only the role, email and username come from it. `status`, `canActAsDriver` and `tenantId` have
+    // their own endpoints, and the permission columns are written only by the server: the default-denied groups
+    // above, with the version bump that every write to the deny list carries. Email and username are omitted
+    // unless they actually changed; a change writes the normalized value.
     const data = {
       ...(dto.role !== undefined ? { role: dto.role } : {}),
+      ...(defaultDenied.length > 0
+        ? {
+            deniedPermissionGroups: { push: [...defaultDenied] },
+            permissionsVersion: { increment: 1 },
+          }
+        : {}),
       ...(emailChanged ? { email: normalizedEmail } : {}),
       ...(usernameEdit ? { username: normalizedUsername } : {}),
     };
