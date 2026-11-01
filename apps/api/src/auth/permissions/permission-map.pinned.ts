@@ -298,6 +298,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "CustomersController.getIncomeChart": "FINANCE|REPORTS",
   "CustomersController.getPortalStatus": "CUSTOMERS",
   "CustomersController.getAccountStatement": "FINANCE|CUSTOMERS",
+  "CustomersController.getAccountStatementPdf": "FINANCE|CUSTOMERS",
   "CustomersController.getStatement": "FINANCE|CUSTOMERS",
   "CustomersController.getStatementMonths": "FINANCE|CUSTOMERS",
   "CustomersController.getStatementPdf": "FINANCE|CUSTOMERS",

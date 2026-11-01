@@ -218,6 +218,15 @@ export class CustomersController {
     return this.customersService.getAccountStatement(id, { staff: true });
   }
 
+  // SA-1078 PR-3: the same statement as a PDF. Returns a signed URL (no JWT needed to download), like the monthly one.
+  @RequirePermission("FINANCE", "CUSTOMERS")
+  @Get(":id/account-statement/pdf")
+  @Roles(UserRole.OPERATOR)
+  async getAccountStatementPdf(@Param("id") id: string) {
+    const url = await this.statementPdfService.generateCurrent(id);
+    return { url };
+  }
+
   // Operator twins of the buyer statement-PDF endpoints (P5-15) — same
   // services, tenant-scoped by customerId. Until now a downloadable customer
   // statement existed ONLY in the buyer portal.
