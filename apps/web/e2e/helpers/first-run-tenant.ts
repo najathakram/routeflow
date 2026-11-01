@@ -6,9 +6,29 @@ import { expect, type APIRequestContext, type Page } from "@playwright/test";
  *
  * WHY NOT AN `e2e-*` SLUG: the public sign-up refuses every approved test-tenant slug on purpose (tenants.service.ts, row 195:
  * a real sign-up can never land on a test tenant), and only `register()` writes the first-question marker. So this spec creates
- * its own tenants by signing up, and the safety is the target instead: `assertLocalStack` refuses to run unless the web, API
- * and mail origins are all loopback (the project is also registered only for a local base URL). Never point it at a hosted stack.
+ * its own tenants by signing up.
+ *
+ * THE EXCEPTION TO CLAUDE.md's test-tenant policy (owner's box, 2026-11-01, "Yes, local only"): the sign-up step, and only it,
+ * may create a throwaway `acme-trial-*` workspace, and only on this computer's throwaway stack. Three locks keep it that way:
+ *   1. `assertLocalStack` refuses to run unless the web, API and mail origins are all loopback (the project is also registered
+ *      only for a local base URL). Never point it at a hosted stack.
+ *   2. `newTrial` makes only slugs matching SIGNUP_THROWAWAY, and `assertWriteTarget` lets a write through to such a slug only
+ *      when it is the very workspace this test signed up.
+ *   3. Every other tenant this spec could write to goes through `assertTestTenant` (scripts/lib/test-tenants.cjs) first.
  */
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+/** The only non-approved slugs this spec may create or write to: its own sign-ups, `acme-trial-<viewport>-<suffix>`. */
+export const SIGNUP_THROWAWAY = /^acme-trial-[a-z0-9]+-[a-z0-9]+$/;
+
+/**
+ * Call before any write to a tenant. A workspace this very test signed up (`signedUp`) passes under the exception above;
+ * any other slug must be an approved test tenant, or this throws (assertTestTenant).
+ */
+export function assertWriteTarget(slug: string, signedUp?: { slug: string }): string {
+  if (signedUp && slug === signedUp.slug && SIGNUP_THROWAWAY.test(slug)) return slug;
+  return assertTestTenant(slug, "e2e spec 82");
+}
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -56,15 +76,23 @@ export interface NewTrial {
   password: string;
 }
 
-/** A fresh, unique trial identity. The slug is exactly what the sign-up form's slugify gives `businessName`. */
-export function newTrial(label = "trial"): NewTrial {
+/**
+ * A fresh, unique trial identity. The slug is exactly what the sign-up form's slugify gives `businessName`, and is always
+ * `acme-trial-<label>-<suffix>` (SIGNUP_THROWAWAY): `label` is the viewport, letters and digits only.
+ */
+export function newTrial(label = "1440"): NewTrial {
   const suffix = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
-  const businessName = `Acme ${label} ${suffix}`;
+  const businessName = `Acme Trial ${label} ${suffix}`;
   const slug = businessName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 30);
+  if (!SIGNUP_THROWAWAY.test(slug)) {
+    throw new Error(
+      `spec 82 only signs up acme-trial-<viewport>-<suffix> workspaces; "${slug}" is not one`,
+    );
+  }
   return {
     businessName,
     slug,
@@ -78,6 +106,8 @@ export function newTrial(label = "trial"): NewTrial {
 
 /** Sign-up through the API (the sign-up form is driven once, in the long spec; the narrow-width specs start here). */
 export async function registerTrial(request: APIRequestContext, webURL: string, t: NewTrial) {
+  assertLocalStack(webURL);
+  assertWriteTarget(t.slug, t);
   const post = () =>
     request.post(`${apiOrigin(webURL)}/api/v1/public/tenants/register`, {
       data: {

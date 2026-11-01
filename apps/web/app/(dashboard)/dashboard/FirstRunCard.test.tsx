@@ -176,6 +176,21 @@ describe("FirstRunCard", () => {
   });
 });
 
+describe("useAnswerFirstRun success", () => {
+  it("F2: a saved answer re-reads the tenant's features, so Dispatch and Counter sale show with no reload", async () => {
+    mockPost.mockResolvedValue({ data: { outcome: "applied", state: "answered" } });
+    const queryClient = createTestQueryClient();
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+    renderWithProviders(<FirstRunCard status={base} />, { queryClient });
+    await userEvent.click(screen.getByLabelText("We deliver with our own trucks"));
+    await userEvent.click(screen.getByRole("button", { name: "Set up my account" }));
+    await screen.findByText("Your account is ready.");
+    // The menu and the capability answers live under ["tenant"]; the card's own status under ["first-run"].
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["tenant"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["first-run"] });
+  });
+});
+
 describe("useAnswerFirstRun errors", () => {
   it("opts out of the global toast (the card words every refusal, and a closed question shows none)", async () => {
     mockPost.mockRejectedValue({

@@ -6,7 +6,8 @@
  * the owner got the "new trial" mail. Then the same card at 768 and 390 with a different answer.
  *
  * Signed-out start, no storageState and no `setup` dependency: every test signs up its own `acme-trial-*` workspace (the public
- * sign-up refuses `e2e-*`/`qa-*` slugs on purpose, so the guard is the target: the web, API and mail origins must all be loopback)
+ * sign-up refuses `e2e-*`/`qa-*` slugs on purpose; the owner allowed this one exception, local throwaway stack only, see
+ * helpers/first-run-tenant.ts: the web, API and mail origins must all be loopback, and every write is checked by `assertWriteTarget`)
  * and reads the mail from the stack's mail catcher (MAILPIT_URL, default http://localhost:8025). The owner list is
  * E2E_OWNER_ALERT_EMAIL (default the code's `admin@routeflow.info`). Nothing here touches an existing tenant.
  */
@@ -15,7 +16,9 @@ import { assertNoOverflow } from "./helpers/overflow";
 import {
   adminToken,
   assertLocalStack,
+  assertWriteTarget,
   apiOrigin,
+  SIGNUP_THROWAWAY,
   newTrial,
   ownerAlertAddress,
   registerTrial,
@@ -38,6 +41,18 @@ async function firstRunStatus(page: Page, token: string) {
   return (await res.json()) as Record<string, unknown>;
 }
 
+/** Status of an authenticated GET on the API (the tenant admin's token). */
+async function apiStatus(page: Page, token: string, path: string) {
+  const res = await page.request.get(`${apiOrigin(page.url())}/api/v1${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.status();
+}
+
+/** The sidebar's Dispatch group (routes and drivers); it exists only for an account that delivers. */
+const dispatchMenu = (page: Page) =>
+  page.getByRole("navigation").getByText("Dispatch", { exact: true });
+
 async function openQuestion(page: Page) {
   const card = page.getByTestId("first-run-card");
   await expect(card).toBeVisible({ timeout: 30_000 });
@@ -50,13 +65,41 @@ test.describe("W1 — the first question on a new account", () => {
   test.describe.configure({ retries: 0 });
   test.beforeEach(({ baseURL }) => assertLocalStack(baseURL));
 
+  test("the write guard: only this test's own acme-trial sign-up passes, anything else must be an approved test tenant", () => {
+    const mine = newTrial("1440");
+    expect(mine.slug).toMatch(SIGNUP_THROWAWAY);
+    expect(assertWriteTarget(mine.slug, mine)).toBe(mine.slug);
+    // the approved test tenants pass with or without a sign-up
+    for (const approved of [
+      "test",
+      "e2e-routeflow",
+      "routeflow-demo",
+      "qa-w1-alert",
+      "e2e-first-run-x",
+    ]) {
+      expect(assertWriteTarget(approved)).toBe(approved);
+    }
+    // a throwaway nobody signed up here, another test's sign-up, a lookalike and a client-shaped name are all refused
+    const other = newTrial("768");
+    for (const [slug, signedUp] of [
+      [mine.slug, undefined],
+      [other.slug, mine],
+      ["acme-trial", mine],
+      ["acme-trial-1440", { slug: "acme-trial-1440" }],
+      ["acme-distribution", { slug: "acme-distribution" }],
+      ["acme-trial-1440-abc/../test", { slug: "acme-trial-1440-abc/../test" }],
+    ] as const) {
+      expect(() => assertWriteTarget(slug, signedUp), slug).toThrow(/not an approved test tenant/);
+    }
+  });
+
   test("1440: sign up, verify, answer, next steps, Workspace ID, owner mail", async ({
     page,
     request,
   }) => {
     test.setTimeout(180_000);
     await page.setViewportSize({ width: 1440, height: 900 });
-    const trial: NewTrial = newTrial("trial");
+    const trial: NewTrial = newTrial("1440");
 
     // ── Sign up on the form ────────────────────────────────────────────────────
     await page.goto("/signup");
@@ -93,6 +136,10 @@ test.describe("W1 — the first question on a new account", () => {
       workspaceId: trial.slug,
     });
 
+    // F1 / F2: before the answer a new account has no routes add-on and no Dispatch menu.
+    expect(await apiStatus(page, token, "/routes"), "GET /routes before the answer").toBe(403);
+    await expect(dispatchMenu(page)).toHaveCount(0);
+
     // Nothing ticked → "Choose at least one." and the question stays open (no request is sent).
     await card.getByRole("button", { name: "Set up my account" }).click();
     await expect(card.getByText("Choose at least one.")).toBeVisible();
@@ -101,6 +148,7 @@ test.describe("W1 — the first question on a new account", () => {
     // Delivery + counter → the account is set up and the card turns into the next steps.
     await card.getByLabel("We deliver with our own trucks").check();
     await card.getByLabel("Customers pick up or buy at the counter").check();
+    assertWriteTarget(trial.slug, trial);
     await card.getByRole("button", { name: "Set up my account" }).click();
 
     const done = page.getByTestId("first-run-done");
@@ -110,15 +158,19 @@ test.describe("W1 — the first question on a new account", () => {
     for (const step of [
       "Add your products",
       "Add your customers",
+      "Take your first order",
       "Add your business address",
       "Add a driver",
       "Plan your first route",
       "Start a counter sale",
-      "Take your first order",
     ]) {
       await expect(done.getByRole("link", { name: step })).toBeVisible();
     }
     await expect(page.getByTestId("first-run-card")).toHaveCount(0);
+
+    // F2: Dispatch shows now, with NO reload (the answer re-reads the tenant's features). F1: the routes add-on is on.
+    await expect(dispatchMenu(page)).toBeVisible();
+    expect(await apiStatus(page, token, "/routes"), "GET /routes after the answer").toBe(200);
 
     // The server has it: answered, with exactly what was ticked, and a second answer is refused.
     expect(await firstRunStatus(page, token)).toMatchObject({
@@ -129,6 +181,7 @@ test.describe("W1 — the first question on a new account", () => {
       shipping: false,
       hasOrder: false,
     });
+    assertWriteTarget(trial.slug, trial);
     const again = await page.request.post(
       `${apiOrigin(page.url())}/api/v1/settings/fulfilment/first-run`,
       { headers: { Authorization: `Bearer ${token}` }, data: { shipping: true } },
@@ -170,7 +223,7 @@ test.describe("W1 — the first question on a new account", () => {
     }) => {
       test.setTimeout(180_000);
       await page.setViewportSize({ width: vp.width, height: vp.height });
-      const trial = newTrial(`w${vp.name}`);
+      const trial = newTrial(vp.name);
       await registerTrial(request, baseURL!, trial);
       await verifyAndLand(page, request, trial);
 
@@ -178,6 +231,7 @@ test.describe("W1 — the first question on a new account", () => {
       await assertNoOverflow(page, `W1 question @${vp.name}`);
 
       await card.getByLabel("We ship by carrier").check();
+      assertWriteTarget(trial.slug, trial);
       await card.getByRole("button", { name: "Set up my account" }).click();
       const done = page.getByTestId("first-run-done");
       await expect(done).toBeVisible({ timeout: 30_000 });

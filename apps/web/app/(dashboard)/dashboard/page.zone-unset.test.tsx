@@ -26,6 +26,13 @@ jest.mock("@/lib/api/addons", () => ({
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
 }));
 jest.mock("@/lib/stock-label", () => ({ unitsLabel: () => "" }));
+// F29: an install link is ready, so the "Get the app" strip WOULD show; the only thing holding it back is the open question.
+jest.mock("@/lib/api/app-links", () => ({
+  ...jest.requireActual("@/lib/api/app-links"),
+  useAppLinks: () => ({
+    data: { androidApkUrl: "https://example.test/app.apk", playStoreUrl: null, iosUrl: null },
+  }),
+}));
 const q = () => ({ data: { data: [], meta: { total: 0 } }, isLoading: false, isError: false });
 jest.mock("@/lib/api/orders", () => ({ useOrders: () => q() }));
 jest.mock("@/lib/api/finance", () => ({
@@ -115,6 +122,21 @@ describe("Dashboard: the business time zone was never picked", () => {
     renderWithProviders(<DashboardPage />);
     expect(await screen.findByText(PROMPT)).toBeInTheDocument();
     expect(screen.getByText("Your account is ready.")).toBeInTheDocument();
+  });
+
+  it("W1 F29: while the first question is open the app strip waits; once answered it comes back", async () => {
+    const STRIP = "Get the RouteFlow app on your phone.";
+    firstRun = "pending";
+    const { unmount } = renderWithProviders(<DashboardPage />);
+    expect(await screen.findByText("How do orders reach your customers?")).toBeInTheDocument();
+    await screen.findByText(/Here's what's happening at Acme Foods/);
+    await act(async () => {});
+    expect(screen.queryByText(STRIP, { exact: false })).toBeNull();
+    unmount();
+
+    firstRun = "answered";
+    renderWithProviders(<DashboardPage />);
+    expect(await screen.findByText(STRIP, { exact: false })).toBeInTheDocument();
   });
 
   it("W1 F13: an operator never reads the first question", async () => {
