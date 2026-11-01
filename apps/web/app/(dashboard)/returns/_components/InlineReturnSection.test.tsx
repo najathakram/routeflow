@@ -128,6 +128,22 @@ async function addProductAndQuote(pieces: string) {
   expect(quoteMutate).toHaveBeenCalledTimes(1);
 }
 
+describe("InlineReturnSection — NS-13 (SA-1060 A-4): editingOrderId rides only when the host names it", () => {
+  it("the Returns dialog and the counter (an entry order, a source sale) send no editingOrderId", async () => {
+    renderSection({ entryOrderId: "ord-1", sourceOrderId: "ord-1" });
+    await addProductAndQuote("2");
+    const req = quoteMutate.mock.calls[0][0];
+    expect(req).not.toHaveProperty("editingOrderId");
+    expect(req.sourceOrderId).toBe("ord-1");
+  });
+
+  it("a host that passes editingOrderId (the order edit) sends it", async () => {
+    renderSection({ entryOrderId: "ord-1", editingOrderId: "ord-1" });
+    await addProductAndQuote("2");
+    expect(quoteMutate.mock.calls[0][0]).toMatchObject({ editingOrderId: "ord-1" });
+  });
+});
+
 describe("InlineReturnSection — lines to quote (#2406)", () => {
   it("shows 'What came back' with no products by default, no Get quote, and asks nothing", () => {
     renderSection();

@@ -89,6 +89,9 @@ export interface InlineReturnSectionProps {
   /** SA-740: the sale this return is from, sent on the quote (REQUIRED for a walk-in; the host
    *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
   sourceOrderId?: string;
+  /** SA-1060 A-4: the order being EDITED, sent on the quote so it prices what the edit's save will see (the order edit's Returns
+   *  section passes it; New order, the counter and the Returns dialog never do). */
+  editingOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -138,6 +141,7 @@ export function InlineReturnSection({
   customerId,
   entryOrderId,
   sourceOrderId,
+  editingOrderId,
   resetToken,
   getQuoteEnabled = true,
   waitingFor,
@@ -174,6 +178,7 @@ export function InlineReturnSection({
     lines,
     customerId,
     sourceOrderId,
+    editingOrderId,
     enabled: getQuoteEnabled && !locked,
   });
   const quote = quoteOverride ?? live.quote;
@@ -408,9 +413,14 @@ export function InlineReturnSection({
                   locked={locked}
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
-                  // SA-1060 PR-2: goods this customer was never sold are not added to stock, whatever the reason (the quote says so)
+                  // SA-1060 PR-2: goods this customer was never sold are not added to stock, whatever the reason (the quote says so).
+                  // A-4 (M3): with no quote to say (not yet asked, refused, failed) a restocking reason claims nothing: null
                   stocks={
-                    restocksForReason(ruling.reason || captureReason) && !productFacts?.neverSold
+                    !restocksForReason(ruling.reason || captureReason)
+                      ? false
+                      : productFacts
+                        ? !productFacts.neverSold
+                        : null
                   }
                   followsFirst={lineIndex !== rulingIndex}
                   rulingIsFirst={rulingIndex === firstIndex}
@@ -639,7 +649,8 @@ function ReturnLine({
   locked: boolean;
   reasonOptions: Array<{ value: ReturnReason; label: string }>;
   reasonLabel: string;
-  stocks: boolean;
+  /** true: back to stock; false: not added; null: not known yet (no quote has said whether it was ever sold). */
+  stocks: boolean | null;
   /** A row of a product that is not the one whose reason rules (the first row with a quantity): it cannot take its own. */
   followsFirst: boolean;
   /** the ruling row is the product's first row, so the label can say "the first row" */
@@ -677,7 +688,7 @@ function ReturnLine({
   const summaryWords = [
     credit !== null && facts && facts.total > 0 ? `Credit ${money(facts.total)}` : null,
     reasonLabel,
-    stocks ? "Back to stock" : "Not added to stock",
+    stocks === null ? null : stocks ? "Back to stock" : "Not added to stock",
   ].filter(Boolean);
 
   const flagWords = [

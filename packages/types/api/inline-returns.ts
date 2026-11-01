@@ -50,6 +50,11 @@ export interface QuoteInlineReturnRequest {
    *  without it); a named customer sends it only to pin the matching to that one order. Must be the customer's own
    *  counter sale or delivered order (400 `SOURCE_SALE_INVALID`). */
   sourceOrderId?: string;
+  /** SA-1060 A-4: the order the screen is EDITING, sent only by the order edit's Returns section (New order, the counter and
+   *  the Returns dialog send nothing). The quote then prices against the matching set as it will be after the edit's revert of
+   *  that order's own SENT invoice, the same set the edit's dry run uses. Must be this customer's own order (400
+   *  `SOURCE_SALE_INVALID`). The client never sends invoice ids. */
+  editingOrderId?: string;
 }
 
 // ─── Request: POST /returns/inline/capture ───────────────────────────────────────

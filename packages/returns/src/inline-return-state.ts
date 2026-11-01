@@ -271,6 +271,8 @@ export function buildQuoteRequest(
   routeRunStopId?: string,
   /** SA-740: the sale this return is from (a counter return sends the sale's order id; REQUIRED for a walk-in). */
   sourceOrderId?: string,
+  /** SA-1060 A-4: the order being edited (the order edit's Returns section only; every other caller omits it). */
+  editingOrderId?: string,
 ): QuoteInlineReturnRequest {
   const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
     lines
@@ -289,21 +291,23 @@ export function buildQuoteRequest(
     pieces,
     ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
   }));
-  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId, editingOrderId);
 }
 
-/** The quote request envelope: routeRunStopId and sourceOrderId ride along only when supplied. */
+/** The quote request envelope: routeRunStopId, sourceOrderId and editingOrderId ride along only when supplied. */
 function quoteRequestOf(
   customerId: string,
   items: QuoteInlineReturnItem[],
   routeRunStopId?: string,
   sourceOrderId?: string,
+  editingOrderId?: string,
 ): QuoteInlineReturnRequest {
   return {
     customerId,
     items,
     ...(routeRunStopId ? { routeRunStopId } : {}),
     ...(sourceOrderId ? { sourceOrderId } : {}),
+    ...(editingOrderId ? { editingOrderId } : {}),
   };
 }
 

@@ -147,6 +147,8 @@ export const OrderInlineReturnsSection = React.forwardRef<
         <InlineReturnSection
           customerId={customerId}
           entryOrderId={entryOrderId}
+          // SA-1060 A-4: in edit mode the quote names the order being edited, so it prices what the save will see
+          editingOrderId={entryOrderId}
           resetToken={resetToken}
           // the return's credit note is held for THIS order first, so it is not "for the next order"
           creditContext="thisOrder"
