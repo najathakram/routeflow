@@ -1,5 +1,6 @@
 import { BillingService } from "./billing.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { pinWallClock } from "../testing/pin-clock";
 
 /**
  * SA-733 D6 / M6 at the service boundary: what `createCheckoutSession` sends to Stripe. Stripe is MOCKED (the
@@ -87,6 +88,9 @@ function make(
 const sent = (h: ReturnType<typeof make>) => h.create.mock.calls[0][0];
 const at = (iso: string) => Date.parse(iso) / 1000;
 
+// L-353: every case runs on a pinned mid-month day; the dated cases below pin their own. Unpinned, the cases that
+// never set a date went red 10:29Z-12:00Z on the 1st (the checkout pause).
+beforeEach(() => pinWallClock());
 afterEach(() => jest.useRealTimers());
 
 describe("SA-733 D6 / M6 — createCheckoutSession anchors every new subscription", () => {
