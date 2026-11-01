@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Providers } from "@/app/providers";
 import { seedSession } from "@/test-utils/session";
 import OrderDetailPage from "./page";
+import { RETURN_SAVE_BLOCKED } from "../_components/use-order-inline-return-save";
 
 // #2406 — order-edit host: the edit-mode Returns section folds an inline return into the SAME
 // PATCH /orders/:id/items write. Modeled on page.selling-restricted.test.tsx's transport-level
@@ -79,9 +80,10 @@ beforeEach(() => {
     return Promise.resolve({ data: [] });
   });
   patch.mockResolvedValue({ data: { ...order, lineItems: order.lineItems } });
+  post.mockResolvedValue({ data: QUOTE_REPLY }); // the quote the section asks for by itself
 });
 
-async function enterEditModeAndOpenReturns({ draft = false } = {}) {
+async function enterEditModeAndOpenReturns({ draft = false, reason = true } = {}) {
   render(
     <Providers>
       <OrderDetailPage />
@@ -95,7 +97,31 @@ async function enterEditModeAndOpenReturns({ draft = false } = {}) {
   // rather than a single (ambiguous) one.
   await waitFor(() => expect(screen.getAllByText("Widget").length).toBeGreaterThanOrEqual(2));
   fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+  if (reason) {
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
+  }
+}
+
+const QUOTE_REPLY = {
+  chunks: [],
+  subtotal: 0,
+  taxAmount: 0,
+  categoryTax: 0,
+  total: 0,
+  productBreakdown: {},
+};
+
+// R-1: no "Get quote" — the section asks by itself 350 ms after the last change to the lines. Waits for that ask, then for
+// its answer to be on screen (the summary stops being busy), so the draft is quoted when the test saves.
+async function waitForCurrentQuote() {
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith("/returns/inline/quote", expect.anything()),
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId("return-summary")).toHaveAttribute("aria-busy", "false"),
+  );
 }
 
 describe("order detail edit mode — Returns section (#2406)", () => {
@@ -126,20 +152,7 @@ describe("order detail edit mode — Returns section (#2406)", () => {
   it("a quoted return is saved via PATCH .../items as inlineReturn, without customerId/orderId", async () => {
     await enterEditModeAndOpenReturns();
 
-    post.mockResolvedValueOnce({
-      data: {
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/returns/inline/quote", expect.anything()),
-    );
+    await waitForCurrentQuote();
 
     fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
@@ -151,22 +164,51 @@ describe("order detail edit mode — Returns section (#2406)", () => {
     expect(body.inlineReturn).not.toHaveProperty("orderId");
   });
 
-  it("a refusal (4xx) keeps edit mode open and shows the message near the Returns section", async () => {
+  it("a quote still being worked out blocks the save: toast, nothing sent", async () => {
+    post.mockImplementation(() => new Promise(() => {})); // the quote never answers
     await enterEditModeAndOpenReturns();
-    post.mockResolvedValueOnce({
-      data: {
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/returns/inline/quote", expect.anything()),
     );
+
+    fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: RETURN_SAVE_BLOCKED["needs-quote"] }),
+    );
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("lines changed after the quote block the save until the new quote answers, then carry the new quantity", async () => {
+    await enterEditModeAndOpenReturns();
+    await waitForCurrentQuote();
+
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "4" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: RETURN_SAVE_BLOCKED["needs-quote"] }),
+    );
+    expect(patch).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    await waitForCurrentQuote();
+    fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1].inlineReturn.items).toEqual([
+      { productId: "p1", qty: 1, boxes: 0, pieces: 4 },
+    ]);
+  });
+
+  it("a draft nobody chose a reason for is saved under EXCESS_ORDER", async () => {
+    await enterEditModeAndOpenReturns({ reason: false });
+    await waitForCurrentQuote();
+    fireEvent.click(screen.getByRole("button", { name: /^save changes$/i }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1].inlineReturn.reason).toBe("EXCESS_ORDER");
+  });
+
+  it("a refusal (4xx) keeps edit mode open and shows the message near the Returns section", async () => {
+    await enterEditModeAndOpenReturns();
+    await waitForCurrentQuote();
 
     patch.mockRejectedValueOnce(
       Object.assign(new Error("Request failed"), {
@@ -190,21 +232,7 @@ describe("order detail edit mode — Returns section (#2406)", () => {
     patch.mockResolvedValue({ data: draft });
     await enterEditModeAndOpenReturns({ draft: true });
     // SA-484i: a return rides the save only once quoted.
-    post.mockResolvedValueOnce({
-      data: {
-        chunks: [],
-        subtotal: 0,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 0,
-        productBreakdown: {},
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/returns/inline/quote", expect.anything()),
-    );
-    await screen.findByRole("button", { name: /^back$/i }); // the quote step is showing
+    await waitForCurrentQuote();
 
     fireEvent.click(await screen.findByRole("button", { name: /publish order/i }));
     await waitFor(() => expect(patch).toHaveBeenCalledWith("/orders/o1/items", expect.anything()));

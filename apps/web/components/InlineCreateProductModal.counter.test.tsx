@@ -74,6 +74,9 @@ describe("W-1042 MUST 9: requirePrice", () => {
     mount({ initialName: "Fresh Pie" });
     expect(save().disabled).toBe(false);
     expect(screen.queryByText(PRICE_HINT)).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("e.g. case, kg, unit"), {
+      target: { value: "each" },
+    }); // SA-1071 I3: a missing unit is named, not sent
     fireEvent.submit(form());
     expect(createMutate.mock.calls[0][0]).toMatchObject({ pricePerUnit: "0" });
   });

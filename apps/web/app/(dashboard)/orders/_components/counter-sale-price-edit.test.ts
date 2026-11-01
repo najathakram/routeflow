@@ -124,6 +124,12 @@ describe("editedLineFigures / discountsTotal", () => {
     expect(priceEditLineOf(l, 1)).toMatchObject({ tierPrice: 24, unitsPerBox: 12, boxes: 2 });
   });
 
+  it("the dialog quotes the price per the line's own unit word (case stays case)", () => {
+    expect(priceEditLineOf({ ...plain, unit: "case" }, 1).unitWord).toBe("case");
+    // a plain line with no unit of its own still names a word ("unit"): U-2 makes `unitWord` required
+    expect(priceEditLineOf(plain, 1).unitWord).toBe("unit");
+  });
+
   it("a raised price is Price changed and adds nothing to Discounts", () => {
     const [l] = applyPriceEdit([plain], "a", edit({ mode: "set", value: 12, unitPrice: 12 }));
     expect(editedLineFigures(l)).toMatchObject({ discount: 0, chip: "Price changed" });

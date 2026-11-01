@@ -1090,10 +1090,16 @@ export interface PriceOverrideLine {
   originalPrice?: number | string | null;
 }
 
-/** True when a line is an operator MANUAL override priced ABOVE the catalog base. */
-export function isUpsellLine(line: PriceOverrideLine): boolean {
-  if (line.priceType !== "MANUAL" || line.originalPrice == null) return false;
-  return Number(line.unitPrice) > Number(line.originalPrice);
+/**
+ * SA-1072: true when a line is charged ABOVE its stored catalog base, whatever its type: a staff upsell (MANUAL) or a tier
+ * above Retail (SPECIAL). The ONE rule for hiding the lower base from the customer, on documents and on their reads.
+ */
+export function isAboveListLine(line: {
+  unitPrice?: number | string | null;
+  originalPrice?: number | string | null;
+}): boolean {
+  if (line.originalPrice == null) return false;
+  return Number(line.unitPrice ?? 0) > Number(line.originalPrice);
 }
 
 /** The half-cent band inside which a typed price IS the baseline (no repricing decision). */
@@ -1144,7 +1150,7 @@ export type StaffOverrideDecision =
  *     (originalPrice null) — at the clean baseline, never the incoming near-miss float;
  *   - a real change on a special-tier line with no reason ⇒ refused;
  *   - otherwise an override: below list ⇒ DISCOUNTED, at or above list ⇒ MANUAL (an upsell above
- *     list — see {@link isUpsellLine}), originalPrice = list, the price rounded to cents.
+ *     list — see {@link isAboveListLine}), originalPrice = list, the price rounded to cents.
  * Pure: the caller resolves the tier and list prices and whether a reason is on file.
  */
 export function decideStaffOverride(input: {
@@ -1171,6 +1177,19 @@ export function decideStaffOverride(input: {
 }
 
 /**
+ * SA-1068: the ONE rule for a customer's remembered price. Only a remembered price ABOVE the product's list is a sticky
+ * upsell (a premium tier above list is the customer's normal price, not an upsell); null, below or equal to list is not.
+ * The server's buyer-merge pricing and the units v2 Customer view call this, and the till's display reads the same answer
+ * through `customerLinePrice`, so the screen never shows a price the server will not charge.
+ */
+export function isStickyUpsell(
+  remembered: number | string | null | undefined,
+  listPrice: number,
+): boolean {
+  return remembered != null && Number(remembered) > listPrice;
+}
+
+/**
  * A customer's EFFECTIVE buyer price for a product. An operator's remembered
  * upsell — a saved override net price ABOVE the catalog LIST price — is sticky and
  * overrides the tier everywhere the buyer is priced (catalog, cart, checkout). A
@@ -1184,9 +1203,9 @@ export function effectiveBuyerPrice(
   rememberedPrice: number | null | undefined,
 ): number {
   const tier = Number(tierPrice) || 0;
-  if (rememberedPrice == null) return tier;
-  const remembered = Number(rememberedPrice);
-  return remembered > Number(listPrice) ? roundMoney(remembered) : tier;
+  return isStickyUpsell(rememberedPrice, Number(listPrice))
+    ? roundMoney(Number(rememberedPrice))
+    : tier;
 }
 
 // ─── Qty display: boxes + pieces split ────────────────────────────────────────

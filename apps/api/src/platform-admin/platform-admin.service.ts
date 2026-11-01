@@ -106,6 +106,7 @@ import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { classifyTenantSlug } from "../tenant/tenant-class";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
+import { FALLBACK_ZONE } from "../common/tenant-time-zone";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
@@ -2832,7 +2833,8 @@ export class PlatformAdminService {
 
     await this.prisma.tenantConfig.upsert({
       where: { tenantId },
-      create: { tenantId, ...dto },
+      // SA-1067 Z2: no zone in the dto and no row yet means UTC, never the column default; a real zone in dto still wins.
+      create: { tenantId, timezone: FALLBACK_ZONE, ...dto },
       update: dto,
     });
 

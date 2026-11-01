@@ -145,6 +145,15 @@ describe("VariantResolutionService", () => {
       );
     });
 
+    it('SA-1048 R-1: a price with a half cent is rounded by roundMoney, not truncated by the float (1.005 -> "1.01")', async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "n1" });
+      prisma.product.update.mockResolvedValue({ id: "n1", detailsIncomplete: false });
+      await service.completeSetup("n1", { pricePerUnit: 1.005 });
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ pricePerUnit: "1.01" }) }),
+      );
+    });
+
     it("B990: refuses a CHANGED formula-led category with a labelled 400 and writes nothing", async () => {
       prisma.product.findUnique.mockResolvedValue({ id: "n1", category: "Drinks" });
       const err: any = await service

@@ -33,6 +33,7 @@ import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
 } from "./plan-catalog.constants";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 interface AuthUser {
   tenantId: string | null;
   sub?: string;
@@ -72,6 +73,7 @@ export class SettingsBillingController {
     return user.tenantId;
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("subscription")
   @ApiOperation({ summary: "The tenant's current plan, add-ons and renewal state" })
   async getSubscription(@CurrentUser() user: AuthUser & { role?: string }) {
@@ -80,18 +82,21 @@ export class SettingsBillingController {
     return trimBillingViewForRole(view, user.role);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("usage")
   @ApiOperation({ summary: "Current-cycle meter usage (seats/routes/scans/msgs)" })
   getUsage(@CurrentUser() user: AuthUser) {
     return this.subscription.getUsage(this.tenantIdOf(user));
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("recommendation")
   @ApiOperation({ summary: "Usage-fit plan recommendation for choose-plan" })
   getRecommendation(@CurrentUser() user: AuthUser) {
     return this.subscription.getRecommendation(this.tenantIdOf(user));
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Post("quote")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Price a plan + add-on selection at a cycle (choose-plan)" })
@@ -106,6 +111,7 @@ export class SettingsBillingController {
     return { ...quote, change };
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("proration-preview")
   @ApiOperation({ summary: "Mid-cycle prorated charge to enable an add-on today" })
   async prorationPreview(@CurrentUser() user: AuthUser, @Query("sku") sku: string) {

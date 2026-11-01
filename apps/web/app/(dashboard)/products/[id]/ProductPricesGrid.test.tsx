@@ -6,6 +6,9 @@ import userEvent from "@testing-library/user-event";
 import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricesGrid } from "./ProductPricesGrid";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
+import { setWideViewport } from "@/test-utils/viewport";
+
+setWideViewport();
 
 let mockGrid: { data?: ProductPriceGridDto; isLoading: boolean; isError: boolean };
 let mockMsrpAddon = false;

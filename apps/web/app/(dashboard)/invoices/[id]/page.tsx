@@ -126,6 +126,7 @@ import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
@@ -1530,17 +1531,23 @@ export default function InvoiceDetailPage() {
   const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
+  const rw = useRestrictionWarningRetry(); // row 460: an unvoid re-sells the whole invoice, so staff may be warned
   const updateShipment = useUpdateInvoiceShipment();
   const updateTerms = useUpdateInvoiceTerms();
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
   const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
-  // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
+  // The draft's wording follows the ORDER first (a PICKUP order is handed over at a mixed business too), then a
+  // store-only business, which is POS-forced and never delivers. null = not known yet: neither moment is claimed.
   const { capability: fulfilmentCapability } = useCounterSaleGate();
-  const mirrorCopy = pendingMirrorCopy(
-    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
-  );
+  const orderStoreOnly: boolean | null =
+    invoice?.order?.fulfillPath === "PICKUP"
+      ? true
+      : fulfilmentCapability == null
+        ? null
+        : isStoreOnly(fulfilmentCapability);
+  const mirrorCopy = pendingMirrorCopy(orderStoreOnly);
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
@@ -2221,15 +2228,8 @@ export default function InvoiceDetailPage() {
 
         {/* Zoho-style action toolbar */}
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Pending mirror: this draft tracks an un-delivered order. Edit/Send are
-              hidden until the order is delivered — edit the order, not the invoice. */}
-          {isPendingMirror && (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
-              <Info className="h-3.5 w-3.5" />
-              {mirrorCopy.badge}
-            </span>
-          )}
-
+          {/* Pending mirror: this draft tracks an order not yet handed over or delivered. Edit is hidden
+              and Send is locked with its reason beside it; the note below explains (edit the order). */}
           {/* Edit — only for a draft that isn't a pending mirror */}
           {status === "DRAFT" && !isPendingMirror && (
             <Button
@@ -2250,9 +2250,7 @@ export default function InvoiceDetailPage() {
             <EmailInvoiceAction
               sendState={invoice.sendState}
               sendLocked={invoice.sendLocked}
-              lockedLabel={sendsAfterLabel(
-                fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
-              )}
+              lockedLabel={sendsAfterLabel(orderStoreOnly)}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
               onSend={handleSend}
             />
@@ -2501,9 +2499,8 @@ export default function InvoiceDetailPage() {
             >
               order #{invoice.order?.orderNumber ?? ""}
             </Link>{" "}
-            and updates automatically until it&apos;s{" "}
-            {isStoreOnly(fulfilmentCapability) ? "handed over" : "delivered"}. To change what&apos;s
-            billed, edit the order — {mirrorCopy.note}
+            and updates automatically until it&apos;s {orderStoreOnly ? "handed over" : "delivered"}
+            . To change what&apos;s billed, edit the order — {mirrorCopy.note}
           </div>
         </div>
       )}
@@ -2533,7 +2530,14 @@ export default function InvoiceDetailPage() {
                 {balanceDue > 0 && (
                   <div className="text-right">
                     <p className="eyebrow-label">Balance due</p>
-                    <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
+                    <p
+                      className={cn(
+                        "money text-2xl font-semibold",
+                        status === "DRAFT" ? "text-navy" : "text-danger",
+                      )}
+                    >
+                      {fmt(balanceDue)}
+                    </p>
                   </div>
                 )}
                 {balanceDue === 0 && status === "PAID" && (
@@ -2602,6 +2606,10 @@ export default function InvoiceDetailPage() {
               </div>
             </div>
 
+            {/* SA-1071 V2: SA-1058 lists the lines by printed name on every copy; one caption says so (nothing to say for one line) */}
+            {(invoice.items?.length ?? 0) > 1 ? (
+              <p className="mb-2 text-xs text-navy/70">Listed by product name.</p>
+            ) : null}
             {/* Line items table — Ledger surface header */}
             <div className="-mx-8 overflow-x-auto">
               <table className="w-full text-sm">
@@ -2743,6 +2751,7 @@ export default function InvoiceDetailPage() {
                 creditApplied={creditApplied}
                 advanceApplied={advanceApplied}
                 balanceDue={balanceDue}
+                isDraft={status === "DRAFT"}
               />
             </div>
 
@@ -3050,7 +3059,11 @@ export default function InvoiceDetailPage() {
               <div
                 className={cn(
                   "flex items-center justify-between border-t border-surface-border pt-2 font-semibold",
-                  balanceDue > 0 ? "text-danger" : "text-success",
+                  status === "DRAFT"
+                    ? "text-navy"
+                    : balanceDue > 0
+                      ? "text-danger"
+                      : "text-success",
                 )}
               >
                 <dt>Balance due</dt>
@@ -3232,25 +3245,32 @@ export default function InvoiceDetailPage() {
             <Button
               variant="primary"
               onClick={() => {
-                unvoid.mutate(invoice.id, {
-                  onSuccess: (res: UnvoidInvoiceResult | undefined) => {
-                    setIsUnvoidOpen(false);
-                    // SA-839 §3: one more line when the void sat in an already-filed month.
-                    const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
-                    toast({
-                      title: "Invoice unvoided — now a draft",
-                      variant: "success",
-                      ...(note ? { description: note } : {}),
-                    });
-                  },
-                  onError: (e: any) =>
-                    toast({
-                      title: "Failed to unvoid the invoice",
-                      description:
-                        unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
-                      variant: "error",
-                    }),
-                });
+                const run = () =>
+                  unvoid.mutate(rw.attach(invoice.id), {
+                    onSuccess: (res: UnvoidInvoiceResult | undefined) => {
+                      setIsUnvoidOpen(false);
+                      // SA-839 §3: one more line when the void sat in an already-filed month.
+                      const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+                      toast({
+                        title: "Invoice unvoided — now a draft",
+                        variant: "success",
+                        ...(note ? { description: note } : {}),
+                      });
+                    },
+                    onError: (e: any) => {
+                      if (rw.handle(e, run)) {
+                        setIsUnvoidOpen(false); // the warning dialog owns the screen; "Sell anyway" re-runs this
+                        return;
+                      }
+                      toast({
+                        title: "Failed to unvoid the invoice",
+                        description:
+                          unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
+                        variant: "error",
+                      });
+                    },
+                  });
+                run();
               }}
               loading={unvoid.isPending}
             >
@@ -3290,6 +3310,7 @@ export default function InvoiceDetailPage() {
         />
       )}
       {duplicateDialog}
+      {rw.dialog}
     </div>
   );
 }

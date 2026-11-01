@@ -280,3 +280,136 @@ describe("invoice PDF payload: invoice.hideBarcodes (SA-1031)", () => {
     expect(mockToBuffer.mock.calls.some(([o]) => o.bcid === "qrcode")).toBe(true);
   });
 });
+
+/**
+ * SA-1031 r2: a mixed-pack line prints ONE barcode source, the box (the line's Code128) or the pieces, never both. "The
+ * tenant used the box" = the pack product has a scan code (`unitSku ?? barcode`); the item number `sku` alone does not count.
+ */
+describe("invoice PDF payload: one barcode source on a mixed-pack line (SA-1031 r2)", () => {
+  const pieceB = {
+    ...component("b", 24, 1, 0.625),
+    unitBarcode: "012345678905",
+    barcodeSymbology: "UPC_A",
+  };
+  const packOf = (product: Record<string, unknown>, components: unknown[]) =>
+    invoice(
+      {
+        items: [
+          {
+            ...invoice({}, components).items[0],
+            product: {
+              id: "p1",
+              name: "Mixed Pack",
+              barcode: null,
+              sku: null,
+              unitSku: null,
+              ...product,
+            },
+          },
+        ],
+      },
+      components,
+    );
+  const code128 = () => mockToBuffer.mock.calls.filter(([o]) => o.bcid === "code128");
+  const pieceDraws = () => mockToBuffer.mock.calls.filter(([o]) => o.bcid === "upca");
+  beforeEach(() => {
+    mockCapturedInvoice = null;
+    mockToBuffer.mockClear();
+    process.env.WEB_URL = "https://app.example.com";
+  });
+
+  it("MP-R1: no pack code (only the item number): the line prints no Code128, the pieces keep theirs", async () => {
+    const svc = await make(
+      "off",
+      packOf({ sku: "PACK-1" }, [component("a", 24, 0, 0.625), pieceB]),
+    );
+    await svc.generateAndUpload("inv-1");
+    const item = mockCapturedInvoice.items[0];
+    expect(item.barcodeDataUri).toBeUndefined();
+    expect(item.barcodeText).toBeUndefined();
+    expect(code128()).toHaveLength(0);
+    for (const s of item.subLines) {
+      expect(s.barcodeText).toEqual(expect.any(String));
+      expect(s.barcodeDataUri).toMatch(/^data:image\/png;base64,/);
+    }
+    expect(pieceDraws()).toHaveLength(2);
+  });
+
+  it("MP-R2: the pack has a box barcode: the line prints it, no piece prints a barcode, the SKU text stays", async () => {
+    const svc = await make(
+      "off",
+      packOf({ barcode: "BOX-123" }, [component("a", 24, 0, 0.625), pieceB]),
+    );
+    await svc.generateAndUpload("inv-1");
+    const item = mockCapturedInvoice.items[0];
+    expect(item.barcodeText).toBe("BOX-123");
+    expect(item.barcodeDataUri).toMatch(/^data:image\/png;base64,/);
+    expect(code128()).toHaveLength(1);
+    expect(pieceDraws()).toHaveLength(0);
+    for (const s of item.subLines) {
+      expect(s.barcodeText).toBeNull();
+      expect(s.barcodeDataUri).toBeNull();
+    }
+    expect(item.subLines[0].unitSku).toBe("SKU-a");
+  });
+
+  it("MP-R3: the pack has only a unit code: the line prints it, the pieces print none", async () => {
+    const svc = await make(
+      "off",
+      packOf({ unitSku: "UNIT-9" }, [component("a", 24, 0, 0.625), pieceB]),
+    );
+    await svc.generateAndUpload("inv-1");
+    const item = mockCapturedInvoice.items[0];
+    expect(item.barcodeText).toBe("UNIT-9");
+    expect(code128()).toHaveLength(1);
+    expect(pieceDraws()).toHaveLength(0);
+    expect(
+      item.subLines.every((s: any) => s.barcodeText === null && s.barcodeDataUri === null),
+    ).toBe(true);
+  });
+
+  it("MP-G1: pin (21)'s fixture (no pack code; piece a has a barcode, piece o none) is unchanged", async () => {
+    const svc = await make(
+      "off",
+      invoice({}, [component("a", 24, 0, 0.625), component("o", 24, 1, null)]),
+    );
+    await svc.generateAndUpload("inv-1");
+    const item = mockCapturedInvoice.items[0];
+    expect(item.barcodeDataUri).toBeUndefined();
+    expect(item.subLines[0].barcodeText).toBe("036000291452");
+    expect(item.subLines[1].barcodeText).toBeNull();
+  });
+
+  it("MP-G2: no pack code and no piece barcode: the line prints the item number, as today", async () => {
+    const svc = await make(
+      "off",
+      packOf({ sku: "PACK-1" }, [component("o", 24, 0, null), component("p", 24, 1, null)]),
+    );
+    await svc.generateAndUpload("inv-1");
+    const item = mockCapturedInvoice.items[0];
+    expect(item.barcodeText).toBe("PACK-1");
+    expect(item.barcodeDataUri).toMatch(/^data:image\/png;base64,/);
+    expect(item.subLines.every((s: any) => s.barcodeText === null)).toBe(true);
+  });
+
+  it("MP-G3: a plain line still prints its code", async () => {
+    const svc = await make("off", packOf({ unitSku: "UNIT-1", sku: "S-1" }, []));
+    await svc.generateAndUpload("inv-1");
+    expect(mockCapturedInvoice.items[0].barcodeText).toBe("UNIT-1");
+    expect(code128()).toHaveLength(1);
+  });
+
+  it("MP-G4: key 'true' prints neither the line nor the pieces", async () => {
+    const svc = await make(
+      "off",
+      packOf({ barcode: "BOX-123" }, [component("a", 24, 0, 0.625), pieceB]),
+      "acme",
+      { "invoice.hideBarcodes": "true" },
+    );
+    await svc.generateAndUpload("inv-1");
+    expect(mockCapturedInvoice.items[0].barcodeDataUri).toBeUndefined();
+    expect(mockToBuffer.mock.calls.some(([o]) => o.bcid === "code128" || o.bcid === "upca")).toBe(
+      false,
+    );
+  });
+});

@@ -22,11 +22,19 @@ import {
   type Return,
   type ReturnStatus,
   type ReturnReason,
-  type CreateReturnItemDto,
+  type CreateReturnLineItemDto,
 } from "@/lib/api/returns";
 import { useCustomers } from "@/lib/api/customers";
 import { useOrders, type Order } from "@/lib/api/orders";
-import { returnLineQtyText } from "@/lib/return-line-qty";
+import {
+  lineCountFields,
+  lineCountProblem,
+  orderedItemQtyText,
+  type ReturnLineSnapshot,
+} from "@/lib/return-line-qty";
+import { createReturnErrorText } from "@/lib/return-error-text";
+import { ReturnLineCountCell } from "./_components/ReturnLineCountCell";
+import { INLINE_HOLD_REASONS } from "@routeflow/types";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { FindSaleByNumber } from "./_components/FindSaleByNumber";
@@ -81,9 +89,13 @@ interface ReturnItemRow {
   lineId: string;
   productId: string;
   productName: string;
-  orderedQty: number;
-  /** SA-1042 B9a: what the line counts, in pieces with its own unit beside it ("400 pcs (2 Cases)"). */
+  /** The order line as it was sold (its own snapshot): what the count cell counts in. */
+  line: ReturnLineSnapshot;
+  /** SA-1042 B9a, A-8: what the line ordered, by what the line knows ("400 pcs (2 Cases)", "10 Cases", "10"). */
   lineText: string;
+  /** What the person typed, in the line's own unit: Cases/boxes and pcs, or one qty on a legacy line. */
+  boxes: string;
+  pieces: string;
   qty: string;
   notes: string;
 }
@@ -198,21 +210,24 @@ function CreateReturnModal({
           lineId: item.id,
           productId: item.productId,
           productName: item.product?.name ?? item.name ?? item.productId,
-          orderedQty: Number(item.qty),
-          lineText: returnLineQtyText(item),
+          line: item,
+          lineText: orderedItemQtyText(item),
+          boxes: "",
+          pieces: "",
           qty: "",
           notes: "",
         })),
     );
   }, [orderId]);
 
-  function updateReturnItem(i: number, field: "qty" | "notes", value: string) {
+  function updateReturnItem(i: number, field: "qty" | "boxes" | "pieces" | "notes", value: string) {
     setReturnItems((prev) =>
       prev.map((row, idx) => (idx === i ? { ...row, [field]: value } : row)),
     );
   }
 
-  const selectedReturnItems = returnItems.filter((r) => r.qty && parseFloat(r.qty) > 0);
+  // A row is returned when it has a count in its line's own unit (Cases/boxes and pcs, or qty on a legacy line).
+  const selectedReturnItems = returnItems.filter((r) => lineCountFields(r.line, r) !== null);
 
   function validate() {
     const errs: Record<string, string> = {};
@@ -220,12 +235,11 @@ function CreateReturnModal({
     if (!orderId) errs.orderId = "Select an order.";
     if (!reason) errs.reason = "Select a return reason.";
     if (selectedReturnItems.length === 0) errs.items = "Enter a quantity for at least one item.";
-    selectedReturnItems.forEach((row) => {
-      const qty = parseFloat(row.qty);
-      if (isNaN(qty) || qty <= 0) errs[`qty_${row.lineId}`] = "Qty must be > 0.";
-      if (qty > row.orderedQty)
-        errs[`qty_${row.lineId}`] = `Cannot exceed ordered qty (${row.orderedQty} pcs).`;
-    });
+    // The message only saves a trip: the server caps each line (and nets earlier returns) and prices it.
+    for (const row of returnItems) {
+      const problem = lineCountProblem(row.line, row);
+      if (problem) errs[`qty_${row.lineId}`] = problem;
+    }
     return errs;
   }
 
@@ -238,11 +252,16 @@ function CreateReturnModal({
     }
     setErrors({});
 
-    const items: CreateReturnItemDto[] = selectedReturnItems.map((row) => ({
-      productId: row.productId,
-      qty: parseFloat(row.qty),
-      notes: row.notes.trim() || undefined,
-    }));
+    // SA-1042 B9c: line items only: the line and the count in its own unit. No figure is read back; the server re-prices.
+    const items = selectedReturnItems.map(
+      (row) =>
+        ({
+          productId: row.productId,
+          orderItemId: row.lineId,
+          ...lineCountFields(row.line, row), // non-null: the row was selected because it has a count
+          notes: row.notes.trim() || undefined,
+        }) as CreateReturnLineItemDto,
+    );
 
     createReturn.mutate(
       {
@@ -257,10 +276,10 @@ function CreateReturnModal({
           toast({ title: "Return request created", variant: "success" });
           onClose();
         },
-        onError: () => {
+        onError: (err) => {
           toast({
             title: "Failed to create return",
-            description: "Please try again.",
+            description: createReturnErrorText(err),
             variant: "error",
           });
         },
@@ -272,6 +291,8 @@ function CreateReturnModal({
     <Modal
       open={isOpen}
       onClose={onClose}
+      scroll
+      className="sm:max-w-2xl"
       title="Create Return"
       description="Create a return request for a delivered order."
       footer={
@@ -377,9 +398,13 @@ function CreateReturnModal({
           <div>
             <label className="mb-2 block text-sm font-medium text-navy">Items to Return</label>
             {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
-            <div className="overflow-x-auto rounded-lg border border-surface-border">
-              <table className="min-w-[480px] w-full text-sm">
-                <thead className="border-b border-surface-border bg-surface-raised">
+            <div
+              className="overflow-x-auto rounded-lg border border-surface-border"
+              data-testid="return-lines-table"
+            >
+              {/* Below sm a row stacks, so the count and its unit words are on screen without a swipe. */}
+              <table className="block w-full text-sm sm:table">
+                <thead className="hidden border-b border-surface-border bg-surface-raised sm:table-header-group">
                   <tr>
                     <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
                       Product
@@ -388,43 +413,47 @@ function CreateReturnModal({
                       Ordered
                     </th>
                     <th className="px-3 py-2.5 text-center text-xs font-medium text-navy/70">
-                      Return qty (pcs)
+                      Return
                     </th>
                     <th className="px-3 py-2.5 text-left text-xs font-medium text-navy/70">
                       Notes
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-surface-border">
+                <tbody className="block divide-y divide-surface-border sm:table-row-group">
                   {returnItems.map((row, i) => (
-                    <tr key={row.lineId}>
-                      <td className="px-3 py-2 text-navy font-medium">{row.productName}</td>
-                      <td className="px-3 py-2 text-center text-navy/70">{row.lineText}</td>
-                      <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          placeholder="0"
-                          min="0"
-                          max={row.orderedQty}
-                          step="1"
-                          value={row.qty}
-                          onChange={(e) => updateReturnItem(i, "qty", e.target.value)}
-                          className={cn(
-                            "h-8 w-20 rounded border bg-white px-2 text-sm text-center text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
-                            errors[`qty_${row.lineId}`] ? "border-danger" : "border-surface-border",
-                          )}
+                    <tr
+                      key={row.lineId}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 px-3 py-3 sm:table-row sm:p-0"
+                    >
+                      <td className="col-start-1 row-start-1 text-navy font-medium sm:px-3 sm:py-2">
+                        {row.productName}
+                      </td>
+                      <td className="col-start-1 row-start-2 whitespace-nowrap text-navy/70 sm:px-3 sm:py-2 sm:text-center">
+                        <span className="block text-xs sm:hidden">Ordered</span>
+                        {row.lineText}
+                      </td>
+                      <td className="col-start-2 row-span-2 row-start-1 sm:px-3 sm:py-2">
+                        <ReturnLineCountCell
+                          line={row.line}
+                          productName={row.productName}
+                          value={row}
+                          invalid={!!errors[`qty_${row.lineId}`]}
+                          onChange={(field, next) => updateReturnItem(i, field, next)}
                         />
                         {errors[`qty_${row.lineId}`] && (
-                          <p className="mt-1 text-xs text-danger">{errors[`qty_${row.lineId}`]}</p>
+                          <p className="mt-1 w-0 min-w-full text-xs text-danger">
+                            {errors[`qty_${row.lineId}`]}
+                          </p>
                         )}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="col-span-2 sm:px-3 sm:py-2">
                         <input
                           type="text"
                           placeholder="Condition / notes…"
                           value={row.notes}
                           onChange={(e) => updateReturnItem(i, "notes", e.target.value)}
-                          className="h-8 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          className="h-11 w-full min-w-[9rem] rounded border border-surface-border bg-white px-2 text-sm sm:h-8 text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                         />
                       </td>
                     </tr>
@@ -464,6 +493,8 @@ export default function ReturnsPage() {
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [reasonFilter, setReasonFilter] = React.useState("");
+  // SA-1060 PR-1: the INLINE returns held for staff (DRIVER_CAP / ALREADY_RETURNED) that nobody has approved or rejected yet
+  const [waitingApproval, setWaitingApproval] = React.useState(false);
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
@@ -473,7 +504,9 @@ export default function ReturnsPage() {
   const LIMIT = 20;
 
   const { data, isLoading, isError, refetch } = useReturns({
-    status: statusFilter || undefined,
+    status: waitingApproval ? "RECEIVED" : statusFilter || undefined,
+    kind: waitingApproval ? "INLINE" : undefined,
+    holdReason: waitingApproval ? INLINE_HOLD_REASONS.join(",") : undefined,
     reason: reasonFilter || undefined,
     search: debouncedSearch || undefined,
     page,
@@ -505,11 +538,12 @@ export default function ReturnsPage() {
   const totalPages = meta?.totalPages ?? 1;
   useClampPage(setPage, page, meta?.totalPages);
 
-  const hasActiveFilters = !!(statusFilter || reasonFilter || search);
+  const hasActiveFilters = !!(statusFilter || reasonFilter || search || waitingApproval);
 
   function clearFilters() {
     setStatusFilter("");
     setReasonFilter("");
+    setWaitingApproval(false);
     setSearch("");
     setPage(1);
   }
@@ -576,11 +610,12 @@ export default function ReturnsPage() {
               key={o.value || "all"}
               onClick={() => {
                 setStatusFilter(o.value);
+                setWaitingApproval(false);
                 setPage(1);
               }}
               className={cn(
                 "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-                statusFilter === o.value
+                statusFilter === o.value && !waitingApproval
                   ? "border-navy bg-navy text-white"
                   : "border-surface-border bg-white text-navy hover:bg-surface-raised",
               )}
@@ -598,6 +633,26 @@ export default function ReturnsPage() {
               )}
             </button>
           ))}
+
+          {hasInlineReturns && (
+            <button
+              type="button"
+              aria-pressed={waitingApproval}
+              onClick={() => {
+                setWaitingApproval((on) => !on);
+                setStatusFilter("");
+                setPage(1);
+              }}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                waitingApproval
+                  ? "border-navy bg-navy text-white"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+              )}
+            >
+              Waiting for approval
+            </button>
+          )}
 
           <select
             value={reasonFilter}

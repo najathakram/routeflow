@@ -270,7 +270,7 @@ function TodayRunHero({
       <div className="flex flex-wrap gap-3 px-5 pb-5">
         {canAddOrder && (
           <Link
-            href="/orders?action=new"
+            href="/orders?action=new&builder=1"
             className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-accent-strong px-5 text-base font-semibold text-white transition-colors hover:bg-accent-deep sm:flex-none sm:min-w-[220px]"
           >
             <ScanLine className="h-5 w-5" />

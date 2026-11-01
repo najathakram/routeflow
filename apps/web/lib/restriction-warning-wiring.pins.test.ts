@@ -26,6 +26,7 @@ const STAFF_WRITE_HOOKS = [
   "useConvertEstimateToInvoice",
   "useRunRecurringInvoice",
   "useGenerateTemplateOrder",
+  "useUnvoidInvoice",
 ];
 const CALL = new RegExp(`\\b(${STAFF_WRITE_HOOKS.join("|")})\\b`);
 const WIRED =

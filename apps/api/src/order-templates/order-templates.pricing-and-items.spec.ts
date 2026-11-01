@@ -257,7 +257,7 @@ describe("OrderTemplatesService — pricing via the shared resolver, PATCH item 
   it("REG-B48 a remembered above-list price (sticky upsell) wins over the tier (T15)", async () => {
     prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1 });
     ordersService.getCustomerPriceHistory.mockResolvedValue({
-      p1: { lastPrice: 12, listPriceAtTime: 10 },
+      p1: { lastPrice: 12, stickyPrice: 12, listPriceAtTime: 10 },
     });
     prisma.product.findMany.mockResolvedValue([
       { id: "p1", pricePerUnit: 10, unitsPerBox: null, category: null, trackedCategoryId: null },
@@ -271,6 +271,23 @@ describe("OrderTemplatesService — pricing via the shared resolver, PATCH item 
     expect(line.priceType).toBe("MANUAL");
     expect(line.originalPrice).toBe(10);
     expect(ordersService.getCustomerPriceHistory).toHaveBeenCalledWith("c1");
+  });
+
+  it("B10 (SA-1072): a tier price remembered from a SPECIAL line isn't carried by a standing order", async () => {
+    prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1 });
+    ordersService.getCustomerPriceHistory.mockResolvedValue({
+      p1: { lastPrice: 12, stickyPrice: null, listPriceAtTime: 10 },
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p1", pricePerUnit: 10, unitsPerBox: null, category: null, trackedCategoryId: null },
+    ]);
+    setTemplate([{ productId: "p1", qty: 1, notes: null }]);
+
+    await service.generateOrder("t1");
+
+    const line = createdLine();
+    expect(line.unitPrice).toBe(10);
+    expect(line.priceType).toBe("STANDARD");
   });
 
   it("REG-B48 tier 1 with no override/promo/history still persists STANDARD and a null originalPrice (T16)", async () => {

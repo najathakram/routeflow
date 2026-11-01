@@ -135,10 +135,10 @@ the state moves/comments/relations the MCP classifier itself cannot.
 
 ## Quick reference
 
-| Step | What                    | Command                                                                                                                                                                                                                          |
-| ---- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Gate                    | `npm run verify`                                                                                                                                                                                                                 |
-| 2    | Visibility flip + merge | public → merge PR → wait for BOTH deployments `SUCCESS` → private — see [`docs/runbooks/deploy-visibility-flip.md`](../../../docs/runbooks/deploy-visibility-flip.md) for the rationale, failure modes, and retirement checklist |
-| 3    | Smoke                   | `SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app SMOKE_TENANT_SLUG=e2e-routeflow npm run post-deploy-check`                                                                                                        |
+| Step | What                    | Command                                                                                                                                                                                                                                                       |
+| ---- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Gate                    | `npm run verify`                                                                                                                                                                                                                                              |
+| 2    | Visibility flip + merge | public → merge PR → wait for every service status (root, api, web, mobile) `SUCCESS` → private — see [`docs/runbooks/deploy-visibility-flip.md`](../../../docs/runbooks/deploy-visibility-flip.md) for the rationale, failure modes, and retirement checklist |
+| 3    | Smoke                   | `SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app SMOKE_TENANT_SLUG=e2e-routeflow npm run post-deploy-check`                                                                                                                                     |
 
 After the deploy, `ci.yml`'s `e2e` job runs Playwright on Railway's `deployment_status` event by itself — do not dispatch it. `post-deploy.yml` is a manual, ad-hoc "check production now" button only (it no longer has a webhook trigger; see its header).

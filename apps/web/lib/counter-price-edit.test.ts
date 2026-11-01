@@ -13,6 +13,7 @@ const plain = (tierPrice: number, over: Partial<PriceEditLine> = {}): PriceEditL
   listPrice: tierPrice,
   tier: 1,
   qty: 1,
+  unitWord: "each",
   ...over,
 });
 /** a 12-pack, box price 24.00, 2 boxes + 3 pieces (qty 27 pieces) */
@@ -24,6 +25,7 @@ const boxed: PriceEditLine = {
   boxes: 2,
   pieces: 3,
   unitsPerBox: 12,
+  unitWord: "box",
 };
 
 describe("resolveCounterPriceEdit (POS-5 money, golden)", () => {
@@ -164,5 +166,35 @@ describe("priceEditChip (the neutral chip on an edited line)", () => {
     expect(priceEditChip({ mode: "percent", value: 10 }, 12, 9)).toBe("25% off");
     // and the amount follows the real gap
     expect(priceEditChip({ mode: "amount", value: 1 }, 12, 9)).toBe("$3.00 off each");
+  });
+});
+
+describe("SA-1067 M3: the Apply limit (MAX_UNIT_PRICE)", () => {
+  it("a set price of exactly the limit resolves; one cent over is OVER_LIMIT with the max", () => {
+    expect(resolveCounterPriceEdit("set", "1000000", plain(10))).toMatchObject({
+      ok: true,
+      unitPrice: 1_000_000,
+    });
+    expect(resolveCounterPriceEdit("set", "1000000.01", plain(10))).toEqual({
+      ok: false,
+      refused: "OVER_LIMIT",
+      max: 1_000_000,
+    });
+  });
+
+  it("a scanned 12-digit code is OVER_LIMIT, not a price", () => {
+    expect(resolveCounterPriceEdit("set", "123456789012", plain(10))).toMatchObject({
+      ok: false,
+      refused: "OVER_LIMIT",
+    });
+  });
+
+  it("a half cent over rounds to the limit and resolves (the rounded price is what's checked)", () => {
+    expect(resolveCounterPriceEdit("set", "1000000.004", plain(10))).toMatchObject({ ok: true });
+  });
+
+  it("percent and amount modes never reach the limit on an ordinary line", () => {
+    expect(resolveCounterPriceEdit("percent", "50", plain(10))).toMatchObject({ ok: true });
+    expect(resolveCounterPriceEdit("amount", "2", plain(10))).toMatchObject({ ok: true });
   });
 });

@@ -24,6 +24,7 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   setLines: (fn: (prev: T[]) => T[]) => void,
   tierFor: DefaultUnitDeps["tierFor"],
   isStaff: boolean,
+  rememberedOf: DefaultUnitDeps["rememberedOf"],
 ) {
   const qc = useQueryClient();
   const sub = useSubscription({ staleTime: 60_000, enabled: isStaff });
@@ -37,6 +38,7 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     unitsEnabled,
     unitsKnown,
     tierFor,
+    rememberedOf,
     getUnits: (id) =>
       qc.ensureQueryData({ queryKey: productUnitsKey(id), queryFn: () => fetchProductUnits(id) }),
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { isSpecialTier } from "@routeflow/pricing";
+import { isSpecialTier, roundMoney } from "@routeflow/pricing";
 import { Button, Input, Modal, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money } from "@routeflow/pricing";
 import {
@@ -11,6 +11,7 @@ import {
   type PriceEditMode,
   type PriceEditRefusal,
 } from "@/lib/counter-price-edit";
+import { useArmedEnter } from "@/lib/armed-enter";
 
 /** What Apply hands back: the screen replaces ONE line's override with it and never posts from here. */
 export interface CounterPriceEdit {
@@ -58,13 +59,13 @@ const MODES: ReadonlyArray<{ mode: PriceEditMode; label: string }> = [
 ];
 
 /** The word a plain line is priced per: its own unit ("case"); "each", "unit" or none read as "item". */
-function plainUnitWord(word: string | undefined): string {
-  const w = (word ?? "").trim().toLowerCase();
+function plainUnitWord(word: string): string {
+  const w = word.trim().toLowerCase();
   return !w || w === "each" || w === "unit" ? "item" : w;
 }
 
-function fieldLabel(mode: PriceEditMode, boxed: boolean, word?: string): string {
-  const unit = boxed ? "box" : plainUnitWord(word);
+function fieldLabel(mode: PriceEditMode, word: string): string {
+  const unit = plainUnitWord(word);
   if (mode === "set") return `Price per ${unit}`;
   if (mode === "percent") return "Percent off";
   return `Amount off per ${unit}`;
@@ -90,6 +91,8 @@ function refusalCopy(
       return "Use at most two decimals, like 12.5.";
     case "AMOUNT_OVER_PRICE":
       return `That's more than the price. Enter ${money(max ?? 0)} or less.`;
+    case "OVER_LIMIT":
+      return `That's over the limit. Enter ${money(max ?? 0)} or less.`;
     case "REASON_REQUIRED":
       return `Add a reason. ${customerName?.trim() || "This customer"} has a special price on this item.`;
   }
@@ -121,20 +124,49 @@ export function CounterLinePriceEdit({
   const [error, setError] = React.useState<string | null>(null);
   const valueRef = React.useRef<HTMLInputElement>(null);
   const errorId = React.useId();
+  // SA-1067 M2a: a scanner's code ends in Enter, which would have applied it. The first Enter arms the value shown;
+  // a second Enter on the same mode, value and reason applies. Any edit ends the arm (A-2). Apply by pointer, or Tab to
+  // Apply and Enter, is not here.
+  const editKey = JSON.stringify([mode, value, reason]);
+  const armedEnter = useArmedEnter(editKey);
+  const { disarm } = armedEnter;
+
+  // SA-1071 P1: the effect below reads the live props through this ref, so a re-render never re-fires a pick.
+  const live = React.useRef({ line, onApply, onClosed, locked, canEditPrices });
+  live.current = { line, onApply, onClosed, locked, canEditPrices };
 
   React.useEffect(() => {
     if (!openWith) return;
+    // SA-1071 P1: pressing Use is already the confirm. When the shared rule needs no reason and refuses nothing, the pick is
+    // the write (`onApply`, the one write; Reset price is the undo). Otherwise the dialog opens prefilled, as it always did.
+    const cur = live.current;
+    if (!cur.canEditPrices) return;
+    const picked = roundMoney(openWith.value);
+    const resolved = resolveCounterPriceEdit("set", picked, cur.line, "");
+    if (resolved.ok) {
+      if (cur.locked) return;
+      cur.onApply({
+        mode: "set",
+        value: picked,
+        unitPrice: resolved.unitPrice,
+        override: resolved.override,
+      });
+      // the history panel hands focus to a field beside it a tick later; the till's scan field takes it after that
+      const t = setTimeout(() => live.current.onClosed?.(), 0);
+      return () => clearTimeout(t);
+    }
     setMode("set");
-    setValue(openWith.value.toFixed(2));
+    setValue(roundMoney(openWith.value).toFixed(2));
     setReason("");
     setError(null);
+    disarm();
     setOpen(true);
-  }, [openWith]);
+  }, [openWith, disarm]);
 
   if (!canEditPrices) return null;
 
   const boxed = isBoxedLine(line);
-  const unitWord = boxed ? "box" : plainUnitWord(line.unitWord);
+  const unitWord = plainUnitWord(line.unitWord);
   // CQ-14: the label says what Apply will do. The reason is required for exactly the lines the shared rule
   // (`decideStaffOverride`, which `resolveCounterPriceEdit` runs) refuses without one: a special-tier line.
   const reasonRequired = line.isSpecial ?? isSpecialTier(line.tier);
@@ -144,6 +176,7 @@ export function CounterLinePriceEdit({
     setValue("");
     setReason("");
     setError(null);
+    disarm();
     setOpen(true);
   };
   const close = () => setOpen(false);
@@ -167,6 +200,14 @@ export function CounterLinePriceEdit({
       ...(reason.trim() ? { reason: reason.trim() } : {}),
     });
     close();
+  };
+
+  const armed = armedEnter.armed;
+  const onFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>) => {
+    if (e.key !== "Enter" || !(e.target instanceof HTMLInputElement)) return;
+    e.preventDefault();
+    if (!resolveCounterPriceEdit(mode, value, line, reason).ok) return apply();
+    armedEnter.press(true, apply);
   };
 
   return (
@@ -217,7 +258,7 @@ export function CounterLinePriceEdit({
             : undefined
         }
       >
-        <form onSubmit={apply} className="flex flex-col gap-4" noValidate>
+        <form onSubmit={apply} onKeyDown={onFormKeyDown} className="flex flex-col gap-4" noValidate>
           <div
             role="radiogroup"
             aria-label="How to change the price"
@@ -250,7 +291,7 @@ export function CounterLinePriceEdit({
 
           <Input
             ref={valueRef}
-            label={fieldLabel(mode, boxed, line.unitWord)}
+            label={fieldLabel(mode, line.unitWord)}
             type="text"
             inputMode="decimal"
             autoComplete="off"
@@ -284,7 +325,7 @@ export function CounterLinePriceEdit({
 
           <p aria-live="polite" className="min-h-[1.25rem] text-sm text-navy/70">
             {preview?.ok
-              ? `New price ${money(preview.unitPrice)} per ${unitWord}. Line total ${money(preview.lineTotal)}.`
+              ? `New price ${money(preview.unitPrice)} per ${unitWord}. Line total ${money(preview.lineTotal)}.${armed ? " Press Enter again to apply." : ""}`
               : ""}
           </p>
 

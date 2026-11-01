@@ -110,6 +110,67 @@ describe("LoginPage (operator)", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
   });
 
+  // W-839 / SA-937 MUST 6: a driver who is also an ACTIVE buyer of this tenant is ASKED which role to use.
+  describe("the role step (W-839)", () => {
+    const signIn = async (user: Record<string, unknown>, me: Record<string, unknown> = {}) => {
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({
+        data: {
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          user: {
+            id: "u1",
+            username: "sam",
+            status: "ACTIVE",
+            forcePasswordChange: false,
+            ...user,
+          },
+        },
+      });
+      (apiClient.get as jest.Mock).mockImplementation((url: string) =>
+        Promise.resolve({ data: url === "/users/me" ? me : {} }),
+      );
+      const u = userEvent.setup();
+      renderWithProviders(<LoginPage />);
+      await u.type(screen.getByLabelText("Workspace"), "acme");
+      await u.type(screen.getByLabelText("Username or email"), "sam");
+      await u.type(screen.getByLabelText("Password"), "s3cret-pw");
+      await u.click(screen.getByRole("button", { name: /sign in/i }));
+    };
+    beforeEach(() => window.history.replaceState(null, "", "/login"));
+
+    it("a driver who also buys goes to the role step, which will land Drive where this path lands", async () => {
+      sessionStorage.clear();
+      await signIn({ role: "DRIVER" }, { alsoBuyer: true });
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/choose-role"));
+      expect(sessionStorage.getItem("rf.roleStep.landing")).toBe("/routes/my-runs");
+    });
+
+    it("a driver who does not buy keeps today's landing", async () => {
+      await signIn({ role: "DRIVER" }, { alsoBuyer: false });
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/routes/my-runs"));
+      expect(push).not.toHaveBeenCalledWith("/choose-role");
+    });
+
+    it("a non-driver is never asked and never pays for the /users/me read", async () => {
+      await signIn({ role: "OPERATOR" }, { alsoBuyer: true });
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+      expect((apiClient.get as jest.Mock).mock.calls.some((c) => c[0] === "/users/me")).toBe(false);
+    });
+
+    it("an explicit redirect wins over the step", async () => {
+      window.history.replaceState(null, "", "/login?redirect=" + encodeURIComponent("/orders/abc"));
+      await signIn({ role: "DRIVER" }, { alsoBuyer: true });
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/abc"));
+      expect(push).not.toHaveBeenCalledWith("/choose-role");
+    });
+
+    it("a forced password change still goes first", async () => {
+      await signIn({ role: "DRIVER", forcePasswordChange: true }, { alsoBuyer: true });
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/change-password"));
+      expect(push).not.toHaveBeenCalledWith("/choose-role");
+    });
+  });
+
   // T11 (R4) — regression pin, deliberately outside the red gate: passes
   // today too (the redirect param is currently ignored) because a forced
   // password change always wins.

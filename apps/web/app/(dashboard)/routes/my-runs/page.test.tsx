@@ -180,7 +180,7 @@ describe("MyRunsPage — B966 'Scan to add order' is hidden for a pure DRIVER", 
 
     expect(await screen.findByText("Open full run")).toBeInTheDocument();
     expect(screen.queryByText("Scan to add order")).not.toBeInTheDocument();
-    expect(document.querySelector('a[href="/orders?action=new"]')).toBeNull();
+    expect(document.querySelector('a[href="/orders?action=new&builder=1"]')).toBeNull();
   });
 
   it("a dual-role OPERATOR (canActAsDriver) in drive mode keeps 'Scan to add order'", async () => {

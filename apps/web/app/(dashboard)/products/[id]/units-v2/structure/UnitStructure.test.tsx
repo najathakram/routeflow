@@ -9,6 +9,9 @@ import { ProductPricingV2 } from "../../ProductPricingV2";
 import { ProductUnitsCard } from "../../ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "../../units-v2-testids";
 import { DIRTY_HINT } from "../units";
+import { setWideViewport } from "@/test-utils/viewport";
+
+setWideViewport();
 
 // K10d: K7's unit panels mounted in the v2 shell, the way the page mounts the shell.
 

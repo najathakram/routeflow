@@ -96,6 +96,14 @@ async function main() {
   });
   const tenantId = tenant.id;
 
+  // SA-1067 Z1: the `test` tenant gets a config row with a real zone, like the other approved local tenants. `update: {}`
+  // keeps a zone someone changed; without this row the tenant read as UTC (the fallback) and no gate saw a real day.
+  await prisma.tenantConfig.upsert({
+    where: { tenantId },
+    update: {},
+    create: { tenantId, businessName: "RouteFlow Test Co.", timezone: "America/New_York" },
+  });
+
   // ─── Operator ─────────────────────────────────────────────────────────────────
   const adminUser = await prisma.user.upsert({
     where: { tenantId_username: { tenantId, username: "admin" } },

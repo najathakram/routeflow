@@ -87,7 +87,7 @@ const row = (over: Partial<Row>): Row => ({
 
 /** A later plain pack line: 2 boxes of the product, priced through the real buyer resolver. */
 async function priceTwoBoxes(rows: Row[]) {
-  const remembered = (await history(rows))[PRODUCT.id]?.lastPrice ?? null;
+  const remembered = (await history(rows))[PRODUCT.id]?.stickyPrice ?? null;
   const r = resolveBuyerLinePrice(PRODUCT, 1, [], 48, 2, remembered, {
     boxes: 2,
     pieces: 0,
@@ -119,10 +119,16 @@ describe("B606 — price history ignores unit-aware lines", () => {
   });
 
   it("a newer Case row does not shadow a real pack override for the same product", async () => {
-    const packOverride = row({ unitPrice: 50, originalPrice: 42, updatedAt: 1 }); // sticky upsell
+    // sticky upsell
+    const packOverride = row({
+      unitPrice: 50,
+      originalPrice: 42,
+      priceType: PriceType.MANUAL,
+      updatedAt: 1,
+    });
     const newerCase = row({ unitLabel: "Case", updatedAt: 2 });
     expect(await history([packOverride, newerCase])).toEqual({
-      p1: { lastPrice: 50, listPriceAtTime: 42 },
+      p1: { lastPrice: 50, stickyPrice: 50, listPriceAtTime: 42 },
     });
     expect(await priceTwoBoxes([packOverride, newerCase])).toMatchObject({
       unitPrice: 50,
@@ -132,8 +138,27 @@ describe("B606 — price history ignores unit-aware lines", () => {
   });
 
   it("still remembers a pack override (no unit) — the filter narrows, it does not disable the feature", async () => {
-    expect(await history([row({ unitPrice: 50, originalPrice: 42 })])).toEqual({
-      p1: { lastPrice: 50, listPriceAtTime: 42 },
+    const override = row({ unitPrice: 50, originalPrice: 42, priceType: PriceType.MANUAL });
+    expect(await history([override])).toEqual({
+      p1: { lastPrice: 50, stickyPrice: 50, listPriceAtTime: 42 },
+    });
+  });
+
+  it("SA-1072: only a MANUAL newest line carries a sticky price, and an older MANUAL line never comes back", async () => {
+    const upsell = row({
+      unitPrice: 50,
+      originalPrice: 42,
+      priceType: PriceType.MANUAL,
+      updatedAt: 1,
+    });
+    const tier = row({
+      unitPrice: 45,
+      originalPrice: 42,
+      priceType: PriceType.SPECIAL,
+      updatedAt: 2,
+    });
+    expect(await history([upsell, tier])).toEqual({
+      p1: { lastPrice: 45, stickyPrice: null, listPriceAtTime: 42 },
     });
   });
 

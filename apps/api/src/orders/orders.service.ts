@@ -53,7 +53,10 @@ import {
   type CategoryTaxType,
   type PromotionRule,
 } from "@routeflow/pricing";
-import { loadCustomerPriceHistory } from "./customer-price-history-query";
+import {
+  loadCustomerPriceHistory,
+  type CustomerPriceHistory,
+} from "./customer-price-history-query";
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryCreditTx } from "../common/tx-retry";
 import { stockTxBounded } from "../common/stock-tx";
@@ -119,6 +122,7 @@ import { assertDeliveredLinesUntouched, reduceDeliveredLineEntries } from "./del
 import { lockEditedOrder, editGuards, walkInSaleLocked } from "./replace-after-delivery";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
 import { buildStatusUpdateData } from "./order-status-claim";
+import { assertDeliveredDemotionAllowed } from "./delivered-demotion.guard";
 import { AppliedCreditNoteDto, CreateOrderDto } from "./dto/create-order.dto";
 import { assertSaleReplayable, keepOrderOnInvoiceFailure, sendSale } from "./sale-replay-guard";
 import { assertReplayOfCart, isIdempotencyKeyViolation } from "./replay-cart-normalize";
@@ -544,9 +548,7 @@ export class OrdersService implements OnApplicationBootstrap {
    * product's price it would price a plain pack line at the Case price (2 boxes at $450 each),
    * and `distinct: productId` would let a newer Case row shadow a real pack override.
    */
-  async getCustomerPriceHistory(
-    customerId: string,
-  ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
+  async getCustomerPriceHistory(customerId: string): Promise<CustomerPriceHistory> {
     const history = await loadCustomerPriceHistory(this.prisma.forTenant(), customerId);
     // S19 R3 (SA-811a): a pack in the customer layer pre-fills the resolver's price, never the last-given one.
     return omitCustomerLayerHistory(this, customerId, history);
@@ -1694,7 +1696,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // is honored verbatim, so they can still sell at list for one order.
         const rememberedForLine =
           user.role === UserRole.CUSTOMER || overridePrice == null
-            ? (priceHistory[item.productId]?.lastPrice ?? null)
+            ? (priceHistory[item.productId]?.stickyPrice ?? null)
             : null;
         const resolved = this.resolveBuyerLinePrice(
           product,
@@ -2206,22 +2208,8 @@ export class OrdersService implements OnApplicationBootstrap {
       dto.status,
       dto.reason,
     );
-
-    // Reopening a route-delivered order from here would leave the run stop
-    // COMPLETED while the order says otherwise — the stop owns the stock and
-    // payment reversal, so send staff there instead. One extra lookup, and only
-    // on this transition.
-    if (isDeliveredDemotion && order.routeRunStopId) {
-      const stop = await this.prisma.forTenant().routeRunStop.findUnique({
-        where: { id: order.routeRunStopId },
-        select: { status: true },
-      });
-      if (stop?.status === "COMPLETED") {
-        throw new ConflictException(
-          "This order was delivered on a route run. Reopen its stop from the run instead — that reverses stock and payments correctly.",
-        );
-      }
-    }
+    // Paid walk-in sale / route-delivered stop refusals: delivered-demotion.guard.ts.
+    if (isDeliveredDemotion) await assertDeliveredDemotionAllowed(this.prisma.forTenant(), order);
 
     await assertStopDoneForOfficeDelivered(this.prisma, order, dto.status); // row 590 (SA-978a)
 
@@ -3048,7 +3036,7 @@ export class OrdersService implements OnApplicationBootstrap {
               buyerPromos,
               qtyPieces,
               qtyUnits,
-              lastPrice: buyerPriceHistory[item.productId]?.lastPrice ?? null,
+              stickyPrice: buyerPriceHistory[item.productId]?.stickyPrice ?? null,
               denomination: { boxes, pieces, unitsPerBox: upb },
             });
             const made = await tx.orderItem.create({
@@ -4890,7 +4878,7 @@ export class OrdersService implements OnApplicationBootstrap {
               buyerPromos,
               qtyPieces,
               qtyUnits,
-              priceHistory[product.id]?.lastPrice ?? null,
+              priceHistory[product.id]?.stickyPrice ?? null,
               // REG-B109: the exact denomination this line bills with below.
               { boxes: split.boxes, pieces: split.pieces, unitsPerBox: upb },
               crPc.layer(product),

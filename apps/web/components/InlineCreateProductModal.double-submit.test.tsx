@@ -38,10 +38,13 @@ function mount() {
   );
 }
 
-// The real form needs a Unit, and jsdom's constraint check would block a click on an empty one; two submit
-// events are what a fast double-click produces once the form is valid.
-const submitForm = () =>
+// The form needs a Unit (SA-1071 I3: it names a missing one and sends nothing); two submit events are what a fast
+// double-click produces once the form is valid.
+const submitForm = () => {
+  const unit = screen.getByPlaceholderText("e.g. case, kg, unit");
+  if (!(unit as HTMLInputElement).value) fireEvent.change(unit, { target: { value: "each" } });
   fireEvent.submit(screen.getByRole("button", { name: /create product/i }).closest("form")!);
+};
 
 beforeEach(() => createMutate.mockReset());
 

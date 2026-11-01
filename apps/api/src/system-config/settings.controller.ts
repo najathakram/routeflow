@@ -36,6 +36,7 @@ import { changeTenantTimeZone, prepareTenantTimeZoneChange } from "./tenant-time
 import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 import { sanitizeReceiptFooter } from "./receipt-footer";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
 @Controller(["settings", "tenant/settings"])
@@ -50,6 +51,7 @@ export class SettingsController {
     private readonly quickKeys: QuickKeysSettingsService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   async getSettings() {
     const all = await this.svc.getAll("settings.");
@@ -140,6 +142,7 @@ export class SettingsController {
     };
   }
 
+  @RequirePermission("FINANCE")
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>, @CurrentUser() user?: JwtPayload) {
     // B1188: these two used to be accepted here and silently dropped (neither is stored by this
@@ -233,7 +236,8 @@ export class SettingsController {
         if (newZone === undefined) {
           await this.prisma.tenantConfig.upsert({
             where: { tenantId },
-            create: { tenantId, ...configUpdate },
+            // SA-1067 Z2: a row-less tenant's first save must not store the column default (New York) as if chosen.
+            create: { tenantId, timezone: FALLBACK_ZONE, ...configUpdate },
             update: configUpdate,
           });
         }
@@ -554,6 +558,7 @@ export class SettingsController {
 
   // ─── Route Settings ───────────────────────────────────────────────────────────
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("route")
   async getRouteSettings() {
     const speedRaw = await this.svc.get("route.averageSpeedKmh");
@@ -595,6 +600,7 @@ export class SettingsController {
     };
   }
 
+  @RequirePermission("DISPATCH")
   @Patch("route")
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async updateRouteSettings(@Body() dto: UpdateRouteSettingsDto) {
@@ -619,6 +625,7 @@ export class SettingsController {
 
   // ─── Invoice Settings ─────────────────────────────────────────────────────────
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("invoice")
   async getInvoiceSettings() {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
@@ -650,6 +657,7 @@ export class SettingsController {
     };
   }
 
+  @RequirePermission("FINANCE")
   @Patch("invoice")
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async updateInvoiceSettings(@Body() dto: UpdateInvoiceSettingsDto) {
@@ -672,7 +680,11 @@ export class SettingsController {
     if (dto.creditAutoApplyOnSend !== undefined && tenantId) {
       await this.prisma.tenantConfig.upsert({
         where: { tenantId },
-        create: { tenantId, creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+        create: {
+          tenantId,
+          timezone: FALLBACK_ZONE,
+          creditAutoApplyOnSend: dto.creditAutoApplyOnSend,
+        },
         update: { creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
       });
     }
@@ -683,6 +695,7 @@ export class SettingsController {
   // Read: any operator/driver (the sale builder needs the floor). Write: admin
   // only — costing method + margin floors are admin-only settings (spec §4).
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("margin")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getMarginConfig() {
@@ -707,6 +720,7 @@ export class SettingsController {
   // Read: any operator (buyer-visible seller info, no reason to admin-gate the
   // read). Write: admin only — mirrors margin's read/write split.
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("remittance")
   getRemittanceConfig() {
     return this.svc.getRemittanceConfig();
@@ -723,6 +737,7 @@ export class SettingsController {
   // Read: any operator/driver (drivers see priced lines too). Write: admin
   // only — mirrors margin/remittance's read/write split.
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("pricing-tier-labels")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getPricingTierLabels() {

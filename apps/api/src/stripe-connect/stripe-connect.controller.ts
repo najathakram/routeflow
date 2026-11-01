@@ -18,6 +18,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { StripeConnectService } from "./stripe-connect.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Tenant-side Stripe Connect management. TENANT_ADMIN satisfies @Roles(OPERATOR).
  * SA-778: the two mutations (`link`, `disconnect`) carry `@NoImpersonation("billing")` (payment setup is not
@@ -29,6 +30,7 @@ import { StripeConnectService } from "./stripe-connect.service";
 export class StripeConnectController {
   constructor(private readonly connect: StripeConnectService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   status(@CurrentUser() user: JwtPayload) {
     return this.connect.getStatus(user.tenantId!);

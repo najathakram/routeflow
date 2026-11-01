@@ -1,6 +1,6 @@
 import * as React from "react";
 import { act } from "react";
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { RecordInlineReturnDialog } from "./RecordInlineReturnDialog";
 import { RETURNS_NOT_ENABLED_MESSAGE } from "@routeflow/returns";
 import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routeflow/types";
@@ -167,13 +167,25 @@ async function openToStep1(orderId = "order-1") {
   await screen.findByText(/what came back/i);
 }
 
+/** R-1: there is no "Get quote". The quote is asked by itself 350 ms after the last change to the lines; the default
+ *  1 s `waitFor` timeout covers it with real timers. */
 async function enterQtyAndGetQuote(pieces: string) {
   const piecesInput = screen.getByLabelText(/^pieces$/i);
   fireEvent.change(piecesInput, { target: { value: pieces } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
 }
+
+/** Waits for the NEXT live quote request (the lines changed again) to go out. */
+async function waitForQuoteCall(n: number) {
+  await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(n));
+}
+
+const TAKE_BACK = /take back items and give .* credit/i;
+const optionsToggle = (name = "Widget") =>
+  screen.getByRole("button", { name: new RegExp(`options for ${name}`, "i") });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -182,7 +194,7 @@ beforeEach(() => {
   captureIsPending = false;
 });
 
-describe("RecordInlineReturnDialog — Step 2 covered chunks (AC1)", () => {
+describe("RecordInlineReturnDialog — covered chunks under the line (AC1)", () => {
   it("renders two covered chunks newest-invoice-first with components per chunk, total = sum", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("10");
@@ -196,7 +208,10 @@ describe("RecordInlineReturnDialog — Step 2 covered chunks (AC1)", () => {
     const older = chunk({ sourceOrderId: "order-older", pieces: 4, subtotal: 8, taxAmount: 0.8 });
     resolveNextQuote(quoteResponse([newest, older]));
 
+    // R-1: the chunks sit in the line's options; open them to read them.
+    fireEvent.click(optionsToggle());
     await screen.findByText(/from order #2002/i);
+    expect(screen.getByText(/from order #2002/i)).toBeVisible();
     const rows = screen.getAllByText(/from order #/i);
     expect(rows[0]).toHaveTextContent("2002");
     expect(rows[1]).toHaveTextContent("1500");
@@ -208,7 +223,7 @@ describe("RecordInlineReturnDialog — Step 2 covered chunks (AC1)", () => {
     expect(screen.getByText("Tax $0.80")).toBeInTheDocument();
 
     // Total = sum of the chunks' own subtotal+tax (20 subtotal + 2 tax = $22.00).
-    expect(screen.getByText("$22.00")).toBeInTheDocument();
+    expect(within(screen.getByTestId("return-summary")).getByText("$22.00")).toBeInTheDocument();
   });
 });
 
@@ -226,14 +241,19 @@ describe("RecordInlineReturnDialog — excess chunk (AC2)", () => {
     });
     resolveNextQuote(quoteResponse([covered, excess]));
 
-    await screen.findByText(/not on any invoice/i);
+    // R-1: the excess is flagged on its own line; the choice sits in that line's options.
+    expect(await screen.findByTestId("return-line-flag-prod-1")).toHaveTextContent(
+      "6 not on any invoice · Credit at current price",
+    );
+    fireEvent.click(optionsToggle());
     const currentPriceRadio = screen.getByRole("radio", { name: /credit at current price/i });
     const returnOnlyRadio = screen.getByRole("radio", { name: /return only what was bought/i });
     expect(currentPriceRadio).toBeChecked();
     expect(returnOnlyRadio).not.toBeChecked();
 
     fireEvent.click(returnOnlyRadio);
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    // No re-quote button: the live quote follows the trimmed quantity by itself.
+    await waitForQuoteCall(2);
     // The re-quote request drops the excess entirely — only the covered pieces remain.
     const requoteReq = quoteMutate.mock.calls[1][0];
     expect(requoteReq.items).toEqual([{ productId: "prod-1", qty: 1, boxes: 0, pieces: 10 }]);
@@ -251,12 +271,15 @@ describe("RecordInlineReturnDialog — excess chunk (AC2)", () => {
     resolveNextQuote(quoteResponse([covered, excess]));
     await screen.findByText(/not on any invoice/i);
 
+    fireEvent.click(optionsToggle());
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    await waitForQuoteCall(2);
     resolveNextQuote(quoteResponse([covered]));
     await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
 
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
 
@@ -282,10 +305,11 @@ describe("RecordInlineReturnDialog — boxed product (AC3)", () => {
 
     fireEvent.change(screen.getByLabelText(/^boxes$/i), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "3" } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
 
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    await waitForQuoteCall(1);
     const req = quoteMutate.mock.calls[0][0];
     expect(req.items).toEqual([{ productId: "prod-boxed", qty: 1, boxes: 1, pieces: 3 }]);
   });
@@ -336,7 +360,9 @@ describe("RecordInlineReturnDialog — returnKey stability across a retry (AC4)"
 });
 
 describe("RecordInlineReturnDialog — refusals render the API's own message (AC5)", () => {
-  it("renders a business refusal's exact message with no retry loop", async () => {
+  // R-1 (meaning changed): a refused quote used to move the dialog to its "refused" screen. It now keeps the work: the
+  // lines and the add box stay, the message sits under the list, and nothing can be confirmed.
+  it("renders a business refusal's exact message under the list, keeps the work, with no retry loop", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("10");
 
@@ -346,7 +372,16 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
         data: { message: "Cannot capture a return against a cancelled order" },
       },
     });
-    await screen.findByText("Cannot capture a return against a cancelled order");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cannot capture a return against a cancelled order",
+    );
+    // the work is still on screen and the dialog never left the lines
+    expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).toBe("10");
+    expect(screen.getByLabelText(/add another product/i)).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^back$/i })).toBeNull();
+    // and nothing can be confirmed against a refused quote
+    expect(screen.queryByRole("button", { name: TAKE_BACK })).toBeNull();
+    await new Promise((r) => setTimeout(r, 450)); // longer than the debounce
     expect(quoteMutate).toHaveBeenCalledTimes(1); // no automatic retry
   });
 
@@ -401,9 +436,10 @@ describe("RecordInlineReturnDialog — refusals render the API's own message (AC
     expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).not.toBe("10");
     // and a new attempt is a NEW capture key (the old one was spent on the recorded return)
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "4" } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
+    await waitForQuoteCall(2);
     resolveNextQuote(quoteResponse([chunk()]));
     fireEvent.click(
       await screen.findByRole("button", { name: /take back items and give .* credit/i }),
@@ -441,7 +477,9 @@ describe("RecordInlineReturnDialog — 403 copy (AC6)", () => {
         },
       },
     });
-    await screen.findByText(RETURNS_NOT_ENABLED_MESSAGE);
+    // R-1: shown under the list (the section keeps the work), still the fixed copy and never the server's text.
+    expect(await screen.findByText(RETURNS_NOT_ENABLED_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(/orders_inline_returns/)).toBeNull();
   });
 });
 
@@ -469,9 +507,10 @@ describe("RecordInlineReturnDialog — SA-108: per-row identity for two lines of
     expect((row2Boxes as HTMLInputElement).value).toBe("");
 
     // A per-line reason is optional; set the capture-level reason instead.
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
+    await waitForQuoteCall(1);
 
     const req = quoteMutate.mock.calls[0][0];
     // ONE merged item (buildQuoteRequest's own productId merge is correct here — it is
@@ -500,9 +539,10 @@ describe("RecordInlineReturnDialog — SA-108: per-row identity for two lines of
 
     const [row1Boxes] = screen.getAllByRole("spinbutton");
     fireEvent.change(row1Boxes, { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
+    await waitForQuoteCall(1);
 
     const covered = chunk({ productId: "prod-mixed", sourceOrderId: "order-newest", pieces: 5 });
     const excess = chunk({
@@ -514,8 +554,10 @@ describe("RecordInlineReturnDialog — SA-108: per-row identity for two lines of
     resolveNextQuote(quoteResponse([covered, excess]));
     await screen.findByText(/not on any invoice/i);
 
+    // the two rows are one product: the choice sits on the first row's options (both toggles read "Options for Widget")
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[0]);
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    await waitForQuoteCall(2);
     resolveNextQuote(quoteResponse([covered]));
     await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
 
@@ -641,7 +683,9 @@ async function captureWith(result: unknown) {
   await enterQtyAndGetQuote("10");
   resolveNextQuote(quoteResponse([chunk()]));
   await screen.findByText(/take back items and give .* credit/i);
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
   fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
   await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
   resolveNextCapture(result);
@@ -670,34 +714,35 @@ describe("RecordInlineReturnDialog — the credit amount on the result (#2097)",
   );
 });
 
-describe("RecordInlineReturnDialog — the excess option resets on every re-quote (#2097)", () => {
-  it("after option 3, going Back and quoting again starts on 'credit at current price'", async () => {
+describe("RecordInlineReturnDialog — the excess choice follows the live quote (#2097)", () => {
+  const covered = () => chunk({ sourceOrderId: "order-newest", pieces: 10 });
+  const excess = (pieces = 6, subtotal = 15) =>
+    chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces, subtotal });
+
+  // R-1 (meaning changed): there is no Back to the items and no "Get quote" to ask again. Typing a different number on
+  // the trimmed line ends the "only what was bought" choice by itself, and the next live quote starts on the default.
+  it("after option 3, typing a bigger quantity ends the choice: the new quote starts on 'credit at current price'", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("16");
-    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
-    const excess = chunk({
-      sourceOrderId: null,
-      sourceInvoiceItemId: null,
-      pieces: 6,
-      subtotal: 15,
-    });
-    resolveNextQuote(quoteResponse([covered, excess]));
+    resolveNextQuote(quoteResponse([covered(), excess()]));
     await screen.findByText(/not on any invoice/i);
+    fireEvent.click(optionsToggle());
 
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    resolveNextQuote(quoteResponse([covered]));
+    await waitForQuoteCall(2);
+    resolveNextQuote(quoteResponse([covered()]));
     await waitFor(() => expect(screen.queryByText(/not on any invoice/i)).not.toBeInTheDocument());
+    expect(screen.getByRole("radio", { name: /return only what was bought/i })).toBeChecked();
 
-    // Back to the items, raise the quantity, quote again: the new quote credits the excess.
-    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    await screen.findByText(/what came back/i);
+    // Raise the quantity: the live quote asks again by itself, and the new quote credits the excess.
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "20" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(3));
+    await waitForQuoteCall(3);
+    expect(quoteMutate.mock.calls[2][0].items).toEqual([
+      { productId: "prod-1", qty: 1, boxes: 0, pieces: 20 },
+    ]);
     resolveNextQuote(
       quoteResponse([
-        covered,
+        covered(),
         chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 10, subtotal: 25 }),
       ]),
     );
@@ -711,29 +756,25 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
   it("picking option 3 sticks through the re-quote it triggers: still checked when that quote still shows an excess, and capture sends the covered pieces", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("16");
-    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
-    const excess = chunk({
-      sourceOrderId: null,
-      sourceInvoiceItemId: null,
-      pieces: 6,
-      subtotal: 15,
-    });
-    resolveNextQuote(quoteResponse([covered, excess]));
+    resolveNextQuote(quoteResponse([covered(), excess()]));
     await screen.findByText(/not on any invoice/i);
+    fireEvent.click(optionsToggle());
 
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    await waitForQuoteCall(2);
     // The re-quote comes back still carrying a (smaller) excess, so the radios stay on screen: the
     // pick must not have been reset by the re-quote it triggered.
     resolveNextQuote(
       quoteResponse([
-        covered,
+        covered(),
         chunk({ sourceOrderId: null, sourceInvoiceItemId: null, pieces: 2, subtotal: 5 }),
       ]),
     );
     await screen.findByText(/not on any invoice/i);
     expect(screen.getByRole("radio", { name: /return only what was bought/i })).toBeChecked();
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "DAMAGED" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /take back items and give .* credit/i }));
     await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
     expect(captureMutate.mock.calls[0][0].items).toEqual([
@@ -741,49 +782,62 @@ describe("RecordInlineReturnDialog — the excess option resets on every re-quot
     ]);
   });
 
-  it("a FAILED option-3 re-quote puts the pick back: Back shows the old quote with the excess AND 'credit at current price' checked", async () => {
+  // R-1 (meaning changed): the old test pressed Back after a FAILED option-3 re-quote and found the old quote with the
+  // default radio. There is no old quote to go back to now; the equivalent is that a refused follow-up quote leaves
+  // nothing confirmable, and choosing 'Credit at current price' puts the typed quantity back and asks again.
+  it("a REFUSED option-3 re-quote leaves nothing to confirm, and 'Credit at current price' puts the quantity back", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("16");
-    const covered = chunk({ sourceOrderId: "order-newest", pieces: 10 });
-    const excess = chunk({
-      sourceOrderId: null,
-      sourceInvoiceItemId: null,
-      pieces: 6,
-      subtotal: 15,
-    });
-    resolveNextQuote(quoteResponse([covered, excess]));
+    resolveNextQuote(quoteResponse([covered(), excess()]));
     await screen.findByText(/not on any invoice/i);
+    fireEvent.click(optionsToggle());
 
     fireEvent.click(screen.getByRole("radio", { name: /return only what was bought/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
+    await waitForQuoteCall(2);
     rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
-    await screen.findByText("Quote failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Quote failed");
+    // the old quote is gone: it can neither be confirmed nor be shown as the current one
+    expect(
+      screen.queryByRole("button", { name: /take back items and give .* credit/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^back$/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    await screen.findByText(/not on any invoice/i); // the old quote, excess still in
-    expect(screen.getByRole("radio", { name: /credit at current price/i })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /return only what was bought/i })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /credit at current price/i }));
+    expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).toBe("16");
+    await waitForQuoteCall(3);
+    expect(quoteMutate.mock.calls[2][0].items).toEqual([
+      { productId: "prod-1", qty: 1, boxes: 0, pieces: 16 },
+    ]);
+    resolveNextQuote(quoteResponse([covered(), excess()]));
+    expect(
+      await screen.findByRole("button", { name: /take back items and give .* credit/i }),
+    ).toBeInTheDocument();
   });
 
-  it("a FAILED Step-1 quote clears the old quote: Back returns to the items, never to a quote that no longer matches them", async () => {
+  // R-1 (meaning changed): was "a FAILED Step-1 quote clears the old quote: Back returns to the items". There is no
+  // Back; a quote is current only for the exact lines on screen, so a change drops it at once and a refusal of the new one
+  // never leaves the old one confirmable.
+  it("changing a quantity drops the old quote at once, and a refusal of the new one never leaves the old one to confirm", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("10");
     resolveNextQuote(quoteResponse([chunk()]));
     await screen.findByText(/take back items and give .* credit/i);
 
-    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    await screen.findByText(/what came back/i);
     fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "12" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(2));
-    rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
-    await screen.findByText("Quote failed");
-
-    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    await screen.findByText(/what came back/i);
+    // dropped at once, before the new quote is even asked
     expect(
       screen.queryByRole("button", { name: /take back items and give .* credit/i }),
     ).not.toBeInTheDocument();
+    expect(quoteMutate).toHaveBeenCalledTimes(1);
+    await waitForQuoteCall(2);
+    expect(quoteMutate.mock.calls[1][0].items[0].pieces).toBe(12);
+    rejectNextQuote({ response: { status: 409, data: { message: "Quote failed" } } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Quote failed");
+
+    expect(
+      screen.queryByRole("button", { name: /take back items and give .* credit/i }),
+    ).not.toBeInTheDocument();
+    expect((screen.getByLabelText(/^pieces$/i) as HTMLInputElement).value).toBe("12");
   });
 });
 
@@ -903,44 +957,66 @@ describe("RecordInlineReturnDialog — B735: a parked ledger reversal must be vi
     expect(screen.queryByTestId("inline-return-parked-warning")).not.toBeInTheDocument();
   });
 });
-
-describe("RecordInlineReturnDialog — a faded Return button says why (R7b 3.1)", () => {
-  it("a faded confirm button says 'Choose a reason to continue'", async () => {
+// R-1 M7 (meaning changed): there is no faded Return button and no "Choose a reason to continue" any more. The reason
+// starts on the server's own default, so the button is ready as soon as the quote is current.
+describe("RecordInlineReturnDialog — the reason starts on the server's default (R-1 M7)", () => {
+  it("one 'Reason for all items' on EXCESS_ORDER, no placeholder, no hint; the button is enabled and capture sends it", async () => {
     await openToStep1();
-    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "10" } });
-    fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
-    await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
-    resolveNextQuote(quoteResponse([chunk()]));
-    const hint = await screen.findByText("Choose a reason to continue");
-    expect(screen.getByLabelText(/^reason$/i)).toHaveAttribute("aria-describedby", hint.id);
-    expect(screen.getByRole("button", { name: /take back items/i })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
+    const reason = screen.getByLabelText(/reason for all items/i);
+    expect(reason).toHaveValue("EXCESS_ORDER");
+    expect(within(reason).queryByText(/choose a reason/i)).toBeNull();
     expect(screen.queryByText("Choose a reason to continue")).toBeNull();
-    expect(screen.getByLabelText(/^reason$/i)).not.toHaveAttribute("aria-describedby");
+    expect(reason).not.toHaveAttribute("aria-describedby");
+
+    fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "10" } });
+    await waitForQuoteCall(1);
+    resolveNextQuote(quoteResponse([chunk()]));
+    const button = await screen.findByRole("button", { name: /take back items/i });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    expect(captureMutate.mock.calls[0][0].reason).toBe("EXCESS_ORDER");
   });
 });
 
 describe("RecordInlineReturnDialog — phone tap targets (W-890)", () => {
   const small = (el: HTMLElement) => expect(el.className).toMatch(/max-lg:(min-)?h-11/);
 
-  it("every control on the lines step is 44 px below lg: close, Remove, fields, Reason, Get quote, Cancel", async () => {
+  it("every control on the lines is 44 px below lg: close, Remove, fields, Reasons, options, Cancel", async () => {
     await openToStep1();
     expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-h-11");
     expect(screen.getByRole("button", { name: "Close" })).toHaveClass("max-lg:min-w-11");
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("max-lg:min-h-11");
-    expect(screen.getByRole("button", { name: "Get quote" })).toHaveClass("max-lg:min-h-11");
+    // R-1: "Get quote" is gone; the line's options row is the control that takes its place
+    expect(screen.queryByRole("button", { name: "Get quote" })).toBeNull();
+    expect(optionsToggle()).toHaveClass("min-h-11");
     const remove = screen.getByRole("button", { name: "Remove" });
     small(remove);
     expect(remove).toHaveClass("max-lg:min-w-11");
+    small(screen.getByLabelText(/^pieces$/i));
     small(screen.getByLabelText(/Note \(optional\)/));
     small(screen.getByLabelText(/Reason \(optional\)/));
-    small(screen.getByLabelText("Reason"));
+    small(screen.getByLabelText("Reason for all items"));
   });
 
-  it("the quote step's Back is 44 px below lg", async () => {
+  it("the take-back button is 44 px below lg once the quote is current, and so is the capture refusal's Back", async () => {
     await openToStep1();
     await enterQtyAndGetQuote("1");
     resolveNextQuote(quoteResponse([chunk({ sourceOrderId: "order-newest", pieces: 1 })]));
+    const takeBack = await screen.findByRole("button", { name: TAKE_BACK });
+    expect(takeBack).toHaveClass("max-lg:min-h-11");
+    fireEvent.click(takeBack);
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    rejectNextCapture({ response: { status: 500, data: { message: "Network error" } } });
     expect(await screen.findByRole("button", { name: "Back" })).toHaveClass("max-lg:min-h-11");
+  });
+
+  it("a quote that did not come back offers a 44 px Try again", async () => {
+    await openToStep1();
+    await enterQtyAndGetQuote("1");
+    rejectNextQuote(Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" }));
+    expect(await screen.findByRole("button", { name: /try again/i })).toHaveClass(
+      "max-lg:min-h-11",
+    );
   });
 });
