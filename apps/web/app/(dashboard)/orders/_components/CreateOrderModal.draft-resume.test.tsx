@@ -1167,6 +1167,132 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
             expect(screen.getByTestId("order-price-layer-failed")).toBeInTheDocument();
             expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
           });
+
+          // SA-1076 A-2. A line starts at tier 2's $38. Memories A $45, B $50. Sending no price is what books the memory.
+          describe("A-2: the history read fails on a new line", () => {
+            const historyKey = (id: string) => ["orders", "price-history", id];
+            const atTier = { ...atNotice, price: "$38.00 / each" };
+            const startOrder = async (
+              history: typeof mockHistoryAnswer,
+              addLine = true,
+              pricingTier = 2,
+            ) => {
+              mockCustomers = [{ ...customer, pricingTier }, custB, custC];
+              mockProductNow = { p1: { id: "p1", ...columns } };
+              mockResolveProductByCode.mockResolvedValue({
+                ...product("p1"),
+                product: { ...product("p1").product, ...columns },
+              });
+              realReads(noRows, history);
+              const view = renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+              await changeToFirst("Acme Foods");
+              await flush(); // the read has landed or failed before the line is added
+              if (addLine) {
+                capturedOnScan!("111");
+                await screen.findByText("Widget p1");
+              }
+              return view;
+            };
+            const refetch = async (view: Awaited<ReturnType<typeof startOrder>>, id: string) => {
+              await act(async () => {
+                void view.queryClient.invalidateQueries({ queryKey: historyKey(id) });
+              });
+            };
+
+            it("SA-1076 edit 2: a switch clears the link, and the re-price writes none back", async () => {
+              // Retail: a tier 2 price is SPECIAL, which skips the pre-fill that makes a link
+              await startOrder(
+                (id) =>
+                  Promise.resolve({
+                    data: id === "c1" ? { p1: { lastPrice: 36, stickyPrice: null } } : {},
+                  }),
+                true,
+                1,
+              );
+              await settlesAt({ ...atTier, price: "$36.00 / each", notice: false });
+              await waitFor(
+                async () => {
+                  const [rec] = await localRecords();
+                  const parked = rec.payload as unknown as {
+                    lineItems: Record<string, unknown>[];
+                  };
+                  expect(parked.lineItems[0].prefillCustomerId).toBe("c1");
+                },
+                { timeout: 4000 },
+              );
+              await changeTo("Beta Bakery");
+              await settlesAt({ ...atTier, notice: false });
+              await waitFor(
+                async () => {
+                  const [rec] = await localRecords();
+                  const saved = rec.payload as unknown as {
+                    customer: { id: string };
+                    lineItems: Record<string, unknown>[];
+                  };
+                  expect(saved.customer.id).toBe("c2");
+                  expect(saved.lineItems[0].unitPrice).toBe(38);
+                  expect(saved.lineItems[0].prefillCustomerId).toBeUndefined();
+                },
+                { timeout: 4000 },
+              );
+            });
+
+            describe.each([
+              ["T43", false],
+              ["T49", true],
+            ])("%s, scan_v2 %s", (_row, scanV2) => {
+              it("the read fails: $38 under the notice, and the send leaves the price to the server", async () => {
+                mockScanV2 = scanV2;
+                await startOrder(offline);
+                await settlesAt(atTier);
+                await sendsNoPrice();
+              });
+            });
+
+            it("T44: T43, then a refetch lands: the memory, and the notice clears", async () => {
+              const view = await startOrder(offline);
+              await settlesAt(atTier);
+              mockHistoryAnswer = remembers({ c1: 45 });
+              await refetch(view, "c1");
+              await settlesAt({ ...atTier, price: "$45.00 / each", notice: false });
+            });
+
+            it("T45: a line at A, then B's read fails: $38 under the notice", async () => {
+              await startOrder((id) => (id === "c1" ? remembers({ c1: 45 })(id) : offline()));
+              await settlesAt({ ...atTier, price: "$45.00 / each", notice: false });
+              await changeTo("Beta Bakery");
+              await settlesAt(atTier);
+              await sendsNoPrice();
+            });
+
+            it("T46 guard: the read still out, a line in the cart: no notice", async () => {
+              await startOrder(NEVER);
+              await settlesAt({ ...atTier, notice: false });
+            });
+
+            it("T47 guard: the read failed, an empty cart: no notice", async () => {
+              await startOrder(offline, false);
+              await flush();
+              expect(screen.queryByTestId("prices-not-refreshed")).not.toBeInTheDocument();
+            });
+
+            it("T48 guard: a failed read on a resume shows one notice", async () => {
+              await parkLineAtMemory();
+              realReads(noRows, offline);
+              await resume();
+              await settlesAt(atNotice);
+              expect(screen.getAllByTestId("prices-not-refreshed")).toHaveLength(1);
+            });
+
+            it("T50 guard: a refetch fails with data cached: no notice", async () => {
+              const view = await startOrder(remembers({ c1: 45 }));
+              const at45 = { ...atTier, price: "$45.00 / each", notice: false };
+              await settlesAt(at45);
+              mockHistoryAnswer = offline;
+              await refetch(view, "c1");
+              await settlesAt(at45);
+            });
+          });
         });
       });
 

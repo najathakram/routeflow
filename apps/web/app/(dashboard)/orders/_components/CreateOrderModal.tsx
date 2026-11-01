@@ -1831,6 +1831,12 @@ export function CreateOrderModal({
     cartJson: string;
   } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
+  // SA-1076 A-2: the server books what this read would have said, so when it fails the screen says so
+  const historyUnknown =
+    selectedCustomer != null &&
+    lineItems.length > 0 &&
+    priceHistory === undefined &&
+    !priceHistoryRead.isPending;
   // SA-1068 M14: the remembered prices are part of the customer's price read, so the re-price waits for them too.
   // SA-1076 A-1: the one gate reads this, so a plan without customer prices is an empty read, not a failure
   const pricingGate = customerPricingGate({
@@ -2663,7 +2669,7 @@ export function CreateOrderModal({
             </div>
           )}
 
-          {pricesNotRefreshed && (
+          {(pricesNotRefreshed || historyUnknown) && (
             <div
               role="status"
               data-testid="prices-not-refreshed"
