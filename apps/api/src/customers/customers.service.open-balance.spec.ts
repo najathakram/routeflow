@@ -152,9 +152,8 @@ describe("CustomersService — Open balance on the list and the CSV (SA-1078 PR-
     expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1);
     const args = prisma.invoice.findMany.mock.calls[0][0];
     expect(args.where.customerId).toEqual({ in: ["cust-1"] });
-    expect(args.where.status.notIn).toEqual(
-      expect.arrayContaining(["PAID", "VOID", "WRITTEN_OFF", "DRAFT"]),
-    );
+    // the EXACT set (order aside): a fifth status added to OPEN_BALANCE_INVOICE_WHERE must fail here, not pass
+    expect([...args.where.status.notIn].sort()).toEqual(["DRAFT", "PAID", "VOID", "WRITTEN_OFF"]);
     expect(args.select).toEqual({
       customerId: true,
       total: true,
