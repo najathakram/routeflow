@@ -313,6 +313,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "CustomersController.removeTag": "CUSTOMERS",
   "CustomersController.resendPortalInvite": "CUSTOMERS",
   "CustomersController.restore": "CUSTOMERS",
+  "CustomersController.sendAccountStatementEmail": "FINANCE|CUSTOMERS",
   "CustomersController.sendPortalInvite": "CUSTOMERS",
   "CustomersController.suggestMerge": "CUSTOMERS",
   "CustomersController.update": "CUSTOMERS",

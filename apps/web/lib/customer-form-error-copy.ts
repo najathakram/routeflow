@@ -5,7 +5,7 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 
 /**
  * B979 (owner rule: no raw strings in the UI): the customer form's error banner shows FIXED copy,
- * chosen by the server's `body.code`, then a closed allow-list of the two server sentences that are
+ * chosen by the server's `body.code`, then a closed allow-list of the server sentences that are
  * already product text, then the HTTP status class. It never shows axios's "Request failed with
  * status code …", an unlisted server message, or a camelCase key.
  */
@@ -14,6 +14,8 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
 export const KNOWN_SERVER_SENTENCES: Record<string, string> = {
   "Email or username already taken": "That email is already in use. Use a different email.",
   "Unknown sales agent": "That sales agent is no longer available. Pick another.",
+  // Thrown at six places (customers, compliance input, routes, the statement send); one sentence for all of them.
+  "Restore the customer first": "This customer has been removed. Restore it first.",
 };
 
 const CUSTOMER_CAP_COPY =

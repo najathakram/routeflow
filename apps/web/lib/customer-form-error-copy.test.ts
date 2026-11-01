@@ -33,6 +33,12 @@ describe("customerFormErrorCopy (B979)", () => {
     );
   });
 
+  it("E28 (SA-1078 A-8): a removed customer's 409 reads as the removed sentence, not a stale-edit one", () => {
+    expect(customerFormErrorCopy(axiosErr(409, { message: "Restore the customer first" }))).toBe(
+      "This customer has been removed. Restore it first.",
+    );
+  });
+
   it("the customer plan cap (PLAN_GATE, meter.customers) says so", () => {
     expect(
       customerFormErrorCopy(

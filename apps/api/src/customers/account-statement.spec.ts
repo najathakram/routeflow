@@ -485,6 +485,13 @@ describe("SA-1078 account statement (PR-1)", () => {
       }
     });
 
+    it("E3: an import-sentinel address on file reads as no address (null), so the sheet asks for one", async () => {
+      arrange({ invoices: [inv("a", 100)] });
+      const sentinel = { ...CUSTOMER, email: "ghost@imported.local" };
+      const res = await buildAccountStatement(prisma as any, sentinel, { staff: true });
+      expect(res.emailOnFile).toBeNull();
+    });
+
     it("the staff view carries both", async () => {
       arrange({ invoices: [inv("a", 100, [], { intent: "CHECK" }), inv("b", 50)] });
       const res = await read(true);
