@@ -110,6 +110,35 @@ describe("TenantsService", () => {
       );
     });
 
+    // W2 B2 (COPY.md 2m): the mail carries the Workspace ID and the sign-in address, because sign-in
+    // asks for the ID typed and no other screen or mail shows it.
+    describe("verification mail words (W2 B2)", () => {
+      const sentHtml = () => (email.send.mock.calls[0][0] as { html: string }).html;
+      const sentText = () =>
+        sentHtml()
+          .replace(/<[^>]+>/g, "")
+          .replace(/\s+/g, " ");
+
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("carries the Workspace ID and the sign-in address", async () => {
+        await service.register(REGISTER_DTO);
+        expect(sentText()).toContain(
+          "Save this for later. To sign in, go to https://app.test/login and enter your Workspace ID: acme-distribution.",
+        );
+      });
+
+      it("uses COPY.md 2m's sentence, drops the Hi {username} line and sentence-cases the button", async () => {
+        await service.register(REGISTER_DTO);
+        expect(sentText()).toContain(
+          "Thanks for signing up for RouteFlow. Verify your email to open your 14-day free trial for",
+        );
+        expect(sentText()).not.toMatch(/Hi \S+,/);
+        expect(sentHtml()).toContain(">Verify my email</a>");
+        expect(sentHtml()).not.toContain("Verify My Email");
+      });
+    });
+
     it("still creates the account but reports emailSent:false when delivery fails — THE BUG: this used to be silently discarded", async () => {
       email.send.mockResolvedValue({
         delivered: false,
@@ -286,6 +315,19 @@ describe("TenantsService", () => {
       expect(sent).toBe(true);
       expect(email.send).toHaveBeenCalledWith(
         expect.objectContaining({ to: "owner@acme.example", senderClass: "platform" }),
+      );
+    });
+
+    it("W2 B2: the resend mail carries the Workspace ID and the sign-in address too", async () => {
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
+      email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+
+      await service.resendVerification("owner@acme.example");
+
+      const html = (email.send.mock.calls[0][0] as { html: string }).html;
+      const text = html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+      expect(text).toContain(
+        "Save this for later. To sign in, go to https://app.test/login and enter your Workspace ID: acme-distribution.",
       );
     });
 

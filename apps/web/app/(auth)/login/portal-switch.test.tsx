@@ -60,7 +60,7 @@ describe("LoginPage — portal switcher (T10, T16, T17)", () => {
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
 
-    await user.type(screen.getByLabelText("Workspace"), "acme");
+    await user.type(screen.getByLabelText("Workspace ID"), "acme");
     await user.type(screen.getByLabelText("Username or email"), "operator1");
     await user.type(screen.getByLabelText("Password"), "s3cret-pw");
     await user.click(screen.getByRole("button", { name: /sign in/i }));

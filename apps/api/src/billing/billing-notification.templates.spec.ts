@@ -91,6 +91,25 @@ describe("billing-notification.templates", () => {
       trialEndsAt: "2026-09-23",
     };
 
+    // W2 B9 (COPY.md section 8): the old line promised nothing would be interrupted, which is not true
+    // whether auto-locks are on or off. The new one names no stop on a date and matches the Terms line.
+    it.each(["TRIAL_ENDING_7D", "TRIAL_ENDING_1D"] as const)(
+      "%s: asks for a plan in words that promise no stop and no continuity",
+      (milestone) => {
+        const t = trialEndingTemplate({ ...base, milestone });
+        expect(t.html).toContain("Choose a plan by then to keep using RouteFlow.");
+        expect(t.text).toContain("Choose a plan by then to keep using RouteFlow.");
+        expect(t.html).not.toContain("without interruption");
+        expect(t.text).not.toContain("without interruption");
+      },
+    );
+
+    it("the expiry mail keeps its own words (the trial has ended, read-only until a plan)", () => {
+      const t = trialEndingTemplate({ ...base, milestone: "TRIAL_ENDING_EXPIRY" });
+      expect(t.html).toContain("Your account is now read-only until you choose a plan.");
+      expect(t.html).not.toContain("Choose a plan by then");
+    });
+
     it("7-day milestone: subject and body name the tenant and the date", () => {
       const t = trialEndingTemplate({ ...base, milestone: "TRIAL_ENDING_7D" });
       expect(t.subject).toContain("Acme Retail");

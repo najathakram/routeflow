@@ -1,3 +1,5 @@
+import { isAboveListLine } from "@routeflow/pricing";
+
 /**
  * How a read-only order line explains its unit price (Special / Upsell / Discounted / Promo /
  * Adjusted). Mirrors the price-type branches of the order-detail line TABLE
@@ -10,8 +12,8 @@ export interface LinePriceTag {
   label: "Special" | "Upsell" | "Promo" | "Adjusted" | "Discounted";
   /** Colour of the shown price + pill: green = at/above list for the customer, amber = below list. */
   tone: "emerald" | "amber";
-  /** Show the original (list) price struck through. An upsell never strikes the base — it is
-   *  operator-only and redacted before a customer sees the line. */
+  /** Show the original (list) price struck through. A line charged ABOVE its list (an upsell, or a tier above
+   *  Retail: pricing's `isAboveListLine`) never strikes the lower base — a strike reads as "this was the price". */
   strikeOriginal: boolean;
 }
 
@@ -26,7 +28,11 @@ export function linePriceTag(input: {
   const unit = Number(input.unitPrice);
 
   if (priceType === "SPECIAL") {
-    return { label: "Special", tone: "emerald", strikeOriginal: hasOriginal };
+    return {
+      label: "Special",
+      tone: "emerald",
+      strikeOriginal: hasOriginal && !isAboveListLine(input),
+    };
   }
   if (priceType === "MANUAL" && hasOriginal && unit > original) {
     return { label: "Upsell", tone: "emerald", strikeOriginal: false };

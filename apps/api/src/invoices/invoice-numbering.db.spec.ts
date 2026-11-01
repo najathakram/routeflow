@@ -73,6 +73,11 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { UserRole } from "@prisma/client";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+
+/** The seeded items are custom lines with a typed price (SA-1034 rule 4): the actor needs price-edit rights, and TENANT_ADMIN holds them with no permissions read. */
+const ADMIN_ACTOR = { ...NO_PRICE_RIGHTS, role: UserRole.TENANT_ADMIN };
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -306,10 +311,13 @@ describeDb(
     /** Drives the real, public mint path: EstimatesService.create() under a tenant context. */
     async function mintEstimate(tenantId: string, customerId: string): Promise<any> {
       return tenantCtx.run(tenantId, () =>
-        estimatesService.create({
-          customerId,
-          items: [{ description: "widget", qty: 1, unitPrice: 10 }],
-        } as any),
+        estimatesService.create(
+          {
+            customerId,
+            items: [{ description: "widget", qty: 1, unitPrice: 10 }],
+          } as any,
+          ADMIN_ACTOR,
+        ),
       );
     }
 

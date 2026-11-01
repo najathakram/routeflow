@@ -603,6 +603,10 @@ describe("CounterSaleService.ring", () => {
         paymentId: "pay-inv-1",
         method: "CASH",
         paymentRecorded: true,
+        tenderPaid: 37.25,
+        returnCredit: 0,
+        tenderMethods: [{ method: "CASH", amount: 37.25 }],
+        returnLines: { applied: 0, refunded: 0, kept: 0, used: 0, pending: false },
         toCollect: "NONE", // SA-1026: every sale reads its state back, NONE unless marked
       });
     });
@@ -1147,6 +1151,10 @@ describe("CounterSaleService.ring", () => {
         method: "CASH",
         paymentRecorded: true,
         replayed: true,
+        tenderPaid: 37.25,
+        returnCredit: 0,
+        tenderMethods: [{ method: "CASH", amount: 37.25 }],
+        returnLines: { applied: 0, refunded: 0, kept: 0, used: 0, pending: false },
         toCollect: "NONE", // SA-1026
       });
       expect(findReplayCandidateByKey).toHaveBeenCalledWith("k1", expect.any(String));
@@ -1508,6 +1516,15 @@ describe("CounterSaleService.ring", () => {
       expect(sendOpts().priceEditAllowed).toBe(allowed);
     });
 
+    it("T-R1 (counter half): an OPERATOR denied PRICING is told priceEditAllowed = false, whatever the permissions mode", async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        deniedPermissionGroups: ["PRICING"],
+        permissionsVersion: 1,
+      });
+      await service.ring(named({ method: "CASH" }) as never, staff);
+      expect(sendOpts().priceEditAllowed).toBe(false);
+    });
+
     it("an OPERATOR rings a sale with a changed price: rung (not 403 PRICE_EDIT_NOT_PERMITTED), price applied, ONE price-edited audit row", async () => {
       // createSale stands in for create()'s own gate (pinned in orders.counter-price-edit.spec.ts): it refuses a
       // real price change exactly when the counter passed priceEditAllowed === false.
@@ -1848,6 +1865,97 @@ describe("CounterSaleService.ring", () => {
         role: "OPERATOR",
         recordAnyway: false,
       });
+    });
+  });
+  // ── SA-1077 / W-1090: the till response carries the tender split ──────────────────────────
+  describe("SA-1077 / W-1090: the tender split on the response (the reprint's and the email's, one derivation)", () => {
+    // T1: a $16.00 sale, $10.00 of store credit from a return of an OLDER sale applied, $6.00 cash
+    const credit = {
+      id: "pc",
+      amount: 10,
+      method: "CREDIT_NOTE",
+      status: "PAID",
+      creditNoteId: "cn-1",
+    };
+    const cash6 = { id: "p0", amount: 6, method: "CASH", status: "PAID" };
+    const olderReturn = {
+      id: "r-older",
+      creditNoteId: "cn-1",
+      orderId: "ord-b",
+      kind: "INLINE",
+      status: "REFUNDED",
+      refundMethod: "CREDIT_NOTE",
+      refundedAt: null,
+      items: [{ sourceOrderId: "ord-a", subtotal: "10.00", taxAmount: "0", categoryTax: null }],
+    };
+    const seedT1 = () => {
+      prisma.return.findMany.mockImplementation(async ({ where }: any) =>
+        where.orderId === "ord-1" ? [] : [olderReturn],
+      );
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          status: "APPLIED",
+          invoiceId: "inv-1",
+          invoicePayments: [{ amount: 10, invoiceId: "inv-1" }],
+        },
+      ]);
+    };
+    const expectedT1 = {
+      tenderPaid: 16,
+      returnCredit: 0,
+      tenderMethods: [
+        { method: "CASH", amount: 6 },
+        { method: "STORE_CREDIT", amount: 10 },
+      ],
+      returnLines: { applied: 0, refunded: 0, kept: 0, used: 0, pending: false },
+    };
+
+    it("R10: a plain new sale reads no return and no credit note (it gains no query)", async () => {
+      prisma.return.findMany.mockClear();
+      prisma.creditNote.findMany.mockClear();
+      const r = await service.ring(named({ method: "CASH", amount: 50 }) as never, staff);
+      expect(r).toMatchObject({ tenderPaid: 37.25, returnCredit: 0 });
+      expect(prisma.return.findMany).not.toHaveBeenCalled();
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
+    });
+
+    it("R9: a read that throws is a warning and NO split: the POST is still 200 with the stored Tendered", async () => {
+      invoices = [inv("inv-1", 16, [{ ...credit }])];
+      storedTendered = null;
+      prisma.return.findMany.mockRejectedValue(new Error("read down"));
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      const r = await service.ring(named({ method: "CASH", amount: 6 }) as never, staff);
+      expect(r.invoiceId).toBe("inv-1");
+      expect(r.paymentRecorded).toBe(true);
+      expect(r.cashTendered).toBe(6);
+      expect(r.tenderPaid).toBeUndefined();
+      expect(r.tenderMethods).toBeUndefined();
+      expect(r.returnLines).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("tender split not read (read down)"),
+      );
+    });
+
+    it("R11: by-key on T1 serves the split the POST serves", async () => {
+      seedT1();
+      findReplayCandidateByKey.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        fulfillPath: "PICKUP",
+        skipAutoMerge: true,
+        counterSale: true,
+        status: "DELIVERED",
+        customerId: "cust-1",
+      });
+      invoices = [inv("inv-1", 16, [{ ...cash6 }, { ...credit }])];
+      const byKey = await service.byKey("k1");
+      expect(byKey).toMatchObject(expectedT1);
+      // the POST, replayed over the same stored rows, reads the same
+      replay = true;
+      findReplayCandidateByKey.mockResolvedValue({ id: "ord-1", counterSale: true });
+      const posted = await service.ring(named({ method: "CASH", amount: 6 }) as never, staff, "k1");
+      expect(posted).toMatchObject(expectedT1);
     });
   });
 });

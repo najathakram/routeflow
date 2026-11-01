@@ -641,3 +641,146 @@ test.describe("T15 — WCAG AA contrast for the B507-fixed roles", () => {
     });
   }
 });
+
+// ─── T16 — W8: every marketing page's head, the share image, the sitemap, the structured data ──
+
+const HEAD_ROUTES = [
+  "/",
+  "/product",
+  "/wholesalers",
+  "/retailers",
+  "/pricing",
+  "/company",
+  "/contact",
+  "/privacy",
+  "/terms",
+  "/book-a-demo",
+  "/sign-in",
+];
+const HOME_TITLE = "RouteFlow: order and delivery software for wholesale distributors";
+
+test.describe("T16 — W8: head, share image, sitemap and structured data", () => {
+  for (const route of HEAD_ROUTES) {
+    test(`T16 — ${route}: title, description, canonical, share image and card are all in the head`, async ({
+      page,
+      request,
+    }) => {
+      await page.goto(route);
+      const attr = (selector: string, name: string) =>
+        page.locator(selector).first().getAttribute(name);
+
+      const title = await page.title();
+      if (route === "/") expect(title).toBe(HOME_TITLE);
+      else expect(title, `${route} title`).toMatch(/\S · RouteFlow$/);
+
+      expect(
+        await attr('meta[name="description"]', "content"),
+        `${route} description`,
+      ).toBeTruthy();
+      const canonical = await attr('link[rel="canonical"]', "href");
+      // Next drops the trailing slash on the home canonical, as it did before W8.
+      expect(canonical, `${route} canonical`).toBe(
+        `https://www.routeflow.info${route === "/" ? "" : route}`,
+      );
+      expect(await attr('meta[property="og:title"]', "content"), `${route} og:title`).toBeTruthy();
+      expect(await attr('meta[name="twitter:card"]', "content"), `${route} twitter:card`).toBe(
+        "summary_large_image",
+      );
+
+      // The share image: named in the head, and it answers 200 as a PNG. The head holds the
+      // production origin (metadataBase), so fetch the same path from the host under test.
+      const image = await attr('meta[property="og:image"]', "content");
+      expect(image, `${route} og:image`).toBeTruthy();
+      expect(await attr('meta[name="twitter:image"]', "content"), `${route} twitter:image`).toBe(
+        image,
+      );
+      const response = await request.get(new URL(image!).pathname);
+      expect(response.status(), `${route} share image status`).toBe(200);
+      expect(response.headers()["content-type"], `${route} share image type`).toBe("image/png");
+    });
+  }
+
+  test("T16 — /book-a-demo is in the sitemap", async ({ request }) => {
+    const response = await request.get("/sitemap.xml");
+    expect(response.status()).toBe(200);
+    expect(await response.text()).toContain("<loc>https://www.routeflow.info/book-a-demo</loc>");
+  });
+
+  test("T16 — the home page carries organization and software data, with no ratings", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const blocks = await page
+      .locator('script[type="application/ld+json"]')
+      .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
+    expect(blocks.length, "JSON-LD blocks on /").toBeGreaterThan(0);
+    const text = blocks.join("\n");
+    const graph = blocks.flatMap((block) => JSON.parse(block)["@graph"] ?? []);
+    expect(graph.map((node: { "@type": string }) => node["@type"])).toEqual(
+      expect.arrayContaining(["Organization", "SoftwareApplication"]),
+    );
+    for (const banned of ["aggregateRating", "ratingValue", "reviewCount", "offers"]) {
+      expect(text).not.toContain(banned);
+    }
+  });
+});
+
+// ─── T17 — W8 / S5: no heading level is skipped on the marketing pages ───────
+
+test.describe("T17 — W8 / S5: heading order on the 10 marketing pages", () => {
+  for (const route of HEAD_ROUTES.filter((r) => r !== "/sign-in")) {
+    test(`T17 — ${route}: one h1 first, no level skipped`, async ({ page }) => {
+      await page.goto(route);
+      // A heading's level is its aria-level when it has one, else its tag (how axe reads it).
+      const levels = await page
+        .locator("h1, h2, h3, h4, h5, h6, [role='heading']")
+        .evaluateAll((els) =>
+          els.map((el) => {
+            const aria = parseInt(el.getAttribute("aria-level") ?? "", 10);
+            return {
+              level: Number.isInteger(aria) ? aria : Number(el.tagName.slice(1)),
+              text: (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40),
+            };
+          }),
+        );
+      const skips: string[] = [];
+      levels.forEach((heading, i) => {
+        const previous = levels[i - 1];
+        if (!previous && heading.level !== 1) skips.push(`first heading is h${heading.level}`);
+        if (previous && heading.level > previous.level + 1) {
+          skips.push(
+            `h${previous.level} "${previous.text}" to h${heading.level} "${heading.text}"`,
+          );
+        }
+      });
+      expect(levels.filter((h) => h.level === 1)).toHaveLength(1);
+      expect(skips, `${route} heading skips`).toEqual([]);
+    });
+  }
+});
+
+// ─── T18 — W8 / S6: the small labels in the hero's example card clear AA ─────
+
+test.describe("T18 — W8 / S6: small hero-art labels clear WCAG AA", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  for (const [name, selector] of [
+    ["the 8px 'Retailer portal' label", ".customer-portal-label"],
+    ["the 11px 'One order. Every team.' line", ".story-top > span:last-child"],
+  ] as const) {
+    test(`T18 — ${name} clears AA on /, /product, /wholesalers`, async ({ page }) => {
+      let checked = 0;
+      for (const route of ["/", "/product", "/wholesalers"]) {
+        await page.goto(route);
+        const label = page.locator(`${selector}:visible`);
+        const count = await label.count();
+        if (count === 0) continue;
+        checked += count;
+        const contrast = await minContrast(label);
+        expect(contrast, `${route} ${selector} contrast`).not.toBeNull();
+        expect(contrast!, `${route} ${selector} contrast`).toBeGreaterThanOrEqual(AA_NORMAL);
+      }
+      expect(checked, `${selector} was found and visible on at least one page`).toBeGreaterThan(0);
+    });
+  }
+});
