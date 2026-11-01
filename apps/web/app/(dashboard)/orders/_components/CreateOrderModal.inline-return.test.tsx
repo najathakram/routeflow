@@ -505,11 +505,16 @@ describe("CreateOrderModal — a return on the merge prompt (SA-1060 A-5)", () =
     const ask = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][0];
     expect(ask).toEqual({ ...boxAsk, editingOrderId: "ord-open" });
     expect(changeLine()).toBeNull(); // nothing until it answers
+    // A-6: the status region is already mounted, so a screen reader announces the words when they arrive
+    const status = screen.getByTestId("merge-return-status");
+    expect(status).toHaveAttribute("role", "status");
+    expect(status).toBeEmptyDOMElement();
     act(() => quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess(NEVER()));
 
     const line = await screen.findByTestId("merge-return-change");
     expect(line).toHaveTextContent(LINE);
-    expect(line).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("merge-return-status")).toBe(status);
+    expect(status).toContainElement(line);
     // the box does not move: its lines, its $32.40 quote and its reason are as they were
     expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(3);
     expect(screen.getAllByText("$32.40").length).toBeGreaterThan(0);
@@ -602,6 +607,19 @@ describe("CreateOrderModal — a return on the merge prompt (SA-1060 A-5)", () =
     expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(3);
     expect(screen.getAllByText("$32.40").length).toBeGreaterThan(0);
     expect(screen.queryByText(/working out the return credit/i)).toBeNull();
+  });
+
+  it("a line shown on one opening is gone when the prompt reopens, until the new ask answers", async () => {
+    await setup();
+    await openPrompt();
+    act(() => quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess(NEVER()));
+    expect(await screen.findByTestId("merge-return-change")).toHaveTextContent(LINE);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /merge into/i })).not.toBeInTheDocument(),
+    );
+    await openPrompt();
+    expect(changeLine()).toBeNull();
   });
 
   it("an answer for a prompt that was closed and reopened paints nothing; the new ask's answer does", async () => {

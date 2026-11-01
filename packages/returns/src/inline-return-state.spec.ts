@@ -1064,6 +1064,24 @@ describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () 
     expect(facts.spansOrders).toBe(false);
   });
 
+  it("NS-22 (SA-1060 A-6): a chunk both already returned and never sold says never sold, and stays already returned", () => {
+    const quote = quoteResponse([
+      chunk({
+        productId: "prod-1",
+        pieces: 3,
+        sourceOrderId: null,
+        sourceInvoiceItemId: null,
+        sourceOrderItemId: null,
+        alreadyReturned: true,
+        neverSold: true,
+      }),
+    ]);
+    const facts = pkg.lineQuoteFacts(quote, "prod-1");
+    expect(facts.neverSold).toBe(true);
+    expect(facts.alreadyReturnedPieces).toBe(3);
+    expect(facts.notOnInvoicePieces).toBe(0);
+  });
+
   it("prefers the server's own per-product total when the quote carries one", () => {
     const quote = {
       ...quoteResponse([chunk({ productId: "prod-1", subtotal: 20, taxAmount: 2 })]),

@@ -10,7 +10,8 @@ import { formatMoney } from "@/lib/format";
  *
  * Returns null when the two agree (the same total and the same never-sold products), so the prompt shows nothing.
  * Otherwise the line names the amount; it ends there unless merging makes a product never-sold that the box had as
- * sold, which also means it is not added to stock.
+ * sold, which also means it is not added to stock: "some of it" when another product of the return still goes back
+ * (SA-1060 A-6).
  */
 export function mergeReturnChange(
   box: InlineReturnQuoteResponse,
@@ -24,7 +25,11 @@ export function mergeReturnChange(
   const sameTotal = Math.abs(Number(box.total) - Number(merged.total)) < 0.005;
   if (sameTotal && sameNeverSold) return null;
   const notAdded = [...after].some((id) => !before.has(id));
-  return `If you merge, this return is ${formatMoney(merged.total)}${
-    notAdded ? ", not added to stock" : ""
-  }.`;
+  const allNeverSold = merged.chunks.every((c) => c.neverSold === true);
+  const stock = !notAdded
+    ? ""
+    : allNeverSold
+      ? ", not added to stock"
+      : ", some of it not added to stock";
+  return `If you merge, this return is ${formatMoney(merged.total)}${stock}.`;
 }

@@ -1281,6 +1281,25 @@ describe("SA-1060 A-4 (M3): the closed row claims no stock outcome the quote has
     expect(summary("prod-1")).toHaveTextContent("Back to stock");
   });
 
+  it("NS-22 (A-6): both flags on a restocking reason -> 'Not added to stock', and the reason is still asked", async () => {
+    authRole = "OPERATOR";
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("3");
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        noSale({ pieces: 3, subtotal: 15, taxAmount: 0, alreadyReturned: true, neverSold: true }),
+      ]),
+    );
+    expect(summary("prod-1")).toHaveTextContent("Bought too many"); // a reason that restocks
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(
+      within(row("prod-1")).getByLabelText(/why credit widget again \(required\)/i),
+    ).toBeVisible();
+  });
+
   it("an answered quote for goods sold before still reads 'Back to stock' (guard)", async () => {
     renderSection({ reasonContext: "counter" });
     await pick();

@@ -301,5 +301,11 @@ describe("SA-1060 PR-2: a never-sold chunk carries no sales tax and is flagged",
     expect(db.invoiceItem.findFirst.mock.calls[0][0].where.invoice.id).toEqual({
       notIn: ["inv-sent"],
     });
+    // Every sold-lines read, the lifetime one included, leaves out the same invoices.
+    const lifetime = db.invoice.findMany.mock.calls.filter(
+      ([args]: [any]) => isLifetimeRead(args) && args?.where?.items,
+    );
+    expect(lifetime.length).toBeGreaterThan(0);
+    for (const [args] of lifetime) expect(args.where.id).toEqual({ notIn: ["inv-sent"] });
   });
 });

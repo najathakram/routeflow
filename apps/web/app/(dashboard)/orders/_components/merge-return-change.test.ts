@@ -72,7 +72,29 @@ describe("mergeReturnChange (SA-1060 A-5)", () => {
     expect(mergeReturnChange(box, merged)).toBe("If you merge, this return is $55.00.");
   });
 
-  it("the same total with a stock flip still shows a line (tax-exempt: $30 on both sides)", () => {
+  it("NS-25: only one of two products flips -> some of it is not added to stock", () => {
+    const box = quote(60, [chunk({ productId: "a" }), chunk({ productId: "b" })]);
+    const merged = quote(55, [
+      chunk({ productId: "a", neverSold: true }),
+      chunk({ productId: "b" }),
+    ]);
+    expect(mergeReturnChange(box, merged)).toBe(
+      "If you merge, this return is $55.00, some of it not added to stock.",
+    );
+  });
+
+  it("every product never sold after the merge reads NS-15's words, though one was never sold before", () => {
+    const box = quote(60, [chunk({ productId: "a", neverSold: true }), chunk({ productId: "b" })]);
+    const merged = quote(55, [
+      chunk({ productId: "a", neverSold: true }),
+      chunk({ productId: "b", neverSold: true }),
+    ]);
+    expect(mergeReturnChange(box, merged)).toBe(
+      "If you merge, this return is $55.00, not added to stock.",
+    );
+  });
+
+  it("NS-24: the same total with a stock flip still shows a line (tax-exempt: $30 on both sides)", () => {
     const soldExempt = quote(30, [chunk({ taxAmount: 0 })]);
     expect(mergeReturnChange(soldExempt, NEVER)).toBe(
       "If you merge, this return is $30.00, not added to stock.",

@@ -3548,11 +3548,13 @@ export function CreateOrderModal({
                 {formatMoney(mergePrompt.total)}
               </div>
             </div>
-            {mergeReturnLine && (
-              <p role="status" data-testid="merge-return-change" className="text-sm text-navy">
-                {mergeReturnLine}
-              </p>
-            )}
+            <div role="status" data-testid="merge-return-status">
+              {mergeReturnLine && (
+                <p data-testid="merge-return-change" className="text-sm text-navy">
+                  {mergeReturnLine}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </Modal>
