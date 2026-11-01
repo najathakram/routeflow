@@ -17,6 +17,7 @@ import { BusinessProfileService, planFingerprint } from "../billing/business-pro
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { closeFirstRun, readFirstRun } from "../billing/first-run-marker";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { OwnerAlertService } from "../email/owner-alert.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { requireTenantContext } from "../settings-inventory/require-tenant-context";
 
@@ -76,6 +77,7 @@ export class FirstRunService {
     private readonly businessProfiles: BusinessProfileService,
     private readonly applyService: BusinessProfileApplyService,
     private readonly audit: AuditService,
+    private readonly ownerAlerts: OwnerAlertService,
   ) {}
 
   /** Tenant from the request context ONLY; the caller's token must be for that tenant. */
@@ -128,7 +130,7 @@ export class FirstRunService {
   async answer(body: unknown, user: JwtPayload): Promise<FirstRunResult> {
     const ticks = parseFirstRunAnswer(body);
     const tenantId = this.tenantOf(user);
-    return this.businessProfiles.withConfirmLock(tenantId, async () => {
+    const result = await this.businessProfiles.withConfirmLock(tenantId, async () => {
       if ((await readFirstRun(this.prisma, tenantId)) !== "pending") throw closed();
       // Re-plan from the DB, not this replica's 30 s mode cache, as both back-office routes do.
       this.featureConfig.forgetCachedModes(tenantId);
@@ -144,7 +146,7 @@ export class FirstRunService {
           entityId: tenantId,
           meta: { answer: ticks },
         });
-        return { outcome: "kept", state: "closed" };
+        return { outcome: "kept", state: "closed" } as FirstRunResult;
       }
 
       const io: ApplyIo = {
@@ -169,7 +171,10 @@ export class FirstRunService {
         io,
       );
       await closeFirstRun(this.prisma, tenantId, "answered");
-      return { outcome: "applied", state: "answered" };
+      return { outcome: "applied", state: "answered" } as FirstRunResult;
     });
+    // After the lock is released, never inside it: a slow mail must not hold the customer's serialized merges.
+    if (result.outcome === "kept") await this.ownerAlerts.keptSetup(tenantId);
+    return result;
   }
 }

@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { ConfigService } from "@nestjs/config";
@@ -27,6 +28,7 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { escapeHtml } from "../common/html-escape";
+import { OwnerAlertService } from "../email/owner-alert.service";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
@@ -84,6 +86,7 @@ export class TenantsService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
+    @Optional() private readonly ownerAlerts?: OwnerAlertService,
   ) {
     // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
     this.emailVerifyKey = derivedJwtKey(
@@ -236,6 +239,9 @@ export class TenantsService {
             `Account is INACTIVE until verified; the self-service resend-verification endpoint ` +
             `will hit the same failure until the underlying mail config is fixed.`,
         );
+        this.ownerAlerts
+          ?.verificationMailFailed(result.tenant.id, result.user.email)
+          ?.catch(() => undefined);
       }
     } catch (err: any) {
       // EmailService.send() is documented to never throw for a delivery/config
@@ -246,6 +252,9 @@ export class TenantsService {
         `Failed to send verification email for new tenant "${result.tenant.slug}" ` +
           `(user ${result.user.id}, ${result.user.email}): ${err?.message ?? err}`,
       );
+      this.ownerAlerts
+        ?.verificationMailFailed(result.tenant.id, result.user.email)
+        ?.catch(() => undefined);
     }
 
     return {

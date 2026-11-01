@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FirstRunAnswer, FirstRunResult, FirstRunStatus } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  type FirstRunAnswer,
+  type FirstRunResult,
+  type FirstRunStatus,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
 
 export type { FirstRunAnswer, FirstRunResult, FirstRunStatus };
@@ -33,7 +38,7 @@ export function useAnswerFirstRun() {
     },
     onError: (err) => {
       // A 409 FIRST_RUN_CLOSED means another tab or a team member got there first: re-read, so the card goes away.
-      if (firstRunErrorCode(err) === "FIRST_RUN_CLOSED") {
+      if (firstRunErrorCode(err) === API_ERROR_CODES.FIRST_RUN_CLOSED) {
         void qc.invalidateQueries({ queryKey: FIRST_RUN_QUERY_KEY });
       }
     },

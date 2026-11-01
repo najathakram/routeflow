@@ -71,14 +71,30 @@ function build(
     }),
   };
   const audit = { log: jest.fn(async () => undefined) };
+  const ownerAlerts = {
+    keptSetup: jest.fn(async () => {
+      calls.push("alert");
+    }),
+  };
   const svc = new FirstRunService(
     prisma as never,
     featureConfig as never,
     businessProfiles as never,
     applyService as never,
     audit as never,
+    ownerAlerts as never,
   );
-  return { svc, calls, marker, prisma, applyService, audit, featureConfig, businessProfiles };
+  return {
+    svc,
+    calls,
+    marker,
+    prisma,
+    applyService,
+    audit,
+    featureConfig,
+    businessProfiles,
+    ownerAlerts,
+  };
 }
 
 describe("parseFirstRunAnswer (F10, F15)", () => {
@@ -190,6 +206,16 @@ describe("FirstRunService.answer", () => {
     expect(t.applyService.applyResolvedLocked).not.toHaveBeenCalled();
     expect(t.marker.value).toBe("closed");
     expect(t.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "FIRST_RUN_KEPT" }));
+  });
+
+  it("W1 (COPY 2q): a kept setup tells the owner, after the lock is released; an applied answer tells nobody", async () => {
+    const kept = build({ plan: changedPlan });
+    await kept.svc.answer({ delivery: true }, user);
+    expect(kept.ownerAlerts.keptSetup).toHaveBeenCalledWith(TENANT);
+    expect(kept.calls.at(-1)).toBe("alert");
+    const applied = build();
+    await applied.svc.answer({ shipping: true }, user);
+    expect(applied.ownerAlerts.keptSetup).not.toHaveBeenCalled();
   });
 
   it("F16: a plan that stops billing, or changes an override, is not a blank either", async () => {
