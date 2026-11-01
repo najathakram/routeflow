@@ -90,6 +90,16 @@ describe("BP1: tap the Outstanding figure", () => {
     expect(mockBuyerGet).toHaveBeenCalledWith("/buyer/account-statement");
   });
 
+  it("reads nothing until the tap: no statement GET while the sheet is closed", async () => {
+    renderWithProviders(<BuyerOpenBalanceButton>$1,234.56</BuyerOpenBalanceButton>);
+    await act(async () => undefined);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockBuyerGet).not.toHaveBeenCalled();
+    await tap();
+    await screen.findByTestId("account-statement-open-balance");
+    expect(mockBuyerGet).toHaveBeenCalledWith("/buyer/account-statement");
+  });
+
   it("never touches the staff client", async () => {
     renderWithProviders(<BuyerOpenBalanceButton>$1,234.56</BuyerOpenBalanceButton>);
     await tap();

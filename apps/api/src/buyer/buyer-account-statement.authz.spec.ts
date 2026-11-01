@@ -6,6 +6,7 @@
  * two reads the guard makes; the statement services are jest fns so the spec can see exactly who they were asked for.
  *   BP2  the print route answers { url } for the buyer's own customer; the read carries no staff fields
  *   BP3  a buyer of seller A asking as seller B is refused by the seller guard, and nothing is rendered or read
+ *   TEN  both routes run inside the seller's tenant context (BuyerTenantInterceptor); it is recorded when each service is called
  *
  * Fixtures are placeholders (acme / globex); no live-client data.
  */
@@ -61,10 +62,21 @@ const links = [
 let app: INestApplication;
 const getAccountStatement = jest.fn();
 const generateCurrent = jest.fn();
+// the tenant the request runs in, read when each service is called (what BuyerTenantInterceptor sets)
+const tenantCtx = new TenantContextService();
+const tenantSeen: { read: (string | null)[]; pdf: (string | null)[] } = { read: [], pdf: [] };
 
 beforeEach(async () => {
-  getAccountStatement.mockReset().mockResolvedValue(STATEMENT);
-  generateCurrent.mockReset().mockResolvedValue(SIGNED);
+  tenantSeen.read = [];
+  tenantSeen.pdf = [];
+  getAccountStatement.mockReset().mockImplementation(async () => {
+    tenantSeen.read.push(tenantCtx.getOrNull());
+    return STATEMENT;
+  });
+  generateCurrent.mockReset().mockImplementation(async () => {
+    tenantSeen.pdf.push(tenantCtx.getOrNull());
+    return SIGNED;
+  });
   const prisma = {
     tenant: {
       findUnique: jest.fn(
@@ -98,7 +110,7 @@ beforeEach(async () => {
         provide: ConfigService,
         useValue: { get: (key: string) => (key === "jwt" ? { secret: SECRET } : undefined) },
       },
-      { provide: TenantContextService, useValue: new TenantContextService() },
+      { provide: TenantContextService, useValue: tenantCtx },
       { provide: PrismaService, useValue: prisma },
       { provide: CustomersService, useValue: { getAccountStatement } },
       { provide: StatementPdfService, useValue: { generateCurrent } },
@@ -159,6 +171,22 @@ describe("BP2: the buyer's statement and its print route", () => {
   it("a customer id on the query string is ignored", async () => {
     await get("/buyer/account-statement/pdf?customerId=c-globex", "acme").expect(200);
     expect(generateCurrent).toHaveBeenCalledWith("c-mine");
+  });
+});
+
+describe("TEN: both routes run in the seller's tenant", () => {
+  it("the read and the print route see seller A's tenant id when asked as seller A", async () => {
+    await get("/buyer/account-statement", "acme").expect(200);
+    await get("/buyer/account-statement/pdf", "acme").expect(200);
+    expect(tenantSeen.read).toEqual(["t-1"]);
+    expect(tenantSeen.pdf).toEqual(["t-1"]);
+  });
+
+  it("and seller B's when the buyer of seller B asks as seller B", async () => {
+    await get("/buyer/account-statement", "globex", token("buyer-globex")).expect(200);
+    await get("/buyer/account-statement/pdf", "globex", token("buyer-globex")).expect(200);
+    expect(tenantSeen.read).toEqual(["t-2"]);
+    expect(tenantSeen.pdf).toEqual(["t-2"]);
   });
 });
 
