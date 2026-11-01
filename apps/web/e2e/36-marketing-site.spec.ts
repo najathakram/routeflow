@@ -404,6 +404,115 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
   });
 });
 
+// ─── T13b — W3: visitor counts (Umami) reach the marketing pages and /signup only ─────────────
+
+// The script is on the page only when the stack was built with NEXT_PUBLIC_UMAMI_WEBSITE_ID. These
+// rows read which case this stack is in from the home page itself, so the same spec holds on a
+// local stack (no ID: M4, no script anywhere) and on one built with a made-up test ID. No real ID
+// is ever used in a test.
+const UMAMI_SCRIPT = 'script[src="https://cloud.umami.is/script.js"]';
+const COUNTED_ROUTES = [
+  "/",
+  "/product",
+  "/wholesalers",
+  "/retailers",
+  "/pricing",
+  "/company",
+  "/contact",
+  "/privacy",
+  "/terms",
+  "/book-a-demo",
+  "/signup",
+];
+// Never counted: sign-in pages, the retailer portal, the dashboard (signed out, these land on a
+// sign-in page, which must carry nothing either).
+const NEVER_COUNTED_ROUTES = [
+  "/sign-in",
+  "/login",
+  "/admin-login",
+  "/forgot-password",
+  "/buyer/login",
+  "/buyer/portal",
+  "/dashboard",
+];
+
+async function umamiScriptCount(page: import("@playwright/test").Page, route: string) {
+  await page.goto(route);
+  await page.waitForLoadState("networkidle");
+  return page.locator(UMAMI_SCRIPT).count();
+}
+
+test.describe("T13b — W3 M2-M4: visitor counts", () => {
+  test("T13b — sign-in pages, the retailer portal and the dashboard never load the script", async ({
+    page,
+  }) => {
+    for (const route of NEVER_COUNTED_ROUTES) {
+      expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(0);
+    }
+  });
+
+  test("T13b — the platform admin dashboard never loads the script", async ({ page }) => {
+    // A signed-in admin view with the API stubbed: the layout only parses the token's payload.
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const token = `${b64({ alg: "none" })}.${b64({ role: "SUPER_ADMIN", exp: 4102444800 })}.x`;
+    await page.addInitScript((t) => localStorage.setItem("superAdminToken", t), token);
+    await page.route("**/api/v1/**", (route) => route.fulfill({ json: {} }));
+    await page.goto("/admin/dashboard");
+    await expect(page.getByRole("navigation").first()).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator(UMAMI_SCRIPT)).toHaveCount(0);
+  });
+
+  test("T13b — M4: a stack built with no site ID sends no script on any page", async ({ page }) => {
+    test.skip((await umamiScriptCount(page, "/")) > 0, "this stack was built with a site ID");
+    for (const route of [...COUNTED_ROUTES, ...NEVER_COUNTED_ROUTES]) {
+      expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(0);
+    }
+  });
+
+  test("T13b — with a site ID, every marketing page and /signup carries one deferred script for the live host", async ({
+    page,
+  }) => {
+    test.skip((await umamiScriptCount(page, "/")) === 0, "this stack has no site ID (M4)");
+    for (const route of COUNTED_ROUTES) {
+      expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(1);
+      const script = page.locator(UMAMI_SCRIPT);
+      expect(await script.getAttribute("data-website-id"), `${route} site id`).toBeTruthy();
+      expect(await script.getAttribute("data-domains"), `${route} domains`).toBe(
+        "www.routeflow.info",
+      );
+      expect(await script.evaluate((el) => (el as HTMLScriptElement).defer), `${route} defer`).toBe(
+        true,
+      );
+    }
+  });
+
+  test("T13b — M3: with the script blocked, pages still work and the page raises no error", async ({
+    page,
+  }) => {
+    test.skip((await umamiScriptCount(page, "/")) === 0, "this stack has no site ID (M4)");
+    await page.route("https://cloud.umami.is/**", (route) => route.abort());
+    const pageErrors: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(e.message));
+    page.on("console", (m) => {
+      // Chrome itself logs "Failed to load resource" for any blocked request (an ad blocker does the
+      // same); that is the browser, not the page. Anything else is the page's own error.
+      if (m.type() === "error" && !/Failed to load resource/.test(m.text())) {
+        consoleErrors.push(m.text());
+      }
+    });
+    for (const route of ["/", "/pricing", "/signup"]) {
+      const response = await page.goto(route);
+      expect(response?.status(), `${route} status`).toBe(200);
+      await page.waitForLoadState("networkidle");
+      await expect(page.locator("h1, h2").first(), `${route} still renders`).toBeVisible();
+    }
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+});
+
 // ─── T14 — WCAG AA contrast for the B504-fixed roles (R7) ───────────────────
 
 // WCAG relative-luminance contrast, computed in-page against the element's

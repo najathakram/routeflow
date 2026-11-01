@@ -1,6 +1,7 @@
 import { SiteHeader } from "./components/site-header";
 import { SiteFooter } from "./components/site-footer";
 import { EditorialMotion } from "./components/editorial-motion";
+import { UmamiScript } from "@/components/UmamiScript";
 
 // Note: signed-in users are redirected away from `/` by the middleware
 // (rf-op-auth → /dashboard, rf-buyer-auth → /buyer/portal), keyed on the
@@ -23,6 +24,8 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
       <main id="main-content">{children}</main>
       <SiteFooter />
       <EditorialMotion />
+      {/* Visit counts: renders only with a site ID, and never on /sign-in (see UmamiScript). */}
+      <UmamiScript />
     </div>
   );
 }

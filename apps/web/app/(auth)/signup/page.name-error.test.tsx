@@ -6,7 +6,10 @@ import SignupPage from "./page";
  * B956: a refused formula-led business name (400 `TEXT_CELL_FORMULA_LEAD`) on tenant signup shows
  * FIXED copy with a human label, never the server message ("businessName must not start with …").
  */
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/signup",
+}));
 
 const registerBody = (over: object) => ({
   statusCode: 400,
