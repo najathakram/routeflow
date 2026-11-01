@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, Route, Users, Warehouse, Store } from "lucide-react";
-import { DEMO_CTA, routes, site } from "../lib/site";
+import { DEMO_CTA, routes } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
 import { DeliveryDemo } from "../components/delivery-demo";
 import { FeatureCatalog, CapabilityStrip } from "../components/feature-catalog";
@@ -27,18 +28,11 @@ import { BrandSignature } from "@/components/brand";
 
 const route = routes.find((r) => r.slug === "product")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/product",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/product" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/product",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const CONNECTION_NODES: Array<[typeof Users, string]> = [
   [Users, "Office"],

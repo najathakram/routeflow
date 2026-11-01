@@ -11,7 +11,8 @@ import {
   MapPin,
   CreditCard,
 } from "lucide-react";
-import { routes, site } from "../lib/site";
+import { routes } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow } from "../components/marketing";
 import { FAQ } from "../components/faq";
 import { RetailerArt, RetailerDetail } from "../components/technology-art";
@@ -21,18 +22,11 @@ import { authLinks } from "../components/auth-links";
 
 const route = routes.find((r) => r.slug === "retailers")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/retailers",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/retailers" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/retailers",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const BENEFITS: Array<[typeof Package, string, string]> = [
   [

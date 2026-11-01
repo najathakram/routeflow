@@ -36,7 +36,6 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/scripts/seed-marketing-screenshot-products.js",
   "apps/api/scripts/seed-test-catalog.js",
   "apps/api/scripts/ux-audit-seed.js",
-  "apps/api/src/customers/customers.service.ts",
   "apps/api/src/import/import.service.ts",
   "apps/api/src/import/migration.service.ts",
   "apps/api/src/import/variant-resolution.service.ts",
@@ -45,15 +44,11 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/src/inventory/testing/order-stock-world.ts", // a test fixture that seeds stock worlds, never production
   "apps/api/src/inventory/testing/sa802-world.ts", // SA-802 / SA-828 DB-spec fixture (qa-sa802-* tenants), never production
   "apps/api/src/invoices/invoice-display-unit.ts", // SA-827/SA-1029: display snapshot writes only; its tier-price selects trip the text scan
-  "apps/api/src/invoices/invoice-edit-plan.ts",
   "apps/api/src/invoices/invoice-restriction-lines.ts",
-  "apps/api/src/orders/orders.service.ts",
   "apps/api/src/orders/testing/units-fold-db-harness.ts", // a test fixture that seeds units-fold tenants (qa-ufold-*), never production
-  "apps/api/src/products/family-price.ts",
   "apps/api/src/products/product-families.service.ts",
   "apps/api/src/products/product-units.service.ts",
   "apps/api/src/products/products.service.ts",
-  "apps/api/src/promotions/promotions.service.ts",
 ];
 
 const REPO = path.resolve(__dirname, "../../../..");
@@ -70,7 +65,9 @@ const ASSIGN = new RegExp(`(?:\\.|\\[\\s*["'])${KEY}["']?\\s*\\]?\\s*[-+*]?=(?!=
 const RAW_SQL = new RegExp(`\\bSET\\b[^;\`]{0,400}"?${KEY}"?\\s*=`, "i");
 // `pricePerUnit: <value>` that is not a select flag, a type member, an orderBy direction or a where operator.
 const KEY_VALUE = new RegExp(
-  `\\b${KEY}\\s*:\\s*(?!true\\b|false\\b|["'](?:asc|desc)["']|\\{|(?:number|string|boolean|unknown|any|null|Numeric|Decimal|Prisma\\.Decimal)\\b)`,
+  // The exclusion sits right after the colon and owns the whitespace: a trailing `\s*` outside it backtracks to
+  // zero spaces, the lookahead then sees the space, and `pricePerUnit: true` was never excluded.
+  `\\b${KEY}\\s*:(?!\\s*(?:true\\b|false\\b|["'](?:asc|desc)["']|\\{|(?:number|string|boolean|unknown|any|null|Numeric|Decimal|Prisma\\.Decimal)\\b))`,
 );
 const SHORTHAND = new RegExp(`[{,]\\s*${KEY}\\s*[,}]`);
 const DB_WRITE =
@@ -191,6 +188,17 @@ describe("SA-795 (h): writers of the pack price columns", () => {
     expect(PACK_WRITE_PATH_COMPLETE && OUTSIDE_WRITERS.length > 0).toBe(false);
     // Flipped to true, with the list empty, by the PR that moves the last writer onto the write path.
     expect(PACK_WRITE_PATH_COMPLETE).toBe(false);
+  });
+
+  it("a select flag is not a writer, a real pack-price write is (the KEY_VALUE exclusion bites)", () => {
+    const select =
+      "x.product.findMany({ select: { pricePerUnit: true, priceTier2: true } }); db.product.update(a);";
+    const write = "db.product.update({ where: { id }, data: { pricePerUnit: 5 } });";
+    expect(writesPackColumns(select)).toBe(false);
+    expect(writesPackColumns(write)).toBe(true);
+    expect(KEY_VALUE.test("pricePerUnit: true")).toBe(false);
+    expect(KEY_VALUE.test("pricePerUnit:true")).toBe(false);
+    expect(KEY_VALUE.test("pricePerUnit: price")).toBe(true);
   });
 
   it("the scan does see the known writers (a broken scan would pass vacuously)", () => {

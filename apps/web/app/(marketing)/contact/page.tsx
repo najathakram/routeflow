@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, CalendarDays, MessageSquare, Route, Users } from "lucide-react";
 import { DEMO_CTA, routes, site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { Eyebrow } from "../components/marketing";
 
 // Words: COPY.md 2j (W6). Email stays the way in (Q4): no phone, hours or street address. The one
@@ -21,18 +22,11 @@ import { Eyebrow } from "../components/marketing";
 
 const route = routes.find((r) => r.slug === "contact")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/contact",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/contact" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/contact",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const AGENDA: Array<[typeof Route, string, string]> = [
   [

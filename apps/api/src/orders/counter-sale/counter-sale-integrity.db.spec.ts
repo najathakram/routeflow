@@ -61,6 +61,7 @@ import { CounterSaleService } from "./counter-sale.service";
 import { CounterSaleVoidService } from "./counter-sale-void.service";
 import type { WalkInCustomerService } from "./walk-in-customer";
 import { TILL_ADMIN } from "../../testing/till-user";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cjs");
@@ -994,6 +995,54 @@ describeDb("Counter Sale integrity, the real chain on Postgres (row 383)", () =>
         await markToCollect(raw, { tenantId: B.tenantId, invoiceIds: [inv.id], method: "CHECK" }),
       ).toBe(0);
       expect((await invoiceOf(A, k)).expectedPaymentMethod).toBeNull();
+    });
+  });
+
+  // ── (i) the till's price right is the OPERATOR's live PRICING group (W-870, SA-1034 r8) ─────────────────────────────
+  describe("(i) a changed price at the till follows the operator's live PRICING group", () => {
+    const deny = (groups: Array<"PRICING" | "FINANCE">) =>
+      raw.user.update({
+        where: { id: A.operatorId },
+        data: { deniedPermissionGroups: groups as never },
+      });
+    afterEach(() => deny([]));
+    /** list 10.00 (the customer is tier 1): a typed 6.00 is a real override. */
+    const changed = (qty = 2) =>
+      [{ productId: A.cola, qty, unitPrice: 6, priceReason: "damaged box" }] as never;
+
+    it("PROBE-1 RED-FIRST (the counter passing [] lets it through): PRICING denied + a changed price = 403 PRICE_EDIT_NOT_PERMITTED, no order, no invoice, no stock move", async () => {
+      await deny(["PRICING"]);
+      const k = key();
+      const before = await stockOf(A.cola);
+      let err: unknown;
+      try {
+        await ring(A, k, { items: changed() });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({
+        code: API_ERROR_CODES.PRICE_EDIT_NOT_PERMITTED,
+      });
+      const f = await footprint(A, k);
+      expect(f.orders).toHaveLength(0);
+      expect(f.invoices).toHaveLength(0);
+      expect(f.saleMovements).toBe(0);
+      expect(await stockOf(A.cola)).toBe(before);
+    });
+
+    it("PROBE-2 PIN: PRICING denied + the list price (no change) rings: one order", async () => {
+      await deny(["PRICING"]);
+      const k = key();
+      await ring(A, k, { items: [{ productId: A.cola, qty: 2 }] });
+      expect((await footprint(A, k)).orders).toHaveLength(1);
+    });
+
+    it("PROBE-3 PIN: FINANCE denied (PRICING held) + a changed price rings: one order", async () => {
+      await deny(["FINANCE"]);
+      const k = key();
+      await ring(A, k, { items: changed() });
+      expect((await footprint(A, k)).orders).toHaveLength(1);
     });
   });
 });

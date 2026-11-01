@@ -71,6 +71,7 @@ describe("InvoicesService.create — the warn census names its source (SA-982 PR
 
   it("a call that names the site (POST /invoices) logs the ambiguous shape once", async () => {
     await service.create({ customerId: "cust-1", items } as never, actor, {
+      source: "request",
       warnSite: "invoices.manual",
     });
     expect(ambiguity()).toEqual([

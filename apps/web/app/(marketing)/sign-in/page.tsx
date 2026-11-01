@@ -1,24 +1,17 @@
 import type { Metadata } from "next";
 import { ArrowRight, Package, Store } from "lucide-react";
-import { site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { authLinks } from "../components/auth-links";
 
 // The account chooser (glass design, 2026-09-16 Codex study). Both buttons
 // route straight to the existing, unchanged sign-in pages — this page
 // collects no credentials itself, matching the study's own disclosure.
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/sign-in",
   title: "Sign in to RouteFlow",
   description: "Choose the RouteFlow account you use for your business.",
-  alternates: { canonical: "/sign-in" },
-  openGraph: {
-    title: "Sign in to RouteFlow",
-    description: "Choose the RouteFlow account you use for your business.",
-    url: "/sign-in",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 export default function SignInPage() {
   return (

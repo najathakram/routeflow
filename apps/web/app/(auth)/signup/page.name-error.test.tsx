@@ -37,11 +37,7 @@ async function fillAndSubmit() {
   fireEvent.change(screen.getByPlaceholderText("you@acme.com"), {
     target: { value: "owner@acme.example" },
   });
-  fireEvent.change(screen.getByPlaceholderText("acme_admin"), { target: { value: "acme_admin" } });
   fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
-    target: { value: "Sup3rSecret!x9" },
-  });
-  fireEvent.change(screen.getByPlaceholderText("Re-enter your password"), {
     target: { value: "Sup3rSecret!x9" },
   });
   fireEvent.submit(document.querySelector("form") as HTMLFormElement);

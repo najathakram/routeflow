@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { FileText, Route, Users } from "lucide-react";
-import { DEMO_CTA, site } from "../lib/site";
+import { DEMO_CTA } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { DemoScheduler } from "../components/demo-scheduler";
 
 // The real booking page — replaces the design study's simulated calendar
@@ -10,18 +11,12 @@ import { DemoScheduler } from "../components/demo-scheduler";
 // ported from the 2026-09-16 Codex study; layout follows its `.booking-layout`
 // two-column split (`booking-copy` / `.glass.booking-panel`).
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/book-a-demo",
   title: DEMO_CTA,
   description: "Pick a time for a video call with the RouteFlow team.",
-  alternates: { canonical: "/book-a-demo" },
-  openGraph: {
-    title: DEMO_CTA,
-    description: "Pick a time for a video call with the RouteFlow team.",
-    url: "/book-a-demo",
-    siteName: site.name,
-    type: "website",
-  },
-};
+  share: { description: "Pick a time for a video call with the RouteFlow team." },
+});
 
 const AGENDA: Array<[typeof Route, string, string]> = [
   [
