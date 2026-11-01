@@ -107,9 +107,9 @@ test.describe("W1 — the first question on a new account", () => {
     // The form derives the Workspace ID from the business name; what it shows is what the person signs in with.
     await expect(page.getByLabel("Workspace ID")).toHaveValue(trial.slug);
     await page.getByLabel("Email").fill(trial.email);
-    await page.getByLabel("Username").fill(trial.username);
+    // W2's form is four fields: Business name, Workspace ID, Email, Password. The username is suggested and
+    // stays out of sight until it needs a person, so this sign-up takes the suggestion.
     await page.getByLabel("Password", { exact: true }).fill(trial.password);
-    await page.getByLabel("Confirm password").fill(trial.password);
     const create = page.getByRole("button", { name: "Create account" });
     assertWriteTarget(trial.slug, trial);
     await create.click();
