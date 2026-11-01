@@ -97,3 +97,21 @@ describe("U22: one name for the figure on the customer page", () => {
     expect(card).not.toMatch(/>\s*Balance Due\s*</);
   });
 });
+
+describe("A-4: a host of OpenBalanceButton never hides its rows on a background refresh", () => {
+  // Closing the sheet refreshes ["reports"]; a `isLoading || isFetching ?` gate unmounts the tapped figure and drops focus.
+  // AR aging and Customer Balance Summary moved to `isLoading ?`. The 14 left on the reports page host no button; a report
+  // moving to `isLoading` lowers the 14. The pin only shrinks.
+  const GATE = /isLoading \|\| isFetching \?/g;
+  it("the reports page keeps exactly 14 isLoading || isFetching gates", () => {
+    expect(read("app/(dashboard)/finance/reports/page.tsx").match(GATE)?.length ?? 0).toBe(14);
+  });
+  it.each([
+    "app/(dashboard)/customers/[id]/page.tsx",
+    "app/(dashboard)/customers/[id]/customer-statement-card.tsx",
+    "app/(dashboard)/orders/_components/CounterCustomerCredit.tsx",
+    "components/CustomerAccountStrip.tsx",
+  ])("%s has none", (file) => {
+    expect(read(file).match(GATE)?.length ?? 0).toBe(0);
+  });
+});
