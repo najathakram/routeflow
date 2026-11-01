@@ -824,7 +824,7 @@ export class PlatformAdminController {
         id,
         resolved,
         dto,
-        { id: admin.sub },
+        { id: admin.sub, kind: "PLATFORM_ADMIN", source: PROFILE_APPLY_SOURCE },
         this.applyIo(id, admin),
       );
       return { profile: resolved.profile.key as BusinessProfileApplyResponse["profile"], ...done };
@@ -864,7 +864,7 @@ export class PlatformAdminController {
         id,
         resolved,
         dto,
-        { id: admin.sub },
+        { id: admin.sub, kind: "PLATFORM_ADMIN", source: PROFILE_APPLY_SOURCE },
         this.applyIo(id, admin),
       );
       return { capabilities: resolved.capabilities, preset: resolved.preset, ...done };

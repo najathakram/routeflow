@@ -3,6 +3,7 @@ import { BillingModule } from "../billing/billing.module";
 import { SettingsFulfilmentController } from "./settings-fulfilment.controller";
 import { SettingsFulfilmentService } from "./settings-fulfilment.service";
 import { FulfilmentEditGuard } from "./fulfilment-edit";
+import { FirstRunService } from "./first-run.service";
 
 /**
  * Settings → Fulfillment (dark behind FULFILMENT_SELF_SERVE): a typed, audited face over the
@@ -12,6 +13,6 @@ import { FulfilmentEditGuard } from "./fulfilment-edit";
 @Module({
   imports: [BillingModule],
   controllers: [SettingsFulfilmentController],
-  providers: [SettingsFulfilmentService, FulfilmentEditGuard],
+  providers: [SettingsFulfilmentService, FirstRunService, FulfilmentEditGuard],
 })
 export class SettingsFulfilmentModule {}

@@ -181,6 +181,30 @@ describe("TenantsService", () => {
       });
     });
 
+    // W1: the first question starts open, in the same transaction as the tenant, and only for a public sign-up.
+    describe("first-question marker (W1)", () => {
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("writes signup.firstRun = pending for the new tenant inside the register transaction", async () => {
+        await service.register(REGISTER_DTO);
+        const create = (prisma as any).systemConfig.create as jest.Mock;
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(create).toHaveBeenCalledWith({
+          data: {
+            tenantId: expect.stringMatching(/^tenant-/),
+            key: "signup.firstRun",
+            value: "pending",
+          },
+        });
+      });
+
+      it("writes no marker when the sign-up is refused (a taken slug)", async () => {
+        (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ id: "other" });
+        await expect(service.register(REGISTER_DTO)).rejects.toThrow();
+        expect((prisma as any).systemConfig.create).not.toHaveBeenCalled();
+      });
+    });
+
     // SA-738: signup never relies on the column default; the zone is always written explicitly.
     describe("timezone (SA-738)", () => {
       const configCreate = () => (prisma as any).tenantConfig.create as jest.Mock;

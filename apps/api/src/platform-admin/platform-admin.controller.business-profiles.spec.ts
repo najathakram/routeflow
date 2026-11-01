@@ -249,6 +249,7 @@ function fakeTenant(start: {
       featureConfig as any,
       featurePreview as any,
       businessProfiles,
+      { systemConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } } as any,
     ),
   ) as Omit<PlatformAdminController, "applyBusinessProfile"> & {
     // the confirm as these tests call it: `planFingerprint` may be left out, the preview-first

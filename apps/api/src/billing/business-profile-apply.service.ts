@@ -1,19 +1,27 @@
-import { Injectable, ServiceUnavailableException } from "@nestjs/common";
+import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import type {
   BusinessProfileApplyResponse,
   BusinessProfileBillingFailedAddon,
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { AddonService, PROFILE_APPLY_SOURCE } from "./addon.service";
+import { AddonService, type ApplySource } from "./addon.service";
 import { BusinessProfileService, type BusinessProfileResolution } from "./business-profile.service";
 import { EntitlementAuthority } from "./entitlement-authority.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { closeFirstRun } from "./first-run-marker";
+import { PrismaService } from "../prisma/prisma.service";
 
-/** Who is applying. The back office is the only caller today; the id is written to the add-on log and the mode history. */
+/**
+ * Who is applying, and under which source the add-on log names it. The back office is `PLATFORM_ADMIN` +
+ * `profile.apply`; a new account's own admin answering the first question is `TENANT_USER` + `signup.setup`.
+ * The id is also written to the mode history.
+ */
 export interface ApplyActor {
   id: string;
+  kind: "PLATFORM_ADMIN" | "TENANT_USER";
+  source: ApplySource;
 }
 
 /**
@@ -47,7 +55,10 @@ export class BusinessProfileApplyService {
     private readonly featureConfig: FeatureConfigService,
     private readonly featurePreview: FeaturePreviewService,
     private readonly businessProfiles: BusinessProfileService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  private readonly logger = new Logger(BusinessProfileApplyService.name);
 
   /**
    * The one apply sequence, for a plan already resolved from the tenant's CURRENT state (preset or ticks).
@@ -148,7 +159,8 @@ export class BusinessProfileApplyService {
       await this.addonService.enableAddon(id, featureKey, undefined, undefined, {
         comp: true,
         lockHeld: true,
-        source: PROFILE_APPLY_SOURCE,
+        source: actor.source,
+        actorKind: actor.kind,
         actorId: actor.id,
         reason: compReason,
       });
@@ -195,6 +207,18 @@ export class BusinessProfileApplyService {
         comps: resolved.plan.comps.map((c) => c.featureKey),
         summary: resolved.summary,
       });
+      // W1: a team setup takes the first question away. Update-only on a `pending` marker, so a tenant with no marker
+      // (every live tenant) writes nothing here. A failed close never fails the apply: the fills-blanks rule still
+      // protects the setup if the question is answered later. The tenant's own answer closes its marker itself.
+      if (actor.kind === "PLATFORM_ADMIN") {
+        try {
+          await closeFirstRun(this.prisma, id, "closed");
+        } catch (closeErr) {
+          this.logger.warn(
+            `first-run marker not closed for tenant ${id}: ${(closeErr as Error).message}`,
+          );
+        }
+      }
     } catch (err) {
       // SA MUST: once any billing was stopped, EVERY later failure is the same coded 503, so the
       // admin is always told billing already stopped. With nothing stopped, the error is its own.

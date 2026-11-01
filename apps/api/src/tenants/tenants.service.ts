@@ -32,6 +32,7 @@ import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { FALLBACK_ZONE } from "../common/tenant-time-zone";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
+import { createPendingFirstRun } from "../billing/first-run-marker";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -152,6 +153,8 @@ export class TenantsService {
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
+      // W1: the first question starts open for a public sign-up (no existing tenant holds this row).
+      await createPendingFirstRun(tx, tenant.id);
 
       // Seed IRS Schedule C expense categories so new tenants have a curated
       // list to pick from immediately.

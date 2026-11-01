@@ -140,6 +140,7 @@ describeDb("SA-769 - a profile's comp grants under real advisory locks (real Pos
         featureConfig as any,
         featurePreview as any,
         businessProfiles,
+        prisma as any,
       ),
     );
   });

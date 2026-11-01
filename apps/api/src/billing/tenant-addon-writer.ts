@@ -21,7 +21,7 @@ import { BILLING_EVENTS } from "./plan-catalog.constants";
  * `FOR UPDATE` here before it is read and written.
  */
 
-/** One value per call site (P3 pins the count at 15, so a new writer is a conscious edit). */
+/** One value per call site (P3 pins the count at 16, so a new writer is a conscious edit). */
 export const ADDON_CHANGE_SOURCES = [
   "tenant.enable",
   "tenant.disable",
@@ -38,6 +38,7 @@ export const ADDON_CHANGE_SOURCES = [
   "manual_activation.price",
   "lock.cancel_clear_item",
   "profile.apply",
+  "signup.setup",
 ] as const;
 export type AddonChangeSource = (typeof ADDON_CHANGE_SOURCES)[number];
 

@@ -85,6 +85,7 @@ function build(opts: {
       featureConfig as never,
       stub(),
       service,
+      { systemConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } } as any,
     ),
   );
   return controller;

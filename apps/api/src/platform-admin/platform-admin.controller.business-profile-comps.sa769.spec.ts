@@ -291,6 +291,7 @@ function world(
       featureConfig as any,
       featurePreview as any,
       businessProfiles,
+      { systemConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } } as any,
     ),
   );
   /** The confirm as the web does it: preview first, then send that fingerprint back. */

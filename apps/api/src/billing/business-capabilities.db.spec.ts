@@ -40,7 +40,6 @@ import { billsAtShipment } from "../orders/order-status-invoicing";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { PlatformAdminController } from "../platform-admin/platform-admin.controller";
 import { BusinessProfileApplyService } from "./business-profile-apply.service";
-import { BusinessProfileApplyService } from "./business-profile-apply.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -119,6 +118,14 @@ describeDb("BO-04 - capability ticks and the carrier-in-transit rule (real Postg
       stub(), // snapshotAdmin
       businessProfiles,
       featureConfig,
+      new BusinessProfileApplyService(
+        addons,
+        authority,
+        featureConfig,
+        featurePreview as any,
+        businessProfiles,
+        prisma as any,
+      ),
     );
     consoleController = new FeatureConfigController(featureConfig);
   });
