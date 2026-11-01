@@ -158,7 +158,7 @@ export class InvoicePdfService {
 
     // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
     // mapper the template model is built from (the findUnique above includes whole item rows).
-    const shownLines = sortInvoiceLines(withFamilyNames(inv.items)); // SA-1058: a copy, `inv` is what the send hashes; the family name composes before the sort
+    const shownLines = withFamilyNames(sortInvoiceLines(inv.items)); // SA-1058: a copy, `inv` is what the send hashes; the order reads the stored text, the family name composes after it
     const itemsWithBarcodes = await Promise.all(
       shownLines.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);

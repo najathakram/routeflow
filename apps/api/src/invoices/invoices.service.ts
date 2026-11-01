@@ -3049,9 +3049,9 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: sortInvoiceLines(
-        withFamilyNames(await du.itemsWithDisplayUnits(db, inv, this.entitlements)),
-      ), // SA-1058; #2717 M3 + SA-827; the family name composes before the sort
+      items: withFamilyNames(
+        sortInvoiceLines(await du.itemsWithDisplayUnits(db, inv, this.entitlements)),
+      ), // SA-1058; #2717 M3 + SA-827; the order reads the stored text, the family name composes after it
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect

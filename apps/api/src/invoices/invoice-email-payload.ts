@@ -71,7 +71,7 @@ export function buildInvoiceEmailPayload(
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: sortInvoiceLines(withFamilyNames(inv.items as any[])).map((it: any) => ({
+    items: withFamilyNames(sortInvoiceLines(inv.items as any[])).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),
@@ -124,7 +124,7 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: sortInvoiceLines(withFamilyNames(inv.items as any[])).map((it: any) => ({
+    items: withFamilyNames(sortInvoiceLines(inv.items as any[])).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),

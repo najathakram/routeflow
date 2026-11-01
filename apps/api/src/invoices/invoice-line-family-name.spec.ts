@@ -163,15 +163,17 @@ describe("the email's item table (sendEmail + reminder payloads)", () => {
     expect(payload.items[0].description).toBe("Classic, case of 12 (gift)");
   });
 
-  it("a standalone line is unchanged and the variant lines sort under their family", () => {
+  it("a standalone line is unchanged and the order follows the STORED text, not the composed one", () => {
+    const zebra = { ...variantProduct, parent: { name: "Zebra Family" } };
     const payload = buildInvoiceEmailPayload(
-      invoice([
-        storedLine("i1", "Widget", standaloneProduct),
-        storedLine("i2", VARIANT, variantProduct),
-      ]),
+      invoice([storedLine("i1", "Widget", standaloneProduct), storedLine("i2", VARIANT, zebra)]),
       ctx,
     );
-    expect(payload.items.map((i: any) => i.description)).toEqual([COMPOSED, "Widget"]);
+    // stored "Classic" < "Widget" keeps the variant line first, though "Zebra Family - Classic" would sort last
+    expect(payload.items.map((i: any) => i.description)).toEqual([
+      "Zebra Family - Classic",
+      "Widget",
+    ]);
   });
 });
 

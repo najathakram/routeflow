@@ -98,17 +98,18 @@ describe("the shared rule (invoice-line-name.ts)", () => {
     );
   });
 
-  it("SA-1058 order: a variant line sorts under its family by the name the reader sees", () => {
-    const lines = withFamilyNames([
+  it("SA-1058 order: sort FIRST on the stored text, compose after; an old invoice keeps its line order", () => {
+    const stored = [
       { id: "1", description: "Zebra Co", productId: "p", product: soloRow },
       { id: "2", description: "Classic", productId: "p-variant", product: variantRow },
       { id: "3", description: "Acme Family - Zesty", productId: "p-z", product: undefined },
-    ]);
-    expect(sortInvoiceLines(lines).map((l) => l.description)).toEqual([
-      COMPOSED,
-      "Acme Family - Zesty",
-      "Zebra Co",
-    ]);
+    ];
+    // the order a reprint has always shown: by the STORED text ("Acme..." < "Classic" < "Zebra...")
+    const shown = withFamilyNames(sortInvoiceLines(stored));
+    expect(shown.map((l) => l.id)).toEqual(["3", "2", "1"]);
+    expect(shown.map((l) => l.description)).toEqual(["Acme Family - Zesty", COMPOSED, "Zebra Co"]);
+    // sorting the composed text would have moved the variant line first ("Acme Family - Classic" < "Acme Family - Zesty")
+    expect(sortInvoiceLines(withFamilyNames(stored)).map((l) => l.id)).not.toEqual(["3", "2", "1"]);
   });
 });
 

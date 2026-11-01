@@ -84,6 +84,8 @@ const ALLOWED: Record<string, string> = {
     "SA-823 PR-2: plans the import's Family rows read-only; the label comes from bareVariantLabel (the one normaliser) and is handed to assignToParent / create, so it writes no product row of its own",
   "products/family-price.ts":
     "propagates PRICE columns to a family's variants (where: parentProductId); writes no name",
+  "invoices/invoice-line-name.ts":
+    "owner bug 2026-11-01: the shared Prisma select (variantName: true) and the composer for an invoice or estimate LINE description; it only reads a product's bare label through productDisplayName and writes no Product row",
 };
 
 describe("B1 variant-name writer census", () => {
