@@ -1323,7 +1323,9 @@ t(
     t("a LINKED local-assets is never regenerable, even when it holds only reports", () => {
       const s = states();
       assert.equal(s.dirty, true);
-      assert.equal(s.allow.salvage.length + s.allow.blockers.length > 0, true);
+      // Windows: git sees the junction as an ignored folder (salvaged). Linux: a symlink is a file
+      // to git, so `local-assets/` does not ignore it and it is untracked (dirty). Never removable.
+      assert.equal(s.allow.dirty || s.allow.salvage.length + s.allow.blockers.length > 0, true);
     });
     unlinkSync(join(dir, "local-assets"));
   } finally {
