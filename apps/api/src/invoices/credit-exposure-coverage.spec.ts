@@ -7,17 +7,16 @@
  *   (i)   the hard block (`assertWithinCreditLimit` in `orders/credit-limit-guard.ts`) and the operator statement
  *         (`CustomersService.getStatementForOperator`) each CALL `loadCreditExposure`, and the
  *         block issues no invoice read of its own;
- *   (ii)  the customers list (`findAll`) and its CSV export (`exportCustomers`) each read
- *         non-settled invoices INCLUDING drafts (`notIn: CREDIT_NOT_APPLICABLE`, never
- *         `CREDIT_EXPOSURE_EXCLUDED`) and sum `receivableBalance` per invoice — which itself
- *         CALLS `isUnbackedDraft`, the same predicate the hard block uses — so a draft backed by
- *         an open/delivered order still counts and only an unbacked one is dropped (D6 option B:
- *         one basis on every surface);
+ *   (ii)  the customers list (`findAll`) and its CSV export (`exportCustomers`) each call
+ *         `openBalancesByCustomer` (SA-1078 PR-5), which reads the statement's own where and select
+ *         (`OPEN_BALANCE_INVOICE_WHERE` / `OPEN_BALANCE_INVOICE_SELECT`) and sums with
+ *         `statementOutstandingAmount`, so the list and CSV show the sheet's Open balance. They no
+ *         longer touch the credit-exposure basis (which stays on the hard block and the statement's
+ *         exposure block);
  *   (iii) a tree scan of `apps/api/src`: the raw settled-only literal (`notIn: ["PAID", "VOID",
  *         "WRITTEN_OFF"]`, in either spelling and any order) and the identifier form
  *         (`notIn: CREDIT_NOT_APPLICABLE`, the same trio) may appear ONLY in an explicit
- *         ALLOWLIST with a reason per entry (the identifier form: the shared reader, and the
- *         customers list + CSV, which sum `receivableBalance` and so drop unbacked drafts in JS).
+ *         ALLOWLIST with a reason per entry (the identifier form: the shared reader only).
  *
  * WHAT THIS DOES NOT CATCH (a reviewer must): an invoice `where` that lists DRAFT positively
  * (`status: { in: [DRAFT, SENT, …] }`), any other identifier whose members happen to equal the
@@ -126,6 +125,15 @@ function callsFunction(root: ts.Node, fn: string): boolean {
   return hit;
 }
 
+/** True when `root` mentions the identifier `name` in code (comments/strings never count). */
+function referencesIdentifier(root: ts.Node, name: string): boolean {
+  let hit = false;
+  walk(root, (n) => {
+    if (ts.isIdentifier(n) && n.text === name) hit = true;
+  });
+  return hit;
+}
+
 /** Calls shaped `<anything>.<model>.<method>(...)`, e.g. `db.invoice.findMany(...)`. */
 function callsModelMethod(root: ts.Node, model: string, method: string): boolean {
   let hit = false;
@@ -218,10 +226,9 @@ function trioIdentifierLines(root: ts.Node): number[] {
 }
 
 /**
- * The identifier form's sanctioned homes: the shared reader, and the customers list + CSV. All of
- * them deliberately fetch every non-settled invoice (drafts included) and then decide per draft
- * through `receivableBalance` (→ `isUnbackedDraft`) — a SQL-side draft exclusion would drop drafts
- * that an open/delivered order backs (D6 option B).
+ * The identifier form's sanctioned home: the shared reader, which deliberately fetches every
+ * non-settled invoice (drafts included) and decides per draft — a SQL-side draft exclusion would drop
+ * drafts that an open/delivered order backs (D6 option B).
  */
 const IDENTIFIER_FORM_ALLOWLIST: Record<string, { hits: number; reason: string }> = {
   "invoices/credit-exposure.ts": {
@@ -229,14 +236,6 @@ const IDENTIFIER_FORM_ALLOWLIST: Record<string, { hits: number; reason: string }
     reason:
       "the ONE reader: fetches every non-settled invoice incl. DRAFT, then computeCreditExposure " +
       "splits counted vs pending",
-  },
-  "customers/customers.service.ts": {
-    hits: 2,
-    reason:
-      "list receivables (findAll) + CSV export (exportCustomers): read non-settled invoices incl. " +
-      "DRAFT and sum receivableBalance per invoice (which drops unbacked drafts in JS through " +
-      "isUnbackedDraft, the same predicate as the hard block) — a backed draft still counts by " +
-      "balance",
   },
 };
 
@@ -335,8 +334,6 @@ describe("credit-exposure coverage (D6 / B462, L-119)", () => {
         "computeCreditExposure",
         "loadCreditExposure",
         "isUnbackedDraft",
-        "receivableBalance",
-        "RECEIVABLE_INVOICE_SELECT",
         "OPEN_ORDER_STATUSES",
       ]) {
         expect({ name, exported: exported.has(name) }).toEqual({ name, exported: true });
@@ -344,27 +341,40 @@ describe("credit-exposure coverage (D6 / B462, L-119)", () => {
     });
   });
 
-  describe("(ii) the customers list and CSV sum receivableBalance, which calls isUnbackedDraft (D6 option B)", () => {
-    it("receivableBalance calls isUnbackedDraft — the one draft decision behind the list and the CSV", () => {
-      const fn = functionNamed(parseFile("invoices/credit-exposure.ts"), "receivableBalance");
-      expect(callsFunction(fn, "isUnbackedDraft")).toBe(true);
+  describe("(ii) the customers list and CSV show the statement's Open balance (SA-1078 PR-5)", () => {
+    it("openBalancesByCustomer reads the statement's where and select and sums with statementOutstandingAmount", () => {
+      const fn = functionNamed(parseFile("customers/open-balances.ts"), "openBalancesByCustomer");
+      expect(callsFunction(fn, "statementOutstandingAmount")).toBe(true);
+      expect(referencesIdentifier(fn, "OPEN_BALANCE_INVOICE_WHERE")).toBe(true);
+      expect(referencesIdentifier(fn, "OPEN_BALANCE_INVOICE_SELECT")).toBe(true);
+      expect(rawSettledLiteralLines(fn)).toEqual([]);
+    });
+
+    it("the account statement reads the same where", () => {
+      const fn = functionNamed(
+        parseFile("customers/account-statement.ts"),
+        "buildAccountStatement",
+      );
+      expect(referencesIdentifier(fn, "OPEN_BALANCE_INVOICE_WHERE")).toBe(true);
     });
 
     it.each(["findAll", "exportCustomers"])(
-      "CustomersService.%s reads non-settled invoices (drafts included) and calls receivableBalance",
+      "CustomersService.%s calls openBalancesByCustomer and keeps no basis of its own",
       (name) => {
         const method = methodNamed(parseFile("customers/customers.service.ts"), name);
-        // The DB read must bring drafts back so the JS predicate can judge each one's order...
-        expect(hasInvoiceWhereNotIn(method, "CREDIT_NOT_APPLICABLE")).toBe(true);
-        // ...and it must NOT drop every DRAFT in SQL (that is the retired option-A basis, under
-        // which a draft behind a DELIVERED order would silently leave the receivable).
-        expect(hasInvoiceWhereNotIn(method, "CREDIT_EXPOSURE_EXCLUDED")).toBe(false);
-        // The one shared per-invoice basis, called — not re-implemented.
-        expect(callsFunction(method, "receivableBalance")).toBe(true);
-        // ...and no raw settled-only literal of its own.
+        expect(callsFunction(method, "openBalancesByCustomer")).toBe(true);
+        expect(callsFunction(method, "receivableBalance")).toBe(false);
+        // no invoice read of its own, and no credit-exposure status set
+        expect(callsModelMethod(method, "invoice", "findMany")).toBe(false);
+        expect(hasInvoiceWhereNotIn(method, "CREDIT_NOT_APPLICABLE")).toBe(false);
         expect(rawSettledLiteralLines(method)).toEqual([]);
       },
     );
+
+    it("the retired Receivables basis is gone from credit-exposure.ts", () => {
+      const text = fs.readFileSync(path.join(SRC_ROOT, "invoices/credit-exposure.ts"), "utf8");
+      expect(text).not.toMatch(/(receivableBalance|RECEIVABLE_INVOICE_SELECT)/);
+    });
   });
 
   describe("(iii) the raw settled-only literal appears only where allow-listed", () => {

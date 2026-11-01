@@ -7,8 +7,6 @@ import {
   loadCreditExposure,
   NON_BACKING_ORDER_STATUSES,
   OPEN_ORDER_STATUSES,
-  RECEIVABLE_INVOICE_SELECT,
-  receivableBalance,
   type ExposureInvoice,
   type ExposureOrder,
 } from "./credit-exposure";
@@ -68,65 +66,6 @@ describe("isUnbackedDraft (the single draft-exclusion predicate)", () => {
       expect(isUnbackedDraft({ status, order: { status: "CANCELLED" } })).toBe(false);
     },
   );
-});
-
-describe("receivableBalance (what ONE invoice adds to a customers list / CSV receivables total)", () => {
-  const row = (o: {
-    status: string;
-    total: unknown;
-    order?: { status: string } | null;
-    payments?: { amount: unknown; status: string }[];
-  }) => ({ payments: [], order: null, ...o });
-
-  it.each([
-    ["standalone (no order)", null],
-    ["on a CANCELLED order", { status: "CANCELLED" }],
-    ["on a DRAFT-status order", { status: "DRAFT" }],
-  ])("an unbacked DRAFT %s adds 0, whatever it totals", (_label, order) => {
-    expect(receivableBalance(row({ status: "DRAFT", total: 900, order }))).toBe(0);
-  });
-
-  it.each(["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"])(
-    "a DRAFT backed by a %s order adds its BALANCE (total − payments)",
-    (status) => {
-      const payments = [{ amount: 120, status: "PAID" }];
-      expect(
-        receivableBalance(row({ status: "DRAFT", total: 300, order: { status }, payments })),
-      ).toBe(180);
-    },
-  );
-
-  it("an issued invoice adds its balance on the non-VOID payment basis (VOID ignored, DRAFT payment still counts)", () => {
-    const payments = [
-      { amount: 100, status: "VOID" }, // bounced — ignored
-      { amount: 25, status: "DRAFT" }, // tracked follow-up: still counted as paid
-    ];
-    expect(receivableBalance(row({ status: "SENT", total: 100, payments }))).toBe(75);
-  });
-
-  it("coerces Prisma Decimal amounts", () => {
-    const payments = [{ amount: new Prisma.Decimal("30"), status: "PAID" }];
-    expect(
-      receivableBalance(row({ status: "SENT", total: new Prisma.Decimal("100"), payments })),
-    ).toBe(70);
-  });
-
-  it("equals the balance computeCreditExposure counts for the same issued invoice (one basis)", () => {
-    const payments = [{ amount: 30, status: "PAID" }];
-    const inv = invoice({ total: 100, payments });
-    expect(computeCreditExposure({ invoices: [inv], openOrders: [] }).counted).toBe(
-      receivableBalance(inv),
-    );
-  });
-
-  it("RECEIVABLE_INVOICE_SELECT selects exactly what receivableBalance reads", () => {
-    expect(RECEIVABLE_INVOICE_SELECT).toEqual({
-      total: true,
-      status: true,
-      order: { select: { status: true } },
-      payments: { select: { amount: true, status: true } },
-    });
-  });
 });
 
 describe("computeCreditExposure (pure)", () => {

@@ -56,11 +56,13 @@ export const KPI_SUMMARY_EXCLUDED: InvoiceStatus[] = [
  * credit-exposure core (`credit-exposure.ts`) to split ISSUED invoices from drafts — it is NOT
  * itself the credit-exposure read filter. D6 / B462 owner ruling (option B): a DRAFT counts
  * toward credit exposure only when an OPEN or DELIVERED order backs it (`isUnbackedDraft`);
- * only an unbacked draft is excluded and surfaced as "pending exposure". The DB read, the
- * customers list Receivables and the CSV export therefore filter `CREDIT_NOT_APPLICABLE`
- * (drafts included) and drop unbacked drafts in JS. Same members as KPI_SUMMARY_EXCLUDED on
- * purpose (one meaning of "an issued receivable"), but a separate name so the credit basis is
- * greppable and a future divergence is a deliberate edit, not an accident.
+ * only an unbacked draft is excluded and surfaced as "pending exposure". The credit-exposure
+ * DB read therefore filters `CREDIT_NOT_APPLICABLE` (drafts included) and drops unbacked
+ * drafts in JS. The customers list and CSV no longer read this basis: they show Open balance
+ * (W-1096), from `OPEN_BALANCE_INVOICE_WHERE` in `customers/account-statement.ts`. Same members
+ * as KPI_SUMMARY_EXCLUDED on purpose (one meaning of "an issued receivable"), but a separate
+ * name so the credit basis is greppable and a future divergence is a deliberate edit, not an
+ * accident.
  */
 export const CREDIT_EXPOSURE_EXCLUDED: InvoiceStatus[] = [
   InvoiceStatus.PAID,
