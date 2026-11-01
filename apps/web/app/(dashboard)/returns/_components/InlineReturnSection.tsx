@@ -44,6 +44,8 @@ import {
   ALREADY_RETURNED_NOTHING_LEFT_MESSAGE,
   NOTHING_BOUGHT_BEFORE_MESSAGE,
   restocksForReason,
+  patchReturnLine,
+  adoptProductValues,
   rulingLineIndex,
   sumChunkTotals,
   type InlineReturnLineDraft,
@@ -226,7 +228,14 @@ export function InlineReturnSection({
   }, [lines, quote, quoteStatus, captureReason, problem]);
 
   function updateLine(lineKey: string, patch: Partial<InlineReturnLineDraft>) {
-    setLines((prev) => prev.map((l) => (l.lineKey === lineKey ? { ...l, ...patch } : l)));
+    // SA-1079: reason, note, credit price and the two "why" boxes belong to the product, so they reach every row of it
+    setLines((prev) =>
+      patchReturnLine(
+        prev,
+        prev.findIndex((l) => l.lineKey === lineKey),
+        patch,
+      ),
+    );
   }
 
   // R7b 3.1: Remove keeps the line for LINE_UNDO_MS in ONE slot (a newer removal makes the older one final), shown in
@@ -265,7 +274,8 @@ export function InlineReturnSection({
     const { line, index } = removed;
     setLines((prev) => {
       const at = Math.min(index, prev.length);
-      return [...prev.slice(0, at), line, ...prev.slice(at)];
+      // the row comes back with what its product's rows hold now, so Undo never brings back an older price or reason
+      return [...prev.slice(0, at), adoptProductValues(prev, line), ...prev.slice(at)];
     });
     clearRemoved();
   }
@@ -386,7 +396,7 @@ export function InlineReturnSection({
             <p className="text-sm text-navy/70">No products yet — search below to add one.</p>
           )}
           {lines.map((line, lineIndex) => {
-            const firstIndex = lines.findIndex((l) => l.productId === line.productId);
+            const rowCount = lines.filter((l) => l.productId === line.productId).length;
             // buildCaptureRequest drops rows with no quantity, merges the rest of one product and keeps the first merged row's
             // reason, so that row's reason is what the server applies (and the stock outcome that follows) to the whole product
             const rulingIndex = rulingLineIndex(lines, line.productId);
@@ -409,9 +419,8 @@ export function InlineReturnSection({
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
                   stocks={restocksForReason(ruling.reason || captureReason)}
-                  followsFirst={lineIndex !== rulingIndex}
-                  rulingIsFirst={rulingIndex === firstIndex}
-                  firstReason={ruling.reason}
+                  isRuling={isRuling}
+                  rowCount={rowCount}
                   canOverrideCredit={canOverrideCredit}
                   needsAlreadyReturnedReason={
                     isRuling &&
@@ -611,9 +620,8 @@ function ReturnLine({
   reasonOptions,
   reasonLabel,
   stocks,
-  followsFirst,
-  rulingIsFirst,
-  firstReason,
+  isRuling,
+  rowCount,
   canOverrideCredit,
   needsAlreadyReturnedReason,
   onlyBoughtActive,
@@ -637,11 +645,10 @@ function ReturnLine({
   reasonOptions: Array<{ value: ReturnReason; label: string }>;
   reasonLabel: string;
   stocks: boolean;
-  /** A row of a product that is not the one whose reason rules (the first row with a quantity): it cannot take its own. */
-  followsFirst: boolean;
-  /** the ruling row is the product's first row, so the label can say "the first row" */
-  rulingIsFirst: boolean;
-  firstReason: ReturnReason | "";
+  /** The row whose quantity the capture counts first: only it opens its options by itself. */
+  isRuling: boolean;
+  /** Rows of this product on the screen: with 2 or more, the product-wide boxes say so in their labels. */
+  rowCount: number;
   canOverrideCredit: boolean;
   needsAlreadyReturnedReason: boolean;
   onlyBoughtActive: boolean;
@@ -655,12 +662,16 @@ function ReturnLine({
 }) {
   const [userOpen, setUserOpen] = React.useState(false);
   const panelId = React.useId();
+  // SA-1079: the boxes that hold one value for the whole product say so when the product has more than one row
+  const wide = (single: string, base: string = single) =>
+    rowCount < 2 ? single : `${base} (${rowCount === 2 ? "both rows" : `all ${rowCount} rows`})`;
   const hasValue =
-    (!!line.reason && !followsFirst) ||
-    !!line.note ||
-    !!line.creditUnitPrice ||
-    !!line.overrideReason ||
-    !!(line.alreadyReturnedReason ?? "").trim();
+    isRuling &&
+    (!!line.reason ||
+      !!line.note ||
+      !!line.creditUnitPrice ||
+      !!line.overrideReason ||
+      !!(line.alreadyReturnedReason ?? "").trim());
   // M9: a typed note or price is never out of sight, and a decision that is not optional opens by itself
   const forced = hasValue || needsAlreadyReturnedReason;
   const open = userOpen || forced;
@@ -793,21 +804,15 @@ function ReturnLine({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Select
             className="max-lg:h-11"
-            label={
-              followsFirst
-                ? rulingIsFirst
-                  ? "Reason (same as the first row)"
-                  : "Reason (same as the first row with a quantity)"
-                : "Reason (optional)"
-            }
-            value={followsFirst ? firstReason : line.reason}
-            disabled={locked || followsFirst}
+            label={wide("Reason (optional)", "Reason")}
+            value={line.reason}
+            disabled={locked}
             onChange={(e) => onChange({ reason: e.target.value as ReturnReason | "" })}
             options={[{ value: "", label: "Use default" }, ...reasonOptions]}
           />
           <Input
             className="max-lg:h-11"
-            label="Note (optional)"
+            label={wide("Note (optional)", "Note")}
             disabled={locked}
             value={line.note}
             onChange={(e) => onChange({ note: e.target.value })}
@@ -817,7 +822,7 @@ function ReturnLine({
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
             <Input
               className="max-lg:h-11"
-              label={boxedForNote ? `Credit price per ${UW.pack.lower}` : "Credit price"}
+              label={wide(boxedForNote ? `Credit price per ${UW.pack.lower}` : "Credit price")}
               type="text"
               inputMode="decimal"
               placeholder="Quoted price"
