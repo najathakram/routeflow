@@ -1124,3 +1124,83 @@ describe("sweep of first-row reads (Lead, #4036): scan, focus and credit price f
     }
   });
 });
+
+describe("BR-16 (Mac mini proof on #4064): the box being typed in stays in view when row 1 opens above it", () => {
+  const twoRows = () => {
+    mockEntryOrder = {
+      id: "order-1",
+      lineItems: [
+        { productId: "prod-1", qty: 5, product: { name: "Widget", unit: "each" } },
+        { productId: "prod-1", qty: 2, product: { name: "Widget", unit: "each" } },
+      ],
+    };
+  };
+  let scrolled: jest.Mock;
+  beforeEach(() => {
+    scrolled = jest.fn();
+    Element.prototype.scrollIntoView = scrolled;
+  });
+
+  it("typing a price on row 2 opens row 1, and the focused price box is scrolled into view clear of a sticky bar", async () => {
+    authRole = "OPERATOR";
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("1", 0);
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    const price = within(rows()[1]).getByLabelText("Credit price (both rows)");
+    price.focus();
+    expect(scrolled).not.toHaveBeenCalled();
+    fireEvent.change(price, { target: { value: "7" } });
+    // row 1 (the ruling row) opened by itself above the box
+    expect(within(rows()[0]).getByLabelText("Credit price (both rows)")).toBeVisible();
+    expect(scrolled).toHaveBeenCalledTimes(1);
+    expect(scrolled.mock.contexts[0]).toBe(price);
+    expect(scrolled).toHaveBeenCalledWith({ block: "nearest" });
+    // room is kept under the box for a sticky Save / Cancel bar, and not left behind on the field
+    expect((price as HTMLElement).style.scrollMarginBottom).toBe("");
+  });
+
+  it("further keystrokes, with row 1 already open, scroll nothing", async () => {
+    authRole = "OPERATOR";
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const rows = () => screen.getAllByTestId("return-line-prod-1");
+    setQty("1", 0);
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[1]);
+    const price = within(rows()[1]).getByLabelText("Credit price (both rows)");
+    price.focus();
+    fireEvent.change(price, { target: { value: "7" } });
+    scrolled.mockClear();
+    fireEvent.change(price, { target: { value: "7." } });
+    fireEvent.change(price, { target: { value: "7.5" } });
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it("opening a row by its own button does not scroll the page", async () => {
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    const toggle = screen.getAllByRole("button", { name: /options for widget/i })[0];
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it("W-785: with two rows Reason and Note stack on a phone so the long label never wraps; one row keeps two columns", async () => {
+    twoRows();
+    renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    fireEvent.click(screen.getAllByRole("button", { name: /options for widget/i })[0]);
+    const fields = (i: number) =>
+      within(screen.getAllByTestId("return-line-prod-1")[i]).getByTestId("return-line-text-fields");
+    expect(fields(0).className).toContain("grid-cols-1");
+    expect(fields(0).className).not.toContain("grid-cols-2");
+  });
+
+  it("W-785: one row keeps its two columns", async () => {
+    renderSection();
+    await pick();
+    fireEvent.click(optionsToggle("Widget"));
+    const fields = within(row("prod-1")).getByTestId("return-line-text-fields");
+    expect(fields.className).toContain("grid-cols-2");
+  });
+});

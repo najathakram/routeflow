@@ -13,7 +13,7 @@
 // the quote, and a quote is shown as current only while it is for exactly the lines on screen (useLiveReturnQuote).
 import * as React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Button, Input, Select, useToast } from "@routeflow/ui/web";
+import { Button, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useScanCodeHandler } from "../../orders/_components/scan/useScanCodeHandler";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
@@ -608,6 +608,18 @@ export function InlineReturnSection({
   );
 }
 
+/** Room kept under a field scrolled into view, for the edit page's sticky Save / Cancel bar. */
+const STICKY_BAR_ROOM = "6rem";
+
+function keepFocusedFieldInView() {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.matches("input, select, textarea")) return;
+  const before = el.style.scrollMarginBottom;
+  el.style.scrollMarginBottom = STICKY_BAR_ROOM;
+  el.scrollIntoView?.({ block: "nearest" });
+  el.style.scrollMarginBottom = before;
+}
+
 /** One return line: name and counts, Qty, and the collapsed options row that shows the line's defaults in words. */
 function ReturnLine({
   line,
@@ -675,6 +687,16 @@ function ReturnLine({
   // M9: a typed note or price is never out of sight, and a decision that is not optional opens by itself
   const forced = hasValue || needsAlreadyReturnedReason;
   const open = userOpen || forced;
+
+  // BR-16: a row that opens by itself (a price typed on another row of the product opens the ruling row) pushes the box
+  // being typed in down the page. Nothing else keeps that box on screen: the host scrolls an inner element, and on the edit
+  // page a sticky Save / Cancel bar sits over the bottom. So when this row opens, the focused field is brought back into
+  // view, with room left under it for that bar.
+  const wasOpen = React.useRef(open);
+  React.useLayoutEffect(() => {
+    if (open && !wasOpen.current) keepFocusedFieldInView();
+    wasOpen.current = open;
+  }, [open]);
 
   const hasExcess = !!facts && facts.notOnInvoicePieces > 0;
   const hasAlreadyReturned = !!facts && facts.alreadyReturnedPieces > 0;
@@ -801,7 +823,11 @@ function ReturnLine({
         )}
       </button>
       <div id={panelId} hidden={!open} className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div
+          data-testid="return-line-text-fields"
+          // two rows: "Reason (both rows)" does not fit half of a phone-wide column, so the two stack there (W-785)
+          className={cn("grid gap-2 sm:grid-cols-4", rowCount > 1 ? "grid-cols-1" : "grid-cols-2")}
+        >
           <Select
             className="max-lg:h-11"
             label={wide("Reason (optional)", "Reason")}
