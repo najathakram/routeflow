@@ -245,7 +245,7 @@ function ArAgingReport({
   onSelectReport?: (id: string, context?: Record<string, string>) => void;
 }) {
   const [interval, setInterval] = React.useState<15 | 30 | 60>(30);
-  const { data, isLoading, isFetching, isError, refetch } = useArAgingInvoices(interval);
+  const { data, isLoading, isError, refetch } = useArAgingInvoices(interval);
   if (isError) return <ErrorState onRetry={() => refetch()} />;
   const buckets = data?.buckets ?? {};
   const totals = data?.totals ?? { total: 0 };
@@ -304,7 +304,7 @@ function ArAgingReport({
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">
-          {isLoading || isFetching ? (
+          {isLoading ? (
             <SkeletonRows cols={8} />
           ) : Object.keys(customerMap).length === 0 ? (
             <tr>
@@ -924,7 +924,7 @@ function CustomerBalanceReport({
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">
-          {isLoading || isFetching ? (
+          {isLoading ? (
             <SkeletonRows cols={4} />
           ) : displayRows.length === 0 ? (
             <tr>
