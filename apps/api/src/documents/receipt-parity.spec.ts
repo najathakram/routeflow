@@ -240,8 +240,24 @@ function build(s: Scenario) {
         carriedReturns: s.carried ?? [],
         creditNotes,
       });
+  // the method the clerk rang: the scenario's, else the first real tender's; a sale settled by credit alone was rung as cash with
+  // nothing due, one left owing as On account; no payment at all = the by-key read (derived from storage: On account)
+  const rang = payments.find(
+    (p) => p.method === "CASH" || p.method === "CREDIT_CARD" || p.method === "CHECK",
+  );
+  const liveMethod =
+    s.liveMethod ??
+    (rang
+      ? rang.method === "CREDIT_CARD"
+        ? "CARD"
+        : (rang.method as "CASH" | "CHECK")
+      : payments.length > 0
+        ? payments.reduce((sum, p) => sum + Number(p.amount), 0) >= Number(s.total)
+          ? "CASH"
+          : "ON_ACCOUNT"
+        : undefined);
   const response = buildCounterSaleResponse({
-    ...(s.liveMethod ? { payment: { method: s.liveMethod } } : {}),
+    ...(liveMethod ? { payment: { method: liveMethod } } : {}),
     ...(split ? { split } : {}),
     order: {
       id: "ord-1",
@@ -631,6 +647,8 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
       expect(htmlLines(b.rendered)).toEqual(pinned);
       expect(reprintLines(b.emailModel)).toEqual(pinned);
       expect(b.emailModel.onAccount).toBe(b.reprint.onAccount);
+      // SA-1077 R12: the till's own receipt reads the same rows (it was never compared on a return, which is how it drifted)
+      expect(reprintLines(b.live)).toEqual(pinned);
     };
     const refunded2 = ret({
       status: "REFUNDED",
@@ -1583,16 +1601,70 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
     const b = t1({ tendered: "20.00" });
     expect(b.live.tendered).toBe(20);
     expect(b.live.change).toBe(14);
+    expect(lines(b.live)).toEqual(lines(b.reprint));
   });
 
   it("R1 T1: Tendered is the stored $6.00, not paid + change ($16.00)", () => {
     const b = t1();
     expect(b.live.tendered).toBe(6);
-    expect(b.live.change).toBe(0);
-    expect(b.live.paid).toBe(16);
+    expect(lines(b.live)).toEqual([
+      "Payment method Cash $6.00 + Store credit $10.00",
+      "Paid $16.00",
+      "Tendered $6.00",
+      "Change $0.00",
+    ]);
   });
 
-  it("R7 T6: older credit auto-applied, no return at all: Tendered is the stored $6.00", () => {
+  it("R3 T1: the method line names both legs, as the reprint does", () => {
+    const b = t1();
+    expect(b.live.methodLabel).toBe("Cash $6.00 + Store credit $10.00");
+    expect(b.live.methodLabel).toBe(b.reprint.methodLabel);
+  });
+
+  it("R4 T3: $6.00 on a card plus the store credit reads Card $6.00 + Store credit $10.00", () => {
+    const b = build({
+      total: "16.00",
+      tax: "0.00",
+      payments: [card("6.00"), credit("10.00")],
+      carried: [olderReturn("10.00")],
+      notes: applied(10),
+    });
+    expect(b.live.methodLabel).toBe("Card $6.00 + Store credit $10.00");
+    expect(lines(b.live)).toEqual(lines(b.reprint));
+  });
+
+  it("R5 T4: on account with $4.00 of store credit shows the credit and Paid $4.00; the On account banner stays", () => {
+    const b = build({
+      total: "10.00",
+      tax: "0.00",
+      payments: [credit("4.00")],
+      carried: [olderReturn("4.00")],
+      notes: applied(4),
+      liveMethod: "ON_ACCOUNT",
+    });
+    expect(b.live.onAccount).toBe(true);
+    expect(b.live.methodLabel).toBe("Store credit $4.00");
+    expect(b.live.paid).toBe(4);
+    expect(b.live.showPaid).toBe(true);
+    expect(b.live.balanceDue).toBe(6);
+    expect(b.live.showBalance).toBe(true);
+  });
+
+  it("R6 T5: a $12.00 return on a $10.00 sale, nothing tendered: Store credit $10.00, Paid $10.00, no Tendered", () => {
+    const b = build({
+      total: "10.00",
+      tax: "0.00",
+      payments: [credit("10.00")],
+      carried: [olderReturn("12.00")],
+      notes: applied(10),
+      liveMethod: "CASH",
+    });
+    expect(b.live.methodLabel).toBe("Store credit $10.00");
+    expect(b.live.paid).toBe(10);
+    expect(b.live.tendered).toBeNull();
+  });
+
+  it("R7 T6: older credit auto-applied, no return at all: Tendered is the stored $6.00 and the method names both legs", () => {
     const b = build({
       total: "16.00",
       tax: "0.00",
@@ -1600,11 +1672,13 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
       tendered: "6.00",
     });
     expect(b.live.tendered).toBe(6);
+    expect(b.live.methodLabel).toBe("Cash $6.00 + Store credit $10.00");
+    expect(lines(b.live)).toEqual(lines(b.reprint));
   });
 
   it("R8: a CASH sale with nothing stored and nothing entered prints no Tendered row", () => {
     const b = build({ total: "10.00", tax: "0.00", payments: [cash("10.00")] });
     expect(b.live.tendered).toBeNull();
-    expect(b.reprint.tendered).toBeNull();
+    expect(lines(b.live)).toEqual(lines(b.reprint));
   });
 });
