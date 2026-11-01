@@ -393,8 +393,8 @@ export function InlineReturnSection({
             const ruling = lines[rulingIndex];
             // the product's quote facts, the credit and the already-returned reason all sit on the ruling row too
             const isRuling = lineIndex === rulingIndex;
-            const facts =
-              isRuling && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            const productFacts = detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            const facts = isRuling ? productFacts : null;
             return (
               <React.Fragment key={line.lineKey}>
                 {removed && removed.index === lineIndex ? undoRow : null}
@@ -408,7 +408,10 @@ export function InlineReturnSection({
                   locked={locked}
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
-                  stocks={restocksForReason(ruling.reason || captureReason)}
+                  // SA-1060 PR-2: goods this customer was never sold are not added to stock, whatever the reason (the quote says so)
+                  stocks={
+                    restocksForReason(ruling.reason || captureReason) && !productFacts?.neverSold
+                  }
                   followsFirst={lineIndex !== rulingIndex}
                   rulingIsFirst={rulingIndex === firstIndex}
                   firstReason={ruling.reason}
@@ -871,6 +874,11 @@ function ReturnLine({
               )}{" "}
               priced at the customer&apos;s current price.
             </p>
+            {facts.neverSold && (
+              <p data-testid={`return-line-stock-note-${line.productId}`} className="text-navy">
+                Not added to stock
+              </p>
+            )}
             {excessChunks.map((c, i) => (
               <CreditOverrideNote key={`excess-override-${i}`} chunk={c} boxed={boxedForNote} />
             ))}

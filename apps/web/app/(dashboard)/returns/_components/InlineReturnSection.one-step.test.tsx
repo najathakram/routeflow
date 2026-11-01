@@ -1018,3 +1018,64 @@ describe("sweep of first-row reads (Lead, #4036): scan, focus and credit price f
     }
   });
 });
+
+describe("SA-1060 PR-2 M9: goods the customer was never sold are not added to stock", () => {
+  async function quoted(chunks: InlineReturnQuoteChunk[], qty = "6") {
+    const view = renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty(qty);
+    wait(DEBOUNCE);
+    answer(quoteResponse(chunks));
+    return view;
+  }
+
+  it("the closed row reads 'Not added to stock' from the quote, though the reason would put it back", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true })]);
+    expect(summary("prod-1")).toHaveTextContent("Bought too many"); // a reason that restocks
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+  });
+
+  it("the options say it too, once opened", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true })]);
+    fireEvent.click(optionsToggle("Widget"));
+    expect(screen.getByTestId("return-line-stock-note-prod-1")).toHaveTextContent(
+      "Not added to stock",
+    );
+  });
+
+  it("a line with goods sold to them before still reads 'Back to stock' (guard)", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 1.2, neverSold: false })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+    fireEvent.click(optionsToggle("Widget"));
+    expect(screen.queryByTestId("return-line-stock-note-prod-1")).toBeNull();
+  });
+
+  it("a fully matched line reads 'Back to stock' (guard)", async () => {
+    await quoted([chunk({ pieces: 6, neverSold: false })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("an older API that sends no neverSold changes nothing (guard)", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0 })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("only the never-sold line changes: its neighbour keeps 'Back to stock'", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    await pick("Gadget");
+    setQty("6", 0);
+    setQty("4", 1);
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        noSale({ productId: "prod-1", pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true }),
+        chunk({ productId: "prod-2", pieces: 4, neverSold: false }),
+      ]),
+    );
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-2")).toHaveTextContent("Back to stock");
+  });
+});

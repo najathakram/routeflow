@@ -484,6 +484,9 @@ export interface LineQuoteFacts {
   total: number;
   /** True when the covered chunks span more than one earlier order. */
   spansOrders: boolean;
+  /** SA-1060 PR-2: the quote says this customer was never sold the product, so the goods are not added to stock whatever the
+   *  reason. Read from the server's own flag on the chunk; the screen never works it out. */
+  neverSold: boolean;
 }
 
 export function lineQuoteFacts(
@@ -505,6 +508,7 @@ export function lineQuoteFacts(
     alreadyReturnedPieces: sumPieces(alreadyReturned),
     total: server ? server.total : sumChunkTotals(chunks).total,
     spansOrders: new Set(covered.map((c) => c.sourceOrderId)).size > 1,
+    neverSold: notOnInvoice.some((c) => c.neverSold === true),
   };
 }
 

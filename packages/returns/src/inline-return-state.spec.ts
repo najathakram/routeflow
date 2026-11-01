@@ -1083,6 +1083,32 @@ describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () 
     expect(facts.covered).toEqual([]);
     expect(facts.total).toBe(0);
   });
+
+  it("SA-1060 PR-2: neverSold is the server's flag on a no-sale chunk of that product, nothing else", () => {
+    const noSale = (o: object) =>
+      chunk({ sourceOrderId: null, sourceInvoiceItemId: null, sourceOrderItemId: null, ...o });
+    const never = pkg.lineQuoteFacts(
+      quoteResponse([noSale({ productId: "prod-1", neverSold: true })]),
+      "prod-1",
+    );
+    expect(never.neverSold).toBe(true);
+    const before = pkg.lineQuoteFacts(
+      quoteResponse([noSale({ productId: "prod-1", neverSold: false })]),
+      "prod-1",
+    );
+    expect(before.neverSold).toBe(false);
+    expect(pkg.lineQuoteFacts(quoteResponse([chunk()]), "prod-1").neverSold).toBe(false);
+    expect(
+      pkg.lineQuoteFacts(quoteResponse([noSale({ productId: "prod-1" })]), "prod-1").neverSold,
+    ).toBe(false); // an older API sends no flag
+    // another product's flag is not this product's
+    expect(
+      pkg.lineQuoteFacts(
+        quoteResponse([noSale({ productId: "prod-2", neverSold: true }), chunk()]),
+        "prod-1",
+      ).neverSold,
+    ).toBe(false);
+  });
 });
 
 describe("R-7: the capture body is byte-equal to what master sent for the same lines", () => {
