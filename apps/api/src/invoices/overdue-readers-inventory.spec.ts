@@ -44,7 +44,7 @@ const USES_CLASSIFIER: Record<string, string> = {
     "the invoice email's and the reminder's balance due: emailPaidBasis (confirmedBalance), the one copy since W-680 (it was inline in sendEmail/sendReminder)",
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "customers/customer-statement.ts":
-    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. SIGNED by design (row 326): the statement's outstandingAmount (the Balance Due tile) is the net position over open invoices, sum(total - confirmed) with no clamp, so an overpaid open invoice nets the figure down (a customer in credit reads <= 0, which the tile colours as credit); it reconciles with the ledger's per-invoice signed runningBalance, and overdueAmount stays clamped at 0",
+    "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. CLAMPED since SA-1078 PR-1 (it was the signed net, row 326): the statement's outstandingAmount (the open balance) is summarizeOpenInvoices(...).unpaidTotal, the sum of each open invoice's clamped balance, so an overpaid open invoice adds 0 and the rows add up to the total, and overdueAmount (also clamped) can no longer read above it; the ledger's per-invoice signed runningBalance is untouched",
   "bookkeeping/bookkeeping.service.ts":
     "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the Receivable Summary's invoice rows (signedBalance, owner ruling 2026-10-11), the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
@@ -318,10 +318,11 @@ describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinel
     }
   });
 
-  // Row 326: the statement's outstandingAmount is the SIGNED net position (by design, see the
-  // USES_CLASSIFIER note on customers/customer-statement.ts): an overpaid open invoice nets it down
-  // (overpaid 100 - 110 = -10; with a 50 invoice owed = 40), unlike overdueAmount, which is clamped.
-  it("customers: outstandingAmount is the signed net over open invoices (overpaid nets down)", async () => {
+  // SA-1078 PR-1 (was row 326): the statement's outstandingAmount is the sum of each open invoice's
+  // CLAMPED balance (see the USES_CLASSIFIER note on customers/customer-statement.ts): an overpaid open
+  // invoice adds 0 (overpaid 100 - 110 = 0; with a 50 invoice owed = 50), like overdueAmount. It was the
+  // signed net (-10 and 40), which the rows could not add up to.
+  it("customers: outstandingAmount sums each open invoice's clamped balance (overpaid adds 0)", async () => {
     const prisma = createMockPrisma();
     prisma.customer.findFirst.mockResolvedValue({ id: "c1", userId: "u1", businessName: "Acme" });
     prisma.creditNote.findMany.mockResolvedValue([]);
@@ -333,13 +334,26 @@ describe("SA-770 — BALANCE_CLAMPED readers behave (overpaid adds 0; a genuinel
       findCustomerOrThrow: jest.fn().mockResolvedValue({ id: "c1" }),
     });
     for (const [rows, want] of [
-      [[overpaid], -10],
-      [[overpaid, owes], 40],
+      [[overpaid], 0],
+      [[overpaid, owes], 50],
     ] as const) {
       prisma.invoice.findMany.mockResolvedValue(rows);
       expect((await svc.getMyStatement({ sub: "u1" } as any)).outstandingAmount).toBe(want);
       expect((await svc.getStatementForOperator("c1")).outstandingAmount).toBe(want);
     }
+  });
+
+  // SA-1078 S21: BOTH statement builders take their total from summarizeOpenInvoices, through the one
+  // statementOutstandingAmount helper; a raw `total - paid` reduce coming back fails here.
+  it("customers: both statement builders take outstandingAmount from summarizeOpenInvoices", () => {
+    const src = stripComments(
+      fs.readFileSync(path.join(SRC_ROOT, "customers/customer-statement.ts"), "utf8"),
+    );
+    const helper = src.match(/function statementOutstandingAmount\([\s\S]*?\n\}/)?.[0] ?? "";
+    expect(helper).toMatch(/\bsummarizeOpenInvoices\(/);
+    expect(helper).toMatch(/\.unpaidTotal\b/);
+    expect(src.match(/\bstatementOutstandingAmount\(/g)?.length).toBe(3); // the definition and the two builders
+    expect(src.match(/const outstanding = statementOutstandingAmount\(/g)?.length).toBe(2);
   });
 
   it("bookkeeping: the per-customer aging overdue figure", async () => {
