@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { AccountStatement } from "@routeflow/types";
+import type { AccountStatement, SendAccountStatementEmailResult } from "@routeflow/types";
 import { apiClient } from "../api-client";
 import { useOptionalAuth } from "../auth-context";
 import { deniedGroupsOf, useMyPermissions } from "./my-permissions";
@@ -31,6 +31,18 @@ export async function fetchAccountStatementPdfUrl(customerId: string): Promise<s
     .get<{ url: string }>(`/customers/${customerId}/account-statement/pdf`)
     .then((r) => r.data);
   return url;
+}
+
+/** SA-1078 PR-4: email the statement (PDF attached). The server resolves the address, renders once and records the delivery. */
+export async function sendAccountStatementEmail(
+  customerId: string,
+  email: string,
+): Promise<SendAccountStatementEmailResult> {
+  return apiClient
+    .post<SendAccountStatementEmailResult>(`/customers/${customerId}/account-statement/email`, {
+      email,
+    })
+    .then((r) => r.data);
 }
 
 /**

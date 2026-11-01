@@ -50,6 +50,8 @@ import { useLastKnownRoutesAccess } from "@/lib/last-known-routes-access";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GetTheAppStrip } from "./GetTheAppStrip";
+import { FirstRunCard } from "./FirstRunCard";
+import { useFirstRun } from "@/lib/api/first-run";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { BRAND_MARK_SRC } from "@/components/brand";
 import { GettingStartedBanner } from "./GettingStartedBanner";
@@ -908,7 +910,13 @@ export default function DashboardPage() {
   const ownerName = settingsData?.ownerName;
   const businessName = settingsData?.businessName;
   // SA-1067 Z4: only the tenant admin can change the zone, so only they are asked.
-  const askForTimeZone = user?.role === "TENANT_ADMIN" && isZoneUnset(settingsData?.timezone);
+  // W1: a new account's admin is asked one thing first. While it is open, nothing else on this page asks them anything
+  // (the time zone card and the app strip wait), so the first screen has one question.
+  const firstRunEnabled = user?.role === "TENANT_ADMIN";
+  const { data: firstRun } = useFirstRun(firstRunEnabled);
+  const firstRunOpen = firstRunEnabled && firstRun?.state === "pending";
+  const askForTimeZone =
+    user?.role === "TENANT_ADMIN" && !firstRunOpen && isZoneUnset(settingsData?.timezone);
 
   // PHASE 1a: the redirect effect above fires once driverHasRunsAccess is
   // known true — render nothing rather than a frame of operator dashboard
@@ -921,6 +929,9 @@ export default function DashboardPage() {
       {/* ── Onboarding in progress (#2159 S4) ── */}
       <GettingStartedBanner onboarding={onboardingQuery.data?.onboarding} />
 
+      {/* ── The first question on a new account (W1) ── */}
+      {firstRunEnabled && <FirstRunCard status={firstRun} />}
+
       {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
       <DriverAppBanner
         visible={baseIsDriver && !driverBannerDismissed}
@@ -928,7 +939,7 @@ export default function DashboardPage() {
       />
 
       {/* ── Install-the-app nudge (row 559; never for drivers, who get the banner above) ── */}
-      <GetTheAppStrip isDriver={baseIsDriver} />
+      {!firstRunOpen && <GetTheAppStrip isDriver={baseIsDriver} />}
 
       {/* ── Install banner (SA-1069 A-2 P-1): staff home only, never the shell — it is fixed
           bottom-4 and covered the till's Complete buttons on an iPhone when mounted on every screen ── */}

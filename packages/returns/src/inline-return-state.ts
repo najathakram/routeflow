@@ -221,6 +221,50 @@ export function rulingLineIndex(
   return withQty >= 0 ? withQty : lines.findIndex((l) => l.productId === productId);
 }
 
+/**
+ * SA-1079: the wire holds ONE item per product (`mergeDuplicateProductItems`), so these fields belong to the product, not the
+ * row. Boxes and pieces stay per row. `patchReturnLine` writes a product-wide field to every row of the product.
+ */
+export const PRODUCT_WIDE_FIELDS = [
+  "reason",
+  "note",
+  "creditUnitPrice",
+  "overrideReason",
+  "alreadyReturnedReason",
+] as const satisfies readonly (keyof InlineReturnLineDraft)[];
+
+/** Applies `patch` to row `at`; the product-wide keys in it also go to every other row of the same product. */
+export function patchReturnLine<L extends InlineReturnLineDraft>(
+  lines: readonly L[],
+  at: number,
+  patch: Partial<InlineReturnLineDraft>,
+): L[] {
+  const target = lines[at];
+  if (!target) return [...lines];
+  const wide: Partial<InlineReturnLineDraft> = {};
+  for (const key of PRODUCT_WIDE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      (wide as Record<string, unknown>)[key] = patch[key];
+    }
+  }
+  return lines.map((l, i) =>
+    i === at ? { ...l, ...patch } : l.productId === target.productId ? { ...l, ...wide } : l,
+  );
+}
+
+/** A row put back (Undo) takes the product-wide values its product's rows hold now; its own when no row is left. */
+export function adoptProductValues<L extends InlineReturnLineDraft>(
+  lines: readonly L[],
+  line: L,
+): L {
+  const at = rulingLineIndex(lines, line.productId);
+  const source = at >= 0 ? lines[at] : undefined;
+  if (!source) return line;
+  const adopted: Partial<InlineReturnLineDraft> = {};
+  for (const key of PRODUCT_WIDE_FIELDS) (adopted as Record<string, unknown>)[key] = source[key];
+  return { ...line, ...adopted };
+}
+
 /** "Get quote" enables when any line has boxes > 0 or pieces > 0. */
 export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
   return lines.some((l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0);
@@ -271,6 +315,8 @@ export function buildQuoteRequest(
   routeRunStopId?: string,
   /** SA-740: the sale this return is from (a counter return sends the sale's order id; REQUIRED for a walk-in). */
   sourceOrderId?: string,
+  /** SA-1060 A-4: the order being edited (the order edit's Returns section only; every other caller omits it). */
+  editingOrderId?: string,
 ): QuoteInlineReturnRequest {
   const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
     lines
@@ -289,21 +335,23 @@ export function buildQuoteRequest(
     pieces,
     ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
   }));
-  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId, editingOrderId);
 }
 
-/** The quote request envelope: routeRunStopId and sourceOrderId ride along only when supplied. */
+/** The quote request envelope: routeRunStopId, sourceOrderId and editingOrderId ride along only when supplied. */
 function quoteRequestOf(
   customerId: string,
   items: QuoteInlineReturnItem[],
   routeRunStopId?: string,
   sourceOrderId?: string,
+  editingOrderId?: string,
 ): QuoteInlineReturnRequest {
   return {
     customerId,
     items,
     ...(routeRunStopId ? { routeRunStopId } : {}),
     ...(sourceOrderId ? { sourceOrderId } : {}),
+    ...(editingOrderId ? { editingOrderId } : {}),
   };
 }
 
@@ -484,6 +532,10 @@ export interface LineQuoteFacts {
   total: number;
   /** True when the covered chunks span more than one earlier order. */
   spansOrders: boolean;
+  /** SA-1060 PR-2: the quote says this customer was never sold the product, so the goods are not added to stock whatever the
+   *  reason. Read from the server's own flag on any chunk (SA-1060 A-6: it wins over `alreadyReturned` for stock and
+   *  tax; `alreadyReturned` keeps the reason and the hold); the screen never works it out. */
+  neverSold: boolean;
 }
 
 export function lineQuoteFacts(
@@ -505,6 +557,7 @@ export function lineQuoteFacts(
     alreadyReturnedPieces: sumPieces(alreadyReturned),
     total: server ? server.total : sumChunkTotals(chunks).total,
     spansOrders: new Set(covered.map((c) => c.sourceOrderId)).size > 1,
+    neverSold: chunks.some((c) => c.neverSold === true),
   };
 }
 

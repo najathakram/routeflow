@@ -44,7 +44,7 @@ export const INTAKE_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * so a Terms update that forgets to bump them fails the build.
  */
 export const TERMS_VERSION = "2026-09-17";
-export const PRIVACY_VERSION = "2026-09-17";
+export const PRIVACY_VERSION = "2026-10-31";
 
 const SECTION_KEYS: IntakeSectionKey[] = [
   "ACCOUNT",

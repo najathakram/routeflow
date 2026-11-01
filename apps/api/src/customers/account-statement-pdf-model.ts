@@ -9,7 +9,7 @@ import { fmtPdfDate } from "../common/pdf-date";
  */
 
 export const fmtMoney = (n: number): string => `$${roundMoney(Math.abs(n)).toFixed(2)}`;
-const dayOf = (day: string): string => fmtPdfDate(`${day}T00:00:00.000Z`);
+export const dayOf = (day: string): string => fmtPdfDate(`${day}T00:00:00.000Z`);
 
 /** What a stored method prints as. An unknown future method reads as "Payment", never as its raw code. */
 const METHOD_WORDS: Record<PaymentMethod, string> = {

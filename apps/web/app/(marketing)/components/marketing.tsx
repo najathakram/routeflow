@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Check, Warehouse, Store } from "lucide-react";
 import type { ReactNode } from "react";
 import { authLinks } from "./auth-links";
+import { DEMO_CTA } from "../lib/site";
 
 // Shared static/presentational building blocks used across the marketing
 // pages (M1 §10). Copy is verbatim from the redesign's components/marketing.tsx.
@@ -57,7 +58,7 @@ export function CTA({ retailer = false }: { retailer?: boolean } = {}) {
           className="button button-white"
           href={retailer ? authLinks.retailerSignUp : "/book-a-demo"}
         >
-          {retailer ? "Create a retailer account" : "Book a workflow demo"}
+          {retailer ? "Create a retailer account" : DEMO_CTA}
           <ArrowUpRight size={19} />
         </Link>
         <span>

@@ -42,6 +42,7 @@ function build() {
     snapshotAdmin as never,
     undefined as never, // businessProfiles
     undefined as never, // featureConfig
+    undefined as never, // applyService
   );
   return { controller, snapshotAdmin, configSnapshotFlag, svc };
 }

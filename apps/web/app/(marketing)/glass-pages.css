@@ -71,6 +71,17 @@
   margin: 6px 0 14px;
 }
 
+/* W6 / C6: the sticky header is 86 to 100 px tall (390 to 1440). Without this margin a jump to the
+   day heading leaves it under the header at 390 and 768. */
+.rf-marketing .booking-panel .day-heading {
+  scroll-margin-top: 120px;
+}
+
+/* W6 / C7: /faq, /integrations and /quickbooks land on #faq; keep its heading below the sticky header. */
+.rf-marketing #faq {
+  scroll-margin-top: 120px;
+}
+
 .rf-marketing .calendar-heading h3 {
   margin: 0;
   font-size: 19px;

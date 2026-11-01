@@ -110,6 +110,11 @@ export interface MyPermissions {
   /** Compare-and-set token for `SetOperatorPermissionsBody.expectedVersion`. */
   version: number;
   mode: PermissionsMode;
+  /**
+   * May the caller type a line price (SA-1034)? The server's MODE-APPLIED answer: in `shadow` the role alone, in `live` the
+   * role and the deny list. The web reads this, never a role, to enable or disable "Add custom item".
+   */
+  priceEditAllowed: boolean;
 }
 
 /** Body of `PUT /users/:id/permissions`. `granted` is the full set of groups that are ON. */

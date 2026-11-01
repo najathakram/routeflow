@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
-import { routes, site } from "../lib/site";
+import { DEMO_CTA, routes } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow } from "../components/marketing";
 import { OrderLifecycle, WholesalerCapabilities } from "../components/order-lifecycle";
 import { WorkflowTour } from "../components/workflow-tour";
@@ -12,18 +13,11 @@ import { FAQ } from "../components/faq";
 
 const route = routes.find((r) => r.slug === "wholesalers")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/wholesalers",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/wholesalers" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/wholesalers",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 export default function WholesalersPage() {
   return (
@@ -42,7 +36,7 @@ export default function WholesalersPage() {
             </p>
             <div className="hero-actions">
               <Link href="/book-a-demo" className="button button-lime">
-                Book a distributor demo <ArrowUpRight size={18} />
+                {DEMO_CTA} <ArrowUpRight size={18} />
               </Link>
             </div>
             <p className="hero-note">Orders, routes, and customer accounts in one workspace.</p>

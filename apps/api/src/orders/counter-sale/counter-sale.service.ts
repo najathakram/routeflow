@@ -30,8 +30,8 @@ import { toCounterOrderItem } from "./counter-sale-lines";
 import { resolveTierPrices } from "./counter-sale-tier-price";
 import { assertReplaySamePrices } from "./counter-sale-replay-price";
 import { AuditService } from "../../audit/audit.service";
-import { staffMay } from "../../auth/permissions/staff-capabilities";
-import { operatorDeniedGroups } from "./till-permission.guard";
+import { operatorDeniedGroups } from "../../auth/permissions/operator-denied-groups";
+import { mayEditPrice } from "../../auth/permissions/price-edit-answer";
 import {
   buildCounterSaleResponse,
   isCounterTenderCashRow,
@@ -58,6 +58,8 @@ import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
 import { markOpenInvoicesToCollect } from "../../invoices/to-collect";
 import { WalkInCustomerService } from "./walk-in-customer";
+import { readReturnData } from "./counter-return-read";
+import { counterReturnSplit, type CounterReturnSplit } from "./counter-sale-today";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
 // A customer id no row holds: lets the tenant-wide steps of the replay lookup answer by key alone.
@@ -178,12 +180,9 @@ export class CounterSaleService {
         counterSale: true,
         // POS-5: create() refuses a real price change from a caller who may not make one (403
         // PRICE_EDIT_NOT_PERMITTED), against its own server-resolved price and before any write.
-        // W-870: over the OPERATOR's denied groups, read live (PRICING switched off = no price change at the till).
-        priceEditAllowed: staffMay(
-          user.role,
-          "EDIT_LINE_PRICE",
-          await operatorDeniedGroups(this.prisma, user),
-        ),
+        // W-870: over the OPERATOR's denied groups, read live (PRICING switched off = no price change at the till);
+        // the till is live by an owner-ruled slice, so it does not go through the mode-aware office answer (SA-1034 r8).
+        priceEditAllowed: mayEditPrice(user.role, await operatorDeniedGroups(this.prisma, user)),
         // B1209: a walk-in's tender is judged against the SERVER total inside create(), before anything is written.
         beforeWrite: walkIn
           ? ({ total }) => assertWalkInTenderCoversTotal(dto.payment, total)
@@ -325,6 +324,7 @@ export class CounterSaleService {
       replayed,
       planError,
       duplicate,
+      split: await this.tenderSplit(orderId, invoices, replayed),
     });
     return creditOverLimit ? { ...response, creditOverLimit } : response;
   }
@@ -635,6 +635,7 @@ export class CounterSaleService {
       invoices,
       replayed: true,
       configuredTaxPercent: await configuredTaxRatePercent(this.prisma),
+      split: await this.tenderSplit(order.id, invoices, true),
     });
     // W-736 (SA-876 LOW 2): the same credit line the POST answered, READ-ONLY (no log line, no audit row). Only with the
     // till's method: without it the tender, and so what the gate netted, is unknown.
@@ -651,6 +652,62 @@ export class CounterSaleService {
           ).catch(() => null)
         : null;
     return creditOverLimit ? { ...response, creditOverLimit } : response;
+  }
+
+  /**
+   * SA-1077 / W-1090: the sale's tender split, by the ONE derivation the Today's row and the emailed receipt call
+   * (`counterReturnSplit`), so the till's receipt reads the same Payment method / Paid / Returned rows as the reprint.
+   * - A NEW sale none of whose payments applied a credit note has no return of its own to find: the split is worked out with
+   *   empty reads, so a plain sale gains no query.
+   * - Anything else reads the returns and credit notes (`readReturnData`, the email's read). `invoiceIds` holds EVERY invoice
+   *   of the order, live or dead (`readInvoices` drops the dead ones), so a credit applied on a dead sibling is never "elsewhere".
+   * - Any throw logs a warning and serves NO split: the sale has committed, a failed read never turns a finished sale into a 500,
+   *   and the receipt keeps its earlier words.
+   */
+  private async tenderSplit(
+    orderId: string,
+    invoices: InvoiceRow[],
+    replayed: boolean,
+  ): Promise<CounterReturnSplit | undefined> {
+    try {
+      const payments = invoices.flatMap((i) =>
+        (i.payments ?? []).map((p) => ({
+          invoiceId: i.id,
+          method: p.method ?? "",
+          amount: p.amount,
+          status: p.status ?? "",
+          creditNoteId: p.creditNoteId ?? null,
+          reference: p.reference ?? null,
+        })),
+      );
+      if (!replayed && !payments.some((p) => !!p.creditNoteId)) {
+        return counterReturnSplit({
+          orderId,
+          invoiceIds: invoices.map((i) => i.id),
+          payments,
+          returns: [],
+        });
+      }
+      const db = this.prisma.forTenant();
+      const tenantId = this.prisma.getTenantId();
+      if (!tenantId) return undefined;
+      const allInvoices: Array<{ id: string }> = await db.invoice.findMany({
+        where: { orderId },
+        select: { id: true },
+      });
+      const read = await readReturnData(tenantId, db, orderId, payments);
+      return counterReturnSplit({
+        orderId,
+        invoiceIds: allInvoices.map((i) => i.id),
+        payments: read.payments,
+        returns: read.returnData.returns,
+        carriedReturns: read.returnData.carriedReturns,
+        creditNotes: read.returnData.creditNotes,
+      });
+    } catch (e) {
+      this.logger.warn(`counter sale ${orderId}: tender split not read (${(e as Error).message})`);
+      return undefined;
+    }
   }
 
   /** Every product must exist for this tenant; answers each one's pack size (the writer's `unitsPerBox`). */

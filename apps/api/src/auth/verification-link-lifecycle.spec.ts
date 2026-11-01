@@ -7,6 +7,7 @@ import { TenantsService } from "../tenants/tenants.service";
 import { UsersService } from "../users/users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { OwnerAlertService } from "../email/owner-alert.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
@@ -50,6 +51,7 @@ describe("verification link lifecycle", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let jwt: { sign: jest.Mock; verify: jest.Mock; decode: jest.Mock };
   let email: { send: jest.Mock };
+  let ownerAlerts: { trialVerified: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -59,6 +61,7 @@ describe("verification link lifecycle", () => {
       decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
     };
     email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) };
+    ownerAlerts = { trialVerified: jest.fn().mockResolvedValue(undefined) };
     (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
     (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ slug: "acme" });
     (prisma.refreshToken.count as jest.Mock).mockResolvedValue(0);
@@ -83,6 +86,7 @@ describe("verification link lifecycle", () => {
           },
         },
         { provide: EmailService, useValue: email },
+        { provide: OwnerAlertService, useValue: ownerAlerts },
         {
           provide: EntitlementsService,
           useValue: { claimsFor: jest.fn().mockResolvedValue(null) },
@@ -107,6 +111,35 @@ describe("verification link lifecycle", () => {
     expect(res).toHaveProperty("accessToken");
     expect(statusWrites()).toHaveLength(1);
     expect(statusWrites()[0][0].data).toEqual({ status: "ACTIVE" });
+  });
+
+  it("W1 (COPY 2q): a verified trial tells the owner once, after the activation committed", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+    await auth.verifyEmailAndLogin("t");
+    expect(ownerAlerts.trialVerified).toHaveBeenCalledTimes(1);
+    expect(ownerAlerts.trialVerified).toHaveBeenCalledWith("tenant-1", base.email);
+  });
+
+  it("W1: a failed alert never fails the sign-in", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+    ownerAlerts.trialVerified.mockRejectedValue(new Error("mail down"));
+    await expect(auth.verifyEmailAndLogin("t")).resolves.toHaveProperty("accessToken");
+  });
+
+  it("W1: a refused link, a lost race and a rolled-back activation tell nobody", async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+      ...base,
+      status: "ACTIVE",
+      lastLoginAt: new Date(),
+    });
+    await auth.verifyEmailAndLogin("t").catch(() => undefined);
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(base);
+    (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+    await auth.verifyEmailAndLogin("t").catch(() => undefined);
+    (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.auditLog.create as jest.Mock).mockRejectedValue(new Error("audit write failed"));
+    await auth.verifyEmailAndLogin("t").catch(() => undefined);
+    expect(ownerAlerts.trialVerified).not.toHaveBeenCalled();
   });
 
   it("writes an audit row for the activation, actor is the user", async () => {

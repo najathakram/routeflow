@@ -73,7 +73,7 @@ function build(opts: WorldOptions = {}) {
     world.addonService,
     world.featureOverrides,
   );
-  const controller = new SettingsFulfilmentController(service);
+  const controller = new SettingsFulfilmentController(service, {} as never);
   return { ...world, service, controller };
 }
 

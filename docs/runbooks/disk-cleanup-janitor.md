@@ -133,7 +133,11 @@ squash-only since 2026-07-30 and lanes branch from the mainline, and the uncommi
   (B819) also means: `git status` could not be read, or an **ignored** path other than build output
   exists (a `.env`, `local-assets/`, a scratch file). The only ignored paths treated as disposable are `node_modules`; `dist`, `build` and
   `coverage` at the repo root or a package root (never deeper, where they may be source); `.next`, `.turbo`, `.expo`, `test-output`, `*.tsbuildinfo`, `.DS_Store`,
-  `.campaign/`, `next-env.d.ts`, everything under `.husky/_/` and `.claude/settings.local.json`.
+  `.campaign/`, `next-env.d.ts`, everything under `.husky/_/`, `.claude/settings.local.json` and a
+  per-workspace `.jest-cache/`. A `local-assets/` folder counts as disposable only when it is a real
+  folder (not a link) holding nothing but top-level `data-questions-report-<UTC timestamp>.txt` files
+  (verify writes one per run) and empty folders (`bugs.mjs` leaves an empty `docs/`); any other
+  file, any file inside a subfolder, or any link keeps the tree.
 - An orphan dir under `.claude/worktrees/` that holds a `.git` entry or changed in the last 24 hours.
 - A **locked** worktree (`git worktree lock`).
 - Any merged, clean, idle worktree with unpushed commits — its `node_modules` may be cleared, but

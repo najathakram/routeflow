@@ -27,6 +27,11 @@ interface PlatformStats {
   tenants: { total: number; active: number; trial: number; suspended: number };
   totalUsers: number;
   newTenantsThisMonth: number;
+  /**
+   * W3 / M1. Absent from an API that predates it, so the card is left out then. `unavailable`
+   * means the read failed, and the card says so.
+   */
+  weeklyFunnel?: { weeks: FunnelWeek[] } | { unavailable: true };
   mrr: number;
   ledgerMrr: number;
   planBreakdown: Record<string, number>;
@@ -56,6 +61,81 @@ interface PlatformStats {
     trialEndsAt: string | null;
     riskReason: string;
   }>;
+}
+
+interface FunnelWeek {
+  /** Monday of the week, UTC, `YYYY-MM-DD`. */
+  weekStart: string;
+  signups: number;
+  verified: number;
+  firstOrder: number;
+  firstRoute: number;
+  demoBookings: number;
+}
+
+const FUNNEL_COLUMNS: Array<[keyof Omit<FunnelWeek, "weekStart">, string]> = [
+  ["signups", "Sign-ups"],
+  ["verified", "Verified"],
+  ["firstOrder", "First order"],
+  ["firstRoute", "First route"],
+  ["demoBookings", "Demo bookings"],
+];
+
+const weekLabel = (weekStart: string) =>
+  new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
+    new Date(`${weekStart}T00:00:00Z`),
+  );
+
+function WeeklyFunnelCard({ funnel }: { funnel: NonNullable<PlatformStats["weeklyFunnel"]> }) {
+  if ("unavailable" in funnel) {
+    return (
+      <AdminCard title="Sign-ups by week">
+        <p className="text-sm text-slate-400">These numbers can&apos;t be shown right now.</p>
+      </AdminCard>
+    );
+  }
+  const { weeks } = funnel;
+  return (
+    <AdminCard title="Sign-ups by week" noPadding>
+      <div
+        className="overflow-x-auto"
+        role="region"
+        aria-label="Sign-ups by week"
+        tabIndex={0}
+        data-testid="dashboard-weekly-funnel"
+      >
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
+              <th className="px-4 py-2.5 text-left">Week of</th>
+              {FUNNEL_COLUMNS.map(([key, label]) => (
+                <th key={key} className="whitespace-nowrap px-4 py-2.5 text-right">
+                  {label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/50">
+            {weeks.map((week) => (
+              <tr key={week.weekStart} className="hover:bg-slate-700/20">
+                <td className="whitespace-nowrap px-4 py-2 text-slate-300">
+                  {weekLabel(week.weekStart)}
+                </td>
+                {FUNNEL_COLUMNS.map(([key]) => (
+                  <td key={key} className="px-4 py-2 text-right font-mono text-slate-200">
+                    {week[key]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-slate-700 px-5 py-3 text-xs text-slate-400">
+        Answered is not counted yet. It starts with the first-question change.
+      </p>
+    </AdminCard>
+  );
 }
 
 interface GrowthPoint {
@@ -184,6 +264,8 @@ export default function AdminDashboardPage() {
         />
         <MrrCard mrr={stats.mrr} ledgerMrr={stats.ledgerMrr} />
       </div>
+
+      {stats.weeklyFunnel && <WeeklyFunnelCard funnel={stats.weeklyFunnel} />}
 
       {/* Charts Row */}
       <div className="grid gap-6 lg:grid-cols-3">

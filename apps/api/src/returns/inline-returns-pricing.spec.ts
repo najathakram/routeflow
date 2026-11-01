@@ -282,11 +282,47 @@ describe("priceUnreferencedChunk", () => {
       { unitPrice: 10, source: "TIER" },
       0.08,
       false,
+      false,
     );
     expect(priced.subtotal).toBe(30.0);
     expect(priced.taxAmount).toBe(2.4);
     expect(priced.priceSource).toBe("TIER");
     expect(priced.sourceOrderId).toBeNull();
+  });
+
+  it("SA-1060 PR-2: a neverSold chunk is untaxed at any rate and says so; a sold-before chunk is taxed and says not", () => {
+    const never = priceUnreferencedChunk(
+      "prod-1",
+      3,
+      { unitPrice: 10, source: "TIER" },
+      0.08,
+      false,
+      true,
+    );
+    expect(never).toMatchObject({ subtotal: 30, taxAmount: 0, categoryTax: 0, neverSold: true });
+    const before = priceUnreferencedChunk(
+      "prod-1",
+      3,
+      { unitPrice: 10, source: "TIER" },
+      0.08,
+      false,
+      false,
+    );
+    expect(before).toMatchObject({ subtotal: 30, taxAmount: 2.4, neverSold: false });
+  });
+
+  it("SA-1060 A-4 (M2): a tax-exempt customer's SOLD-BEFORE chunk is untaxed by the exemption alone, not by neverSold", () => {
+    // neverSold is false here, so only `customerIsTaxExempt` can take the $2.40 off. Dropping that flag from the
+    // tax line leaves $30.00 at 8% = $2.40; the exempt path must hold $0.00.
+    const exempt = priceUnreferencedChunk(
+      "prod-1",
+      3,
+      { unitPrice: 10, source: "TIER" },
+      0.08,
+      true,
+      false,
+    );
+    expect(exempt).toMatchObject({ subtotal: 30, taxAmount: 0, neverSold: false });
   });
 
   it("Opus fix-round BLOCKER: a boxed unreferenced return prices via the SELLING-UNIT (box) rate, never unitPrice x pieces (revert $288.00)", () => {
@@ -296,6 +332,7 @@ describe("priceUnreferencedChunk", () => {
       12,
       { unitPrice: 24, source: "TIER", unitsPerBox: 12 },
       0,
+      false,
       false,
     );
     expect(priced.subtotal).toBe(24.0);
@@ -378,6 +415,7 @@ describe("applyCreditOverride (#2695, SA-557: lower-only staff credit price)", (
       { unitPrice: 24, source: "TIER", unitsPerBox: 12 },
       0.05,
       false,
+      false,
     );
     expect(boxed.subtotal).toBe(36); // 1.5 boxes at $24
     const r = applyCreditOverride(
@@ -439,7 +477,7 @@ describe("totalChunks", () => {
         5,
         false,
       ),
-      priceUnreferencedChunk("prod-2", 1, { unitPrice: 9.99, source: "BASE" }, 0.08, false),
+      priceUnreferencedChunk("prod-2", 1, { unitPrice: 9.99, source: "BASE" }, 0.08, false, false),
     ];
     const totals = totalChunks(chunks);
     expect(totals.subtotal).toBe(roundMoneySum(50, 9.99));

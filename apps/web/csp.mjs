@@ -36,7 +36,9 @@ export function buildContentSecurityPolicy({ isDev, apiUrl }) {
     // tag; without these two hosts EVERY dashboard map (trip builder, route
     // create/detail) loads a permanently blank <Map> — the CSP added in
     // 8aacd2d7 post-dated the Maps integration and silently broke them all.
-    `script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com${isDev ? " 'unsafe-eval'" : ""}`,
+    // W3: Umami's cookie-free visit counter (components/UmamiScript.tsx) loads from this host. Its
+    // reports go back over connect-src's existing `https:`, so that directive does not change.
+    `script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com https://cloud.umami.is${isDev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob: https:",

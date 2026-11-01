@@ -8,6 +8,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
+import { OwnerAlertService } from "../email/owner-alert.service";
 
 /**
  * Repro-first coverage for the self-service tenant signup email-honesty bug:
@@ -28,6 +29,7 @@ describe("TenantsService", () => {
   let service: TenantsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let email: { send: jest.Mock };
+  let ownerAlerts: { verificationMailFailed: jest.Mock };
 
   const REGISTER_DTO = {
     slug: "acme-distribution",
@@ -67,6 +69,7 @@ describe("TenantsService", () => {
     );
 
     email = { send: jest.fn() };
+    ownerAlerts = { verificationMailFailed: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -75,6 +78,7 @@ describe("TenantsService", () => {
         { provide: EncryptionService, useValue: {} },
         { provide: StorageService, useValue: {} },
         { provide: EmailService, useValue: email },
+        { provide: OwnerAlertService, useValue: ownerAlerts },
         {
           provide: ConfigService,
           useValue: {
@@ -106,6 +110,35 @@ describe("TenantsService", () => {
       );
     });
 
+    // W2 B2 (COPY.md 2m): the mail carries the Workspace ID and the sign-in address, because sign-in
+    // asks for the ID typed and no other screen or mail shows it.
+    describe("verification mail words (W2 B2)", () => {
+      const sentHtml = () => (email.send.mock.calls[0][0] as { html: string }).html;
+      const sentText = () =>
+        sentHtml()
+          .replace(/<[^>]+>/g, "")
+          .replace(/\s+/g, " ");
+
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("carries the Workspace ID and the sign-in address", async () => {
+        await service.register(REGISTER_DTO);
+        expect(sentText()).toContain(
+          "Save this for later. To sign in, go to https://app.test/login and enter your Workspace ID: acme-distribution.",
+        );
+      });
+
+      it("uses COPY.md 2m's sentence, drops the Hi {username} line and sentence-cases the button", async () => {
+        await service.register(REGISTER_DTO);
+        expect(sentText()).toContain(
+          "Thanks for signing up for RouteFlow. Verify your email to open your 14-day free trial for",
+        );
+        expect(sentText()).not.toMatch(/Hi \S+,/);
+        expect(sentHtml()).toContain(">Verify my email</a>");
+        expect(sentHtml()).not.toContain("Verify My Email");
+      });
+    });
+
     it("still creates the account but reports emailSent:false when delivery fails — THE BUG: this used to be silently discarded", async () => {
       email.send.mockResolvedValue({
         delivered: false,
@@ -123,6 +156,25 @@ describe("TenantsService", () => {
       expect(result.emailSent).toBe(false);
       // And it must be loud server-side, not merely swallowed.
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
+    });
+
+    it("W1 (COPY 2q): a verification mail that did not go out, or threw, tells the owner; one that went out does not", async () => {
+      email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+      await service.register(REGISTER_DTO);
+      expect(ownerAlerts.verificationMailFailed).not.toHaveBeenCalled();
+
+      email.send.mockResolvedValue({ delivered: false, transport: "none", error: "no key" });
+      (prisma.tenant.findUnique as jest.Mock).mockResolvedValue(null);
+      await service.register(REGISTER_DTO);
+      expect(ownerAlerts.verificationMailFailed).toHaveBeenCalledTimes(1);
+      expect(ownerAlerts.verificationMailFailed).toHaveBeenCalledWith(
+        expect.stringMatching(/^tenant-/),
+        REGISTER_DTO.adminEmail,
+      );
+
+      email.send.mockRejectedValue(new Error("ECONNREFUSED"));
+      await service.register(REGISTER_DTO);
+      expect(ownerAlerts.verificationMailFailed).toHaveBeenCalledTimes(2);
     });
 
     it("reports emailSent:false and logs when EmailService.send itself throws", async () => {
@@ -178,6 +230,30 @@ describe("TenantsService", () => {
           currentPlan: "STARTER",
           planKey: "STARTER",
         },
+      });
+    });
+
+    // W1: the first question starts open, in the same transaction as the tenant, and only for a public sign-up.
+    describe("first-question marker (W1)", () => {
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("writes signup.firstRun = pending for the new tenant inside the register transaction", async () => {
+        await service.register(REGISTER_DTO);
+        const create = (prisma as any).systemConfig.create as jest.Mock;
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(create).toHaveBeenCalledWith({
+          data: {
+            tenantId: expect.stringMatching(/^tenant-/),
+            key: "signup.firstRun",
+            value: "pending",
+          },
+        });
+      });
+
+      it("writes no marker when the sign-up is refused (a taken slug)", async () => {
+        (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ id: "other" });
+        await expect(service.register(REGISTER_DTO)).rejects.toThrow();
+        expect((prisma as any).systemConfig.create).not.toHaveBeenCalled();
       });
     });
 
@@ -239,6 +315,19 @@ describe("TenantsService", () => {
       expect(sent).toBe(true);
       expect(email.send).toHaveBeenCalledWith(
         expect.objectContaining({ to: "owner@acme.example", senderClass: "platform" }),
+      );
+    });
+
+    it("W2 B2: the resend mail carries the Workspace ID and the sign-in address too", async () => {
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(PENDING_USER);
+      email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+
+      await service.resendVerification("owner@acme.example");
+
+      const html = (email.send.mock.calls[0][0] as { html: string }).html;
+      const text = html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+      expect(text).toContain(
+        "Save this for later. To sign in, go to https://app.test/login and enter your Workspace ID: acme-distribution.",
       );
     });
 

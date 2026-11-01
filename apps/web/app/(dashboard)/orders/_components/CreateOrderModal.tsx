@@ -9,6 +9,7 @@ import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
+import { customerPricingGate } from "@/lib/customer-pricing-gate";
 import { countNoun } from "@/lib/plural";
 import { formatMoney } from "@/lib/format";
 import { orderBuilderTotals } from "@/lib/order-builder-totals";
@@ -134,6 +135,8 @@ import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal"
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 import { useAuth } from "@/lib/auth-context";
+import { usePriceEditAllowed } from "@/lib/api/my-permissions";
+import { PRICE_RIGHTS_COPY } from "@/lib/price-rights-copy";
 import { CustomerAccountStrip } from "@/components/CustomerAccountStrip";
 import { CreditRefusalRecordPayment } from "@/components/CreditRefusalRecordPayment";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
@@ -147,6 +150,7 @@ import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
+import { useMergeReturnChange } from "./use-merge-return-change";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 import {
   CREDITS_PENDING_COPY,
@@ -376,7 +380,8 @@ export function CreateOrderModal({
   const [customerError, setCustomerError] = React.useState("");
 
   // Customer per-product tier overrides
-  const { data: customerPricesData } = useCustomerPrices(selectedCustomer?.id);
+  const customerPricesRead = useCustomerPrices(selectedCustomer?.id);
+  const { data: customerPricesData } = customerPricesRead;
   const cpMap = React.useMemo(() => {
     const map = new Map<string, number | null>();
     (customerPricesData ?? []).forEach((cp: any) => map.set(cp.productId, cp.pricingTier ?? null));
@@ -407,6 +412,8 @@ export function CreateOrderModal({
 
   // ── Custom (unlisted) item inline form ──
   const [customFormOpen, setCustomFormOpen] = React.useState(false);
+  // SA-1034 rule 10: the server's answer decides whether a custom (typed-price) line may be added.
+  const priceEditAllowed = usePriceEditAllowed();
   const [customName, setCustomName] = React.useState("");
   const [customPrice, setCustomPrice] = React.useState("");
   const [customQty, setCustomQty] = React.useState("1");
@@ -487,6 +494,12 @@ export function CreateOrderModal({
   const staleKeysRef = React.useRef<Set<string>>(new Set());
   const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted (compared with a key event's own timeStamp)
   const mergePromptOpen = mergePrompt !== null;
+  // SA-1060 A-5: what merging changes about a quoted return (one extra quote, words only; nothing waits on it).
+  const mergeReturnLine = useMergeReturnChange(
+    mergePrompt?.id ?? null,
+    returnsRef,
+    selectedCustomer?.id,
+  );
   React.useEffect(() => {
     if (!isOpen) return;
     const held = heldKeysRef.current;
@@ -816,13 +829,11 @@ export function CreateOrderModal({
     !isPickup,
   );
 
-  // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
-  // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
-  // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
-  // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
-  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
-  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes, and
-  // SA-1068 M27: a linked line follows its customer until a person prices it.
+  // Owner ruling D1, SA-1076: the customer's price applies IMMEDIATELY, including to lines scanned
+  // BEFORE the customer was chosen. Only lines whose price is still the auto-derived tier price
+  // move; an operator's one-time price, an upsell, or a history-prefilled override stands, as do
+  // unlisted lines and lines added before this snapshot existed (no `tierPrices`). B755: a price
+  // pre-filled from ANOTHER customer's history is dropped.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
@@ -837,8 +848,6 @@ export function CreateOrderModal({
         let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        // classic modal (scan_v2 off): only a linked line moves (B755 below, SA-1068 M27)
-        if (!scanV2 && !(li.prefillCustomerId != null && selectedCustomer != null)) return li;
         // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
         // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
         // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
@@ -855,8 +864,8 @@ export function CreateOrderModal({
             overrideReason: undefined,
           };
         }
-        // SA-1068 M28: a resume re-prices its own lines and writes the note, so a linked line waits for it
-        if (!scanV2 && !fromOtherCustomer && resuming) return li;
+        // SA-1068 M28: a resume re-prices its own lines and writes the note, so a line waits for it
+        if (!fromOtherCustomer && resuming) return li;
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
         if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
@@ -880,17 +889,11 @@ export function CreateOrderModal({
           return li;
         }
         changed = true;
-        return {
-          ...li,
-          unitPrice: tierPrice,
-          priceType,
-          specialPrice,
-          prefillCustomerId: line.prefillCustomerId != null ? selectedCustomer?.id : undefined, // SA-1068 M27
-        };
+        return { ...li, unitPrice: tierPrice, priceType, specialPrice };
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig, priceHistory]);
+  }, [selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig, priceHistory]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -1059,7 +1062,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
-      prefillCustomerId: hasHistOverride || memory != null ? selectedCustomer?.id : undefined,
+      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1504,7 +1507,7 @@ export function CreateOrderModal({
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
-            prefillCustomerId: memory != null ? selectedCustomer?.id : undefined, // SA-1068 M26
+            prefillCustomerId: undefined,
             overrideReason: undefined,
             unitPrice: memory ?? li.specialPrice ?? li.listPrice,
             priceType: memory != null ? "MANUAL" : li.specialPrice != null ? "SPECIAL" : "STANDARD",
@@ -1839,37 +1842,51 @@ export function CreateOrderModal({
     cartJson: string;
   } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
+  // SA-1076 A-2: the server books what this read would have said, so when it fails the screen says so
+  const historyUnknown =
+    selectedCustomer != null &&
+    lineItems.length > 0 &&
+    priceHistory === undefined &&
+    !priceHistoryRead.isPending;
   // SA-1068 M14: the remembered prices are part of the customer's price read, so the re-price waits for them too.
-  const resumePricesReady =
-    priceLayer.ready && customerPricesData !== undefined && !priceHistoryRead.isPending;
+  // SA-1076 A-1: the one gate reads this, so a plan without customer prices is an empty read, not a failure
+  const pricingGate = customerPricingGate({
+    customerQuery: { data: selectedCustomer }, // already picked, so nothing to wait for
+    customerPricesQuery: customerPricesRead,
+    priceLayer,
+  });
+  const resumePricesReady = priceLayer.ready && !pricingGate.pending && !priceHistoryRead.isPending;
+  // SA-1076: the resume's product read can land after a customer change, so it prices from these, not the effect's capture.
+  const pricingNowRef = React.useRef({ tierForProduct, priceLayer, rememberedOf });
+  pricingNowRef.current = { tierForProduct, priceLayer, rememberedOf };
   React.useEffect(() => {
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
     // SA-1068 A-4: the read has settled, so no data means it failed. Test the data: a failed refetch keeps its cached memories.
-    if (priceHistory === undefined) {
+    if (priceHistory === undefined || pricingGate.readFailed) {
       // Unknown memories: a re-price could put a remembered line on a tier the server won't book, under a false note.
       setPricesNotRefreshed(true);
       return;
     }
     repriceAfterResumeRef.current = false;
-    const tierFor = tierForProduct; // the one tier chain this modal prices with
-    const layerOf = priceLayer.enabled
-      ? (productId: string) => priceLayer.layerOf(productId)
-      : undefined;
     void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
       apiClient.get(`/products/${id}`).then((r) => r.data),
     ).then((fresh) => {
       setPricesNotRefreshed(fresh.failed);
       if (fresh.byProduct.size === 0) return;
-      setLineItems(
-        (prev) =>
-          repriceResumedLines(
-            withFreshTierPrices(prev, fresh.byProduct),
-            tierFor,
-            layerOf,
-            rememberedOf,
-          ).lines,
-      );
+      setLineItems((prev) => {
+        // read here: the customer can change while the product read is out
+        const now = pricingNowRef.current;
+        const layerOf = now.priceLayer.enabled
+          ? (productId: string) => now.priceLayer.layerOf(productId)
+          : undefined;
+        return repriceResumedLines(
+          withFreshTierPrices(prev, fresh.byProduct),
+          now.tierForProduct, // the one tier chain this modal prices with
+          layerOf,
+          now.rememberedOf,
+        ).lines;
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);
@@ -2663,7 +2680,7 @@ export function CreateOrderModal({
             </div>
           )}
 
-          {pricesNotRefreshed && (
+          {(pricesNotRefreshed || historyUnknown) && (
             <div
               role="status"
               data-testid="prices-not-refreshed"
@@ -2846,7 +2863,10 @@ export function CreateOrderModal({
                 hasLines={lineItems.length > 0}
                 addedProductIds={addedProductIds}
                 onAddProduct={suggestionActions.addProduct}
-                onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
+                onOrderAgain={(order) => {
+                  setLastPick(null); // "Order again" adds many lines: no single Undo, so the last one goes too
+                  void suggestionActions.orderAgain(order);
+                }}
                 error={orderSuggestionsError}
                 menuOpen={suggestionsMenuOpen}
                 onMenuOpenChange={setSuggestionsMenuOpen}
@@ -3154,14 +3174,20 @@ export function CreateOrderModal({
                 {customError && <p className="text-xs text-danger">{customError}</p>}
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => setCustomFormOpen(true)}
-                className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-                Add custom item
-              </button>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setCustomFormOpen(true)}
+                  disabled={!priceEditAllowed}
+                  className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-brand-500"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add custom item
+                </button>
+                {!priceEditAllowed && (
+                  <p className="mt-1 text-xs text-navy/60">{PRICE_RIGHTS_COPY}</p>
+                )}
+              </div>
             )}
 
             {lastPick && lineItems.some((li) => li.productId === lastPick.productId) ? (
@@ -3521,13 +3547,22 @@ export function CreateOrderModal({
         }
       >
         {mergePrompt && (
-          <div className="rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm">
-            <div className="font-medium text-navy">
-              {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
+          <div className="space-y-2">
+            <div className="rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm">
+              <div className="font-medium text-navy">
+                {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
+              </div>
+              <div className="text-navy/70">
+                {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
+                {formatMoney(mergePrompt.total)}
+              </div>
             </div>
-            <div className="text-navy/70">
-              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
-              {formatMoney(mergePrompt.total)}
+            <div role="status" data-testid="merge-return-status">
+              {mergeReturnLine && (
+                <p data-testid="merge-return-change" className="text-sm text-navy">
+                  {mergeReturnLine}
+                </p>
+              )}
             </div>
           </div>
         )}

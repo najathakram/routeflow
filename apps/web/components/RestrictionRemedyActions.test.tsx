@@ -8,7 +8,11 @@ import {
   type RestrictionWarningLine,
 } from "@routeflow/types";
 import { RestrictionWarningDialog } from "./RestrictionWarningDialog";
-import { NO_STATE_FIXER_HREF, STORE_STATE_HREF } from "./RestrictionRemedyActions";
+import {
+  NO_STATE_FIXER_HREF,
+  RestrictionRemedyActions,
+  STORE_STATE_HREF,
+} from "./RestrictionRemedyActions";
 import { REMEDY_COPY, RESTRICTION_COPY } from "@/lib/api/restriction-warning";
 
 /**
@@ -195,5 +199,69 @@ describe("RestrictionWarningDialog: the row-672 remedy beside the override", () 
     expect(
       await screen.findAllByRole("button", { name: noStateOnFileLine("Acme Market") }),
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * Keyboard-focus follow-up to row 672 (R7 focus pass on the PR's head): the dialog is driven by keyboard alone, so focus
+ * has to follow the flow. Opening the fixer lands on its State field, saving lands on "Check the sale again" (the Save
+ * button it replaces would otherwise drop focus to the dialog container), and the remedy shows the same teal ring as
+ * the other controls instead of the browser default outline.
+ */
+describe("RestrictionRemedyActions: focus follows the keyboard flow", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCustomer = { id: "cust-1", businessName: "Acme Market", addresses: [] };
+    mockGet.mockImplementation(async () => ({ data: mockCustomer }));
+    mockPost.mockResolvedValue({ data: {} });
+    mockPatch.mockResolvedValue({ data: {} });
+  });
+
+  it("opening the fixer moves focus to the State field", async () => {
+    open([unresolved()]);
+    const remedy = await screen.findByRole("button", { name: noStateOnFileLine("Acme Market") });
+    expect(screen.queryByLabelText(REMEDY_COPY.stateLabel)).not.toBeInTheDocument();
+    expect(remedy).not.toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(remedy);
+    expect(await screen.findByLabelText(REMEDY_COPY.stateLabel)).toHaveFocus();
+  });
+
+  it("closing the fixer again does not pull focus anywhere", async () => {
+    open([unresolved()]);
+    const remedy = await screen.findByRole("button", { name: noStateOnFileLine("Acme Market") });
+    fireEvent.click(remedy);
+    await screen.findByLabelText(REMEDY_COPY.stateLabel);
+    remedy.focus();
+    fireEvent.click(remedy);
+    expect(screen.queryByLabelText(REMEDY_COPY.stateLabel)).not.toBeInTheDocument();
+    expect(remedy).toHaveFocus();
+  });
+
+  it("after Save state, focus lands on 'Check the sale again'", async () => {
+    open([unresolved()]);
+    fireEvent.click(await screen.findByRole("button", { name: noStateOnFileLine("Acme Market") }));
+    fireEvent.change(await screen.findByLabelText(REMEDY_COPY.stateLabel), {
+      target: { value: "NV" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: REMEDY_COPY.save }));
+    expect(await screen.findByRole("button", { name: REMEDY_COPY.checkAgain })).toHaveFocus();
+  });
+
+  it("the remedy action and the store-state link carry the teal focus ring (not the browser default)", async () => {
+    const { unmount } = renderWithProviders(
+      <RestrictionRemedyActions lines={[unresolved()]} onRecheck={jest.fn()} />,
+    );
+    const remedy = await screen.findByRole("button", { name: noStateOnFileLine("Acme Market") });
+    expect(remedy).toHaveClass("focus-visible:outline-none", "focus-visible:ring-2");
+    expect(remedy).toHaveClass("focus-visible:ring-accent");
+    unmount();
+    renderWithProviders(
+      <RestrictionRemedyActions
+        lines={[unresolved({ remedy: "ADD_STORE_STATE", customerId: undefined })]}
+      />,
+    );
+    const link = screen.getByRole("link", { name: NO_STORE_STATE_LINE });
+    expect(link).toHaveClass("focus-visible:outline-none", "focus-visible:ring-2");
+    expect(link).toHaveClass("focus-visible:ring-accent");
   });
 });

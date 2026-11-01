@@ -16,6 +16,7 @@ import {
 } from "@/lib/account-statement-display";
 import { useBackToClose } from "@/lib/use-back-to-close";
 import { StatementPrintButton } from "./StatementPrintButton";
+import { StatementEmailButton } from "./StatementEmailButton";
 
 /** The sheet rests on the right from 768 and fills the screen at 390 (AddFullAddressSheet's side-sheet form). */
 const SHEET_CLASS =
@@ -265,21 +266,19 @@ export function AccountStatementBody({
 }
 
 /**
- * The staff sheet: one `Modal` in side-sheet form over `GET /customers/:id/account-statement`. The footer carries Print
- * (PR-3); `actions` is the slot after it that Email (PR-4) fills. A failed read says so with Try Again, never a $0.00.
+ * The staff sheet: one `Modal` in side-sheet form over `GET /customers/:id/account-statement`. The footer carries Email (PR-4)
+ * and Print (PR-3). A failed read says so with Try Again, never a $0.00.
  */
 export function AccountStatementSheet({
   customerId,
   open,
   onClose,
   linkInvoices = true,
-  actions,
 }: {
   customerId: string;
   open: boolean;
   onClose: () => void;
   linkInvoices?: boolean;
-  actions?: React.ReactNode;
 }) {
   const q = useAccountStatement(customerId, open);
   // U9: a sheet that read a fresher figure leaves the figures behind it fresh too, and the next open reads again
@@ -308,8 +307,8 @@ export function AccountStatementSheet({
       linkInvoices={linkInvoices}
       footer={
         <>
+          <StatementEmailButton customerId={customerId} emailOnFile={q.data?.emailOnFile ?? null} />
           <StatementPrintButton customerId={customerId} />
-          {actions}
         </>
       }
     />
@@ -353,6 +352,7 @@ export function StatementSheetFrame({
         onClose={onClose}
         title={STATEMENT_COPY.title}
         scroll
+        anchor="top"
         className={SHEET_CLASS}
         closeClassName="max-sm:flex max-sm:min-h-11 max-sm:min-w-11 max-sm:items-center max-sm:justify-center"
         onOpenAutoFocus={() => {

@@ -19,7 +19,12 @@ import {
 } from "./plan-catalog.constants";
 import { inclusionOf } from "./addon-inclusion";
 import { inclusionCatalogFor, pricedAddonSku } from "./plan-version-pin";
-import { updateAddonRowTx, upsertAddonRowTx, type AddonChangeSource } from "./tenant-addon-writer";
+import {
+  updateAddonRowTx,
+  upsertAddonRowTx,
+  type AddonActorKind,
+  type AddonChangeSource,
+} from "./tenant-addon-writer";
 import { addonCatalogInvalidException } from "./addon-catalog-invalid";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
@@ -66,7 +71,12 @@ export interface EnableAddonOptions {
    * SA-788 A3: the CALLER names the record's source when it is not the plain admin route (a business-profile apply
    * passes `profile.apply`, whether the add-on it enables is a comp or not). Absent = decided by `comp` / `uncomp`.
    */
-  source?: typeof PROFILE_APPLY_SOURCE;
+  source?: ApplySource;
+  /**
+   * W1: who the record names. Absent = a platform admin (every caller before the first question). The new account's
+   * own admin answering the first question passes TENANT_USER with the `signup.setup` source.
+   */
+  actorKind?: Extract<AddonActorKind, "PLATFORM_ADMIN" | "TENANT_USER">;
   /** SA-769: who and why, for the log line only. The audit row is the caller's (ADDON_COMPED). */
   actorId?: string;
   reason?: string;
@@ -96,6 +106,9 @@ export const UncompBilling = {
   UNBILLED: "UNBILLED",
 } as const;
 export type UncompBillingMode = (typeof UncompBilling)[keyof typeof UncompBilling];
+
+/** W1: the two sources a profile apply may carry: the back office, or a new account's own admin answering the first question. */
+export type ApplySource = Extract<AddonChangeSource, "profile.apply" | "signup.setup">;
 
 /** The two callers of `disableAddon`, each with its own source in the closed `AddonChangeSource` list (SA-788 A3). */
 export const ADMIN_DISABLE_SOURCE = "admin.disable" as const;
@@ -501,7 +514,7 @@ export class AddonService {
               tenantId,
               addonKey: current?.addonKey ?? addonKey,
               actor: {
-                kind: "PLATFORM_ADMIN",
+                kind: opts?.actorKind ?? "PLATFORM_ADMIN",
                 id: opts?.actorId ?? null,
                 source: (opts?.source ??
                   (comp

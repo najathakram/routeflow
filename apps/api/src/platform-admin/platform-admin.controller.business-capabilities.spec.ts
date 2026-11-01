@@ -7,6 +7,7 @@ import { NotFoundException } from "@nestjs/common";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
+import { BusinessProfileApplyService } from "../billing/business-profile-apply.service";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BusinessProfileService } from "../billing/business-profile.service";
 import { BUSINESS_PROFILES } from "../billing/business-profiles";
@@ -78,6 +79,14 @@ function build(opts: {
     stub(),
     service,
     featureConfig as any,
+    new BusinessProfileApplyService(
+      addonService as never,
+      stub(),
+      featureConfig as never,
+      stub(),
+      service,
+      { systemConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } } as any,
+    ),
   );
   return controller;
 }

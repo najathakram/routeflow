@@ -8,43 +8,38 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
+import { UmamiScript } from "@/components/UmamiScript";
 import { safeTextBodyCopy } from "@/lib/safe-text-error-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
-const signupSchema = z
-  .object({
-    businessName: z.string().min(2, "Business name must be at least 2 characters").max(100),
-    slug: z
-      .string()
-      .min(3, "Workspace ID must be at least 3 characters")
-      .max(30, "Workspace ID must be 30 characters or less")
-      .regex(
-        /^[a-z0-9][a-z0-9-]{2,29}$/,
-        "Only lowercase letters, numbers, and hyphens — must start with a letter or number",
-      ),
-    adminEmail: z.string().email("Enter a valid email address"),
-    adminUsername: z
-      .string()
-      .min(3, "Username must be at least 3 characters")
-      .max(30, "Username must be 30 characters or less")
-      .regex(/^[a-zA-Z0-9_]{3,30}$/, "Only letters, numbers, and underscores"),
-    // B03: mirrors the server DTO (register-tenant.dto.ts) and every other
-    // password-setting flow (reset-password, buyer register/change-password) —
-    // this used to require only uppercase+digit, so a password that passed
-    // signup could then be rejected the first time the user tried to reset it.
-    adminPassword: z
-      .string()
-      .min(8, "Password must be at least 8 characters")
-      .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-      .regex(/[a-z]/, "Must contain at least one lowercase letter")
-      .regex(/[0-9\W_]/, "Must contain at least one number or special character"),
-    confirmPassword: z.string().min(1, "Please confirm your password"),
-  })
-  .refine((d) => d.adminPassword === d.confirmPassword, {
-    message: "Passwords do not match",
-    path: ["confirmPassword"],
-  });
+const signupSchema = z.object({
+  businessName: z.string().min(2, "Business name must be at least 2 characters").max(100),
+  slug: z
+    .string()
+    .min(3, "Workspace ID must be at least 3 characters")
+    .max(30, "Workspace ID must be 30 characters or less")
+    .regex(
+      /^[a-z0-9][a-z0-9-]{2,29}$/,
+      "Only lowercase letters, numbers, and hyphens — must start with a letter or number",
+    ),
+  adminEmail: z.string().email("Enter a valid email address"),
+  adminUsername: z
+    .string()
+    .min(3, "Username must be at least 3 characters")
+    .max(30, "Username must be 30 characters or less")
+    .regex(/^[a-zA-Z0-9_]{3,30}$/, "Only letters, numbers, and underscores"),
+  // B03: mirrors the server DTO (register-tenant.dto.ts) and every other
+  // password-setting flow (reset-password, buyer register/change-password) —
+  // this used to require only uppercase+digit, so a password that passed
+  // signup could then be rejected the first time the user tried to reset it.
+  adminPassword: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[A-Z]/, "Must contain at least one uppercase letter")
+    .regex(/[a-z]/, "Must contain at least one lowercase letter")
+    .regex(/[0-9\W_]/, "Must contain at least one number or special character"),
+});
 
 type SignupFormValues = z.infer<typeof signupSchema>;
 
@@ -86,7 +81,6 @@ function SignupInner() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
-  const [showConfirm, setShowConfirm] = React.useState(false);
 
   // Slug availability
   const [slugStatus, setSlugStatus] = React.useState<AvailStatus>("idle");
@@ -96,6 +90,9 @@ function SignupInner() {
   // Username availability
   const [usernameStatus, setUsernameStatus] = React.useState<AvailStatus>("idle");
   const [usernameEdited, setUsernameEdited] = React.useState(false);
+  // W2 B8: the username is auto-filled and sign-in takes email, so it shows as one line. The field
+  // opens on Change, or by itself when the auto-filled name is taken or fails its check.
+  const [usernameOpen, setUsernameOpen] = React.useState(false);
   const usernameDebounce = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
@@ -103,22 +100,31 @@ function SignupInner() {
     handleSubmit,
     watch,
     setValue,
+    setFocus,
     formState: { errors },
   } = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
+    // W2 B7: an error shows when a field is left, then follows the typing; not only on submit.
+    mode: "onTouched",
     defaultValues: {
       businessName: "",
       slug: "",
       adminEmail: "",
       adminUsername: "",
       adminPassword: "",
-      confirmPassword: "",
     },
   });
 
   const businessName = watch("businessName");
   const slugValue = watch("slug");
   const usernameValue = watch("adminUsername");
+  const usernameProblem = usernameStatus === "taken" || !!errors.adminUsername;
+  const showUsernameField = usernameOpen || usernameProblem;
+  // The field that opened by itself stays open: the first keystroke clears "taken" (status goes to checking), and
+  // a field that closed under the person's hands dropped focus to the page.
+  React.useEffect(() => {
+    if (usernameProblem) setUsernameOpen(true);
+  }, [usernameProblem]);
 
   // Auto-derive slug from business name (unless user has manually edited it)
   React.useEffect(() => {
@@ -241,8 +247,9 @@ function SignupInner() {
       const emailSentParam = regBody.emailSent === false ? "&emailSent=false" : "";
 
       // Redirect to "check your email" page — no auto-login, must verify first
+      // W2 B1: the Workspace ID goes along so check-email can show it; sign-in asks for it typed.
       router.push(
-        `/signup/check-email?email=${encodeURIComponent(data.adminEmail)}${emailSentParam}`,
+        `/signup/check-email?email=${encodeURIComponent(data.adminEmail)}&workspace=${encodeURIComponent(data.slug)}${emailSentParam}`,
       );
     } catch {
       setApiError("Something went wrong. Please try again.");
@@ -253,9 +260,9 @@ function SignupInner() {
   return (
     <AuthShell
       audience="distributor"
-      kicker="Distributor workspace"
-      title="Your next chapter starts here."
-      lead="Start your 14-day free trial. No card needed."
+      kicker="Distributor account"
+      title="Try it free for 14 days."
+      lead="No card needed."
       footer={
         <>
           <p className="text-xs text-navy/70">
@@ -265,9 +272,9 @@ function SignupInner() {
             </a>
           </p>
           <p className="text-xs text-navy/70">
-            Looking for the buyer portal?{" "}
+            Buying from a distributor?{" "}
             <a href="/buyer/register" className="text-brand-600 hover:underline">
-              Sign up here
+              Create a retailer account
             </a>
           </p>
         </>
@@ -313,7 +320,7 @@ function SignupInner() {
             <p className="text-xs text-success">This workspace ID is available.</p>
           ) : (
             <p className="text-xs text-navy/70">
-              Used in your sign-in URL. Lowercase letters, numbers, and hyphens.
+              You’ll need this to sign in. Use small letters, numbers, and dashes (-).
             </p>
           )}
         </div>
@@ -328,36 +335,53 @@ function SignupInner() {
           error={errors.adminEmail?.message}
         />
 
-        {/* Username */}
-        <div className="flex flex-col gap-1">
-          <label htmlFor="adminUsername" className="text-sm font-medium text-navy">
-            Username
-          </label>
-          <div className="relative">
-            <input
-              id="adminUsername"
-              type="text"
-              placeholder="acme_admin"
-              autoComplete="username"
-              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              {...register("adminUsername", { onChange: () => setUsernameEdited(true) })}
-            />
-            <span className="absolute inset-y-0 right-0 flex items-center pr-3">
-              <AvailIndicator status={usernameStatus} />
-            </span>
+        {/* Username: one line until it needs a person (W2 B8) */}
+        {showUsernameField ? (
+          <div className="flex flex-col gap-1">
+            <label htmlFor="adminUsername" className="text-sm font-medium text-navy">
+              Username
+            </label>
+            <div className="relative">
+              <input
+                id="adminUsername"
+                type="text"
+                placeholder="acme_admin"
+                autoComplete="username"
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                {...register("adminUsername", { onChange: () => setUsernameEdited(true) })}
+              />
+              <span className="absolute inset-y-0 right-0 flex items-center pr-3">
+                <AvailIndicator status={usernameStatus} />
+              </span>
+            </div>
+            {errors.adminUsername ? (
+              <p className="text-xs text-danger">{errors.adminUsername.message}</p>
+            ) : usernameStatus === "taken" ? (
+              <p className="text-xs text-danger">
+                This username is reserved. Please choose a different one.
+              </p>
+            ) : usernameStatus === "available" ? (
+              <p className="text-xs text-success">This username is available.</p>
+            ) : (
+              <p className="text-xs text-navy/70">Letters, numbers, and underscores only.</p>
+            )}
           </div>
-          {errors.adminUsername ? (
-            <p className="text-xs text-danger">{errors.adminUsername.message}</p>
-          ) : usernameStatus === "taken" ? (
-            <p className="text-xs text-danger">
-              This username is reserved. Please choose a different one.
-            </p>
-          ) : usernameStatus === "available" ? (
-            <p className="text-xs text-success">This username is available.</p>
-          ) : (
-            <p className="text-xs text-navy/70">Letters, numbers, and underscores only.</p>
-          )}
-        </div>
+        ) : usernameValue ? (
+          <p className="flex items-center gap-2 text-sm text-navy">
+            <span>Username: {usernameValue}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setUsernameOpen(true);
+                // The field mounts on the next render; focus it then.
+                setTimeout(() => setFocus("adminUsername"), 0);
+              }}
+              className="font-medium text-brand-600 hover:underline"
+            >
+              Change
+            </button>
+          </p>
+        ) : null}
 
         {/* Password */}
         <div className="flex flex-col gap-1">
@@ -383,42 +407,13 @@ function SignupInner() {
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
-          {errors.adminPassword ? (
+          {/* W2 B6: the rule stays visible while typing and next to an error (COPY.md section 8). */}
+          {errors.adminPassword && (
             <p className="text-xs text-danger">{errors.adminPassword.message}</p>
-          ) : (
-            <p className="text-xs text-navy/70">
-              Uppercase, lowercase, and a number or symbol required.
-            </p>
           )}
-        </div>
-
-        {/* Confirm Password */}
-        <div className="flex flex-col gap-1">
-          <label htmlFor="signup-confirm" className="text-sm font-medium text-navy">
-            Confirm password
-          </label>
-          <div className="relative">
-            <input
-              id="signup-confirm"
-              type={showConfirm ? "text" : "password"}
-              placeholder="Re-enter your password"
-              autoComplete="new-password"
-              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-              {...register("confirmPassword")}
-            />
-            <button
-              type="button"
-              onClick={() => setShowConfirm((v) => !v)}
-              className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
-              tabIndex={-1}
-              aria-label={showConfirm ? "Hide password" : "Show password"}
-            >
-              {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
-          {errors.confirmPassword && (
-            <p className="text-xs text-danger">{errors.confirmPassword.message}</p>
-          )}
+          <p className="text-xs text-navy/70">
+            At least 8 characters. Uppercase, lowercase, and a number or symbol required.
+          </p>
         </div>
 
         <Button
@@ -467,8 +462,12 @@ function browserTimeZone(): string | undefined {
 
 export default function SignupPage() {
   return (
-    <React.Suspense fallback={null}>
-      <SignupInner />
-    </React.Suspense>
+    <>
+      {/* Visit counts (W3): /signup is one of the two places it runs; with no site ID it renders nothing. */}
+      <UmamiScript />
+      <React.Suspense fallback={null}>
+        <SignupInner />
+      </React.Suspense>
+    </>
   );
 }

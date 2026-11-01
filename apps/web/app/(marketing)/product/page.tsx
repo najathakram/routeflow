@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, Route, Users, Warehouse, Store } from "lucide-react";
-import { routes, site } from "../lib/site";
+import { DEMO_CTA, routes } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
 import { DeliveryDemo } from "../components/delivery-demo";
 import { FeatureCatalog, CapabilityStrip } from "../components/feature-catalog";
@@ -27,18 +28,11 @@ import { BrandSignature } from "@/components/brand";
 
 const route = routes.find((r) => r.slug === "product")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/product",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/product" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/product",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const CONNECTION_NODES: Array<[typeof Users, string]> = [
   [Users, "Office"],
@@ -62,7 +56,7 @@ export default function ProductPage() {
           costing, and dedicated tools for regulated goods.
         </p>
         <Link href="/book-a-demo" className="button">
-          Book a workflow demo <ArrowUpRight size={18} />
+          {DEMO_CTA} <ArrowUpRight size={18} />
         </Link>
       </section>
       <section className="platform-live-story wrap">

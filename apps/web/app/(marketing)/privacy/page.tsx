@@ -2,28 +2,22 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { routes, site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { Eyebrow } from "../components/marketing";
 
 // Published privacy policy (R9 follow-up). Source draft:
 // local-assets/handoff/2026-09-17/legal/privacy-policy-DRAFT.md — this page carries the
 // full text, not the interim shell. `LAST_UPDATED` also feeds the visible "Last updated"
 // line below; bump both together when the policy changes.
-const LAST_UPDATED = "September 17, 2026";
+const LAST_UPDATED = "October 31, 2026";
 
 const route = routes.find((r) => r.slug === "privacy")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/privacy",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/privacy" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/privacy",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 export default function PrivacyPage() {
   return (
@@ -153,7 +147,8 @@ export default function PrivacyPage() {
             <strong>strictly necessary</strong> cookies to keep you signed in and route you to the
             correct portal (e.g., an authentication-presence cookie and a &ldquo;last portal
             used&rdquo; cookie). These cookies do not track you across other websites. We do not
-            currently use third-party advertising or analytics cookies.
+            currently use third-party advertising or analytics cookies. We count visits to our
+            public website with Umami, which sets no cookies.
           </li>
           <li>
             <strong>Location data (mobile, drivers only):</strong> while a driver is actively
@@ -328,6 +323,11 @@ export default function PrivacyPage() {
                   Technical error/crash data; may incidentally include portions of application state
                   at time of error
                 </td>
+              </tr>
+              <tr>
+                <td>Umami</td>
+                <td>Visit counts on our public website</td>
+                <td>Pages viewed, referring site, browser, device type and country</td>
               </tr>
             </tbody>
           </table>

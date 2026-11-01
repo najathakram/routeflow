@@ -69,6 +69,12 @@ ENV NEXT_PUBLIC_MOBILE_WEB_URL=$NEXT_PUBLIC_MOBILE_WEB_URL
 # default so a build with the var unset never fails.
 ARG NEXT_PUBLIC_RELEASE_SHA=""
 ENV NEXT_PUBLIC_RELEASE_SHA=$NEXT_PUBLIC_RELEASE_SHA
+# Visitor counts (components/UmamiScript.tsx): the Umami site ID, baked in at build time like the
+# vars above. Set a `NEXT_PUBLIC_UMAMI_WEBSITE_ID` service variable in Railway; Railway forwards it
+# as this build arg. Empty default means no script is rendered, so a build without it never fails
+# and a local or test stack sends nothing. The value is never committed.
+ARG NEXT_PUBLIC_UMAMI_WEBSITE_ID=""
+ENV NEXT_PUBLIC_UMAMI_WEBSITE_ID=$NEXT_PUBLIC_UMAMI_WEBSITE_ID
 # Purge any Next.js build cache to ensure a completely fresh build.
 # Then build the Next.js application (output: standalone is set in next.config.mjs)
 WORKDIR /app/apps/web

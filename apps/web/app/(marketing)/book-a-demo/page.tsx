@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { FileText, Route, Users } from "lucide-react";
-import { site } from "../lib/site";
+import { DEMO_CTA } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { DemoScheduler } from "../components/demo-scheduler";
 
 // The real booking page — replaces the design study's simulated calendar
@@ -10,18 +11,12 @@ import { DemoScheduler } from "../components/demo-scheduler";
 // ported from the 2026-09-16 Codex study; layout follows its `.booking-layout`
 // two-column split (`booking-copy` / `.glass.booking-panel`).
 
-export const metadata: Metadata = {
-  title: "Book a RouteFlow demo",
-  description: "See how RouteFlow fits your operation — choose a time for a product walkthrough.",
-  alternates: { canonical: "/book-a-demo" },
-  openGraph: {
-    title: "Book a RouteFlow demo",
-    description: "Choose a time for a product walkthrough.",
-    url: "/book-a-demo",
-    siteName: site.name,
-    type: "website",
-  },
-};
+export const metadata: Metadata = marketingMetadata({
+  path: "/book-a-demo",
+  title: DEMO_CTA,
+  description: "Pick a time for a video call with the RouteFlow team.",
+  share: { description: "Pick a time for a video call with the RouteFlow team." },
+});
 
 const AGENDA: Array<[typeof Route, string, string]> = [
   [
@@ -38,16 +33,9 @@ export default function BookADemoPage() {
     <section className="glass-page g-section">
       <div className="g-wrap booking-layout">
         <div className="glass booking-copy">
-          <span className="g-eyebrow caps">Book a RouteFlow demo</span>
-          <h1>
-            See how RouteFlow fits
-            <br />
-            your operation.
-          </h1>
-          <p>
-            Review the features your team needs and discuss pricing and setup. Bring an example of
-            an order, from intake through delivery and payment.
-          </p>
+          <span className="g-eyebrow caps">{DEMO_CTA}</span>
+          <h1>See RouteFlow with your own orders.</h1>
+          <p>It’s a 30-minute video call. We show you RouteFlow and you ask questions.</p>
           <ul className="agenda-list">
             {AGENDA.map(([Icon, title, text]) => (
               <li key={title}>

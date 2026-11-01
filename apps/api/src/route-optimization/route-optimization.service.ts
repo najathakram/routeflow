@@ -481,7 +481,7 @@ export class RouteOptimizationService {
     if (missingCoords.length > 0) {
       const names = missingCoords.map((s) => s.customer?.businessName ?? s.id).join(", ");
       throw new BadRequestException(
-        `Missing geocoded addresses for: ${names}. Set GOOGLE_MAPS_API_KEY to auto-geocode.`,
+        `We couldn't place these customers on the map: ${names}. Check their addresses.`,
       );
     }
 
@@ -713,7 +713,7 @@ export class RouteOptimizationService {
     if (missingCoords.length > 0) {
       const names = missingCoords.map((s) => s.routeStop.customer?.businessName ?? s.id).join(", ");
       throw new BadRequestException(
-        `Missing geocoded addresses for: ${names}. Set GOOGLE_MAPS_API_KEY to auto-geocode.`,
+        `We couldn't place these customers on the map: ${names}. Check their addresses.`,
       );
     }
 

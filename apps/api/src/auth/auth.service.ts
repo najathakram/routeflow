@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -13,6 +14,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { UsersService } from "../users/users.service";
 import { EmailService } from "../email/email.service";
+import { OwnerAlertService } from "../email/owner-alert.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
@@ -53,6 +55,7 @@ export class AuthService {
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
     private readonly entitlements: EntitlementsService,
+    @Optional() private readonly ownerAlerts?: OwnerAlertService,
   ) {
     // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
     this.emailVerifyKey = derivedJwtKey(
@@ -543,6 +546,9 @@ export class AuthService {
       throw new BadRequestException({ ...VERIFICATION_REFUSED });
     }
     const activeUser = { ...user, status: "ACTIVE" as const };
+    // W1 (COPY 2q): tell the owner a trial is live. Best-effort and never awaited into the sign-in.
+    if (user.tenantId)
+      this.ownerAlerts?.trialVerified(user.tenantId, user.email)?.catch(() => undefined);
 
     const { password: _pw, ...safeUser } = activeUser;
     return this.login(safeUser, deviceInfo);

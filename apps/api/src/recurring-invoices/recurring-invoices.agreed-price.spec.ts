@@ -22,6 +22,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 // A tier-3 customer; the product's tier-3 price (8.00) differs from what the template agreed (10.00).
 const LIVE_PRODUCTS = [
@@ -78,6 +79,7 @@ describe("recurring generation bills the template's agreed price verbatim (SA-85
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },

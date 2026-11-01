@@ -157,6 +157,23 @@ function notSuspendedRefusal(): BadRequestException {
   );
 }
 
+/** How many weeks the dashboard's sign-up funnel looks back, the current week included (W3 / M1). */
+const FUNNEL_WEEKS = 8;
+
+/** One week of the dashboard funnel. `answered` joins after W1 adds the first-question marker. */
+export interface WeeklyFunnelWeek {
+  /** Monday of the week, UTC, `YYYY-MM-DD`. */
+  weekStart: string;
+  signups: number;
+  verified: number;
+  firstOrder: number;
+  firstRoute: number;
+  demoBookings: number;
+}
+
+/** The dashboard funnel: the weeks, or the mark that its read failed and the card should say so. */
+export type WeeklyFunnel = { weeks: WeeklyFunnelWeek[] } | { unavailable: true };
+
 @Injectable()
 export class PlatformAdminService {
   private readonly logger = new Logger(PlatformAdminService.name);
@@ -1931,6 +1948,7 @@ export class PlatformAdminService {
       trialsExpiringSoon,
       atRiskTenants,
       mrrOverview,
+      weeklyFunnel,
     ] = await Promise.all([
       this.prisma.tenant.count({ where: { deletedAt: null, class: "PRODUCTION" } }),
       this.prisma.tenant.count({
@@ -2011,6 +2029,7 @@ export class PlatformAdminService {
         select: { id: true, slug: true, name: true, status: true, plan: true, trialEndsAt: true },
       }),
       this.mrrService.computeOverview(),
+      this._weeklyFunnelOrUnavailable(now),
     ]);
 
     // Plan distribution keyed on the current catalog's planKey (STARTER/GROWTH/
@@ -2031,6 +2050,7 @@ export class PlatformAdminService {
       totalUsers,
       superAdminCount,
       newTenantsThisMonth,
+      weeklyFunnel,
       // One MRR engine: MrrService.computeOverview() prices from the per-tenant snapshot,
       // already scoped to class: "PRODUCTION" (see mrr.service.ts). `mrr` is the live
       // run-rate; `ledgerMrr` reconciles it against the append-only BillingEvent ledger.
@@ -2057,6 +2077,122 @@ export class PlatformAdminService {
         riskReason: this._riskReason(t.status, t.trialEndsAt, now),
       })),
     };
+  }
+
+  /**
+   * W3 / M1: our own sign-up funnel, by week, for the last FUNNEL_WEEKS weeks (UTC, weeks start
+   * Monday, the current week included). Five numbers per week, each from rows we already keep:
+   *   signups      tenants created
+   *   verified     tenants whose admin opened the email link (the `user.activate` audit row that
+   *                verifyEmailAndLogin writes with reason `email_verify`)
+   *   firstOrder   tenants signed up inside the window whose earliest order was placed that week
+   *   firstRoute   tenants signed up inside the window whose earliest route was made that week
+   *   demoBookings demo bookings made that week (not tenant rows, so no tenant filter applies)
+   * The sixth, `answered`, reads W1's first-question marker, which does not exist yet, so it is
+   * left out here and added with W1. The first-order and first-route reads are bounded to the sign-up
+   * cohort (tenants created inside the window), so they read only that cohort's rows, not every order
+   * and route on the platform; an older tenant that places its first order inside the window is not a
+   * sign-up and is not counted (review-c on #4062, cohort bound approved by the Lead). Every tenant count leaves out non-PRODUCTION tenants
+   * (test, demo, internal: `class` is set from the approved test-tenant list) and soft-deleted ones,
+   * the same two filters as every count in getStats().
+   */
+  private async _weeklyFunnel(now: Date): Promise<{ weeks: WeeklyFunnelWeek[] }> {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const mondayOffset = (new Date(startOfToday).getUTCDay() + 6) % 7;
+    const thisWeek = startOfToday - mondayOffset * DAY_MS;
+    const weekStarts = Array.from(
+      { length: FUNNEL_WEEKS },
+      (_, i) => thisWeek - (FUNNEL_WEEKS - 1 - i) * 7 * DAY_MS,
+    );
+    const windowStart = new Date(weekStarts[0]);
+    const weekIndex = (d: Date) => {
+      const i = Math.floor((d.getTime() - weekStarts[0]) / (7 * DAY_MS));
+      return i >= 0 && i < FUNNEL_WEEKS ? i : -1;
+    };
+    const live = { class: "PRODUCTION" as const, deletedAt: null };
+    const firstEver = {
+      by: ["tenantId" as const],
+      where: { tenantId: { not: null }, tenant: { ...live, createdAt: { gte: windowStart } } },
+      _min: { createdAt: true as const },
+      // Only tenants whose FIRST row falls inside the window; an older tenant's later row is not a first.
+      having: { createdAt: { _min: { gte: windowStart } } },
+    };
+
+    const [signupRows, activations, firstOrders, firstRoutes, bookings] = await Promise.all([
+      this.prisma.tenant.findMany({
+        where: { ...live, createdAt: { gte: windowStart } },
+        select: { createdAt: true },
+      }),
+      // AuditLog has no tenant relation, so the activations are read first and their tenants
+      // are checked against `live` just below.
+      this.prisma.auditLog.findMany({
+        where: {
+          action: "user.activate",
+          meta: { path: ["reason"], equals: "email_verify" },
+          tenantId: { not: null },
+          createdAt: { gte: windowStart },
+        },
+        select: { tenantId: true, createdAt: true },
+      }),
+      this.prisma.order.groupBy(firstEver),
+      this.prisma.route.groupBy(firstEver),
+      this.prisma.demoBooking.findMany({
+        where: { createdAt: { gte: windowStart } },
+        select: { createdAt: true },
+      }),
+    ]);
+
+    const liveVerifiedIds = new Set<string>(
+      activations.length === 0
+        ? []
+        : (
+            await this.prisma.tenant.findMany({
+              where: {
+                ...live,
+                id: { in: [...new Set(activations.map((a) => a.tenantId as string))] },
+              },
+              select: { id: true },
+            })
+          ).map((t) => t.id),
+    );
+
+    const weeks: WeeklyFunnelWeek[] = weekStarts.map((ms) => ({
+      weekStart: new Date(ms).toISOString().slice(0, 10),
+      signups: 0,
+      verified: 0,
+      firstOrder: 0,
+      firstRoute: 0,
+      demoBookings: 0,
+    }));
+    const bump = (d: Date | null | undefined, key: keyof Omit<WeeklyFunnelWeek, "weekStart">) => {
+      const i = d ? weekIndex(d) : -1;
+      if (i >= 0) weeks[i][key] += 1;
+    };
+    for (const t of signupRows) bump(t.createdAt, "signups");
+    // One verified tenant counts once, in the week of its first verification in the window.
+    const verifiedWeek = new Map<string, Date>();
+    for (const a of activations) {
+      const id = a.tenantId as string;
+      const seen = verifiedWeek.get(id);
+      if (liveVerifiedIds.has(id) && (!seen || a.createdAt < seen))
+        verifiedWeek.set(id, a.createdAt);
+    }
+    for (const d of verifiedWeek.values()) bump(d, "verified");
+    for (const r of firstOrders) bump(r._min?.createdAt, "firstOrder");
+    for (const r of firstRoutes) bump(r._min?.createdAt, "firstRoute");
+    for (const b of bookings) bump(b.createdAt, "demoBookings");
+    return { weeks };
+  }
+
+  /** The funnel sits inside getStats()'s Promise.all, so a bad read here must not fail the page. */
+  private async _weeklyFunnelOrUnavailable(now: Date): Promise<WeeklyFunnel> {
+    try {
+      return await this._weeklyFunnel(now);
+    } catch (e) {
+      this.logger.error(`Weekly funnel read failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { unavailable: true };
+    }
   }
 
   /** Human-readable "why at risk" for the dashboard At-Risk table. */

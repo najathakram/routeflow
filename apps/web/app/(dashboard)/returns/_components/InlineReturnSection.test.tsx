@@ -128,6 +128,22 @@ async function addProductAndQuote(pieces: string) {
   expect(quoteMutate).toHaveBeenCalledTimes(1);
 }
 
+describe("InlineReturnSection — NS-13 (SA-1060 A-4): editingOrderId rides only when the host names it", () => {
+  it("the Returns dialog and the counter (an entry order, a source sale) send no editingOrderId", async () => {
+    renderSection({ entryOrderId: "ord-1", sourceOrderId: "ord-1" });
+    await addProductAndQuote("2");
+    const req = quoteMutate.mock.calls[0][0];
+    expect(req).not.toHaveProperty("editingOrderId");
+    expect(req.sourceOrderId).toBe("ord-1");
+  });
+
+  it("a host that passes editingOrderId (the order edit) sends it", async () => {
+    renderSection({ entryOrderId: "ord-1", editingOrderId: "ord-1" });
+    await addProductAndQuote("2");
+    expect(quoteMutate.mock.calls[0][0]).toMatchObject({ editingOrderId: "ord-1" });
+  });
+});
+
 describe("InlineReturnSection — lines to quote (#2406)", () => {
   it("shows 'What came back' with no products by default, no Get quote, and asks nothing", () => {
     renderSection();
@@ -430,7 +446,7 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
     const priceInputs = () => (openAllOptions(), screen.getAllByLabelText(/credit price/i));
     const reasonInputs = () => (openAllOptions(), screen.getAllByLabelText(/why the lower price/i));
 
-    it("two priced rows with DIFFERENT overrides send no request and say why", async () => {
+    it("BR-5: a price typed on row 1 shows on row 2 too and quotes ONE merged item, with no refusal", async () => {
       authRole = "OPERATOR";
       twoRows();
       expect(await screen.findAllByLabelText(/^pieces$/i)).toHaveLength(2);
@@ -438,13 +454,24 @@ describe("InlineReturnSection — #2695 staff credit price override", () => {
       fireEvent.change(qtyInputs()[1], { target: { value: "2" } });
       fireEvent.change(priceInputs()[0], { target: { value: "3" } });
       fireEvent.change(reasonInputs()[0], { target: { value: "dented" } });
-      // The second row carries no override: one row priced, one not, on the same product.
-      wait(DEBOUNCE * 2);
-      expect(quoteMutate).not.toHaveBeenCalled();
+      // SA-1079: the price belongs to the product, so row 2 holds it as well: nothing to disagree about
+      expect(priceInputs()[1]).toHaveValue("3");
+      expect(reasonInputs()[1]).toHaveValue("dented");
       expect(
-        screen.getByText(/two rows of this product have different credit prices/i),
-      ).toBeInTheDocument();
-      expect(screen.queryByRole("alert")).toBeNull();
+        screen.queryByText(/two rows of this product have different credit prices/i),
+      ).not.toBeInTheDocument();
+      wait(DEBOUNCE * 2);
+      expect(quoteMutate).toHaveBeenCalledTimes(1);
+      expect(quoteMutate.mock.calls[0][0].items).toEqual([
+        {
+          productId: "prod-1",
+          qty: 1,
+          boxes: 0,
+          pieces: 3,
+          creditUnitPrice: 3,
+          overrideReason: "dented",
+        },
+      ]);
     });
 
     it("the same override on both rows quotes ONE merged item carrying it", async () => {

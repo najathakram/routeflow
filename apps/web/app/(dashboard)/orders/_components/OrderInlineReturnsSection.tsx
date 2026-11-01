@@ -15,7 +15,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { hasAnyQtyEntered, type InlineReturnLineDraft } from "@routeflow/returns";
-import type { ReturnReason } from "@routeflow/types";
+import type { InlineReturnQuoteResponse, ReturnReason } from "@routeflow/types";
 import {
   InlineReturnSection,
   type InlineReturnSectionState,
@@ -26,6 +26,9 @@ export interface OrderInlineReturnsDraft {
   captureReason: ReturnReason | "";
   /** SA-484i: a return rides the save only once it has been QUOTED. */
   quoted: boolean;
+  /** SA-1060 A-5: the box's own quote while it is current (the same moment `quoted` is true), else null. The merge prompt
+   *  compares it with the merge target's. */
+  quote: InlineReturnQuoteResponse | null;
   /** M14: a half-typed credit price, as the sentence to show; the save is blocked with it. */
   problem: string | null;
 }
@@ -95,6 +98,7 @@ export const OrderInlineReturnsSection = React.forwardRef<
           lines: state.lines,
           captureReason: state.captureReason,
           quoted: state.quoteStatus === "current",
+          quote: state.quoteStatus === "current" ? state.quote : null,
           problem: state.problem,
         };
       },
@@ -147,6 +151,8 @@ export const OrderInlineReturnsSection = React.forwardRef<
         <InlineReturnSection
           customerId={customerId}
           entryOrderId={entryOrderId}
+          // SA-1060 A-4: in edit mode the quote names the order being edited, so it prices what the save will see
+          editingOrderId={entryOrderId}
           resetToken={resetToken}
           // the return's credit note is held for THIS order first, so it is not "for the next order"
           creditContext="thisOrder"

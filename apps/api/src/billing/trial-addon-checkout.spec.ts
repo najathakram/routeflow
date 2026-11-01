@@ -38,6 +38,7 @@ jest.mock("../common/db-locks", () => ({
 }));
 
 import { fakeStripeProducts } from "../testing/fake-stripe-products";
+import { pinWallClock } from "../testing/pin-clock";
 import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { BillingController } from "./billing.controller";
@@ -653,10 +654,13 @@ function make(opts: Opts = {}) {
 const ADDON_TYPES = [BILLING_EVENTS.ADDON_ENABLED, BILLING_EVENTS.ADDON_DISABLED];
 
 beforeEach(() => {
+  // L-353: checkout reads the real clock for its anchor; unpinned, this file goes red 10:29Z-12:00Z on the 1st.
+  pinWallClock();
   lockTails.clear();
   mockWithAdvisoryLock.mockClear();
   seq = 0;
 });
+afterEach(() => jest.useRealTimers());
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () => {
@@ -1880,6 +1884,7 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
         {} as any,
         {} as any,
         h.billing,
+        {} as any,
         {} as any,
         {} as any,
         {} as any,

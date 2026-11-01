@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, CalendarDays, MessageSquare, Route, Users } from "lucide-react";
-import { routes, site } from "../lib/site";
+import { DEMO_CTA, routes, site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { Eyebrow } from "../components/marketing";
 
-// Copy verbatim from the redesign's app/[page]/page.tsx `Contact()` (M1 §2f).
+// Words: COPY.md 2j (W6). Email stays the way in (Q4): no phone, hours or street address. The one
+// promise is the reply time the owner set (SA-1075 A-5): "We reply within one business day."
 // Inside the marketing chrome; the old `app/contact/page.tsx` is deleted
 // (spec.md R8).
 //
@@ -20,31 +22,20 @@ import { Eyebrow } from "../components/marketing";
 
 const route = routes.find((r) => r.slug === "contact")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/contact",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/contact" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/contact",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const AGENDA: Array<[typeof Route, string, string]> = [
   [
     MessageSquare,
-    "Start with your process",
-    "The orders, handoffs, and customer questions you handle.",
+    "Show us your orders",
+    "How orders, deliveries, and customer questions work today.",
   ],
-  [Route, "See the connected workflow", "From order intake through dispatch and delivery."],
-  [
-    CalendarDays,
-    "Discuss the next step",
-    "Review pricing, setup, and the details you need to decide.",
-  ],
+  [Route, "See RouteFlow", "From the order to the delivery."],
+  [CalendarDays, "Talk about next steps", "Ask about price and setup."],
 ];
 
 export default function ContactPage() {
@@ -52,17 +43,16 @@ export default function ContactPage() {
     <div className="glass-page">
       <section className="contact-section wrap">
         <div className="contact-copy">
-          <Eyebrow>See RouteFlow in action</Eyebrow>
+          <Eyebrow>Contact RouteFlow</Eyebrow>
           <h1>
-            Let’s talk about <br />
-            <em>your delivery day.</em>
+            Email us or <br />
+            <em>book a video call.</em>
           </h1>
           <p className="lead">
-            Bring your workflow and your questions. Explore how RouteFlow could fit the way your
-            team takes orders and runs deliveries.
+            Email a question and include your company name. We reply within one business day.
           </p>
           <div className="demo-agenda">
-            <h2>Make the walkthrough yours.</h2>
+            <h2>What we do on the call.</h2>
             {AGENDA.map(([Icon, title, text]) => (
               <div key={title}>
                 <Icon size={23} />
@@ -79,24 +69,18 @@ export default function ContactPage() {
             <span className="g-tile">
               <CalendarDays size={22} />
             </span>
-            <h2>Product demos &amp; pricing</h2>
-            <p>
-              Review your orders, delivery process, and customer accounts. Ask about features,
-              setup, and the price for your operation.
-            </p>
+            <h2>Book a video call</h2>
+            <p>Look at your orders, deliveries, and customers. Ask about features and setup.</p>
             <Link className="button" href="/book-a-demo">
-              Book a demo <ArrowUpRight size={18} />
+              {DEMO_CTA} <ArrowUpRight size={18} />
             </Link>
           </article>
           <article className="contact-card">
             <span className="g-tile">
               <Users size={22} />
             </span>
-            <h2>General inquiries</h2>
-            <p>
-              For product questions, account help, or partnership inquiries, email the RouteFlow
-              team. Include your company and a short description of what you need.
-            </p>
+            <h2>Other questions</h2>
+            <p>Email us about your account or anything else. Include your company name.</p>
             <a className="button button-outline" href={`mailto:${site.email}`}>
               {site.email} <ArrowUpRight size={18} />
             </a>

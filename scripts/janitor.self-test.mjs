@@ -61,6 +61,9 @@ import {
   buildPlan,
   parseAllowList,
   classifyIgnoredForAllowList,
+  hasUnpushedCommits,
+  isRegenerableLocalAssets,
+  readIgnoredStatus,
   samePath,
   salvageIgnored,
   allowListVerdict,
@@ -1218,6 +1221,159 @@ t(
     assert.equal(dirtyFromStatus("", "!! local-assets/repair-f03-x.jsonl\n"), true);
   },
 );
+
+// Janitor gaps (fix list 11-01): every jest config writes a per-workspace .jest-cache, and verify's
+// data-questions report lands in local-assets/. Both made 26 of 29 merged factory trees "dirty".
+t("a per-workspace .jest-cache is regenerable (step 7 already deletes its entries)", () => {
+  assert.equal(
+    dirtyFromStatus("", "!! apps/api/.jest-cache/\n!! packages/pricing/.jest-cache/\n"),
+    false,
+  );
+  assert.equal(dirtyFromStatus("", "!! apps/api/src/.jest-cache-notes.md\n"), true);
+});
+
+t(
+  "local-assets holding only verify reports (or nothing) is regenerable; anything else is data",
+  () => {
+    const f = (name) => ({ name, isFile: true });
+    const report = f("data-questions-report-2026-10-28T16-28-31-518Z.txt");
+    assert.equal(isRegenerableLocalAssets({ isLink: false, entries: [report] }), true);
+    assert.equal(isRegenerableLocalAssets({ isLink: false, entries: [] }), true);
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [report, f("notes.md")] }),
+      false,
+    );
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [{ name: "proofs", isFile: false }] }),
+      false,
+    );
+    // bugs.mjs leaves an empty local-assets/docs in every tree that rendered the register.
+    const emptyDocs = { name: "docs", isFile: false, isEmptyDir: true };
+    assert.equal(isRegenerableLocalAssets({ isLink: false, entries: [report, emptyDocs] }), true);
+    assert.equal(
+      isRegenerableLocalAssets({
+        isLink: false,
+        entries: [{ name: "docs", isFile: false, isEmptyDir: false }],
+      }),
+      false,
+    );
+    // A report name that is a folder or link, a linked local-assets, or an unreadable one: data.
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [{ ...report, isFile: false }] }),
+      false,
+    );
+    assert.equal(isRegenerableLocalAssets({ isLink: true, entries: [report] }), false);
+    assert.equal(isRegenerableLocalAssets(null), false);
+    assert.equal(
+      isRegenerableLocalAssets({ isLink: false, entries: [f("data-questions-report-x.txt")] }),
+      false,
+    );
+  },
+);
+
+// The same rule on a real tree, through the one reader both dirty checks use.
+{
+  const dir = mkdtempSync(join(tmpdir(), "janitor-gaps-"));
+  const other = mkdtempSync(join(tmpdir(), "janitor-gaps-link-"));
+  const g = (...args) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
+    }).trim();
+  const report = "data-questions-report-2026-10-29T14-01-52-983Z.txt";
+  const states = () => {
+    const s = readIgnoredStatus(dir);
+    return {
+      dirty: dirtyFromStatus(s.status, s.ignored),
+      allow: classifyIgnoredForAllowList(s.status, s.ignored),
+    };
+  };
+  try {
+    g("init", "-q", "-b", "master");
+    writeFileSync(join(dir, ".gitignore"), "local-assets/\n.jest-cache/\n");
+    g("add", ".gitignore");
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "c1");
+    mkdirSync(join(dir, "apps", "api", ".jest-cache"), { recursive: true });
+    writeFileSync(join(dir, "apps", "api", ".jest-cache", "perf-cache-x"), "{}");
+    mkdirSync(join(dir, "local-assets", "docs", "nested"), { recursive: true });
+    writeFileSync(join(dir, "local-assets", report), "report");
+    t(
+      "a tree with only a .jest-cache, verify reports and empty folders is clean in both checks",
+      () => {
+        const s = states();
+        assert.equal(s.dirty, false);
+        assert.deepEqual(s.allow, { dirty: false, salvage: [], blockers: [] });
+      },
+    );
+    writeFileSync(join(dir, "local-assets", "docs", "nested", "register.html"), "<p>");
+    t("a file deep inside an otherwise empty local-assets folder keeps the tree dirty", () => {
+      assert.equal(states().dirty, true);
+    });
+    rmSync(join(dir, "local-assets", "docs"), { recursive: true, force: true });
+    writeFileSync(join(dir, "local-assets", "notes.md"), "mine");
+    t("one other file beside the reports keeps local-assets as data (dirty; salvaged)", () => {
+      const s = states();
+      assert.equal(s.dirty, true);
+      assert.deepEqual(s.allow.salvage, ["local-assets/"]);
+    });
+    rmSync(join(dir, "local-assets"), { recursive: true, force: true });
+    writeFileSync(join(other, report), "report");
+    symlinkSync(other, join(dir, "local-assets"), "junction");
+    t("a LINKED local-assets is never regenerable, even when it holds only reports", () => {
+      const s = states();
+      assert.equal(s.dirty, true);
+      // Windows: git sees the junction as an ignored folder (salvaged). Linux: a symlink is a file
+      // to git, so `local-assets/` does not ignore it and it is untracked (dirty). Never removable.
+      assert.equal(s.allow.dirty || s.allow.salvage.length + s.allow.blockers.length > 0, true);
+    });
+    unlinkSync(join(dir, "local-assets"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+}
+
+// A lane pushed with `git push origin <branch>` (no -u): no upstream recorded, but origin has it.
+{
+  const origin = mkdtempSync(join(tmpdir(), "janitor-up-origin-"));
+  const dir = mkdtempSync(join(tmpdir(), "janitor-up-"));
+  const run = (cwd, ...args) =>
+    execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: fixtureGitEnv(),
+    }).trim();
+  const g = (...args) => run(dir, ...args);
+  const commit = (file) => {
+    writeFileSync(join(dir, file), file);
+    g("add", file);
+    g("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", file);
+  };
+  try {
+    run(origin, "init", "-q", "--bare");
+    g("init", "-q", "-b", "master");
+    g("remote", "add", "origin", origin);
+    commit("a");
+    g("checkout", "-q", "-b", "work");
+    commit("b");
+    g("push", "-q", "origin", "work");
+    t("a branch with no upstream but an identical origin branch is pushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "work"), false);
+    });
+    commit("c");
+    t("one commit past the same-named origin branch is unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "work"), true);
+    });
+    g("checkout", "-q", "-b", "local-only");
+    t("no upstream and no origin branch of that name is unpushed (unknown is unsafe)", () => {
+      assert.equal(hasUnpushedCommits(dir, "local-only"), true);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(origin, { recursive: true, force: true });
+  }
+}
 
 // Smoke: the real CLI runs its report-only path end to end inside a throwaway repo (never --apply).
 {
