@@ -10,7 +10,7 @@
 // No new dependency: it uses the Playwright that apps/web already has.
 //
 //   node apps/web/scripts/glance-shots.mjs --piece w0 [--url http://localhost:3001] [--path /]
-//        [--brand Northbay] [--out local-assets/proofs/website-review/<piece>]
+//        [--brand Northbay] [--out local-assets/proofs/website-review/<piece>] [--chrome <path>]
 //
 // Proofs go to local-assets/proofs/website-review/<piece>/ (gitignored), never into git.
 // The runbook is docs/runbooks/glance-test.md.
@@ -42,12 +42,17 @@ const outDir = path.resolve(
 );
 mkdirSync(outDir, { recursive: true });
 
-// Runs in the page. Order matters: swap names first, hide the logo, then blur what is left small.
+// Runs in the page, and again whenever React re-renders (a hydration pass can rebuild the text
+// nodes this wrapped, so one run is not enough). It is idempotent. Order matters: swap names first,
+// hide the logo, then blur what is left small.
 function prepare({ brand, blurBelow, blurPx }) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const texts = [];
   while (walker.nextNode()) texts.push(walker.currentNode);
-  for (const node of texts) node.nodeValue = node.nodeValue.replace(/RouteFlow/g, brand);
+  for (const node of texts) {
+    if (node.nodeValue.includes("RouteFlow"))
+      node.nodeValue = node.nodeValue.replace(/RouteFlow/g, brand);
+  }
   document.title = document.title.replace(/RouteFlow/g, brand);
 
   for (const el of document.querySelectorAll(
@@ -56,7 +61,8 @@ function prepare({ brand, blurBelow, blurPx }) {
     el.style.visibility = "hidden";
   }
   for (const img of document.querySelectorAll("[alt]")) {
-    img.setAttribute("alt", img.getAttribute("alt").replace(/RouteFlow/g, brand));
+    const alt = img.getAttribute("alt");
+    if (alt.includes("RouteFlow")) img.setAttribute("alt", alt.replace(/RouteFlow/g, brand));
   }
 
   // Blur text under the cut-off. Wrap each small text node so a large heading is never blurred by
@@ -64,10 +70,12 @@ function prepare({ brand, blurBelow, blurPx }) {
   for (const node of texts) {
     if (!node.nodeValue.trim() || !node.parentElement) continue;
     const parent = node.parentElement;
+    if (parent.closest("[data-glance]")) continue;
     if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(parent.tagName)) continue;
     const size = parseFloat(getComputedStyle(parent).fontSize);
     if (size >= blurBelow) continue;
     const span = document.createElement("span");
+    span.dataset.glance = "1";
     span.style.filter = `blur(${blurPx}px)`;
     span.style.display = "inline-block";
     parent.replaceChild(span, node);
@@ -75,7 +83,33 @@ function prepare({ brand, blurBelow, blurPx }) {
   }
 }
 
-const browser = await chromium.launch();
+// Runs in the page after prepare(): counts what a reader could still read that they must not.
+function audit({ blurBelow }) {
+  let readableSmall = 0;
+  let brandLeft = 0;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const parent = node.parentElement;
+    if (!parent || !node.nodeValue.trim()) continue;
+    if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(parent.tagName)) continue;
+    if (node.nodeValue.includes("RouteFlow")) brandLeft += 1;
+    const box = parent.getBoundingClientRect();
+    if (box.bottom < 0 || box.top > innerHeight || box.width === 0) continue; // not in the first screen
+    if (
+      parseFloat(getComputedStyle(parent).fontSize) < blurBelow &&
+      !parent.closest("[data-glance]")
+    ) {
+      readableSmall += 1;
+    }
+  }
+  return { readableSmall, brandLeft };
+}
+
+// --chrome <path> (or GLANCE_CHROME) picks a browser binary when the installed Playwright build
+// does not match the one on disk.
+const executablePath = arg("chrome", process.env.GLANCE_CHROME);
+const browser = await chromium.launch(executablePath ? { executablePath } : {});
 try {
   for (const view of VIEWS) {
     const context = await browser.newContext({
@@ -86,9 +120,26 @@ try {
     const page = await context.newPage();
     await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
     await page.addStyleTag({
-      content: "*,*::before,*::after{animation:none!important;transition:none!important}",
+      content:
+        "*,*::before,*::after{animation:none!important;transition:none!important}" +
+        " nextjs-portal{display:none!important}",
     });
-    await page.evaluate(prepare, { brand, blurBelow: BLUR_BELOW_PX, blurPx: BLUR_PX });
+    const opts = { brand, blurBelow: BLUR_BELOW_PX, blurPx: BLUR_PX };
+    await page.evaluate(prepare, opts);
+    // Re-apply after any re-render, then prove nothing small is still readable. A silent miss would
+    // hand the readers an unblurred, branded page, which is not the test.
+    let left = { readableSmall: 1, brandLeft: 0 };
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await page.waitForTimeout(800);
+      await page.evaluate(prepare, opts);
+      left = await page.evaluate(audit, opts);
+      if (left.readableSmall === 0 && left.brandLeft === 0) break;
+    }
+    if (left.readableSmall !== 0 || left.brandLeft !== 0) {
+      throw new Error(
+        `glance-shots: ${view.name} still shows readable small text or the product name: ${JSON.stringify(left)}`,
+      );
+    }
     const file = path.join(outDir, `${piece}-${view.name}-${view.width}.png`);
     // First screen only: a reader sees what the page shows at first paint, not the whole page.
     await page.screenshot({ path: file, fullPage: false });
