@@ -16,6 +16,7 @@ import { daysPastDue } from "@/lib/days-past-due";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { WriteButton } from "@/lib/read-only-gate";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 
 /** Shown instead of the figures when a read failed. The load-failed wording is the counter's, reused. */
 export const ACCOUNT_STRIP_FAILED_COPY = "Couldn't load account info";
@@ -190,7 +191,10 @@ export function CustomerAccountStrip({
         ) : (
           <>
             <p data-testid="account-strip-line" className="font-medium">
-              {parts.join(" · ")}
+              <OpenBalanceButton customerId={id} linkInvoices={false}>
+                {parts[0]}
+              </OpenBalanceButton>
+              {parts.length > 1 ? ` · ${parts.slice(1).join(" · ")}` : ""}
             </p>
             {listable ? (
               <button

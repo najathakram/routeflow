@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 import { fmt } from "@/lib/formatting";
 import { useCounterCustomerCredit } from "@/lib/api/counter-customer-credit";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 import {
   COUNTER_CUSTOMER_DEFAULT_TERMS_COPY,
   COUNTER_CUSTOMER_LOAD_FAILED_COPY,
@@ -83,7 +84,14 @@ export function CounterCustomerCredit({ customerId }: { customerId: string }) {
         <div className="flex gap-1">
           <dt className="text-navy/70">Open balance</dt>
           <dd className="font-medium" data-testid="counter-customer-open-balance">
-            <Value field={view.openBalance} render={(v) => fmt(v)} />
+            <Value
+              field={view.openBalance}
+              render={(v) => (
+                <OpenBalanceButton customerId={customerId} linkInvoices={false}>
+                  {fmt(v)}
+                </OpenBalanceButton>
+              )}
+            />
           </dd>
         </div>
       </dl>
