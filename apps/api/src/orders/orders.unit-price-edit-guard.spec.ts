@@ -5,6 +5,14 @@
  * tier price, still succeeds. `createSale` (/orders/sell) forwards the same option to the same create().
  * Fixture: tier-3 customer, Case list $480 / tier $450.
  */
+// SA-1034: create() computes the price-edit capability from its principal (`priceEditAllowedFor`); these specs pin what
+// create() DOES with each answer, so the helper is stubbed and the answer set per call. The helper itself is pinned in
+// auth/permissions/price-edit.spec.ts.
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn(async () => true),
+}));
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+const capability = priceEditAllowedFor as jest.Mock;
 jest.mock("../invoices/invoices.service", () => ({ InvoicesService: class InvoicesService {} }));
 jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: class NotificationsService {},
@@ -65,15 +73,17 @@ describe("H3 / POS-5 priceEditAllowed on a unit line in create()", () => {
     },
   ];
   const line = () => prisma.order.create.mock.calls[0][0].data.lineItems.create[0];
-  const create = (item: Record<string, unknown>, priceEditAllowed?: boolean) =>
-    service.create(
+  const create = (item: Record<string, unknown>, priceEditAllowed?: boolean) => {
+    capability.mockResolvedValue(priceEditAllowed ?? true);
+    return service.create(
       {
         customerId: "cust-1",
         items: [{ productId: "prod-1", qty: 2, unitLabel: "Case", ...item }],
       } as never,
       staff,
-      priceEditAllowed === undefined ? {} : { priceEditAllowed },
+      {},
     );
+  };
   const refused = { response: { code: "PRICE_EDIT_NOT_PERMITTED" } };
 
   beforeEach(async () => {
@@ -161,7 +171,6 @@ describe("H3 / POS-5 priceEditAllowed on a unit line in create()", () => {
             ],
           } as never,
           staff,
-          { priceEditAllowed: false } as never,
         ),
       ).rejects.toMatchObject(refused);
       expect(prisma.order.create).not.toHaveBeenCalled();

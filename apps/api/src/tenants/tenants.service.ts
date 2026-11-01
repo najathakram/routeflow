@@ -71,6 +71,15 @@ const RESERVED_USERNAMES = new Set([
   "manager",
 ]);
 
+/**
+ * W2 / COPY.md 2m: sign-in asks for the Workspace ID typed, and no other screen or mail shows it. Both
+ * verification mails (first send and resend) carry it with the sign-in address, from this one helper.
+ */
+function signInReminderHtml(webUrl: string, workspaceId: string): string {
+  const loginUrl = `${webUrl.replace(/\/$/, "")}/login`;
+  return `<p>Save this for later. To sign in, go to <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a> and enter your Workspace ID: <strong>${escapeHtml(workspaceId)}</strong>.</p>`;
+}
+
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
@@ -213,11 +222,11 @@ export class TenantsService {
       const sendResult = await this.email.send({
         to: result.user.email,
         subject: "Verify your email to activate RouteFlow",
-        html: `<p>Hi ${escapeHtml(result.user.username)},</p>
-<p>Thanks for signing up for <strong>RouteFlow</strong>! Click the button below to verify your email and activate your 14-day free trial for <strong>${escapeHtml(businessName)}</strong>.</p>
+        html: `<p>Thanks for signing up for <strong>RouteFlow</strong>. Verify your email to open your 14-day free trial for <strong>${escapeHtml(businessName)}</strong>.</p>
 <p style="margin:24px 0;">
-  <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
+  <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify my email</a>
 </p>
+${signInReminderHtml(webUrl, result.tenant.slug)}
 <p>Or paste this link into your browser:<br/><a href="${escapeHtml(verifyUrl)}">${escapeHtml(verifyUrl)}</a></p>
 <p><em>This link expires in 24 hours. If you didn't sign up, you can safely ignore this email.</em></p>
 <p>The RouteFlow Team</p>`,
@@ -312,6 +321,7 @@ export class TenantsService {
 <p style="margin:24px 0;">
   <a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Verify My Email</a>
 </p>
+${signInReminderHtml(webUrl, user.tenant.slug)}
 <p><em>This link expires in 24 hours.</em></p>
 <p>The RouteFlow Team</p>`,
         // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.

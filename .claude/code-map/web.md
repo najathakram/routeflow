@@ -51,6 +51,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-31-x.md](web/landing-2026-10-31-x.md) | Train X (b6fa8f21a..5503f21974): stepper in the selling unit, Drafts button on the till, pickup wording, Invoice step and Create invoice, one Escape per layer, History word |
 | [web/landing-2026-10-31-y.md](web/landing-2026-10-31-y.md) | Train Y (5503f21974..09600c8c59): install banner on home only, one New order menu (`newOrderEntry`), price field names its unit |
 | [web/landing-2026-10-31-z.md](web/landing-2026-10-31-z.md) | Train Z (e134d6bd5..ccf3eb39d): ReadyEmailLine, price curve, HeldReturnActions, PdfPreview, stickyPrice, live return quote |
+| [web/landing-2026-10-31-n.md](web/landing-2026-10-31-n.md) | Train n (ccf3eb39d..74c94e74f): iOS 16px touch rule, ios-zoom e2e, builder rememberedOf, applyTypedPrice memoryMayBook |
 | [web/landing-2026-10-22-w4.md](web/landing-2026-10-22-w4.md) | Landing 2026-10-22 window 4: orders apple-ux r3/r4 train, buyer cart, import Family UI, counter till/returns, payment key dialogs |
 | [web/landing-2026-10-17-units-v2-3.md](web/landing-2026-10-17-units-v2-3.md) | Landing 2026-10-17 units-v2-3: price layer, units settings, K-cards, product image actions |
 | [web/landing-2026-10-12-r52.md](web/landing-2026-10-12-r52.md) | Landing 2026-10-12 Release 5.2: edit rebase on 409, read-only gate and copy, billing card, counter QA polish, paid-at-sale |
@@ -64,3 +65,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-10-08-w21a.md](web/landing-2026-10-08-w21a.md) | Landing 2026-10-08 W21a: counter refund or store credit, Today's sales, register look and exit guard, Settings > Fulfillment (dark) |
 | [web/landing-2026-10-06-w4-w10.md](web/landing-2026-10-06-w4-w10.md) | Landing 2026-10-06 (windows 4 to 10): order actions by role, business profile picker, billing confirm sheets, order suggestions |
 | [web/landing-2026-10-01-w12-w27.md](web/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 w12-w27: settings hub, PO route/detail/scan, scan level/aim/hold, shell handoff, CN edit/void |
+| [web/landing-2026-11-01-o.md](web/landing-2026-11-01-o.md) | Train o (5d3b36a508..f0710f769b): one Radix copy and menu close, till receipt tenderRows, price rights copy, no strike above list, workspace memory and four-field signup, marketing metadata/share image |

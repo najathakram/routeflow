@@ -523,6 +523,7 @@ describe("buildUnitLine — a held level the ladder resized (SA-1044)", () => {
       item: { productId: "p1", qty: 3, unitLabel: "Case", ...item },
       tier: 1,
       taxFor,
+      priceEditAllowed: true,
       position: 0,
       tenantId: "t1",
       ...(existing ? { existing, stored: existing } : {}),

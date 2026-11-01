@@ -136,13 +136,6 @@
 - **Lesson:** **Every Expo web export used for a proof or a deploy runs `npx expo export --platform web --clear`, then greps `dist/_expo/static/js/web/*.js` for the exact API base URL and the full build sha before any capture. A substring check like "3310" is not proof: grep the whole value.**
 - **Guard:** none automatic; the sign-in screen's `build <sha7>` (`lib/build-info.ts`) is the on-screen check. Cf. [[L-265]] (stale build output in a proof).
 
-### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
-
-- **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
-- **Root cause:** `next dev` writes route type stubs under `apps/web/.next/types`, and `apps/web/tsconfig.json` includes `.next/types/**/*.ts`, so `tsc --noEmit` compiles them; a stub for a route this branch changed or removed no longer matches the tree.
-- **Lesson:** **After any `next dev` proof, run `rm -rf apps/web/.next` before committing or pushing (and again before the next proof, so the server never serves stale output). The type-check gate must see source only.**
-- **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
-
 ## testing
 
 ### L-366 · 2026-10-31 · testing · a wrapper must accept only values its inner guard accepts; a safety guard is never widened to fit the wrapper
@@ -373,6 +366,13 @@
 - **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
 - **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit. Fixed in `apps/control` (`Referrer-Policy: same-origin`; `originOk` accepts `Origin: null` only with `Sec-Fetch-Site: same-origin`), pinned by `apps/control/test/login-origin.spec.ts`.
 
+### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
+
+- **Symptom:** an OAuth/booking token traveled as a URL query parameter, the exact shape that ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
+- **Root cause:** a query string is the easiest place to carry a value across a redirect, but also the least private transport HTTP offers.
+- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in a URL query string; use a fragment (`#`, never sent to the server) for a client-side handoff, or a POST body for a server-side one.**
+- **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
+
 ## deploy
 
 ### L-367 · 2026-10-31 · deploy · a hosted job's timeout is sized from its measured stages with headroom; a cancelled run is read by its annotation, and a local verify red mid-chain hides every later step
@@ -401,7 +401,7 @@
 - **Symptom:** two windows closed with CI still running and landed one PR between them; waits for CI burned the 45-minute watchdog.
 - **Root cause:** windows were sized to CI wait plus merges. A run that starts while the repo is public keeps running after the flip, but a run that starts on a private repo fails on billing.
 - **Lesson:** **Start every CI run at window open, close on the watchdog, and spend the window on merge, deploy SUCCESS and the private read-back. Never flip on BUILDING.**
-- **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask. Extended 2026-10-31: never flip private while a train's hosted CI run is in progress unless the watchdog forces it. A hosted job was cancelled about 3 minutes after the flip with every real step already passed and only the post-run step cancelled; a cancelled run is not green, so read the run's conclusion (as [[L-337]] refuses CANCELLED), and a second short window may re-run the failed job.
+- **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask. Extended 2026-10-31: never flip private while a train's hosted CI run is in progress unless the watchdog forces it. A hosted job was cancelled about 3 minutes after the flip with every real step already passed and only the post-run step cancelled; a cancelled run is not green, so read the run's conclusion (as [[L-337]] refuses CANCELLED), and a second short window may re-run the failed job. Extended 2026-11-01 (train n): push the train branch while the repo is still private, before the watchdog starts (the pre-push fast verify takes minutes, none of them public), then open the window with the branch already on origin. A docs-only PR (only `.claude/**`, `docs/**` or `**.md`) gets no CI run in any window, because `ci.yml` `paths-ignore` skips it and a close/reopen fires nothing; its gate is the read PASS plus MERGEABLE/CLEAN, so do not promise it CI. Extended 2026-11-01 (train o): a Verify attempt that started in window 1 and was still running at the private flip hit the 45-minute limit (annotation: exceeded the maximum execution time) with nothing red; the failed-job re-run in window 2 passed in 23m44s on the same sha, while Migration replay and Control, which had finished inside window 1, stayed green. Re-run only the failed job in the next window and report the check-run annotation, not just `cancelled`.
 
 ### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
 
