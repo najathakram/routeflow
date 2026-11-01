@@ -197,6 +197,118 @@ describe("SA-1078 account statement (PR-1)", () => {
     });
   });
 
+  describe("A-3: the tenant’s own days", () => {
+    const chicago = "America/Chicago";
+    const payRow = (at: string) => ({
+      amount: 10,
+      method: "CASH",
+      reference: null,
+      paidAt: new Date(at),
+      settledAt: null,
+      invoice: { invoiceNumber: "INV-1" },
+    });
+
+    it("S13b: the 30-day window opens at the tenant’s local midnight, not UTC midnight", async () => {
+      jest.setSystemTime(new Date("2026-10-31T15:00:00.000Z"));
+      arrange({ zone: chicago });
+      await read();
+      const since = prisma.invoicePayment.findMany.mock.calls[0][0].where.OR[0].settledAt.gte;
+      // Oct 1 00:00 in Chicago (UTC-5): 02:00Z on Oct 1 is Sep 30 local (out), 06:00Z is Oct 1 local (in)
+      expect(since.toISOString()).toBe("2026-10-01T05:00:00.000Z");
+      expect(new Date("2026-10-01T02:00:00.000Z").getTime()).toBeLessThan(since.getTime());
+      expect(new Date("2026-10-01T06:00:00.000Z").getTime()).toBeGreaterThanOrEqual(
+        since.getTime(),
+      );
+    });
+
+    it("S13b: the window holds across a clock change (Nov 20 opens at Oct 21 local midnight, still UTC-5)", async () => {
+      jest.setSystemTime(new Date("2026-11-20T15:00:00.000Z"));
+      arrange({ zone: chicago });
+      await read();
+      const since = prisma.invoicePayment.findMany.mock.calls[0][0].where.OR[0].settledAt.gte;
+      expect(since.toISOString()).toBe("2026-10-21T05:00:00.000Z");
+    });
+
+    it("S22: every date is the tenant’s day (YYYY-MM-DD), for a payment, a credit note and an advance", async () => {
+      jest.setSystemTime(new Date("2026-10-31T15:00:00.000Z"));
+      const at = new Date("2026-10-31T02:00:00.000Z"); // Oct 30, 21:00 in Chicago
+      arrange({
+        zone: chicago,
+        payments: [payRow("2026-10-31T02:00:00.000Z")],
+        credits: [
+          {
+            id: "cn1",
+            creditNoteNumber: "CN-1",
+            amount: 10,
+            amountUsed: 0,
+            reason: "Damaged",
+            createdAt: at,
+            expiresAt: null,
+          },
+        ],
+        advances: [{ id: "ad1", balance: 5, reference: null, receivedAt: at }],
+      });
+      const res = await read();
+      expect(res.recentPayments[0].date).toBe("2026-10-30");
+      expect(res.credits.map((c) => c.date)).toEqual(["2026-10-30", "2026-10-30"]);
+    });
+
+    it("S23: an advance’s staff notes never reach the statement, on either view; a credit note keeps its reason", async () => {
+      arrange({
+        credits: [
+          {
+            id: "cn1",
+            creditNoteNumber: "CN-1",
+            amount: 10,
+            amountUsed: 0,
+            reason: "Damaged",
+            createdAt: day("2026-10-02"),
+            expiresAt: null,
+          },
+        ],
+        advances: [
+          {
+            id: "ad1",
+            balance: 5,
+            reference: "CHK-1",
+            notes: "staff only: owes us a favour",
+            receivedAt: day("2026-10-05"),
+          },
+        ],
+      });
+      for (const staff of [true, false]) {
+        const res = await read(staff);
+        expect(res.credits.find((c) => c.kind === "ADVANCE")?.reason).toBeNull();
+        expect(res.credits.find((c) => c.kind === "CREDIT_NOTE")?.reason).toBe("Damaged");
+        expect(JSON.stringify(res)).not.toContain("favour");
+      }
+      expect(prisma.advancePayment.findMany.mock.calls[0][0].select.notes).toBeUndefined();
+    });
+
+    it("S24: one statement reads one clock: a passed `now` drives asOf, daysLate, overdue and openBalance", async () => {
+      jest.setSystemTime(new Date("2026-12-25T12:00:00.000Z")); // the wall clock is far away
+      arrange({
+        zone: chicago,
+        invoices: [
+          inv("a", 100, [], { due: "2026-10-30" }),
+          inv("b", 50, [], { due: "2026-10-31" }),
+        ],
+      });
+      const res = await buildAccountStatement(prisma as any, CUSTOMER, {
+        staff: true,
+        now: new Date("2026-11-01T03:00:00.000Z"), // Oct 31, 22:00 in Chicago
+      });
+      expect(res.asOf).toBe("2026-10-31");
+      expect(
+        Object.fromEntries(res.openInvoices.map((r) => [r.invoiceNumber, r.daysLate])),
+      ).toEqual({ A: 1, B: 0 });
+      expect(res.overdue).toBe(100); // B is due today, not overdue
+      expect(res.openBalance).toBe(150);
+      const since = prisma.invoicePayment.findMany.mock.calls[0][0].where.OR[0].settledAt.gte;
+      expect(since.toISOString()).toBe("2026-10-01T05:00:00.000Z");
+    });
+  });
+
   it("S11: credit notes and advances list what is left; expired and used-up ones are not credit", async () => {
     arrange({
       credits: [
@@ -320,9 +432,8 @@ describe("SA-1078 account statement (PR-1)", () => {
       ]);
       expect(res.recentPayments[1].amount).toBe(12.5);
       expect(res.recentPayments[0].reference).toBe("CHK-1");
-      expect(res.recentPayments[0].date).toBe(
-        new Date(NOW.getTime() - 5 * 3_600_000).toISOString(),
-      );
+      // a tenant-zone day, not an instant (A-3): 07:00 UTC on Oct 31 in a UTC tenant
+      expect(res.recentPayments[0].date).toBe("2026-10-31");
     });
 
     it("S14: 51 payments in 30 days read as 50 rows and truncated; 50 are not truncated", async () => {

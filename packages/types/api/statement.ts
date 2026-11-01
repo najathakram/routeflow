@@ -31,6 +31,7 @@ export interface AccountStatementInvoice {
 
 /** One confirmed payment or credit in the last 30 days, on any invoice (a paid invoice still shows its payment). */
 export interface AccountStatementPayment {
+  /** the tenant-zone day it was collected, "YYYY-MM-DD"; print it with a calendar-date formatter, never a zone */
   date: string;
   kind: "PAYMENT" | "CREDIT";
   method: string;
@@ -44,7 +45,9 @@ export interface AccountStatementCredit {
   kind: "CREDIT_NOTE" | "ADVANCE";
   id: string;
   number: string | null;
+  /** the tenant-zone day it was issued or received, "YYYY-MM-DD" */
   date: string;
+  /** a credit note's reason only; always null for an advance (its notes are staff-only) */
   reason: string | null;
   /** what is left to use */
   remaining: number;

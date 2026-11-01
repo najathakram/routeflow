@@ -35,8 +35,9 @@ import { toCollectSummary } from "../invoices/to-collect";
 export function statementOutstandingAmount(
   open: ReadonlyArray<ClassifiableInvoice>,
   timeZone: string | null,
+  now: Date = new Date(),
 ): number {
-  return summarizeOpenInvoices(open, overdueCutoff(new Date(), timeZone)).unpaidTotal;
+  return summarizeOpenInvoices(open, overdueCutoff(now, timeZone)).unpaidTotal;
 }
 
 /**
@@ -49,8 +50,9 @@ export function statementOutstandingAmount(
 export function statementOverdueAmount(
   open: ReadonlyArray<ClassifiableInvoice>,
   timeZone: string | null,
+  now: Date = new Date(),
 ): number {
-  const cutoff = overdueCutoff(new Date(), timeZone);
+  const cutoff = overdueCutoff(now, timeZone);
   let sum = 0;
   for (const inv of open) {
     const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, cutoff);
