@@ -128,6 +128,14 @@ describe("creditRoomRefusal: a row that takes all the qty left gets the drift al
     expect(await creditRoomRefusal(dbOf(afterTwoReturns()), [row(6.66, 5)])).not.toBeNull();
   });
 
+  it("A5: 6.66 / 4.01 pcs is refused: the money fits, a hundredth of a piece past the 4 left does not", async () => {
+    expect(await creditRoomRefusal(dbOf(afterTwoReturns()), [row(6.66, 4.01)])).toMatchObject({
+      requestedQty: 4.01,
+      remainingQty: 4,
+    });
+    expect(await creditRoomRefusal(dbOf(afterTwoReturns()), [row(6.66, 4)])).toBeNull();
+  });
+
   it("a reissue's exclude drops the old note's own reversal from the room and from the prior-row count", async () => {
     const withNote = [
       ...afterTwoReturns(),

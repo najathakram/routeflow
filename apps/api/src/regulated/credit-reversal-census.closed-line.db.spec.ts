@@ -10,6 +10,8 @@
  *   CS-2  a return (2 pcs), then a typed credit that clamps and closes (stores 10.00 levy, the ledger books the 8.00 left)
  *                                                                          -> live, flagged, stored 10.00 against booked 8.00
  *   CS-3  N3 unchanged: a SALE offset in place by a re-sync REVERSAL (no returnId, no creditNoteId)        -> NOT live, not flagged
+ *   CS-4  A-2's third shape: a typed credit ALONE closes the line (no return); stored 10.00 = booked 10.00 -> live, NOT flagged
+ *         (fails if the census nets the credit's own REVERSAL: the line would read dead and drop to itemsWithoutLiveSale)
  *
  * Collected only by `jest.db.config.js` (`npm run local:test:db`).
  * SAFETY: a throwaway `qa-cs-<run>` tenant approved by `assertTestTenant`, deleted in FK order in afterAll.
@@ -75,7 +77,7 @@ describeDb("SA-1054 A-2: the census sees a line a return or a credit closed", ()
     const t0 = new Date(Date.now() - 3_600_000);
     const t1 = new Date(Date.now() - 1_800_000);
     const lines: Record<string, { orderItemId: string; invoiceItemId: string }> = {};
-    for (const [position, n] of ["CS1", "CS2", "CS3"].entries()) {
+    for (const [position, n] of ["CS1", "CS2", "CS3", "CS4"].entries()) {
       const shape = { qty: 10, unitPrice: 10, subtotal: 100, boxes: 10, pieces: 0, unitsPerBox: 1 };
       const orderItem = await prisma.orderItem.create({
         data: {
@@ -182,6 +184,15 @@ describeDb("SA-1054 A-2: the census sees a line a return or a credit closed", ()
     await row("CS3", "SALE", { qty: 10, net: 100, tax: 10, at: t0 });
     await row("CS3", "REVERSAL", { qty: -10, net: -100, tax: -10, at: t1 });
     await note("CS3", 4, 5);
+    // CS-4: no return; a typed credit closes the line alone (the reversal books it all) and stores what the ledger booked
+    await row("CS4", "SALE", { qty: 10, net: 100, tax: 10, at: t0 });
+    await row("CS4", "REVERSAL", {
+      qty: -10,
+      net: -100,
+      tax: -10,
+      at: t1,
+      creditNoteId: await note("CS4", 10, 10),
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -202,12 +213,12 @@ describeDb("SA-1054 A-2: the census sees a line a return or a credit closed", ()
     await prisma?.$disconnect();
   });
 
-  it("CS-1, CS-2 are live and flagged (stored against booked); CS-3 (a re-sync offset) stays out", async () => {
+  it("CS-1, CS-2 are live and flagged (stored against booked); CS-3 (a re-sync offset) stays out; CS-4 (a credit alone closing) is live, not flagged", async () => {
     const census = await censusOldTypedCredits(prisma, { tenantId });
     expect(census).toMatchObject({
-      typedItems: 3,
-      notes: 3,
-      itemsWithLiveSale: 2,
+      typedItems: 4,
+      notes: 4,
+      itemsWithLiveSale: 3,
       itemsWithoutLiveSale: 1,
       notesBookedLessTaxThanStored: 2,
     });
@@ -218,5 +229,6 @@ describeDb("SA-1054 A-2: the census sees a line a return or a credit closed", ()
       ]),
     );
     expect(census.sample.map((s) => s.creditNoteId)).not.toContain(noteIds.CS3);
+    expect(census.sample.map((s) => s.creditNoteId)).not.toContain(noteIds.CS4); // live and equal: counted, not listed
   });
 });

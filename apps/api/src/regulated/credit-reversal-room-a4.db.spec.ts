@@ -671,6 +671,29 @@ describeDb(
       });
     });
 
+    it("A7 (SA-1054 A-2 fold, money half): 30.00 / 40 pcs on two items of one order line: each fits, together 60.00 of the 50.00 held: refused", async () => {
+      // the qty half is G-L12; here the qty is small (80 of 200) so only the money arm of the fold can refuse
+      const s = await seed("a7");
+      const second = await secondItemOnA(s);
+      const both = await typedCreditItems(s, s.invoiceA.id, [
+        { invoiceItemId: s.iA.id, amount: 30, qty: 40 },
+        { invoiceItemId: second.id, amount: 30, qty: 40 },
+      ]);
+      expect({ door: doorOf(both), notes: await noteCount(s), items: await itemCount(s) }).toEqual({
+        door: "ledger room (A-4)",
+        notes: 0,
+        items: 0,
+      });
+      const one = await seed("a7b");
+      expect(
+        codeOf(
+          await typedCreditItems(one, one.invoiceA.id, [
+            { invoiceItemId: one.iA.id, amount: 30, qty: 40 },
+          ]),
+        ),
+      ).toBeNull(); // 30.00 / 40 alone fits
+    });
+
     it("G-L13 (OBSERVED, SA-1054 A-2): a line a re-sync offset and never re-booked: a typed credit is refused with 0 left, a lump is accepted", async () => {
       const s = await seed("gl13");
       await prisma.regulatedSalesLedger.create({
