@@ -311,6 +311,16 @@ export class BuyerController {
     return this.customersService.getStatementForOperator(ctx.customerId);
   }
 
+  @Get("account-statement")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get buyer's open-balance account statement at the selected seller" })
+  getAccountStatement(@CurrentBuyerCustomer() ctx: any) {
+    // The buyer's view: no emailOnFile and none of the staff-only collection fields (SA-1078 S17).
+    return this.customersService.getAccountStatement(ctx.customerId, { staff: false });
+  }
+
   @Get("statements")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)

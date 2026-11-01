@@ -29,7 +29,8 @@
 # each rounding up to a full billed minute. Hence: one job, one install.
 #
 # RULES that follow from the budget, and that a future edit must not quietly break:
-#   1. ubuntu-latest ONLY. Windows bills 2x and macOS 10x.
+#   1. ubuntu-latest ONLY, except Verify dispatched with runner=self-hosted (runbook:
+#      docs/runbooks/self-hosted-runner.md). Windows bills 2x and macOS 10x.
 #   2. Do not add a job that installs dependencies. Add a STEP to `verify`.
 #   3. Correctness runs on the PR, ONCE. It does not re-run on the master push —
 #      see the `verify` job's `if:` for why that is sound here.
@@ -132,8 +133,15 @@ on:
     types: [railway-deploy]
 
   # Manual trigger — runs BOTH jobs. This is the documented recovery path after a
-  # Railway deploy is re-run (see the e2e job's readiness gate).
+  # Railway deploy is re-run (see the e2e job's readiness gate). runner=self-hosted
+  # runs Verify alone, on a train head (docs/runbooks/self-hosted-runner.md).
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Where Verify runs. self-hosted needs tools/ci-runner/launch-once.mjs on the PC."
+        type: choice
+        options: [hosted, self-hosted]
+        default: hosted
 
 # PR runs group per-ref (a new push cancels the stale run). Deploy-driven runs
 # group per DEPLOYED SHA with cancellation OFF — `github.ref` is empty/constant
@@ -195,11 +203,18 @@ jobs:
       (github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.pull_request.draft != true)) &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]')
-    runs-on: ubuntu-latest
+    # No step here uses the token, so hold it to the least, in case the repo default ever widens.
+    permissions:
+      contents: read
+    # `inputs` is empty on every event but dispatch, so a PR always gets ubuntu-latest. The runner
+    # job takes about 38 minutes and keeps no token on disk.
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted","routeflow-ephemeral"]') || 'ubuntu-latest' }}
     # Turbo alone took 25m23s on 2026-10-31; 30 cut the script self-tests off.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: ${{ inputs.runner != 'self-hosted' }}
 
       # DARK (R3): report the PR's own counted size (scripts/pr-size.mjs, one rule in
       # scripts/lib/pr-size.mjs) as a ::warning:: annotation. Never fails the job. The checkout is
@@ -444,7 +459,7 @@ jobs:
     if: >
       (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success') ||
       github.event_name == 'repository_dispatch' ||
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_dispatch' && inputs.runner != 'self-hosted')
     outputs:
       run: ${{ steps.freshness.outputs.run }}
       reason: ${{ steps.freshness.outputs.reason }}

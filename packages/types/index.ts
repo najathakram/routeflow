@@ -162,6 +162,7 @@ export * from "./counter-default-tender";
 export * from "./no-longer-fits-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
+export * from "./api/statement";
 export * from "./api/products";
 export * from "./api/stock-level";
 export * from "./api/product-prices-v2";
