@@ -57,6 +57,7 @@ import {
   withStale,
 } from "./lib/verify-scope.mjs";
 import { resolveVerifyMode } from "./verify-mode.mjs";
+import { describeMissing, importClosure, relativeImports } from "./lib/import-closure.mjs";
 // Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
 // direct-execution guard means importing it does NOT spawn turbo or call process.exit.
 import {
@@ -990,6 +991,65 @@ check(
   ],
   [true, false, false, false],
 );
+// VC: the scratch-repo fixture below runs verify-turbo.mjs from a COPY, so the copy list must hold every local file the
+// script imports, transitively. It is derived from the script's own imports (scripts/lib/import-closure.mjs), never
+// hand-kept, and a file the script imports that is missing fails with a named message. Pure rows run on every OS (the
+// fixture itself is POSIX only); a hand-kept list went stale the day verify-turbo.mjs gained an import.
+{
+  const tree = {
+    "s/a.mjs":
+      'import x from "./lib/b.mjs";\nimport { createRequire } from "node:module";\nconst c = createRequire(import.meta.url)("./lib/c.cjs");\nawait import("./d.mjs");\nimport pkg from "left-pad";\n',
+    "s/lib/b.mjs": '// from "./nope.mjs" is only a comment\nexport * from "../e.mjs";\n',
+    "s/lib/c.cjs": 'module.exports = require("./b.mjs"); // cycle\n',
+    "s/d.mjs": "export {};\n",
+    "s/e.mjs": 'const url = "https://example.com/x.mjs";\nexport {};\n',
+  };
+  const seams = { exists: (r) => r in tree, read: (r) => tree[r] };
+  const cl = importClosure("/", "s/a.mjs", seams);
+  check(
+    "VC1 closure follows from / dynamic import / createRequire / require, transitively, ignoring comments and bare specifiers",
+    [cl.files, cl.missing],
+    [["s/d.mjs", "s/e.mjs", "s/lib/b.mjs", "s/lib/c.cjs"], []],
+  );
+  check(
+    "VC2 a relative import of a file that does not exist is reported with its importer",
+    importClosure("/", "s/a.mjs", { ...seams, exists: (r) => r in tree && r !== "s/e.mjs" })
+      .missing,
+    [{ from: "s/lib/b.mjs", spec: "../e.mjs" }],
+  );
+  check(
+    "VC3 the missing-file message names the importer, the specifier and the fix",
+    describeMissing([{ from: "scripts/verify-turbo.mjs", spec: "./lib/gone.mjs" }]),
+    "fixture copy list: scripts/verify-turbo.mjs imports ./lib/gone.mjs, which does not exist; fix the import or restore the file",
+  );
+  check(
+    "VC4 relativeImports ignores a URL in a string and a commented import",
+    relativeImports(
+      'const u = "https://a.b/c.mjs"; // import x from "./z.mjs"\n/* from "./y.mjs" */',
+    ),
+    [],
+  );
+  check(
+    "VC4b a `/*` inside a string or glob does not open a comment that swallows the imports after it",
+    relativeImports('const g = "apps/*";\nimport x from "./real.mjs";\n/* later */\n'),
+    ["./real.mjs"],
+  );
+  const real = importClosure(ROOT, "scripts/verify-turbo.mjs");
+  check(
+    "VC5 the real verify-turbo.mjs closure resolves completely and holds every file the fixture hand-listed",
+    [
+      real.missing,
+      [
+        "scripts/lib/check-git-hooks.mjs",
+        "scripts/lib/heavy-slot.mjs",
+        "scripts/lib/prisma-fresh.mjs",
+        "scripts/lib/scrubbed-git-env.cjs",
+        "scripts/lib/verify-scope.mjs",
+      ].every((f) => real.files.includes(f)),
+    ],
+    [[], true],
+  );
+}
 
 // End to end: the REAL main() with a stub `npx` first on PATH that records its argv. CI=1 makes
 // the scope FULL without touching git; JEST_MAX_WORKERS selects the split path. POSIX only (the
@@ -1203,19 +1263,12 @@ if (process.platform !== "win32") {
           mkdirSync(dirname(join(fixDir, rel)), { recursive: true });
           writeFileSync(join(fixDir, rel), text);
         };
-        for (const f of ["verify-turbo.mjs"]) {
-          put(`scripts/${f}`, readFileSync(join(ROOT, "scripts", f), "utf8"));
-        }
-        for (const f of [
-          "verify-scope.mjs",
-          "check-git-hooks.mjs",
-          "scrubbed-git-env.cjs",
-          "heavy-slot.mjs",
-          "prisma-fresh.mjs",
-          "verify-result.mjs",
-          "cross-workspace-specs.cjs",
-        ]) {
-          put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
+        // The copy list is the script plus everything it imports, derived (VC); a file it imports that is
+        // missing fails here by name instead of as an unexplained fixture crash.
+        const closure = importClosure(ROOT, "scripts/verify-turbo.mjs");
+        check("VX25a the fixture copy list is complete", describeMissing(closure.missing), "");
+        for (const rel of ["scripts/verify-turbo.mjs", ...closure.files]) {
+          put(rel, readFileSync(join(ROOT, rel), "utf8"));
         }
         // The report step's stub: it records its argv and whether the slot is held, then exits with
         // STUB_REPORTS_EXIT. The real script would force real test runs in this fixture.
