@@ -33,7 +33,7 @@ import { test, expect, devices } from "@playwright/test";
 // flattened (Playwright's toHaveText normalises whitespace, not markup, but
 // there is no markup left once innerText is read). /privacy + /terms per R9.
 const H1_BY_ROUTE: Record<string, string> = {
-  "/": "Turn scattered orders into organized deliveries.",
+  "/": "Wholesale software for orders and delivery.",
   "/product": "Orders. Deliveries. Accounts. Finally, connected.",
   "/wholesalers": "Get your team out of the daily delivery scramble.",
   "/retailers": "Restock your shelves. Skip the back and forth.",
@@ -126,7 +126,7 @@ const { defaultBrowserType: _desktopBrowserType, ...desktopChrome } = devices["D
 test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => {
   test.use({ ...iPhone13 });
 
-  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a demo, Escape closes it", async ({
+  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a video call, Escape closes it", async ({
     page,
   }) => {
     await page.goto("/");
@@ -144,7 +144,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
       "Contact",
       "Distributor sign in",
       "Retailer sign in",
-      "Book a demo",
+      "Book a video call",
     ];
     for (const name of expectedLinkNames) {
       await expect(
@@ -153,7 +153,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
       ).toBeVisible();
     }
     await expect(sheet.getByRole("link"), "mobile sheet link count").toHaveCount(9);
-    await expect(sheet.getByRole("link", { name: /book a demo/i })).toHaveAttribute(
+    await expect(sheet.getByRole("link", { name: /book a video call/i })).toHaveAttribute(
       "href",
       "/book-a-demo",
     );
