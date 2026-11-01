@@ -39,16 +39,16 @@ const H1_BY_ROUTE: Record<string, string> = {
   "/retailers": "Restock your shelves. Skip the back and forth.",
   "/pricing": "A plan that fits your working day.",
   "/company": "For the people who keep local shelves stocked.",
-  "/contact": "Let’s talk about your delivery day.",
+  "/contact": "Email us or book a video call.",
   "/privacy": "Privacy information",
   "/terms": "Terms information",
 };
 
 const PUBLIC_ROUTES = Object.keys(H1_BY_ROUTE);
 
-// M1 §4 site-header.tsx nav array — Contact is deliberately absent from the
-// primary nav (R2, spec.md's port-notes call this out explicitly).
-const NAV_ITEMS = ["Platform", "Distributors", "Retailers", "Pricing", "Company"];
+// site-header.tsx nav array. W6 (Q5): Contact joined the desktop nav, before Company. The T1 viewport
+// is Desktop Chrome's 1280 px, wide enough for all six (the 901-1100 px case is T2b).
+const NAV_ITEMS = ["Platform", "Distributors", "Retailers", "Pricing", "Contact", "Company"];
 
 // ─── T1 — the 9 public routes (R1 R2 R3 R8 R9 R12) ──────────────────────────
 
@@ -100,11 +100,20 @@ test.describe("T1 — public routes render the port's chrome + copy (R1 R2 R3 R8
     await expect(robots).toHaveAttribute("content", /follow/i);
   });
 
-  test("T1 — /contact shows the demo request form", async ({ page }) => {
+  test("T1 — /contact says email us or book a video call, with no phone, hours or address", async ({
+    page,
+  }) => {
     await page.goto("/contact");
-    await expect(page.getByRole("textbox", { name: /name/i })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: /email/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /prepare my demo request/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Book a video call" }).first()).toHaveAttribute(
+      "href",
+      "/book-a-demo",
+    );
+    await expect(
+      page.locator("#main-content").getByRole("link", { name: /hello@routeflow\.info/ }),
+    ).toHaveAttribute("href", "mailto:hello@routeflow.info");
+    const text = (await page.locator("#main-content").innerText()).replace(/\s+/g, " ");
+    expect(text).not.toMatch(/\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/);
+    expect(text).not.toMatch(/\b(hours|monday|street|suite)\b/i);
   });
 
   test("T1 — /company credits the warehouse photo to Pexels", async ({ page }) => {
@@ -126,7 +135,7 @@ const { defaultBrowserType: _desktopBrowserType, ...desktopChrome } = devices["D
 test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => {
   test.use({ ...iPhone13 });
 
-  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a demo, Escape closes it", async ({
+  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a video call, Escape closes it", async ({
     page,
   }) => {
     await page.goto("/");
@@ -144,7 +153,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
       "Contact",
       "Distributor sign in",
       "Retailer sign in",
-      "Book a demo",
+      "Book a video call",
     ];
     for (const name of expectedLinkNames) {
       await expect(
@@ -153,35 +162,13 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
       ).toBeVisible();
     }
     await expect(sheet.getByRole("link"), "mobile sheet link count").toHaveCount(9);
-    await expect(sheet.getByRole("link", { name: /book a demo/i })).toHaveAttribute(
+    await expect(sheet.getByRole("link", { name: /book a video call/i })).toHaveAttribute(
       "href",
       "/book-a-demo",
     );
 
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
-  });
-
-  test("T2 — the /contact form prepares a mailto draft naming the company", async ({ page }) => {
-    await page.goto("/contact");
-    await page.getByRole("textbox", { name: /name/i }).fill("Ada");
-    await page.getByRole("textbox", { name: /email/i }).fill("ada@example.com");
-    await page.getByRole("textbox", { name: /company/i }).fill("Northwind");
-    await page.getByRole("textbox", { name: /notes/i }).fill("A note about our workflow.");
-    await page.getByRole("button", { name: /prepare my demo request/i }).click();
-
-    await expect(page.getByRole("heading", { name: /your email draft is ready/i })).toBeVisible();
-
-    const mailLink = page.getByRole("link", { name: /open email app/i });
-    const href = await mailLink.getAttribute("href");
-    expect(href, "mailto href present").toBeTruthy();
-    expect(href!.startsWith("mailto:hello@routeflow.info?subject="), `href was "${href}"`).toBe(
-      true,
-    );
-    expect(decodeURIComponent(href!)).toContain("RouteFlow demo request — Northwind");
-
-    await page.getByRole("button", { name: /start a new draft/i }).click();
-    await expect(page.getByRole("textbox", { name: /name/i })).toBeVisible();
   });
 
   test('T2 — /wholesalers "Plan the route" tab opens its panel', async ({ page }) => {
@@ -238,6 +225,248 @@ test.describe("T2 — desktop sign-in menu (R2 R7 R8 R14)", () => {
       "href",
       "/buyer/login",
     );
+  });
+});
+
+// ─── T2b — W6: the desktop header fits on one line, and /book-a-demo does not scroll sideways ────
+
+// What the header holds at each width: the desktop nav shows above 900 px, and from 901 to 1100 its
+// last link (Company) hides. At 900 and below the nav is the sheet's job (T2).
+const HEADER_NAV_AT: Array<[number, string[]]> = [
+  [1440, ["Platform", "Distributors", "Retailers", "Pricing", "Contact", "Company"]],
+  [1101, ["Platform", "Distributors", "Retailers", "Pricing", "Contact", "Company"]],
+  [1100, ["Platform", "Distributors", "Retailers", "Pricing", "Contact"]],
+  [1024, ["Platform", "Distributors", "Retailers", "Pricing", "Contact"]],
+  [902, ["Platform", "Distributors", "Retailers", "Pricing", "Contact"]],
+  // Exactly 901 px is the tightest: with Contact in the nav it was about a pixel too wide until
+  // marketing.css took one pixel out of the gap between the links (901 to 1100 px).
+  [901, ["Platform", "Distributors", "Retailers", "Pricing", "Contact"]],
+];
+
+test.describe("T2b — W6 O6 and C1: the header, with the call label and Contact, fits on one line", () => {
+  for (const [width, expectedNav] of HEADER_NAV_AT) {
+    test.describe(`at ${width}px`, () => {
+      test.use({ ...desktopChrome, viewport: { width, height: 900 } });
+
+      test(`T2b — ${width}px: one line, no overlap, no sideways scroll, nav is ${expectedNav.join(", ")}`, async ({
+        page,
+      }) => {
+        await page.goto("/");
+        const header = page.locator("header.site-header");
+        await expect(header).toBeVisible();
+        const measured = await header.evaluate((el) => {
+          const visible = (n: Element) => {
+            const r = n.getBoundingClientRect();
+            const cs = getComputedStyle(n);
+            return (
+              r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none"
+            );
+          };
+          const items = [
+            ...el.querySelectorAll(
+              ".brand, .desktop-nav a, .nav-login .login-trigger, .header-actions > a.button",
+            ),
+          ].filter(visible);
+          const rects = items.map((n) => {
+            const r = n.getBoundingClientRect();
+            return {
+              text: (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+              left: r.left,
+              right: r.right,
+              top: r.top,
+              bottom: r.bottom,
+              centre: (r.top + r.bottom) / 2,
+              height: r.height,
+            };
+          });
+          const sorted = [...rects].sort((a, b) => a.left - b.left);
+          const overlaps = sorted
+            .slice(1)
+            .map((r, i) => ({ a: sorted[i]!, b: r }))
+            .filter(({ a, b }) => b.left < a.right - 0.5)
+            .map(({ a, b }) => `${a.text} / ${b.text}`);
+          const headerBox = el.getBoundingClientRect();
+          return {
+            nav: [...el.querySelectorAll(".desktop-nav a")]
+              .filter(visible)
+              .map((n) => n.textContent?.trim()),
+            overlaps,
+            // one line: every item's centre sits on the same row, and nothing is taller than one line
+            centreSpread:
+              Math.max(...rects.map((r) => r.centre)) - Math.min(...rects.map((r) => r.centre)),
+            tallest: Math.max(...rects.map((r) => r.height)),
+            headerHeight: headerBox.height,
+            insideHeader: rects.every(
+              (r) => r.top >= headerBox.top - 0.5 && r.bottom <= headerBox.bottom + 0.5,
+            ),
+            docScroll: document.documentElement.scrollWidth,
+            inner: window.innerWidth,
+            right: Math.max(...rects.map((r) => r.right)),
+          };
+        });
+        expect(measured.nav, `${width}px nav links`).toEqual(expectedNav);
+        expect(measured.overlaps, `${width}px overlapping items`).toEqual([]);
+        expect(measured.centreSpread, `${width}px items on one row`).toBeLessThan(8);
+        expect(
+          measured.tallest,
+          `${width}px tallest item (a wrapped label would be taller)`,
+        ).toBeLessThan(60);
+        expect(measured.insideHeader, `${width}px items inside the header`).toBe(true);
+        expect(measured.docScroll, `${width}px sideways scroll`).toBeLessThanOrEqual(
+          measured.inner,
+        );
+        expect(measured.right, `${width}px rightmost item`).toBeLessThanOrEqual(measured.inner);
+      });
+    });
+  }
+});
+
+test.describe("T2b — W6 O9 (B549): /book-a-demo at 390px does not scroll sideways", () => {
+  test.use({ ...iPhone13, viewport: { width: 390, height: 844 } });
+
+  test("T2b — /book-a-demo: the page is no wider than the screen", async ({ page }) => {
+    await page.goto("/book-a-demo");
+    await expect(page.locator("h1")).toBeVisible();
+    const widths = await page.evaluate(() => ({
+      doc: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      inner: window.innerWidth,
+    }));
+    expect(widths.doc, "documentElement.scrollWidth").toBeLessThanOrEqual(widths.inner);
+    expect(widths.body, "body.scrollWidth").toBeLessThanOrEqual(widths.inner);
+  });
+});
+
+// ─── T2c — W6: straight answers, the calendar, and guessed addresses ────────────────────────────
+
+const GUESSED_ADDRESSES: Array<[string, string]> = [
+  ["/about", "/company"],
+  ["/demo", "/book-a-demo"],
+  ["/features", "/product"],
+  ["/faq", "/"],
+  ["/integrations", "/"],
+  ["/quickbooks", "/"],
+];
+
+for (const [label, device] of [
+  ["desktop", desktopChrome],
+  ["phone", iPhone13],
+] as const) {
+  test.describe(`T2c — W6 C7 on a ${label}: guessed addresses land on a real page`, () => {
+    test.use({ ...device });
+
+    for (const [address, lands] of GUESSED_ADDRESSES) {
+      test(`T2c — ${address} lands on ${lands}${lands === "/" ? "#faq" : ""}`, async ({ page }) => {
+        const response = await page.goto(address);
+        expect(response?.status(), `${address} final status`).toBe(200);
+        expect(new URL(page.url()).pathname).toBe(lands);
+        if (lands === "/") {
+          expect(new URL(page.url()).hash).toBe("#faq");
+          const faq = page.locator("#faq");
+          await expect(faq).toBeVisible();
+          await expect(
+            faq.getByRole("heading", { name: "Questions before you start." }),
+          ).toBeInViewport();
+          // The sticky header must not sit on top of the FAQ heading.
+          const headerBottom = await page
+            .locator("header.site-header")
+            .evaluate((el) => el.getBoundingClientRect().bottom);
+          const headingTop = await faq
+            .getByRole("heading", { name: "Questions before you start." })
+            .evaluate((el) => el.getBoundingClientRect().top);
+          expect(headingTop, "FAQ heading is below the sticky header").toBeGreaterThanOrEqual(
+            headerBottom - 1,
+          );
+        }
+      });
+    }
+  });
+}
+
+test.describe("T2c — W6 C3: the home FAQ answers the QuickBooks question straight", () => {
+  test("T2c — Does RouteFlow work with QuickBooks? answers 'Not directly' and names CSV", async ({
+    page,
+  }) => {
+    await page.goto("/#faq");
+    await page.getByText("Does RouteFlow work with QuickBooks?").click();
+    const answer = page.locator("#faq details[open] [data-slot=accordion-content]");
+    await expect(answer).toContainText("Not directly");
+    await expect(answer).toContainText("CSV");
+  });
+});
+
+// The call calendar with the API stubbed: it asks for a month at a time, and every weekday has times.
+async function stubAvailability(page: import("@playwright/test").Page) {
+  await page.route("**/public/demo-bookings/availability**", async (route) => {
+    const url = new URL(route.request().url());
+    const from = new Date(url.searchParams.get("from")!);
+    const to = new Date(url.searchParams.get("to")!);
+    const days: Array<{ date: string; slots: Array<{ startsAt: string; endsAt: string }> }> = [];
+    for (
+      let d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+      d < to;
+      d = new Date(d.getTime() + 864e5)
+    ) {
+      if (d.getUTCDay() === 0 || d.getUTCDay() === 6) continue;
+      const key = d.toISOString().slice(0, 10);
+      days.push({
+        date: key,
+        slots: [15, 16, 17, 18].map((h) => ({
+          startsAt: `${key}T${h}:00:00.000Z`,
+          endsAt: `${key}T${h}:30:00.000Z`,
+        })),
+      });
+    }
+    await route.fulfill({
+      json: { status: "ok", timeZone: "America/Chicago", durationMinutes: 30, days },
+      headers: { "access-control-allow-origin": "*" },
+    });
+  });
+}
+
+for (const [width, height] of [
+  [390, 844],
+  [768, 1024],
+] as const) {
+  test.describe(`T2c — W6 C6 at ${width}px: the date heading is not under the sticky header`, () => {
+    test.use({ viewport: { width, height }, timezoneId: "America/Chicago" });
+
+    test(`T2c — ${width}px: choosing a date, and jumping to its heading, both leave it clear of the header`, async ({
+      page,
+    }) => {
+      await stubAvailability(page);
+      await page.goto("/book-a-demo");
+      const grid = page.getByRole("group", { name: /available dates/i });
+      await grid.locator("button:not([disabled])").first().click();
+      const heading = page.locator(".booking-panel .day-heading");
+      await expect(heading).toBeVisible();
+      await page.waitForTimeout(1200); // smooth scroll
+      const headerBottom = () =>
+        page.locator("header.site-header").evaluate((el) => el.getBoundingClientRect().bottom);
+      const top = () => heading.evaluate((el) => el.getBoundingClientRect().top);
+      expect(await top(), "heading after choosing a date").toBeGreaterThanOrEqual(
+        await headerBottom(),
+      );
+      // The same check for a browser jump (anchor, focus, find in page): scroll-margin-top does it.
+      await heading.evaluate((el) => el.scrollIntoView({ block: "start" }));
+      expect(await top(), "heading after a jump to it").toBeGreaterThanOrEqual(
+        await headerBottom(),
+      );
+    });
+  });
+}
+
+test.describe("T2c — W6 C5: one plain time-zone line on the calendar", () => {
+  test.use({ timezoneId: "America/Chicago" });
+
+  test("T2c — 'Times are in your time zone.' and no zone name next to a slot", async ({ page }) => {
+    await stubAvailability(page);
+    await page.goto("/book-a-demo");
+    await expect(page.locator("#booking-title + p")).toHaveText(
+      "Times are in your time zone. Each call is 30 minutes long.",
+    );
+    const panel = await page.locator(".booking-panel").innerText();
+    expect(panel).not.toMatch(/\b(CDT|CST|GMT|UTC)\b/);
   });
 });
 

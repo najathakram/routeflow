@@ -3,6 +3,7 @@
 import Link from "next/link";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Package, Route, CheckCheck, ReceiptText, Check, ArrowUpRight } from "lucide-react";
+import { DEMO_CTA } from "../lib/site";
 
 // Copy verbatim from the redesign's components/workflow-tour.tsx (M1 §2b);
 // re-implemented on `@radix-ui/react-tabs` instead of shadcn's `Tabs`
@@ -106,7 +107,7 @@ export function WorkflowTour() {
               ))}
             </ul>
             <Link className="text-link" href="/book-a-demo">
-              See it in a demo <ArrowUpRight size={17} />
+              {DEMO_CTA} <ArrowUpRight size={17} />
             </Link>
           </div>
           <div className="tour-preview">

@@ -4,8 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 
-// Copy verbatim from the redesign's components/faq.tsx (M1 §1.9 / §2c) —
-// two hardcoded Q&A sets, selected via the `retail` prop. Re-implemented on
+// Words: COPY.md 2i (W6). Two hardcoded Q&A sets, selected via the `retail` prop. Re-implemented on
 // native `<details>/<summary>` (ux-spec.md §4) instead of the shadcn
 // `Accordion` the redesign used (no `@radix-ui/react-accordion` in this
 // repo's dependency set — standing rules), with a controlled `openIndex` so
@@ -14,22 +13,24 @@ import { ChevronDown } from "lucide-react";
 const GENERAL: Array<[string, string]> = [
   [
     "Who is RouteFlow for?",
-    "RouteFlow is for wholesalers and distributors who take customer orders and run deliveries, along with the retailers who order from them. The distributor workspace covers operations; the retailer portal covers purchasing.",
+    "RouteFlow is for wholesale businesses that take orders and deliver them. Their customers can order in the retailer portal.",
   ],
   [
     "Can retailers order through RouteFlow?",
-    "Yes. Retailers can use the web portal to browse catalogs and place orders with their connected suppliers. A retailer account does not provide access to every supplier automatically.",
+    "Yes. Retailers see catalogs and place orders in the retailer portal, and it’s free for them. Each supplier has to add them first.",
   ],
   [
-    "Do I need to install an app?",
-    "You can access RouteFlow through a web browser. Native iOS and Android apps are not part of this website’s availability promise; ask the team for their current release status.",
+    "What does my team use it on?",
+    "Your office and retailers use a web browser, on a phone or computer. There’s nothing to install.",
   ],
   [
-    "Can I bring my existing customer and product data?",
-    "The distributor workspace includes import options. Bring a sample of your existing files to the demo so the team can confirm supported formats, field mapping, and setup needs.",
+    "Does RouteFlow work with QuickBooks?",
+    "Not directly: RouteFlow doesn’t connect to QuickBooks, Xero, or Zoho. You can import customers, products, invoices, payments, expenses, and stock from CSV files. You can export invoices as CSV files.",
   ],
+  // Held for W4 (COPY.md 2i row 5, the trial-end answer): until then the fifth question stays,
+  // with "demo" changed to "video call" (COPY.md section 8). The answer is unchanged.
   [
-    "What will we cover in a demo?",
+    "What will we cover on a video call?",
     "Start with your ordering and delivery process. Ask to see order intake, route planning, delivery confirmation, and customer records, then discuss the plan and setup that fit your team.",
   ],
 ];
@@ -37,23 +38,23 @@ const GENERAL: Array<[string, string]> = [
 const RETAILER: Array<[string, string]> = [
   [
     "Do I need a supplier connection?",
-    "Yes. Your supplier connection determines the catalogs, prices, and ordering options available to your account. Ask your distributor how to connect.",
+    "Yes. Your supplier decides the catalogs, prices, and ordering options you see. Ask your supplier how to connect.",
   ],
   [
     "How do I pay an invoice?",
-    "You can pay by card directly in the portal when your seller has card payments turned on for their account. Otherwise, arrange payment with them the way you always have — cash, check, or on account — and the portal keeps your balance and history up to date either way.",
+    "Pay by card in the portal if your supplier turns it on. If not, ask your supplier how to pay.",
   ],
   [
     "Can I use the portal on my phone?",
-    "Use the retailer web portal from a supported browser. You do not need to wait for a native mobile app to access the web portal.",
+    "Yes. The retailer portal works in the web browser on your phone, with nothing to install.",
   ],
   [
     "Who handles my order or delivery questions?",
-    "Contact the distributor fulfilling the order for product availability, delivery arrangements, returns, or account terms.",
+    "Ask the supplier sending your order about products, delivery, returns, or payment.",
   ],
   [
     "Will this create a new distributor account?",
-    "No. Choose the retailer registration link to create a retailer account. Distributor sign-in and signup use a separate workflow.",
+    "No. Use the retailer sign-up link to create a retailer account. Distributors sign up on a different page.",
   ],
 ];
 
@@ -62,18 +63,13 @@ export function FAQ({ retail = false }: { retail?: boolean } = {}) {
   const [openIndex, setOpenIndex] = React.useState<number | null>(null);
 
   return (
-    <section className="section faq-section wrap">
+    // id="faq" is where /faq, /integrations and /quickbooks land (they redirect to /#faq).
+    <section className="section faq-section wrap" id="faq">
       <div>
-        <p className="eyebrow">
-          <span />A few useful answers
-        </p>
-        <h2>
-          Before you <br />
-          get started.
-        </h2>
-        <p>Have a question about your setup?</p>
+        <h2>Questions before you start.</h2>
+        <p>Have another question?</p>
         <Link className="text-link" href="/contact">
-          Talk to the team ↗
+          Contact us
         </Link>
       </div>
       <div className="faq-list">

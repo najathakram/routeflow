@@ -80,3 +80,18 @@ describe("SiteHeader's .desktop-nav is never inside a page's .glass-page wrapper
     expect(glassPage!.contains(desktopNav)).toBe(false);
   });
 });
+
+// W6 / C1: the desktop nav order. Contact sits before Company, so Company stays the last link, the
+// one marketing.css hides from 901 to 1100 px.
+describe("NAV_SLUGS (W6 C1)", () => {
+  it("puts contact before company, and company last", () => {
+    expect([...NAV_SLUGS]).toEqual([
+      "product",
+      "wholesalers",
+      "retailers",
+      "pricing",
+      "contact",
+      "company",
+    ]);
+  });
+});
