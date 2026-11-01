@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Package, Pencil, Search, RotateCcw, Trash2, X } from "lucide-react";
+import { Package, Pencil, Plus, Search, RotateCcw, Trash2, X } from "lucide-react";
 import { Button, Modal, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { displayProductName, orderLineName } from "@/lib/product-display";
 import { sellableFlat, type PickerRow } from "@/lib/product-search-groups";
@@ -40,6 +40,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "../price-edit-row";
 import { DecimalInput } from "@/components/MoneyInput";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "../scan-level-line";
 import { storedPackBasis } from "../stored-pack-basis";
@@ -766,6 +767,7 @@ export function EditableLineItems({
   const [addOpen, setAddOpen] = React.useState(false);
   const [addLoading, setAddLoading] = React.useState(false);
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
+  const [createProductInitialName, setCreateProductInitialName] = React.useState("");
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
   // Custom (unlisted) item inline form
   const [customFormOpen, setCustomFormOpen] = React.useState(false);
@@ -783,7 +785,7 @@ export function EditableLineItems({
   // and the raw decode contains-misses when the camera's digit count differs
   // from the stored shape (iOS 13-digit vs 12-digit codes in numeric names).
   const addTermIsScanCode = /^\d{8,14}$/.test(addSearch.trim());
-  const { data: productsData } = useProducts({
+  const { data: productsData, isFetching: addFetching } = useProducts({
     search: addTermIsScanCode ? undefined : addSearch || undefined,
     scanCode: addTermIsScanCode ? addSearch.trim() : undefined,
     limit: 20,
@@ -873,8 +875,17 @@ export function EditableLineItems({
     scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
+  /** The New product window, started from text the clerk typed or a code that was scanned. */
+  function openCreateProduct(text: string, door: PrefillDoor) {
+    const prefill = newProductPrefill(text, door);
+    setCreateProductInitialName(prefill.name);
+    setCreateProductInitialSku(prefill.sku);
+    setCreateProductOpen(true);
+    setAddOpen(false);
+  }
+
   // #2715 PR-1: one resolve path for the field's Enter AND the shared scanner button (camera + wedge).
-  async function handleScanCode(raw: string) {
+  async function handleScanCode(raw: string, door: PrefillDoor = "scanBox") {
     const code = raw.trim();
     if (!code) return;
     setAddLoading(true);
@@ -911,9 +922,8 @@ export function EditableLineItems({
         );
         return;
       }
-      // Nothing found — open create-product modal with scanned code as SKU
-      setCreateProductInitialSku(code);
-      setCreateProductOpen(true);
+      // Nothing found: the New product window, with a code in SKU and words in Name (the door decides).
+      openCreateProduct(code, door);
     } catch {
       // Network / 5xx: keep the code selected for an easy rescan; don't treat
       // a transient failure as "product doesn't exist".
@@ -1415,16 +1425,21 @@ export function EditableLineItems({
             setAddSearch("");
             setAddOpen(false);
           }}
-          onScan={(code) => {
+          onScan={(code, source) => {
             setAddSearch(code);
-            void handleScanCode(code);
+            void handleScanCode(code, source === "field" ? "scanBox" : "camera");
           }}
           onError={(message) => toast({ variant: "error", title: message })}
         />
         {/* r5 N09: below sm the results open ABOVE the field; below it the pinned Save bar hid all but one row. */}
-        {addOpen && products.length > 0 && (
+        {addOpen && addSearch.trim() && (products.length > 0 || !addFetching) && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg max-sm:bottom-full max-sm:top-auto max-sm:mb-1 max-sm:mt-0">
             <ul className="max-h-52 overflow-y-auto py-1">
+              {products.length === 0 && (
+                <li role="status" className="px-3 py-2 text-sm text-navy/70">
+                  No products found.
+                </li>
+              )}
               {products.map((p: any) => (
                 <li key={p.id}>
                   <button
@@ -1438,6 +1453,18 @@ export function EditableLineItems({
                   </button>
                 </li>
               ))}
+              {/* The Create Order builder's own row, in its own words: an item that is not listed is added here. */}
+              <li className="border-t border-surface-border">
+                <button
+                  type="button"
+                  disabled={!pricingReady}
+                  onMouseDown={() => openCreateProduct(addSearch, "typed")}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-brand-500 hover:bg-surface-raised disabled:opacity-50"
+                >
+                  <Plus className="h-3.5 w-3.5 shrink-0" />
+                  {`Create new product: "${addSearch.trim()}"`}
+                </button>
+              </li>
             </ul>
           </div>
         )}
@@ -1543,15 +1570,11 @@ export function EditableLineItems({
           setAddSearch("");
         }}
         onCreated={(product) => {
-          addProduct({
-            id: product.id,
-            name: product.name,
-            sku: product.sku,
-            unit: product.unit,
-            pricePerUnit: product.pricePerUnit,
-          });
+          // The whole product, so a boxed item keeps its pack size and a variant its parent: it is a normal line.
+          addProduct(product);
           setCreateProductOpen(false);
         }}
+        initialName={createProductInitialName}
         initialSku={createProductInitialSku}
       />
     </div>
