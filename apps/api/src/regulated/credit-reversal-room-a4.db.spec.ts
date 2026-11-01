@@ -59,6 +59,9 @@ const PIECES: Shape = { qty: 200, boxes: 20, pack: 10, unitPrice: 0.25, net: 50,
 const BOXED: Shape = { qty: 60, boxes: 5, pack: 12, unitPrice: 1, net: 60, levy: 6 };
 /** SA-1054 A-3: 10.00 over 6 pcs. 1 pc back twice leaves 6.67 on the money (it telescopes) and 6.66 on the ledger (a share of what is left). */
 const SIX: Shape = { qty: 6, boxes: 6, pack: 1, unitPrice: 1.67, net: 10, levy: 1 };
+/** SA-1054 A-5: the same 10.00 over more pieces: the qty the form never sends is derived from the rounded amount and overshoots. */
+const TWENTY_FOUR: Shape = { qty: 24, boxes: 24, pack: 1, unitPrice: 0.42, net: 10, levy: 1 };
+const SIX_HUNDRED: Shape = { qty: 600, boxes: 600, pack: 1, unitPrice: 0.02, net: 10, levy: 1 };
 
 describeDb(
   "SA-1042 A-4: a typed credit on a regulated line fits what the ledger can still reverse — real Postgres",
@@ -842,6 +845,89 @@ describeDb(
       await returnAndRefund(s, 1, v.named ? s.lineA.id : null);
       return s;
     }
+
+    /**
+     * SA-1054 A-5, rows CD-13 to CD-19: the web form sends no qty, so the service derives one from the rounded amount and the
+     * room used to test THAT against the qty left. On a two-invoice order (the refund notes carry no items) it overshoots by a
+     * sliver and the room refused a row whose money fit. A row typed by amount only is held to the money left. A typed qty
+     * stays strict. CD-17 and CD-19 pin today's cents on purpose and move with the money side's row.
+     */
+    async function returnsOf(label: string, shape: Shape, qtys: number[], named = false) {
+      const s = await seed(label, { shape });
+      for (const q of qtys) await returnAndRefund(s, q, named ? s.lineA.id : null);
+      return s;
+    }
+    const ledgerOf = async (s: Seed) => {
+      const a = await lineA(s);
+      return { net: a.net, qty: a.qty };
+    };
+
+    it("CD-13: 24 pcs, 4 + 4 back, no line named, an amount-only 6.67 is accepted and the line nets 0 / 0", async () => {
+      const s = await returnsOf("cd13", TWENTY_FOUR, [4, 4]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 0, qty: 0 });
+      const item = await prisma.creditNoteItem.findFirstOrThrow({
+        where: { tenantId: s.tenantId },
+      });
+      expect(Number(item.amount)).toBe(6.67);
+    });
+
+    it("CD-14: 600 pcs, one return of 200, no line named, an amount-only 6.67 is accepted (no drift needed)", async () => {
+      const s = await returnsOf("cd14", SIX_HUNDRED, [200]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 0, qty: 0 });
+    });
+
+    it("CD-15: 24 pcs, 4 + 4 back, an amount-only 3.00 then 3.67 are both accepted and the line nets 0 / 0", async () => {
+      const s = await returnsOf("cd15", TWENTY_FOUR, [4, 4]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 3))).toBeNull();
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 3.67))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 0, qty: 0 });
+    });
+
+    it("CD-16: 24 pcs, 12 back, a typed 1.00 / 10 then an amount-only 2.00 is accepted; 2.00 / 0 pcs is left", async () => {
+      const s = await returnsOf("cd16", TWENTY_FOUR, [12]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 1, 10))).toBeNull();
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 2))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 2, qty: 0 });
+    });
+
+    it("CD-17: 24 pcs, 4 + 4 back, an amount-only 6.68 is accepted: the line nets 0 / 0 and the notes sum 10.01 (the money side's cent)", async () => {
+      const s = await returnsOf("cd17", TWENTY_FOUR, [4, 4]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 6.68))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 0, qty: 0 });
+      expect(await noteSum(s)).toBe(10.01);
+    });
+
+    it("CD-18: refused by the room, nothing written: amount-only 6.69 and 8.00, a typed 6.67 / 16.1, and 0.03 on a closed line", async () => {
+      for (const [label, amount, qty] of [
+        ["cd18a", 6.69, undefined],
+        ["cd18b", 8, undefined],
+        ["cd18c", 6.67, 16.1],
+      ] as const) {
+        const s = await returnsOf(label, TWENTY_FOUR, [4, 4]);
+        const itemsBefore = await itemCount(s);
+        const err = await typedCredit(s, s.invoiceA.id, s.iA.id, amount, qty);
+        expect({ label, door: doorOf(err) }).toEqual({ label, door: "ledger room (A-4)" });
+        expect(await itemCount(s)).toBe(itemsBefore);
+      }
+      const closed = await returnsOf("cd18d", TWENTY_FOUR, [12, 12]);
+      const itemsBefore = await itemCount(closed);
+      const err = await typedCredit(closed, closed.invoiceA.id, closed.iA.id, 0.03);
+      expect(doorOf(err)).toBe("ledger room (A-4)");
+      expect(await itemCount(closed)).toBe(itemsBefore);
+    });
+
+    it("CD-19: the return names the line: an amount-only 6.67 is still refused, by the pinned door (24 pcs 4 + 4, and 600 pcs one return of 200)", async () => {
+      for (const [label, shape, qtys] of [
+        ["cd19a", TWENTY_FOUR, [4, 4]],
+        ["cd19b", SIX_HUNDRED, [200]],
+      ] as const) {
+        const s = await returnsOf(label, shape, [...qtys], true);
+        const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67);
+        expect({ label, door: doorOf(err) }).toEqual({ label, door: "pinned (A-3)" });
+      }
+    });
 
     it("CD-11a: one live invoice: 6.68 / 4 is refused by the money check (no item); 6.67 / 4 is accepted and the ledger reads 0 / 0", async () => {
       const refused = await twoReturnsOn("cd11a1", { voidB: true });

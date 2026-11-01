@@ -417,8 +417,13 @@ export class CreditNotesService {
     // reverseCreditNoteEntries clamps to), or the item would store a levy the filing never books. A return-refund row carries no
     // category, and a line that never booked a SALE row is skipped by the ledger too, so neither is bound. A row that takes all
     // the qty left may pass the money remaining by the money side's own drift allowance (SA-1054 A-3).
+    // SA-1054 A-5: a row with no typed qty (the web form sends none) carries a qty derived from its rounded amount; the room
+    // is told which rows those are and holds them to the money left, not to that derived figure.
     const roomRefusal = await creditRoomRefusal(db, cnItemsData, {
       excludeCreditNoteId: opts.excludeCreditNoteId,
+      derivedQtyItemIds: new Set(
+        [...mergedByLine.values()].filter((li) => li.qty == null).map((li) => li.invoiceItemId),
+      ),
     });
     if (roomRefusal)
       throw cnBad(

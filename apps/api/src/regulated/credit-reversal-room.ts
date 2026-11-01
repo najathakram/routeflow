@@ -370,6 +370,8 @@ export interface CreditRoomRefusal {
  * the money side already allows (`creditDriftTol`, scaled by the rows the line already carries). The ledger books a share of
  * what is left and the money telescopes, so after a second partial return they part by a cent: the clerk crediting "the rest"
  * at the money's figure must not be refused (CD-1), and the clamp books the exact remaining. The qty arm never changes.
+ * A row typed by AMOUNT ONLY (the web form sends no qty) carries a qty the service derived from the rounded amount; the caller names
+ * those rows (`derivedQtyItemIds`) and they are held to the money left, not to that figure (SA-1054 A-5).
  * Not bound (`creditItemRoom` returns null): a line that never booked a SALE row (a line a re-sync offset and never re-booked
  * is bound, and refused with 0 left), and any row without a tracked category (non-regulated lines, SA-628 return-refund rows).
  * Reads only: no notice, no write.
@@ -377,7 +379,7 @@ export interface CreditRoomRefusal {
 export async function creditRoomRefusal(
   db: any,
   rows: CreditRowInput[],
-  opts: { excludeCreditNoteId?: string } = {},
+  opts: { excludeCreditNoteId?: string; derivedQtyItemIds?: Set<string> } = {},
 ): Promise<CreditRoomRefusal | null> {
   const regulated = rows.filter((r) => r.trackedCategoryId);
   if (regulated.length === 0) return null;
@@ -390,9 +392,18 @@ export async function creditRoomRefusal(
     const remainingAmount = Math.max(0, roundMoney(-left.remNet));
     const remainingQty = Math.max(0, round3(-left.remQty));
     // a closing row takes all the qty left; `remainingQty > ROOM_EPS` keeps a closed line from reading as closing (CD-6)
-    const closing = remainingQty > ROOM_EPS && row.qty >= remainingQty - ROOM_EPS;
+    // SA-1054 A-5: a qty the clerk did not type is not the clerk's number. The service derives it from the rounded amount, which
+    // overshoots by a sliver, so such a row takes the qty left when its amount reaches the money left, else min(derived, left).
+    // Closing, the qty arm and the fold below all use that figure; a typed qty stays strict and the money arm stays the bound.
+    const derived = !!row.invoiceItemId && !!opts.derivedQtyItemIds?.has(row.invoiceItemId);
+    const rowQty = derived
+      ? row.amount >= remainingAmount - ROOM_EPS
+        ? remainingQty
+        : Math.min(row.qty, remainingQty)
+      : row.qty;
+    const closing = remainingQty > ROOM_EPS && rowQty >= remainingQty - ROOM_EPS;
     const moneyTol = closing ? creditDriftTol(left.already.items) : ROOM_EPS;
-    if (row.amount > remainingAmount + moneyTol || row.qty > remainingQty + ROOM_EPS) {
+    if (row.amount > remainingAmount + moneyTol || rowQty > remainingQty + ROOM_EPS) {
       return {
         invoiceItemId: row.invoiceItemId,
         requestedAmount: roundMoney(row.amount),
@@ -404,7 +415,7 @@ export async function creditRoomRefusal(
     room.revByLine.set(left.lineKey, {
       ...left.already,
       net: left.already.net - Math.min(row.amount, remainingAmount),
-      qty: left.already.qty - Math.min(row.qty, remainingQty),
+      qty: left.already.qty - Math.min(rowQty, remainingQty),
       items: left.already.items + 1,
     });
   }
