@@ -15,6 +15,7 @@ import {
   statementShape,
 } from "@/lib/account-statement-display";
 import { useBackToClose } from "@/lib/use-back-to-close";
+import { StatementPrintButton } from "./StatementPrintButton";
 
 /** The sheet rests on the right from 768 and fills the screen at 390 (AddFullAddressSheet's side-sheet form). */
 const SHEET_CLASS =
@@ -264,8 +265,8 @@ export function AccountStatementBody({
 }
 
 /**
- * The staff sheet: one `Modal` in side-sheet form over `GET /customers/:id/account-statement`. `actions` is the footer slot
- * Print (PR-3) and Email (PR-4) fill. A failed read says so with Try Again, never a $0.00.
+ * The staff sheet: one `Modal` in side-sheet form over `GET /customers/:id/account-statement`. The footer carries Print
+ * (PR-3); `actions` is the slot after it that Email (PR-4) fills. A failed read says so with Try Again, never a $0.00.
  */
 export function AccountStatementSheet({
   customerId,
@@ -322,7 +323,17 @@ export function AccountStatementSheet({
           e.preventDefault();
           tapped.current?.focus();
         }}
-        footer={actions ? <div data-testid="account-statement-actions">{actions}</div> : undefined}
+        footer={
+          q.data ? (
+            <div
+              data-testid="account-statement-actions"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <StatementPrintButton customerId={customerId} />
+              {actions}
+            </div>
+          ) : undefined
+        }
       >
         <div data-testid="account-statement-sheet">
           {q.data ? (

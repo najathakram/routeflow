@@ -23,6 +23,17 @@ export function useAccountStatement(customerId: string | null, enabled = true) {
 }
 
 /**
+ * SA-1078 PR-3: the statement as a PDF. The server renders it fresh and answers with a signed URL (no JWT needed to open
+ * it). `fetchPdfBlob` picks the right transport for the bytes; touch devices open the URL itself.
+ */
+export async function fetchAccountStatementPdfUrl(customerId: string): Promise<string> {
+  const { url } = await apiClient
+    .get<{ url: string }>(`/customers/${customerId}/account-statement/pdf`)
+    .then((r) => r.data);
+  return url;
+}
+
+/**
  * Whether this signed-in person may open the sheet. The server stays the authority (`FINANCE|CUSTOMERS`); this only decides
  * whether a figure is offered as a button. An operator whose permission read has not answered gets the plain figure, never
  * a button that might 403.
