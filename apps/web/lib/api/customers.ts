@@ -31,7 +31,7 @@ export interface Customer {
   creditLimit?: number | null;
   currency?: string;
   pricingTier?: number;
-  receivables?: number;
+  openBalance?: number;
   unusedCredits?: number;
   /**
    * Per-customer "this customer is always Net 60" override — one of the same

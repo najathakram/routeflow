@@ -296,6 +296,11 @@ export function AccountStatementSheet({
       queryKey: ["customers", customerId],
       predicate: (query) => query.queryKey[3] !== own[3],
     });
+    // PR-5 L9: the customers list (key ["customers", params]) prints the same figure, so it reads again too
+    void qc.invalidateQueries({
+      queryKey: ["customers"],
+      predicate: (query) => typeof query.queryKey[1] !== "string",
+    });
     void qc.invalidateQueries({ queryKey: ["invoices"] });
     void qc.invalidateQueries({ queryKey: ["reports"] });
     qc.removeQueries({ queryKey: own });
