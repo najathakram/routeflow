@@ -1,0 +1,30 @@
+{
+  "run": "2026-10-25-bug-swarm-6",
+  "profile": "bug-swarm",
+  "mode": "bugfix",
+  "scale": "small",
+  "engine": "bug-swarm v1.2 workflow (wf_d9377855-182), idSpace row, maxClusters 4, base ebc237be0",
+  "started": "2026-10-25T16:01:58Z",
+  "ended": "2026-10-25T16:20:00Z",
+  "phaseReport": [
+    { "phase": "Workflow (Triage+Pack, Cluster, 3x Build/Gate/Review)", "ran": true, "agents": 11, "tokens": 6654857, "estUsd": 3.7362, "model": "mixed", "effort": "per role", "note": "haiku-5-5 1.13M tokens unpriced (model id unknown to session-usage prices)" },
+    { "phase": "Orchestrator (to workflow end, Opus 5.5)", "ran": true, "agents": 0, "tokens": 2962804, "estUsd": 2.5918, "model": "claude-opus-5-5", "effort": "session", "note": "row pick, avoid list, base npm ci, launch; push and PRs came after and are not in this figure (the session also did W-910 work)" }
+  ],
+  "bugsFixed": 3,
+  "requestedIds": 6,
+  "builtIds": ["302", "734", "W-694"],
+  "excluded": { "674": "fixed-on-master", "W-879": "unclear, not reproduced", "535": "touches avoided file products/[id]/page.tsx" },
+  "unaccounted": {},
+  "quality": {
+    "firstPassGate": { "c1": "GREEN", "c2": "GREEN", "c3": "GREEN" },
+    "reviewMusts": { "c1": 0, "c2": 0, "c3": 0 },
+    "reviewVerdicts": { "c1": "PASS", "c2": "PASS", "c3": "PASS" },
+    "specEdits": 0,
+    "specEditsRejected": 0
+  },
+  "prs": { "c1": "#3755 @ addeff0415b64ad616430c95bc1eb2d61a2005e5", "c2": "#3757 @ 7ed3e0a9814798dacaadd62a4208103a016f1ec7", "c3": "#3758 @ 0a01fe8726e449c2fa26b864738f31c527b976f1" },
+  "costUsd": 6.328,
+  "costPerBugUsd": 2.11,
+  "orchestratorShare": 0.41,
+  "weeklyUsagePct": null
+}
