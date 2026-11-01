@@ -167,6 +167,9 @@ describe("W0 one look: the home hero", () => {
   it("has one filled button and one text link, and the old kicker, audience line and AI link are gone", () => {
     const hero = homeHero();
     expect(hero).toContain("{DEMO_CTA}");
+    expect(hero).toContain("<HeroSteps");
+    expect(hero).not.toContain("<DeliveryDemo");
+    expect(hero).toContain('href="#sample-order"');
     expect(hero).toContain(HERO_LINK);
     expect(hero).not.toMatch(/<Eyebrow>/);
     expect(hero).not.toContain("hero-assurance");
@@ -176,6 +179,21 @@ describe("W0 one look: the home hero", () => {
   it("O3 says nothing about a trial, free or a price (the trial is not real until W1)", () => {
     const hero = homeHero().replace(/className="[^"]*"/g, "");
     expect(hero).not.toMatch(/\b(trial|free|price|prices|pricing)\b|[$€£]\d/i);
+  });
+
+  it("keeps the picture's alt text in words", () => {
+    const src = fs.readFileSync(path.join(MARKETING_ROOT, "components", "hero-steps.tsx"), "utf8");
+    expect(src).toContain("A laptop showing three steps: order, delivery, and invoice.");
+    for (const label of ["Order", "Delivery", "Invoice"]) expect(src).toContain(label);
+  });
+
+  it("puts the example under its own heading, with the id the hero link points to", () => {
+    const src = fs.readFileSync(path.join(MARKETING_ROOT, "page.tsx"), "utf8");
+    const at = src.indexOf('id="sample-order"');
+    expect(at).toBeGreaterThan(-1);
+    const after = src.slice(at);
+    expect(after.indexOf("Try a sample order.")).toBeGreaterThan(-1);
+    expect(after.indexOf("Try a sample order.")).toBeLessThan(after.indexOf("<DeliveryDemo"));
   });
 });
 

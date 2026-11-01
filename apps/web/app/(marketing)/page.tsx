@@ -5,6 +5,7 @@ import { AudienceCards, CTA, Eyebrow } from "./components/marketing";
 import { FeatureCatalog, CapabilityStrip } from "./components/feature-catalog";
 import { FAQ } from "./components/faq";
 import { DeliveryDemo } from "./components/delivery-demo";
+import { HeroSteps } from "./components/hero-steps";
 import { AISpotlight } from "./components/ai-spotlight";
 import {
   ProblemSection,
@@ -56,16 +57,28 @@ export default function Home() {
             <Link className="button" href="/book-a-demo">
               {DEMO_CTA} <ArrowUpRight size={18} />
             </Link>
-            <Link className="text-link" href="#how-it-works">
+            <Link className="text-link" href="#sample-order">
               See how it works <ArrowRight size={17} />
             </Link>
           </div>
         </div>
         <div className="glass-hero-art">
-          <DeliveryDemo />
+          <HeroSteps />
         </div>
       </section>
       <CapabilityStrip />
+      <section
+        className="section wrap sample-order-section"
+        id="sample-order"
+        aria-labelledby="sample-order-heading"
+      >
+        <div className="section-heading">
+          <h2 id="sample-order-heading">Try a sample order.</h2>
+        </div>
+        <div className="sample-order-demo">
+          <DeliveryDemo />
+        </div>
+      </section>
       <ProblemSection />
       <section className="section proof-tour wrap" id="how-it-works">
         <div className="section-heading split-heading">

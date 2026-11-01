@@ -9943,3 +9943,151 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
+
+/* ---- one-look.css (W0 "Say it in one look", COPY.md section 1) ----
+
+   Last in the file on purpose, and one class deeper (`.glass-page`) than glass.css, which loads after
+   this file and sets `.glass-page h1`: it settles the home hero after every earlier layer. The text column
+   gets more room than the picture so the H1 holds two lines on a wide screen, and `text-wrap:
+   balance` replaces the old <br> tags. The picture (`HeroSteps`) is CSS only: a laptop holding
+   three round icons with arrows between them. Its labels are 20 px or more at every width. It is a
+   picture, so no pointer cursor, no hover, no focus stop. */
+.rf-marketing .glass-page .glass-hero {
+  grid-template-columns: 1.3fr 1fr;
+  min-height: 0;
+}
+.rf-marketing .glass-page .glass-hero-copy h1 {
+  max-width: none;
+  font-size: clamp(2.5rem, 4.3vw, 4.25rem);
+  line-height: 1.08;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+.rf-marketing .glass-page .glass-hero-copy > p:not(.eyebrow) {
+  font-size: 1.25rem;
+  line-height: 1.6;
+  max-width: 600px;
+  text-wrap: balance;
+}
+.rf-marketing .glass-page .hero-steps {
+  width: 100%;
+  max-width: 640px;
+  margin-inline: auto;
+}
+.rf-marketing .glass-page .hero-steps-laptop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.rf-marketing .glass-page .hero-steps-screen {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  background: #1c2536;
+  border-radius: 18px 18px 6px 6px;
+  box-shadow: 0 28px 60px -30px #567aa3a0;
+}
+.rf-marketing .glass-page .hero-steps-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 44px 8px 40px;
+  list-style: none;
+  background: #ffffff;
+  border-radius: 10px;
+}
+.rf-marketing .glass-page .hero-steps-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  cursor: default;
+}
+.rf-marketing .glass-page .hero-steps-icon {
+  display: grid;
+  place-items: center;
+  width: clamp(72px, 6.1vw, 88px);
+  height: clamp(72px, 6.1vw, 88px);
+  border-radius: 50%;
+  color: #ffffff;
+  background: linear-gradient(145deg, #4267d2, #5298e8);
+}
+.rf-marketing .glass-page .hero-steps-label {
+  font-size: clamp(1.25rem, 1.9vw, 1.5rem);
+  font-weight: 650;
+  line-height: 1.2;
+  color: #1c2536;
+  white-space: nowrap;
+}
+.rf-marketing .glass-page .hero-steps-arrow {
+  position: absolute;
+  top: calc(clamp(72px, 6.1vw, 88px) / 2 - 11px);
+  left: calc(100% + 7px - 11px);
+  color: #9aa8bf;
+}
+.rf-marketing .glass-page .hero-steps-base {
+  width: calc(100% + 12px);
+  height: 12px;
+  background: linear-gradient(#cfd6e2, #aeb8c9);
+  border-radius: 0 0 14px 14px;
+}
+.rf-marketing .sample-order-section .section-heading {
+  max-width: 860px;
+  margin-inline: auto;
+}
+.rf-marketing .sample-order-demo {
+  max-width: 860px;
+  margin-inline: auto;
+}
+.rf-marketing .sample-order-section {
+  scroll-margin-top: 90px;
+}
+@media (max-width: 900px) {
+  .rf-marketing .glass-page .glass-hero {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+  .rf-marketing .glass-page .hero-steps-icon {
+    width: 72px;
+    height: 72px;
+  }
+  .rf-marketing .glass-page .hero-steps-label {
+    font-size: 1.25rem;
+  }
+  .rf-marketing .glass-page .hero-steps-arrow {
+    top: 25px;
+  }
+  .rf-marketing .glass-page .glass-hero-copy h1 {
+    font-size: clamp(2.5rem, 7.6vw, 3.75rem);
+  }
+}
+@media (max-width: 480px) {
+  .rf-marketing .glass-page .glass-hero {
+    padding-block: 20px 36px;
+    gap: 24px;
+  }
+  .rf-marketing .glass-page .glass-hero-copy h1 {
+    font-size: clamp(1.75rem, 8.4vw, 2.1rem);
+  }
+  .rf-marketing .glass-page .glass-hero-copy > p:not(.eyebrow) {
+    font-size: 1.25rem;
+    margin-top: 16px;
+  }
+  .rf-marketing .glass-page .glass-hero-copy .hero-actions {
+    margin-top: 20px;
+    gap: 16px;
+  }
+  .rf-marketing .glass-page .hero-steps-row {
+    gap: 12px;
+    padding: 24px 6px 22px;
+  }
+  .rf-marketing .glass-page .hero-steps-icon {
+    width: 56px;
+    height: 56px;
+  }
+  .rf-marketing .glass-page .hero-steps-arrow {
+    top: 17px;
+  }
+}
