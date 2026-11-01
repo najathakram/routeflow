@@ -5,14 +5,15 @@
  * advisory lock (`addon:<tenant>:<sku>`), on the caller's promise that it already holds that key. The only
  * caller that can honestly make that promise is business-profile confirm, which holds every profile module's
  * key on one pinned connection (`BusinessProfileService.withConfirmLock`) and calls the comp enable from
- * `PlatformAdminController.applyResolvedLocked`. Anywhere else the flag would silently remove the
+ * `BusinessProfileApplyService.applyResolvedLocked`. Anywhere else the flag would silently remove the
  * serialisation the lock exists for (B342).
  *
  * This spec fails, naming the file, when:
- *   - any source file other than `addon.service.ts` (the definition) and `platform-admin.controller.ts` mentions
+ *   - any source file other than `addon.service.ts` (the definition) and `business-profile-apply.service.ts` mentions
  *     `lockHeld` in code (src, scripts, prisma; comments are ignored);
- *   - a `lockHeld` in the controller sits outside `applyResolvedLocked`, or in an options object without
- *     `comp: true`;
+ *   - a `lockHeld` in the apply service sits outside `applyResolvedLocked`, or in an options object without
+ *     `comp: true`. Whoever passes `lockHeld` holds the lock: every caller of `applyResolvedLocked` takes
+ *     `withConfirmLock` first (the controller does today);
  *   - the service honours `lockHeld` without also requiring `comp`.
  */
 import * as fs from "node:fs";
@@ -21,12 +22,7 @@ import * as path from "node:path";
 const API_ROOT = path.resolve(__dirname, "..", "..");
 const ROOTS = ["src", "scripts", "prisma"].map((d) => path.join(API_ROOT, d));
 const SERVICE_FILE = path.resolve(__dirname, "addon.service.ts");
-const CONTROLLER_FILE = path.resolve(
-  __dirname,
-  "..",
-  "platform-admin",
-  "platform-admin.controller.ts",
-);
+const APPLY_FILE = path.resolve(__dirname, "business-profile-apply.service.ts");
 const SOURCE_EXT = /\.(ts|tsx|js|mjs|cjs)$/;
 
 /** Code with line and block comments blanked out (a comment may mention the flag; code may not). */
@@ -58,18 +54,16 @@ export function mentionsLockHeld(text: string): boolean {
 /** Files (other than the two allowed) whose code mentions `lockHeld`. */
 function strayLockHeldFiles(list: string[]): string[] {
   return list
-    .filter((f) => f !== SERVICE_FILE && f !== CONTROLLER_FILE)
+    .filter((f) => f !== SERVICE_FILE && f !== APPLY_FILE)
     .filter((f) => mentionsLockHeld(fs.readFileSync(f, "utf8")));
 }
 
-/** Body of `applyResolvedLocked` in the controller source (comments kept out). */
-function applyLockedBody(controllerCode: string): { start: number; end: number } {
-  const start = controllerCode.indexOf("private async applyResolvedLocked(");
-  if (start < 0) throw new Error("applyResolvedLocked not found in the controller");
-  // the next decorated route or section after it ends the method
-  const rest = controllerCode.slice(start + 10);
-  const next = rest.search(/\n {2}@(Get|Post|Put|Patch|Delete)\(/);
-  return { start, end: next < 0 ? controllerCode.length : start + 10 + next };
+/** Body of `applyResolvedLocked` in the apply service source (comments kept out). */
+function applyLockedBody(code: string): { start: number; end: number } {
+  const start = code.indexOf("async applyResolvedLocked(");
+  if (start < 0) throw new Error("applyResolvedLocked not found in the apply service");
+  // the method is the last member of the class, so the end of the file ends it
+  return { start, end: code.length };
 }
 
 describe("SA-769 - `lockHeld` has exactly one caller", () => {
@@ -86,12 +80,12 @@ describe("SA-769 - `lockHeld` has exactly one caller", () => {
     expect(mentionsLockHeld("// lockHeld is explained here\n/* and lockHeld here */")).toBe(false);
   });
 
-  it("no file other than addon.service.ts and platform-admin.controller.ts passes or reads lockHeld", () => {
+  it("no file other than addon.service.ts and business-profile-apply.service.ts passes or reads lockHeld", () => {
     expect(strayLockHeldFiles(files).map((f) => path.relative(API_ROOT, f))).toEqual([]);
   });
 
-  it("the controller passes it only inside applyResolvedLocked, always next to comp: true", () => {
-    const code = codeOnly(fs.readFileSync(CONTROLLER_FILE, "utf8"));
+  it("the apply service passes it only inside applyResolvedLocked, always next to comp: true", () => {
+    const code = codeOnly(fs.readFileSync(APPLY_FILE, "utf8"));
     const { start, end } = applyLockedBody(code);
     const hits = [...code.matchAll(/\blockHeld\b/g)];
     expect(hits.length).toBeGreaterThan(0);

@@ -32,6 +32,7 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PlatformAdminController } from "../platform-admin/platform-admin.controller";
+import { BusinessProfileApplyService } from "./business-profile-apply.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -115,6 +116,10 @@ describeDb("SA-769 - a profile's comp grants under real advisory locks (real Pos
       featurePreview as any,
     );
     const stub = () => ({}) as any;
+    const authority = {
+      assertFeatureRequiresMet: jest.fn().mockResolvedValue(undefined),
+      invalidate: jest.fn(),
+    } as any;
     controller = new PlatformAdminController(
       { recordAdminAction: jest.fn().mockResolvedValue(undefined) } as any, // svc (audit rows are not under test)
       stub(), // platformConfig
@@ -124,14 +129,18 @@ describeDb("SA-769 - a profile's comp grants under real advisory locks (real Pos
       stub(), // entitlementsMode
       stub(), // configSnapshotFlag
       stub(), // featureDiffs
-      {
-        assertFeatureRequiresMet: jest.fn().mockResolvedValue(undefined),
-        invalidate: jest.fn(),
-      } as any,
+      authority,
       featurePreview as any,
       stub(), // snapshotAdmin
       businessProfiles,
       featureConfig as any,
+      new BusinessProfileApplyService(
+        addons,
+        authority,
+        featureConfig as any,
+        featurePreview as any,
+        businessProfiles,
+      ),
     );
   });
 
