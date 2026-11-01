@@ -6,6 +6,7 @@ import { Button, Modal, cn } from "@routeflow/ui/web";
 import type { AccountStatement } from "@routeflow/types";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useAccountStatement } from "@/lib/api/account-statement";
+import { paymentMethodLabel } from "@/lib/payment-methods";
 import { tenantDateOf, useTenantTimeZone } from "@/lib/tenant-timezone";
 import {
   STATEMENT_COPY,
@@ -194,7 +195,7 @@ export function AccountStatementBody({
                 className="flex justify-between gap-3 py-2"
               >
                 <span>
-                  {fmtCalendarDate(p.date)} · {p.method}
+                  {fmtCalendarDate(p.date)} · {paymentMethodLabel(p.method)}
                   {p.reference ? ` ${p.reference}` : ""} · {p.invoiceNumber}
                 </span>
                 <span className="font-medium tabular-nums">{fmt(p.amount)}</span>

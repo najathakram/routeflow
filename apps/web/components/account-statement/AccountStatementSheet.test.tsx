@@ -218,6 +218,34 @@ describe("AccountStatementSheet", () => {
     expect(screen.getByText("Credit available")).toBeInTheDocument();
   });
 
+  it("recent payments print the method's label, never the raw code", async () => {
+    const pay = (method: string, reference: string | null, kind: "PAYMENT" | "CREDIT") => ({
+      date: "2026-10-20T00:00:00.000Z",
+      kind,
+      method,
+      reference,
+      invoiceNumber: "INV-1001",
+      amount: 10,
+    });
+    statement.recentPayments = [
+      pay("CHECK", "1042", "PAYMENT"),
+      pay("ACH", null, "PAYMENT"),
+      pay("CREDIT_NOTE", null, "CREDIT"),
+      pay("ADVANCE", null, "CREDIT"),
+    ];
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    const list = await screen.findByTestId("account-statement-payments");
+    const text = list.textContent ?? "";
+    expect(text).toContain("Check 1042");
+    expect(text).toContain("ACH / bank transfer");
+    expect(text).toContain("Credit note");
+    expect(text).toContain("Advance");
+    for (const raw of ["CHECK", "CREDIT_NOTE", "ADVANCE"]) {
+      expect(text).not.toContain(raw);
+    }
+  });
+
   it("U13: with no credit available neither credit line shows", async () => {
     renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
     await open();
