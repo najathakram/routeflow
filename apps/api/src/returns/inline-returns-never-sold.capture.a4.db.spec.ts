@@ -11,6 +11,11 @@
  * sale of the product, so the edit reverts it to a DRAFT of an undelivered order and the goods were never sold: $30.00, no tax,
  * no stock movement. NS-8: a paid sale on another invoice exists too: $32.40 with $2.40 tax, and a RETURN stock movement.
  *
+ * A-5 (a return on a Merge): NS-16 and NS-17 take the New order's return to the merge prompt's two answers. NS-16 (Merge) runs
+ * the real foldMergeItems and then the real updateOrderItems with replaceAll and isCreateMerge, exactly the call the create
+ * controller's merge branch makes (orders.controller.ts), with the real revert; the controller handler itself (its customer lock
+ * and idempotency replay) is not run. NS-17 (Create as separate) runs the real OrdersService.create with skipAutoMerge.
+ *
  * Run via `npm run local:test:db` (compose Postgres) - collected only by jest.db.config.js.
  */
 jest.mock("../invoices/invoices.service", () => ({
@@ -37,6 +42,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { InlineReturnsService } from "./inline-returns.service";
 import { OrdersService } from "../orders/orders.service";
+import { foldMergeItems } from "../orders/merge-items";
 import { revertLinkedInvoicesToDraft } from "../invoices/order-edit-revert-set";
 import { INVOICE_EDIT_STUBS } from "../orders/testing/invoice-edit-stubs";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -256,7 +262,11 @@ describeDb("SA-1060 A-4 - the order edit's capture matches the quote, real Postg
     };
     orders = Object.assign(Object.create(OrdersService.prototype), {
       prisma,
-      gateway: { emitOrderStatusChanged: jest.fn(), emitOrderCreated: jest.fn() },
+      gateway: {
+        emitOrderStatusChanged: jest.fn(),
+        emitOrderCreated: jest.fn(),
+        emitUrgentOrder: jest.fn(),
+      },
       systemConfig,
       featureConfig,
       entitlements: { hasFlag: async () => true },
@@ -370,6 +380,108 @@ describeDb("SA-1060 A-4 - the order edit's capture matches the quote, real Postg
     expect(w.items).toHaveLength(1);
     expect(Number(w.items[0].taxAmount)).toBe(q.taxAmount);
     expect(Number(w.items[0].subtotal)).toBe(30);
+    expect(w.items[0].restock).toBe(true);
+    expect(w.movements).toBe(1);
+  }, 90_000);
+
+  // ─── A-5: a return on a Merge ─────────────────────────────────────────────────────
+
+  it("NS-16 (guard): New order, return 3, Merge into the open order -> the capture equals the prompt's quote: $30.00, no tax, no stock", async () => {
+    const f = await editedOrder("ns16");
+    // the box: the New order's Returns section quotes with no editingOrderId (nothing is reverted yet)
+    const box = await tenantCtx.run(tenantId, () =>
+      quoteService.quote(
+        {
+          customerId: f.customerId,
+          items: [{ productId: f.productId, boxes: 0, pieces: 3 }],
+        } as any,
+        staff(),
+      ),
+    );
+    expect({ total: box.total, neverSold: box.chunks.map((c) => c.neverSold) }).toEqual({
+      total: 32.4,
+      neverSold: [false],
+    });
+    // the prompt's quote: the same request plus the merge target
+    const prompt = await quote(f);
+    expect({ total: prompt.total, tax: prompt.taxAmount }).toEqual({ total: 30, tax: 0 });
+
+    // the Merge click: the controller's fold of the New order's items into the open order, with the return riding along
+    const existing = await raw.orderItem.findMany({ where: { orderId: f.orderId } });
+    const fold = foldMergeItems(existing as any, [{ productId: f.productId, qty: 1 }] as any, {
+      liveTrioByProductId: await orders.liveTrioByProduct([f.productId]),
+      liveUnitsPerBoxByProductId: await orders.liveUnitsPerBoxByProduct([
+        f.productId,
+        ...existing.map((li) => li.productId).filter(Boolean),
+      ]),
+      bare: "pieces",
+    });
+    await tenantCtx.run(tenantId, () =>
+      orders.updateOrderItems(
+        f.orderId,
+        {
+          items: fold.items,
+          replaceAll: true,
+          inlineReturn: {
+            items: [{ productId: f.productId, boxes: 0, pieces: 3 }],
+            returnKey: `ns16-${run}`,
+          },
+        },
+        staff(),
+        { isCreateMerge: true },
+      ),
+    );
+
+    expect((await raw.invoice.findUniqueOrThrow({ where: { id: f.ownInvoiceId } })).status).toBe(
+      "DRAFT",
+    );
+    const w = await written(f);
+    expect(w.cns).toHaveLength(1);
+    expect(Number(w.cns[0].amount)).toBe(prompt.total);
+    expect(w.items).toHaveLength(1);
+    expect(Number(w.items[0].taxAmount)).toBe(prompt.taxAmount);
+    expect(w.items[0].restock).toBe(false);
+    expect(w.movements).toBe(0);
+  }, 90_000);
+
+  it("NS-17 (guard): New order, return 3, Create as separate -> the capture equals the box: $32.40 with $2.40 tax, 3 back to stock, the open order's invoice stays SENT", async () => {
+    const f = await editedOrder("ns17");
+    const box = await tenantCtx.run(tenantId, () =>
+      quoteService.quote(
+        {
+          customerId: f.customerId,
+          items: [{ productId: f.productId, boxes: 0, pieces: 3 }],
+        } as any,
+        staff(),
+      ),
+    );
+    expect({ total: box.total, tax: box.taxAmount }).toEqual({ total: 32.4, tax: 2.4 });
+
+    const created = await tenantCtx.run(tenantId, () =>
+      orders.create(
+        {
+          customerId: f.customerId,
+          items: [{ productId: f.productId, qty: 1 }],
+          inlineReturn: {
+            items: [{ productId: f.productId, boxes: 0, pieces: 3 }],
+            returnKey: `ns17-${run}`,
+          },
+        },
+        staff(),
+        { skipAutoMerge: true },
+      ),
+    );
+    if (created?.id) orderIds.push(created.id);
+
+    // nothing reverted: the open order's own invoice still counts as a sale
+    expect((await raw.invoice.findUniqueOrThrow({ where: { id: f.ownInvoiceId } })).status).toBe(
+      "SENT",
+    );
+    const w = await written(f);
+    expect(w.cns).toHaveLength(1);
+    expect(Number(w.cns[0].amount)).toBe(box.total);
+    expect(w.items).toHaveLength(1);
+    expect(Number(w.items[0].taxAmount)).toBe(box.taxAmount);
     expect(w.items[0].restock).toBe(true);
     expect(w.movements).toBe(1);
   }, 90_000);

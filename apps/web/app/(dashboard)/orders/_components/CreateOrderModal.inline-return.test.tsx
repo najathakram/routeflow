@@ -429,3 +429,194 @@ describe("CreateOrderModal — collapsing the Returns section (#2406)", () => {
     expect(screen.getByLabelText(/^pieces$/i)).toBeInTheDocument();
   });
 });
+
+// ─── SA-1060 A-5: a return on a Merge ────────────────────────────────────────────────────────────────────────────
+// A merge target can have a sent invoice that the merge's revert turns into a draft, so the box (priced before the
+// revert) and the note (priced after it) can differ. When the prompt opens on a quoted return it asks once more, with
+// `editingOrderId` set to the target, and says what merging changes. It only says; nothing waits on the answer.
+describe("CreateOrderModal — a return on the merge prompt (SA-1060 A-5)", () => {
+  const OPEN = {
+    id: "ord-open",
+    orderNumber: "ORD-OPEN-1",
+    status: "PENDING",
+    total: 100,
+    itemCount: 1,
+  };
+  const chunkOf = (over: Record<string, unknown> = {}) => ({
+    sourceOrderId: null,
+    sourceInvoiceItemId: null,
+    sourceOrderItemId: null,
+    productId: "prod-1",
+    pieces: 3,
+    subtotal: 30,
+    taxAmount: 2.4,
+    categoryTax: 0,
+    priceSource: "TIER",
+    unitPrice: 10,
+    neverSold: false,
+    ...over,
+  });
+  const quoteOf = (total: number, chunk = chunkOf()) => ({
+    ...quoteReply(3),
+    chunks: [chunk],
+    subtotal: 30,
+    taxAmount: Math.round((total - 30) * 100) / 100,
+    total,
+  });
+  const SOLD = () => quoteOf(32.4);
+  const NEVER = () => quoteOf(30, chunkOf({ taxAmount: 0, neverSold: true }));
+  const LINE = "If you merge, this return is $30.00, not added to stock.";
+
+  /** The box's quote, answered as the section's own ask (the last call so far). */
+  async function boxQuoted(reply = SOLD()) {
+    await waitFor(() => expect(quoteMutate.mock.calls.length).toBeGreaterThan(answered));
+    const calls = quoteMutate.mock.calls;
+    answered = calls.length;
+    act(() => calls[calls.length - 1][1].onSuccess(reply));
+  }
+  /** Opens the merge prompt from the Save-as-draft button. */
+  async function openPrompt() {
+    fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+    await screen.findByRole("button", { name: /merge into/i });
+  }
+  const mergeBtn = () => screen.getByRole("button", { name: /merge into/i });
+  const separateBtn = () => screen.getByRole("button", { name: /separate/i });
+  const changeLine = () => screen.queryByTestId("merge-return-change");
+  const promptAsks = () =>
+    quoteMutate.mock.calls.filter((c) => c[0]?.editingOrderId === "ord-open");
+
+  async function setup() {
+    mockActiveOrder = OPEN;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("3");
+    await boxQuoted();
+  }
+
+  it("NS-15: the prompt asks ONE more quote with the box's own request plus editingOrderId, and says what merging changes", async () => {
+    await setup();
+    const boxAsk = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][0];
+    expect(boxAsk).not.toHaveProperty("editingOrderId"); // the box itself never names the target
+    const before = quoteMutate.mock.calls.length;
+
+    await openPrompt();
+
+    expect(quoteMutate.mock.calls.length).toBe(before + 1);
+    const ask = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][0];
+    expect(ask).toEqual({ ...boxAsk, editingOrderId: "ord-open" });
+    expect(changeLine()).toBeNull(); // nothing until it answers
+    act(() => quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess(NEVER()));
+
+    const line = await screen.findByTestId("merge-return-change");
+    expect(line).toHaveTextContent(LINE);
+    expect(line).toHaveAttribute("role", "status");
+    // the box does not move: its lines, its $32.40 quote and its reason are as they were
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(3);
+    expect(screen.getAllByText("$32.40").length).toBeGreaterThan(0);
+    // neither button waits: both are enabled, and Merge keeps the prompt's focus
+    expect(mergeBtn()).toBeEnabled();
+    expect(separateBtn()).toBeEnabled();
+    expect(mergeBtn()).not.toHaveTextContent(/working out/i);
+    expect(separateBtn()).not.toHaveTextContent(/working out/i);
+  });
+
+  it("NS-15: Merge does not wait for the answer and sends the save at once", async () => {
+    await setup();
+    await openPrompt();
+    fireEvent.click(mergeBtn()); // before any answer
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0].inlineReturn).toBeDefined();
+    expect(createOrderMutate.mock.calls[0][1]).toBeDefined();
+  });
+
+  it("NS-18: no return at all -> the prompt makes no quote call and shows no line", async () => {
+    mockActiveOrder = OPEN;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openPrompt();
+    expect(quoteMutate).not.toHaveBeenCalled();
+    expect(changeLine()).toBeNull();
+  });
+
+  it("NS-18: a return that is not quoted yet -> no call from the prompt and no line", async () => {
+    mockActiveOrder = OPEN;
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await openReturnsAndAddLine("3"); // lines, but the box's quote is not answered
+    await waitFor(() => expect(quoteMutate).toHaveBeenCalled()); // the box asked; it has no answer
+    const before = quoteMutate.mock.calls.length;
+    await openPrompt();
+    expect(quoteMutate.mock.calls.length).toBe(before);
+    expect(promptAsks()).toHaveLength(0);
+    expect(changeLine()).toBeNull();
+  });
+
+  it("NS-19: merging prices the return the same -> no line", async () => {
+    await setup();
+    await openPrompt();
+    act(() => quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess(SOLD()));
+    expect(promptAsks()).toHaveLength(1);
+    expect(changeLine()).toBeNull();
+  });
+
+  it("NS-20: a failed quote says nothing and both buttons work", async () => {
+    await setup();
+    await openPrompt();
+    act(() =>
+      quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onError(
+        Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" }),
+      ),
+    );
+    expect(changeLine()).toBeNull();
+    expect(mergeBtn()).toBeEnabled();
+    expect(separateBtn()).toBeEnabled();
+    fireEvent.click(separateBtn());
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("NS-20: a refused quote says nothing and both buttons work", async () => {
+    await setup();
+    await openPrompt();
+    act(() =>
+      quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onError({
+        response: { status: 400, data: { code: "SOURCE_SALE_INVALID", message: "No." } },
+      }),
+    );
+    expect(changeLine()).toBeNull();
+    expect(mergeBtn()).toBeEnabled();
+    fireEvent.click(mergeBtn());
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("NS-21: Escape leaves the box's lines and quote alone, and a late answer paints no line on the closed prompt", async () => {
+    await setup();
+    await openPrompt();
+    const lateAnswer = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess;
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /merge into/i })).not.toBeInTheDocument(),
+    );
+    act(() => lateAnswer(NEVER()));
+    expect(changeLine()).toBeNull();
+    // the box is exactly as it was: the same lines, still quoted, no "working out" state
+    expect(screen.getByLabelText(/^pieces$/i)).toHaveValue(3);
+    expect(screen.getAllByText("$32.40").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/working out the return credit/i)).toBeNull();
+  });
+
+  it("an answer for a prompt that was closed and reopened paints nothing; the new ask's answer does", async () => {
+    await setup();
+    await openPrompt();
+    const firstAnswer = quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess;
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /merge into/i })).not.toBeInTheDocument(),
+    );
+    await openPrompt(); // reopened: a second ask
+    expect(promptAsks()).toHaveLength(2);
+    act(() => firstAnswer(NEVER())); // the first open's answer lands late
+    expect(changeLine()).toBeNull();
+    act(() => quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][1].onSuccess(NEVER()));
+    expect(await screen.findByTestId("merge-return-change")).toHaveTextContent(LINE);
+  });
+});

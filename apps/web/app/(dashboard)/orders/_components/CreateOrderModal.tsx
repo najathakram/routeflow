@@ -147,6 +147,7 @@ import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
+import { useMergeReturnChange } from "./use-merge-return-change";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 import {
   CREDITS_PENDING_COPY,
@@ -487,6 +488,12 @@ export function CreateOrderModal({
   const staleKeysRef = React.useRef<Set<string>>(new Set());
   const promptOpenedAtRef = React.useRef(Number.NEGATIVE_INFINITY); // performance.now() when the prompt mounted (compared with a key event's own timeStamp)
   const mergePromptOpen = mergePrompt !== null;
+  // SA-1060 A-5: what merging changes about a quoted return (one extra quote, words only; nothing waits on it).
+  const mergeReturnLine = useMergeReturnChange(
+    mergePrompt?.id ?? null,
+    returnsRef,
+    selectedCustomer?.id,
+  );
   React.useEffect(() => {
     if (!isOpen) return;
     const held = heldKeysRef.current;
@@ -3521,14 +3528,21 @@ export function CreateOrderModal({
         }
       >
         {mergePrompt && (
-          <div className="rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm">
-            <div className="font-medium text-navy">
-              {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
+          <div className="space-y-2">
+            <div className="rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm">
+              <div className="font-medium text-navy">
+                {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
+              </div>
+              <div className="text-navy/70">
+                {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
+                {formatMoney(mergePrompt.total)}
+              </div>
             </div>
-            <div className="text-navy/70">
-              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
-              {formatMoney(mergePrompt.total)}
-            </div>
+            {mergeReturnLine && (
+              <p role="status" data-testid="merge-return-change" className="text-sm text-navy">
+                {mergeReturnLine}
+              </p>
+            )}
           </div>
         )}
       </Modal>
