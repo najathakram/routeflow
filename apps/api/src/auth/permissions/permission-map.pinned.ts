@@ -152,6 +152,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "BuyerController.disconnectFromSeller": "UNGUARDED",
   "BuyerController.expiringAuthorizations": "UNGUARDED",
   "BuyerController.getAccountStatement": "UNGUARDED",
+  "BuyerController.getAccountStatementPdf": "UNGUARDED",
   "BuyerController.getActiveOrder": "UNGUARDED",
   "BuyerController.getAnalytics": "UNGUARDED",
   "BuyerController.getCatalogCounts": "UNGUARDED",

@@ -11,7 +11,7 @@ const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
 /** Each entry: the file, and a regex whose every match is one printed open-balance figure. */
-const SURFACES: { file: string; label: string; figure: RegExp }[] = [
+const SURFACES: { file: string; label: string; figure: RegExp; tag?: string }[] = [
   {
     file: "app/(dashboard)/customers/[id]/page.tsx",
     label: "customer page top tile and Billing tab",
@@ -47,27 +47,31 @@ const SURFACES: { file: string; label: string; figure: RegExp }[] = [
     label: "Customer Balance Summary balance",
     figure: /\{fmt\(r\.balance\)\}<\/OpenBalanceButton>/g,
   },
+  {
+    file: "app/buyer/portal/[seller]/payments/page.tsx",
+    label: "buyer portal Payments page Outstanding card (PR-6)",
+    figure: /\{fmt\(statement\?\.outstandingAmount \?\? 0\)\}/g,
+    tag: "BuyerOpenBalanceButton",
+  },
 ];
 
-/** Files that read the figure but do not print it for staff (or print the buyer's own, PR-6), with the reason. */
+/** Files that read the figure but do not print it for staff, with the reason. */
 const PLAIN_ON_PURPOSE: Record<string, string> = {
   "components/account-statement/AccountStatementSheet.tsx": "the statement view itself",
-  "app/buyer/portal/[seller]/payments/page.tsx":
-    "the buyer's own portal (PR-6 gives it the buyer sheet)",
 };
 
 /** True when `index` sits between an opening `<OpenBalanceButton` and its closing tag. */
-function insideButton(src: string, index: number): boolean {
+function insideButton(src: string, index: number, tag = "OpenBalanceButton"): boolean {
   const before = src.slice(0, index);
-  return before.lastIndexOf("<OpenBalanceButton") > before.lastIndexOf("</OpenBalanceButton>");
+  return before.lastIndexOf(`<${tag}`) > before.lastIndexOf(`</${tag}>`);
 }
 
 describe("U21: the open-balance figure is only printed inside OpenBalanceButton", () => {
-  it.each(SURFACES)("$label ($file)", ({ file, figure }) => {
+  it.each(SURFACES)("$label ($file)", ({ file, figure, tag }) => {
     const src = read(file);
     const hits = [...src.matchAll(figure)];
     expect(hits.length).toBeGreaterThan(0);
-    for (const h of hits) expect(insideButton(src, h.index!)).toBe(true);
+    for (const h of hits) expect(insideButton(src, h.index!, tag)).toBe(true);
   });
 
   it("no other staff file reads the statement's open balance without being listed", () => {

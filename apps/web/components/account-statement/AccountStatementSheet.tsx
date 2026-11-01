@@ -36,7 +36,7 @@ function InvoiceNumber({ id, number, link }: { id: string; number: string; link:
   return link ? (
     <Link
       href={`/invoices/${id}`}
-      className="inline-flex items-center font-medium text-brand-600 hover:underline max-sm:min-h-[44px] max-sm:min-w-[44px]"
+      className="inline-flex font-medium text-brand-600 hover:underline max-sm:min-h-[44px] max-sm:min-w-[44px] max-sm:items-start"
     >
       {number}
     </Link>
@@ -282,7 +282,6 @@ export function AccountStatementSheet({
   actions?: React.ReactNode;
 }) {
   const q = useAccountStatement(customerId, open);
-  useBackToClose(open, onClose);
   // U9: a sheet that read a fresher figure leaves the figures behind it fresh too, and the next open reads again
   const qc = useQueryClient();
   const loaded = React.useRef(false);
@@ -301,6 +300,47 @@ export function AccountStatementSheet({
     void qc.invalidateQueries({ queryKey: ["reports"] });
     qc.removeQueries({ queryKey: own });
   }, [open, customerId, qc]);
+  return (
+    <StatementSheetFrame
+      open={open}
+      onClose={onClose}
+      query={q}
+      linkInvoices={linkInvoices}
+      footer={
+        <>
+          <StatementPrintButton customerId={customerId} />
+          {actions}
+        </>
+      }
+    />
+  );
+}
+
+/** What the frame needs of a statement read: the staff hook and the buyer hook both fit it. */
+export interface StatementRead {
+  data?: AccountStatement;
+  isError: boolean;
+  refetch: () => unknown;
+}
+
+/**
+ * The one sheet both portals open: a `Modal` in side-sheet form over a statement read, with back-to-close, focus returned to
+ * the figure that was tapped, and a footer that only shows once there is a statement to act on.
+ */
+export function StatementSheetFrame({
+  open,
+  onClose,
+  query: q,
+  linkInvoices,
+  footer,
+}: {
+  open: boolean;
+  onClose: () => void;
+  query: StatementRead;
+  linkInvoices: boolean;
+  footer: React.ReactNode;
+}) {
+  useBackToClose(open, onClose);
   // U17: the sheet has no Radix trigger, so it hands focus back to the figure that was tapped.
   const tapped = React.useRef<HTMLElement | null>(null);
   // The sheet is a React child of the figure that opened it, and React bubbles events through a portal: without this, a tap
@@ -328,8 +368,7 @@ export function AccountStatementSheet({
               data-testid="account-statement-actions"
               className="flex flex-wrap items-center gap-2"
             >
-              <StatementPrintButton customerId={customerId} />
-              {actions}
+              {footer}
             </div>
           ) : undefined
         }

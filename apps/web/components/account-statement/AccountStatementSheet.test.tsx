@@ -325,6 +325,14 @@ describe("Mac mini proof on #4061 (F1 to F5)", () => {
     expect(close.className).toContain("max-sm:min-h-11");
     expect(close.className).toContain("max-sm:min-w-11");
   });
+
+  it("F5 (#4061 proof): the 44 px link's text sits at the top of its box, level with the amount", async () => {
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    const link = await screen.findByRole("link", { name: "INV-1001" });
+    expect(link.className).toContain("max-sm:items-start");
+    expect(link.className).not.toMatch(/(^|\s)items-center(\s|$)/);
+  });
 });
 
 describe("AccountStatementSheet", () => {

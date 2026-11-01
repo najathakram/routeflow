@@ -29,6 +29,7 @@ import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
 import { paymentMethodLabel } from "@/lib/payment-methods";
+import { BuyerOpenBalanceButton } from "@/components/account-statement/BuyerOpenBalanceButton";
 import { MakePaymentPanel } from "./_components/MakePaymentPanel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ function StatCard({
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
-  value: string;
+  value: React.ReactNode;
   sub?: string;
   color: string;
 }) {
@@ -253,7 +254,11 @@ function BuyerPaymentsPageInner() {
         <StatCard
           icon={Clock}
           label="Outstanding"
-          value={fmt(statement?.outstandingAmount ?? 0)}
+          value={
+            <BuyerOpenBalanceButton hint="View statement">
+              {fmt(statement?.outstandingAmount ?? 0)}
+            </BuyerOpenBalanceButton>
+          }
           color="bg-warning-bg text-warning"
         />
       </div>
