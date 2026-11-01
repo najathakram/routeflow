@@ -544,6 +544,8 @@ function HeaderTools({
   const pathname = usePathname();
   const router = useGuardedRouter();
   const rawRouter = useRouter(); // a parked leave (Discard) must not re-ask
+  const [bellOpen, setBellOpen] = React.useState(false);
+  const [userOpen, setUserOpen] = React.useState(false);
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
   // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
@@ -603,7 +605,9 @@ function HeaderTools({
 
       {/* Notification bell */}
       <DropdownMenu.Root
+        open={bellOpen}
         onOpenChange={(open) => {
+          setBellOpen(open);
           if (open) markAllRead();
         }}
       >
@@ -740,6 +744,7 @@ function HeaderTools({
                           href={n.href}
                           className="min-w-0 flex-1"
                           onClick={(e) => {
+                            setBellOpen(false); // SA-1073 A-3: not a menu item, so nothing else closes the panel
                             if (guardCounterLeave(() => rawRouter.push(n.href!)))
                               e.preventDefault(); // POS-7: not mid-sale
                           }}
@@ -769,7 +774,7 @@ function HeaderTools({
       </DropdownMenu.Root>
 
       {/* Avatar dropdown */}
-      <DropdownMenu.Root>
+      <DropdownMenu.Root open={userOpen} onOpenChange={setUserOpen}>
         <DropdownMenu.Trigger asChild>
           <button
             className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-raised"
@@ -854,7 +859,10 @@ function HeaderTools({
                 to="buyer"
                 onClick={(e) => {
                   const href = e.currentTarget.href; // resolved by PortalSwitchLink (presence-aware)
-                  if (guardCounterLeave(() => window.location.assign(href))) e.preventDefault();
+                  if (guardCounterLeave(() => window.location.assign(href))) {
+                    e.preventDefault();
+                    setUserOpen(false); // SA-1073 A-3: a prevented click skips Radix's close
+                  }
                 }}
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 iconClassName="h-4 w-4 text-navy/70"

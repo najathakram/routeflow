@@ -189,6 +189,13 @@
 
 ## tooling
 
+### L-265 · 2026-10-06 · tooling · a `next dev` proof leaves `apps/web/.next/types`, which breaks the web type-check in pre-push; wipe `apps/web/.next` before committing or pushing
+
+- **Symptom:** three builders (#3233, #3238, #3223, 2026-10-06) ran the app under `next dev` to prove a change, then their pre-push `check-types -w apps/web` failed on errors from generated files, none in the diff.
+- **Root cause:** `next dev` writes route type stubs under `apps/web/.next/types`, and `apps/web/tsconfig.json` includes `.next/types/**/*.ts`, so `tsc --noEmit` compiles them; a stub for a route this branch changed or removed no longer matches the tree.
+- **Lesson:** **After any `next dev` proof, run `rm -rf apps/web/.next` before committing or pushing (and again before the next proof, so the server never serves stale output). The type-check gate must see source only.**
+- **Guard:** none automatic; propose `check-types -w apps/web` clearing `.next/types` first, or a pre-push step that fails on a leftover `apps/web/.next`.
+
 ### L-338 · 2026-10-24 · tooling · jest ignores an unknown config key, so a config pin must read the config jest resolved (#3638, #3643)
 
 - **Symptom:** a DB-lane hook wired as `setupFilesAfterEach` (the real key is `setupFilesAfterEnv`) never ran, yet the pin that guarded it stayed green.
@@ -4610,14 +4617,3 @@ citations, closed-out with its own post-init assertion guard).
   guards; a test asserting every consumer calls the _same_ function reference (not just a
   matching result) is flagged, not yet added.
 
-### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
-
-- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
-  ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
-- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
-  also the least private transport HTTP offers.
-- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
-  a URL query string — use a fragment (`#`, never sent to the server) for a client-side handoff,
-  or a POST body for a server-side one.**
-- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
-  named query params on any new route.

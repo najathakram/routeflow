@@ -59,6 +59,7 @@ describe("GET /users/me/permissions", () => {
       groups: ALL,
       version: 0,
       mode: "shadow",
+      priceEditAllowed: true,
     });
     expect(res.body.groups).toHaveLength(9);
   });
@@ -91,6 +92,7 @@ describe("GET /users/me/permissions", () => {
       groups: ALL,
       version: 0,
       mode: "shadow",
+      priceEditAllowed: true,
     });
     expect(prisma.user.findFirst).not.toHaveBeenCalled();
   });
@@ -104,6 +106,7 @@ describe("GET /users/me/permissions", () => {
       groups: [],
       version: 0,
       mode: "shadow",
+      priceEditAllowed: false,
     });
   });
 

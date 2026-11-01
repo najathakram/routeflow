@@ -7625,7 +7625,8 @@
   align-items: center;
   gap: 5px;
   font-size: 8px;
-  color: #68758a;
+  /* W8 / S6: was #68758a, 4.27:1 on the portal card's #edf7f4. #566680 is 5.32:1. */
+  color: #566680;
 }
 .rf-marketing .customer-glimpse > strong {
   font-size: 19px;

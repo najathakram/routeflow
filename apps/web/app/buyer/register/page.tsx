@@ -155,8 +155,8 @@ function BuyerRegisterInner() {
     <AuthShell
       audience="retailer"
       kicker="Retailer account"
-      title="Your next chapter starts here."
-      lead="Create your retailer account."
+      title="Create your retailer account."
+      lead="Order from your suppliers in one place."
       footer={
         <p className="text-xs text-navy/70">
           Selling on RouteFlow?{" "}

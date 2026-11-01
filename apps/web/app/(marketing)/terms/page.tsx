@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { routes, site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { Eyebrow } from "../components/marketing";
 
 // Published terms of service (R9 follow-up). Source draft:
@@ -12,18 +13,11 @@ const LAST_UPDATED = "September 17, 2026";
 
 const route = routes.find((r) => r.slug === "terms")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/terms",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/terms" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/terms",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 export default function TermsPage() {
   return (

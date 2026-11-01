@@ -12,6 +12,7 @@ import type {
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import type { CounterSaleDto } from "./counter-sale.dto";
+import type { CounterReturnSplit } from "./counter-sale-today";
 import { duplicateCause } from "./counter-duplicate-ref";
 import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 
@@ -46,6 +47,8 @@ export type InvoiceRow = {
     status?: string;
     /** the check number / card reference typed at the till (`Payment.reference`) */
     reference?: string | null;
+    /** the credit note this payment applied (SA-1077: `counterReturnSplit` reads it from the same rows) */
+    creditNoteId?: string | null;
   }>;
 };
 
@@ -167,6 +170,11 @@ export function buildCounterSaleResponse(input: {
   duplicate?: DuplicatePaymentRefExisting;
   /** the tenant's configured rate in percent: a stored line rate is named only when it equals this */
   configuredTaxPercent?: number | null;
+  /**
+   * SA-1077 / W-1090: the sale's tender split from `counterReturnSplit` (the Today's row and the emailed receipt call the same
+   * one), spread as it is. Nothing is worked out here; absent when the read failed, and the receipt then keeps its earlier words.
+   */
+  split?: CounterReturnSplit;
 }): CounterSaleResponse {
   const { payment, order, invoices, replayed, planError, duplicate } = input;
   const first = invoices[0];
@@ -251,6 +259,7 @@ export function buildCounterSaleResponse(input: {
       originalPrice: l.originalPrice == null ? null : roundMoney(Number(l.originalPrice)),
       priceType: l.priceType ?? "STANDARD",
     })),
+    ...(input.split ? input.split : {}),
     ...(replayed ? { replayed: true } : {}),
   };
 }

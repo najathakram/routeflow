@@ -1404,6 +1404,13 @@
   color: var(--g-eyebrow);
 }
 
+/* W8 / S6: marketing.css's dark-card rule `.story-top > span:last-child` (#abc3e4, written for
+   the old navy card) outranks the plain rule above, so the line "One order. Every team." was
+   light blue on the light glass card, measured 1.5-1.65:1. One more class makes this win. */
+.rf-marketing .glass-page .story-top > span:last-child {
+  color: var(--g-eyebrow);
+}
+
 .glass-page .story-chapter-count {
   color: var(--g-soft);
 }

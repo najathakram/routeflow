@@ -204,6 +204,26 @@ describe("S19b C-1: invoices/new adds from the customer layer", () => {
     expect(layerCalls()).toHaveLength(0);
   });
 
+  // SA-1077 / W-1093: the regular price above the Rate is struck only when the line is charged BELOW it; a tier over Retail is
+  // charged above its list, where a strike would read as a discount.
+  it("flag OFF: a tier price below the list ($8 on $10) strikes the regular $10.00 above the Rate", async () => {
+    flagOn = false;
+    await openNewSale();
+    capturedOnScan!("111");
+    await screen.findByDisplayValue("Tiered Widget");
+    expect(screen.getByText("$10.00")).toHaveClass("line-through");
+  });
+
+  it("flag OFF: a tier price above the list ($12 on $10) strikes nothing and keeps the rate", async () => {
+    flagOn = false;
+    mockBarcodeProduct = { ...TIERED, priceTier3: "12" };
+    await openNewSale();
+    capturedOnScan!("111");
+    await screen.findByDisplayValue("Tiered Widget");
+    await waitFor(() => expect(unitPriceValue()).toBe(12));
+    expect(screen.queryByText("$10.00")).not.toBeInTheDocument();
+  });
+
   it("M3: while the layer is pending the prices are unconfirmed and Save is disabled", async () => {
     layerResponder = () => new Promise(() => {});
     await openNewSale();
