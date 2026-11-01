@@ -23,6 +23,7 @@ export const ADDON_SOURCE_CLASS: Record<AddonChangeSource, AddonSourceClass> = {
   "subscribe.pick": "owner",
   "subscribe.drop": "owner",
   "profile.apply": "owner",
+  "signup.setup": "owner",
   "manual_activation.price": "owner",
   "checkout.adopt": "expected_system",
   "plan.stop_billing": "expected_system",
@@ -41,6 +42,7 @@ export const ADDON_SOURCE_REASON: Record<AddonChangeSource, string> = {
   "subscribe.pick": "the tenant picks add-ons while subscribing",
   "subscribe.drop": "the tenant drops add-ons while subscribing",
   "profile.apply": "a platform admin applies a business profile to the tenant",
+  "signup.setup": "a new account's own admin answers the first question on the dashboard",
   "manual_activation.price":
     "a platform admin runs Manual Activation, which prices the unbilled add-ons",
   "checkout.adopt":

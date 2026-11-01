@@ -17,6 +17,7 @@ import type {
   BusinessProfilePlan,
   BusinessProfilePreviewResponse,
   FeaturePreviewRequest,
+  FirstRunAnswer,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -30,6 +31,7 @@ import {
   assertCapabilitiesRequested,
   capabilitiesFromInputs,
   capabilityAvailability,
+  firstRunRequest,
   isOpensAsChoosable,
   presetTicks,
   ticksToProfileDef,
@@ -217,6 +219,16 @@ export class BusinessProfileService {
         opensAs: now.opensAs,
       },
     });
+    return this.planDef(tenantId, def, { capabilities: normalised, preset });
+  }
+
+  /**
+   * W1: the plan for a new account's first question. The current ticks come from the SAME read the capabilities GET
+   * shows; the mapping to a request is `firstRunRequest` (not the back office's call), then the ONE planner.
+   */
+  async planFirstRun(tenantId: string, answer: FirstRunAnswer): Promise<BusinessProfileResolution> {
+    const now = await this.capabilities(tenantId);
+    const { def, normalised, preset } = firstRunRequest(answer, now);
     return this.planDef(tenantId, def, { capabilities: normalised, preset });
   }
 

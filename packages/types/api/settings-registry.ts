@@ -255,6 +255,15 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
         : "/settings?tab=fulfilment#counter-sales",
     adminOnly: true,
   })),
+  // W1: the first-question marker (`pending` / `answered` / `closed`), written by sign-up and by the first question;
+  // the dashboard card reads it. A memo, not a setting anyone edits.
+  {
+    key: "signup.firstRun",
+    home: "systemConfig",
+    kind: "memo",
+    status: "live",
+    screen: "implicit",
+  },
   // -- tenantConfig (SA-738): the business time zone, a `TenantConfig.timezone` column written by
   // `PATCH /settings` (and by signup / create-tenant). Only a TENANT_ADMIN changes it.
   {

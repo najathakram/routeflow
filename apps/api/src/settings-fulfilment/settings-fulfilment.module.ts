@@ -1,8 +1,10 @@
 import { Module } from "@nestjs/common";
 import { BillingModule } from "../billing/billing.module";
+import { EmailModule } from "../email/email.module";
 import { SettingsFulfilmentController } from "./settings-fulfilment.controller";
 import { SettingsFulfilmentService } from "./settings-fulfilment.service";
 import { FulfilmentEditGuard } from "./fulfilment-edit";
+import { FirstRunService } from "./first-run.service";
 
 /**
  * Settings → Fulfillment (dark behind FULFILMENT_SELF_SERVE): a typed, audited face over the
@@ -10,8 +12,8 @@ import { FulfilmentEditGuard } from "./fulfilment-edit";
  * come from the global FeatureConfigModule; the add-on and override services from BillingModule.
  */
 @Module({
-  imports: [BillingModule],
+  imports: [BillingModule, EmailModule],
   controllers: [SettingsFulfilmentController],
-  providers: [SettingsFulfilmentService, FulfilmentEditGuard],
+  providers: [SettingsFulfilmentService, FirstRunService, FulfilmentEditGuard],
 })
 export class SettingsFulfilmentModule {}

@@ -447,6 +447,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
 
   it("the writer FILE list is frozen (a new writer must be added here with its registry rows)", () => {
     expect(writers.map((w) => w.rel).sort()).toEqual([
+      "billing/first-run-marker.ts",
       "email/email.service.ts",
       "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
@@ -516,6 +517,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
   it("the prisma-direct writer files are frozen, each with a pinned key source", () => {
     const direct = writers.filter((w) => PRISMA_WRITE.test(w.src)).map((w) => w.rel);
     expect(direct.sort()).toEqual([
+      "billing/first-run-marker.ts",
       "email/email.service.ts",
       "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",

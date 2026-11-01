@@ -75,6 +75,7 @@ describeDb("settings/fulfilment — real Postgres (PR1)", () => {
         addons as never,
         overrides as never,
       ),
+      {} as never, // FirstRunService: not under test here
     );
   });
 

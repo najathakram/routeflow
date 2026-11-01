@@ -970,6 +970,10 @@ export const API_ERROR_CODES = {
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
    */
   BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
+  /** W1: the first question on a new account's dashboard. 400 nothing ticked; 400 an unknown key or a non-boolean; 409 not open for this account. */
+  FIRST_RUN_EMPTY: "FIRST_RUN_EMPTY",
+  FIRST_RUN_INVALID: "FIRST_RUN_INVALID",
+  FIRST_RUN_CLOSED: "FIRST_RUN_CLOSED",
   /**
    * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
    * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing

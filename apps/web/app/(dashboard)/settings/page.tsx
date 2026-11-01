@@ -159,7 +159,9 @@ function BusinessProfileTab() {
   const qc = useQueryClient();
   const { branding, refresh: refreshBranding } = useTenant();
   // Only a tenant admin may change the time zone; everyone else sees it read-only.
-  const canEditTimeZone = useAuth().user?.role === "TENANT_ADMIN";
+  const profileAuth = useAuth();
+  const canEditTimeZone = profileAuth.user?.role === "TENANT_ADMIN";
+  const workspaceId = profileAuth.user?.tenantSlug ?? null;
   const saveBusinessName = useSaveBusinessName(); // B1231: the name saves via branding, not PATCH /settings
   const [logoPreview, setLogoPreview] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -369,6 +371,13 @@ function BusinessProfileTab() {
               Used for invoices, order updates, and customer communications.
             </p>
           </div>
+          {workspaceId && (
+            <dl className="col-span-2" data-testid="settings-workspace-id">
+              <dt className="text-sm font-medium text-navy">Workspace ID</dt>
+              <dd className="font-mono text-sm text-navy">{workspaceId}</dd>
+              <dd className="mt-1 text-xs text-navy/70">You&apos;ll need it to sign in.</dd>
+            </dl>
+          )}
         </div>
         <div className="mt-4">
           {canEditTimeZone ? (

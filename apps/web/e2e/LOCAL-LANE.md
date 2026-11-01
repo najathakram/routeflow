@@ -96,6 +96,7 @@ Every check is appended to `local-assets/proof-stack.jsonl`.
 | `pdf-preview`                    | `80-pdf-preview-touch.spec.ts`              | W-1064: the PDF preview scrolls on phone settings, the worker loads with no CSP error, desktop keeps its iframe                                                                                                                                                          |
 | `menu-dialog-freeze`             | `81-menu-dialog-freeze.spec.ts`             | SA-1073 PR-2: a dialog opened from a menu (Restrict…, the till's user menu, the two link doors) leaves the page taking clicks, and Keep selling keeps the cart                                                                                                           |
 | `ios-zoom`                       | `81-ios-zoom-touch.spec.ts`                 | SA-1071 A-2: every field reads 16px on touch, desktop keeps its sizes, boxes and pieces hold 3 digits clear of Rate                                                                                                                                                      |
+| `trial-first-run`                | `82-trial-first-run.spec.ts`                | W-1095 W1: sign up, verify from caught mail, answer the first question, Workspace ID on dashboard and Settings, owner mail; 768/390 fit. Needs MAILPIT_URL                                                                                                               |
 
 Projects needing `PLAYWRIGHT_SA_*` (`super-admin`, `impersonation-signout`) are excluded from
 the allow-list — those secrets are not expected to be present on every contributor's machine.
@@ -273,3 +274,13 @@ created in a `finally`. jsdom cannot see an overlap, so this is the guard for th
 local-only block as spec 71. CI, post-deploy and nightly run `npx playwright test` with no project filter and install chromium
 only, so the project is not registered there (`GITHUB_ACTIONS=true` lists none of its tests). Locally it needs
 `npx playwright install webkit`; run it with `--project=counter-return-iphone`.
+
+## Spec 82 (`trial-first-run`): a new account's first question
+
+Signs up on the real form, verifies from the mail the stack caught, answers the first question and reads the Workspace ID;
+then the same card at 768 and 390. It creates `acme-trial-*` workspaces with no cleanup: the public sign-up refuses every
+approved test-tenant slug on purpose, so the safety is the target. `assertLocalStack` throws unless the web, API and mail
+origins are all loopback. It needs the stack's mail catcher (`MAILPIT_URL`, default `http://localhost:8025`) and the owner
+list (`E2E_OWNER_ALERT_EMAIL`, default `admin@routeflow.info`). Register allows 5 a minute, so retries are off; it uses 3.
+On a lane-owned stack: `PLAYWRIGHT_BASE_URL=<web> SMOKE_BASE_URL=<api> MAILPIT_URL=<mail> SKIP_E2E_SEED=true` and
+`--project=trial-first-run`.

@@ -8,6 +8,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { EncryptionService } from "../common/encryption.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
+import { OwnerAlertService } from "../email/owner-alert.service";
 
 /**
  * Repro-first coverage for the self-service tenant signup email-honesty bug:
@@ -28,6 +29,7 @@ describe("TenantsService", () => {
   let service: TenantsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let email: { send: jest.Mock };
+  let ownerAlerts: { verificationMailFailed: jest.Mock };
 
   const REGISTER_DTO = {
     slug: "acme-distribution",
@@ -67,6 +69,7 @@ describe("TenantsService", () => {
     );
 
     email = { send: jest.fn() };
+    ownerAlerts = { verificationMailFailed: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -75,6 +78,7 @@ describe("TenantsService", () => {
         { provide: EncryptionService, useValue: {} },
         { provide: StorageService, useValue: {} },
         { provide: EmailService, useValue: email },
+        { provide: OwnerAlertService, useValue: ownerAlerts },
         {
           provide: ConfigService,
           useValue: {
@@ -154,6 +158,25 @@ describe("TenantsService", () => {
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
     });
 
+    it("W1 (COPY 2q): a verification mail that did not go out, or threw, tells the owner; one that went out does not", async () => {
+      email.send.mockResolvedValue({ delivered: true, transport: "resend" });
+      await service.register(REGISTER_DTO);
+      expect(ownerAlerts.verificationMailFailed).not.toHaveBeenCalled();
+
+      email.send.mockResolvedValue({ delivered: false, transport: "none", error: "no key" });
+      (prisma.tenant.findUnique as jest.Mock).mockResolvedValue(null);
+      await service.register(REGISTER_DTO);
+      expect(ownerAlerts.verificationMailFailed).toHaveBeenCalledTimes(1);
+      expect(ownerAlerts.verificationMailFailed).toHaveBeenCalledWith(
+        expect.stringMatching(/^tenant-/),
+        REGISTER_DTO.adminEmail,
+      );
+
+      email.send.mockRejectedValue(new Error("ECONNREFUSED"));
+      await service.register(REGISTER_DTO);
+      expect(ownerAlerts.verificationMailFailed).toHaveBeenCalledTimes(2);
+    });
+
     it("reports emailSent:false and logs when EmailService.send itself throws", async () => {
       email.send.mockRejectedValue(new Error("ECONNREFUSED"));
       const loggerErrorSpy = jest.spyOn((service as any).logger, "error");
@@ -207,6 +230,30 @@ describe("TenantsService", () => {
           currentPlan: "STARTER",
           planKey: "STARTER",
         },
+      });
+    });
+
+    // W1: the first question starts open, in the same transaction as the tenant, and only for a public sign-up.
+    describe("first-question marker (W1)", () => {
+      beforeEach(() => email.send.mockResolvedValue({ delivered: true, transport: "resend" }));
+
+      it("writes signup.firstRun = pending for the new tenant inside the register transaction", async () => {
+        await service.register(REGISTER_DTO);
+        const create = (prisma as any).systemConfig.create as jest.Mock;
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(create).toHaveBeenCalledWith({
+          data: {
+            tenantId: expect.stringMatching(/^tenant-/),
+            key: "signup.firstRun",
+            value: "pending",
+          },
+        });
+      });
+
+      it("writes no marker when the sign-up is refused (a taken slug)", async () => {
+        (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({ id: "other" });
+        await expect(service.register(REGISTER_DTO)).rejects.toThrow();
+        expect((prisma as any).systemConfig.create).not.toHaveBeenCalled();
       });
     });
 
