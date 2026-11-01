@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, Row } from "@tanstack/react-table";
 import {
   Pencil,
   ToggleLeft,
@@ -63,6 +63,24 @@ import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
+
+// A module-level component, never an inline `cell:` closure: flexRender mounts a cell function as a
+// component, so a closure rebuilt with `columns` is a new component type on every page render and
+// remounts the button, dropping the open statement sheet (it closed itself on reload and on an early tap).
+function OpenBalanceCell({ row }: { row: Row<Customer> }) {
+  const balance = row.original.openBalance ?? 0;
+  return (
+    <span
+      data-testid="open-balance-cell"
+      className={cn(
+        "block text-right font-medium tabular-nums",
+        balance > 0 ? "text-danger" : "text-navy/70",
+      )}
+    >
+      <OpenBalanceButton customerId={row.original.id}>{fmt(balance)}</OpenBalanceButton>
+    </span>
+  );
+}
 
 // Below `sm` the lower-value columns hide (a RELOCATION: phone + tags move to a secondary line in
 // the Name cell, email + credits live on the customer detail page). Consumed by Table via
@@ -581,20 +599,7 @@ export default function CustomersPage() {
         id: "receivables",
         meta: TIGHT_SMALL_BELOW_SM,
         header: () => <SortHeader col="receivables">Open balance</SortHeader>,
-        cell: ({ row }) => {
-          const balance = row.original.openBalance ?? 0;
-          return (
-            <span
-              data-testid="open-balance-cell"
-              className={cn(
-                "block text-right font-medium tabular-nums",
-                balance > 0 ? "text-danger" : "text-navy/70",
-              )}
-            >
-              <OpenBalanceButton customerId={row.original.id}>{fmt(balance)}</OpenBalanceButton>
-            </span>
-          );
-        },
+        cell: OpenBalanceCell,
       },
       {
         id: "credits",

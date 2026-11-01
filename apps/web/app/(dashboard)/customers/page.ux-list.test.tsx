@@ -192,6 +192,43 @@ describe("SA-1078 PR-5 customers list — Open balance", () => {
     expect(screen.getByRole("columnheader", { name: /open balance/i })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /receivables/i })).toBeNull();
   });
+
+  describe("the sheet survives the list rendering again (the cell must not remount)", () => {
+    afterEach(() => window.history.replaceState({}, "", "/"));
+
+    it("L11: a reload with ?statement=<id> opens the sheet and it stays open through later renders", async () => {
+      window.history.replaceState({}, "", "/customers?page=2&statement=cA");
+      renderWithProviders(<CustomersPage />);
+      expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+      // Time for the page's own effects and the sheet's read to land and re-render the list.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(screen.getByTestId("account-statement-sheet")).toBeInTheDocument();
+      expect(new URL(window.location.href).searchParams.get("statement")).toBe("cA");
+    });
+
+    it("L11: a tap made right away stays open when the list renders again", async () => {
+      const view = renderWithProviders(<CustomersPage />);
+      const button = within(screen.getAllByTestId("open-balance-cell")[0]).getByTestId(
+        "open-balance-button",
+      );
+      await userEvent.setup().click(button);
+      await screen.findByTestId("account-statement-sheet");
+      view.rerender(<CustomersPage />); // the page renders again (a mutation hook, a filter): same rows
+      await new Promise((r) => setTimeout(r, 100));
+      expect(screen.getByTestId("account-statement-sheet")).toBeInTheDocument();
+    });
+
+    it("L11: closing keeps the rest of the URL (?page=2) and drops only ?statement", async () => {
+      window.history.replaceState({}, "", "/customers?page=2&statement=cA");
+      renderWithProviders(<CustomersPage />);
+      await screen.findByTestId("account-statement-sheet");
+      await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByTestId("account-statement-sheet")).toBeNull());
+      const url = new URL(window.location.href);
+      expect(url.searchParams.has("statement")).toBe(false);
+      expect(url.searchParams.get("page")).toBe("2");
+    });
+  });
 });
 
 describe("PKG-1 customers list — F24 columns below sm (relocation, not removal)", () => {
