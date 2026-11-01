@@ -58,7 +58,7 @@ export class StatementPdfService {
 
   /**
    * The current "Open balance" statement as a PDF. Built from the customer-shaped read (`staff: false`), so the page
-   * carries no To collect tag. Stored at `statement-pdfs/{customerId}/current.pdf`, overwritten on every call; the
+   * carries no staff-only field. Stored at `statement-pdfs/{customerId}/current.pdf`, overwritten on every call; the
    * signed URL it returns downloads without a JWT, like the monthly one.
    */
   async generateCurrent(customerId: string): Promise<string> {
