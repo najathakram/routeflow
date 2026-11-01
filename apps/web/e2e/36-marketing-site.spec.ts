@@ -126,7 +126,7 @@ const { defaultBrowserType: _desktopBrowserType, ...desktopChrome } = devices["D
 test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => {
   test.use({ ...iPhone13 });
 
-  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a demo, Escape closes it", async ({
+  test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a video call, Escape closes it", async ({
     page,
   }) => {
     await page.goto("/");
@@ -144,7 +144,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
       "Contact",
       "Distributor sign in",
       "Retailer sign in",
-      "Book a demo",
+      "Book a video call",
     ];
     for (const name of expectedLinkNames) {
       await expect(
@@ -153,7 +153,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
       ).toBeVisible();
     }
     await expect(sheet.getByRole("link"), "mobile sheet link count").toHaveCount(9);
-    await expect(sheet.getByRole("link", { name: /book a demo/i })).toHaveAttribute(
+    await expect(sheet.getByRole("link", { name: /book a video call/i })).toHaveAttribute(
       "href",
       "/book-a-demo",
     );
@@ -238,6 +238,112 @@ test.describe("T2 — desktop sign-in menu (R2 R7 R8 R14)", () => {
       "href",
       "/buyer/login",
     );
+  });
+});
+
+// ─── T2b — W6: the desktop header fits on one line, and /book-a-demo does not scroll sideways ────
+
+// What the header holds at each width: the desktop nav shows above 900 px, and from 901 to 1100 its
+// last link (Company) hides. At 900 and below the nav is the sheet's job (T2).
+const HEADER_NAV_AT: Array<[number, string[]]> = [
+  [1440, ["Platform", "Distributors", "Retailers", "Pricing", "Company"]],
+  [1101, ["Platform", "Distributors", "Retailers", "Pricing", "Company"]],
+  [1100, ["Platform", "Distributors", "Retailers", "Pricing"]],
+  [1024, ["Platform", "Distributors", "Retailers", "Pricing"]],
+  [901, ["Platform", "Distributors", "Retailers", "Pricing"]],
+];
+
+test.describe("T2b — W6 O6: the header, with the call label, fits on one line", () => {
+  for (const [width, expectedNav] of HEADER_NAV_AT) {
+    test.describe(`at ${width}px`, () => {
+      test.use({ ...desktopChrome, viewport: { width, height: 900 } });
+
+      test(`T2b — ${width}px: one line, no overlap, no sideways scroll, nav is ${expectedNav.join(", ")}`, async ({
+        page,
+      }) => {
+        await page.goto("/");
+        const header = page.locator("header.site-header");
+        await expect(header).toBeVisible();
+        const measured = await header.evaluate((el) => {
+          const visible = (n: Element) => {
+            const r = n.getBoundingClientRect();
+            const cs = getComputedStyle(n);
+            return (
+              r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none"
+            );
+          };
+          const items = [
+            ...el.querySelectorAll(
+              ".brand, .desktop-nav a, .nav-login .login-trigger, .header-actions > a.button",
+            ),
+          ].filter(visible);
+          const rects = items.map((n) => {
+            const r = n.getBoundingClientRect();
+            return {
+              text: (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+              left: r.left,
+              right: r.right,
+              top: r.top,
+              bottom: r.bottom,
+              centre: (r.top + r.bottom) / 2,
+              height: r.height,
+            };
+          });
+          const sorted = [...rects].sort((a, b) => a.left - b.left);
+          const overlaps = sorted
+            .slice(1)
+            .map((r, i) => ({ a: sorted[i]!, b: r }))
+            .filter(({ a, b }) => b.left < a.right - 0.5)
+            .map(({ a, b }) => `${a.text} / ${b.text}`);
+          const headerBox = el.getBoundingClientRect();
+          return {
+            nav: [...el.querySelectorAll(".desktop-nav a")]
+              .filter(visible)
+              .map((n) => n.textContent?.trim()),
+            overlaps,
+            // one line: every item's centre sits on the same row, and nothing is taller than one line
+            centreSpread:
+              Math.max(...rects.map((r) => r.centre)) - Math.min(...rects.map((r) => r.centre)),
+            tallest: Math.max(...rects.map((r) => r.height)),
+            headerHeight: headerBox.height,
+            insideHeader: rects.every(
+              (r) => r.top >= headerBox.top - 0.5 && r.bottom <= headerBox.bottom + 0.5,
+            ),
+            docScroll: document.documentElement.scrollWidth,
+            inner: window.innerWidth,
+            right: Math.max(...rects.map((r) => r.right)),
+          };
+        });
+        expect(measured.nav, `${width}px nav links`).toEqual(expectedNav);
+        expect(measured.overlaps, `${width}px overlapping items`).toEqual([]);
+        expect(measured.centreSpread, `${width}px items on one row`).toBeLessThan(8);
+        expect(
+          measured.tallest,
+          `${width}px tallest item (a wrapped label would be taller)`,
+        ).toBeLessThan(60);
+        expect(measured.insideHeader, `${width}px items inside the header`).toBe(true);
+        expect(measured.docScroll, `${width}px sideways scroll`).toBeLessThanOrEqual(
+          measured.inner,
+        );
+        expect(measured.right, `${width}px rightmost item`).toBeLessThanOrEqual(measured.inner);
+      });
+    });
+  }
+});
+
+test.describe("T2b — W6 O9 (B549): /book-a-demo at 390px does not scroll sideways", () => {
+  test.use({ ...iPhone13, viewport: { width: 390, height: 844 } });
+
+  test("T2b — /book-a-demo: the page is no wider than the screen", async ({ page }) => {
+    await page.goto("/book-a-demo");
+    await expect(page.locator("h1")).toBeVisible();
+    const widths = await page.evaluate(() => ({
+      doc: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      inner: window.innerWidth,
+    }));
+    expect(widths.doc, "documentElement.scrollWidth").toBeLessThanOrEqual(widths.inner);
+    expect(widths.body, "body.scrollWidth").toBeLessThanOrEqual(widths.inner);
   });
 });
 

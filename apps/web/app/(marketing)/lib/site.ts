@@ -15,6 +15,10 @@ export const site = {
   email: "hello@routeflow.info",
 };
 
+// The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
+// Sentence case, 3 words, starts with a verb. W4 adds TRIAL_CTA beside it.
+export const DEMO_CTA = "Book a video call";
+
 export interface MarketingRoute {
   slug: string;
   label: string;

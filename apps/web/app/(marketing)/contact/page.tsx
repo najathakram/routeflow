@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, CalendarDays, MessageSquare, Route, Users } from "lucide-react";
-import { routes, site } from "../lib/site";
+import { DEMO_CTA, routes, site } from "../lib/site";
 import { Eyebrow } from "../components/marketing";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Contact()` (M1 §2f).
@@ -85,7 +85,7 @@ export default function ContactPage() {
               setup, and the price for your operation.
             </p>
             <Link className="button" href="/book-a-demo">
-              Book a demo <ArrowUpRight size={18} />
+              {DEMO_CTA} <ArrowUpRight size={18} />
             </Link>
           </article>
           <article className="contact-card">
