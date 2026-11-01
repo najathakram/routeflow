@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, CalendarDays, MessageSquare, Route, Users } from "lucide-react";
 import { routes, site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { Eyebrow } from "../components/marketing";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Contact()` (M1 §2f).
@@ -20,18 +21,11 @@ import { Eyebrow } from "../components/marketing";
 
 const route = routes.find((r) => r.slug === "contact")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/contact",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/contact" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/contact",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const AGENDA: Array<[typeof Route, string, string]> = [
   [
