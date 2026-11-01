@@ -19,7 +19,6 @@ import {
   formatDayHeading,
   formatSlotLong,
   formatSlotTime,
-  timeZoneLabel,
   visitorTimeZone,
 } from "../lib/demo-booking";
 import { site } from "../lib/site";
@@ -40,6 +39,9 @@ import { site } from "../lib/site";
  */
 
 type Step = "slot" | "details" | "done";
+
+/** How many months ahead the calendar may skip on first load to find one with times (C4). */
+const AUTO_MONTHS_AHEAD = 2;
 
 const WEEKDAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
@@ -86,7 +88,13 @@ export function DemoScheduler() {
   const [booking, setBooking] = React.useState<Booking | null>(null);
 
   const headingRef = React.useRef<HTMLHeadingElement>(null);
+  const dayHeadingRef = React.useRef<HTMLHeadingElement>(null);
   const [reloadKey, setReloadKey] = React.useState(0);
+
+  // C4: on first load, a month with no times left (the last days of a month, say) is skipped for
+  // the first month ahead that has some, up to AUTO_MONTHS_AHEAD. If none does, it returns to this
+  // month and says so. Any month change by the visitor ends this for good.
+  const autoAdvance = React.useRef({ active: true, left: AUTO_MONTHS_AHEAD, origin: cursor });
 
   // `cursor` is the identity that matters; the Date object is recreated on each
   // month change, so key the effect on its month string instead.
@@ -103,10 +111,27 @@ export function DemoScheduler() {
     // the request honest when the visitor is looking at the current month.
     const from = start.getTime() < Date.now() ? new Date() : start;
 
+    let advancing = false;
     fetchAvailability(from, end, timeZone, controller.signal)
       .then((result) => {
         if (cancelled) return;
         setAvailability(result);
+        const auto = autoAdvance.current;
+        if (auto.active && result.status !== "unavailable" && result.days.length === 0) {
+          advancing = true;
+          if (auto.left > 0) {
+            auto.left -= 1;
+            setCursor(
+              (current) =>
+                new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1)),
+            );
+          } else {
+            auto.active = false;
+            setCursor(auto.origin);
+          }
+        } else {
+          auto.active = false;
+        }
       })
       .catch((error: unknown) => {
         if (cancelled || (error as Error).name === "AbortError") return;
@@ -124,7 +149,8 @@ export function DemoScheduler() {
         void error;
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        // While it is skipping to the next month the grid stays on "loading", not a flash of "no times".
+        if (!cancelled && !advancing) setLoading(false);
       });
 
     return () => {
@@ -150,11 +176,25 @@ export function DemoScheduler() {
 
   const visibleCells = React.useMemo(() => buildMonthCells(cursor), [cursor]);
   const selectedDay = selectedDate ? daysByKey.get(selectedDate) : undefined;
-  const zoneLabel = timeZoneLabel(timeZone);
 
   const atCurrentMonth = monthKey(cursor) === monthKey(new Date());
 
+  // C6: choosing a date puts its heading just under the sticky header, so the times below it are
+  // on screen. `scroll-margin-top` on `.day-heading` is what keeps it clear of the header.
+  React.useEffect(() => {
+    const heading = dayHeadingRef.current;
+    if (!selectedDate || !heading || typeof heading.scrollIntoView !== "function") return;
+    const top = heading.getBoundingClientRect().top;
+    const headerBottom =
+      document.querySelector("header.site-header")?.getBoundingClientRect().bottom ?? 0;
+    if (top < headerBottom + 8 || top > window.innerHeight * 0.6) {
+      const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      heading.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
+    }
+  }, [selectedDate]);
+
   function goToMonth(delta: number) {
+    autoAdvance.current.active = false;
     setCursor(
       (current) => new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + delta, 1)),
     );
@@ -222,7 +262,7 @@ export function DemoScheduler() {
             <p>
               Your spot is booked, but we could not confirm that our email reached you. Save the
               details below, and reach out to <strong>{site.email}</strong> if you do not hear from
-              us before your walkthrough.
+              us before your call.
             </p>
           )}
         </div>
@@ -254,11 +294,11 @@ export function DemoScheduler() {
       <span className="g-tile">
         <CalendarDays aria-hidden="true" />
       </span>
-      <h2 id="booking-title">Choose a demo time</h2>
+      <h2 id="booking-title">Pick a time</h2>
       <p>
         {availability
-          ? `Times shown in ${zoneLabel}. Each walkthrough runs ${availability.durationMinutes} minutes.`
-          : "Select a date and time for a product walkthrough."}
+          ? `Times are in your time zone. Each call is ${availability.durationMinutes} minutes long.`
+          : "Pick a day and time for your call."}
       </p>
 
       <div className="booking-steps">
@@ -358,14 +398,16 @@ export function DemoScheduler() {
             </div>
           ) : !availability || availability.days.length === 0 ? (
             <p className="slots-empty" role="status">
-              No times are available this month. Try the next month, or email us and we will find a
-              slot that works.
+              No times are available this month. Try next month, or email{" "}
+              <a href={`mailto:${site.email}`}>{site.email}</a> and we will find a time for you.
             </p>
           ) : !selectedDay ? (
             <p className="slots-empty">Select a highlighted date to see its times.</p>
           ) : (
             <>
-              <h3>{formatDayHeading(selectedDay.date)}</h3>
+              <h3 className="day-heading" ref={dayHeadingRef}>
+                {formatDayHeading(selectedDay.date)}
+              </h3>
               <div className="time-slots" role="group" aria-label="Available times">
                 {selectedDay.slots.map((slot) => (
                   <button

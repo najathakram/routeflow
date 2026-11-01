@@ -47,8 +47,8 @@ const EXPECTED_ROUTE_METADATA: Record<string, { title: string; description: stri
   },
   contact: {
     title: "See RouteFlow in action",
-    description:
-      "Request a focused walkthrough of wholesale orders, routes, and customer accounts.",
+    // W6 (COPY.md 2j): the title stays for now, the description says the two ways in.
+    description: "Email us or book a video call.",
   },
   privacy: {
     title: "Privacy Policy",

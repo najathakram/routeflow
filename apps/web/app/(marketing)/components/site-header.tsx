@@ -10,9 +10,9 @@ import { Brand } from "@/components/brand";
 import { DEMO_CTA, routes, NAV_SLUGS } from "../lib/site";
 import { authLinks } from "./auth-links";
 
-// The five primary-nav items, sourced from the single `routes` table (L-072
-// — never hand-mirror labels/hrefs). Contact is deliberately absent from the
-// desktop nav (spec.md R2) but appears in the mobile sheet below.
+// The primary-nav items, sourced from the single `routes` table (L-072
+// — never hand-mirror labels/hrefs). The desktop nav and the mobile sheet both
+// map this one list, so Contact appears in each exactly once (W6, Q5).
 const NAV_LINKS = NAV_SLUGS.map((slug) => {
   const route = routes.find((r) => r.slug === slug);
   if (!route) throw new Error(`SiteHeader: no routes[] entry for "${slug}"`);
@@ -130,10 +130,6 @@ export function SiteHeader() {
                           <ArrowUpRight size={18} aria-hidden="true" />
                         </Link>
                       ))}
-                      <Link href="/contact" onClick={() => setOpen(false)}>
-                        Contact
-                        <ArrowUpRight size={18} aria-hidden="true" />
-                      </Link>
                     </nav>
                     <div className="mobile-access">
                       <a href={authLinks.distributorSignIn}>

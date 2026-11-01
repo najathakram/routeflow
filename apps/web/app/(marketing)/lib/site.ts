@@ -65,8 +65,7 @@ export const routes: MarketingRoute[] = [
     slug: "contact",
     label: "Contact",
     title: "See RouteFlow in action",
-    description:
-      "Request a focused walkthrough of wholesale orders, routes, and customer accounts.",
+    description: "Email us or book a video call.",
   },
   {
     slug: "privacy",
@@ -82,8 +81,18 @@ export const routes: MarketingRoute[] = [
   },
 ];
 
-/** The five primary-nav routes, in header/footer order. */
-export const NAV_SLUGS = ["product", "wholesalers", "retailers", "pricing", "company"] as const;
+/**
+ * The primary-nav routes, in header order. Contact sits before Company on purpose: the desktop nav
+ * hides its LAST link from 901 to 1100 px (marketing.css), and that must stay Company, not Contact.
+ */
+export const NAV_SLUGS = [
+  "product",
+  "wholesalers",
+  "retailers",
+  "pricing",
+  "contact",
+  "company",
+] as const;
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
 // privacy/terms were excluded while they were placeholder shells; now that they carry the

@@ -9943,3 +9943,13 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
+
+/* W6 / C1: Contact joined the desktop nav (Q5), and at exactly 901 px the header was about a pixel
+   too wide, so "Sign in" and "Book a video call" wrapped to two lines. One pixel less between the
+   nav links, 901 to 1100 px only (the range where Company hides and the header is tightest), gives
+   the room. Pinned in e2e/36 T2b at 901. W4's shorter button label can make this unnecessary. */
+@media (min-width: 901px) and (max-width: 1100px) {
+  .rf-marketing .desktop-nav {
+    gap: 3px;
+  }
+}
