@@ -16,7 +16,7 @@
  *   G-L5  boxed line (5 boxes of 12, B661 pieces): the bind compares in the unit the clamp uses.
  *   G-L6  filing-period straddle (the SALE sits in an earlier, LOCKED period): the bind reads the same remaining the reversal books.
  *   G-L7  a line-named return (R-r22's shape): refused (A-3's pinned bind fires first; the A-4 bind would refuse it too).
- *   G-L8  a line with no live SALE row: accepted, as on master.   G-L9  the S1 shape on a non-regulated product: accepted.
+ *   G-L8  a line that never booked a SALE row: accepted, as on master.   G-L9  the S1 shape on a non-regulated product: accepted.
  *   G-L10 for each accepted credit: the tax the reversal booked equals the levy the items store (within the closing drift).
  *   G-L3c (SA-1054 A-2) the money fits, the qty does not: refused (the qty arm). G-L12 two items on one order line and invoice: each
  *         fits, together they don't (the fold). G-L13 a line a re-sync offset and never re-booked: observed.
@@ -40,6 +40,7 @@ import { NumberingService } from "../import/numbering.service";
 import { CreditNoteReissueService } from "../credit-notes/credit-note-reissue.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { censusOldTypedCredits } from "./credit-reversal-census";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -926,7 +927,58 @@ describeDb(
         const s = await returnsOf(label, shape, [...qtys], true);
         const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67);
         expect({ label, door: doorOf(err) }).toEqual({ label, door: "pinned (A-3)" });
+        expect({ label, items: await itemCount(s) }).toEqual({ label, items: 0 });
       }
+    });
+
+    /**
+     * SA-1054 A-6, rows CD-20 to CD-22: the branches of A-5's rule that no earlier row could see, because every amount-only row
+     * so far reached the qty left anyway. A row typed by amount only is held to the money left (the money test); the row that
+     * takes all of it closes the line, a row that takes part of it stays small (the qty left is not the default).
+     */
+    it("CD-20: 24 pcs, 4 + 4 back, a typed 3.00 / 1 then an amount-only 3.67 (all the money left) is accepted and the line nets 0 / 0", async () => {
+      const s = await returnsOf("cd20", TWENTY_FOUR, [4, 4]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 3, 1))).toBeNull();
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 3.67))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 0, qty: 0 });
+    });
+
+    it("CD-21: 24 pcs, 4 + 4 back, two items on one order line, amount-only 3.33 + 3.34: accepted and the line nets 0 / 0", async () => {
+      const s = await returnsOf("cd21", TWENTY_FOUR, [4, 4]);
+      const second = await secondItemOnA(s);
+      const err = await typedCreditItems(s, s.invoiceA.id, [
+        { invoiceItemId: s.iA.id, amount: 3.33 },
+        { invoiceItemId: second.id, amount: 3.34 },
+      ]);
+      expect({ code: codeOf(err), door: doorOf(err) }).toEqual({ code: null, door: null });
+      expect(await ledgerOf(s)).toEqual({ net: 0, qty: 0 });
+    });
+
+    it("CD-22: 24 pcs, 12 back, a typed 1.00 / 12 then an amount-only 2.00 twice: the line nets 2 / 0 then 0 / 0, no levy left, census short 0; 2.03 on the 2.00 left is refused", async () => {
+      const s = await returnsOf("cd22", TWENTY_FOUR, [12]);
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 1, 12))).toBeNull();
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 2))).toBeNull();
+      expect(await ledgerOf(s)).toEqual({ net: 2, qty: 0 });
+
+      const refused = await returnsOf("cd22b", TWENTY_FOUR, [12]);
+      expect(
+        codeOf(await typedCredit(refused, refused.invoiceA.id, refused.iA.id, 1, 12)),
+      ).toBeNull();
+      expect(codeOf(await typedCredit(refused, refused.invoiceA.id, refused.iA.id, 2))).toBeNull();
+      const itemsBefore = await itemCount(refused);
+      const err = await typedCredit(refused, refused.invoiceA.id, refused.iA.id, 2.03);
+      expect(doorOf(err)).toBe("ledger room (A-4)");
+      expect(await itemCount(refused)).toBe(itemsBefore);
+
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 2))).toBeNull();
+      const after = await lineA(s);
+      expect({ net: after.net, qty: after.qty, tax: after.tax }).toEqual({
+        net: 0,
+        qty: 0,
+        tax: 0,
+      });
+      const census = await censusOldTypedCredits(prisma, { tenantId: s.tenantId });
+      expect(census.notesBookedLessTaxThanStored).toBe(0);
     });
 
     it("CD-11a: one live invoice: 6.68 / 4 is refused by the money check (no item); 6.67 / 4 is accepted and the ledger reads 0 / 0", async () => {
