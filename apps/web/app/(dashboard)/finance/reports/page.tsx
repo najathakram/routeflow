@@ -60,6 +60,7 @@ import type { ToCollectState } from "@routeflow/types";
 import { depositOverdueLine, groupArAgingByCustomer, toCollectLookup } from "@/lib/ar-aging-rows";
 import { ToCollectChip } from "@/components/ToCollectChip";
 import { receivableSummaryBalanceTotal } from "@/lib/receivable-summary-total";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
@@ -336,7 +337,7 @@ function ArAgingReport({
                     </td>
                   ))}
                   <td className="px-4 py-2.5 text-right font-semibold text-navy">
-                    {fmt(rowTotal)}
+                    <OpenBalanceButton customerId={customerId}>{fmt(rowTotal)}</OpenBalanceButton>
                   </td>
                   <td className="px-4 py-2.5 text-right text-navy" data-testid="ar-to-collect">
                     {toCollect[customerId] ? fmt(toCollect[customerId].balance) : "\u2014"}
@@ -940,7 +941,9 @@ function CustomerBalanceReport({
               >
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.businessName}</td>
                 <td className="px-4 py-2.5 text-right text-navy">{r.invoiceCount}</td>
-                <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.balance)}</td>
+                <td className="px-4 py-2.5 text-right font-semibold text-navy">
+                  <OpenBalanceButton customerId={r.customerId}>{fmt(r.balance)}</OpenBalanceButton>
+                </td>
                 <td className="px-4 py-2.5 text-right font-semibold text-danger">
                   {r.overdue > 0 ? fmt(r.overdue) : "\u2014"}
                 </td>
