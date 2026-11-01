@@ -1146,6 +1146,35 @@ describe("SA-1060 A-4 (M3): the closed row claims no stock outcome the quote has
     expect(summary("prod-1")).toHaveTextContent("Not added to stock");
   });
 
+  it("a product the answered quote has no chunk for (added with no quantity, or still pending) claims nothing, while the quoted line keeps its word", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ productId: "prod-1", pieces: 6, neverSold: false })]));
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // Gadget joins after the quote answered: no quantity yet, so the quote has nothing for it
+    await pick("Gadget");
+    expect(summary("prod-2")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-2")).not.toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // a quantity makes the next quote pending: the last quote still has no chunk for Gadget
+    setQty("4", 1);
+    expect(summary("prod-2")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-2")).not.toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // once the quote answers for it, it reads the quote's word
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        chunk({ productId: "prod-1", pieces: 6, neverSold: false }),
+        noSale({ productId: "prod-2", pieces: 4, subtotal: 10, taxAmount: 0, neverSold: true }),
+      ]),
+    );
+    expect(summary("prod-2")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
   it("an answered quote for goods sold before still reads 'Back to stock' (guard)", async () => {
     renderSection({ reasonContext: "counter" });
     await pick();

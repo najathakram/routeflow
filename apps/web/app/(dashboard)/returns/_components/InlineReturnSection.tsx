@@ -62,6 +62,11 @@ const UW = unitWords();
 // line and a pack line from a source order, say — can be edited/removed independently.
 type SectionLine = InlineReturnLineDraft & { lineKey: string };
 
+/** A-4 (M3): the quote has priced at least one chunk of this product, so its neverSold flag is an answer rather than an absence. */
+function quotePricedProduct(facts: LineQuoteFacts): boolean {
+  return facts.covered.length + facts.notOnInvoice.length + facts.alreadyReturned.length > 0;
+}
+
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
@@ -414,11 +419,12 @@ export function InlineReturnSection({
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
                   // SA-1060 PR-2: goods this customer was never sold are not added to stock, whatever the reason (the quote says so).
-                  // A-4 (M3): with no quote to say (not yet asked, refused, failed) a restocking reason claims nothing: null
+                  // A-4 (M3): with no quote to say (not yet asked, refused, failed, or
+                  // no chunk for THIS product: no quantity yet, or its quote still pending) a restocking reason claims nothing: null
                   stocks={
                     !restocksForReason(ruling.reason || captureReason)
                       ? false
-                      : productFacts
+                      : productFacts && quotePricedProduct(productFacts)
                         ? !productFacts.neverSold
                         : null
                   }
