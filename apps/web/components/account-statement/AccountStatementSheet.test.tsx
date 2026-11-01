@@ -140,10 +140,10 @@ describe("OpenBalanceButton", () => {
 
   it("U18: browser Back closes the sheet and stays on the page", async () => {
     renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    const here = window.location.href;
     await open();
     await screen.findByTestId("account-statement-sheet");
-    const here = window.location.href;
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    window.history.back();
     await waitFor(() => expect(screen.queryByTestId("account-statement-sheet")).toBeNull());
     expect(window.location.href).toBe(here);
   });
@@ -524,5 +524,90 @@ describe("AccountStatementSheet", () => {
     await screen.findByTestId("account-statement-invoices");
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.getAllByText("INV-1001").length).toBeGreaterThan(0);
+  });
+});
+
+describe("Mac mini proof on #4061 (U26: F02 reload, the enter)", () => {
+  const url = () => new URL(window.location.href);
+  beforeEach(() => window.history.replaceState({}, "", "/customers/c1"));
+  afterEach(() => window.history.replaceState({}, "", "/"));
+
+  it("F02: opening writes ?statement=<customer> on the pushed entry, keeping the back-to-close mark", async () => {
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    await screen.findByTestId("account-statement-sheet");
+    await waitFor(() => expect(url().searchParams.get("statement")).toBe("c1"));
+    expect(window.history.state).toMatchObject({ __rfBackToClose: true });
+  });
+
+  it("F02: a reload with ?statement=<customer> comes back with the sheet open, and the URL keeps the param", async () => {
+    window.history.replaceState({}, "", "/customers/c1?statement=c1");
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+    expect(await screen.findByTestId("account-statement-open-balance")).toHaveTextContent(
+      "$120.00",
+    );
+    await waitFor(() => expect(url().searchParams.get("statement")).toBe("c1"));
+  });
+
+  it("F02: a param for another customer opens nothing", async () => {
+    window.history.replaceState({}, "", "/customers/c1?statement=c2");
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("F02: no permission, no sheet, and the figure stays plain", async () => {
+    mockMay = false;
+    window.history.replaceState({}, "", "/customers/c1?statement=c1");
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("F02: two figures for the same customer open one sheet, not two", async () => {
+    window.history.replaceState({}, "", "/customers/c1?statement=c1");
+    renderWithProviders(
+      <>
+        <OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>
+        <OpenBalanceButton customerId="c1">$120.00 again</OpenBalanceButton>
+      </>,
+    );
+    await screen.findByTestId("account-statement-sheet");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(screen.getAllByTestId("account-statement-sheet")).toHaveLength(1);
+  });
+
+  it("F02: closing by the X leaves a clean URL; a later reload does not reopen the sheet", async () => {
+    window.history.replaceState({}, "", "/customers/c1?statement=c1");
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    const user = userEvent.setup();
+    await screen.findByTestId("account-statement-sheet");
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByTestId("account-statement-sheet")).toBeNull());
+    await waitFor(() => expect(url().searchParams.has("statement")).toBe(false));
+  });
+
+  it("F02: Back closes the restored sheet and the URL has no param", async () => {
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    await screen.findByTestId("account-statement-sheet");
+    window.history.back();
+    await waitFor(() => expect(screen.queryByTestId("account-statement-sheet")).toBeNull());
+    await waitFor(() => expect(url().searchParams.has("statement")).toBe(false));
+  });
+
+  it("the enter: no diagonal. The sheet slides from the right only (no slide from the top, no zoom)", async () => {
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    const dialog = await screen.findByRole("dialog", { name: "Statement" });
+    const cls = dialog.className;
+    expect(cls).toContain("data-[state=open]:slide-in-from-right");
+    expect(cls).not.toMatch(/slide-in-from-top/);
+    expect(cls).not.toMatch(/slide-out-to-top/);
+    expect(cls).not.toMatch(/zoom-(in|out)-95/);
+    expect(cls).not.toContain("top-1/2");
   });
 });
