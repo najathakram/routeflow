@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import type { AccountStatement } from "@routeflow/types";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
-import { useAccountStatement } from "@/lib/api/account-statement";
-import { tenantDateOf, useTenantTimeZone } from "@/lib/tenant-timezone";
+import { accountStatementKey, useAccountStatement } from "@/lib/api/account-statement";
+import { paymentMethodLabel } from "@/lib/payment-methods";
 import {
   STATEMENT_COPY,
   daysLateLabel,
@@ -35,7 +36,7 @@ function InvoiceNumber({ id, number, link }: { id: string; number: string; link:
   return link ? (
     <Link
       href={`/invoices/${id}`}
-      className="inline-flex min-h-[44px] items-center font-medium text-brand-600 hover:underline sm:min-h-0"
+      className="inline-flex items-center font-medium text-brand-600 hover:underline max-sm:min-h-[44px] max-sm:min-w-[44px]"
     >
       {number}
     </Link>
@@ -55,9 +56,9 @@ export function AccountStatementBody({
   statement: AccountStatement;
   linkInvoices: boolean;
 }) {
-  const zone = useTenantTimeZone();
   const shape = statementShape(statement);
-  const asOf = fmtCalendarDate(tenantDateOf(statement.asOf, zone) || statement.asOf);
+  // every date on the statement is already the tenant's day ("YYYY-MM-DD", SA-1078 A-3): no zone is run over it
+  const asOf = fmtCalendarDate(statement.asOf);
   return (
     <div className="space-y-5" data-testid="account-statement-body">
       <div>
@@ -141,8 +142,6 @@ export function AccountStatementBody({
                       >
                         Due {fmtCalendarDate(r.dueDate)}
                         {r.daysLate > 0 ? ` · ${daysLateLabel(r.daysLate)}` : ""}
-                        {` · Total ${fmt(r.total)} · Paid ${fmt(r.paid)}`}
-                        {shape.showCreditColumn && r.credit > 0 ? ` · Credit ${fmt(r.credit)}` : ""}
                       </div>
                     </td>
                     <td className="hidden px-2 py-2 align-top sm:table-cell">
@@ -166,10 +165,40 @@ export function AccountStatementBody({
                     )}
                     <td className="py-2 pl-2 text-right align-top font-semibold tabular-nums text-navy">
                       {fmt(r.unpaid)}
+                      <div
+                        className="text-xs font-normal text-navy/70 sm:hidden"
+                        data-testid="statement-row-paid"
+                      >
+                        {`Paid ${fmt(r.paid)}`}
+                        {shape.showCreditColumn && r.credit > 0 ? ` · Credit ${fmt(r.credit)}` : ""}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t border-surface-border" data-testid="account-statement-foot">
+                  <th
+                    scope="row"
+                    colSpan={shape.showCreditColumn ? 5 : 4}
+                    className="hidden py-2 pr-2 text-left text-sm font-semibold text-navy sm:table-cell"
+                  >
+                    {STATEMENT_COPY.openBalance}
+                  </th>
+                  <th
+                    scope="row"
+                    className="py-2 pr-2 text-left text-sm font-semibold text-navy sm:hidden"
+                  >
+                    {STATEMENT_COPY.openBalance}
+                  </th>
+                  <td
+                    className="py-2 pl-2 text-right text-sm font-bold tabular-nums text-navy"
+                    data-testid="account-statement-foot-total"
+                  >
+                    {fmt(statement.openBalance)}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
             {shape.cut && (
               <p className="text-xs text-navy/70" data-testid="account-statement-cut">
@@ -195,7 +224,7 @@ export function AccountStatementBody({
                 className="flex justify-between gap-3 py-2"
               >
                 <span>
-                  {fmtCalendarDate(p.date)} · {p.method}
+                  {fmtCalendarDate(p.date)} · {paymentMethodLabel(p.method)}
                   {p.reference ? ` ${p.reference}` : ""} · {p.invoiceNumber}
                 </span>
                 <span className="font-medium tabular-nums">{fmt(p.amount)}</span>
@@ -223,6 +252,7 @@ export function AccountStatementBody({
                   {c.number ?? (c.kind === "ADVANCE" ? "Advance" : "Credit")} ·{" "}
                   {fmtCalendarDate(c.date)}
                   {c.reason ? ` · ${c.reason}` : ""}
+                  {c.expiresAt ? ` · Expires ${fmtCalendarDate(c.expiresAt)}` : ""}
                 </span>
                 <span className="font-medium tabular-nums">{fmt(c.remaining)}</span>
               </li>
@@ -253,50 +283,74 @@ export function AccountStatementSheet({
 }) {
   const q = useAccountStatement(customerId, open);
   useBackToClose(open, onClose);
+  // U9: a sheet that read a fresher figure leaves the figures behind it fresh too, and the next open reads again
+  const qc = useQueryClient();
+  const loaded = React.useRef(false);
+  React.useEffect(() => {
+    if (open && q.data) loaded.current = true;
+  }, [open, q.data]);
+  React.useEffect(() => {
+    if (open || !loaded.current) return;
+    loaded.current = false;
+    const own = accountStatementKey(customerId);
+    void qc.invalidateQueries({
+      queryKey: ["customers", customerId],
+      predicate: (query) => query.queryKey[3] !== own[3],
+    });
+    void qc.invalidateQueries({ queryKey: ["invoices"] });
+    void qc.invalidateQueries({ queryKey: ["reports"] });
+    qc.removeQueries({ queryKey: own });
+  }, [open, customerId, qc]);
   // U17: the sheet has no Radix trigger, so it hands focus back to the figure that was tapped.
   const tapped = React.useRef<HTMLElement | null>(null);
+  // The sheet is a React child of the figure that opened it, and React bubbles events through a portal: without this, a tap
+  // inside the sheet reaches the row it sits in (AR aging, Customer Balance Summary) and navigates the page behind it.
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={STATEMENT_COPY.title}
-      scroll
-      className={SHEET_CLASS}
-      onOpenAutoFocus={() => {
-        tapped.current = document.activeElement as HTMLElement | null;
-      }}
-      onCloseAutoFocus={(e) => {
-        e.preventDefault();
-        tapped.current?.focus();
-      }}
-      footer={
-        q.data ? (
-          <div
-            data-testid="account-statement-actions"
-            className="flex flex-wrap items-center gap-2"
-          >
-            <StatementPrintButton customerId={customerId} />
-            {actions}
-          </div>
-        ) : undefined
-      }
-    >
-      <div data-testid="account-statement-sheet">
-        {q.data ? (
-          <AccountStatementBody statement={q.data} linkInvoices={linkInvoices} />
-        ) : q.isError ? (
-          <div role="alert" className="space-y-3">
-            <p className="text-sm text-navy">{STATEMENT_COPY.loadFailed}</p>
-            <Button type="button" variant="secondary" size="sm" onClick={() => void q.refetch()}>
-              {STATEMENT_COPY.tryAgain}
-            </Button>
-          </div>
-        ) : (
-          <p role="status" className="text-sm text-navy/70">
-            Loading…
-          </p>
-        )}
-      </div>
-    </Modal>
+    <span className="contents" onClick={stop} onKeyDown={stop}>
+      <Modal
+        open={open}
+        onClose={onClose}
+        title={STATEMENT_COPY.title}
+        scroll
+        className={SHEET_CLASS}
+        closeClassName="max-sm:flex max-sm:min-h-11 max-sm:min-w-11 max-sm:items-center max-sm:justify-center"
+        onOpenAutoFocus={() => {
+          tapped.current = document.activeElement as HTMLElement | null;
+        }}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          tapped.current?.focus();
+        }}
+        footer={
+          q.data ? (
+            <div
+              data-testid="account-statement-actions"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <StatementPrintButton customerId={customerId} />
+              {actions}
+            </div>
+          ) : undefined
+        }
+      >
+        <div data-testid="account-statement-sheet">
+          {q.data ? (
+            <AccountStatementBody statement={q.data} linkInvoices={linkInvoices} />
+          ) : q.isError ? (
+            <div role="alert" className="space-y-3">
+              <p className="text-sm text-navy">{STATEMENT_COPY.loadFailed}</p>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void q.refetch()}>
+                {STATEMENT_COPY.tryAgain}
+              </Button>
+            </div>
+          ) : (
+            <p role="status" className="text-sm text-navy/70">
+              Loading…
+            </p>
+          )}
+        </div>
+      </Modal>
+    </span>
   );
 }
