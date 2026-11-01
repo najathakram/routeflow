@@ -1,6 +1,6 @@
 /**
- * D6 / B462 (option B) — customers list / CSV receivables and the operator statement's exposure
- * figures. Split out of `customers.service.spec.ts` so that file stays under the size ratchet
+ * D6 / B462 (option B) — the operator statement's exposure figures (the customers list and CSV moved to
+ * the statement's Open balance in SA-1078 PR-5; see `customers.service.open-balance.spec.ts`). Split out of `customers.service.spec.ts` so that file stays under the size ratchet
  * (`common/size-ratchet.spec.ts`); the harness is the same mocked-Prisma + stub-provider setup,
  * and `honouringTake` is copied verbatim. The derivation's own unit specs live in
  * `invoices/credit-exposure.spec.ts`.
@@ -18,7 +18,6 @@ import { EmailService } from "../email/email.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { computeCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 
 const MOCK_CUSTOMER = {
@@ -79,236 +78,12 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
       return Promise.resolve(matched.slice(skip, skip + take));
     });
 
-  // ─── D6 / B462 (option B) — only UNBACKED drafts leave the receivables basis; the statement
+  // ─── D6 / B462 (option B) — the statement
   // gains operator-only exposure figures from the SAME derivation the hard credit block uses.
   // A DRAFT whose order is OPEN or DELIVERED still counts by balance (delivered goods stay
-  // guarded); a standalone / cancelled-order / draft-order DRAFT is not a receivable. The
-  // DRAFT-PAYMENT basis (non-VOID payments) is a separate open decision and stays.
-  describe("D6 / B462 (option B) — only unbacked DRAFT invoices excluded from list/CSV receivables; statement exposure", () => {
+  // guarded); a standalone / cancelled-order / draft-order DRAFT is pending, not counted.
+  describe("D6 / B462 (option B) — statement exposure; list unusedCredits", () => {
     const past = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-    const orderOf = (status: string) => ({ status });
-
-    // One fixture, every shape, worked out by hand:
-    //   SENT 100 (no order)                          → 100  counted by balance
-    //   DRAFT 900 standalone (no order)              → skipped (unbacked)
-    //   DRAFT 700 on a CANCELLED order               → skipped (unbacked)
-    //   DRAFT 600 on a DRAFT-status order            → skipped (unbacked)
-    //   DRAFT 300 on a DELIVERED order               → 300  counted (backed)
-    //   DRAFT 50 on an OPEN (CONFIRMED) order        →  50  counted (backed)
-    //   PAID 500                                     → dropped by the settled filter
-    const fixture = () => [
-      { customerId: "cust-1", status: "SENT", total: 100, order: null, payments: [] },
-      { customerId: "cust-1", status: "DRAFT", total: 900, order: null, payments: [] },
-      {
-        customerId: "cust-1",
-        status: "DRAFT",
-        total: 700,
-        order: orderOf("CANCELLED"),
-        payments: [],
-      },
-      { customerId: "cust-1", status: "DRAFT", total: 600, order: orderOf("DRAFT"), payments: [] },
-      {
-        customerId: "cust-1",
-        status: "DRAFT",
-        total: 300,
-        order: orderOf("DELIVERED"),
-        payments: [],
-      },
-      {
-        customerId: "cust-1",
-        status: "DRAFT",
-        total: 50,
-        order: orderOf("CONFIRMED"),
-        payments: [],
-      },
-      { customerId: "cust-1", status: "PAID", total: 500, order: null, payments: [] },
-    ];
-
-    it("findAll: reads non-settled invoices INCLUDING drafts (each with its order status) and drops ONLY unbacked drafts from receivables", async () => {
-      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-      prisma.invoice.findMany.mockImplementation(honouringTake(fixture()));
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      // 100 + 300 (delivered-order draft) + 50 (open-order draft) — not 2,650 and not 100.
-      expect((result.data[0] as any).receivables).toBe(450);
-      const args = prisma.invoice.findMany.mock.calls[0][0];
-      // Settled only in SQL: DRAFT must come back so the JS predicate can judge its order.
-      expect(new Set(args.where.status.notIn)).toEqual(new Set(CREDIT_NOT_APPLICABLE));
-      expect(args.where.status.notIn).not.toContain("DRAFT");
-      expect(args.select.status).toBe(true);
-      expect(args.select.order).toEqual({ select: { status: true } });
-    });
-
-    it("findAll: a customer whose only invoice is an unbacked DRAFT shows 0 receivables", async () => {
-      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-      prisma.invoice.findMany.mockImplementation(
-        honouringTake([
-          { customerId: "cust-1", status: "DRAFT", total: 900, order: null, payments: [] },
-        ]),
-      );
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      expect((result.data[0] as any).receivables).toBe(0);
-    });
-
-    it("findAll: the payment basis is UNCHANGED — non-VOID payments (incl. a DRAFT payment) still net off", async () => {
-      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-      prisma.invoice.findMany.mockImplementation(
-        honouringTake([
-          {
-            customerId: "cust-1",
-            status: "SENT",
-            total: 100,
-            order: null,
-            payments: [
-              { amount: 100, status: "VOID" }, // bounced — ignored
-              { amount: 25, status: "DRAFT" }, // still counted as paid (tracked follow-up)
-            ],
-          },
-        ]),
-      );
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      expect((result.data[0] as any).receivables).toBe(75);
-    });
-
-    it("findAll: a BACKED draft nets its payments like any invoice (balance, not total)", async () => {
-      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-      prisma.invoice.findMany.mockImplementation(
-        honouringTake([
-          {
-            customerId: "cust-1",
-            status: "DRAFT",
-            total: 300,
-            order: orderOf("DELIVERED"),
-            payments: [{ amount: 120, status: "PAID" }],
-          },
-        ]),
-      );
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      expect((result.data[0] as any).receivables).toBe(180);
-    });
-
-    it("findAll: the summed receivable is cents, never binary-float dust (0.1 + 0.2 → 0.3)", async () => {
-      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-      prisma.invoice.findMany.mockImplementation(
-        honouringTake([
-          { customerId: "cust-1", status: "SENT", total: 0.1, order: null, payments: [] },
-          { customerId: "cust-1", status: "SENT", total: 0.2, order: null, payments: [] },
-        ]),
-      );
-
-      const result = await service.findAll({ page: 1, limit: 20 });
-
-      // 0.1 + 0.2 === 0.30000000000000004 in binary floating point.
-      expect((result.data[0] as any).receivables).toBe(0.3);
-    });
-
-    it("exportCustomers: the nested invoice read keeps drafts; the CSV Receivables column drops ONLY unbacked drafts", async () => {
-      // A findMany that APPLIES the nested `include.invoices.where` to the fixture, so the CSV
-      // total below proves which invoices reach the sum (PAID dropped in SQL, unbacked drafts in JS).
-      prisma.customer.findMany.mockImplementation((args: any) => {
-        const notIn: string[] = args.include.invoices.where.status.notIn;
-        return Promise.resolve([
-          {
-            ...MOCK_CUSTOMER,
-            customerType: "RETAIL",
-            user: { status: "ACTIVE" },
-            invoices: fixture()
-              .map((i, idx) =>
-                idx === 0 ? { ...i, payments: [{ amount: 25, status: "PAID" }] } : i,
-              )
-              .filter((i) => !notIn.includes(i.status)),
-            advancePayments: [],
-          },
-        ]);
-      });
-
-      const csv = await service.exportCustomers({});
-
-      // (100 − 25) + 300 + 50 = 425; the 900 / 700 / 600 unbacked drafts are dropped.
-      expect(csv.split("\n")[1]).toContain(",425.00,0.00");
-      const args = prisma.customer.findMany.mock.calls[0][0];
-      expect(new Set(args.include.invoices.where.status.notIn)).toEqual(
-        new Set(CREDIT_NOT_APPLICABLE),
-      );
-      expect(args.include.invoices.select.status).toBe(true);
-      expect(args.include.invoices.select.order).toEqual({ select: { status: true } });
-    });
-
-    it("the list and the CSV agree on one customer's receivables (one basis)", async () => {
-      prisma.customer.findMany.mockImplementation((args: any) => {
-        if (args.include?.invoices) {
-          const notIn: string[] = args.include.invoices.where.status.notIn;
-          return Promise.resolve([
-            {
-              ...MOCK_CUSTOMER,
-              customerType: "RETAIL",
-              user: { status: "ACTIVE" },
-              invoices: fixture().filter((i) => !notIn.includes(i.status)),
-              advancePayments: [],
-            },
-          ]);
-        }
-        return Promise.resolve([MOCK_CUSTOMER]);
-      });
-      prisma.customer.count.mockResolvedValue(1);
-      prisma.advancePayment.findMany.mockResolvedValue([]);
-      prisma.invoice.findMany.mockImplementation(honouringTake(fixture()));
-
-      const list = await service.findAll({ page: 1, limit: 20 });
-      const csv = await service.exportCustomers({});
-
-      const listed = (list.data[0] as any).receivables;
-      expect(csv.split("\n")[1]).toContain(`,${listed.toFixed(2)},0.00`);
-      expect(listed).toBe(450);
-    });
-
-    it("exportCustomers: a settled-to-the-cent invoice shows 0.00, never -0.00 float dust (B584)", async () => {
-      prisma.customer.findMany.mockImplementation((args: any) => {
-        const notIn: string[] = args.include.invoices.where.status.notIn;
-        return Promise.resolve([
-          {
-            ...MOCK_CUSTOMER,
-            customerType: "RETAIL",
-            user: { status: "ACTIVE" },
-            invoices: [
-              {
-                status: "SENT",
-                total: 0.3,
-                order: null,
-                // 0.3 − (0.1 + 0.2) === −5.55e-17 in binary floating point → "-0.00" via toFixed
-                payments: [
-                  { amount: 0.1, status: "PAID" },
-                  { amount: 0.2, status: "PAID" },
-                ],
-              },
-            ].filter((i) => !notIn.includes(i.status)),
-            advancePayments: [],
-          },
-        ]);
-      });
-
-      const csv = await service.exportCustomers({});
-
-      expect(csv.split("\n")[1]).toContain(",0.00,0.00");
-      expect(csv.split("\n")[1]).not.toContain("-0.00");
-    });
 
     it("findAll: unusedCredits is cents too (0.1 + 0.2 → 0.3)", async () => {
       prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
