@@ -180,6 +180,10 @@ export interface InlineReturnQuoteChunk {
    *  already returned or credited). Shown as "already returned or credited", NOT "not on any invoice"; only staff may credit it,
    *  with a reason; a driver capture holds it for the office. Absent on every other chunk. */
   alreadyReturned?: boolean;
+  /** SA-1060 PR-2: this customer has no live invoice line of the product in their whole history, so the goods did not come from
+   *  us. The server credits such a chunk with no sales tax and does not add it to stock; the screen reads this to say "Not added
+   *  to stock". True or false on every chunk from this API; absent only from an older one. Never sent by the client. */
+  neverSold?: boolean;
 }
 
 export interface InlineReturnQuoteBreakdown {

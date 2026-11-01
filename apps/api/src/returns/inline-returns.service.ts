@@ -470,7 +470,9 @@ export class InlineReturnsService {
         qty: c.pieces,
         reason,
         condition: dtoItem?.condition,
-        restock: dtoItem?.restock ?? this.restockDefault(reason),
+        // SA-1060 PR-2: goods this customer was never sold are never added to stock. Keyed on the CHUNK the pricer flagged, so
+        // neither the reason nor a DTO `restock: true` can switch it on; every other chunk is exactly as before.
+        restock: c.neverSold ? false : (dtoItem?.restock ?? this.restockDefault(reason)),
         sourceOrderId: c.sourceOrderId,
         sourceInvoiceItemId: c.sourceInvoiceItemId,
         sourceOrderItemId: c.sourceOrderItemId,

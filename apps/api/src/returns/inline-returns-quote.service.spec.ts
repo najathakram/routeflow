@@ -879,7 +879,39 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
   });
 
-  it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax)", async () => {
+  it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax) — for goods sold to this customer before, outside the window", async () => {
+    // SA-1060 PR-2: only the whole-history read (no issueDate filter) finds the old sale, so the 5 pieces are an unreferenced
+    // chunk of a SOLD-BEFORE product. (A product never sold to them takes no tax at all: the next test.)
+    (db.invoice.findMany as jest.Mock).mockImplementation((args: any) =>
+      Promise.resolve(
+        args?.where?.issueDate === undefined
+          ? [
+              {
+                orderId: "ord-old",
+                subtotal: 20,
+                discount: 0,
+                taxAmount: 1.6,
+                items: [
+                  {
+                    id: "item-old",
+                    orderItemId: "oi-old",
+                    productId: "prod-1",
+                    qty: 2,
+                    unitPrice: 10,
+                    subtotal: 20,
+                    boxes: null,
+                    pieces: null,
+                    unitsPerBox: null,
+                    promoFreeUnits: null,
+                    taxRate: 0.08,
+                    categoryTaxAmount: 0,
+                  },
+                ],
+              },
+            ]
+          : [],
+      ),
+    );
     const result = await service.quote(
       {
         customerId: "cust-1",
@@ -892,6 +924,20 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     expect(result.taxAmount).toBe(4.0);
     expect(result.taxAmount).not.toBe(0);
     expect(systemConfig.get).toHaveBeenCalledWith("settings.taxRate");
+  });
+
+  it("SA-1060 PR-2: the same 5 pieces of a product on none of this customer's invoices, ever, carry no tax", async () => {
+    const result = await service.quote(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
+      OPERATOR,
+    );
+
+    expect(result.subtotal).toBe(50.0);
+    expect(result.taxAmount).toBe(0);
+    expect(result.chunks[0].neverSold).toBe(true);
   });
 
   it("still charges $0.00 tax for an exempt customer, even with a non-zero tenant rate", async () => {
@@ -1022,6 +1068,7 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
           categoryTax: 0.8,
           priceSource: "SOURCE_INVOICE",
           unitPrice: 5,
+          neverSold: false,
         },
       ]),
     );

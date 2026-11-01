@@ -378,18 +378,28 @@ export class InlineReturnsQuoteService {
       return (await this.creditNotedPiecesOutsideReturns(db, lines)) > 0;
     };
 
+    // SA-1060 PR-2: ONE product-filtered read of the customer's sold lines (null window = whole history; only invoices that HAVE
+    // the product), cached per product. `lifetimeExhausted` and `neverSoldToCustomer` both read it, so a product costs one read.
+    const lifetimeLinesCache = new Map<string, CandidateInvoiceLine[]>();
+    const lifetimeLines = async (productId: string): Promise<CandidateInvoiceLine[]> => {
+      const cached = lifetimeLinesCache.get(productId);
+      if (cached !== undefined) return cached;
+      const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
+        soldWindowDays: null,
+        excludeInvoiceIds: opts.excludeInvoiceIds,
+      });
+      const lines = lifeSet.filter((l) => l.productId === productId);
+      lifetimeLinesCache.set(productId, lines);
+      return lines;
+    };
+
     // B961 (SA-071f): Σ returned + Σ credit-noted pieces >= Σ sold pieces across ALL this customer's live invoices of the product.
     // Cached per product; an unclassifiable prior return counts as exhausted (fail toward staff review).
     const lifetimeCache = new Map<string, boolean>();
     const lifetimeExhausted = async (productId: string): Promise<boolean> => {
       const cached = lifetimeCache.get(productId);
       if (cached !== undefined) return cached;
-      // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
-      const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
-        soldWindowDays: null,
-        excludeInvoiceIds: opts.excludeInvoiceIds,
-      });
-      const lines = lifeSet.filter((l) => l.productId === productId);
+      const lines = await lifetimeLines(productId);
       const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
       let exhausted = false;
       if (sold > 0) {
@@ -404,6 +414,14 @@ export class InlineReturnsQuoteService {
       }
       lifetimeCache.set(productId, exhausted);
       return exhausted;
+    };
+
+    // SA-1060 PR-2: the customer has NO live invoice line of this product in their whole history, so goods past what was bought
+    // did not come from us. A product with a line in the pricing window is sold without a read; otherwise the cached whole-history
+    // read decides. Asked only for a product that has a no-sale chunk.
+    const neverSoldToCustomer = async (productId: string): Promise<boolean> => {
+      if (matchingSet.some((l) => l.productId === productId)) return false;
+      return (await lifetimeLines(productId)).length === 0;
     };
 
     for (const item of dto.items) {
@@ -505,7 +523,8 @@ export class InlineReturnsQuoteService {
       // item / §3.2 cases 2/3 — never a hand-rolled 0, which silently zero-taxed every
       // unreferenced chunk on a product with no candidate invoice line at all).
       // B463: when that candidate's invoice charged NO tax (m-7), the over-return is untaxed too: never credit a tax the sale
-      // did not charge. A product on no candidate invoice at all takes the tenant's current rate.
+      // did not charge. A product with a sale outside the window takes the tenant's current rate; one the customer was never sold, ever, is
+      // untaxed (SA-1060 PR-2: the pricer zeroes it from `neverSold`).
       const candidateLine = matchingSet.find((l) => l.productId === item.productId);
       const fallbackTaxRate = candidateLine
         ? candidateLine.invoiceTaxAmount === 0
@@ -519,6 +538,11 @@ export class InlineReturnsQuoteService {
       // recent purchases were returned (repeat buyer).
       const hasPriorReturns = allocated.some((c) => !c.line)
         ? (await windowHasPriorReturns(item.productId)) || (await lifetimeExhausted(item.productId))
+        : false;
+      // SA-1060 PR-2: goods this customer was never sold, ever, carry no sales tax and are not added to stock; the pricer reads
+      // this flag, not the rate. Only a product with a no-sale chunk asks (at most one whole-history read per product).
+      const neverSold = allocated.some((c) => !c.line)
+        ? await neverSoldToCustomer(item.productId)
         : false;
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
@@ -535,6 +559,7 @@ export class InlineReturnsQuoteService {
               },
               fallbackTaxRate,
               customer.isTaxExempt,
+              neverSold,
             );
         // B961: the unreferenced chunk of a product the customer DID buy AND already has prior returns of is "already returned
         // or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.
