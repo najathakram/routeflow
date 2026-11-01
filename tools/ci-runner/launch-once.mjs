@@ -16,6 +16,8 @@ const EXIT_BAD_FLAGS = 2;
 export const EXIT_NOT_PRIVATE = 3;
 export const EXIT_FOREIGN_QUEUED = 4;
 const EXIT_NO_SEAT = 5;
+/** Owner ruling 2026-10-30: Verify runs on train heads only. One path segment, as every train is named. */
+const TRAIN_BRANCH = /^train\/[A-Za-z0-9._-]+$/;
 /** "verify" in the label makes this one of heavy-slot's capped verify seats. */
 const SEAT_LABEL = "ci-runner-verify";
 /** Under heavy-slot's 90-minute hold cap, which ends tracked children only: docker here isn't one. */
@@ -302,6 +304,10 @@ const REAL_DEPS = {
 export async function launch(flags, deps = REAL_DEPS) {
   if (!flags.branch) {
     deps.error("refusing: --branch is required, to check the job the runner takes");
+    return EXIT_BAD_FLAGS;
+  }
+  if (!TRAIN_BRANCH.test(flags.branch)) {
+    deps.error(`refusing: --branch must be a train head (train/<name>), not ${flags.branch}`);
     return EXIT_BAD_FLAGS;
   }
   if (!(flags.maxMinutes > 0 && flags.maxMinutes <= MAX_MINUTES)) {

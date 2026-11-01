@@ -23,7 +23,7 @@ gh workflow run ci.yml --repo najathakram/routeflow --ref <train-branch> -f runn
 node tools/ci-runner/launch-once.mjs --branch <train-branch>
 ```
 
-The launcher takes its own heavy seat, so do not wrap it in `heavy-slot run`. Run it in the background and read its output when it exits. While it waits for a seat, nothing is registered, and it is safe to stop. `--branch` must match the dispatch: the launcher stops any job that isn't a dispatch on that branch.
+The launcher takes its own heavy seat, so do not wrap it in `heavy-slot run`. Run it in the background and read its output when it exits. While it waits for a seat, nothing is registered, and it is safe to stop. `--branch` must be a train head (`train/<name>`), or the launcher refuses before it takes a seat, and it must match the dispatch: the launcher stops any job that isn't a dispatch on that branch.
 
 The branch needs this PR's `ci.yml`, because a dispatch reads the workflow from the branch.
 
@@ -58,12 +58,12 @@ docker network create routeflow-ci-runner
 gh run list --repo najathakram/routeflow --workflow ci.yml --branch <train-branch> --limit 1
 ```
 
-| Exit | Meaning                                                 | What to do                                            |
-| ---- | ------------------------------------------------------- | ----------------------------------------------------- |
-| 2    | `--branch` is missing, or `--max-minutes` isn't 1 to 80 | Fix the flag                                          |
-| 3    | The repo is not PRIVATE                                 | Wait for the window to close, then start the launcher |
-| 4    | A run from outside the repo is queued or running        | Do not start a runner. Read the run first             |
-| 5    | No heavy seat: `CI` is set, or `RF_HEAVY_SLOT=off`      | Unset it. The runner never runs beside a seat         |
+| Exit | Meaning                                                                       | What to do                                            |
+| ---- | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| 2    | `--branch` is missing or isn't a train head, or `--max-minutes` isn't 1 to 80 | Fix the flag                                          |
+| 3    | The repo is not PRIVATE                                                       | Wait for the window to close, then start the launcher |
+| 4    | A run from outside the repo is queued or running                              | Do not start a runner. Read the run first             |
+| 5    | No heavy seat: `CI` is set, or `RF_HEAVY_SLOT=off`                            | Unset it. The runner never runs beside a seat         |
 
 These four print a `refusing:` line and register no runner. The job stays queued for up to 24 hours, so a later launcher can still take it.
 
@@ -116,13 +116,13 @@ A public repo lets a fork PR reach a self-hosted runner, and the repo goes publi
 - The runner's token is good for one job, and the container is deleted after it.
 - The container holds no secrets, runs as an unprivileged user and can't reach private addresses.
 
-**Check for a live runner before opening a window.** The deploy flow doesn't check this for you.
+**A public flip refuses while a runner is registered.** The window runs the check and the flip as one command, so the flip goes only on a reading of 0:
 
 ```bash
-gh api repos/najathakram/routeflow/actions/runners --jq ".total_count"
+node tools/ci-runner/check-no-runner.mjs && gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences
 ```
 
-It should print 0. If it doesn't, finish or stop that runner before you open the window, as in [Stopping it](#stopping-it).
+Exit 1 means a runner is registered, and the check names it. Finish or stop it, as in [Stopping it](#stopping-it). Exit 2 means GitHub gave no reading, which also refuses the flip.
 
 A confirmed job keeps running if the repo goes public. A one-job runner can't take a second job, so that job is the only one exposed.
 

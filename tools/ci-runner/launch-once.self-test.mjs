@@ -19,6 +19,7 @@ import {
   pollOnce,
   runContainer,
 } from "./launch-once.mjs";
+import { EXIT_LIVE_RUNNER, EXIT_UNREADABLE, checkNoRunner } from "./check-no-runner.mjs";
 import { isCappedLabel, withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
 
 let passed = 0;
@@ -382,6 +383,113 @@ check(
   ),
   true,
 );
+
+// A commented-out line must not satisfy these pins, so comments go first. The order matters too: a
+// private address on port 443 has to hit the REJECT before the web ACCEPT.
+const entrypoint = readFileSync(new URL("./entrypoint.sh", import.meta.url), "utf8")
+  .split(/\r?\n/)
+  .filter((line) => !/^\s*#/.test(line))
+  .join("\n");
+check(
+  "C10 the job drops to uid 10001 with no groups and no capabilities",
+  entrypoint.includes(
+    "setpriv --reuid=10001 --regid=10001 --clear-groups --bounding-set=-all --inh-caps=-all ",
+  ),
+  true,
+);
+check(
+  "C11 every private range is in the REJECT loop",
+  /for net in ([^;]+); do\s+iptables -A OUTPUT -d "\$net" -j REJECT\s+done/
+    .exec(entrypoint)?.[1]
+    .split(" "),
+  ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"],
+);
+check(
+  "C12 private ranges are rejected before the web is allowed, and the rest is rejected last",
+  (() => {
+    const reject = entrypoint.indexOf('iptables -A OUTPUT -d "$net" -j REJECT');
+    const web = entrypoint.indexOf(
+      "iptables -A OUTPUT -p tcp -m multiport --dports 80,443 -j ACCEPT",
+    );
+    const last = entrypoint.indexOf("iptables -A OUTPUT -j REJECT");
+    return reject !== -1 && reject < web && web < last;
+  })(),
+  true,
+);
+
+// ── Train heads only ─────────────────────────────────────────────────────────────────────────────
+for (const branch of [
+  "master",
+  "feat/x",
+  "fix/train/acme",
+  "xtrain/acme",
+  "train/",
+  "train/a/b",
+  "train/a b",
+]) {
+  const { deps, calls } = fakeDeps();
+  check(
+    `T1 --branch ${branch} is refused before the seat`,
+    [await launch({ ...defaults, branch }, deps), calls.length],
+    [2, 0],
+  );
+}
+for (const branch of ["train/acme", "train/o-2026-11-01", "train/post-sitting-b-6", "train/w19"]) {
+  const { deps, calls } = fakeDeps();
+  await launch({ ...defaults, branch }, deps);
+  check(`T2 --branch ${branch} goes ahead`, calls.includes("mint"), true);
+}
+
+// ── A public flip refuses while a runner is registered ───────────────────────────────────────────
+{
+  const run = (reply) => {
+    const lines = [];
+    const code = checkNoRunner(reply, (line) => lines.push(line));
+    return { code, text: lines.join("\n") };
+  };
+  const reading = (body) => () => JSON.stringify(body);
+  check("N1 no runner: the flip may go", run(reading({ total_count: 0, runners: [] })).code, 0);
+  const live = run(
+    reading({ total_count: 1, runners: [{ id: 7, name: "rf-ephemeral-1", busy: true }] }),
+  );
+  check("N2 a registered runner refuses the flip", live.code, EXIT_LIVE_RUNNER);
+  check("N3 the refusal names the runner", /rf-ephemeral-1/.test(live.text), true);
+  check(
+    "N4 an idle runner refuses it too",
+    run(reading({ total_count: 1, runners: [{ id: 7, name: "x", busy: false }] })).code,
+    EXIT_LIVE_RUNNER,
+  );
+  check(
+    "N5 gh failing refuses it: no reading is not a zero",
+    run(() => {
+      throw new Error("gh timed out");
+    }).code,
+    EXIT_UNREADABLE,
+  );
+  for (const [name, body] of [
+    ["no total_count", {}],
+    ["a null total_count", { total_count: null }],
+    ["a string total_count", { total_count: "0" }],
+  ]) {
+    check(`N6 ${name} refuses it`, run(reading(body)).code, EXIT_UNREADABLE);
+  }
+  check("N7 bad JSON refuses it", run(() => "<html>").code, EXIT_UNREADABLE);
+  check(
+    "N8 it reads this repo's runners, not an org's",
+    (() => {
+      let asked;
+      checkNoRunner(
+        (a) => {
+          asked = a.join(" ");
+          return JSON.stringify({ total_count: 0, runners: [] });
+        },
+        () => {},
+      );
+      return asked;
+    })(),
+    `api repos/${REPO}/actions/runners`,
+  );
+}
 
 // ── Refusals mint nothing ────────────────────────────────────────────────────────────────────────
 {
