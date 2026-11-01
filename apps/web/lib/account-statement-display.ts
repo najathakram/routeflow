@@ -18,6 +18,11 @@ export const STATEMENT_COPY = {
   loadFailed: "Couldn't load the statement.",
   tryAgain: "Try Again",
   viewStatement: "View statement",
+  print: "Print",
+  printOrShare: "Print or share",
+  openPdf: "Open PDF",
+  printFailedTitle: "Couldn't print the statement",
+  printFailedBody: "Try again.",
 } as const;
 
 export const daysLateLabel = (n: number): string => (n === 1 ? "1 day late" : `${n} days late`);
