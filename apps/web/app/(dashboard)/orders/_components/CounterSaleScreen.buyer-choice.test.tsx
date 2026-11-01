@@ -28,6 +28,17 @@ const BOLT = { id: "c-bolt", businessName: "Bolt Deli", pricingTier: 1, fulfillP
 jest.mock("@/lib/api-client", () => ({
   apiClient: { get: jest.fn(), post: jest.fn(), delete: jest.fn() },
 }));
+// SA-1068: the till reads the customer's remembered prices (an empty, answered read here: no sticky upsell).
+jest.mock("@/lib/api/orders", () => ({
+  ...jest.requireActual("@/lib/api/orders"),
+  useCustomerPriceHistory: () => ({
+    data: {},
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [ACME, BOLT] } }),
   useCustomerPrices: () => ({

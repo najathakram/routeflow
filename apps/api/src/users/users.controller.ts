@@ -25,6 +25,7 @@ import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
 import { NoImpersonation } from "../auth/decorators/no-impersonation.decorator";
 import { OperatorPermissionsService } from "../auth/permissions/operator-permissions.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 @ApiTags("users")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -35,6 +36,7 @@ export class UsersController {
     private readonly permissions: OperatorPermissionsService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
@@ -49,9 +51,10 @@ export class UsersController {
     return this.usersService.createOperator(dto);
   }
 
+  /** W-839 / SA-937: the caller's own record plus `alsoBuyer` (getMe); `/:id` below never carries it. */
   @Get("me")
   getMe(@CurrentUser() user: JwtPayload) {
-    return this.usersService.findById(user.sub);
+    return this.usersService.getMe(user.sub);
   }
 
   /** The caller's feature groups (any authenticated staff role). Declared before `:id` so it is not shadowed. */

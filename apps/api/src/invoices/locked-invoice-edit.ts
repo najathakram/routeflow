@@ -292,7 +292,7 @@ export function assertNotOverpaidByEdit(
   if (over(newTotal) > over(Number(storedTotal))) {
     throw new ConflictException({
       code: API_ERROR_CODES.INVOICE_TOTAL_BELOW_PAID,
-      message: `This change would take the invoice total ($${roundMoney(newTotal).toFixed(2)}) below the $${paid.toFixed(2)} already paid or credited. Remove the credit first, or change the lines or discount.`,
+      message: `This change would take the invoice total ($${roundMoney(newTotal).toFixed(2)}) below the $${roundMoney(paid).toFixed(2)} already paid or credited. Remove the credit first, or change the lines or discount.`,
     });
   }
 }

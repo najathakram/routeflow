@@ -1,14 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { isDayClosedRefusal } from "../day-closed-copy";
+import { isCreateReturnRefusal } from "../return-error-text";
 import type {
   CreateReturnItemDto,
+  CreateReturnLineItemDto,
   FiledPeriod,
   InlineRefundTender,
   ReturnKind,
   UnbilledReturnItem,
 } from "@routeflow/types";
-export type { CreateReturnItemDto, UnbilledReturnItem } from "@routeflow/types";
+export type {
+  CreateReturnItemDto,
+  CreateReturnLineItemDto,
+  UnbilledReturnItem,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +38,17 @@ export interface ReturnItem {
   orderedQty: number;
   unitPrice?: number | null;
   qty: number;
+  /**
+   * SA-1042 B9b: the order line this item names (a snapshot of the line, never the live product), or null for a pooled item.
+   * `qty` is then in that line's own unit, pieces for a modern line.
+   */
+  line?: {
+    unitLabel: string | null;
+    unitsPerBox: number | null;
+    boxes: number | null;
+    pieces: number | null;
+    qty: number;
+  } | null;
   condition?: string;
   notes?: string;
   restock?: boolean;
@@ -62,6 +79,10 @@ export interface Return {
   logs?: ReturnLog[];
   createdAt: string;
   updatedAt: string;
+  /** SA-1060 PR-1: why an INLINE return is waiting for staff (see INLINE_HOLD_REASONS in @routeflow/types); null/absent when it is not held. */
+  holdReason?: string | null;
+  /** The credit held back until approval. A Prisma Decimal: JSON carries it as a string; show it, never compute with it. */
+  heldAmount?: number | string | null;
   /** Populated once a CREDIT_NOTE refund has minted store credit for this return. */
   creditNoteId?: string;
   creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
@@ -108,6 +129,8 @@ export function useReturns(params?: {
   /** #2406: STANDARD (default, unchanged) | INLINE | ALL. The order-detail panel passes
    *  "ALL" so a captured INLINE return (every return that flow records) shows up. */
   kind?: "STANDARD" | "INLINE" | "ALL";
+  /** SA-1060 PR-1: comma list of INLINE_HOLD_REASONS; the held-returns filter ("Waiting for approval"). */
+  holdReason?: string;
 }) {
   return useQuery<PaginatedResponse<Return>>({
     queryKey: ["returns", params],
@@ -130,13 +153,15 @@ export interface CreateReturnDto {
   orderId: string;
   reason: ReturnReason;
   notes?: string;
-  items: CreateReturnItemDto[];
+  /** A pooled item (`qty`), or a line item naming its order line (B9c: the form sends line items only). */
+  items: (CreateReturnItemDto | CreateReturnLineItemDto)[];
 }
 
 export function useCreateReturn() {
   const qc = useQueryClient();
   return useMutation<Return, Error, CreateReturnDto>({
     mutationFn: (dto) => apiClient.post("/returns", dto).then((r) => r.data),
+    meta: { localErrorToast: isCreateReturnRefusal }, // the form toasts these itself, and only it has the sentence
     onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
   });
 }

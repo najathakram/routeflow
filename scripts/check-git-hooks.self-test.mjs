@@ -74,6 +74,17 @@ try {
       !/npx husky/.test(r.message),
     JSON.stringify(r),
   );
+  ok(
+    "T1b a missing .husky/_ names the likely cause: a branch that predates the tracked hooks",
+    /predates the tracked \.husky\/_/.test(r.message) && /merge master/.test(r.message),
+    r.message,
+  );
+  const aOther = repo("missing-other-dir");
+  sh(aOther, "config", "core.hooksPath", ".githooks");
+  ok(
+    "T1c a missing hooks dir that is not .husky/_ gets no older-branch note",
+    !/predates/.test(run(aOther).message),
+  );
 
   // T2 — the directory present with a pre-push hook PASSES.
   withHook(a, ".husky/_");

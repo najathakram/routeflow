@@ -458,7 +458,11 @@ describe("products export.csv", () => {
   });
 
   it("honours the list filters in the where clause and ignores paging", async () => {
-    const { svc, productCalls } = build({ products: [] });
+    const { svc, prisma, productCalls } = build({ products: [] });
+    // W-925 (SA-1002): LOW is the shared id prefetch, so the export filters on `id in (...)`, never a second `lte 5` literal
+    prisma.tenantTransaction = jest.fn(async (fn: any) =>
+      fn({ $queryRaw: async () => [{ id: "low-1" }] }),
+    );
     await run(svc, {
       ...WINDOW,
       search: "cola",
@@ -476,7 +480,8 @@ describe("products export.csv", () => {
     expect(s).toContain("Drinks");
     expect(w.isActive).toBe(true); // LOW also pins isActive true
     expect(w.isTobacco).toBe(false);
-    expect(w.currentStock).toEqual({ lte: 5 });
+    expect(w.currentStock).toBeUndefined();
+    expect(JSON.stringify(w)).toContain('"id":{"in":["low-1"]}');
     expect(w.trackedCategoryId).toEqual({ not: null });
     expect(productCalls[0].skip).toBeUndefined();
     expect(productCalls[0].take).toBeGreaterThan(5);

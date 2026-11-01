@@ -207,9 +207,10 @@ jobs:
     permissions:
       contents: read
     # `inputs` is empty on every event but dispatch, so a PR always gets ubuntu-latest. The runner
-    # job takes about 38 minutes, hence the longer limit. It keeps no token on disk.
+    # job takes about 38 minutes and keeps no token on disk.
     runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted","routeflow-ephemeral"]') || 'ubuntu-latest' }}
-    timeout-minutes: ${{ inputs.runner == 'self-hosted' && 45 || 30 }}
+    # Turbo alone took 25m23s on 2026-10-31; 30 cut the script self-tests off.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:

@@ -17,6 +17,7 @@ const FILES = [
   path.resolve(__dirname, "../page.tsx"),
   path.resolve(__dirname, "./PosOrderActions.tsx"),
   path.resolve(__dirname, "./DeleteOrderTier.tsx"),
+  path.resolve(__dirname, "./ReopenDeliveredTier.tsx"),
 ];
 const sources = FILES.map((f) =>
   ts.createSourceFile(

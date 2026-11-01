@@ -57,10 +57,12 @@ import {
 import {
   customerLinePrice,
   computeLineSubtotal,
+  isStickyUpsell,
   pendingScanDecision,
   undoPendingTap,
   type DerivedBaseMarker,
   type SellLevel,
+  mayCompleteAtCounter,
 } from "@routeflow/pricing";
 import {
   applyTypedPrice,
@@ -71,6 +73,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
+import { newProductPrefill } from "@/lib/product-prefill";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
@@ -116,16 +119,17 @@ import { ScanOrderScreen } from "./scan/ScanOrderScreen";
 import { PriceEditor } from "./scan/PriceEditor";
 import type { ScanHistoryEntry } from "./scan/scan-summary";
 import { LicenseGuardModal } from "./LicenseGuardModal";
-import { API_ERROR_CODES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, COUNTER_COPY, FULFILL_PATH_VALUES, staffMay } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { parseRestrictionWarning } from "@/lib/api/restriction-warning";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import type { BlockedLine } from "@routeflow/types";
+import type { BlockedLine, FulfillPath } from "@routeflow/types";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { CustomerSearchPicker } from "./CustomerSearchPicker";
+import { useNewCustomerDoor } from "./useNewCustomerDoor";
 import { STALE_CREDIT_COPY, isStaleCreditRefusal } from "./stale-credit-refusal";
 import { useCustomerChangeUndo } from "./use-customer-change-undo";
 import { useListboxNav } from "@/lib/use-listbox-nav";
@@ -170,7 +174,7 @@ const schema = z.object({
    *  `.optional()` (not `.default()`) matches `urgent` above — every call site
    *  already supplies an explicit "ROUTE"/"SHIP" value, and `.default()` here
    *  makes the zodResolver's inferred type disagree with useForm<FormValues>. */
-  fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
+  fulfillPath: z.enum(FULFILL_PATH_VALUES).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -180,7 +184,9 @@ type FormValues = z.infer<typeof schema>;
  * rather than widening the shared type — fully optional so drafts parked
  * before this feature (missing the key) still hydrate fine.
  */
-type DraftPayloadWithFulfillPath = OrderDraftPayload & { fulfillPath?: "ROUTE" | "SHIP" };
+type DraftPayloadWithFulfillPath = OrderDraftPayload & {
+  fulfillPath?: FulfillPath;
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -228,7 +234,8 @@ interface LineItem extends DerivedBaseMarker {
   /** S19b: a price the SYSTEM pre-filled from last-given history; the customer layer replaces it once ready. */
   systemPrefill?: boolean;
   /** B755: the customer whose last-given history pre-filled this line's price. A different customer chosen later
-   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it. */
+   *  re-prices the line like a plain one; a price the operator typed (or confirmed with a reason) clears it.
+   *  A line the system priced keeps its link until a person prices it (SA-1068 M27). */
   prefillCustomerId?: string;
   /** SA-817 A5: the price this line carried when the order was parked, set when a resume found today's price different. */
   priceChangedFrom?: number;
@@ -387,6 +394,15 @@ export function CreateOrderModal({
   const lineItemsRef = React.useRef(lineItems);
   lineItemsRef.current = lineItems;
   const [lineItemsError, setLineItemsError] = React.useState("");
+  // SA-1071 V3: what the latest chip tap or search pick did, in the scan history's own shape, for one Undo.
+  const [lastPick, setLastPick] = React.useState<ScanHistoryEntry | null>(null);
+  React.useEffect(() => {
+    if (!lastPick) return;
+    const t = window.setTimeout(() => setLastPick(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [lastPick]);
+  // a different customer is a different order: the old pick has nothing left to undo
+  React.useEffect(() => setLastPick(null), [selectedCustomer?.id]);
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
 
   // ── Custom (unlisted) item inline form ──
@@ -540,7 +556,10 @@ export function CreateOrderModal({
 
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
-  const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+  const priceHistoryRead = useCustomerPriceHistory(selectedCustomer?.id);
+  const priceHistory = priceHistoryRead.data;
+  // SA-1068 M17: the only memory read in this modal.
+  const rememberedOf = (productId: string) => priceHistory?.[productId]?.stickyPrice;
   // ONE batched request feeds every line's "Recent prices" chips (no per-line request, no mount budget).
   // This screen creates a new order, so there is no order of its own to exclude.
   const { data: priceSummary } = usePriceSummary(
@@ -594,7 +613,7 @@ export function CreateOrderModal({
     return () => clearTimeout(t);
   }, [productSearch]);
 
-  const { data: customersData } = useCustomers({
+  const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: debouncedCustomerSearch || undefined,
   });
   // A term that looks like a scanned code goes through the candidate-aware
@@ -610,6 +629,9 @@ export function CreateOrderModal({
     includeVariants: true,
   });
 
+  // The search has an answer (not on its way, not failed): only then is "No customers found." (and Add) true.
+  const customersAnswered =
+    debouncedCustomerSearch.length > 0 && customersData !== undefined && !customersFetching;
   const filteredCustomers = React.useMemo(() => {
     if (!debouncedCustomerSearch) return [];
     return (customersData?.data ?? []).slice(0, 8);
@@ -688,6 +710,18 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = watch("fulfillPath") ?? staffFulfilment.formDefault;
+  // W-1043: Pickup later in the regular order. Offered where the store hands over and the till is allowed (the API refuses
+  // PICKUP otherwise), so an optional counter gets it too (SA-1069 A-3); POS mode and a store-only business keep their own
+  // switch and behaviour.
+  const storePickupOffered = mayCompleteAtCounter({
+    mayUseTill: posAllowed,
+    methods: staffFulfilment.methods,
+    counter: staffFulfilment.counter,
+  });
+  const isPickup = posMode || (storePickupOffered && fulfillPath === "PICKUP");
+  // pickForm only knows ROUTE | SHIP (it would turn a PICKUP into SHIP), so PICKUP is carried here, only where it is offered.
+  const pickPath = (p?: string | null): FormValues["fulfillPath"] =>
+    p === "PICKUP" && storePickupOffered ? "PICKUP" : staffFulfilment.pickForm(p);
   // A ship-only account must not submit before /tenants/me/features answers (the path would fall back to
   // ROUTE) — and a FAILED answer keeps it blocked behind an inline Retry, never a silent ROUTE default.
   // POS mode sends the explicit PICKUP path, which does not depend on the delivery settings: never blocked by them.
@@ -696,7 +730,7 @@ export function CreateOrderModal({
   // the moment "Create Order" is clicked. It looks for the SAME merge target create would: same fulfil path.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(
     selectedCustomer?.id,
-    posMode ? "PICKUP" : fulfillPath,
+    isPickup ? "PICKUP" : fulfillPath,
   );
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
@@ -766,44 +800,45 @@ export function CreateOrderModal({
   const [customerListOpen, setCustomerListOpen] = React.useState(true);
   // Seeds the order's fulfilment from the customer's own default here (not in a
   // selectedCustomer-keyed effect) so hydrating a parked draft's own fulfillPath is never clobbered.
-  const pickCustomer = (c: SelectedCustomer) => {
+  const pickCustomer = (c: SelectedCustomer, keepPath = false) => {
     setSelectedCustomer(c);
-    setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
+    // W-1041: a customer made in the sale holds the form default, not the path the clerk chose: keep the clerk's.
+    if (!keepPath && fulfillPath !== "PICKUP")
+      setValue("fulfillPath", staffFulfilment.pickForm(c.fulfillPath));
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setCustomerListOpen(true);
     customerUndo.dismiss();
   };
+  // W-1041: a pickup (POS) order needs no address; a delivery or shipped one does.
+  const newCustomerDoor = useNewCustomerDoor<SelectedCustomer>(
+    (c) => pickCustomer(c, true),
+    !isPickup,
+  );
 
   // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
   // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
   // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
   // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
   // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
-  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes.
+  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes, and
+  // SA-1068 M27: a linked line follows its customer until a person prices it.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
       lineItems.map((li) => JSON.stringify(priceLayer.layerOf(li.productId) ?? null)).join("|")
     : "";
   React.useEffect(() => {
+    // read here: React can run the updater below after the resume effect has cleared this
+    const resuming = repriceAfterResumeRef.current;
     setLineItems((prev) => {
       let changed = false;
       const next = prev.map((line) => {
         let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        // classic modal (scan_v2 off): only a price pre-filled from another customer moves (B755 below)
-        if (
-          !scanV2 &&
-          !(
-            li.prefillCustomerId != null &&
-            selectedCustomer != null &&
-            li.prefillCustomerId !== selectedCustomer.id
-          )
-        ) {
-          return li;
-        }
+        // classic modal (scan_v2 off): only a linked line moves (B755 below, SA-1068 M27)
+        if (!scanV2 && !(li.prefillCustomerId != null && selectedCustomer != null)) return li;
         // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
         // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
         // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
@@ -820,6 +855,8 @@ export function CreateOrderModal({
             overrideReason: undefined,
           };
         }
+        // SA-1068 M28: a resume re-prices its own lines and writes the note, so a linked line waits for it
+        if (!scanV2 && !fromOtherCustomer && resuming) return li;
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
         if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
@@ -829,10 +866,11 @@ export function CreateOrderModal({
           product: li.tierPrices as unknown as Record<string, unknown>,
           tier,
           layer: priceLayer.layerOf(li.productId),
+          remembered: rememberedOf(li.productId), // SA-1068 M15: what the server books for this plain line
         });
         const tierPrice = lp.price;
         const priceType = lp.priceType;
-        const specialPrice = customerLineSpecial(lp);
+        const specialPrice = customerLineSpecial(lp, li.specialPrice);
         if (
           !fromOtherCustomer &&
           li.unitPrice === tierPrice &&
@@ -842,11 +880,17 @@ export function CreateOrderModal({
           return li;
         }
         changed = true;
-        return { ...li, unitPrice: tierPrice, priceType, specialPrice };
+        return {
+          ...li,
+          unitPrice: tierPrice,
+          priceType,
+          specialPrice,
+          prefillCustomerId: line.prefillCustomerId != null ? selectedCustomer?.id : undefined, // SA-1068 M27
+        };
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig]);
+  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig, priceHistory]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -990,8 +1034,16 @@ export function CreateOrderModal({
     const hasHistDiscount = !permanentPrice && histEntry != null && histEntry.lastPrice < tierPrice;
     // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
     // as a MANUAL override, mirroring the operator's last agreed above-list price.
-    const hasHistUpsell = !permanentPrice && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistUpsell = !permanentPrice && isStickyUpsell(histEntry?.stickyPrice, listPrice);
     const hasHistOverride = hasHistDiscount || hasHistUpsell;
+    // SA-1068 M20: no pre-fill, but the server books the memory: the line starts there, sends nothing and keeps its tier.
+    const memory = hasHistOverride
+      ? undefined
+      : memoryOf({
+          productId: product.id as string,
+          listPrice,
+          tierPrices: product as LineItem["tierPrices"],
+        });
     const orderedUnit =
       opts?.ordered?.unit && opts.ordered.unit.kind !== "pack" ? opts.ordered.unit : undefined;
     const baseLine: LineItem = {
@@ -1007,7 +1059,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
-      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
+      prefillCustomerId: hasHistOverride || memory != null ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1021,12 +1073,13 @@ export function CreateOrderModal({
             effectiveTier,
           )
         : undefined,
-      unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
-      priceType: hasHistUpsell
-        ? ("MANUAL" as const)
-        : hasHistDiscount
-          ? ("DISCOUNTED" as const)
-          : priceType,
+      unitPrice: hasHistOverride ? histEntry!.lastPrice : (memory ?? tierPrice),
+      priceType:
+        hasHistUpsell || memory != null
+          ? ("MANUAL" as const)
+          : hasHistDiscount
+            ? ("DISCOUNTED" as const)
+            : priceType,
       ...(opts?.ordered ? opts.ordered.qty : newLineQtyForLevel(upb, level, n)),
       unitsPerBox: upb,
       startOnDefaultUnit: opts?.startOnDefaultUnit,
@@ -1049,6 +1102,7 @@ export function CreateOrderModal({
           ...applyLineUnit(baseLine, orderedUnit, {
             tier: effectiveTier,
             layer: priceLayer.layerOf(product.id),
+            remembered: rememberedOf(product.id),
           }),
           qty: opts!.ordered!.qty.qty,
         }
@@ -1163,7 +1217,12 @@ export function CreateOrderModal({
   const addPicked = (product: any) => {
     if (isFamilyProduct(product)) return; // a FAMILY is a container, never a line (B1215 C7)
     // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
-    addLineItem(product, undefined, { startOnDefaultUnit: true });
+    const added = addLineItem(product, undefined, { startOnDefaultUnit: true });
+    recordPick(product, added);
+  };
+  const recordPick = (product: any, result: { created: boolean; refused?: boolean }) => {
+    if (result.refused) return;
+    setLastPick({ productId: product.id, created: result.created });
   };
 
   // PKG-4 F09: ArrowUp/Down + Enter on the product results. Nothing is highlighted until an Arrow
@@ -1195,9 +1254,9 @@ export function CreateOrderModal({
   const createProductRowIndex = productNavRows.length;
   productNavRows.push({ kind: "create" });
   const openCreateProduct = () => {
-    const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-    setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-    setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
+    const prefill = newProductPrefill(debouncedProductSearch);
+    setCreateProductInitialName(prefill.name);
+    setCreateProductInitialSku(prefill.sku);
     setCreateProductOpen(true);
     setProductSearch("");
     setDebouncedProductSearch("");
@@ -1328,6 +1387,20 @@ export function CreateOrderModal({
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
     cpMap.get(productId) ?? selectedCustomer?.pricingTier ?? 1;
+  // SA-1068 M17: the memory the server books for this line, by the same rule that prices it: pack only, no layer row.
+  const memoryOf = (li: Pick<LineItem, "productId" | "listPrice" | "unitLabel" | "tierPrices">) => {
+    const lp = customerLinePrice({
+      product: (li.tierPrices ?? { pricePerUnit: li.listPrice }) as unknown as Record<
+        string,
+        unknown
+      >,
+      tier: tierForProduct(li.productId),
+      layer: priceLayer.layerOf(li.productId),
+      unitLabel: li.unitLabel,
+      remembered: rememberedOf(li.productId),
+    });
+    return lp.remembered ? lp.price : undefined;
+  };
 
   // S19b (SA-811a R1): once the customer's layer has loaded, every auto-priced line (pack or unit, however it was added or
   // switched) takes the layer price. Idempotent (a settled line returns itself), so running it after every commit is safe;
@@ -1372,7 +1445,11 @@ export function CreateOrderModal({
   );
   const suggestionActions = useOrderSuggestionActions({
     suggestions: orderSuggestions,
-    addLine: addLineItem,
+    addLine: (product, level, opts) => {
+      const result = addLineItem(product, level, opts);
+      if (!opts.ordered) recordPick(product, result); // "Order again" adds many lines: no single Undo
+      return result;
+    },
     tierFor: tierForProduct,
     toast,
   });
@@ -1387,7 +1464,8 @@ export function CreateOrderModal({
       if (!target) return prev;
       const tier = tierForProduct(target.productId);
       const layer = priceLayer.layerOf(target.productId);
-      return applyUnitToLines(prev, tempId, option, refresh, tier, layer);
+      const remembered = rememberedOf(target.productId);
+      return applyUnitToLines(prev, tempId, option, refresh, tier, layer, remembered);
     });
   // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
   const { user: authUser } = useAuth();
@@ -1396,7 +1474,13 @@ export function CreateOrderModal({
     retry: retryUnits,
     retrying,
     statusFor: unitStatusFor,
-  } = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct, isStaffRole(authUser?.role));
+  } = useDefaultUnitResolver(
+    lineItems,
+    setLineItems,
+    tierForProduct,
+    isStaffRole(authUser?.role),
+    rememberedOf,
+  );
   const resolvingRef = React.useRef(false);
   /** #2865 case c: the row's pending-unit state (locked qty controls, tap count, loading/failed + Retry). */
   const pendingUnitOf = (li: LineItem) => {
@@ -1414,23 +1498,26 @@ export function CreateOrderModal({
         // logic, exactly like a quantity edit (the price controls are disabled while pending as well).
         if (refusesLineEdit(li, "price")) return li;
         if (value == null) {
-          // Clear override — revert to special or list price
-          const revertPrice = li.specialPrice ?? li.listPrice;
+          // Clear override — revert to the memory (SA-1068 M19), else to special or list price
+          const memory = memoryOf(li);
           return {
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
-            prefillCustomerId: undefined,
+            prefillCustomerId: memory != null ? selectedCustomer?.id : undefined, // SA-1068 M26
             overrideReason: undefined,
-            unitPrice: revertPrice,
-            priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+            unitPrice: memory ?? li.specialPrice ?? li.listPrice,
+            priceType: memory != null ? "MANUAL" : li.specialPrice != null ? "SPECIAL" : "STANDARD",
             startOnDefaultUnit: false,
           };
         }
         // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
-        const next = applyTypedPrice(li, value);
+        // SA-1068 M18: unknown memories count, so a failed read and a driver are covered too.
+        const next = applyTypedPrice(li, value, {
+          memoryMayBook: priceHistory === undefined || memoryOf(li) != null,
+        });
         const consumed = {
           ...next,
           startOnDefaultUnit: false,
@@ -1588,6 +1675,8 @@ export function CreateOrderModal({
   // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
   // the Escape and clear just the sub-flow state, keeping the order builder open.
   const handleEscape = (event: KeyboardEvent) => {
+    // A window above us (New product) already took this Escape for its own list: nothing here closes (SA-1066 FL1).
+    if (event.defaultPrevented) return;
     // The "Order again" menu takes Escape first — it closes the menu, never the order.
     if (suggestionsMenuOpen) {
       event.preventDefault();
@@ -1606,7 +1695,7 @@ export function CreateOrderModal({
       customerListOpen &&
       !selectedCustomer &&
       customerSearch &&
-      (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0)
+      (filteredCustomers.length > 0 || customersAnswered)
     ) {
       event.preventDefault();
       setCustomerListOpen(false);
@@ -1664,7 +1753,7 @@ export function CreateOrderModal({
   // Fill the builder from a draft payload (a docked server draft, a local copy, or the other device's version after a conflict).
   // Returns the payload exactly as the builder will re-serialize it, so the engine's baseline matches and hydrating itself writes nothing.
   const hydrateFromPayload = (p: DraftPayloadWithFulfillPath): DraftPayload => {
-    const pick = staffFulfilment.pickForm(p.fulfillPath);
+    const pick = pickPath(p.fulfillPath);
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
@@ -1750,10 +1839,18 @@ export function CreateOrderModal({
     cartJson: string;
   } | null>(null);
   const [pricesNotRefreshed, setPricesNotRefreshed] = React.useState(false);
-  const resumePricesReady = priceLayer.ready && customerPricesData !== undefined;
+  // SA-1068 M14: the remembered prices are part of the customer's price read, so the re-price waits for them too.
+  const resumePricesReady =
+    priceLayer.ready && customerPricesData !== undefined && !priceHistoryRead.isPending;
   React.useEffect(() => {
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
+    // SA-1068 A-4: the read has settled, so no data means it failed. Test the data: a failed refetch keeps its cached memories.
+    if (priceHistory === undefined) {
+      // Unknown memories: a re-price could put a remembered line on a tier the server won't book, under a false note.
+      setPricesNotRefreshed(true);
+      return;
+    }
     repriceAfterResumeRef.current = false;
     const tierFor = tierForProduct; // the one tier chain this modal prices with
     const layerOf = priceLayer.enabled
@@ -1766,7 +1863,12 @@ export function CreateOrderModal({
       if (fresh.byProduct.size === 0) return;
       setLineItems(
         (prev) =>
-          repriceResumedLines(withFreshTierPrices(prev, fresh.byProduct), tierFor, layerOf).lines,
+          repriceResumedLines(
+            withFreshTierPrices(prev, fresh.byProduct),
+            tierFor,
+            layerOf,
+            rememberedOf,
+          ).lines,
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1928,7 +2030,7 @@ export function CreateOrderModal({
       // Close a merge-vs-separate prompt that led here, so the operator lands back on the
       // Returns section they must fix (never a stale prompt over the blocked form).
       setMergePrompt(null);
-      toast({ title: RETURN_SAVE_BLOCKED[inlineReturn], variant: "error" });
+      toast({ title: returnSave.blockedMessage(inlineReturn), variant: "error" });
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.
@@ -1978,7 +2080,9 @@ export function CreateOrderModal({
       items: itemsForSubmit,
       notes: data.notes,
       urgent: posMode ? false : data.urgent,
-      fulfillPath: posMode ? "PICKUP" : staffFulfilment.pickForm(data.fulfillPath),
+      fulfillPath: isPickup
+        ? "PICKUP"
+        : staffFulfilment.pickForm(data.fulfillPath === "PICKUP" ? undefined : data.fulfillPath),
       // POS mode: the delivery-only fields step aside (their values are kept, so switching POS off restores them).
       requestedDeliveryDate: posMode ? undefined : requestedDeliveryDate || undefined,
       orderDate: orderDate || undefined,
@@ -2669,10 +2773,11 @@ export function CreateOrderModal({
                     setCustomerError("");
                   }}
                   results={filteredCustomers as SelectedCustomer[]}
-                  searched={debouncedCustomerSearch.length > 0}
+                  searched={customersAnswered}
                   listOpen={customerListOpen}
                   onListOpenChange={setCustomerListOpen}
                   onPick={pickCustomer}
+                  onCreateNew={newCustomerDoor.open}
                   error={customerError}
                 />
                 {customerUndo.previous && (
@@ -3059,6 +3164,26 @@ export function CreateOrderModal({
               </button>
             )}
 
+            {lastPick && lineItems.some((li) => li.productId === lastPick.productId) ? (
+              <p
+                role="status"
+                className="flex items-center gap-2 text-xs text-navy/70"
+                data-testid="last-pick-undo"
+              >
+                <span>Item added.</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    undoScan(lastPick);
+                    setLastPick(null);
+                  }}
+                  className="inline-flex min-h-[44px] items-center font-medium text-brand-500 hover:underline sm:min-h-0"
+                >
+                  Undo
+                </button>
+              </p>
+            ) : null}
+
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
@@ -3224,7 +3349,7 @@ export function CreateOrderModal({
               </div>
             )}
 
-            {staffFulfilment.choice && !posMode && (
+            {(staffFulfilment.choice || storePickupOffered) && !posMode && (
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
                 <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
@@ -3241,6 +3366,20 @@ export function CreateOrderModal({
                       {m === "ROUTE" ? "Delivery route" : "Ship via carrier"}
                     </button>
                   ))}
+                  {storePickupOffered && (
+                    <button
+                      type="button"
+                      onClick={() => setValue("fulfillPath", "PICKUP")}
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        fulfillPath === "PICKUP"
+                          ? "bg-navy text-white"
+                          : "text-navy/70 hover:text-navy",
+                      )}
+                    >
+                      {COUNTER_COPY.pickupLater}
+                    </button>
+                  )}
                 </div>
                 {fulfillPath === "SHIP" && (
                   <p className="text-[11px] leading-snug text-navy/70">Ships via carrier.</p>
@@ -3277,6 +3416,8 @@ export function CreateOrderModal({
           </section>
         </div>
       </form>
+      {/* Outside the form: a submit inside the customer window must not bubble into the order's. */}
+      {newCustomerDoor.modal}
 
       <InlineCreateProductModal
         isOpen={createProductOpen}

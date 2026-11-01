@@ -1,0 +1,907 @@
+import * as fs from "fs";
+import * as path from "path";
+import * as React from "react";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders, screen, waitFor, fireEvent, within, act } from "@/test-utils/render";
+import { computeLineSubtotal } from "@routeflow/pricing";
+import { apiClient } from "@/lib/api-client";
+import { renderTill } from "@/test-utils/render-till";
+import { CounterLineRow } from "./CounterLineRow";
+import { CounterSaleScreen } from "./CounterSaleScreen";
+
+/**
+ * W-853 (SA-1021 as amended by SA-1022, SA-940 rule 19): a counter line shows the SAME `PriceHistoryButton` as Create Order
+ * when a NAMED customer is picked and the person may edit prices (`mayEditPrices`, the one gate). A walk-in, no customer, or no
+ * grant shows nothing and makes no history request. "Use this price" goes through `editPrice` -> `applyPriceEdit`, the path a
+ * typed price takes: the dialog asks for the special-price reason, Charge asks again if the customer changes, the locked guard holds, and nothing prefills the till.
+ */
+
+type MockUser = { id: string; tenantSlug: string; role?: string } | null | undefined;
+let mockUser: MockUser;
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useOptionalAuth: () => ({ user: mockUser }),
+}));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+
+const COLA = {
+  id: "p-cola",
+  name: "Cola",
+  pricePerUnit: 10,
+  priceTier2: 8,
+  priceTier3: 6,
+  unit: "each",
+  unitsPerBox: null,
+};
+const JUICE = {
+  id: "p-juice",
+  name: "Juice",
+  pricePerUnit: 5,
+  priceTier2: 4,
+  priceTier3: 3,
+  unit: "each",
+  unitsPerBox: null,
+};
+/** a 12-pack at 24.00 a box */
+const WATER = {
+  id: "p-water",
+  name: "Water",
+  pricePerUnit: 24,
+  priceTier2: 20,
+  priceTier3: 18,
+  unit: "case",
+  unitsPerBox: 12,
+};
+/** a 24-pack at 48.00 a box, its base word "each": the line's unit hint must still read as the case */
+const CRATE = {
+  id: "p-crate",
+  name: "Crate",
+  pricePerUnit: 48,
+  priceTier2: 40,
+  priceTier3: 36,
+  unit: "each",
+  unitsPerBox: 24,
+};
+const PRODUCTS: Record<string, unknown> = { COLA, JUICE, WATER, CRATE };
+/** every code the scan box submitted, in order (a lookup is the proof a scan reached the scan box) */
+const mockLookups: string[] = [];
+jest.mock("@/lib/barcode-resolve", () => ({
+  ...jest.requireActual("@/lib/barcode-resolve"),
+  resolveProductByCode: async (code: string) => {
+    mockLookups.push(code);
+    return PRODUCTS[code] ? { product: PRODUCTS[code], source: "sku" } : { notFound: true };
+  },
+}));
+const ACME = { id: "c-acme", businessName: "Acme Cafe", pricingTier: 2 };
+const BETA = { id: "c-beta", businessName: "Beta Deli", pricingTier: 1 };
+const WALKIN = { id: "c-walkin", businessName: "Walk-in Record", pricingTier: 1, isWalkIn: true };
+jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn(), post: jest.fn() } }));
+// SA-1068: the till reads the customer's remembered prices (an empty, answered read here: no sticky upsell).
+jest.mock("@/lib/api/orders", () => ({
+  ...jest.requireActual("@/lib/api/orders"),
+  useCustomerPriceHistory: () => ({
+    data: {},
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
+jest.mock("@/lib/api/customers", () => ({
+  useCustomers: () => ({ data: { data: [ACME, BETA, WALKIN] } }),
+  useCustomerPrices: (customerId: string | undefined) =>
+    jest.requireActual("@tanstack/react-query").useQuery({
+      queryKey: ["customer-prices", customerId],
+      queryFn: () =>
+        jest
+          .requireMock("@/lib/api-client")
+          .apiClient.get(`/customers/${customerId}/prices`)
+          .then((r: { data: unknown }) => r.data),
+      enabled: !!customerId,
+    }),
+}));
+const mutateAsync = jest.fn();
+jest.mock("@/lib/api/counter-sale", () => ({
+  useCounterSaleGate: () => ({
+    showButton: true,
+    opensAsCounter: true,
+    offerShipInstead: false,
+    capability: { counter: "always" },
+  }),
+  useCreateCounterSale: () => ({ mutateAsync, isPending: false }),
+  useCounterSaleByKey: () => ({ mutateAsync: jest.fn(), isPending: false }),
+}));
+
+const get = apiClient.get as unknown as jest.Mock;
+const ADMIN = { id: "u-a", tenantSlug: "acme", role: "TENANT_ADMIN" };
+const OPERATOR = { id: "u-o", tenantSlug: "acme", role: "OPERATOR" };
+
+const historyRow = (over: Record<string, unknown>) => ({
+  date: "2026-09-20T00:00:00.000Z",
+  source: "INVOICE",
+  unitPrice: 9,
+  unitLabel: "each",
+  unitsPerBox: null,
+  salePack: 1,
+  qty: 2,
+  boxes: 0,
+  pieces: 2,
+  avgCostAtSale: 4,
+  invoiceId: "inv-1",
+  invoiceNumber: "INV-0001",
+  orderId: "ord-1",
+  orderNumber: "ORD-0001",
+  priceType: null,
+  ...over,
+});
+/** what the history endpoint answers per product: one usable price each, and Water also a different-pack price */
+const HISTORY: Record<string, unknown[]> = {
+  "p-cola": [
+    historyRow({ unitPrice: 9 }),
+    historyRow({ unitPrice: 8.004, invoiceNumber: "INV-2" }),
+  ],
+  "p-juice": [historyRow({ unitPrice: 4.5 })],
+  "p-crate": [historyRow({ unitPrice: 36, unitLabel: "case", unitsPerBox: 24, salePack: 24 })],
+  "p-water": [
+    historyRow({ unitPrice: 21, unitLabel: "case", unitsPerBox: 12, salePack: 12 }),
+    historyRow({
+      unitPrice: 40,
+      unitLabel: "case",
+      unitsPerBox: 24,
+      salePack: 24,
+      invoiceNumber: "INV-3",
+    }),
+  ],
+};
+const HISTORY_URL = /^\/customers\/[^/]+\/products\/[^/]+\/price-history$/;
+const historyCalls = () => get.mock.calls.filter((c) => HISTORY_URL.test(String(c[0])));
+
+const PARKED = "/orders/counter-sale/parked";
+const parkedPayload = () => ({
+  lines: [
+    {
+      tempId: "r1",
+      productId: "p-cola",
+      name: "Cola",
+      unitPrice: 10,
+      qty: 1,
+      listPrice: 10,
+      unit: "each",
+      priceType: "STANDARD",
+      tierPrices: { pricePerUnit: 10, priceTier2: 8 },
+    },
+  ],
+  customer: { id: "c-beta", businessName: "Beta Deli", pricingTier: 1 },
+  method: "CARD",
+  tendered: "",
+  reference: "",
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockLookups.length = 0;
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+  mockUser = ADMIN;
+  get.mockImplementation((url: string) => {
+    const m = /^\/customers\/[^/]+\/products\/([^/]+)\/price-history$/.exec(url);
+    if (m) return Promise.resolve({ data: { rows: HISTORY[m[1]] ?? [], summaries: [] } });
+    if (url === PARKED)
+      return Promise.resolve({
+        data: {
+          data: [
+            {
+              id: "a",
+              label: "Hold A",
+              registerKey: "main",
+              createdAt: "2026-10-08T18:41:00.000Z",
+              expiresAt: new Date(Date.now() + 72_000_000).toISOString(),
+              lineCount: 1,
+              customerName: "Beta Deli",
+            },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 20,
+        },
+      });
+    return url.endsWith("/statement")
+      ? Promise.resolve({ data: { outstandingAmount: 0, overdueAmount: 0, autoApplyCredit: 0 } })
+      : url.startsWith("/customers/")
+        ? Promise.resolve({ data: [] })
+        : Promise.resolve({ data: { taxRate: 0 } });
+  });
+  (apiClient.post as unknown as jest.Mock).mockImplementation((url: string) =>
+    /\/parked\/.+\/resume$/.test(url)
+      ? Promise.resolve({ data: { id: "a", label: "x", createdAt: "t", payload: parkedPayload() } })
+      : Promise.reject(new Error(`unexpected POST ${url}`)),
+  );
+  mutateAsync.mockResolvedValue({
+    orderId: "o1",
+    orderNumber: "ORD-1",
+    invoiceId: "i1",
+    invoiceNumber: "INV-1",
+    total: 9,
+    paid: 9,
+    balanceDue: 0,
+    change: 0,
+    paymentRecorded: true,
+  });
+});
+
+const NAME: Record<string, string> = {
+  COLA: "Cola",
+  JUICE: "Juice",
+  WATER: "Water",
+  CRATE: "Crate",
+};
+const scan = async (text: string) => {
+  const field = screen.getByLabelText("Scan or search items");
+  fireEvent.change(field, { target: { value: text } });
+  fireEvent.submit(field.closest("form")!);
+  await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: `Remove ${NAME[text]}` })).toBeInTheDocument(),
+  );
+};
+const pick = async (name: string) => {
+  fireEvent.change(screen.getByLabelText("Find a customer"), { target: { value: "a" } });
+  fireEvent.click(screen.getByRole("option", { name }));
+  await waitFor(() => expect(screen.queryByTestId("counter-reprice-busy")).toBeNull());
+};
+const total = () => screen.getByTestId("running-total");
+const lineOf = (name: string) =>
+  screen.getByRole("button", { name: `Remove ${name}` }).closest("li") as HTMLElement;
+/** how many "Price history" buttons the cart shows (a count, so a missing button reads Expected 1, Received 0) */
+const historyButtons = () => screen.queryAllByRole("button", { name: "Price history" });
+const openHistory = async (name: string) => {
+  expect(within(lineOf(name)).queryAllByRole("button", { name: "Price history" })).toHaveLength(1);
+  fireEvent.click(within(lineOf(name)).getByRole("button", { name: "Price history" }));
+  return screen.findByRole("dialog", { name: "Price history" });
+};
+const priceBtn = (dialog: HTMLElement, price: string) =>
+  within(dialog).findByRole("button", { name: `Use this price (${price})` });
+/** Opens the panel for `name`, taps Use on the `price` row and waits for the price dialog it opens. */
+const chooseHistoryPrice = async (name: string, price: string) => {
+  const panel = await openHistory(name);
+  fireEvent.click(await priceBtn(panel, price));
+  await waitFor(() =>
+    expect(screen.queryAllByRole("dialog", { name: `Change the price for ${name}` })).toHaveLength(
+      1,
+    ),
+  );
+};
+const completeBtn = () => screen.getByRole("button", { name: "Complete & show receipt" });
+const interactiveCount = (name: string) => lineOf(name).querySelectorAll("button, input").length;
+
+describe("W-853 the history button on a counter line", () => {
+  it("shows one history button per line once a named customer is picked, and asks nothing until then", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await scan("JUICE");
+    expect(historyButtons()).toHaveLength(0);
+    await pick("Beta Deli");
+    expect(historyButtons()).toHaveLength(2);
+    expect(within(lineOf("Cola")).queryAllByRole("button", { name: "Price history" })).toHaveLength(
+      1,
+    );
+    expect(
+      within(lineOf("Juice")).queryAllByRole("button", { name: "Price history" }),
+    ).toHaveLength(1);
+  });
+
+  it("a walk-in (no customer, or the system walk-in record) shows nothing and makes no history request", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    expect(historyButtons()).toHaveLength(0);
+    await pick("Walk-in Record");
+    await scan("JUICE");
+    expect(historyButtons()).toHaveLength(0);
+    expect(interactiveCount("Cola")).toBe(6); // remove, 2 steppers, qty, Change price, Add note: nothing new
+    expect(historyCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    ["a SUPER_ADMIN", { ...ADMIN, role: "SUPER_ADMIN" }],
+    ["a DRIVER", { ...ADMIN, role: "DRIVER" }],
+    ["no user", undefined],
+  ] as [string, MockUser][])(
+    "%s (canEditPrices false) gets no button, no tab stop and no history request",
+    async (_who, user) => {
+      mockUser = user;
+      renderTill(<CounterSaleScreen />);
+      await scan("COLA");
+      await pick("Beta Deli");
+      expect(historyButtons()).toHaveLength(0);
+      expect(interactiveCount("Cola")).toBe(5); // remove, 2 steppers, qty, Add note
+      expect(lineOf("Cola").innerHTML).not.toMatch(/Price history/);
+      expect(historyCalls()).toHaveLength(0);
+    },
+  );
+
+  it("an OPERATOR gets it too: the button is one more tab stop beside Change price", async () => {
+    mockUser = OPERATOR;
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    expect(historyButtons()).toHaveLength(1);
+    expect(interactiveCount("Cola")).toBe(7);
+    expect(historyButtons()[0]).toBeEnabled();
+  });
+
+  it("choosing Walk-in removes the button; picking another customer reads that customer's history", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    await waitFor(() =>
+      expect(historyCalls().map((c) => c[0])).toContain(
+        "/customers/c-beta/products/p-cola/price-history",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
+    await waitFor(() => expect(historyButtons()).toHaveLength(0));
+    get.mockClear();
+    await pick("Acme Cafe");
+    expect(historyButtons()).toHaveLength(1);
+    await waitFor(() =>
+      expect(historyCalls().map((c) => c[0])).toEqual([
+        "/customers/c-acme/products/p-cola/price-history",
+      ]),
+    );
+  });
+
+  it("a restored parked sale for a named customer shows the button, and Use sets the price at once (SA-1071 P1)", async () => {
+    renderTill(<CounterSaleScreen />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Parked (1)" })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Parked (1)" }));
+    await screen.findByRole("dialog", { name: "Parked sales" });
+    fireEvent.click(screen.getByRole("button", { name: "Resume Hold A" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove Cola" })).not.toBeNull(),
+    );
+    expect(historyButtons()).toHaveLength(1);
+    fireEvent.click(await priceBtn(await openHistory("Cola"), "$9.00"));
+    await waitFor(() => expect(total()).toHaveTextContent("$9.00"));
+    expect(screen.queryByRole("dialog", { name: "Change the price for Cola" })).toBeNull();
+    expect(within(lineOf("Cola")).getByTestId("line-price-chip")).toHaveTextContent(
+      "Price changed",
+    );
+  });
+
+  it("a line with no product (an unlisted line) gets no history button", () => {
+    renderWithProviders(
+      <ul>
+        <CounterLineRow
+          line={{ tempId: "u1", productId: "", name: "Loose item", unitPrice: 3, qty: 1 }}
+          locked={false}
+          onStep={jest.fn()}
+          onRemove={jest.fn()}
+          onNote={jest.fn()}
+          onQty={() => true}
+          canEditPrices
+          historyCustomerId="c-beta"
+        />
+      </ul>,
+    );
+    expect(screen.getByRole("button", { name: "Change price for Loose item" })).toBeEnabled();
+    expect(historyButtons()).toHaveLength(0);
+    expect(historyCalls()).toHaveLength(0);
+  });
+});
+
+describe("W-853 the panel's pack rule, on the counter", () => {
+  it("offers a price of the line's own pack and refuses one from a different pack", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("WATER");
+    await pick("Beta Deli");
+    const dialog = await openHistory("Water");
+    expect(await priceBtn(dialog, "$21.00")).toBeEnabled();
+    expect(await priceBtn(dialog, "$40.00")).toBeDisabled();
+  });
+});
+
+describe("W-853 Use this price: a line that needs a reason opens the dialog, and Apply is the write (SA-1071 P1 applies the rest at once)", () => {
+  const priceDialog = (name = "Cola") =>
+    screen.findByRole("dialog", { name: `Change the price for ${name}` });
+  const priceField = () => screen.getByRole("textbox", { name: "Price per item" });
+  /** Charges the sale and returns the first item sent. */
+  const charge = async () => {
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.click(completeBtn());
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return mutateAsync.mock.calls[0][0].dto.items[0] as Record<string, unknown>;
+  };
+
+  it("opens the dialog with the history price in the number field, and nothing is priced until Apply", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe"); // a special price: the change needs a reason
+    await chooseHistoryPrice("Cola", "$9.00");
+    expect(priceField()).toHaveValue("9.00");
+    await waitFor(() => expect(priceField()).toHaveFocus());
+    expect(screen.queryByRole("dialog", { name: "Price history" })).toBeNull();
+    expect(total()).toHaveTextContent("$8.00");
+    expect(screen.queryAllByTestId("line-price-chip")).toHaveLength(0);
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("a Use writes the line once, exactly as a typed price does for the same number", async () => {
+    const first = renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    fireEvent.click(screen.getByRole("button", { name: "Change price for Cola" }));
+    await priceDialog();
+    expect(priceField()).toHaveValue(""); // a plain Change price opens empty
+    fireEvent.change(priceField(), { target: { value: "9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const typedTotal = total().textContent;
+    const typedChip = within(lineOf("Cola")).getByTestId("line-price-chip").textContent;
+    const typedItem = await charge();
+    first.unmount();
+    mutateAsync.mockClear();
+
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    fireEvent.click(await priceBtn(await openHistory("Cola"), "$9.00")); // SA-1071 P1: no dialog, no Apply
+    await waitFor(() => expect(total().textContent).toBe(typedTotal));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(total().textContent).toBe(typedTotal);
+    expect(total()).toHaveTextContent("$9.00");
+    expect(within(lineOf("Cola")).getByTestId("line-price-chip").textContent).toBe(typedChip);
+    expect(within(lineOf("Cola")).queryAllByTestId("line-price-chip")).toHaveLength(1);
+    expect(await charge()).toEqual(typedItem);
+  });
+
+  it("SA-942 MUST 13: a history BOX price on a 24-pack line of 1 box + 6 pieces is computeLineSubtotal, never qty x price", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("CRATE");
+    for (let i = 0; i < 6; i++) {
+      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Crate" }));
+    }
+    await waitFor(() => expect(total()).toHaveTextContent("$60.00")); // 48 + 6 x (48/24)
+    await pick("Beta Deli");
+    fireEvent.click(await priceBtn(await openHistory("Crate"), "$36.00")); // SA-1071 P1: at once
+    await waitFor(() => expect(total()).toHaveTextContent("$45.00"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const builder = computeLineSubtotal({
+      unitPrice: 36,
+      qty: 30,
+      boxes: 1,
+      pieces: 6,
+      unitsPerBox: 24,
+    });
+    expect(builder).toBe(45); // 36 + 6 x 1.50, not 30 x 36
+    expect(total()).toHaveTextContent("$45.00");
+    expect(await charge()).toMatchObject({
+      productId: "p-crate",
+      boxes: 1,
+      pieces: 6,
+      qty: 30,
+      unitPrice: 36,
+    });
+  });
+
+  it("a dialog left on Percent off, with a reason and an error in it, opens from history clean: 9.00 is a price, not 9% off", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    fireEvent.click(screen.getByRole("button", { name: "Change price for Cola" }));
+    await priceDialog();
+    fireEvent.click(screen.getByRole("radio", { name: "Percent off" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Percent off" }), {
+      target: { value: "abc" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (required)" }), {
+      target: { value: "Left over" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await chooseHistoryPrice("Cola", "$9.00");
+    expect(priceField()).toHaveValue("9.00");
+    expect(screen.getByRole("textbox", { name: "Reason (required)" })).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("radio", { name: "Set price" })).toBeChecked();
+  });
+
+  it("SA-1021 C9(b): a history price applied for a plain customer, then a special-tier customer: Charge asks for the reason and nothing is sent", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    fireEvent.click(await priceBtn(await openHistory("Cola"), "$9.00")); // SA-1071 P1: at once
+    await waitFor(() => expect(total()).toHaveTextContent("$9.00"));
+    await pick("Acme Cafe");
+    await waitFor(() => expect(screen.getByTestId("counter-reprice-note")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.click(completeBtn());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Add a reason for Cola. Acme Cafe has a special price on it.",
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("Cancel from a history Use that opened the dialog leaves the line untouched, and the next plain Change price opens empty", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    await chooseHistoryPrice("Cola", "$9.00");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(total()).toHaveTextContent("$8.00");
+    expect(within(lineOf("Cola")).queryAllByTestId("line-price-chip")).toHaveLength(0);
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Change price for Cola" }));
+    await priceDialog();
+    expect(priceField()).toHaveValue("");
+  });
+
+  it("using the same price twice opens the dialog twice", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    await chooseHistoryPrice("Cola", "$9.00");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await chooseHistoryPrice("Cola", "$9.00");
+    expect(priceField()).toHaveValue("9.00");
+  });
+
+  it("a special-tier customer's dialog asks for the reason: no reason, no write, no POST; with one it is sent", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    await chooseHistoryPrice("Cola", "$9.00"); // Acme's price is 8.00
+    expect(screen.getByRole("textbox", { name: "Reason (required)" })).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/reason/i);
+    expect(screen.getByRole("dialog", { name: "Change the price for Cola" })).toBeInTheDocument();
+    expect(total()).toHaveTextContent("$8.00");
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Reason (required)" }), {
+      target: { value: "Matched last invoice" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(total()).toHaveTextContent("$9.00");
+    expect(await charge()).toMatchObject({ priceReason: "Matched last invoice" });
+  });
+
+  it("a history price within half a cent of the special price needs no reason, opens no dialog and stays a plain line", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    fireEvent.click(await priceBtn(await openHistory("Cola"), "$8.00")); // 8.004 from an old invoice
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(lineOf("Cola")).queryAllByTestId("line-price-chip")).toHaveLength(0);
+    expect(total()).toHaveTextContent("$8.00");
+    expect(await charge()).not.toHaveProperty("priceReason");
+  });
+
+  it("changes nothing while a sale is in flight: the button is off and a Use from an open panel opens no dialog", async () => {
+    mutateAsync.mockReturnValue(new Promise(() => {}));
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    const dialog = await openHistory("Cola");
+    const use = await priceBtn(dialog, "$9.00");
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.click(completeBtn());
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(within(lineOf("Cola")).getByRole("button", { name: "Price history" })).toBeDisabled();
+    fireEvent.click(use);
+    expect(screen.queryByRole("dialog", { name: "Change the price for Cola" })).toBeNull();
+    expect(total()).toHaveTextContent("$10.00");
+    expect(within(lineOf("Cola")).queryAllByTestId("line-price-chip")).toHaveLength(0);
+  });
+
+  it("focus: Escape in the price dialog hands it to the scan field; Escape in the panel leaves it on the history button", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe");
+    await chooseHistoryPrice("Cola", "$9.00");
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Change the price for Cola" }), {
+      key: "Escape",
+      code: "Escape",
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
+    expect(total()).toHaveTextContent("$8.00");
+
+    await openHistory("Cola");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Price history" })).toBeNull());
+    await waitFor(() =>
+      expect(within(lineOf("Cola")).getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
+  });
+});
+
+describe("SA-1071 P1: Use applies at once on an ordinary line", () => {
+  const usePrice = async (name: string, price: string) => {
+    const panel = await openHistory(name);
+    fireEvent.click(await priceBtn(panel, price));
+  };
+  const charge = async () => {
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.click(completeBtn());
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return mutateAsync.mock.calls[0][0].dto.items[0] as Record<string, unknown>;
+  };
+  /** an open modal hides the page from role queries, so this reads the line through it */
+  const hiddenLine = () =>
+    screen.getByRole("button", { name: "Remove Cola", hidden: true }).closest("li") as HTMLElement;
+  /** what the screen shows for the Cola line, read after the panel's own tick has passed */
+  const observed = async () => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    return {
+      dialogs: screen.queryAllByRole("dialog", { name: "Change the price for Cola" }).length,
+      panel: screen.queryAllByRole("dialog", { name: "Price history" }).length,
+      total: (total().textContent ?? "").replace(/^Total\s*/, ""),
+      reset: within(hiddenLine()).queryAllByRole("button", { name: "Reset price", hidden: true })
+        .length,
+    };
+  };
+
+  it("P1: Use on an ordinary line sets the price, opens no dialog and shows Reset price", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    await usePrice("Cola", "$9.00");
+    expect(await observed()).toEqual({ dialogs: 0, panel: 0, total: "$9.00", reset: 1 });
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("P1: Reset price on the line is the undo", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    await usePrice("Cola", "$9.00");
+    await waitFor(() => expect(total()).toHaveTextContent("$9.00"));
+    fireEvent.click(within(lineOf("Cola")).getByRole("button", { name: "Reset price" }));
+    await waitFor(() => expect(total()).toHaveTextContent("$10.00"));
+    expect(within(lineOf("Cola")).queryAllByTestId("line-price-chip")).toHaveLength(0);
+  });
+
+  it("P1: the Last and Low cells of the panel take the same path", async () => {
+    get.mockImplementation((url: string) => {
+      const m = /^\/customers\/[^/]+\/products\/([^/]+)\/price-history$/.exec(url);
+      if (m)
+        return Promise.resolve({
+          data: {
+            rows: HISTORY[m[1]] ?? [],
+            summaries: [
+              { unitLabel: "each", last: 9, low: 9, high: 9, qtySold: 2, currentAvgCost: null },
+            ],
+          },
+        });
+      return Promise.resolve({ data: url.startsWith("/customers/") ? [] : { taxRate: 0 } });
+    });
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    const panel = await openHistory("Cola");
+    fireEvent.click(
+      await within(panel).findByRole("button", { name: "Use the last price ($9.00)" }),
+    );
+    expect(await observed()).toEqual({ dialogs: 0, panel: 0, total: "$9.00", reset: 1 });
+  });
+
+  it("P1a: a special-tier line with a real change still opens the dialog and asks for the reason", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Acme Cafe"); // tier 2 is a special price
+    await usePrice("Cola", "$9.00");
+    expect(
+      await screen.findByRole("dialog", { name: "Change the price for Cola" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Price per item" })).toHaveValue("9.00");
+    expect(screen.getByRole("textbox", { name: "Reason (required)" })).toHaveValue("");
+    expect(total()).toHaveTextContent("$8.00");
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("P1c: the sale after Use sends the unit price as an override, for the server to judge again", async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    await usePrice("Cola", "$9.00");
+    // base: the dialog is open and Apply is the write; after P1 there is no dialog and no Apply
+    const apply = screen.queryByRole("button", { name: "Apply" });
+    if (apply) fireEvent.click(apply);
+    await waitFor(() => expect(total()).toHaveTextContent("$9.00"));
+    expect(await charge()).toMatchObject({ productId: "p-cola", unitPrice: 9 });
+  });
+});
+
+describe("W-853 SA-1062 A-4: a scan with the price panel open goes to the scan box", () => {
+  /** the history answer for Cola: one row at $9.00 (R13l overrides it with two) */
+  const COLA_HISTORY = HISTORY["p-cola"];
+  beforeEach(() => {
+    HISTORY["p-cola"] = [historyRow({ unitPrice: 9 })];
+  });
+  afterEach(() => {
+    HISTORY["p-cola"] = COLA_HISTORY;
+  });
+  const priceDialogs = () => screen.queryAllByRole("dialog", { name: "Change the price for Cola" });
+  const scanBox = () => screen.getByLabelText("Scan or search items") as HTMLInputElement;
+  /** a desktop till (no touch-first), one $10.00 Cola line, the panel open with focus inside it */
+  const openPanel = async () => {
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    mockLookups.length = 0; // the setup scan is not under test
+    const panel = await openHistory("Cola");
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    return panel;
+  };
+  /** lets the scan's lookup (async) and the price dialog settle, then reads everything a row cares about */
+  const observed = async () => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 80));
+    });
+    return {
+      lookups: [...mockLookups],
+      priceDialogs: priceDialogs().length,
+      total: (total().textContent ?? "").replace(/^Total\s*/, ""),
+      chips: screen.queryAllByTestId("line-price-chip").length,
+    };
+  };
+  const SCANNED = (...lookups: string[]) => ({
+    lookups,
+    priceDialogs: 0,
+    total: "$10.00",
+    chips: 0,
+  });
+  /** Tab until a "Use this price" button holds focus */
+  const tabToUse = async (user: ReturnType<typeof userEvent.setup>) => {
+    for (let i = 0; i < 12; i++) {
+      const a = document.activeElement as HTMLElement | null;
+      if (a?.getAttribute("aria-label")?.startsWith("Use this price")) return;
+      await user.tab();
+    }
+    throw new Error("Use this price never took focus");
+  };
+
+  it("R13e: a desktop till with the panel open sends the whole code to the scan box, letters included", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("AB12345{Enter}");
+    expect(await observed()).toEqual(SCANNED("AB12345"));
+  });
+
+  it("R13f: letters then Enter submit the code to the scan, and the price dialog does not open", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("ABCDEF{Enter}");
+    expect(await observed()).toEqual(SCANNED("ABCDEF"));
+  });
+
+  it("R13g: a letter code, then a 12-digit code: the line keeps its own total, no price chip, two lookups", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("ABCDEF{Enter}");
+    await user.keyboard("123456789012{Enter}");
+    expect(await observed()).toEqual(SCANNED("ABCDEF", "123456789012"));
+  });
+
+  it("R13h: a prefix of letters keeps its letters: AB12345 is submitted whole", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("AB12345{Enter}");
+    expect(await observed()).toEqual(SCANNED("AB12345"));
+  });
+
+  it("R13i: focus on Use, letters then Enter: the code goes to the scan, Use is not pressed", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await tabToUse(user);
+    await user.keyboard("ABCDEF{Enter}");
+    expect(await observed()).toEqual(SCANNED("ABCDEF"));
+  });
+
+  it("R13j: a symbol prefix counts: ]C1234 is submitted whole", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("]C1234{Enter}");
+    expect(await observed()).toEqual(SCANNED("]C1234"));
+  });
+
+  it("R13k: an all-digit code still goes whole to the scan box", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("123456789012{Enter}");
+    expect(await observed()).toEqual(SCANNED("123456789012"));
+  });
+
+  it("R13l: two ArrowDowns then Enter use row 1's price at once (SA-1071 P1): the line is $8.00, no dialog", async () => {
+    HISTORY["p-cola"] = COLA_HISTORY; // two rows: 9.00 and 8.004
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+    await waitFor(() => expect(total()).toHaveTextContent("$8.00"));
+    expect(priceDialogs()).toHaveLength(0);
+    expect(screen.getAllByTestId("line-price-chip")).toHaveLength(1);
+    expect(mockLookups).toEqual([]);
+  });
+
+  it("R13m: Tab to Use, then Enter applies the price at once (SA-1071 P1); again with Space", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await tabToUse(user);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(total()).toHaveTextContent("$9.00"));
+    expect(priceDialogs()).toHaveLength(0);
+    // Reset price is the undo; then the same road with Space
+    fireEvent.click(within(lineOf("Cola")).getByRole("button", { name: "Reset price" }));
+    await waitFor(() => expect(total()).toHaveTextContent("$10.00"));
+
+    const panel = await openHistory("Cola");
+    await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+    await tabToUse(user);
+    await user.keyboard(" ");
+    await waitFor(() => expect(total()).toHaveTextContent("$9.00"));
+    expect(priceDialogs()).toHaveLength(0);
+    expect(mockLookups).toEqual([]);
+  });
+
+  it("R13n: Escape closes the panel and focus goes back to the history button", async () => {
+    const user = userEvent.setup();
+    await openPanel();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Price history" })).toBeNull());
+    await waitFor(() =>
+      expect(within(lineOf("Cola")).getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
+    expect(mockLookups).toEqual([]);
+  });
+
+  it("R13o: panel shut, focus on a line button, g: not routed to the scan box", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scan("COLA");
+    await pick("Beta Deli");
+    const button = within(lineOf("Cola")).getByRole("button", { name: "Price history" });
+    button.focus();
+    expect(button).toHaveFocus();
+    await user.keyboard("g");
+    expect(scanBox()).not.toHaveFocus();
+    expect(scanBox()).toHaveValue("");
+  });
+});
+
+describe("W-853 structure: one component, no local copy of its rules", () => {
+  const dir = __dirname;
+  const counterSources = () =>
+    fs
+      .readdirSync(dir)
+      .filter((f) => /^(Counter|useCounter|counter-).*\.tsx?$/.test(f) && !/\.test\./.test(f))
+      .map((f) => ({ f, src: fs.readFileSync(path.join(dir, f), "utf8") }));
+
+  it("the counter row imports PriceHistoryButton from components/PriceHistory", () => {
+    const row = fs.readFileSync(path.join(dir, "CounterLineRow.tsx"), "utf8");
+    expect(row).toMatch(
+      /import \{[^}]*\bPriceHistoryButton\b[^}]*\} from "@\/components\/PriceHistory"/,
+    );
+  });
+
+  it("no counter file defines its own pack rule or reads /price-history itself", () => {
+    const offenders = counterSources()
+      .filter(({ src }) =>
+        /function canUseHistoryPrice|const canUseHistoryPrice|\/price-history/.test(src),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
+});

@@ -512,3 +512,28 @@ describe("PKG-4 owner rule: no control in the touched areas is lost or hidden", 
     expect(await creditBox()).toBeInTheDocument(); // CreditNotePicker row
   });
 });
+
+/**
+ * SA-1066 FL1 (review): New product marks an Escape that a list took as handled (`preventDefault`) so Radix does not dismiss
+ * the builder. Radix still calls the builder's `onEscapeKeyDown`, so `handleEscape` must honour that mark too, or the same
+ * Escape wipes the custom-item form open behind the window.
+ */
+describe("FL1: a list's Escape in New product leaves the custom-item form behind it alone", () => {
+  it("custom-item form open, New product open, a list open: Escape closes only the list", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: /Add custom item/ }));
+    await user.type(screen.getByPlaceholderText(/Pallet delivery surcharge/), "Fresh pie");
+    await user.type(prod(), "cola");
+    await rowBtn(/Sample Cola/);
+    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}"); // Create new product
+    const parent = await screen.findByPlaceholderText(/Standalone product/);
+    fireEvent.focus(parent);
+    expect(parent).toHaveAttribute("aria-controls"); // a list is open
+    fireEvent.keyDown(parent, { key: "Escape" });
+    expect(parent).not.toHaveAttribute("aria-controls"); // the list closed
+    expect(screen.getByText("Custom item")).toBeInTheDocument(); // the form behind is still open
+    expect(screen.getByPlaceholderText(/Pallet delivery surcharge/)).toHaveValue("Fresh pie");
+    expect(screen.getByPlaceholderText(/Standalone product/)).toBeInTheDocument(); // and so is the window
+  });
+});

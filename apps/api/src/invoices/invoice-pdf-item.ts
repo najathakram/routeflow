@@ -12,7 +12,12 @@
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
 
-import { basePriceText, componentPriceText, invoiceLineQtyText } from "@routeflow/pricing";
+import {
+  basePriceText,
+  componentPriceText,
+  invoiceLineQtyText,
+  roundMoney,
+} from "@routeflow/pricing";
 import type { InvoiceDisplayLines } from "@routeflow/pricing";
 import type { LineComponentView } from "@routeflow/types";
 
@@ -108,20 +113,25 @@ export interface PdfSubLine {
  * #2717 M3 (SA-579 case 21): the sub-line of one frozen component, from its client view. The text
  * parts come from `@routeflow/pricing` (`componentPriceText`, the same helper `componentSubLineText`
  * uses), so the PDF, web and mobile read identically. `barcodeDataUri` is rendered by the caller
- * (bwip-js) because it is I/O.
+ * (bwip-js) because it is I/O, and `showBarcode` is whether the pieces are this line's barcode source (`invoiceBarcodeSource`: the tenant's choice, and the box or the pieces, never both). It is required: the compiler finds every caller.
  */
-export function pdfSubLine(view: LineComponentView, barcodeDataUri: string | null): PdfSubLine {
+export function pdfSubLine(
+  view: LineComponentView,
+  barcodeDataUri: string | null,
+  showBarcode: boolean,
+): PdfSubLine {
   return {
     name: view.name,
     unitSku: view.unitSku,
-    barcodeText: view.unitBarcode,
-    barcodeDataUri,
+    // SA-1031: off (the tenant's `invoice.hideBarcodes`, or the box is this line's source, r2) prints neither the bars nor the digits; the SKU text stays.
+    barcodeText: showBarcode ? view.unitBarcode : null,
+    barcodeDataUri: showBarcode ? barcodeDataUri : null,
     qtyText: `x ${view.qty}`,
     priceText: componentPriceText(view.displayUnitPrice4),
   };
 }
 
-const amountText = (n: number): string => `$${n.toFixed(2)}`;
+const amountText = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
 
 /** One component row of a components-layout line. */
 export interface PdfDisplayRow {

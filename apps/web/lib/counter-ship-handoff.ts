@@ -1,4 +1,6 @@
+import type { CustomerLinePrice } from "@routeflow/pricing";
 import type { SaveDraftInput } from "@/lib/api/drafts";
+import type { PriceOverride } from "@/lib/counter-price-edit";
 import { draftDeviceLabel, type DraftLineItem, type OrderDraftPayload } from "@/lib/drafts";
 
 /**
@@ -23,10 +25,13 @@ export interface CounterShipLine {
   /** Product snapshot taken when the line was added; lines held before it existed fall back (see the mapper). */
   listPrice?: number;
   unit?: string;
-  priceType?: "STANDARD" | "SPECIAL";
+  priceType?: CustomerLinePrice["priceType"];
   category?: string;
   /** POS-3 per-line note; rides onto the draft line's `note` (trimmed, omitted when empty). */
   note?: string;
+  /** POS-5: set on an edited line only. `unitPrice` is then the clerk's net and `tierPrice` the system's price. */
+  tierPrice?: number;
+  override?: Pick<PriceOverride, "reason">;
 }
 
 export interface CounterShipCustomer {
@@ -47,15 +52,27 @@ function freshTempId(productId: string): string {
 function toDraftLine(l: CounterShipLine): DraftLineItem {
   const note = l.note?.trim();
   const priceType = l.priceType ?? "STANDARD";
+  const systemPrice = l.override ? (l.tierPrice ?? l.unitPrice) : l.unitPrice;
+  const listPrice = l.listPrice ?? systemPrice;
+  const reason = l.override?.reason?.trim();
   return {
     tempId: freshTempId(l.productId),
     productId: l.productId,
     productName: l.name,
     unit: l.unit ?? "each",
-    listPrice: l.listPrice ?? l.unitPrice,
-    ...(priceType === "SPECIAL" ? { specialPrice: l.unitPrice } : {}),
+    listPrice,
+    ...(priceType === "SPECIAL" ? { specialPrice: systemPrice } : {}),
     unitPrice: l.unitPrice,
     priceType,
+    // SA-1068 M16: a typed price goes out with its reason, as the till sends it (`toSaleItem`). The builder sends a price only
+    // for a DISCOUNTED or MANUAL line with `discountedPrice`, and any line the till edited is sent, even one typed back to list.
+    ...(l.override
+      ? {
+          discountedPrice: l.unitPrice,
+          priceType: l.unitPrice < listPrice ? ("DISCOUNTED" as const) : ("MANUAL" as const),
+          ...(reason ? { overrideReason: reason } : {}),
+        }
+      : {}),
     qty: l.qty,
     ...(l.unitsPerBox != null ? { unitsPerBox: l.unitsPerBox } : {}),
     ...(l.boxes != null ? { boxes: l.boxes } : {}),

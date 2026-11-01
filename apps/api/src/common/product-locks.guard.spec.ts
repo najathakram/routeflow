@@ -243,6 +243,7 @@ describe("SA-767 Nit 6 — the stock writers use retryStockTx", () => {
     // SA-767 L-2: the manual stock / cost writers.
     ["inventory.recordPurchase", inv],
     ["inventory.recordAdjustment", inv],
+    ["inventory.countProduct", inv],
     ["inventory.assignToVariants", inv],
     ["inventory.commitStockCount", inv],
     ["inventory.commitStockCountSession", inv],

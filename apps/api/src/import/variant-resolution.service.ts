@@ -80,7 +80,7 @@ export class VariantResolutionService {
       name,
       sku: dto.sku,
       unit: (dto.unit ?? "").trim() || "each",
-      pricePerUnit: listPrice.toFixed(2),
+      pricePerUnit: roundMoney(listPrice).toFixed(2),
       standardCost: cost > 0 ? cost.toFixed(4) : undefined,
     });
     // create() doesn't own the import-only flag; set it in a follow-up write.
@@ -179,7 +179,9 @@ export class VariantResolutionService {
       const row = await tx.product.update({
         where: { id },
         data: {
-          ...(dto.pricePerUnit !== undefined && { pricePerUnit: dto.pricePerUnit.toFixed(2) }),
+          ...(dto.pricePerUnit !== undefined && {
+            pricePerUnit: roundMoney(dto.pricePerUnit).toFixed(2),
+          }),
           ...(dto.unit !== undefined && { unit: dto.unit }),
           ...(dto.unitsPerBox !== undefined && { unitsPerBox: dto.unitsPerBox }),
           ...(dto.category !== undefined && { category: dto.category }),

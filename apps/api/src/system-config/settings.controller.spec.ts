@@ -1,4 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { validate, validateSync } from "class-validator";
+import { plainToInstance } from "class-transformer";
+import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { ConfigService } from "@nestjs/config";
 import { BadRequestException } from "@nestjs/common";
 import { SettingsController } from "./settings.controller";
@@ -7,9 +10,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { quickKeysSettingsStubProvider } from "../testing/quick-keys-settings-stub";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { plainToInstance } from "class-transformer";
-import { validateSync } from "class-validator";
-import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 
 // WP2: settings.taxRate is stored as a PERCENT (0-100, string) — see
 // apps/api/src/common/tax-rate.ts. A direct PATCH call can otherwise store an
@@ -162,6 +162,66 @@ describe("SettingsController — GET/PATCH /settings/invoice hideOriginalPrice",
   });
 });
 
+// SA-1031: invoice.hideBarcodes, the sibling of hideOriginalPrice (SystemConfig KV, no schema change; absent = shown).
+describe("SettingsController — GET/PATCH /settings/invoice hideBarcodes (SA-1031)", () => {
+  let controller: SettingsController;
+  let svc: { get: jest.Mock; set: jest.Mock; getAll: jest.Mock };
+
+  beforeEach(async () => {
+    svc = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      getAll: jest.fn().mockResolvedValue({}),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+      providers: [
+        { provide: SystemConfigService, useValue: svc },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: PrismaService, useValue: createMockPrisma() },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        quickKeysSettingsStubProvider,
+      ],
+    }).compile();
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it("GET returns hideBarcodes: false when the key was never written (every tenant stays on at deploy)", async () => {
+    expect((await controller.getInvoiceSettings()).hideBarcodes).toBe(false);
+  });
+
+  it.each([
+    ["true", true],
+    ["false", false],
+    ["yes", false],
+  ])("GET reads %p as hideBarcodes %p (only the string 'true' hides)", async (stored, expected) => {
+    svc.get.mockImplementation((k: string) =>
+      Promise.resolve(k === "invoice.hideBarcodes" ? stored : null),
+    );
+    expect((await controller.getInvoiceSettings()).hideBarcodes).toBe(expected);
+  });
+
+  it("PATCH {hideBarcodes:true} writes invoice.hideBarcodes 'true'; false writes 'false'", async () => {
+    await controller.updateInvoiceSettings({ hideBarcodes: true });
+    expect(svc.set).toHaveBeenCalledWith("invoice.hideBarcodes", "true");
+    await controller.updateInvoiceSettings({ hideBarcodes: false });
+    expect(svc.set).toHaveBeenCalledWith("invoice.hideBarcodes", "false");
+  });
+
+  it("PATCH without hideBarcodes does not touch that key", async () => {
+    await controller.updateInvoiceSettings({ defaultTerms: "Net 15" });
+    expect(svc.set).not.toHaveBeenCalledWith("invoice.hideBarcodes", expect.anything());
+  });
+
+  it("the DTO takes a boolean and refuses 'yes' (400 through the ValidationPipe)", async () => {
+    expect(
+      await validate(plainToInstance(UpdateInvoiceSettingsDto, { hideBarcodes: true })),
+    ).toEqual([]);
+    const bad = await validate(plainToInstance(UpdateInvoiceSettingsDto, { hideBarcodes: "yes" }));
+    expect(bad.map((e) => e.property)).toEqual(["hideBarcodes"]);
+  });
+});
+
 // WP-D1: tenant deposit policy — depositDefaultPercent (number, absent/0 = no tenant
 // default) and depositCollectAtOrder (boolean), both stored in SystemConfig like every
 // other invoice setting in this file.
@@ -270,7 +330,7 @@ describe("SettingsController — GET/PATCH /settings/invoice deposit policy", ()
     const result = await controller.updateInvoiceSettings({ creditAutoApplyOnSend: true });
     expect(prisma.tenantConfig.upsert).toHaveBeenCalledWith({
       where: { tenantId: "test-tenant" },
-      create: { tenantId: "test-tenant", creditAutoApplyOnSend: true },
+      create: { tenantId: "test-tenant", timezone: "UTC", creditAutoApplyOnSend: true }, // SA-1067 Z2: the zone is named, never the column default
       update: { creditAutoApplyOnSend: true },
     });
     expect(result.creditAutoApplyOnSend).toBe(true);

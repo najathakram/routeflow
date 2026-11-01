@@ -1,6 +1,6 @@
 /**
  * Order edit: every priced catalog line of EditableLineItems carries the customer price-history
- * button (beside "Unit price") when a customer is known - the real page passes `customer`.
+ * button (beside the price field) when a customer is known - the real page passes `customer`.
  * Harness copied from unit-picker-mount.test.tsx.
  */
 import * as React from "react";
@@ -103,7 +103,7 @@ beforeEach(() => {
 });
 
 describe("order edit page - price history button", () => {
-  it("shows beside Unit price for a catalog line and opens the panel for this customer", async () => {
+  it("shows beside the price field for a catalog line and opens the panel for this customer", async () => {
     renderRows([line()], { id: "c1", name: "Acme Foods" });
     const btn = screen.getByRole("button", { name: "Price history" });
     expect(btn).toBeEnabled();

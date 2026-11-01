@@ -168,14 +168,16 @@ describe("OrdersService.updateFulfillPath: switch to PICKUP", () => {
     async (runStatus) => {
       open({
         routeRunStopId: "stop-1",
-        routeRunStop: { routeRun: { status: runStatus, driver: { contactName: "Dana" } } },
+        routeRunStop: {
+          routeRun: { id: "run-7", status: runStatus, driver: { contactName: "Dana" } },
+        },
       });
       await expect(toPickup()).rejects.toThrow(
         /active delivery run with Dana.*switching it to pickup/,
       );
       // #3689 review MUST 4: a coded refusal, so the clients give it their own copy (never the raw message)
       const err: any = await toPickup().catch((e) => e);
-      expect(err.getResponse()).toMatchObject({ code: "ORDER_ON_ACTIVE_RUN" });
+      expect(err.getResponse()).toMatchObject({ code: "ORDER_ON_ACTIVE_RUN", runId: "run-7" });
       expect(h.prisma.order.update).not.toHaveBeenCalled();
     },
   );

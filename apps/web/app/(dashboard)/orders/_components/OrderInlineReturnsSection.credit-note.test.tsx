@@ -48,10 +48,12 @@ it("order create/edit: the credit note says the credit goes toward this order, n
   renderWithProviders(<OrderInlineReturnsSection customerId="cust-1" />);
   fireEvent.click(screen.getByRole("button", { name: /^returns$/i }));
   fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
-  fireEvent.click(await screen.findByText("Widget"));
+  fireEvent.click(await screen.findByRole("button", { name: "Widget" }));
   fireEvent.change(screen.getByLabelText(/^pieces$/i), { target: { value: "5" } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
+  // R-1: no "Get quote" — the section asks by itself once the lines have been quiet for 350 ms
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
   act(() => quoteMutate.mock.calls[0][1].onSuccess(QUOTE));
   expect(

@@ -537,7 +537,8 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
       customerId: CUSTOMER_ID,
     });
     expect(inv.items.map((i: { id: string }) => i.id)).toEqual(["it-1"]);
-    expect(out.items).toBe(resolved);
+    // SA-1058: toEqual, because findOne returns the helper's sorted copy of these lines.
+    expect(out.items).toEqual(resolved);
   });
 
   it("findOne on a DRAFT passes the DRAFT status through (the live preference is resolved inside the helper)", async () => {

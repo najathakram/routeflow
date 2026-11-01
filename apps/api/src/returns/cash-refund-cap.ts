@@ -143,7 +143,7 @@ export async function assertCashRefundWithinCap(
       throw new ConflictException({
         code: API_ERROR_CODES.REFUND_EXCEEDS_CASH_PAID,
         message:
-          `This is more cash than was taken for this sale (less the cash already refunded): at most $${room.toFixed(2)} can ` +
+          `This is more cash than was taken for this sale (less the cash already refunded): at most $${roundMoney(room).toFixed(2)} can ` +
           "go back in cash. Refund the rest by card or check, or give store credit.",
         maxCashRefund: room,
         requested,

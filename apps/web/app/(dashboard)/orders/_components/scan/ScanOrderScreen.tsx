@@ -8,11 +8,13 @@ import {
   cueForOutcome,
   continuousFrameScanned,
   createContinuousScanState,
+  createPausableClock,
   manualScanned,
   resetSteadyRead,
   scanSettled,
   shouldDecode,
   type ContinuousScanState,
+  type PausableClock,
   type ScanMode,
   type ScanEngineStep,
   type ScanOutcome,
@@ -32,6 +34,7 @@ import {
 import type { ScanResolution } from "./useScanCodeHandler";
 import { formatMoney } from "@/lib/format";
 import { useContinuousScanCamera, type ScanFrame } from "./useContinuousScanCamera";
+import { ScanViewfinder } from "./ScanViewfinder";
 import {
   distinctSkuCount,
   popHistory,
@@ -104,6 +107,10 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const live = open && !paused;
 
   const engineRef = React.useRef<ContinuousScanState>(createContinuousScanState());
+  // SA-1067 C2: the engine reads "absent" off the time it is given (a code unseen for 0.6 s counts again). The camera is
+  // off while the price editor is open, so a code still held in view would look absent on resume and count a second time.
+  // This clock stops while the editor is open (the same one the counter strip uses, SA-1059).
+  const clockRef = React.useRef<PausableClock>(createPausableClock());
   // Hold to scan (owner ruling 2026-09-24): OPTIONAL per-device mode, default Continuous. In Hold mode the camera stays live
   // but a decoded frame is ignored unless the round button is held (a ref too, so a frame never races a state update).
   const [scanMode, setScanModeState] = React.useState<ScanMode>(() => readScanMode());
@@ -177,6 +184,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   React.useEffect(() => {
     if (!open) return;
     engineRef.current = createContinuousScanState();
+    clockRef.current = createPausableClock();
     setResolving(false);
     setHistory([]);
     setHighlightId(null);
@@ -329,12 +337,14 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const handleFrame = React.useCallback(
     (code: string, frame?: ScanFrame) => {
       if (!shouldDecode(scanModeRef.current, holdingRef.current)) return;
+      clockRef.current.unblock(); // the first frame after the editor closed ends its block
       applyStep(
-        continuousFrameScanned(engineRef.current, code, Date.now(), {
+        continuousFrameScanned(engineRef.current, code, clockRef.current.now(), {
           bounds: frame?.bounds,
           aimBox: frame?.aimBox,
-          // Order builder only (owner ruling 2026-10-14): a repeat of the code just accepted counts after a
-          // 0.3 s absence, no steady hold. Every other scan screen stays on the 09-24 rule.
+          // Order builder (owner ruling 2026-10-14), and the counter's camera strip by SA-1059's extension (CounterCameraStrip):
+          // a repeat of the code just accepted counts after a 0.6 s absence, no steady hold. Every other scan screen stays on
+          // the 09-24 rule.
           fastRepeat: true,
         }),
       );
@@ -434,6 +444,9 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // would increment the very line being edited (the focused field jumping under the operator's
   // cursor) with its cue and feedback hidden. Scanning resumes when the sheet closes.
   const camera = useContinuousScanCamera({ enabled: live && !editorOpen, onDetect: handleFrame });
+  React.useEffect(() => {
+    if (editorOpen) clockRef.current.block();
+  }, [editorOpen]);
 
   // A hold never outlives what can still deliver its release: closing / pausing the screen, a camera error (the button
   // unmounts, so its pointerup never arrives) or leaving Hold mode all end it, so the next session starts released.
@@ -608,62 +621,41 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
         )}
       </header>
 
-      {/* Camera strip: wide and short (a barcode is held that way); object-cover crops the frame
-          for display only — zxing still reads all of it. */}
-      <div className={cn("relative h-36 shrink-0 bg-black sm:h-44", scanMode === "hold" && "mb-7")}>
-        {camera.error ? (
-          <div className="flex h-full items-center justify-center px-4 text-center text-sm text-white/80">
-            {camera.error}
-          </div>
-        ) : (
-          <>
-            <video
-              ref={camera.videoRef}
-              className="h-full w-full cursor-pointer object-cover"
-              autoPlay
-              muted
-              playsInline
-              onClick={camera.refocus}
-            />
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
-            </div>
-            {scanMode === "hold" && (
-              <button
-                type="button"
-                aria-label="Hold to scan"
-                aria-describedby="scan-hold-hint"
-                aria-pressed={holding}
-                onPointerDown={(e) => {
-                  e.currentTarget.setPointerCapture?.(e.pointerId);
-                  startHold();
-                }}
-                onPointerUp={releaseHold}
-                onPointerCancel={releaseHold}
-                onPointerLeave={releaseHold}
-                onKeyDown={(e) => {
-                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
-                    e.preventDefault();
-                    startHold();
-                  }
-                }}
-                onKeyUp={(e) => {
-                  if (e.key === " " || e.key === "Enter") releaseHold();
-                }}
-                // focus leaving mid keyboard-hold: the keyup would land elsewhere and the hold would stick
-                onBlur={releaseHold}
-                onContextMenu={(e) => e.preventDefault()}
-                className={cn(
-                  // straddles the strip's bottom edge (half inside the free 20% under the aim box, half in the margin below),
-                  // so the thumb never covers the barcode
-                  "absolute -bottom-7 left-1/2 z-10 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg [-webkit-touch-callout:none]",
-                  holding ? "scale-95 bg-brand-500" : "bg-brand-500/70",
-                )}
-              />
+      <ScanViewfinder camera={camera} className={cn(scanMode === "hold" && "mb-7")}>
+        {scanMode === "hold" && (
+          <button
+            type="button"
+            aria-label="Hold to scan"
+            aria-describedby="scan-hold-hint"
+            aria-pressed={holding}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture?.(e.pointerId);
+              startHold();
+            }}
+            onPointerUp={releaseHold}
+            onPointerCancel={releaseHold}
+            onPointerLeave={releaseHold}
+            onKeyDown={(e) => {
+              if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                e.preventDefault();
+                startHold();
+              }
+            }}
+            onKeyUp={(e) => {
+              if (e.key === " " || e.key === "Enter") releaseHold();
+            }}
+            // focus leaving mid keyboard-hold: the keyup would land elsewhere and the hold would stick
+            onBlur={releaseHold}
+            onContextMenu={(e) => e.preventDefault()}
+            className={cn(
+              // straddles the strip's bottom edge (half inside the free 20% under the aim box, half in the margin below),
+              // so the thumb never covers the barcode
+              "absolute -bottom-7 left-1/2 z-10 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg [-webkit-touch-callout:none]",
+              holding ? "scale-95 bg-brand-500" : "bg-brand-500/70",
             )}
-          </>
+          />
         )}
-      </div>
+      </ScanViewfinder>
 
       <div className="shrink-0 border-b border-surface-border px-3 py-2">
         {/* Scan mode: OPTIONAL per device (owner ruling 2026-09-24), default Continuous. */}

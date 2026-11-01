@@ -10,6 +10,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { refDedupeFromRequest } from "../invoices/payment-ref-dedupe";
 import { PaymentRequestsService } from "./payment-requests.service";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 class ApprovePaymentRequestDto {
   /** SA-837b item 2: the approving staff member's resend of an approval refused as a duplicate payment reference. */
   @IsOptional() @IsBoolean() recordAnyway?: boolean;
@@ -32,6 +33,7 @@ export class ListPaymentRequestsDto {
  * recordStandalonePayment); CARD requests settle from the Stripe webhook and
  * appear here as history only.
  */
+@RequirePermission("FINANCE")
 @ApiTags("payment-requests")
 @Controller("payment-requests")
 @UseGuards(JwtAuthGuard, RolesGuard)

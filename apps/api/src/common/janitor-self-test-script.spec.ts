@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { IDLE_RUN_MAX_MS, runWithIdleTimeout } from "./testing/run-with-idle-timeout";
 
 // B800: scripts/janitor.self-test.mjs is a plain node script, so nothing ran it — a regression in the
 // janitor's "is this worktree merged / safe to touch" rules would ship silently, and those rules
@@ -11,31 +11,31 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SCRIPT = path.resolve(REPO_ROOT, "scripts/janitor.self-test.mjs");
 
 // #2146: the child's time is intrinsic real process spawns (PowerShell cold starts plus ~150 git
-// spawns): ~56s standalone, ~129s when the machine is contended — a fixed 120s timeout had no
-// margin inside the full `npm run test -w apps/api`. Load-tolerant default (5 min);
-// JANITOR_SELF_TEST_TIMEOUT_MS overrides it for a slower box without touching this file (a
-// non-numeric or non-positive value falls back to the default). The jest test timeout stays
-// above the child's own, so a genuine hang still fails with the child's own signal/status
-// assertions instead of a less specific jest-level timeout.
-const DEFAULT_CHILD_TIMEOUT_MS = 300_000;
-const envTimeoutMs = Number(process.env.JANITOR_SELF_TEST_TIMEOUT_MS);
-const CHILD_TIMEOUT_MS =
-  Number.isFinite(envTimeoutMs) && envTimeoutMs > 0 ? envTimeoutMs : DEFAULT_CHILD_TIMEOUT_MS;
+// spawns): ~56s standalone, ~129s when the machine is contended. A fixed total-time budget therefore
+// failed a healthy child exactly when the machine was busiest, so the budget is IDLE time: the child
+// prints one progress mark per case and is ended only when it goes this long without output (stuck).
+// JANITOR_SELF_TEST_TIMEOUT_MS overrides the idle window for a slower box without touching this file
+// (a non-numeric or non-positive value falls back to the default).
+const DEFAULT_IDLE_MS = 300_000;
+const envIdleMs = Number(process.env.JANITOR_SELF_TEST_TIMEOUT_MS);
+const IDLE_MS = Number.isFinite(envIdleMs) && envIdleMs > 0 ? envIdleMs : DEFAULT_IDLE_MS;
 
 describe("janitor self-test contract (B800)", () => {
   it(
     "exits 0 with no failures, including the fresh zero-commit branch case",
-    () => {
-      const res = spawnSync(process.execPath, [SCRIPT], {
+    async () => {
+      const res = await runWithIdleTimeout(process.execPath, [SCRIPT], {
         cwd: REPO_ROOT,
-        encoding: "utf8",
-        timeout: CHILD_TIMEOUT_MS,
+        idleMs: IDLE_MS,
       });
+      expect(res.timedOut).toBeNull();
       expect(res.signal).toBeNull();
+      // One mark per case while it runs: the idle window needs output to watch.
+      expect(res.stdout).toMatch(/^\.{20,}/);
       expect(res.stderr).not.toMatch(/FAIL/);
       expect(res.status).toBe(0);
       expect(res.stdout).toMatch(/janitor self-test: \d+ passed, 0 failed/);
     },
-    CHILD_TIMEOUT_MS + 30_000,
+    IDLE_RUN_MAX_MS + 30_000,
   );
 });

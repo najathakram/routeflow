@@ -8,6 +8,7 @@ import { useInvalidFocus } from "@/lib/form-errors";
 import { z } from "zod";
 import { FULFILL_PATH_VALUES } from "@routeflow/types";
 import { useQueryClient } from "@tanstack/react-query";
+import { Building2, ChevronDown, User } from "lucide-react";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -101,6 +102,12 @@ export interface CustomerFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   mode: "add" | "edit";
+  /** W-1041: a sale's "new customer" door. Called with the new customer after the toast, before `onClose`. */
+  onCreated?: (customer: { id: string; businessName: string; [k: string]: unknown }) => void;
+  /** W-1041: the typed search, prefilled as the business name of a new customer. */
+  initialName?: string;
+  /** W-1041: false lets a new customer save without an address (the sale does not need one). Default true. */
+  addressRequired?: boolean;
   initialData?: {
     id?: string;
     businessName: string;
@@ -136,12 +143,13 @@ export interface CustomerFormModalProps {
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
   newCustomerFulfillPath: "ROUTE" | "SHIP" = "ROUTE",
+  initialName = "",
 ): CustomerFormValues {
   if (!initialData) {
     return {
       customerType: "BUSINESS",
       fulfillPath: newCustomerFulfillPath,
-      businessName: "",
+      businessName: initialName,
       contactName: "",
       salutation: "",
       firstName: "",
@@ -192,13 +200,40 @@ function buildDefaultValues(
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CustomerFormModal({ isOpen, onClose, mode, initialData }: CustomerFormModalProps) {
+/** SA-1071 C2: the fields a sale's door shows without opening "More details". */
+const DOOR_SHORT_FIELDS = ["businessName", "firstName", "lastName", "salutation", "phone", "email"];
+
+/** SA-1071 C1: the first field in the form a person can see and has not filled in. */
+function firstEmptyField(root: HTMLElement | null): HTMLElement | null {
+  for (const el of Array.from(root?.querySelectorAll<HTMLInputElement>("input, textarea") ?? [])) {
+    if (["checkbox", "radio", "hidden"].includes(el.type) || el.disabled) continue;
+    if (el.closest("[hidden]")) continue;
+    if (el.value.trim() === "") return el;
+  }
+  return null;
+}
+
+export function CustomerFormModal({
+  isOpen,
+  onClose,
+  mode,
+  initialData,
+  onCreated,
+  initialName,
+  addressRequired = true,
+}: CustomerFormModalProps) {
   const { toast } = useToast();
+  // W-1041: inside a sale one name is enough (the contact name falls back to it) and the email sits under it.
+  const door = !!onCreated;
   const router = useRouter();
   const qc = useQueryClient();
   const createCustomer = useCreateCustomer({ localErrorToast: true }); // the banner below shows errors
   const updateCustomer = useUpdateCustomer({ localErrorToast: true });
 
+  // SA-1071 C2: a sale's door keeps all but name, phone and email behind "More details". It starts open when the sale needs an
+  // address, and opens by itself when a field inside fails.
+  const [moreOpen, setMoreOpen] = React.useState(addressRequired);
+  const formRef = React.useRef<HTMLFormElement>(null);
   const [streetError, setStreetError] = React.useState("");
   const [cityError, setCityError] = React.useState("");
   const [zipError, setZipError] = React.useState("");
@@ -212,6 +247,9 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   // customer starts on the account default (ROUTE for an account with no fulfilment mode).
   const staffFulfilment = useStaffFulfilment();
   const newCustomerPath = staffFulfilment.formDefault;
+  // A customer stored as PICKUP keeps the picker, and its Pickup option, for the whole session: read once from the data the
+  // form opened with, never from the live value (picking Ship would otherwise unmount the control at the moment of choosing).
+  const openedOnPickup = formFulfillPath(initialData?.fulfillPath) === "PICKUP";
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -227,11 +265,19 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     setValue,
     formState: { errors },
   } = useForm<CustomerFormValues>({
-    resolver: zodResolver(customerSchema),
+    resolver: (values, context, options) =>
+      zodResolver(customerSchema)(
+        door && values.customerType === "BUSINESS" && !values.contactName?.trim()
+          ? // A blank business name always fails on businessName, so the stand-in is never submitted.
+            { ...values, contactName: values.businessName?.trim() ? values.businessName : "-" }
+          : values,
+        context,
+        options,
+      ),
     // onInvalid (handleSubmit's second argument) is the single focus owner: it announces "Fix N field(s)" and
     // scrolls to the first invalid control, so a failed submit never looks like a dead button (row 328).
     shouldFocusError: false,
-    defaultValues: buildDefaultValues(initialData, newCustomerPath),
+    defaultValues: buildDefaultValues(initialData, newCustomerPath, initialName),
   });
   const onInvalid = useInvalidFocus();
 
@@ -243,12 +289,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     if (isOpen) {
       createCustomer.reset();
       updateCustomer.reset();
-      reset(buildDefaultValues(initialData, newCustomerPath));
+      reset(buildDefaultValues(initialData, newCustomerPath, initialName));
       setStreetError("");
       setCityError("");
       setZipError("");
       setSalesAgentId("");
       setIsAgentModalOpen(false);
+      setMoreOpen(addressRequired);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
@@ -259,6 +306,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     if (isOpen && !initialData && staffFulfilment.known) setValue("fulfillPath", newCustomerPath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffFulfilment.known, newCustomerPath]);
+
+  const innerError =
+    Object.keys(errors).some((k) => !DOOR_SHORT_FIELDS.includes(k)) ||
+    !!(streetError || cityError || zipError);
+  React.useEffect(() => {
+    if (door && innerError) setMoreOpen(true);
+  }, [door, innerError]);
 
   const apiError = (createCustomer.error || updateCustomer.error) as Error | null;
   // B956: the form scrolls inside the modal, so a banner at the top is out of view after the address
@@ -292,16 +346,19 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     const resolvedDisplayName = isBusiness ? (data.businessName ?? "") : fullName;
 
     if (mode === "add") {
+      // W-1041: a sale that needs no address saves without one, but a half-filled address is not dropped.
+      const needAddress =
+        addressRequired || [data.street, data.city, data.zip].some((v) => v?.trim());
       let hasAddressError = false;
-      if (!data.street?.trim()) {
+      if (needAddress && !data.street?.trim()) {
         setStreetError("Required");
         hasAddressError = true;
       } else setStreetError("");
-      if (!data.city?.trim()) {
+      if (needAddress && !data.city?.trim()) {
         setCityError("Required");
         hasAddressError = true;
       } else setCityError("");
-      if (!data.zip?.trim()) {
+      if (needAddress && !data.zip?.trim()) {
         setZipError("Required");
         hasAddressError = true;
       } else setZipError("");
@@ -315,6 +372,22 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           .toLowerCase()
           .slice(0, 24) || "customer";
       const username = `${usernameBase}_${Date.now().toString(36)}`;
+      const addresses = needAddress
+        ? [
+            {
+              line1: data.street!,
+              city: data.city!,
+              // Never default a blank state (it used to become "TX"): the selling-restrictions
+              // engine keys off the address state, so a guessed one judges the customer in the
+              // wrong jurisdiction and hides the "can't tell where" path. Blank stays blank.
+              state: data.state?.trim() ?? "",
+              zip: data.zip!,
+              isDefault: true,
+              label: "Main",
+              addressType: data.addressType || "BILLING",
+            },
+          ]
+        : undefined;
 
       createCustomer.mutate(
         {
@@ -333,27 +406,20 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: creditLimitForSubmit(data.creditLimit, "create", false),
           currency: data.currency || "USD",
-          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
+          fulfillPath: payloadFulfillPath(
+            data.fulfillPath,
+            staffFulfilment.pickForm,
+            staffFulfilment.staffDefault,
+            newCustomerPath,
+          ),
           notes: data.notes,
-          addresses: [
-            {
-              line1: data.street!,
-              city: data.city!,
-              // Never default a blank state (it used to become "TX"): the selling-restrictions
-              // engine keys off the address state, so a guessed one judges the customer in the
-              // wrong jurisdiction and hides the "can't tell where" path. Blank stays blank.
-              state: data.state?.trim() ?? "",
-              zip: data.zip!,
-              isDefault: true,
-              label: "Main",
-              addressType: data.addressType || "BILLING",
-            },
-          ],
+          addresses,
           ...(salesAgentId ? { salesAgentId } : {}),
         },
         {
-          onSuccess: () => {
+          onSuccess: (created) => {
             toast({ title: "Customer added", variant: "success" });
+            if (created?.customer) onCreated?.(created.customer);
             onClose();
           },
         },
@@ -390,7 +456,12 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
             initialData.creditLimit != null,
           ),
           currency: data.currency || "USD",
-          fulfillPath: payloadFulfillPath(data.fulfillPath, staffFulfilment.pickForm),
+          fulfillPath: payloadFulfillPath(
+            data.fulfillPath,
+            staffFulfilment.pickForm,
+            staffFulfilment.staffDefault,
+            formFulfillPath(initialData.fulfillPath),
+          ),
           notes: data.notes,
         },
         {
@@ -403,6 +474,85 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     }
   };
 
+  const emailField = (
+    <Input
+      label="Email (optional)"
+      type="email"
+      placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
+      register={register("email")}
+      error={errors.email?.message}
+    />
+  );
+
+  // SA-1071 C2: the fields both layouts use. The customers page lays them out as before; a sale's door shows the first three.
+  const businessNameInput = (
+    <Input
+      label="Business Name"
+      placeholder="Acme Co."
+      register={register("businessName")}
+      error={errors.businessName?.message}
+    />
+  );
+  const contactNameInput = (
+    <Input
+      label={door ? "Contact Name (optional)" : "Contact Name"}
+      placeholder={door ? "Same as business name" : "Jane Doe"}
+      register={register("contactName")}
+      error={errors.contactName?.message}
+    />
+  );
+  const individualNames = (
+    /* Individual: salutation + first + last */
+    <div className="grid grid-cols-8 gap-3">
+      <div className="col-span-2">
+        <Select
+          label="Salutation"
+          options={[
+            { value: "", label: "—" },
+            { value: "Mr.", label: "Mr." },
+            { value: "Mrs.", label: "Mrs." },
+            { value: "Ms.", label: "Ms." },
+            { value: "Dr.", label: "Dr." },
+          ]}
+          register={register("salutation")}
+        />
+      </div>
+      <div className="col-span-3">
+        <Input
+          label="First Name"
+          placeholder="Jane"
+          register={register("firstName")}
+          error={errors.firstName?.message}
+        />
+      </div>
+      <div className="col-span-3">
+        <Input
+          label="Last Name"
+          placeholder="Doe"
+          register={register("lastName")}
+          error={errors.lastName?.message}
+        />
+      </div>
+    </div>
+  );
+  const phoneInput = (
+    <Input
+      label="Phone (optional)"
+      type="tel"
+      placeholder="(512) 555-0100"
+      register={register("phone")}
+      error={errors.phone?.message}
+    />
+  );
+  const mobileInput = (
+    <Input
+      label="Mobile (optional)"
+      type="tel"
+      placeholder="(512) 555-0200"
+      register={register("mobile")}
+    />
+  );
+
   return (
     <Modal
       open={isOpen}
@@ -412,6 +562,17 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
         mode === "add"
           ? "Fill in the details to create a new customer account."
           : "Update the customer's information below."
+      }
+      // SA-1071 C1: a new customer opens with the cursor on the first empty field, not the close button.
+      onOpenAutoFocus={
+        mode === "add"
+          ? (e) => {
+              const first = firstEmptyField(formRef.current);
+              if (!first) return;
+              e.preventDefault();
+              first.focus();
+            }
+          : undefined
       }
       className="max-w-2xl"
       footer={
@@ -426,24 +587,50 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       }
     >
       <form
+        ref={formRef}
         id="customer-form"
-        onSubmit={handleSubmit(onSubmit, onInvalid)}
+        onSubmit={handleSubmit(onSubmit, (errs) => {
+          if (door && Object.keys(errs).some((k) => !DOOR_SHORT_FIELDS.includes(k)))
+            setMoreOpen(true);
+          onInvalid(errs);
+        })}
         noValidate
         className="max-h-[60vh] overflow-y-auto pr-1"
       >
-        <div className="space-y-5">
-          {/* API error banner */}
-          {apiError && (
-            <div
-              ref={setBannerEl}
-              role="alert"
-              aria-live="assertive"
-              className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
-            >
-              {customerFormErrorCopy(apiError)}
-            </div>
-          )}
+        {/* API error banner */}
+        {apiError && (
+          <div
+            ref={setBannerEl}
+            role="alert"
+            aria-live="assertive"
+            className="mb-5 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+          >
+            {customerFormErrorCopy(apiError)}
+          </div>
+        )}
 
+        {/* SA-1071 C2: on a sale's door the form is name, phone and email; the rest sits behind More details. */}
+        {door && (
+          <div className="mb-5 space-y-3">
+            {isBusiness ? businessNameInput : individualNames}
+            {phoneInput}
+            {emailField}
+            <button
+              type="button"
+              aria-expanded={moreOpen}
+              aria-controls="customer-more-details"
+              onClick={() => setMoreOpen((v) => !v)}
+              className="inline-flex min-h-[44px] items-center gap-1 text-sm font-medium text-brand-600 hover:underline"
+            >
+              <ChevronDown
+                className={cn("h-4 w-4 transition-transform", moreOpen && "rotate-180")}
+                aria-hidden="true"
+              />
+              More details
+            </button>
+          </div>
+        )}
+        <div id="customer-more-details" hidden={door && !moreOpen} className="space-y-5">
           {/* ── Customer Type Toggle ─────────────────────────────────────────── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
@@ -456,76 +643,46 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                   type="button"
                   onClick={() => setValue("customerType", t, { shouldValidate: false })}
                   className={cn(
-                    "flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
+                    "inline-flex flex-1 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                     customerType === t
                       ? "border-brand-500 bg-brand-50 text-brand-600"
                       : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
                   )}
                 >
-                  {t === "BUSINESS" ? "🏢 Business" : "👤 Individual"}
+                  {t === "BUSINESS" ? (
+                    <Building2 className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <User className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {t === "BUSINESS" ? "Business" : "Individual"}
                 </button>
               ))}
             </div>
           </section>
 
           {/* ── Name Fields (type-specific) ──────────────────────────────────── */}
-          <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-              {isBusiness ? "Business Info" : "Personal Info"}
-            </p>
-
-            {isBusiness ? (
-              /* Business: company name + primary contact person */
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  label="Business Name"
-                  placeholder="Acme Co."
-                  register={register("businessName")}
-                  error={errors.businessName?.message}
-                />
-                <Input
-                  label="Contact Name"
-                  placeholder="Jane Doe"
-                  register={register("contactName")}
-                  error={errors.contactName?.message}
-                />
-              </div>
-            ) : (
-              /* Individual: salutation + first + last */
-              <div className="grid grid-cols-8 gap-3">
-                <div className="col-span-2">
-                  <Select
-                    label="Salutation"
-                    options={[
-                      { value: "", label: "—" },
-                      { value: "Mr.", label: "Mr." },
-                      { value: "Mrs.", label: "Mrs." },
-                      { value: "Ms.", label: "Ms." },
-                      { value: "Dr.", label: "Dr." },
-                    ]}
-                    register={register("salutation")}
-                  />
+          {!door && (
+            <section className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                {isBusiness ? "Business Info" : "Personal Info"}
+              </p>
+              {isBusiness ? (
+                /* Business: company name + primary contact person */
+                <div className="grid grid-cols-2 gap-3">
+                  {businessNameInput}
+                  {contactNameInput}
                 </div>
-                <div className="col-span-3">
-                  <Input
-                    label="First Name"
-                    placeholder="Jane"
-                    register={register("firstName")}
-                    error={errors.firstName?.message}
-                  />
-                </div>
-                <div className="col-span-3">
-                  <Input
-                    label="Last Name"
-                    placeholder="Doe"
-                    register={register("lastName")}
-                    error={errors.lastName?.message}
-                  />
-                </div>
-              </div>
-            )}
-          </section>
-
+              ) : (
+                individualNames
+              )}
+            </section>
+          )}
+          {door && (
+            <section className="grid grid-cols-2 gap-3">
+              {isBusiness ? contactNameInput : null}
+              {mobileInput}
+            </section>
+          )}
           {/* ── Sales agent (add mode only, flag-gated) ──────────────────────── */}
           {hasSalesAgents && mode === "add" && (
             <section className="space-y-3">
@@ -560,33 +717,18 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           )}
 
           {/* ── Contact Details (shared) ─────────────────────────────────────── */}
-          <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-              Contact Details
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Phone (optional)"
-                type="tel"
-                placeholder="(512) 555-0100"
-                register={register("phone")}
-                error={errors.phone?.message}
-              />
-              <Input
-                label="Mobile (optional)"
-                type="tel"
-                placeholder="(512) 555-0200"
-                register={register("mobile")}
-              />
-            </div>
-            <Input
-              label="Email (optional)"
-              type="email"
-              placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
-              register={register("email")}
-              error={errors.email?.message}
-            />
-          </section>
+          {!door && (
+            <section className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Contact Details
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                {phoneInput}
+                {mobileInput}
+              </div>
+              {emailField}
+            </section>
+          )}
 
           {/* ── Account ─────────────────────────────────────────────────────── */}
           <section className="space-y-3">
@@ -627,7 +769,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 </label>
               </div>
             </div>
-            {(staffFulfilment.choice || watch("fulfillPath") === "PICKUP") && (
+            {(staffFulfilment.choice || openedOnPickup) && (
               <div className="space-y-1">
                 <Select
                   label="Default fulfillment"
@@ -637,9 +779,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                       label: m === "ROUTE" ? "Delivery route" : "Ship via carrier",
                     })),
                     // Shown only for a customer that already has it: the API does not let a form set PICKUP.
-                    ...(watch("fulfillPath") === "PICKUP"
-                      ? [{ value: "PICKUP", label: "Pickup (counter)" }]
-                      : []),
+                    ...(openedOnPickup ? [{ value: "PICKUP", label: "Pickup (counter)" }] : []),
                   ]}
                   register={register("fulfillPath")}
                 />
@@ -659,7 +799,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           {mode === "add" ? (
             <section className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Primary Delivery Address
+                Primary Delivery Address{addressRequired ? "" : " (optional)"}
               </p>
               <div className="flex gap-2">
                 {(["BILLING", "SHIPPING"] as const).map((t) => (

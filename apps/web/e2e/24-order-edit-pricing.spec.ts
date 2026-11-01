@@ -234,16 +234,14 @@ test.describe("Order-edit pricing readiness (F06)", () => {
     // control against DOING the add too early in the first place).
     const newLineName = page.getByText(tierProduct.name, { exact: true });
     await expect(newLineName).toBeVisible({ timeout: 10_000 });
-    // Nearest ancestor <div> that also contains a "Unit price" label — the
+    // Nearest ancestor <div> that also contains a "Price per <unit>" / "Price each" label — the
     // per-line wrapper `page.tsx` renders around each item's name AND its
     // PriceEditRow (a sibling block), found by content rather than a
     // hardcoded ancestor depth so it survives an unrelated markup reflow.
     const newLineRow = newLineName.locator(
-      'xpath=ancestor::div[.//*[normalize-space(text())="Unit price"]][1]',
+      'xpath=ancestor::div[.//*[(starts-with(normalize-space(text()),"Price per ") or normalize-space(text())="Price each")]][1]',
     );
-    const unitPriceInput = newLineRow
-      .getByText("Unit price", { exact: true })
-      .locator("xpath=..//input");
+    const unitPriceInput = newLineRow.getByText(/^Price (per .+|each)$/).locator("xpath=..//input");
     await expect(unitPriceInput).toHaveValue(tier2Price.toFixed(2), { timeout: 10_000 });
   });
 });

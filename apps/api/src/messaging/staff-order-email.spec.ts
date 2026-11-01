@@ -9,6 +9,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { EmailDeliveryService } from "../email/email-delivery.service";
+import { PolicyService } from "../policy/policy.service";
 
 /**
  * WS4 (SA-606) — staff emails for buyer-placed orders / buyer edits / cancels.
@@ -57,7 +58,9 @@ function makeHarness(
   };
   const email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }) };
   const deliveries = { record: jest.fn().mockResolvedValue(undefined) };
-  return { prisma, email, deliveries, models };
+  // SA-1063: the tenant policy `notifications.staffOrderEmail` (its registry default is "dark")
+  const policies = { resolve: jest.fn().mockResolvedValue("dark") };
+  return { prisma, email, deliveries, policies, models };
 }
 
 function baseOrder(over: Row = {}): Row {
@@ -80,21 +83,18 @@ async function build(h: ReturnType<typeof makeHarness>): Promise<StaffOrderEmail
       { provide: PrismaService, useValue: h.prisma },
       { provide: EmailService, useValue: h.email },
       { provide: EmailDeliveryService, useValue: h.deliveries },
+      { provide: PolicyService, useValue: h.policies },
     ],
   }).compile();
   return mod.get(StaffOrderEmailService);
 }
 
-/**
- * ASSUMED SEAM: the policy mode is fixed "dark" in production today, so "on" is reached in
- * specs by overriding the instance field `policyMode` (implementer: expose
- * `policyMode: StaffOrderEmailMode = "dark"` on StaffOrderEmailService).
- */
+/** Env on and the tenant policy `on`: the only combination that really sends. */
 async function buildOn(opts: Parameters<typeof makeHarness>[0]) {
   process.env.STAFF_ORDER_EMAIL = "on";
   const h = makeHarness(opts);
   const svc = await build(h);
-  (svc as unknown as { policyMode: StaffOrderEmailMode }).policyMode = "on";
+  h.policies.resolve.mockResolvedValue("on");
   return { h, svc };
 }
 

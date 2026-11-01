@@ -11,6 +11,9 @@ interface UnitComboboxProps {
   /** Additional units from the existing catalog to suggest */
   extraUnits?: string[];
   required?: boolean;
+  /** SA-1071 I3: the owner's form names a missing unit; the input says so to assistive tech. */
+  invalid?: boolean;
+  describedBy?: string;
   placeholder?: string;
   className?: string;
   id?: string;
@@ -21,6 +24,8 @@ export function UnitCombobox({
   onChange,
   extraUnits = [],
   required,
+  invalid,
+  describedBy,
   placeholder = "e.g. case, kg, unit",
   className,
   id,
@@ -66,6 +71,8 @@ export function UnitCombobox({
         ref={inputRef}
         id={id}
         required={required}
+        aria-invalid={invalid ? true : undefined}
+        aria-describedby={describedBy}
         type="text"
         value={value}
         placeholder={placeholder}

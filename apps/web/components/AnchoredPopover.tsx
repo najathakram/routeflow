@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
  * A lightweight, NON-modal popover anchored under an element — the hand-rolled pattern of
  * `MarginHint`'s CostHistoryPopover, extracted. Portaled to <body> so it escapes a modal's
  * `transform` / `overflow` clipping; `position: fixed` from the anchor rect; closes on an outside
- * mousedown; Escape is a CAPTURE-phase window listener that stops propagation, so a surrounding
+ * pointerdown (touch fires it; iOS Safari may send no mouse events for a tap); Escape is a CAPTURE-phase window listener that stops propagation, so a surrounding
  * Radix Dialog (the order builder) does not also close and discard the order.
  *
  * Inside a modal Radix Dialog it portals INTO the dialog's content instead of <body>: outside the
@@ -24,7 +24,7 @@ export function AnchoredPopover({
   children,
 }: {
   anchor: HTMLElement;
-  /** Why it closed: Escape or a mousedown outside (the panel's own actions call their own close). */
+  /** Why it closed: Escape or a pointerdown outside (the panel's own actions call their own close). */
   onClose: (reason?: "escape" | "outside") => void;
   label: string;
   /** Card width in px (kept on screen horizontally). */
@@ -51,7 +51,8 @@ export function AnchoredPopover({
       const below = window.innerHeight - r.bottom - 8;
       const above = r.top - 8;
       const flip = h > below && above > below;
-      const top = flip ? Math.max(8, r.top - 4 - Math.min(h, above)) : r.bottom + 4;
+      const wanted = flip ? r.top - 4 - h : r.bottom + 4;
+      const top = Math.max(8, Math.min(wanted, window.innerHeight - h - 8));
       // `position: fixed` resolves against a transformed host, not the viewport.
       const o = host === document.body ? { top: 0, left: 0 } : host.getBoundingClientRect();
       setPos({ top: top - o.top, left: left - o.left });
@@ -75,7 +76,7 @@ export function AnchoredPopover({
   }, [placed]);
 
   React.useEffect(() => {
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (ref.current && !ref.current.contains(t) && !anchor.contains(t)) onClose("outside");
     };
@@ -85,10 +86,10 @@ export function AnchoredPopover({
       e.stopPropagation();
       onClose("escape");
     };
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey, true);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey, true);
     };
   }, [anchor, onClose]);
@@ -97,6 +98,7 @@ export function AnchoredPopover({
     <div
       ref={ref}
       role="dialog"
+      data-anchored-popover=""
       aria-label={label}
       tabIndex={-1}
       onKeyDown={(e) => {

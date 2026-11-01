@@ -13,19 +13,23 @@ import { AssignProductsDto } from "./dto/assign-products.dto";
 import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 // TENANT_ADMIN satisfies OPERATOR via the RolesGuard hierarchy, so both roles
 // can manage categories; SUPER_ADMIN too. Generic feature — no addon gate.
+@RequirePermission("REGULATED")
 @Controller("tracked-categories")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
 export class TrackedCategoriesController {
   constructor(private readonly service: TrackedCategoriesService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   findAll(@Query() query: ListTrackedCategoriesDto) {
     return this.service.findAll(query);
   }
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.service.findOne(id);

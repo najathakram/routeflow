@@ -1,13 +1,16 @@
 import {
   isCalendarDay,
+  mayCompleteAtCounter,
   roundMoney,
   saleTotals,
   type ChargeLine,
   validCustomer,
   validLine,
-  type CategoryTaxType,
 } from "@routeflow/pricing";
 import { formatReceiptMoney } from "./counter-receipt";
+import { saleLinesOf, type CartCategory, type CartLine } from "./sale-lines";
+
+export type { CartCategory, CartLine };
 import {
   SALE_ORDER_EXISTS_CODES as ORDER_EXISTS_CODES,
   isDefinitiveSaleRefusal,
@@ -16,6 +19,7 @@ import {
 import {
   API_ERROR_CODES,
   COMPLETE_MODE_ERROR_COPY,
+  UNSET_FULFILMENT_CAPABILITIES,
   counterCompleteRefusalCopy,
   type CounterSalePaymentMethod,
   type ToCollectMethod,
@@ -32,21 +36,15 @@ import { isReadOnlyRefusal, readOnlyRefusalCopy } from "./read-only-refusal";
  */
 
 export interface CounterSaleGate {
-  /** the "Counter sale" button (Orders + dashboard) */
+  /** the till is offered: the sidebar leaf, the palette, the settings index and the counter screen */
   showButton: boolean;
-  /** staff "New order" opens AS the counter sale */
-  opensAsCounter: boolean;
   /** "Ship this order instead": only when SHIP is a method of this business */
   offerShipInstead: boolean;
-  /** "Invoice order": a store-only business's way into the order builder (row 331) */
-  offerInvoiceOrder: boolean;
 }
 
 const NO_COUNTER: CounterSaleGate = {
   showButton: false,
-  opensAsCounter: false,
   offerShipInstead: false,
-  offerInvoiceOrder: false,
 };
 
 /**
@@ -60,47 +58,91 @@ export function isStoreOnly(
   return methods.length > 0 && methods.every((m) => m === "PICKUP");
 }
 
-/** always -> the button and New order opens as the counter; optional -> the button only; off / unknown / loading -> nothing. */
+/** always -> the till, and "Ship this order instead" where SHIP is a method; optional -> the till; off / unknown / loading -> nothing. */
 export function counterSaleGate(cap: FulfilmentCapability | null | undefined): CounterSaleGate {
   if (!cap) return NO_COUNTER;
-  if (cap.counter === "optional")
-    return {
-      showButton: true,
-      opensAsCounter: false,
-      offerShipInstead: false,
-      offerInvoiceOrder: false,
-    };
+  if (cap.counter === "optional") return { showButton: true, offerShipInstead: false };
   if (cap.counter === "always")
     return {
       showButton: true,
-      opensAsCounter: true,
       offerShipInstead: (cap.methods ?? []).includes("SHIP"), // `?? []`: a partial answer must not crash the till
-      // A business with no delivery at all has nowhere else to build an invoiced order from: give it the entry.
-      offerInvoiceOrder: isStoreOnly(cap),
     };
   return NO_COUNTER;
 }
 
 /**
- * Row 331 (UX G7) + row 344: the ONE header rule for every place that carries the quick-create entries (the Orders
- * header, the dashboard header). A store-only business has a single place to ring a sale, so "New Order" (which
- * went to the same place as "Counter sale") is not offered, Counter sale is the filled primary and trails, and
- * the actions are 44 px targets below `sm`. Read from the one capability gate (`counterSaleGate`), so there is no
- * second rule and no second capability read. A partial gate (a test double, a loading state) is NOT store-only.
+ * W-854 (SA-940, A-1.1): what New order does here. The ONE predicate every sale entry reads: the Orders header, both
+ * dashboard branches and the `?action=new` intent. A new kind fails to compile at each caller.
+ * - `wait`: the gate hasn't answered. Nothing is offered and the URL intent stays.
+ * - `none`: a store-only business with the till denied or unknown. The builder's PICKUP path IS the till there (BO-07),
+ *   so sending this operator to the builder would hand back what their admin took away.
+ * - `builder`: no counter, a counter this operator is denied, or the capability read failed. One option isn't a choice.
+ * - `menu`: Counter sale and Regular order, with the business's default (`staffOpensAs`) first.
  */
-export interface QuickCreateRule {
-  storeOnly: boolean;
-  /** "New Order" is offered. */
-  showNewOrder: boolean;
-  /** "Counter sale" is the filled primary (and trails the other actions). */
-  counterIsPrimary: boolean;
+export type NewOrderEntry =
+  | { kind: "wait" }
+  | { kind: "none" }
+  | { kind: "builder" }
+  | { kind: "menu"; first: "counter" | "order" };
+
+export interface NewOrderGate {
+  capability?: FulfilmentCapability | null;
+  mayUseTill?: boolean;
+  permsKnown?: boolean;
+  loading?: boolean;
 }
 
-export function quickCreateRule(
-  gate: Partial<Pick<CounterSaleGate, "offerInvoiceOrder">> | null | undefined,
-): QuickCreateRule {
-  const storeOnly = gate?.offerInvoiceOrder === true;
-  return { storeOnly, showNewOrder: !storeOnly, counterIsPrimary: storeOnly };
+export function newOrderEntry(gate: NewOrderGate): NewOrderEntry {
+  if (gate.loading) return { kind: "wait" };
+  const cap = gate.capability;
+  const mayUseTill = gate.mayUseTill === true && gate.permsKnown === true;
+  if (isStoreOnly(cap) && !mayUseTill) return { kind: "none" };
+  if (!mayUseTill || (cap?.counter !== "always" && cap?.counter !== "optional"))
+    return { kind: "builder" };
+  return { kind: "menu", first: cap.staffOpensAs === "counter" ? "counter" : "order" };
+}
+
+/** What a bare `?action=new` does with that answer. A read-only workspace opens nothing: the screen's hint says why. */
+export function newOrderIntent(
+  entry: NewOrderEntry,
+  readOnly: boolean,
+): "wait" | "nothing" | "builder" | "menu" {
+  switch (entry.kind) {
+    case "wait":
+      return "wait";
+    case "none":
+      return "nothing";
+    case "builder":
+      return "builder";
+    case "menu":
+      return readOnly ? "nothing" : "menu";
+  }
+}
+
+/**
+ * SA-940 MUST 4, SA-1069 A-3: the Regular order line in the menu says what the builder will offer: its form methods, plus
+ * pickup later where the store hands over. It reads the same capability the builder falls back to (`useFulfilmentCaps`:
+ * an inconsistent answer is the UNSET shape), so the sentence stays true. Only ever shown inside the menu, where the
+ * till is allowed.
+ */
+export function regularOrderSubtitle(cap: FulfilmentCapability | null | undefined): string {
+  if (isStoreOnly(cap)) return "Pick up later, invoiced";
+  const offer = !cap || cap.consistent === false ? UNSET_FULFILMENT_CAPABILITIES : cap;
+  const words = [
+    ...(offer.methods.includes("ROUTE") ? ["deliver"] : []),
+    ...(offer.methods.includes("SHIP") ? ["ship"] : []),
+    ...(mayCompleteAtCounter({ mayUseTill: true, methods: offer.methods, counter: offer.counter })
+      ? ["pick up later"]
+      : []),
+  ];
+  const last = words[words.length - 1];
+  const line =
+    words.length > 2
+      ? `${words.slice(0, -1).join(", ")}, or ${last}`
+      : words.length === 2
+        ? `${words[0]} or ${last}`
+        : last;
+  return line ? line[0].toUpperCase() + line.slice(1) : "";
 }
 
 /**
@@ -115,26 +157,6 @@ export function preselectFulfilment(
   if (customerPath && ((cap.methods ?? []) as readonly string[]).includes(customerPath))
     return customerPath;
   return cap.staffDefault;
-}
-
-export interface CartLine {
-  unitPrice: number;
-  qty: number;
-  boxes?: number | null;
-  pieces?: number | null;
-  unitsPerBox?: number | null;
-  /** The product's regulated category (levy), snapshotted when the line was added. */
-  trackedCategoryId?: string | null;
-}
-
-/** A regulated category as the tracked-categories list serialises it (`rate` is a Decimal string). */
-export interface CartCategory {
-  id?: string;
-  /** the category's name: the levy prints as its own named charge ("CRV deposit") */
-  name?: string;
-  taxType: string;
-  rate: string | number;
-  priceIncludesTax?: boolean | null;
 }
 
 export interface CartTotalsContext {
@@ -162,28 +184,10 @@ export function cartTotals(
   /** the levy as named charges, one per regulated category (CQ-08) */
   chargeLines: ChargeLine[];
 } {
-  const t = saleTotals(
-    lines.map((l) => {
-      const c = l.trackedCategoryId ? ctx.categories?.get(l.trackedCategoryId) : undefined;
-      return {
-        unitPrice: l.unitPrice,
-        qty: l.qty,
-        boxes: l.boxes ?? undefined,
-        pieces: l.pieces ?? undefined,
-        unitsPerBox: l.unitsPerBox ?? undefined,
-        category: c
-          ? {
-              id: c.id ?? l.trackedCategoryId,
-              name: c.name,
-              taxType: c.taxType as CategoryTaxType,
-              rate: Number(c.rate),
-              priceIncludesTax: c.priceIncludesTax ?? false,
-            }
-          : null,
-      };
-    }),
-    { taxRate, isTaxExempt: ctx.isTaxExempt === true },
-  );
+  const t = saleTotals(saleLinesOf(lines, ctx.categories), {
+    taxRate,
+    isTaxExempt: ctx.isTaxExempt === true,
+  });
   return {
     subtotal: t.subtotal,
     tax: t.regularTax,
@@ -214,6 +218,17 @@ export function quickTenderOptions(total: number): QuickTender[] {
 /** Change owed for a tender, in cents; never negative. */
 export function changeDue(total: number, tendered: number): number {
   return Math.max(0, roundMoney(tendered - total));
+}
+
+/**
+ * SA-1067 M2b: the largest US bill. A real tender is within one bill of the sale, so a tender this far over it is far more
+ * likely a scanner's code than money; Enter on it arms and a second Enter completes.
+ */
+export const TENDER_ARM_OVER = 100;
+
+/** True when Enter alone must not complete the sale: the tender is `TENDER_ARM_OVER` or more over what's due. */
+export function tenderNeedsSecondEnter(total: number, tendered: number): boolean {
+  return roundMoney(tendered - total) >= TENDER_ARM_OVER;
 }
 
 /** What is still owed for a tender, in cents; never negative. Zero exactly when `changeDue` takes over. */
@@ -746,6 +761,26 @@ const PICKUP_HANDLED_CODES: ReadonlySet<string> = new Set([
   API_ERROR_CODES.COUNTER_SALE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
   API_ERROR_CODES.COUNTER_CHECK_POSTDATED,
+  // W-778: the Complete-at-counter refusals are the dialog's own copy too (one message per refusal, never also the generic 409 toast)
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
+]);
+/**
+ * W-778: refusals no retry from this dialog can fix (nothing was written). The dialog shows only Close (or Reload) and locks
+ * the tender controls, so nothing looks ready to retry. COUNTER_COMPLETE_ON_RUN is not here: the clerk can confirm it.
+ */
+export const COMPLETE_HARD_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED,
+  API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED,
+  API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED,
+  API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE,
+  API_ERROR_CODES.ORDER_ON_ACTIVE_RUN,
+  API_ERROR_CODES.ORDER_RUN_LINK_CHANGED,
 ]);
 /** Counter-sale codes the till answers with its own fixed copy (counterSaleErrorCopy): the global error toast stays quiet. */
 const COUNTER_SALE_HANDLED_CODES: ReadonlySet<string> = new Set([

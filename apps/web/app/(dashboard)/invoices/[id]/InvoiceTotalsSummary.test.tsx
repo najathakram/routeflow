@@ -93,3 +93,28 @@ describe("InvoiceTotalsSummary: the levy is its own named charge, never inside T
     expect(screen.queryByTestId(/^invoice-charge-/)).not.toBeInTheDocument();
   });
 });
+
+describe("InvoiceTotalsSummary Balance due colour (SA-1066 M5)", () => {
+  const row = () => screen.getByText("Balance due").parentElement as HTMLElement;
+
+  it("R5: a draft with a balance is navy, label and amount unchanged", () => {
+    render(<InvoiceTotalsSummary {...BASE} isDraft />);
+    expect(row()).toHaveClass("text-navy");
+    expect(row()).not.toHaveClass("text-danger");
+    expect(row()).toHaveTextContent("Balance due$870.00");
+  });
+
+  it("R5a: a draft at zero is navy, not success", () => {
+    render(<InvoiceTotalsSummary {...BASE} balanceDue={0} isDraft />);
+    expect(row()).toHaveClass("text-navy");
+    expect(row()).not.toHaveClass("text-success");
+  });
+
+  it("R5b: not a draft, a balance stays danger and zero stays success", () => {
+    const { unmount } = render(<InvoiceTotalsSummary {...BASE} />);
+    expect(row()).toHaveClass("text-danger");
+    unmount();
+    render(<InvoiceTotalsSummary {...BASE} balanceDue={0} />);
+    expect(row()).toHaveClass("text-success");
+  });
+});

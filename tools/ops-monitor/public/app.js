@@ -93,6 +93,7 @@
     "stale-source": "Data source is out of date",
     "untracked-pr": "Pull request not linked to any item",
     "unknown-status": "Item has a status the monitor does not know",
+    "blocker-cleared": "Blocker landed and nobody has taken the work",
     "untracked-branch": "Branch not linked to any item",
   };
   const kindLabel = (kind) => ALARM_KIND_LABEL[kind] ?? String(kind ?? "other").replace(/-/g, " ");

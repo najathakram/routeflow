@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Eye, EyeOff, History } from "lucide-react";
+import { Eye, EyeOff, History, X } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { AnchoredPopover } from "@/components/AnchoredPopover";
 import {
@@ -14,9 +14,11 @@ import {
   type PriceSummaryEntry,
 } from "@/lib/api/price-history";
 import { fmt } from "@/lib/formatting";
+import { countNoun } from "@/lib/plural";
 import { PriceHistoryChart } from "@/components/price-history/PriceHistoryChart";
 import {
   buildChartModel,
+  monthLabel,
   NOTE_COPY,
   NOTE_IDS,
   type ComparisonState,
@@ -85,17 +87,52 @@ function Skeleton() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+/** Close at every width (44px under sm); AnchoredPopover has no close of its own. Behaves as Escape. */
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close price history"
+      onClick={onClose}
+      className="absolute -right-2 -top-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy sm:-right-1 sm:-top-1 sm:min-h-6 sm:min-w-6"
+    >
+      <X className="h-4 w-4" aria-hidden />
+    </button>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  onUse,
+}: {
+  label: string;
+  value: string;
+  /** SA-1066 F08: set when a usable row carries this figure; the figure then does what that row's Use does. */
+  onUse?: () => void;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-wide text-navy/50">{label}</div>
-      <div className="font-mono text-xs text-navy">{value}</div>
+      {onUse ? (
+        <button
+          type="button"
+          aria-label={`Use the ${label.toLowerCase()} price (${value})`}
+          onClick={onUse}
+          className="flex min-h-11 items-start font-mono text-xs text-brand-600 underline sm:min-h-0"
+        >
+          {value}
+        </button>
+      ) : (
+        <div className="font-mono text-xs text-navy">{value}</div>
+      )}
     </div>
   );
 }
 
 function PanelBody({
   data,
+  chartRows,
   productName,
   customerName,
   unitHint,
@@ -107,8 +144,12 @@ function PanelBody({
   onCompareChange,
   onCompareRetry,
   onUse,
+  onClose,
+  keyRef,
 }: {
   data: PriceHistoryResponse;
+  /** This customer's rows for the chart: the compare query's (up to 100), once ready; the table keeps `data.rows` (25). */
+  chartRows?: PriceHistoryRow[];
   productName: string;
   customerName?: string | null;
   unitHint?: string | null;
@@ -124,9 +165,14 @@ function PanelBody({
   onCompareChange: (on: boolean) => void;
   onCompareRetry: () => void;
   onUse: (price: number) => void;
+  /** The header's close button: it behaves as Escape (focus returns to the trigger). */
+  onClose: () => void;
+  /** The panel's key handler, handed up so the popover SHELL (where focus really lands) can call it: a key pressed on a parent never reaches a child's handler. */
+  keyRef: React.MutableRefObject<((e: React.KeyboardEvent) => void) | null>;
 }) {
   const [showCost, setShowCost] = React.useState(false);
-  const [active, setActive] = React.useState(0);
+  // -1 = nothing chosen. A scanner's keyboard ends in Enter and cannot press arrows, so Enter alone must never commit a row.
+  const [active, setActive] = React.useState(-1);
   const bodyRef = React.useRef<HTMLDivElement>(null);
   // Focus the body only once the (visible) popover shell exists; AnchoredPopover also focuses it.
   React.useEffect(() => bodyRef.current?.focus({ preventScroll: true }), []);
@@ -153,6 +199,10 @@ function PanelBody({
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
     [data.rows, unit],
   );
+  const plotRows = React.useMemo(
+    () => (chartRows ?? data.rows).filter((r) => sameUnit(r.unitLabel, unit)),
+    [chartRows, data.rows, unit],
+  );
   const summary: PriceHistorySummary | undefined = data.summaries.find((s) =>
     sameUnit(s.unitLabel, unit),
   );
@@ -166,16 +216,21 @@ function PanelBody({
     () =>
       buildChartModel({
         unit,
-        rows,
+        rows: plotRows,
         comparison: data.comparison,
         comparisonState,
         panelOpen: compare,
       }),
-    [unit, rows, data.comparison, comparisonState, compare],
+    [unit, plotRows, data.comparison, comparisonState, compare],
   );
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
+  // F08: a summary figure is usable only when a row carries that price and the line can use that row (same gate as its Use).
+  const summaryUse = (price: number | null | undefined) =>
+    price != null && rows.some((r) => r.unitPrice === price && canUse(r))
+      ? () => onUse(price)
+      : undefined;
   const marginCell = (r: PriceHistoryRow) =>
     !showCost
       ? MASK
@@ -185,14 +240,24 @@ function PanelBody({
   const refs = data.references;
   const agg = data.aggregate && sameUnit(data.aggregate.unitLabel, unit) ? data.aggregate : null;
   const neverSold = rows.length === 0;
+  // A different unit is a different list: the old index points at some other row.
+  React.useEffect(() => setActive(-1), [unit]);
+  // SA-1067 A-4: the arrow keys' preventDefault stops the shell's native scroll, so the highlight keeps its row on screen. Read
+  // from tbody: the unit tabs carry aria-selected too. `nearest` leaves a row already in view alone.
+  React.useEffect(() => {
+    if (active < 0) return;
+    bodyRef.current
+      ?.querySelector<HTMLElement>('tbody tr[aria-selected="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [active]);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (rows.length === 0) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setActive((i) =>
-        Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
+        i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
       );
-    } else if (e.key === "Enter" && !(e.target as HTMLElement).closest("button")) {
+    } else if (e.key === "Enter" && active >= 0 && !(e.target as HTMLElement).closest("button")) {
       const r = rows[Math.min(active, rows.length - 1)];
       if (r && canUse(r)) {
         e.preventDefault();
@@ -201,14 +266,17 @@ function PanelBody({
     }
   };
 
+  React.useEffect(() => {
+    keyRef.current = onKeyDown;
+    return () => {
+      keyRef.current = null;
+    };
+  });
+
   return (
-    <div
-      ref={bodyRef}
-      tabIndex={-1}
-      onKeyDown={onKeyDown}
-      className="space-y-2 text-xs outline-none"
-    >
-      <div>
+    <div ref={bodyRef} tabIndex={-1} className="space-y-2 text-xs outline-none">
+      <div className="relative pr-11 sm:pr-7">
+        <CloseButton onClose={onClose} />
         <p className="text-sm font-semibold text-navy">
           Price history · {data.productName || productName}
         </p>
@@ -221,12 +289,7 @@ function PanelBody({
               {refs.changeSinceLast != null && (
                 <>
                   {" · "}
-                  <span
-                    className={refs.changeSinceLast > 0 ? "text-emerald-700" : "text-amber-700"}
-                  >
-                    {refs.changeSinceLast > 0 ? "+" : ""}
-                    {(refs.changeSinceLast * 100).toFixed(0)}% since last order
-                  </span>
+                  <ChangeSinceLast value={refs.changeSinceLast} />
                 </>
               )}
             </p>
@@ -300,7 +363,9 @@ function PanelBody({
                 <Stat label="High" value={money(agg.high)} />
               </div>
               <p className="mt-1 text-[10px] text-navy/50">
-                Other customers, {agg.customers} in all. Names are never shown.
+                {countNoun(agg.customers, "other customer")}
+                {agg.newestMonth && `, 6 months to ${monthLabel(agg.newestMonth)}`}. Names are never
+                shown.
               </p>
             </>
           ) : compareError ? (
@@ -325,11 +390,11 @@ function PanelBody({
       )}
 
       {!neverSold && (
-        <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
-          <Stat label="Last" value={money(summary?.last)} />
-          <Stat label="Low" value={money(summary?.low)} />
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
+          <Stat label="Last" value={money(summary?.last)} onUse={summaryUse(summary?.last)} />
+          <Stat label="Low" value={money(summary?.low)} onUse={summaryUse(summary?.low)} />
           <Stat label="High" value={money(summary?.high)} />
-          <Stat label="Qty sold" value={String(summary?.qtySold ?? 0)} />
+          <Stat label="Qty invoiced" value={String(summary?.qtySold ?? 0)} />
           {data.costVisible && (
             <Stat label="Avg cost now" value={costCell(summary?.currentAvgCost ?? null)} />
           )}
@@ -338,7 +403,7 @@ function PanelBody({
               type="button"
               onClick={() => setShowCost((v) => !v)}
               aria-pressed={showCost}
-              className="ml-auto flex items-center gap-1 text-[11px] text-navy/70 hover:text-navy"
+              className="ml-auto flex items-center gap-1 self-end text-[11px] text-navy/70 hover:text-navy"
             >
               {showCost ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               {showCost ? "Hide cost" : "Show cost"}
@@ -371,17 +436,18 @@ function PanelBody({
               <tr
                 key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
                 aria-selected={i === active}
-                onMouseEnter={() => setActive(i)}
                 className={cn(
-                  "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
-                  i === active && "bg-brand-50/60",
+                  "grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-surface-border py-1 sm:table-row sm:py-0",
+                  i === active ? "bg-brand-50/60" : "hover:bg-brand-50/30",
                 )}
               >
-                <td className="whitespace-nowrap py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
-                <td className="py-1 pr-2 font-mono text-navy">
+                <td className="col-start-1 row-start-1 whitespace-nowrap py-1 pr-0 text-navy/70 sm:pr-2">
+                  {fmtDate(r.date)}
+                </td>
+                <td className="col-start-2 row-span-2 row-start-1 py-1 pr-0 font-mono text-navy sm:pr-2">
                   {fmt(r.unitPrice)}
                   {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                    <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
+                    <span className="block w-fit rounded bg-sunken px-1 text-[11px] uppercase text-navy/70">
                       {PRICE_TYPE_TAG[r.priceType]}
                     </span>
                   )}
@@ -396,36 +462,36 @@ function PanelBody({
                     {marginCell(r)}
                   </td>
                 )}
-                <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
+                <td className="col-start-1 row-start-2 max-w-[5rem] break-words py-1 pl-0 pr-0 text-navy/70 sm:pl-2 sm:pr-2">
                   {r.qty} {r.unitLabel}
                 </td>
                 <td
-                  className="max-w-[7rem] truncate py-1 pr-2 text-navy/70"
+                  className="col-start-3 row-span-2 row-start-1 min-w-0 max-w-[7rem] py-1 pr-0 text-navy/70 sm:pr-2"
                   title={
                     r.source === "INVOICE"
                       ? (r.invoiceNumber ?? r.orderNumber)
                       : `${r.orderNumber} (not invoiced yet)`
                   }
                 >
-                  {r.source === "INVOICE" ? (
-                    (r.invoiceNumber ?? r.orderNumber)
-                  ) : (
-                    <>
-                      {r.orderNumber}
-                      <span className="ml-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700 ring-1 ring-amber-200">
-                        not invoiced yet
-                      </span>
-                    </>
+                  {/* the number truncates; the note never does (SA-1066 F4) */}
+                  <span className="block truncate">
+                    {r.source === "INVOICE" ? (r.invoiceNumber ?? r.orderNumber) : r.orderNumber}
+                  </span>
+                  {r.source !== "INVOICE" && (
+                    // SA-1071 P3: where the number came from, not the price: plain muted text, so the price-type pill is the row's only pill
+                    <span className="block w-fit whitespace-nowrap text-[11px] text-navy/70">
+                      not invoiced yet
+                    </span>
                   )}
                 </td>
-                <td className="w-full py-1 text-right sm:w-auto">
+                <td className="col-start-4 row-span-2 row-start-1 ml-auto shrink-0 py-1 text-right">
                   <button
                     type="button"
                     disabled={!canUse(r)}
                     title={canUse(r) ? undefined : "A different unit than this line"}
                     aria-label={`Use this price (${fmt(r.unitPrice)})`}
                     onClick={() => onUse(r.unitPrice)}
-                    className="min-h-[44px] w-full whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:w-auto"
+                    className="min-h-[44px] min-w-[44px] whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-medium text-brand-600 ring-1 ring-brand-200 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:min-w-0"
                   >
                     <span className="sm:hidden">Use</span>
                     <span className="hidden sm:inline">Use this price</span>
@@ -437,6 +503,22 @@ function PanelBody({
         </table>
       )}
     </div>
+  );
+}
+
+/**
+ * The customer's last price against the one before it (the server's `changeSinceLast`), named as such: it is not today's
+ * price. Tests the raw value, never the rounded text: exactly 0 is "Same"; a non-zero change that rounds to 0 is "under 1%",
+ * because "Same" would be false (and this never prints "-0%").
+ */
+function ChangeSinceLast({ value }: { value: number }) {
+  if (value === 0) return <span className="text-navy/70">Same as the order before</span>;
+  const word = value > 0 ? "Up" : "Down";
+  const pct = Math.round(Math.abs(value) * 100);
+  return (
+    <span className={value > 0 ? "text-emerald-700" : "text-amber-700"}>
+      {pct === 0 ? `${word} under 1%` : `${word} ${pct}%`} from the order before
+    </span>
   );
 }
 
@@ -466,12 +548,15 @@ function Panel({
   excludeOrderId?: string | null;
 }) {
   const [compare, setCompare] = React.useState(false);
+  // SA-1067 P4: AnchoredPopover focuses its own shell once placed, so Down and Enter arrive there, not on the panel body.
+  const keyRef = React.useRef<((e: React.KeyboardEvent) => void) | null>(null);
   // Two requests, so a failed or slow comparison never takes the customer's own rows away: the base
   // history is always shown; `?compare=all` is a separate query that only adds the aggregate (and its
   // average line, which the chart always draws). Both leave the order being edited out of the history
   // (hunt2 F6).
   const q = usePriceHistory(customerId, productId, true, 25, excludeOrderId);
-  const cmp = usePriceHistory(customerId, productId, true, 25, excludeOrderId, true);
+  // The compare query also carries this customer's rows up to the API's cap (100) for the chart's own line (W-1058 H-2.7).
+  const cmp = usePriceHistory(customerId, productId, true, 100, excludeOrderId, true);
   const shown = q.data
     ? { ...q.data, aggregate: cmp.data?.aggregate ?? null, comparison: cmp.data?.comparison }
     : undefined;
@@ -486,11 +571,13 @@ function Panel({
       onClose={(r) => onClose(r ?? "escape")}
       label="Price history"
       width={520}
+      onKeyDown={(e) => keyRef.current?.(e)}
     >
       {q.isLoading ? (
         <Skeleton />
       ) : q.isError || !shown ? (
-        <div role="alert" className="space-y-2 text-xs text-navy">
+        <div role="alert" className="relative space-y-2 pr-11 text-xs text-navy sm:pr-7">
+          <CloseButton onClose={() => onClose("escape")} />
           <p className="text-sm font-semibold">Price history · {productName}</p>
           <p>Couldn&apos;t load price history.</p>
           <button
@@ -506,6 +593,7 @@ function Panel({
       ) : (
         <PanelBody
           data={shown}
+          chartRows={cmp.data?.rows}
           productName={productName}
           customerName={customerName}
           unitHint={unitHint}
@@ -520,6 +608,8 @@ function Panel({
             onUsePrice(price);
             onClose("use");
           }}
+          onClose={() => onClose("escape")}
+          keyRef={keyRef}
         />
       )}
     </AnchoredPopover>
@@ -545,11 +635,14 @@ export function PriceHistoryButton({
   focusSelector,
   className,
   excludeOrderId,
+  label,
 }: {
   customerId?: string | null;
   customerName?: string | null;
   productId?: string | null;
   productName: string;
+  /** A visible word beside the clock (SA-1066 F07). Part of the same button; the accessible name stays "Price history". */
+  label?: string;
   /** The unit being entered (case / piece / ...), so history and "Use" never cross units. */
   unitHint?: string | null;
   /** The line's pack size (units per box), so a price from a different pack is never offered. */
@@ -626,10 +719,12 @@ export function PriceHistoryButton({
         }}
         className={cn(
           "inline-flex h-6 min-h-11 w-6 min-w-11 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40 lg:min-h-0 lg:min-w-0",
+          label && "w-auto gap-1 px-1",
           className,
         )}
       >
         <History className="h-3.5 w-3.5" aria-hidden />
+        {label && <span className="text-[11px] font-medium text-navy/70">{label}</span>}
       </button>
       {open && ready && anchor && (
         <Panel

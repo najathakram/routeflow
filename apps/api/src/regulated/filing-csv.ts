@@ -18,6 +18,7 @@
 import { ReportColumn, RegulatedReport } from "./report-types";
 import { serializeReportCsv } from "./report-csv";
 
+import { roundMoney } from "@routeflow/pricing";
 export interface FilingCsvRow {
   periodBucket: string;
   qty: number;
@@ -68,7 +69,7 @@ export interface AggregateReportInput extends FilingCsvData {
 // filing is only as complete as the ledger. Surfaced on every filing artifact.
 const DISCLOSURE = "Based on order-to-invoice sales recorded in the regulated ledger.";
 
-const money = (n: number) => n.toFixed(2);
+const money = (n: number) => roundMoney(n).toFixed(2);
 const qty = (n: number) => n.toFixed(3);
 
 /**

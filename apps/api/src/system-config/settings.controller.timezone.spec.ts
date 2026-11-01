@@ -209,7 +209,8 @@ describe("PATCH /settings: timezone writer (SA-738 R16-4)", () => {
     await c.updateSettings({ city: "Austin" }, operator);
     const call = prisma.tenantConfig.upsert.mock.calls[0][0];
     expect(call.update).toEqual({ city: "Austin" });
-    expect(call.create).not.toHaveProperty("timezone");
+    // SA-1067 Z2: a first-time row names the fallback zone itself (UTC), never the column default nobody chose.
+    expect(call.create.timezone).toBe("UTC");
     expect(tx.tenantConfig.upsert).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });

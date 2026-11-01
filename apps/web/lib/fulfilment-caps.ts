@@ -47,6 +47,8 @@ export function useStaffFulfilment() {
     /** Show the per-order / per-customer fulfilment picker (more than one method the form can hold). */
     choice: formMethods.length > 1,
     methods: caps.methods as FulfilmentMethod[],
+    /** The till's setting: `mayCompleteAtCounter` reads it with `methods`. */
+    counter: caps.counter,
     /** The ROUTE / SHIP options the account offers, in order. */
     formMethods,
     staffDefault: caps.staffDefault,
@@ -64,10 +66,13 @@ export function useStaffFulfilment() {
  *  (filters, the dashboard strip). `normal` is the label used today and is the fallback. */
 export function useOrderStatusLabel() {
   const caps = useFulfilmentCaps();
-  // An account with no fulfilment mode set keeps today's words everywhere, even for a SHIP order.
+  // An account with no fulfilment mode set keeps today's words everywhere, even for a SHIP order, except a PICKUP
+  // order (W-1043): an explicit PICKUP exists on any account (POS mode), so the order's own path decides.
   const unset = isUnsetCapabilities(caps);
   return (status: string, normal: string, fulfillPath?: string | null) =>
-    unset ? normal : fulfilmentStatusLabel(fulfillPath ?? caps.staffDefault, status, normal);
+    unset && fulfillPath !== "PICKUP"
+      ? normal
+      : fulfilmentStatusLabel(fulfillPath ?? caps.staffDefault, status, normal);
 }
 
 /** True for the "no fulfilment mode set" shape: today's behaviour, pinned unchanged. */
