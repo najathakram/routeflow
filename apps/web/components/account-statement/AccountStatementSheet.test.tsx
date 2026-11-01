@@ -148,17 +148,6 @@ describe("OpenBalanceButton", () => {
     expect(window.location.href).toBe(here);
   });
 
-  it("the footer actions slot renders what the caller hands it", async () => {
-    renderWithProviders(
-      <OpenBalanceButton customerId="c1" actions={<button type="button">Pay now</button>}>
-        $120.00
-      </OpenBalanceButton>,
-    );
-    await open();
-    const actions = await screen.findByTestId("account-statement-actions");
-    expect(within(actions).getByRole("button", { name: "Pay now" })).toBeInTheDocument();
-  });
-
   it("E1 (PR-4): the footer carries Email beside Print, and its form starts at the on-file address", async () => {
     renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
     const user = await open();

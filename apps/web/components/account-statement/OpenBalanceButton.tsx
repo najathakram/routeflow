@@ -19,7 +19,6 @@ export function OpenBalanceButton({
   chevron = false,
   hint,
   className,
-  actions,
 }: {
   customerId: string | null | undefined;
   children: React.ReactNode;
@@ -29,7 +28,6 @@ export function OpenBalanceButton({
   /** A line under the figure that only shows when the figure is a button (e.g. "View statement"). */
   hint?: string;
   className?: string;
-  actions?: React.ReactNode;
 }) {
   const may = useMayOpenStatement();
   const [open, setOpen] = React.useState(false);
@@ -64,7 +62,6 @@ export function OpenBalanceButton({
         open={open}
         onClose={() => setOpen(false)}
         linkInvoices={linkInvoices}
-        actions={actions}
       />
     </>
   );

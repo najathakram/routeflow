@@ -7,17 +7,20 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { escapeHtml } from "../common/html-escape";
 import { resolveRecipientEmail } from "../invoices/invoice-reminder-email";
 import { dayOf, fmtMoney } from "./account-statement-pdf-model";
+import { buildAccountStatement } from "./account-statement";
 
 /**
  * SA-1078 (W-1096) PR-4: the "Open balance" statement by email. On demand, from the sheet; same people who can read it
  * (`FINANCE|CUSTOMERS`). Follows `invoice-reminder-email.ts`: the recipient rule, the not-set-up check, then one send with
  * the PDF attached and one `EmailDelivery` row. The subject, the body and the PDF are all drawn from ONE statement object
- * (`StatementPdfService.buildCurrentPdf`), so a value decided twice can never disagree.
+ * (`buildAccountStatement` then `StatementPdfService.renderCurrent`), so a value decided twice can never disagree.
  */
 export interface StatementEmailDeps {
-  prisma: Pick<PrismaService, "forTenant" | "getTenantId">;
+  prisma: PrismaService;
   emailService: Pick<EmailService, "isEmailConfigured" | "send">;
-  statementPdf: Pick<StatementPdfService, "buildCurrentPdf">;
+  statementPdf: Pick<StatementPdfService, "loadTenant" | "renderCurrent">;
+  /** The one clock for this email (tests pass it; default is the wall clock, read once). */
+  now?: Date;
 }
 
 export interface StatementEmail {
@@ -69,7 +72,20 @@ export async function sendCustomerStatementEmail(
     });
   }
 
-  const { statement, tenant, pdf } = await deps.statementPdf.buildCurrentPdf(customer);
+  // One clock, one read, one render: the subject, the body and the attachment all come from this one statement.
+  const now = deps.now ?? new Date();
+  const statement = await buildAccountStatement(deps.prisma, customer, { staff: false, now });
+  const tenant = await deps.statementPdf.loadTenant();
+  let pdf: Buffer;
+  try {
+    pdf = await deps.statementPdf.renderCurrent(statement, tenant, now);
+  } catch {
+    // The body says the PDF is attached, so a statement without one is never sent (and no delivery row is written).
+    throw new BadRequestException({
+      code: API_ERROR_CODES.EMAIL_SEND_FAILED,
+      message: "The statement couldn't be prepared, so it wasn't sent. Try again.",
+    });
+  }
   const mail = buildStatementEmail(statement, tenant?.businessName);
 
   const tenantId = deps.prisma.getTenantId();

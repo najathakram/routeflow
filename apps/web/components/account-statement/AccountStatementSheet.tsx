@@ -267,20 +267,18 @@ export function AccountStatementBody({
 
 /**
  * The staff sheet: one `Modal` in side-sheet form over `GET /customers/:id/account-statement`. The footer carries Email (PR-4)
- * and Print (PR-3); `actions` is the slot after them for what comes next. A failed read says so with Try Again, never a $0.00.
+ * and Print (PR-3). A failed read says so with Try Again, never a $0.00.
  */
 export function AccountStatementSheet({
   customerId,
   open,
   onClose,
   linkInvoices = true,
-  actions,
 }: {
   customerId: string;
   open: boolean;
   onClose: () => void;
   linkInvoices?: boolean;
-  actions?: React.ReactNode;
 }) {
   const q = useAccountStatement(customerId, open);
   useBackToClose(open, onClose);
@@ -334,7 +332,6 @@ export function AccountStatementSheet({
                 emailOnFile={q.data.emailOnFile ?? null}
               />
               <StatementPrintButton customerId={customerId} />
-              {actions}
             </div>
           ) : undefined
         }

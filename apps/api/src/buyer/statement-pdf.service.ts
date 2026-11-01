@@ -68,7 +68,11 @@ export class StatementPdfService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    const { pdf } = await this.buildCurrentPdf(customer);
+    // One clock for the read and the page's "generated" stamp (SA-1078 A-6).
+    const now = new Date();
+    const statement = await buildAccountStatement(this.prisma, customer, { staff: false, now });
+    const tenant = await this.loadTenant();
+    const pdf = await this.renderCurrent(statement, tenant, now);
 
     const key = `statement-pdfs/${customerId}/current.pdf`;
     await this.storage.upload(key, pdf, "application/pdf");
@@ -76,30 +80,25 @@ export class StatementPdfService {
   }
 
   /**
-   * SA-1078 PR-4: the current statement as bytes, for the email (stores nothing). Returns the very `AccountStatement`
-   * the page was drawn from and the letterhead it used, so the email's subject, body and attachment come from one object.
+   * SA-1078 PR-4: render ONE already-read statement to bytes. Print stores them, the email attaches them directly (it never
+   * reads `current.pdf` back: every print overwrites that file). A render failure throws; the caller decides what that means.
    */
-  async buildCurrentPdf(customer: {
-    id: string;
-    businessName: string;
-    email?: string | null;
-  }): Promise<{ statement: AccountStatement; tenant: StatementTenantInfo | null; pdf: Buffer }> {
-    const statement = await buildAccountStatement(this.prisma, customer, { staff: false });
-    const tenant = await this.loadTenant();
-
-    this.logger.log(`Generating current statement PDF for customer ${customer.id}`);
-
+  async renderCurrent(
+    statement: AccountStatement,
+    tenant: StatementTenantInfo | null,
+    now: Date,
+  ): Promise<Buffer> {
+    this.logger.log(`Generating current statement PDF for customer ${statement.customer.id}`);
     try {
       const element = React.createElement(AccountStatementPdfTemplate as any, {
         statement,
         tenant,
-        generatedAt: new Date(),
+        generatedAt: now,
       });
-      const pdf = await renderToBuffer(element as any);
-      return { statement, tenant, pdf };
+      return await renderToBuffer(element as any);
     } catch (err) {
       this.logger.error(
-        `Current statement PDF render failed for customer ${customer.id}`,
+        `Current statement PDF render failed for customer ${statement.customer.id}`,
         err instanceof Error ? err.stack : String(err),
       );
       throw new Error(`Statement PDF render failed: ${err}`);
@@ -107,7 +106,7 @@ export class StatementPdfService {
   }
 
   /** The letterhead data for a render: the tenant's config plus its logo as a data URI (a logo that fails to load is skipped). */
-  private async loadTenant(): Promise<StatementTenantInfo | null> {
+  async loadTenant(): Promise<StatementTenantInfo | null> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return null;
     const cfg = await this.prisma.tenantConfig.findUnique({

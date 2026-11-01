@@ -4,10 +4,16 @@ import { CustomersController } from "./customers.controller";
 import { EMAIL_KINDS, EMAIL_KIND_AUDIENCE } from "../email/email-kinds";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { buildStatementEmail, sendCustomerStatementEmail } from "./customer-statement-email";
-import { SendAccountStatementEmailDto } from "./dto/send-account-statement-email.dto";
+import { SendStatementEmailDto } from "./dto/send-statement-email.dto";
 import { validate } from "class-validator";
 import { plainToInstance } from "class-transformer";
 import type { AccountStatement } from "@routeflow/types";
+
+const mockBuild = jest.fn();
+jest.mock("./account-statement", () => ({
+  ...jest.requireActual("./account-statement"),
+  buildAccountStatement: (...a: unknown[]) => mockBuild(...a),
+}));
 
 /**
  * SA-1078 PR-4 (W-1096): the statement email. Rows E1-E11 (+ S19 for the email route, + the kind registration). Dummy data:
@@ -38,6 +44,8 @@ function arrange(
     sendResult?: Record<string, unknown>;
     statement?: Partial<AccountStatement>;
     tenantName?: string | null;
+    renderFails?: boolean;
+    now?: Date;
   } = {},
 ) {
   const customer =
@@ -51,17 +59,28 @@ function arrange(
   const findFirst = jest.fn().mockResolvedValue(customer);
   const send = jest.fn().mockResolvedValue(over.sendResult ?? { delivered: true });
   const isEmailConfigured = jest.fn().mockResolvedValue(over.configured ?? true);
-  const buildCurrentPdf = jest.fn().mockResolvedValue({
-    statement: { ...STATEMENT, ...over.statement },
-    tenant: over.tenantName === null ? null : { businessName: over.tenantName ?? "Test Wholesale" },
-    pdf: PDF,
-  });
-  const deps = {
-    prisma: { forTenant: () => ({ customer: { findFirst } }), getTenantId: () => "tenant-test" },
-    emailService: { isEmailConfigured, send },
-    statementPdf: { buildCurrentPdf },
+  mockBuild.mockReset();
+  const statement = { ...STATEMENT, ...over.statement };
+  mockBuild.mockResolvedValue(statement);
+  const loadTenant = jest
+    .fn()
+    .mockResolvedValue(
+      over.tenantName === null ? null : { businessName: over.tenantName ?? "Test Wholesale" },
+    );
+  const renderCurrent = over.renderFails
+    ? jest.fn().mockRejectedValue(new Error("react-pdf blew up"))
+    : jest.fn().mockResolvedValue(PDF);
+  const prisma = {
+    forTenant: () => ({ customer: { findFirst } }),
+    getTenantId: () => "tenant-test",
   };
-  return { deps: deps as any, findFirst, send, isEmailConfigured, buildCurrentPdf };
+  const deps = {
+    prisma,
+    emailService: { isEmailConfigured, send },
+    statementPdf: { loadTenant, renderCurrent },
+    now: over.now,
+  };
+  return { deps: deps as any, findFirst, send, isEmailConfigured, renderCurrent, statement };
 }
 
 describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
@@ -69,7 +88,10 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     const a = arrange();
     const res = await sendCustomerStatementEmail(a.deps, "cust-1");
     expect(res).toEqual({ success: true, sentTo: "ap@acme.example" });
-    expect(a.buildCurrentPdf).toHaveBeenCalledTimes(1); // one read, one render
+    expect(mockBuild).toHaveBeenCalledTimes(1); // one read
+    expect(a.renderCurrent).toHaveBeenCalledTimes(1); // one render
+    expect(mockBuild.mock.calls[0][2]).toMatchObject({ staff: false }); // the customer-shaped read
+    expect(a.renderCurrent.mock.calls[0][0]).toBe(a.statement); // the page is drawn from that same object
     const sent = a.send.mock.calls[0][0];
     expect(sent.to).toBe("ap@acme.example");
     expect(sent.subject).toBe("Your statement from Test Wholesale");
@@ -93,7 +115,7 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     await expect(sendCustomerStatementEmail(a.deps, "cust-1")).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(a.buildCurrentPdf).not.toHaveBeenCalled();
+    expect(a.renderCurrent).not.toHaveBeenCalled();
     expect(a.send).not.toHaveBeenCalled();
     // a typed address still goes
     const b = arrange({ customerEmail: "ghost@imported.local" });
@@ -113,7 +135,7 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     await expect(sendCustomerStatementEmail(a.deps, "cust-1")).rejects.toMatchObject({
       response: { code: API_ERROR_CODES.EMAIL_NOT_CONFIGURED },
     });
-    expect(a.buildCurrentPdf).not.toHaveBeenCalled();
+    expect(a.renderCurrent).not.toHaveBeenCalled();
     expect(a.send).not.toHaveBeenCalled();
   });
 
@@ -164,13 +186,38 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     expect(sent.text).not.toContain("Open balance:");
   });
 
+  it("E12: one clock — the read, the page's stamp, the subject and the body all read the same instant", async () => {
+    const now = new Date("2026-11-01T04:30:00.000Z"); // Oct 31 evening in Chicago
+    const a = arrange({ now });
+    await sendCustomerStatementEmail(a.deps, "cust-1");
+    expect(mockBuild.mock.calls[0][2]).toEqual({ staff: false, now });
+    expect(a.renderCurrent.mock.calls[0][2]).toBe(now);
+    expect(a.send.mock.calls[0][0].text).toContain("as of Oct 31, 2026");
+  });
+
+  it("E13: the attachment is the rendered buffer itself — storage is never read back", async () => {
+    const a = arrange();
+    await sendCustomerStatementEmail(a.deps, "cust-1");
+    expect(a.send.mock.calls[0][0].attachments[0].content).toBe(PDF);
+    expect(a.deps.statementPdf.download).toBeUndefined();
+    expect(a.deps.storage).toBeUndefined();
+  });
+
+  it("E14: a render that throws sends nothing and writes no delivery row (EMAIL_SEND_FAILED)", async () => {
+    const a = arrange({ renderFails: true });
+    await expect(sendCustomerStatementEmail(a.deps, "cust-1")).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.EMAIL_SEND_FAILED },
+    });
+    expect(a.send).not.toHaveBeenCalled();
+  });
+
   it("a customer the tenant does not have is a 404 before anything else", async () => {
     const a = arrange({ customer: null });
     await expect(sendCustomerStatementEmail(a.deps, "nope")).rejects.toBeInstanceOf(
       NotFoundException,
     );
     expect(a.isEmailConfigured).not.toHaveBeenCalled();
-    expect(a.buildCurrentPdf).not.toHaveBeenCalled();
+    expect(a.renderCurrent).not.toHaveBeenCalled();
   });
 });
 
@@ -209,15 +256,15 @@ describe("POST /customers/:id/account-statement/email (SA-1078 PR-4)", () => {
   });
 
   it("E11: a bad address is a 400 from the DTO, before any render", async () => {
-    const bad = plainToInstance(SendAccountStatementEmailDto, { email: "not-an-address" });
+    const bad = plainToInstance(SendStatementEmailDto, { email: "not-an-address" });
     expect((await validate(bad)).length).toBeGreaterThan(0);
-    const long = plainToInstance(SendAccountStatementEmailDto, {
+    const long = plainToInstance(SendStatementEmailDto, {
       email: `${"a".repeat(250)}@acme.example`,
     });
     expect((await validate(long)).length).toBeGreaterThan(0);
-    const ok = plainToInstance(SendAccountStatementEmailDto, { email: "ap@acme.example" });
+    const ok = plainToInstance(SendStatementEmailDto, { email: "ap@acme.example" });
     expect(await validate(ok)).toHaveLength(0);
-    const none = plainToInstance(SendAccountStatementEmailDto, {});
+    const none = plainToInstance(SendStatementEmailDto, {});
     expect(await validate(none)).toHaveLength(0);
   });
 });

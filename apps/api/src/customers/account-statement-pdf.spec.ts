@@ -279,7 +279,7 @@ describe("service: PD2 letterhead fallback, the current key, PD5 the monthly key
     expect(props.tenant.logoDataUri).toBeUndefined();
     expect(props.statement.openBalance).toBe(160.5);
     // the customer's read: no staff-only keys on the page
-    expect(mockBuild.mock.calls[0][2]).toEqual({ staff: false });
+    expect(mockBuild.mock.calls[0][2]).toEqual({ staff: false, now: expect.any(Date) });
   });
 
   it("stores the current statement at its own key and returns the signed URL", async () => {
@@ -292,18 +292,26 @@ describe("service: PD2 letterhead fallback, the current key, PD5 the monthly key
     expect(storage.presignedUrl).toHaveBeenCalledWith("statement-pdfs/c1/current.pdf");
   });
 
-  it("E1 (PR-4): buildCurrentPdf returns the statement it rendered, the letterhead and the bytes, and stores nothing", async () => {
-    mockBuild.mockClear();
+  it("E1/E12 (PR-4): renderCurrent draws the statement it is handed, stamped with the one clock, and stores nothing", async () => {
     const s = statement();
-    mockBuild.mockResolvedValue(s);
     const { service, storage } = setup();
-    const built = await service.buildCurrentPdf({ id: "c1", businessName: "Buyer Co" });
-    expect(built.statement).toBe(s); // one read: the object the page was drawn from
-    expect(mockBuild).toHaveBeenCalledTimes(1);
+    const now = new Date("2026-11-01T04:30:00.000Z");
+    const tenant = await service.loadTenant();
+    const pdf = await service.renderCurrent(s, tenant, now);
+    expect(pdf.toString()).toBe("%PDF-test");
     expect(mockRendered[0].props.statement).toBe(s);
-    expect(built.pdf.toString()).toBe("%PDF-test");
-    expect(built.tenant?.businessName).toBe("Acme Wholesale");
+    expect(mockRendered[0].props.generatedAt).toBe(now);
+    expect(tenant?.businessName).toBe("Acme Wholesale");
     expect(storage.upload).not.toHaveBeenCalled();
+  });
+
+  it("generateCurrent reads and stamps the page with one clock", async () => {
+    mockBuild.mockClear();
+    mockBuild.mockResolvedValue(statement());
+    const { service } = setup();
+    await service.generateCurrent("c1");
+    expect(mockBuild.mock.calls[0][2].now).toBeInstanceOf(Date);
+    expect(mockRendered[0].props.generatedAt).toBe(mockBuild.mock.calls[0][2].now);
   });
 
   it("404s on a customer that is not this tenant's, before any render", async () => {

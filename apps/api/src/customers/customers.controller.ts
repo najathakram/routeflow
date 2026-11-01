@@ -34,7 +34,7 @@ import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempote
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { CustomerStatementEmailService } from "./customer-statement-email";
-import { SendAccountStatementEmailDto } from "./dto/send-account-statement-email.dto";
+import { SendStatementEmailDto } from "./dto/send-statement-email.dto";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -235,7 +235,7 @@ export class CustomersController {
   @Post(":id/account-statement/email")
   @HttpCode(200)
   @Roles(UserRole.OPERATOR)
-  sendAccountStatementEmail(@Param("id") id: string, @Body() dto: SendAccountStatementEmailDto) {
+  sendAccountStatementEmail(@Param("id") id: string, @Body() dto: SendStatementEmailDto) {
     return this.statementEmail.send(id, dto?.email);
   }
 
