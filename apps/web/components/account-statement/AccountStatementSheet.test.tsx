@@ -150,13 +150,36 @@ describe("OpenBalanceButton", () => {
 
   it("the footer actions slot renders what the caller hands it", async () => {
     renderWithProviders(
-      <OpenBalanceButton customerId="c1" actions={<button type="button">Print</button>}>
+      <OpenBalanceButton customerId="c1" actions={<button type="button">Email</button>}>
         $120.00
       </OpenBalanceButton>,
     );
     await open();
     const actions = await screen.findByTestId("account-statement-actions");
-    expect(within(actions).getByRole("button", { name: "Print" })).toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "Email" })).toBeInTheDocument();
+  });
+
+  it("PD6: the footer carries Print, and a failed print leaves the sheet and its figures on screen", async () => {
+    mockGet.mockImplementation((url: string) =>
+      url.endsWith("/pdf")
+        ? Promise.reject(new Error("boom"))
+        : Promise.resolve({ data: statement }),
+    );
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    const user = await open();
+    const actions = await screen.findByTestId("account-statement-actions");
+    await user.click(within(actions).getByRole("button", { name: "Print" }));
+    expect(await screen.findByText("Couldn't print the statement")).toBeInTheDocument();
+    expect(screen.getByTestId("account-statement-sheet")).toBeInTheDocument();
+    expect(screen.getByTestId("account-statement-open-balance")).toHaveTextContent("$120.00");
+  });
+
+  it("shows no Print while the read has not answered or has failed", async () => {
+    failRead = true;
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    await screen.findByRole("alert");
+    expect(screen.queryByTestId("account-statement-actions")).toBeNull();
   });
 });
 
