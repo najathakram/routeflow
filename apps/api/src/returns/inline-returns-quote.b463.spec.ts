@@ -66,8 +66,9 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
   };
 
   /** One invoice, one line of 2 pieces at $10.00 (so $20.00), with the given snapshot tax figures. */
-  const sold = (inv: { taxAmount: number; lineTaxRate: number; categoryTax?: number }) =>
-    db.invoice.findMany.mockResolvedValue([
+  const sold = (inv: { taxAmount: number; lineTaxRate: number; categoryTax?: number }) => {
+    db.invoiceItem.findFirst.mockResolvedValue({ id: "item-1" }); // SA-1060 A-4: the customer has a live sale of the product
+    return db.invoice.findMany.mockResolvedValue([
       {
         orderId: "ord-1",
         subtotal: 20,
@@ -91,6 +92,7 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
         ],
       },
     ]);
+  };
 
   const quote = (pieces: number) =>
     service.quote(
@@ -117,12 +119,12 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
     expect(q.chunks.find((c) => !c.sourceOrderId)).toMatchObject({ subtotal: 10, taxAmount: 0.88 });
   });
 
-  it("(1) control: a product on no candidate invoice at all still takes the tenant's CURRENT rate", async () => {
+  it("(1) SA-1060 PR-2 supersedes the old control: a product on no invoice of this customer, ever, is untaxed at any tenant rate (it took the CURRENT rate before)", async () => {
     await setup("10");
     db.invoice.findMany.mockResolvedValue([]);
     const q = await quote(1);
     expect(q.chunks).toHaveLength(1);
-    expect(q.chunks[0]).toMatchObject({ subtotal: 10, taxAmount: 1 });
+    expect(q.chunks[0]).toMatchObject({ subtotal: 10, taxAmount: 0, neverSold: true });
   });
 
   it("(2) excise-only netting: no sales tax on the invoice, the line's excise share is credited and nothing else is taxed", async () => {

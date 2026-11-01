@@ -28,7 +28,9 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { customerPricing } from "../orders/units-prices-v2";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { priceEditAllowedFor } from "../auth/permissions/price-edit";
-import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
+import { ACCRUAL_REVENUE_STATUSES, REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { quoteExcludedInvoiceIds } from "../invoices/order-edit-revert-set";
 import { currentTaxRate } from "../common/tax-rate";
 import { finiteStoredLevy } from "../common/money-invariants.util";
 import { getTierPrice, isWholeCents, packFromOwnSplit, roundMoney } from "@routeflow/pricing";
@@ -141,6 +143,8 @@ export class InlineReturnsQuoteService {
     private readonly systemConfig: SystemConfigService,
     // S19: the customer layer (flag.units_prices_v2) prices an unreferenced return like the sale; absent = master's tier.
     @Optional() private readonly entitlements?: EntitlementsService,
+    // SA-1060 A-4: reads the business's billing moment, so the quote knows whether an edited order is with the carrier.
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   async quote(
@@ -157,7 +161,11 @@ export class InlineReturnsQuoteService {
     }
   > {
     const db = this.prisma.forTenant();
-    const priced = await this.priceInlineReturn(dto, user, db);
+    // SA-1060 A-4 (M1): on an order edit the screen prices the same post-revert matching set the edit's dry run and capture do.
+    // `priceInlineReturn` resolves `editingOrderId` itself, after its buyer and driver checks (check order: those run first).
+    const priced = await this.priceInlineReturn(dto, user, db, {
+      editingOrderId: dto.editingOrderId,
+    });
     // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
     // only; POST /returns/inline/:id/refund re-checks everything under its locks.
     const [customer, source] = await Promise.all([
@@ -197,7 +205,13 @@ export class InlineReturnsQuoteService {
     // #2178: invoices to leave out of the matching set — the order-edit preflight passes the ones
     // the edit's revert is about to turn into DRAFTs of an undelivered order (which §3.1 excludes).
     // SA-740: `defaultSourceOrderId` is the capture's carrying order, the source a WALK-IN return defaults to.
-    opts: { excludeInvoiceIds?: readonly string[]; defaultSourceOrderId?: string | null } = {},
+    // SA-1060 A-4: `editingOrderId` (the quote's order edit) is resolved into the invoices to leave out AFTER the buyer and driver
+    // checks below, so those refusals never depend on it; an explicit `excludeInvoiceIds` wins and nothing is read.
+    opts: {
+      excludeInvoiceIds?: readonly string[];
+      defaultSourceOrderId?: string | null;
+      editingOrderId?: string;
+    } = {},
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -264,6 +278,12 @@ export class InlineReturnsQuoteService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
+    const excludeInvoiceIds: readonly string[] =
+      opts.excludeInvoiceIds ??
+      (opts.editingOrderId
+        ? await quoteExcludedInvoiceIds(db, dto.customerId, opts.editingOrderId, this.featureConfig)
+        : []);
+
     // SA-740 (row 190): the walk-in is decided HERE from the row, never from the client. A walk-in names its source sale
     // (the quote requires it; the capture defaults to the carrying order); a named customer is pinned only if they send one.
     const walkIn = customer.isWalkIn === true;
@@ -314,7 +334,7 @@ export class InlineReturnsQuoteService {
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
     const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap, {
-      excludeInvoiceIds: opts.excludeInvoiceIds,
+      excludeInvoiceIds,
       sourceOrderId,
       withPriorCredits: true, // B905: the pricing set telescopes over what each line already had credited
     });
@@ -398,7 +418,7 @@ export class InlineReturnsQuoteService {
       // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
       const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
         soldWindowDays: null,
-        excludeInvoiceIds: opts.excludeInvoiceIds,
+        excludeInvoiceIds,
       });
       const lines = lifeSet.filter((l) => l.productId === productId);
       const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
@@ -415,6 +435,40 @@ export class InlineReturnsQuoteService {
       }
       lifetimeCache.set(productId, exhausted);
       return exhausted;
+    };
+
+    // SA-1060 A-4 (MUST 5): the customer has NO live invoice line of this product in their whole history, so goods past what was
+    // bought did not come from us. Its own read, NOT `fetchMatchingSet` (which keeps only invoices that have an order and is the
+    // pricing pool): a sale on an invoice with no order (an estimate convert, an import, a manual invoice, a duplicate) is a sale.
+    // Live = ACCRUAL_REVENUE_STATUSES (a written-off sale counts: the goods left and the tax was charged) plus a DRAFT of a delivered
+    // order; a line needs qty > 0. Asked only for a product with a no-sale chunk, cached per product (one findFirst on the
+    // product index, however many items name it).
+    const neverSoldCache = new Map<string, boolean>();
+    const neverSoldToCustomer = async (productId: string): Promise<boolean> => {
+      const cached = neverSoldCache.get(productId);
+      if (cached !== undefined) return cached;
+      // Prisma drops an undefined `where` key: refuse here rather than read every customer's or every product's sales
+      if (!dto.customerId || !productId)
+        throw new Error("neverSoldToCustomer needs a customer and a product");
+      const excluded = excludeInvoiceIds;
+      const sale = await db.invoiceItem.findFirst({
+        where: {
+          productId,
+          qty: { gt: 0 },
+          invoice: {
+            customerId: dto.customerId,
+            ...(excluded.length > 0 ? { id: { notIn: [...excluded] } } : {}),
+            OR: [
+              { status: ACCRUAL_REVENUE_STATUSES },
+              { status: InvoiceStatus.DRAFT, order: { status: { in: DELIVERED_ORDER_STATUSES } } },
+            ],
+          },
+        },
+        select: { id: true },
+      });
+      const never = sale == null;
+      neverSoldCache.set(productId, never);
+      return never;
     };
 
     for (const item of dto.items) {
@@ -516,7 +570,8 @@ export class InlineReturnsQuoteService {
       // item / §3.2 cases 2/3 — never a hand-rolled 0, which silently zero-taxed every
       // unreferenced chunk on a product with no candidate invoice line at all).
       // B463: when that candidate's invoice charged NO tax (m-7), the over-return is untaxed too: never credit a tax the sale
-      // did not charge. A product on no candidate invoice at all takes the tenant's current rate.
+      // did not charge. A product with a sale outside the window takes the tenant's current rate; one the customer was never sold, ever, is
+      // untaxed (SA-1060 PR-2: the pricer zeroes it from `neverSold`).
       const candidateLine = matchingSet.find((l) => l.productId === item.productId);
       const fallbackTaxRate = candidateLine
         ? candidateLine.invoiceTaxAmount === 0
@@ -530,6 +585,11 @@ export class InlineReturnsQuoteService {
       // recent purchases were returned (repeat buyer).
       const hasPriorReturns = allocated.some((c) => !c.line)
         ? (await windowHasPriorReturns(item.productId)) || (await lifetimeExhausted(item.productId))
+        : false;
+      // SA-1060 PR-2: goods this customer was never sold, ever, carry no sales tax and are not added to stock; the pricer reads
+      // this flag, not the rate. Only a product with a no-sale chunk asks (at most one whole-history read per product).
+      const neverSold = allocated.some((c) => !c.line)
+        ? await neverSoldToCustomer(item.productId)
         : false;
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
@@ -546,6 +606,7 @@ export class InlineReturnsQuoteService {
               },
               fallbackTaxRate,
               customer.isTaxExempt,
+              neverSold,
             );
         // B961: the unreferenced chunk of a product the customer DID buy AND already has prior returns of is "already returned
         // or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.

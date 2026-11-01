@@ -143,6 +143,10 @@ export interface PricedChunk {
   /** B961 / SA-071c: an over-return chunk of a product WITH prior sales on this customer's candidate invoices (all returned or
    * credited): "already returned or credited". Absent otherwise (a never-invoiced product stays "not on any invoice"). */
   alreadyReturned?: boolean;
+  /** SA-1060 PR-2: this customer has no live invoice line of the product in their whole history, so the goods did not come from
+   * us. Such a chunk carries no sales tax and is never restocked; the quote sets it, the capture reads it, the client never
+   * sends it. False on every matched and every sold-before chunk. */
+  neverSold: boolean;
 }
 
 export interface QuoteBreakdown {
@@ -331,21 +335,25 @@ export function priceMatchedChunk(
     categoryTax: categoryTaxShare,
     priceSource: "SOURCE_INVOICE",
     unitPrice: chunkPieces > 0 ? roundMoney(subtotal / chunkPieces) : null,
+    neverSold: false,
   };
 }
 
 /** Cases 2/3 — unreferenced: no matched invoice line for this piece, priced off the
  * customer's current tier/CustomerPrice (case 2) or the product's base price (case 3) —
- * the caller resolves which and supplies the label via `ctx.source`. */
+ * the caller resolves which and supplies the label via `ctx.source`.
+ * SA-1060 PR-2: a `neverSold` chunk (no live sale of the product to this customer, ever) credits no sales tax, at any rate: B463's
+ * rule is never to credit a tax the sale did not charge, and there was no sale. */
 export function priceUnreferencedChunk(
   productId: string,
   chunkPieces: number,
   ctx: UnreferencedPriceContext,
   taxRate: number,
   customerIsTaxExempt: boolean,
+  neverSold: boolean,
 ): PricedChunk {
   const subtotal = priceSellingUnitChunk(ctx.unitPrice, chunkPieces, ctx.unitsPerBox);
-  const taxAmount = customerIsTaxExempt ? 0 : roundMoney(subtotal * taxRate);
+  const taxAmount = customerIsTaxExempt || neverSold ? 0 : roundMoney(subtotal * taxRate);
   return {
     sourceOrderId: null,
     sourceInvoiceItemId: null,
@@ -357,6 +365,7 @@ export function priceUnreferencedChunk(
     categoryTax: 0,
     priceSource: ctx.source,
     unitPrice: ctx.unitPrice,
+    neverSold,
   };
 }
 
@@ -398,7 +407,9 @@ export function applyCreditOverride(
     chunk: {
       ...defaultChunk,
       subtotal,
-      taxAmount: basis.taxExempt ? 0 : roundMoney(subtotal * basis.taxRate),
+      // SA-1060 PR-2: a never-sold chunk stays untaxed at the lowered price too (keyed on the chunk, not on the rate)
+      taxAmount:
+        basis.taxExempt || defaultChunk.neverSold ? 0 : roundMoney(subtotal * basis.taxRate),
       priceSource: "MANUAL",
       unitPrice: override.unitPrice,
       originalPrice: defaultUnitPrice,
