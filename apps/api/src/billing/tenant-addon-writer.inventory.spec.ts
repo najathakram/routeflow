@@ -48,6 +48,8 @@ const SITES: Record<string, string[]> = {
   // enable AND disable are named by the CALLER (platform-admin.controller, via PROFILE_APPLY_SOURCE); the one
   // literal in the service is the disable's record actor
   "profile.apply": ["billing/addon.service.ts#disableAddon"],
+  // the new account's own admin answers the first question: the apply sequence takes the source from its caller
+  "signup.setup": ["settings-fulfilment/first-run.service.ts#answer"],
 };
 
 function sourceSites(): Map<string, Set<string>> {
@@ -79,7 +81,7 @@ function sourceSites(): Map<string, Set<string>> {
 describe("SA-788 (a) inventory: every AddonChangeSource sits at exactly its named call site", () => {
   const found = sourceSites();
 
-  it("the table covers all 15 sources and nothing else", () => {
+  it("the table covers all 16 sources and nothing else", () => {
     expect(Object.keys(SITES).sort()).toEqual([...ADDON_CHANGE_SOURCES].sort());
   });
 

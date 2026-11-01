@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import AdminDashboardPage from "./page";
 
 jest.mock("@/lib/admin-api", () => ({
@@ -85,5 +85,95 @@ describe("AdminDashboardPage — MRR card (T14-5/6/7, R27)", () => {
     await waitFor(() => {
       expect(document.body.textContent).not.toMatch(/NaN/);
     });
+  });
+});
+
+// W3 / M1: the weekly funnel sits under the stat cards. The API sends five numbers per week;
+// the sixth (answered) joins after the first-question change, and the card says so.
+describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const weeks = [
+    {
+      weekStart: "2026-10-19",
+      signups: 3,
+      verified: 2,
+      firstOrder: 1,
+      firstRoute: 0,
+      demoBookings: 4,
+    },
+    {
+      weekStart: "2026-10-26",
+      signups: 5,
+      verified: 4,
+      firstOrder: 2,
+      firstRoute: 1,
+      demoBookings: 0,
+    },
+  ];
+
+  it("shows each week's five numbers under their labels, with the week named by its Monday", async () => {
+    mockStatsAndGrowth(baseStats({ weeklyFunnel: { weeks } }));
+
+    render(<AdminDashboardPage />);
+
+    const region = await screen.findByRole("region", { name: "Sign-ups by week" });
+    const headers = within(region)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(headers).toEqual([
+      "Week of",
+      "Sign-ups",
+      "Verified",
+      "First order",
+      "First route",
+      "Demo bookings",
+    ]);
+    const rows = within(region).getAllByRole("row").slice(1);
+    expect(
+      rows.map((r) =>
+        within(r)
+          .getAllByRole("cell")
+          .map((c) => c.textContent),
+      ),
+    ).toEqual([
+      ["Oct 19", "3", "2", "1", "0", "4"],
+      ["Oct 26", "5", "4", "2", "1", "0"],
+    ]);
+  });
+
+  it("says the answered count is not there yet, rather than showing a zero for it", async () => {
+    mockStatsAndGrowth(baseStats({ weeklyFunnel: { weeks } }));
+
+    render(<AdminDashboardPage />);
+
+    await screen.findByRole("region", { name: "Sign-ups by week" });
+    expect(
+      screen.getByText("Answered is not counted yet. It starts with the first-question change."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /answered/i })).not.toBeInTheDocument();
+  });
+
+  it("says the numbers can't be shown when the funnel read failed, and the page still loads", async () => {
+    mockStatsAndGrowth(baseStats({ weeklyFunnel: { unavailable: true } }));
+
+    render(<AdminDashboardPage />);
+
+    expect(await screen.findByText("These numbers can't be shown right now.")).toBeInTheDocument();
+    expect(screen.getByText("Sign-ups by week")).toBeInTheDocument();
+    expect(screen.getByText("Platform Dashboard")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Sign-ups by week" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Sign-ups" })).not.toBeInTheDocument();
+  });
+
+  it("leaves the card out when the API sends no funnel, instead of showing zeros", async () => {
+    mockStatsAndGrowth(baseStats({}));
+
+    render(<AdminDashboardPage />);
+
+    await screen.findByText("Platform Dashboard");
+    expect(screen.queryByRole("region", { name: "Sign-ups by week" })).not.toBeInTheDocument();
   });
 });

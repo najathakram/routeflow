@@ -55,6 +55,7 @@ export const EXPECTED_SOURCES = [
   "manual_activation.price",
   "lock.cancel_clear_item",
   "profile.apply",
+  "signup.setup",
 ];
 
 describe("SA-788 P3 - the TenantAddon writer is the only writer", () => {
@@ -101,9 +102,9 @@ describe("SA-788 P3 - the TenantAddon writer is the only writer", () => {
     expect(hits).toEqual([]);
   });
 
-  it("AddonChangeSource has exactly the 15 sanctioned values (a new writer is a conscious edit)", () => {
+  it("AddonChangeSource has exactly the 16 sanctioned values (a new writer is a conscious edit)", () => {
     expect([...ADDON_CHANGE_SOURCES]).toEqual(EXPECTED_SOURCES);
-    expect(new Set(ADDON_CHANGE_SOURCES).size).toBe(15);
+    expect(new Set(ADDON_CHANGE_SOURCES).size).toBe(16);
   });
 
   it("every script that writes TenantAddon directly is listed EXEMPT with a reason (no silent new script)", () => {

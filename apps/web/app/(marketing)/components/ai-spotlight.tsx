@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, FileText, ScanText, UserCheck } from "lucide-react";
+import { DEMO_CTA } from "../lib/site";
 
 // Copy verbatim from the redesign's components/ai-spotlight.tsx (M1 §1.4).
 
@@ -24,7 +25,7 @@ export function AISpotlight() {
           purchases by hand.
         </p>
         <Link className="text-link" href="/book-a-demo">
-          See AI invoice scanning in a demo <ArrowRight size={18} />
+          {DEMO_CTA} <ArrowRight size={18} />
         </Link>
       </div>
       <div className="ai-review">

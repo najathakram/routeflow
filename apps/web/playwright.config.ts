@@ -1224,6 +1224,14 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // W-1095 W1 (spec 82): sign up, verify from the caught mail, answer the first question, read the Workspace ID, and the
+          // owner mail. It CREATES acme-trial-* workspaces (signed up, loopback only) with no cleanup and reads the stack's mail catcher (MAILPIT_URL), so
+          // it is local lane only like 71-81. Signed out, no setup dependency.
+          {
+            name: "trial-first-run",
+            testMatch: /82-trial-first-run.spec.ts/,
+            use: { ...devices["Desktop Chrome"] },
+          },
           // SA-1042 B9c: return 1 Case through the form, read 200 pcs (1 Case), credit 45.00 (spec 77). It CREATES a product,
           // a customer, an invoice and a credit note with no cleanup, so it is local lane only like 71-76 and 79.
           // W-1064 (SA-1074): the PDF preview on phone settings. It drafts an invoice, so it is local lane only.

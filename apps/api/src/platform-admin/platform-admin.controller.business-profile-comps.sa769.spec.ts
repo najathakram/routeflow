@@ -83,6 +83,7 @@ import * as path from "node:path";
 import { ConflictException, Logger } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { PlatformAdminController } from "./platform-admin.controller";
+import { BusinessProfileApplyService } from "../billing/business-profile-apply.service";
 import { AdminAuditAction } from "./audit-actions.constant";
 import { AddonService } from "../billing/addon.service";
 import { BusinessProfileService } from "../billing/business-profile.service";
@@ -284,6 +285,14 @@ function world(
     stub(), // snapshotAdmin
     businessProfiles,
     featureConfig as any,
+    new BusinessProfileApplyService(
+      addonService as any,
+      authority as any,
+      featureConfig as any,
+      featurePreview as any,
+      businessProfiles,
+      { systemConfig: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } } as any,
+    ),
   );
   /** The confirm as the web does it: preview first, then send that fingerprint back. */
   const apply = async (profile: string) => {

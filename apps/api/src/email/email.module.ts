@@ -2,6 +2,7 @@ import { Module, forwardRef } from "@nestjs/common";
 import { EmailService } from "./email.service";
 import { EmailDeliveryService } from "./email-delivery.service";
 import { EmailDeliveryPruneService } from "./email-delivery-prune.service";
+import { OwnerAlertService } from "./owner-alert.service";
 import { MailboxModule } from "./mailbox/mailbox.module";
 import { MailboxAlertService } from "./mailbox/mailbox-alert.service";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -17,7 +18,13 @@ import { NotificationsModule } from "../notifications/notifications.module";
 // `NotificationsModule` supplies `NotificationsService` for the in-app notification.
 @Module({
   imports: [forwardRef(() => MailboxModule), NotificationsModule],
-  providers: [EmailService, MailboxAlertService, EmailDeliveryService, EmailDeliveryPruneService],
-  exports: [EmailService, EmailDeliveryService],
+  providers: [
+    EmailService,
+    MailboxAlertService,
+    EmailDeliveryService,
+    EmailDeliveryPruneService,
+    OwnerAlertService,
+  ],
+  exports: [EmailService, EmailDeliveryService, OwnerAlertService],
 })
 export class EmailModule {}

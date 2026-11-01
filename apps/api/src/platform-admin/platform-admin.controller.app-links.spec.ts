@@ -18,7 +18,8 @@ function build() {
   const controller = new PlatformAdminController(
     svc as never,
     platformConfig as never,
-    ...(Array<undefined>(11).fill(undefined) as [
+    ...(Array<undefined>(12).fill(undefined) as [
+      never,
       never,
       never,
       never,

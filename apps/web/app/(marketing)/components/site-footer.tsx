@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Brand } from "@/components/brand";
-import { site } from "../lib/site";
+import { DEMO_CTA, site } from "../lib/site";
 import { authLinks } from "./auth-links";
 
 // Preview-only lines from the redesign are deliberately dropped here:
@@ -32,7 +32,7 @@ export function SiteFooter() {
           <div>
             <h2>Company</h2>
             <Link href="/company">About RouteFlow</Link>
-            <Link href="/book-a-demo">Book a demo</Link>
+            <Link href="/book-a-demo">{DEMO_CTA}</Link>
             <Link href="/contact">Contact us</Link>
             <Link href="/privacy">Privacy</Link>
             <Link href="/terms">Terms</Link>

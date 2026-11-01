@@ -826,6 +826,8 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "SettingsController.updateSettings": "FINANCE",
   "SettingsController.verifyEmailConnection": "ADMIN",
   "SettingsController.verifySendingDomain": "ADMIN",
+  "SettingsFulfilmentController.firstRunAnswer": "ADMIN",
+  "SettingsFulfilmentController.firstRunStatus": "ADMIN",
   "SettingsFulfilmentController.get": "BASE",
   "SettingsFulfilmentController.preview": "ADMIN",
   "SettingsFulfilmentController.update": "ADMIN",

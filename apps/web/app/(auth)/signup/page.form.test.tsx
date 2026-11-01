@@ -8,7 +8,10 @@ import SignupPage from "./page";
  * Password) and shows the auto-filled username as one line with a Change button. Errors appear when a
  * field is left, not only on submit.
  */
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/signup",
+}));
 
 let usernameAvailable = true;
 function mockFetch() {

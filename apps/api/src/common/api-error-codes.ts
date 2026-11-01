@@ -751,6 +751,15 @@ export const API_ERROR_CODES = {
    */
   BUSINESS_CAPABILITIES_EMPTY: "BUSINESS_CAPABILITIES_EMPTY",
   /**
+   * W1: the first question on a new account's dashboard (POST /settings/fulfilment/first-run).
+   * 400 FIRST_RUN_EMPTY: nothing ticked. 400 FIRST_RUN_INVALID: the body carries a key other than delivery, shipping and
+   * counter, or a value that is not true or false. 409 FIRST_RUN_CLOSED: the question is not open for this account (no
+   * marker, already answered, or closed). Fixed bodies; nothing was written.
+   */
+  FIRST_RUN_EMPTY: "FIRST_RUN_EMPTY",
+  FIRST_RUN_INVALID: "FIRST_RUN_INVALID",
+  FIRST_RUN_CLOSED: "FIRST_RUN_CLOSED",
+  /**
    * 503 from every server-priced order path (buyer checkout, standing orders, returns, order edits) when the customer has
    * typed unit prices but the units_prices_v2 flag could not be read (the override or plan lookup failed). Retryable: nothing
    * was written, so the caller never gets the tier price instead of the customer's typed price.

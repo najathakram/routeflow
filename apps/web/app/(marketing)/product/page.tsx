@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, Route, Users, Warehouse, Store } from "lucide-react";
-import { routes } from "../lib/site";
+import { DEMO_CTA, routes } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
 import { DeliveryDemo } from "../components/delivery-demo";
@@ -56,7 +56,7 @@ export default function ProductPage() {
           costing, and dedicated tools for regulated goods.
         </p>
         <Link href="/book-a-demo" className="button">
-          Book a workflow demo <ArrowUpRight size={18} />
+          {DEMO_CTA} <ArrowUpRight size={18} />
         </Link>
       </section>
       <section className="platform-live-story wrap">

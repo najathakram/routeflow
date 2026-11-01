@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { ConfigService } from "@nestjs/config";
@@ -27,11 +28,13 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { escapeHtml } from "../common/html-escape";
+import { OwnerAlertService } from "../email/owner-alert.service";
 import { mayUseVerificationLink } from "../auth/verification-link-eligibility";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 import { FALLBACK_ZONE } from "../common/tenant-time-zone";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
+import { createPendingFirstRun } from "../billing/first-run-marker";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -92,6 +95,7 @@ export class TenantsService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
+    @Optional() private readonly ownerAlerts?: OwnerAlertService,
   ) {
     // Fails the boot on a missing or short secret (see derived-jwt-key.ts).
     this.emailVerifyKey = derivedJwtKey(
@@ -161,6 +165,8 @@ export class TenantsService {
       });
 
       await tx.tenantConfig.create({ data: { tenantId: tenant.id, businessName, timezone } });
+      // W1: the first question starts open for a public sign-up (no existing tenant holds this row).
+      await createPendingFirstRun(tx, tenant.id);
 
       // Seed IRS Schedule C expense categories so new tenants have a curated
       // list to pick from immediately.
@@ -242,6 +248,9 @@ ${signInReminderHtml(webUrl, result.tenant.slug)}
             `Account is INACTIVE until verified; the self-service resend-verification endpoint ` +
             `will hit the same failure until the underlying mail config is fixed.`,
         );
+        this.ownerAlerts
+          ?.verificationMailFailed(result.tenant.id, result.user.email)
+          ?.catch(() => undefined);
       }
     } catch (err: any) {
       // EmailService.send() is documented to never throw for a delivery/config
@@ -252,6 +261,9 @@ ${signInReminderHtml(webUrl, result.tenant.slug)}
         `Failed to send verification email for new tenant "${result.tenant.slug}" ` +
           `(user ${result.user.id}, ${result.user.email}): ${err?.message ?? err}`,
       );
+      this.ownerAlerts
+        ?.verificationMailFailed(result.tenant.id, result.user.email)
+        ?.catch(() => undefined);
     }
 
     return {

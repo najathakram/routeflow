@@ -6,9 +6,12 @@ import { apiConnectSources, buildContentSecurityPolicy } from "../csp.mjs";
 // with isDev=false and no NEXT_PUBLIC_API_URL override — i.e. the literal
 // array `next.config.mjs` built inline, joined with "; "). Any change to
 // this string for the production inputs below is a regression.
+// W3 (M2): the one deliberate change since, `https://cloud.umami.is` at the end of script-src, so
+// the visit-count script can load. Before it, script-src ended at `https://maps.gstatic.com`.
+// connect-src is untouched: its `https:` already lets the script report back.
 const PROD_CSP_ORACLE =
   "default-src 'self'; " +
-  "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com; " +
+  "script-src 'self' 'unsafe-inline' https://maps.googleapis.com https://maps.gstatic.com https://cloud.umami.is; " +
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
   "font-src 'self' https://fonts.gstatic.com data:; " +
   "img-src 'self' data: blob: https:; " +
@@ -52,6 +55,16 @@ describe("buildContentSecurityPolicy", () => {
     const scriptSrc = csp.split("; ").find((d) => d.startsWith("script-src"));
     expect(connectSrc).toBe("connect-src 'self' https: wss: http://localhost:* ws://localhost:*");
     expect(scriptSrc).toContain("'unsafe-eval'");
+  });
+});
+
+describe("script-src and Umami (W3 M2)", () => {
+  it("allows exactly one analytics host, and adds nothing to connect-src for it", () => {
+    const csp = buildContentSecurityPolicy({ isDev: false, apiUrl: undefined });
+    const directives = Object.fromEntries(csp.split("; ").map((d) => [d.split(" ")[0], d]));
+    expect(directives["script-src"]!.split(" ")).toContain("https://cloud.umami.is");
+    expect(directives["script-src"]).not.toMatch(/\*|https:(?!\/\/)/);
+    expect(directives["connect-src"]).toBe("connect-src 'self' https: wss:");
   });
 });
 

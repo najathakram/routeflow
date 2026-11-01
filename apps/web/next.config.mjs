@@ -65,6 +65,15 @@ const nextConfig = {
         destination: "/wholesalers",
         permanent: false,
       },
+      // W6: addresses a visitor might guess. Same pattern, same reason as /distributors above:
+      // a next.config redirect carries its Location header, a prerendered page may not.
+      // /faq, /integrations and /quickbooks open the FAQ section on the home page (id="faq").
+      { source: "/about", destination: "/company", permanent: false },
+      { source: "/demo", destination: "/book-a-demo", permanent: false },
+      { source: "/features", destination: "/product", permanent: false },
+      { source: "/faq", destination: "/#faq", permanent: false },
+      { source: "/integrations", destination: "/#faq", permanent: false },
+      { source: "/quickbooks", destination: "/#faq", permanent: false },
     ];
   },
 
