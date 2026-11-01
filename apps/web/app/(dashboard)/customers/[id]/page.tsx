@@ -161,6 +161,8 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { CustomerStatementCard } from "./customer-statement-card";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
+import { STATEMENT_COPY } from "@/lib/account-statement-display";
 import { CustomerToCollectChip } from "./_components/CustomerToCollectChip";
 import { CreditLimitPanel } from "./credit-limit-panel";
 import { GenerateOrderNowButton } from "./generate-order-button";
@@ -2432,8 +2434,17 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 icon={<FileText className="h-5 w-5" />}
               />
               <StatCard
-                label="Open Balance"
-                value={statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
+                label="Open balance"
+                value={
+                  <OpenBalanceButton
+                    customerId={id}
+                    unavailable={statementFailed || !statement}
+                    chevron
+                    hint={STATEMENT_COPY.viewStatement}
+                  >
+                    {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
+                  </OpenBalanceButton>
+                }
                 icon={<TrendingDown className="h-5 w-5" />}
                 className={(statement?.outstandingAmount ?? 0) > 0 ? "border-danger/40" : undefined}
               />
@@ -3566,12 +3577,14 @@ function CustomerDetailPageInner({ id }: { id: string }) {
               <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <Card>
                   <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                    Outstanding
+                    Open balance
                   </p>
                   <p
                     className={`mt-1 text-xl font-bold ${outstandingTotal > 0 ? "text-danger" : "text-success"}`}
                   >
-                    {outstandingText}
+                    <OpenBalanceButton customerId={id} unavailable={statementFailed || !statement}>
+                      {outstandingText}
+                    </OpenBalanceButton>
                   </p>
                 </Card>
                 <Card>
@@ -3713,14 +3726,16 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                      Open Balance
+                      Open balance
                     </p>
                     <TrendingDown className="h-4 w-4 text-danger" />
                   </div>
                   <p
                     className={`text-2xl font-bold ${(statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success"}`}
                   >
-                    {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
+                    <OpenBalanceButton customerId={id} unavailable={statementFailed || !statement}>
+                      {statementMoney(statement, statementFailed, (x) => x.outstandingAmount, fmt)}
+                    </OpenBalanceButton>
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
                   <WriteButton

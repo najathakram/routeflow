@@ -14,6 +14,7 @@ import { findFiledPeriod as findFiledPeriodIn, type FiledPeriod } from "./filed-
 import { assertLedgerRowsNotLocked } from "./filing-lock";
 import { resolveSaleLines, type ResolvedSaleLine } from "./sale-line-resolver";
 import { unbookedReversalMeta } from "./unbooked-reversals";
+import { creditItemRoom, loadCreditReversalRoom } from "./credit-reversal-room";
 import { writeAdminNotice } from "../billing/manual-invoice-notice";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 
@@ -2296,261 +2297,20 @@ export class RegulatedLedgerService {
     });
     if (items.length === 0) return;
 
-    const invoiceItemIds = [
-      ...new Set(items.map((it: any) => it.invoiceItemId).filter(Boolean)),
-    ] as string[];
-    if (invoiceItemIds.length === 0) return;
-
-    // SA-789 F1: the credited items' order lines. A legacy rebuild re-creates the invoice items, so the
-    // item being credited now is not the id the SALE row was written under; the order line is stable.
-    // (This reads the CREDITED item, not a ledger row's id: that mapping lives in `resolveSaleLines`.)
-    const creditedItems: any[] =
-      (await db.invoiceItem.findMany({
-        where: { id: { in: invoiceItemIds } },
-        select: { id: true, orderItemId: true, invoiceId: true },
-      })) ?? [];
-    const creditedOrderItemIds = [
-      ...new Set(creditedItems.map((c: any) => c.orderItemId).filter(Boolean)),
-    ] as string[];
-
-    // The credited lines' LIVE SALE rows — the source ids stamped onto reversals and
-    // the SALE-existence guard (only a line that recorded a live regulated SALE can be
-    // credited). Keyed by the credited invoice item.
-    const liveSaleRows = await db.regulatedSalesLedger.findMany({
-      // SA-070(b) Hazard 1: `correctsEntryId != null` excludes a B681 correction row — typed
-      // like the row it corrects (net 0, qty 0, unitBasisQty a delta) — from EVER being read as
-      // "the credited line's own live SALE row". Included here it would still skew `live.unitBasis`
-      // (used below for the pieces-per-line-unit ratio) even though it never moves live.net/qty.
-      // It is NOT excluded from `lineRows` below — the remaining-balance cap (`saleByLine`) must
-      // still fold in its real net/qty/unitBasis contribution.
-      where: {
-        entryType: "SALE",
-        correctsEntryId: null,
-        ...(creditedOrderItemIds.length > 0
-          ? {
-              OR: [
-                { invoiceItemId: { in: invoiceItemIds } },
-                { orderItemId: { in: creditedOrderItemIds } },
-              ],
-            }
-          : { invoiceItemId: { in: invoiceItemIds } }),
-      },
-      // deterministic read order: the live-key choice and the oldest-first offset rule never depend on the planner
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: {
-        // `id` is what deadSaleIdsOf / the live-row filter key on: a SALE read without it can never be named dead
-        id: true,
-        invoiceItemId: true,
-        createdAt: true,
-        netSales: true,
-        // B661: both quantity axes of THIS credited line's own SALE rows — the pieces-per-line-unit
-        // ratio is taken from here, not from the order line's aggregate (see below).
-        qty: true,
-        unitBasisQty: true,
-        orderId: true,
-        orderItemId: true,
-        invoiceId: true,
-        // RF-3: reporting breakdown carried onto the REVERSAL rows below.
-        trackedSubcategoryId: true,
-        // B297 row 341: which booked line (category / subcategory / order line) each SALE row is.
-        trackedCategoryId: true,
-      },
+    const room = await loadCreditReversalRoom(db, items, {
+      onUnmatched: (unmatched, creditedItems, liveSaleRows) =>
+        this.reportUnmatchedCredits(db, creditNoteId, unmatched, creditedItems, liveSaleRows),
     });
-    const liveSaleByItem = new Map<
-      string,
-      {
-        net: number;
-        qty: number;
-        unitBasis: number;
-        orderId: string | null;
-        orderItemId: string | null;
-        invoiceId: string | null;
-        trackedSubcategoryId: string | null;
-        /** The invoice item id the SALE rows sit under (differs from the credited item's after a rebuild). */
-        saleInvoiceItemId: string | null;
-      }
-    >();
-    type LiveSale = typeof liveSaleByItem extends Map<string, infer V> ? V : never;
-    const addSale = (m: Map<string, LiveSale>, k: string, s: any) => {
-      const cur = m.get(k) ?? {
-        net: 0,
-        qty: 0,
-        unitBasis: 0,
-        orderId: s.orderId ?? null,
-        orderItemId: s.orderItemId ?? null,
-        invoiceId: s.invoiceId ?? null,
-        trackedSubcategoryId: s.trackedSubcategoryId ?? null,
-        saleInvoiceItemId: s.invoiceItemId ?? null,
-      };
-      cur.net += Number(s.netSales);
-      cur.qty += Number(s.qty);
-      cur.unitBasis += Number(s.unitBasisQty);
-      m.set(k, cur);
-    };
-    for (const s of liveSaleRows) addSale(liveSaleByItem, s.invoiceItemId ?? "", s);
-    // SA-789 F1: a credited item no SALE row points at (re-created since the sale) matches its ORDER
-    // LINE's SALE rows instead. Several generations of rows can share the order line: the figures
-    // (pieces-per-unit ratio) come from the NEWEST generation (one invoice item id), never an aggregate.
-    const unmatchedCredited: any[] = [];
-    for (const it of items) {
-      const key = it.invoiceItemId ?? "";
-      if (!key || liveSaleByItem.has(key)) continue;
-      const credited = creditedItems.find((c: any) => c.id === key);
-      const orderItemId = credited?.orderItemId ?? null;
-      const byGeneration = new Map<string, any[]>();
-      for (const r of liveSaleRows) {
-        // SA-835: the same order line AND the same invoice as the credited item.
-        if (!orderItemId || r.orderItemId !== orderItemId || r.invoiceId !== credited?.invoiceId) {
-          continue;
-        }
-        byGeneration.set(r.invoiceItemId ?? "", [
-          ...(byGeneration.get(r.invoiceItemId ?? "") ?? []),
-          r,
-        ]);
-      }
-      if (byGeneration.size === 0) {
-        unmatchedCredited.push(it);
-        continue;
-      }
-      const newest = [...byGeneration.values()].sort((x, y) => {
-        const tx = Math.max(...x.map((r: any) => new Date(r.createdAt ?? 0).getTime()));
-        const ty = Math.max(...y.map((r: any) => new Date(r.createdAt ?? 0).getTime()));
-        // Ties break on the invoice item id so the pick is deterministic.
-        return ty - tx || String(y[0].invoiceItemId).localeCompare(String(x[0].invoiceItemId));
-      })[0];
-      for (const r of newest) addSale(liveSaleByItem, key, r);
-    }
-    await this.reportUnmatchedCredits(
-      db,
-      creditNoteId,
-      unmatchedCredited,
-      creditedItems,
-      liveSaleRows,
-    );
-
-    // The cumulative-reversal cap is keyed on the ORDER LINE, not the invoice item.
-    // A delivered-basis reconcile DELETES an open draft's InvoiceItems and recreates
-    // them under fresh ids (rotating invoiceItemId) while re-booking the SALE under
-    // the SAME orderItemId. Keying on invoiceItemId would let a 2nd full credit after
-    // a reconcile read a 0 cap for the new id and over-reverse (category SUM goes
-    // negative). orderItemId is stable; fall back to invoiceItemId for freeform lines
-    // (no order line — never reconciled). Pull EVERY SALE/REVERSAL row of the credited
-    // order lines (incl. rows booked under a now-deleted invoice item pre-reconcile).
-    const orderLineIds = [
-      ...new Set(liveSaleRows.map((s: any) => s.orderItemId).filter(Boolean)),
-    ] as string[];
-    const lineRows = await db.regulatedSalesLedger.findMany({
-      where: {
-        entryType: { in: ["SALE", "REVERSAL"] },
-        OR: [
-          ...(orderLineIds.length > 0 ? [{ orderItemId: { in: orderLineIds } }] : []),
-          { invoiceItemId: { in: invoiceItemIds } },
-        ],
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: {
-        // deadSaleIdsOf needs the row's identity, its time and whether it is a units-only correction
-        id: true,
-        createdAt: true,
-        correctsEntryId: true,
-        entryType: true,
-        invoiceItemId: true,
-        orderItemId: true,
-        trackedCategoryId: true,
-        trackedSubcategoryId: true,
-        returnId: true,
-        creditNoteId: true,
-        netSales: true,
-        qty: true,
-        unitBasisQty: true,
-        categoryTax: true,
-      },
-    });
-    // B297 row 341: base SALEs that are not a live target (a re-filed line's dead sale, or one offset in place).
-    const deadSaleIds = deadSaleIdsOf(lineRows);
-    // invoiceItemId → order line, so legacy REVERSAL rows with a null orderItemId can
-    // still be attributed to their line (bridge through a matching SALE row).
-    const orderLineByInvoiceItem = new Map<string, string>();
-    for (const r of lineRows) {
-      if (r.entryType === "SALE" && r.invoiceItemId) {
-        orderLineByInvoiceItem.set(r.invoiceItemId, r.orderItemId ?? r.invoiceItemId);
-      }
-    }
-    const lineKeyOf = (r: any): string =>
-      r.orderItemId ??
-      (r.invoiceItemId ? (orderLineByInvoiceItem.get(r.invoiceItemId) ?? r.invoiceItemId) : "");
-
-    // Per-ORDER-LINE totals: SALE (positive) and everything already reversed —
-    // credit-note, return, void AND reconcile re-sync reversals (signed negative) —
-    // so cumulative reversal can never exceed the sold amount no matter which path or
-    // since-rotated invoice item booked the earlier reversal.
-    type LineBag = { net: number; qty: number; unitBasis: number; tax: number };
-    const emptyBag = (): LineBag => ({ net: 0, qty: 0, unitBasis: 0, tax: 0 });
-    const saleByLine = new Map<string, LineBag>();
-    const revByLine = new Map<string, LineBag>();
-    for (const r of lineRows) {
-      const lk = lineKeyOf(r);
-      const bag = r.entryType === "SALE" ? saleByLine : revByLine;
-      const cur = bag.get(lk) ?? emptyBag();
-      cur.net += Number(r.netSales);
-      cur.qty += Number(r.qty);
-      cur.unitBasis += Number(r.unitBasisQty);
-      cur.tax += Number(r.categoryTax);
-      bag.set(lk, cur);
-    }
+    if (!room) return;
 
     const now = new Date();
     const bucket = periodBucketOf(now);
     const rows: any[] = [];
     for (const it of items) {
-      const live = liveSaleByItem.get(it.invoiceItemId ?? "");
-      if (!live || live.net <= 0) continue; // SALE-existence guard — no naked reversal.
-      // B297 row 341: the subcategory / order line / invoice the reversal carries, and the pieces-per-unit
-      // ratio, come from the line's LIVE booked key (the newest base SALE of the credited category that is not
-      // dead), never from whichever SALE of the item an unordered read returned first or from the dead sale
-      // blended in. A LOCAL, so a second credit item on the same invoice item starts from `live` again.
-      const liveRows = liveSaleRows.filter(
-        (s: any) =>
-          s.invoiceItemId === it.invoiceItemId &&
-          !deadSaleIds.has(s.id) &&
-          (s.trackedCategoryId == null || s.trackedCategoryId === it.trackedCategoryId),
-      );
-      const metaRow = [...liveRows].sort(
-        (a: any, b: any) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0),
-      )[0];
-      const meta = metaRow
-        ? {
-            orderId: metaRow.orderId ?? null,
-            orderItemId: metaRow.orderItemId ?? null,
-            invoiceId: metaRow.invoiceId ?? null,
-            trackedSubcategoryId: metaRow.trackedSubcategoryId ?? null,
-            qty: liveRows.reduce((n: number, r: any) => n + Number(r.qty), 0),
-            unitBasis: liveRows.reduce((n: number, r: any) => n + Number(r.unitBasisQty), 0),
-          }
-        : {
-            orderId: live.orderId,
-            orderItemId: live.orderItemId,
-            invoiceId: live.invoiceId,
-            trackedSubcategoryId: live.trackedSubcategoryId,
-            qty: live.qty,
-            unitBasis: live.unitBasis,
-          };
-      const lk = meta.orderItemId ?? it.invoiceItemId ?? "";
-      const sale = saleByLine.get(lk) ?? emptyBag();
-      if (sale.net <= 0) continue;
-      const already = revByLine.get(lk) ?? emptyBag();
-      // Remaining capacity to reverse for the ORDER LINE (signed, negative). `sale.*`
-      // is the line's gross SALE, `already.*` (<= 0) folds in the reconcile re-sync
-      // reversals that offset the pre-reconcile SALE rows, so this nets to the current
-      // un-reversed balance.
-      const remNet = -sale.net - already.net;
-      const remQty = -sale.qty - already.qty;
-      // B661: the SALE row's `unitBasisQty` is a PIECE count, while `qty` (and a CreditNoteItem's qty)
-      // is in the INVOICE LINE's own unit — boxes for a box-unaware line. The two axes are tracked
-      // separately and each is closed against its own remaining, or a full credit of a 5-box pack-12
-      // line books -5 against a SALE of 60 and strands 55 phantom pieces on the regulated filing.
-      const remUnitBasis = -sale.unitBasis - already.unitBasis;
-      const remTax = -sale.tax - already.tax;
+      // the one remaining the credit-note create() binds a typed row to (credit-reversal-room.ts)
+      const itemRoom = creditItemRoom(room, it);
+      if (!itemRoom) continue;
+      const { live, meta, lineKey: lk, already, remNet, remQty, remUnitBasis, remTax } = itemRoom;
       if (remNet >= -0.005) continue; // line already fully reversed — nothing left.
 
       let net = -Number(it.amount);
@@ -2609,11 +2369,12 @@ export class RegulatedLedgerService {
       });
       // Accumulate onto the ORDER LINE so a second CreditNoteItem on the same line
       // (within this credit note) sees the reduced remaining and can't re-consume.
-      revByLine.set(lk, {
+      room.revByLine.set(lk, {
         net: already.net + bookedNet,
         qty: already.qty + bookedQty,
         unitBasis: already.unitBasis + bookedUnitBasis,
         tax: already.tax + bookedTax,
+        items: already.items + 1,
       });
     }
     if (rows.length === 0) return;

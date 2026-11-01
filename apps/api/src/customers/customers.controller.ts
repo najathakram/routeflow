@@ -33,6 +33,8 @@ import { CustomersService } from "./customers.service";
 import { optionalIdempotencyKey } from "../orders/counter-sale/required-idempotency-key";
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
+import { CustomerStatementEmailService } from "./customer-statement-email";
+import { SendStatementEmailDto } from "./dto/send-statement-email.dto";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -55,6 +57,7 @@ export class CustomersController {
     private readonly customersService: CustomersService,
     private readonly statementService: StatementService,
     private readonly statementPdfService: StatementPdfService,
+    private readonly statementEmail: CustomerStatementEmailService,
   ) {}
 
   @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
@@ -216,6 +219,24 @@ export class CustomersController {
   @Roles(UserRole.OPERATOR)
   getAccountStatement(@Param("id") id: string) {
     return this.customersService.getAccountStatement(id, { staff: true });
+  }
+
+  // SA-1078 PR-3: the same statement as a PDF. Returns a signed URL (no JWT needed to download), like the monthly one.
+  @RequirePermission("FINANCE", "CUSTOMERS")
+  @Get(":id/account-statement/pdf")
+  @Roles(UserRole.OPERATOR)
+  async getAccountStatementPdf(@Param("id") id: string) {
+    const url = await this.statementPdfService.generateCurrent(id);
+    return { url };
+  }
+
+  // SA-1078 PR-4: email the same statement (PDF attached). Same people who can read it; a re-send is allowed on purpose.
+  @RequirePermission("FINANCE", "CUSTOMERS")
+  @Post(":id/account-statement/email")
+  @HttpCode(200)
+  @Roles(UserRole.OPERATOR)
+  sendAccountStatementEmail(@Param("id") id: string, @Body() dto: SendStatementEmailDto) {
+    return this.statementEmail.send(id, dto?.email);
   }
 
   // Operator twins of the buyer statement-PDF endpoints (P5-15) — same

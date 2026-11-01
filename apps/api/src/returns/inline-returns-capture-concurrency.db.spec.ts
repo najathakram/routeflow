@@ -87,6 +87,7 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
   const customerIds: string[] = [];
   const productIds: string[] = [];
   const userIds: string[] = [];
+  const invoiceIds: string[] = [];
 
   function driverUser(sub: string): JwtPayload {
     return {
@@ -236,6 +237,9 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
       await raw.return.deleteMany({ where: { orderId } });
     }
     await raw.creditNote.deleteMany({ where: { tenantId } });
+    await raw.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+    await raw.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+    await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
     await raw.routeRunStop.deleteMany({ where: { tenantId } });
     await raw.routeRun.deleteMany({ where: { tenantId } });
@@ -410,5 +414,155 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     expect(await raw.return.count({ where: { returnKey: key, kind: "INLINE" } })).toBe(1);
     expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(1);
     expect(await rowJson(first.id)).toBe(firstRow); // the first capture is untouched
+  }, 30_000);
+
+  // ─── SA-1060 PR-2: what a no-sale credit means ──────────────────────────────────
+  // A product this customer was never sold, ever, is credited with no sales tax and is NOT added to stock: `restock` is forced
+  // false on the chunk, whatever the reason or the DTO says. A product sold to them before (outside the 90-day window) keeps
+  // today's restock. The held path (a driver's capture over the order cap) restocks at approve() from the STORED flag.
+
+  const staffOf = (sub: string): JwtPayload => ({
+    sub,
+    username: "operator",
+    role: "OPERATOR" as any,
+    status: "ACTIVE" as any,
+    forcePasswordChange: false,
+    tenantId,
+    tenantSlug: slug,
+  });
+  const returnMovements = (productId: string) =>
+    raw.stockMovement.count({ where: { productId, type: "RETURN" } });
+  const itemsOf = (returnId: string) => raw.returnItem.findMany({ where: { returnId } });
+
+  /** One DELIVERED sale of the product to the customer, `daysAgo` days back (outside the 90-day pricing window). */
+  async function seedOldSale(f: { customerId: string; productId: string }, daysAgo: number) {
+    const order = await raw.order.create({
+      data: {
+        customerId: f.customerId,
+        tenantId,
+        status: "DELIVERED",
+        subtotal: "100.00",
+        total: "100.00",
+      },
+    });
+    orderIds.push(order.id);
+    await raw.orderItem.create({
+      data: {
+        tenantId,
+        orderId: order.id,
+        productId: f.productId,
+        name: "Widget",
+        qty: 10,
+        unitPrice: "10.00",
+        subtotal: "100.00",
+      } as any,
+    });
+    const invoice = await raw.invoice.create({
+      data: {
+        tenantId,
+        customerId: f.customerId,
+        orderId: order.id,
+        invoiceNumber: `INV-1060-${run}-${invoiceIds.length}`,
+        status: "PAID",
+        subtotal: "100.00",
+        taxAmount: "0.00",
+        total: "100.00",
+        issueDate: new Date(Date.now() - daysAgo * 86_400_000),
+      } as any,
+    });
+    invoiceIds.push(invoice.id);
+    await raw.invoiceItem.create({
+      data: {
+        tenantId,
+        invoiceId: invoice.id,
+        productId: f.productId,
+        description: "Widget",
+        qty: 10,
+        unitPrice: "10.00",
+        subtotal: "100.00",
+      },
+    });
+  }
+
+  const captureQty = (
+    f: { customerId: string; orderId: string; productId: string },
+    user: JwtPayload,
+    item: Record<string, unknown>,
+    returnKey: string,
+    extra: Record<string, unknown> = {},
+  ) =>
+    tenantCtx.run(tenantId, () =>
+      svc.capture(
+        {
+          customerId: f.customerId,
+          orderId: f.orderId,
+          items: [{ productId: f.productId, ...item }],
+          returnKey,
+          ...extra,
+        },
+        user,
+      ),
+    );
+
+  it("R-3: a never-sold chunk books no stock movement and stores restock false (RED on master: one RETURN movement)", async () => {
+    const f = await seedOrder("ns-r3", 500);
+    const ret = await captureQty(f, staffOf(f.driverId), { qty: 3 }, `ns-r3-${run}`);
+    expect(await returnMovements(f.productId)).toBe(0);
+    expect((await itemsOf(ret.id)).map((i) => i.restock)).toEqual([false]);
+    const product = await raw.product.findUniqueOrThrow({ where: { id: f.productId } });
+    expect(Number(product.currentStock)).toBe(0);
+  }, 30_000);
+
+  it("R-3b: a reason that would otherwise restock changes nothing for a never-sold chunk (EXCESS_ORDER, WRONG_ITEM)", async () => {
+    const f = await seedOrder("ns-r3b", 500);
+    await captureQty(f, staffOf(f.driverId), { qty: 1, reason: "WRONG_ITEM" }, `ns-r3b-${run}`);
+    expect(await returnMovements(f.productId)).toBe(0);
+  }, 30_000);
+
+  it("R-4: the DTO cannot switch the restock back on: restock true is still no movement (RED on master: one movement)", async () => {
+    const f = await seedOrder("ns-r4", 500);
+    const ret = await captureQty(f, staffOf(f.driverId), { qty: 3, restock: true }, `ns-r4-${run}`);
+    expect(await returnMovements(f.productId)).toBe(0);
+    expect((await itemsOf(ret.id)).map((i) => i.restock)).toEqual([false]);
+  }, 30_000);
+
+  it("G-3 (guard, green on master): a sold-before chunk keeps today's restock, one RETURN movement of the returned pieces", async () => {
+    const f = await seedOrder("ns-g3", 500);
+    await seedOldSale(f, 120);
+    const ret = await captureQty(f, staffOf(f.driverId), { qty: 3 }, `ns-g3-${run}`);
+    expect((await itemsOf(ret.id)).map((i) => i.restock)).toEqual([true]);
+    expect(await returnMovements(f.productId)).toBe(1);
+    const product = await raw.product.findUniqueOrThrow({ where: { id: f.productId } });
+    expect(Number(product.currentStock)).toBe(3);
+  }, 30_000);
+
+  it("a held never-sold capture, later approved, still adds nothing to stock: approve() restocks from the stored flag (RED on master: one movement)", async () => {
+    const f = await seedOrder("ns-held", 100);
+    // a driver's $120 return on a $100 order is held for the office (DRIVER_CAP); nothing is restocked at capture
+    const held = await captureQty(f, driverUser(f.driverId), { qty: 12 }, `ns-held-${run}`, {
+      routeRunStopId: f.routeRunStopId,
+    });
+    expect(held).toMatchObject({ status: "RECEIVED", holdReason: "DRIVER_CAP" });
+    expect(await returnMovements(f.productId)).toBe(0); // nothing at capture (green on master too)
+
+    const approved = await tenantCtx.run(tenantId, () => svc.approve(held.id, staffOf(f.driverId)));
+    expect(approved.creditNoteId).toBeTruthy(); // the credit was issued: only the stock stayed put
+    expect(await returnMovements(f.productId)).toBe(0);
+    expect((await itemsOf(held.id)).map((i) => i.restock)).toEqual([false]);
+    const product = await raw.product.findUniqueOrThrow({ where: { id: f.productId } });
+    expect(Number(product.currentStock)).toBe(0);
+  }, 30_000);
+
+  it("G-3 held (guard, green on master): a held sold-before capture, approved, restocks from the stored flag", async () => {
+    const f = await seedOrder("ns-held-sold", 100);
+    await seedOldSale(f, 120);
+    const held = await captureQty(f, driverUser(f.driverId), { qty: 12 }, `ns-held-sold-${run}`, {
+      routeRunStopId: f.routeRunStopId,
+    });
+    expect(held).toMatchObject({ status: "RECEIVED", holdReason: "DRIVER_CAP" });
+    expect((await itemsOf(held.id)).map((i) => i.restock)).toEqual([true]);
+    expect(await returnMovements(f.productId)).toBe(0); // not at capture
+    await tenantCtx.run(tenantId, () => svc.approve(held.id, staffOf(f.driverId)));
+    expect(await returnMovements(f.productId)).toBe(1);
   }, 30_000);
 });

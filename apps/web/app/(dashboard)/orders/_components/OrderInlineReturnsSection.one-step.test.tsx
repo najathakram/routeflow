@@ -126,6 +126,17 @@ describe("R-1 M4: the host reads a current quote or nothing", () => {
     expect(netOfReturn(10, lastCredit())).toEqual({ payTotal: 2, storeCredit: 0 });
   });
 
+  it("SA-1060 A-5: the draft also returns the box's own quote, and null while it is not current", async () => {
+    await openAndAddWidget();
+    setQty("3");
+    expect(handle.current?.getDraft()?.quote).toBeNull();
+    wait(DEBOUNCE);
+    answer(4);
+    expect(handle.current?.getDraft()?.quote).toEqual(quoteWorth(4));
+    setQty("4"); // the lines changed: the old quote is gone at once
+    expect(handle.current?.getDraft()?.quote).toBeNull();
+  });
+
   it("R-8: while the quote is pending the draft is not quoted, so a save is blocked, not sent", async () => {
     await openAndAddWidget();
     setQty("3");
@@ -220,5 +231,28 @@ describe("review-c MUST 3: a blocked save says why the credit is missing, and it
     expect(blocked).toHaveLength(1);
     expect(blocked[0]).not.toMatch(/working out/i);
     expect(blocked[0]).toMatch(/quote/i);
+  });
+});
+
+describe("NS-13 (SA-1060 A-4): the quote names the order being edited, and only then", () => {
+  async function addWidget(props: Partial<React.ComponentProps<typeof OrderInlineReturnsSection>>) {
+    renderWithProviders(<OrderInlineReturnsSection customerId="cust-1" {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Returns" }));
+    fireEvent.change(screen.getByLabelText(/add another product/i), { target: { value: "wid" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Widget" }));
+    setQty("3");
+    wait(DEBOUNCE);
+    return quoteMutate.mock.calls[quoteMutate.mock.calls.length - 1][0];
+  }
+
+  it("edit mode (the host passes the order being edited) sends it as editingOrderId", async () => {
+    const request = await addWidget({ entryOrderId: "order-edit" });
+    expect(request).toMatchObject({ customerId: "cust-1", editingOrderId: "order-edit" });
+  });
+
+  it("New order (no entry order) sends no editingOrderId at all", async () => {
+    const request = await addWidget({});
+    expect(request).not.toHaveProperty("editingOrderId");
+    expect(request.items).toHaveLength(1);
   });
 });

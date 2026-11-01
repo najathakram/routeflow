@@ -315,6 +315,8 @@ export function buildQuoteRequest(
   routeRunStopId?: string,
   /** SA-740: the sale this return is from (a counter return sends the sale's order id; REQUIRED for a walk-in). */
   sourceOrderId?: string,
+  /** SA-1060 A-4: the order being edited (the order edit's Returns section only; every other caller omits it). */
+  editingOrderId?: string,
 ): QuoteInlineReturnRequest {
   const items: QuoteInlineReturnItem[] = mergeDuplicateProductItems(
     lines
@@ -333,21 +335,23 @@ export function buildQuoteRequest(
     pieces,
     ...(creditUnitPrice !== undefined ? { creditUnitPrice, overrideReason } : {}),
   }));
-  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId);
+  return quoteRequestOf(customerId, items, routeRunStopId, sourceOrderId, editingOrderId);
 }
 
-/** The quote request envelope: routeRunStopId and sourceOrderId ride along only when supplied. */
+/** The quote request envelope: routeRunStopId, sourceOrderId and editingOrderId ride along only when supplied. */
 function quoteRequestOf(
   customerId: string,
   items: QuoteInlineReturnItem[],
   routeRunStopId?: string,
   sourceOrderId?: string,
+  editingOrderId?: string,
 ): QuoteInlineReturnRequest {
   return {
     customerId,
     items,
     ...(routeRunStopId ? { routeRunStopId } : {}),
     ...(sourceOrderId ? { sourceOrderId } : {}),
+    ...(editingOrderId ? { editingOrderId } : {}),
   };
 }
 
@@ -528,6 +532,10 @@ export interface LineQuoteFacts {
   total: number;
   /** True when the covered chunks span more than one earlier order. */
   spansOrders: boolean;
+  /** SA-1060 PR-2: the quote says this customer was never sold the product, so the goods are not added to stock whatever the
+   *  reason. Read from the server's own flag on any chunk (SA-1060 A-6: it wins over `alreadyReturned` for stock and
+   *  tax; `alreadyReturned` keeps the reason and the hold); the screen never works it out. */
+  neverSold: boolean;
 }
 
 export function lineQuoteFacts(
@@ -549,6 +557,7 @@ export function lineQuoteFacts(
     alreadyReturnedPieces: sumPieces(alreadyReturned),
     total: server ? server.total : sumChunkTotals(chunks).total,
     spansOrders: new Set(covered.map((c) => c.sourceOrderId)).size > 1,
+    neverSold: chunks.some((c) => c.neverSold === true),
   };
 }
 

@@ -64,6 +64,11 @@ const UW = unitWords();
 // line and a pack line from a source order, say — can be edited/removed independently.
 type SectionLine = InlineReturnLineDraft & { lineKey: string };
 
+/** A-4 (M3): the quote has priced at least one chunk of this product, so its neverSold flag is an answer rather than an absence. */
+function quotePricedProduct(facts: LineQuoteFacts): boolean {
+  return facts.covered.length + facts.notOnInvoice.length + facts.alreadyReturned.length > 0;
+}
+
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
@@ -91,6 +96,9 @@ export interface InlineReturnSectionProps {
   /** SA-740: the sale this return is from, sent on the quote (REQUIRED for a walk-in; the host
    *  also sends it on the capture). Omit for a named customer, whose return may spill across orders. */
   sourceOrderId?: string;
+  /** SA-1060 A-4: the order being EDITED, sent on the quote so it prices what the edit's save will see (the order edit's Returns
+   *  section passes it; New order, the counter and the Returns dialog never do). */
+  editingOrderId?: string;
   /** Bumping this value resets every field and re-seeds from `entryOrderId` — mirrors the
    *  original dialog's "fresh attempt every time it opens" effect. */
   resetToken?: string | number;
@@ -140,6 +148,7 @@ export function InlineReturnSection({
   customerId,
   entryOrderId,
   sourceOrderId,
+  editingOrderId,
   resetToken,
   getQuoteEnabled = true,
   waitingFor,
@@ -176,6 +185,7 @@ export function InlineReturnSection({
     lines,
     customerId,
     sourceOrderId,
+    editingOrderId,
     enabled: getQuoteEnabled && !locked,
   });
   const quote = quoteOverride ?? live.quote;
@@ -403,8 +413,8 @@ export function InlineReturnSection({
             const ruling = lines[rulingIndex];
             // the product's quote facts, the credit and the already-returned reason all sit on the ruling row too
             const isRuling = lineIndex === rulingIndex;
-            const facts =
-              isRuling && detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            const productFacts = detailQuote ? lineQuoteFacts(detailQuote, line.productId) : null;
+            const facts = isRuling ? productFacts : null;
             return (
               <React.Fragment key={line.lineKey}>
                 {removed && removed.index === lineIndex ? undoRow : null}
@@ -418,7 +428,16 @@ export function InlineReturnSection({
                   locked={locked}
                   reasonOptions={REASON_OPTIONS}
                   reasonLabel={reasonLabel(ruling.reason)}
-                  stocks={restocksForReason(ruling.reason || captureReason)}
+                  // SA-1060 PR-2: goods this customer was never sold are not added to stock, whatever the reason (the quote says so).
+                  // A-4 (M3): with no quote to say (not yet asked, refused, failed, or
+                  // no chunk for THIS product: no quantity yet, or its quote still pending) a restocking reason claims nothing: null
+                  stocks={
+                    !restocksForReason(ruling.reason || captureReason)
+                      ? false
+                      : productFacts && quotePricedProduct(productFacts)
+                        ? !productFacts.neverSold
+                        : null
+                  }
                   isRuling={isRuling}
                   rowCount={rowCount}
                   canOverrideCredit={canOverrideCredit}
@@ -656,7 +675,8 @@ function ReturnLine({
   locked: boolean;
   reasonOptions: Array<{ value: ReturnReason; label: string }>;
   reasonLabel: string;
-  stocks: boolean;
+  /** true: back to stock; false: not added; null: not known yet (no quote has said whether it was ever sold). */
+  stocks: boolean | null;
   /** The row whose quantity the capture counts first: only it opens its options by itself. */
   isRuling: boolean;
   /** Rows of this product on the screen: with 2 or more, the product-wide boxes say so in their labels. */
@@ -707,7 +727,7 @@ function ReturnLine({
   const summaryWords = [
     credit !== null && facts && facts.total > 0 ? `Credit ${money(facts.total)}` : null,
     reasonLabel,
-    stocks ? "Back to stock" : "Not added to stock",
+    stocks === null ? null : stocks ? "Back to stock" : "Not added to stock",
   ].filter(Boolean);
 
   const flagWords = [
@@ -902,6 +922,11 @@ function ReturnLine({
               )}{" "}
               priced at the customer&apos;s current price.
             </p>
+            {facts.neverSold && (
+              <p data-testid={`return-line-stock-note-${line.productId}`} className="text-navy">
+                Not added to stock
+              </p>
+            )}
             {excessChunks.map((c, i) => (
               <CreditOverrideNote key={`excess-override-${i}`} chunk={c} boxed={boxedForNote} />
             ))}

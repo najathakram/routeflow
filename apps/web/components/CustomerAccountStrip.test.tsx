@@ -54,6 +54,13 @@ jest.mock("@/components/CustomerRecordPaymentModal", () => ({
   },
 }));
 
+// SA-1078 U4: the statement sheet is its own spec; here only whether the figure is offered as a button.
+let mockMay = false;
+jest.mock("@/lib/api/account-statement", () => ({
+  ...jest.requireActual("@/lib/api/account-statement"),
+  useMayOpenStatement: () => mockMay,
+}));
+
 interface Inv {
   id: string;
   invoiceNumber: string;
@@ -80,6 +87,7 @@ let overdueTotal: number | null = null;
 let failZone = false;
 
 beforeEach(() => {
+  mockMay = false;
   mockUser = { role: "OPERATOR" };
   modalProps = null;
   failStatement = false;
@@ -133,6 +141,26 @@ beforeEach(() => {
 const line = () => screen.findByTestId("account-strip-line");
 
 describe("CustomerAccountStrip", () => {
+  it("U4: the Owes part of the line opens the statement sheet; View and Mark paid are untouched", async () => {
+    mockMay = true;
+    const user = userEvent.setup();
+    renderWithProviders(<CustomerAccountStrip customerId="c1" customerName="Acme Foods" />);
+    expect(await line()).toHaveTextContent("Owes $1,240.00 · 3 open · 2 overdue");
+    const bar = screen.getByTestId("account-strip-bar");
+    const owes = within(bar).getByTestId("open-balance-button");
+    expect(owes).toHaveTextContent("Owes $1,240.00");
+    expect(within(bar).getByRole("button", { name: /view/i })).toBeInTheDocument();
+    await user.click(owes);
+    expect(await screen.findByRole("dialog", { name: "Statement" })).toBeInTheDocument();
+    expect(mockGet).toHaveBeenCalledWith("/customers/c1/account-statement");
+  });
+
+  it("U4b: without permission the line is plain text, as before", async () => {
+    renderWithProviders(<CustomerAccountStrip customerId="c1" customerName="Acme Foods" />);
+    expect(await line()).toHaveTextContent("Owes $1,240.00 · 3 open · 2 overdue");
+    expect(screen.queryByTestId("open-balance-button")).toBeNull();
+  });
+
   // Opus review: the list is one page (limit 100). The open count is the server's total, never the page's length, and
   // past one page the full list is on the customer page, not a "Show all" that would show only the first 100.
   // #3724 review (a): past one page, the overdue figures are the server's too (an isOverdue read), never the page's.

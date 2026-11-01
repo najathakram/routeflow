@@ -315,6 +315,10 @@ describe("R-6 M7: the closed row says where the goods go", () => {
   it("shows the options in words, with 'Back to stock' by default", async () => {
     renderSection({ reasonContext: "counter" });
     await pick();
+    // A-4 (M3): "Back to stock" is the quote's word, so the quote answers first
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 6, neverSold: false })]));
     expect(summary("prod-1")).toHaveTextContent("Bought too many");
     expect(summary("prod-1")).toHaveTextContent("Back to stock");
   });
@@ -323,6 +327,15 @@ describe("R-6 M7: the closed row says where the goods go", () => {
     renderSection({ reasonContext: "counter" });
     await pick();
     await pick("Gadget");
+    setQty("6", 0);
+    setQty("4", 1);
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        chunk({ productId: "prod-1", pieces: 6, neverSold: false }),
+        chunk({ productId: "prod-2", pieces: 4, neverSold: false }),
+      ]),
+    );
     fireEvent.click(optionsToggle("Widget"));
     fireEvent.change(within(row("prod-1")).getByLabelText(/reason \(optional\)/i), {
       target: { value: "DAMAGED" },
@@ -801,6 +814,10 @@ describe("review-c on #4036 (T1, four MUSTs and the mutants they left)", () => {
       ],
     };
     renderSection({ entryOrderId: "order-1", reasonContext: "counter" });
+    // A-4 (M3): the quote answers (goods sold before) before the rows read "Back to stock"
+    setQty("3", 0);
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 3, neverSold: false })]));
     for (const r of screen.getAllByTestId("return-line-prod-1")) {
       expect(within(r).getByTestId("return-line-summary-prod-1")).toHaveTextContent(
         "Back to stock",
@@ -840,6 +857,8 @@ describe("review-c on #4036 at 852bb08fce", () => {
       target: { value: "DAMAGED" },
     });
     setQty("3", 1);
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 3, neverSold: false })]));
     // the reason belongs to the product: row 2, the row that counts, reads DAMAGED and so does the capture
     expect(
       (within(rows()[1]).getByLabelText("Reason (both rows)") as HTMLSelectElement).value,
@@ -1122,6 +1141,172 @@ describe("sweep of first-row reads (Lead, #4036): scan, focus and credit price f
         "Not added to stock",
       );
     }
+  });
+});
+
+describe("SA-1060 PR-2 M9: goods the customer was never sold are not added to stock", () => {
+  async function quoted(chunks: InlineReturnQuoteChunk[], qty = "6") {
+    const view = renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty(qty);
+    wait(DEBOUNCE);
+    answer(quoteResponse(chunks));
+    return view;
+  }
+
+  it("the closed row reads 'Not added to stock' from the quote, though the reason would put it back", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true })]);
+    expect(summary("prod-1")).toHaveTextContent("Bought too many"); // a reason that restocks
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+  });
+
+  it("the options say it too, once opened", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true })]);
+    fireEvent.click(optionsToggle("Widget"));
+    expect(screen.getByTestId("return-line-stock-note-prod-1")).toHaveTextContent(
+      "Not added to stock",
+    );
+  });
+
+  it("a line with goods sold to them before still reads 'Back to stock' (guard)", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 1.2, neverSold: false })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+    fireEvent.click(optionsToggle("Widget"));
+    expect(screen.queryByTestId("return-line-stock-note-prod-1")).toBeNull();
+  });
+
+  it("a fully matched line reads 'Back to stock' (guard)", async () => {
+    await quoted([chunk({ pieces: 6, neverSold: false })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("an older API that sends no neverSold changes nothing (guard)", async () => {
+    await quoted([noSale({ pieces: 6, subtotal: 15, taxAmount: 0 })]);
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("only the never-sold line changes: its neighbour keeps 'Back to stock'", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    await pick("Gadget");
+    setQty("6", 0);
+    setQty("4", 1);
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        noSale({ productId: "prod-1", pieces: 6, subtotal: 15, taxAmount: 0, neverSold: true }),
+        chunk({ productId: "prod-2", pieces: 4, neverSold: false }),
+      ]),
+    );
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-2")).toHaveTextContent("Back to stock");
+  });
+});
+
+describe("SA-1060 A-4 (M3): the closed row claims no stock outcome the quote has not told it", () => {
+  // Whether the goods were ever sold to this customer is only known from a quote. Until one answers (not yet asked, refused, or
+  // failed) a restocking reason must not read "Back to stock": that would be a claim about a never-sold line the screen cannot make.
+  const refusal = {
+    response: {
+      status: 400,
+      data: { message: "That is more than was sold", code: "RETURN_EXCEEDS_SALE" },
+    },
+  };
+
+  it("before any quote has answered, a restocking reason says nothing about stock", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    expect(summary("prod-1")).toHaveTextContent("Bought too many");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+  });
+
+  it("a refused quote leaves the row silent about stock", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("99");
+    wait(DEBOUNCE);
+    refuse(refusal);
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+  });
+
+  it("a quote that failed leaves the row silent about stock", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    refuse(Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" }));
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Not added to stock");
+  });
+
+  it("a reason that never restocks still says so without a quote (guard: that outcome is known)", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+      target: { value: "QUALITY_ISSUE" },
+    });
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+  });
+
+  it("a product the answered quote has no chunk for (added with no quantity, or still pending) claims nothing, while the quoted line keeps its word", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ productId: "prod-1", pieces: 6, neverSold: false })]));
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // Gadget joins after the quote answered: no quantity yet, so the quote has nothing for it
+    await pick("Gadget");
+    expect(summary("prod-2")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-2")).not.toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // a quantity makes the next quote pending: the last quote still has no chunk for Gadget
+    setQty("4", 1);
+    expect(summary("prod-2")).not.toHaveTextContent("Back to stock");
+    expect(summary("prod-2")).not.toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+    // once the quote answers for it, it reads the quote's word
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        chunk({ productId: "prod-1", pieces: 6, neverSold: false }),
+        noSale({ productId: "prod-2", pieces: 4, subtotal: 10, taxAmount: 0, neverSold: true }),
+      ]),
+    );
+    expect(summary("prod-2")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
+  });
+
+  it("NS-22 (A-6): both flags on a restocking reason -> 'Not added to stock', and the reason is still asked", async () => {
+    authRole = "OPERATOR";
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("3");
+    wait(DEBOUNCE);
+    answer(
+      quoteResponse([
+        noSale({ pieces: 3, subtotal: 15, taxAmount: 0, alreadyReturned: true, neverSold: true }),
+      ]),
+    );
+    expect(summary("prod-1")).toHaveTextContent("Bought too many"); // a reason that restocks
+    expect(summary("prod-1")).toHaveTextContent("Not added to stock");
+    expect(summary("prod-1")).not.toHaveTextContent("Back to stock");
+    expect(
+      within(row("prod-1")).getByLabelText(/why credit widget again \(required\)/i),
+    ).toBeVisible();
+  });
+
+  it("an answered quote for goods sold before still reads 'Back to stock' (guard)", async () => {
+    renderSection({ reasonContext: "counter" });
+    await pick();
+    setQty("6");
+    wait(DEBOUNCE);
+    answer(quoteResponse([chunk({ pieces: 6, neverSold: false })]));
+    expect(summary("prod-1")).toHaveTextContent("Back to stock");
   });
 });
 

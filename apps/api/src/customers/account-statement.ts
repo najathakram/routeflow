@@ -16,6 +16,7 @@ import {
 import { KPI_SUMMARY_EXCLUDED, OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { classifyInvoiceBalance } from "../invoices/invoice-balance-classify";
 import { toCollectState } from "../invoices/to-collect";
+import { isInternalEmail } from "../common/internal-email";
 import {
   addCalendarDays,
   calendarDateFromIso,
@@ -207,7 +208,9 @@ export async function buildAccountStatement(
   return {
     asOf: tenantDay,
     customer: { id: customer.id, businessName: customer.businessName },
-    ...(opts.staff ? { emailOnFile: customer.email ?? null } : {}),
+    ...(opts.staff
+      ? { emailOnFile: isInternalEmail(customer.email) ? null : (customer.email ?? null) }
+      : {}),
     openBalance,
     overdue,
     creditAvailable,

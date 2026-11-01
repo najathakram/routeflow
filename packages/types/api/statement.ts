@@ -76,3 +76,16 @@ export interface AccountStatement {
   recentPaymentsTruncated: boolean;
   credits: AccountStatementCredit[];
 }
+
+/** `POST /customers/:id/account-statement/email` body. Omit `email` to use the address on file. */
+export interface SendAccountStatementEmailRequest {
+  email?: string;
+}
+
+/** What the email route answers. `warning` is set when the tenant's own SMTP failed and the platform's carried the send. */
+export interface SendAccountStatementEmailResult {
+  success: true;
+  sentTo: string;
+  warning?: string;
+  fromAddress?: string;
+}

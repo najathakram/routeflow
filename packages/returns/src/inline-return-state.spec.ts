@@ -1064,6 +1064,24 @@ describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () 
     expect(facts.spansOrders).toBe(false);
   });
 
+  it("NS-22 (SA-1060 A-6): a chunk both already returned and never sold says never sold, and stays already returned", () => {
+    const quote = quoteResponse([
+      chunk({
+        productId: "prod-1",
+        pieces: 3,
+        sourceOrderId: null,
+        sourceInvoiceItemId: null,
+        sourceOrderItemId: null,
+        alreadyReturned: true,
+        neverSold: true,
+      }),
+    ]);
+    const facts = pkg.lineQuoteFacts(quote, "prod-1");
+    expect(facts.neverSold).toBe(true);
+    expect(facts.alreadyReturnedPieces).toBe(3);
+    expect(facts.notOnInvoicePieces).toBe(0);
+  });
+
   it("prefers the server's own per-product total when the quote carries one", () => {
     const quote = {
       ...quoteResponse([chunk({ productId: "prod-1", subtotal: 20, taxAmount: 2 })]),
@@ -1086,6 +1104,32 @@ describe("R-1 M6/M8: lineQuoteFacts, what the quote says about one product", () 
     const facts = pkg.lineQuoteFacts(quoteResponse([chunk()]), "prod-9");
     expect(facts.covered).toEqual([]);
     expect(facts.total).toBe(0);
+  });
+
+  it("SA-1060 PR-2: neverSold is the server's flag on a no-sale chunk of that product, nothing else", () => {
+    const noSale = (o: object) =>
+      chunk({ sourceOrderId: null, sourceInvoiceItemId: null, sourceOrderItemId: null, ...o });
+    const never = pkg.lineQuoteFacts(
+      quoteResponse([noSale({ productId: "prod-1", neverSold: true })]),
+      "prod-1",
+    );
+    expect(never.neverSold).toBe(true);
+    const before = pkg.lineQuoteFacts(
+      quoteResponse([noSale({ productId: "prod-1", neverSold: false })]),
+      "prod-1",
+    );
+    expect(before.neverSold).toBe(false);
+    expect(pkg.lineQuoteFacts(quoteResponse([chunk()]), "prod-1").neverSold).toBe(false);
+    expect(
+      pkg.lineQuoteFacts(quoteResponse([noSale({ productId: "prod-1" })]), "prod-1").neverSold,
+    ).toBe(false); // an older API sends no flag
+    // another product's flag is not this product's
+    expect(
+      pkg.lineQuoteFacts(
+        quoteResponse([noSale({ productId: "prod-2", neverSold: true }), chunk()]),
+        "prod-1",
+      ).neverSold,
+    ).toBe(false);
   });
 });
 

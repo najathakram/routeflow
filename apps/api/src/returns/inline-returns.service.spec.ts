@@ -416,6 +416,51 @@ describe("InlineReturnsService", () => {
     });
   });
 
+  it("NS-22 (SA-1060 A-6): both flags on a restocking reason -> the note restocks nothing, and the reason is still asked", async () => {
+    const base = priced();
+    quoteService.priceInlineReturn.mockResolvedValue({
+      ...base,
+      chunks: [{ ...base.chunks[0], sourceOrderId: null, neverSold: true, alreadyReturned: true }],
+    });
+    const err: any = await service.capture(CAPTURE_DTO as any, OPERATOR).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+    });
+    expect(prisma.return.create).not.toHaveBeenCalled();
+    await service.capture(
+      {
+        ...CAPTURE_DTO,
+        reason: "EXCESS_ORDER",
+        items: CAPTURE_DTO.items.map((i: object) => ({
+          ...i,
+          alreadyReturnedReason: "second batch",
+        })),
+      } as any,
+      OPERATOR,
+    );
+    const created = prisma.return.create.mock.calls[0][0].data;
+    expect(created.items.create[0].restock).toBe(false);
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("NS-23 (SA-1060 PR-2): a client's restock: true can't put a never-sold chunk back in stock", async () => {
+    const base = priced();
+    quoteService.priceInlineReturn.mockResolvedValue({
+      ...base,
+      chunks: [{ ...base.chunks[0], neverSold: true }],
+    });
+    await service.capture(
+      {
+        ...CAPTURE_DTO,
+        items: CAPTURE_DTO.items.map((i: object) => ({ ...i, restock: true })),
+      } as any,
+      OPERATOR,
+    );
+    const created = prisma.return.create.mock.calls[0][0].data;
+    expect(created.items.create[0].restock).toBe(false);
+    expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+  });
+
   it("resolves restock from the reason default (DAMAGED never restocks) when the item omits an explicit flag", async () => {
     quoteService.priceInlineReturn.mockResolvedValue(priced());
     await service.capture({ ...CAPTURE_DTO, reason: "DAMAGED" } as any, OPERATOR);
