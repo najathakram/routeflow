@@ -104,4 +104,15 @@ export class QuoteInlineReturnDto {
   @IsString()
   @IsNotEmpty()
   sourceOrderId?: string;
+
+  /**
+   * SA-1060 A-4: the order the screen is EDITING (the order edit's Returns section only; New order, the counter and the Returns
+   * dialog send nothing). On an undelivered order edit the save reverts that order's own SENT invoice to a DRAFT of an undelivered
+   * order before the return is captured, so the quote prices against the same post-revert set the edit's dry run and capture
+   * do. The client never sends invoice ids. Must be this customer's own order (400 SOURCE_SALE_INVALID).
+   */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  editingOrderId?: string;
 }

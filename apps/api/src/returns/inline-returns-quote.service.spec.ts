@@ -880,8 +880,9 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
   });
 
   it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax) — for goods sold to this customer before, outside the window", async () => {
-    // SA-1060 PR-2: only the whole-history read (no issueDate filter) finds the old sale, so the 5 pieces are an unreferenced
-    // chunk of a SOLD-BEFORE product. (A product never sold to them takes no tax at all: the next test.)
+    // SA-1060 A-4: the customer HAS a live sale of the product, outside the window (the never-sold read finds it), so the 5
+    // pieces are an unreferenced chunk of a SOLD-BEFORE product. (A product never sold to them takes no tax: the next test.)
+    (db.invoiceItem.findFirst as jest.Mock).mockResolvedValue({ id: "item-old" });
     (db.invoice.findMany as jest.Mock).mockImplementation((args: any) =>
       Promise.resolve(
         args?.where?.issueDate === undefined
@@ -958,6 +959,29 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     expect(result.taxAmount).toBe(0);
   });
 
+  it("SA-1060 A-4 (M2): an exempt customer's SOLD-BEFORE product is untaxed by the exemption, with neverSold false", async () => {
+    // The product HAS a live sale to this customer (the never-sold read finds it), so only isTaxExempt can zero the
+    // tax: $50.00 at 8% is $4.00 without it.
+    (db.invoiceItem.findFirst as jest.Mock).mockResolvedValue({ id: "item-old" });
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: true,
+    });
+
+    const result = await service.quote(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
+      OPERATOR,
+    );
+
+    expect(result.subtotal).toBe(50.0);
+    expect(result.taxAmount).toBe(0);
+    expect(result.chunks[0].neverSold).toBe(false);
+  });
+
   it("reads the tenant rate ONCE per quote — not once per item", async () => {
     await service.quote(
       {
@@ -1011,6 +1035,7 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
       },
     ]);
     // 10 pieces sold at $5.00 on a 5% snapshot line, $2.00 excise booked.
+    (db.invoiceItem.findFirst as jest.Mock).mockResolvedValue({ id: "invitem-1" }); // SA-1060 A-4: a live sale exists
     (db.invoice.findMany as jest.Mock).mockResolvedValue([
       {
         orderId: "order-1",

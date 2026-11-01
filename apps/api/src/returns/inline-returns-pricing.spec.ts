@@ -311,6 +311,20 @@ describe("priceUnreferencedChunk", () => {
     expect(before).toMatchObject({ subtotal: 30, taxAmount: 2.4, neverSold: false });
   });
 
+  it("SA-1060 A-4 (M2): a tax-exempt customer's SOLD-BEFORE chunk is untaxed by the exemption alone, not by neverSold", () => {
+    // neverSold is false here, so only `customerIsTaxExempt` can take the $2.40 off. Dropping that flag from the
+    // tax line leaves $30.00 at 8% = $2.40; the exempt path must hold $0.00.
+    const exempt = priceUnreferencedChunk(
+      "prod-1",
+      3,
+      { unitPrice: 10, source: "TIER" },
+      0.08,
+      true,
+      false,
+    );
+    expect(exempt).toMatchObject({ subtotal: 30, taxAmount: 0, neverSold: false });
+  });
+
   it("Opus fix-round BLOCKER: a boxed unreferenced return prices via the SELLING-UNIT (box) rate, never unitPrice x pieces (revert $288.00)", () => {
     // upb 12, $24/box, returning exactly 1 box (12 pieces).
     const priced = priceUnreferencedChunk(

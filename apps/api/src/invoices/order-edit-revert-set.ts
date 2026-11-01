@@ -1,6 +1,8 @@
 import { BadRequestException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
+import { carrierEditGuard, resyncsInPlace, type CarrierOrder } from "../orders/order-carrier-guard";
 
 /**
  * #2178 — the ONE selection of the invoices an UNDELIVERED order edit reverts to DRAFT
@@ -50,6 +52,42 @@ export async function selectEditRevertedInvoices(
   const depositMirrorExempt =
     !!order && order.status !== "DELIVERED" && order.status !== "CANCELLED" && nonVoidCount === 1;
   return depositMirrorExempt ? linked.filter((inv) => inv.depositPercent == null) : linked;
+}
+
+/**
+ * SA-1060 A-4 (M1): the invoices the Returns section's QUOTE must leave out while the operator is editing `orderId`, so the
+ * screen prices the same post-revert matching set the edit's dry run and capture do (`preflightCapture`, `revertOrderId`).
+ *
+ * Reads the order (this customer's, in this tenant: any other is a 400 SOURCE_SALE_INVALID, never a probe) and applies the
+ * edit's own routing rule, never a second copy: `resyncsInPlace(order.status, carrierEditGuard)` is true for an order that is out
+ * for delivery, partly or fully delivered, or with the carrier, and then nothing reverts, so `[]`. Otherwise the revert runs and
+ * the ids are `selectEditRevertedInvoices`' own (the order's non-batch SENT/VIEWED/OVERDUE invoices, minus an exempt deposit
+ * mirror). `featureConfig` is the one reader of the business's billing moment; absent, no order is with the carrier, as in the edit.
+ */
+export async function quoteExcludedInvoiceIds(
+  db: Omit<RevertSetDb, "order"> & {
+    order: { findFirst(args: unknown): Promise<any> };
+  },
+  customerId: string,
+  orderId: string,
+  featureConfig?: Parameters<typeof carrierEditGuard>[0]["featureConfig"],
+): Promise<string[]> {
+  const order: (CarrierOrder & { id: string; status: string }) | null = await db.order.findFirst({
+    where: { id: orderId, customerId },
+    select: { id: true, status: true, fulfillPath: true, shippedAt: true, tenantId: true },
+  });
+  if (!order) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.SOURCE_SALE_INVALID,
+      message: "That order is not this customer's.",
+    });
+  }
+  const guard = await carrierEditGuard(
+    { featureConfig, prisma: { forTenant: () => db } as any },
+    order,
+  );
+  if (resyncsInPlace(order.status, guard)) return [];
+  return (await selectEditRevertedInvoices(db, orderId)).map((inv) => inv.id);
 }
 
 /**

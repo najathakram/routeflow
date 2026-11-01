@@ -66,8 +66,9 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
   };
 
   /** One invoice, one line of 2 pieces at $10.00 (so $20.00), with the given snapshot tax figures. */
-  const sold = (inv: { taxAmount: number; lineTaxRate: number; categoryTax?: number }) =>
-    db.invoice.findMany.mockResolvedValue([
+  const sold = (inv: { taxAmount: number; lineTaxRate: number; categoryTax?: number }) => {
+    db.invoiceItem.findFirst.mockResolvedValue({ id: "item-1" }); // SA-1060 A-4: the customer has a live sale of the product
+    return db.invoice.findMany.mockResolvedValue([
       {
         orderId: "ord-1",
         subtotal: 20,
@@ -91,6 +92,7 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
         ],
       },
     ]);
+  };
 
   const quote = (pieces: number) =>
     service.quote(

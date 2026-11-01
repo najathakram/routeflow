@@ -2,9 +2,11 @@
  * SA-1060 PR-2 (what a no-sale credit means): a chunk of goods the customer was never sold, ever, carries no sales tax
  * (B463's own rule: never credit a tax that was not charged) and is flagged `neverSold` so the capture does not restock it.
  *
- * "Never sold" is ONE predicate, `neverSoldToCustomer`, read from the same whole-history matching-set read that
- * `lifetimeExhausted` already makes, cached per product: at most one read per product, and only for a no-sale chunk.
- * A sold-before chunk (a live invoice line outside the 90-day window) and a matched chunk are unchanged.
+ * "Never sold" is ONE predicate, `neverSoldToCustomer` (A-4): its own `invoiceItem.findFirst` over the customer's live invoice
+ * lines of the product, with or without an order, cached per product, asked only for a product with a no-sale chunk. The
+ * real-Postgres rows (NS-1 to NS-12) are in inline-returns-never-sold.a4.db.spec.ts; this file pins the read's shape on a
+ * mock (a mock accepts any `where`, so the values are never trusted here). A sold-before chunk is a product whose read finds a
+ * line; a matched chunk is unchanged.
  */
 import { Test } from "@nestjs/testing";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
@@ -92,10 +94,12 @@ describe("SA-1060 PR-2: a never-sold chunk carries no sales tax and is flagged",
     db.invoice.findMany.mock.calls.filter(([args]: [any]) => isLifetimeRead(args)).length;
 
   /** An invoice that exists only OUTSIDE the 90-day window: the window read is empty, the whole-history read finds it. */
-  const soldBeforeOnly = (invoice = invoiceWith(1.75, 0.0875)) =>
-    db.invoice.findMany.mockImplementation((args: any) =>
+  const soldBeforeOnly = (invoice = invoiceWith(1.75, 0.0875)) => {
+    db.invoiceItem.findFirst.mockResolvedValue({ id: "item-old" }); // A-4: the never-sold read finds the live sale
+    return db.invoice.findMany.mockImplementation((args: any) =>
       Promise.resolve(isLifetimeRead(args) ? [invoice] : []),
     );
+  };
 
   const quote = (pieces: number, extra: Record<string, unknown> = {}) =>
     service.quote(
@@ -213,6 +217,7 @@ describe("SA-1060 PR-2: a never-sold chunk carries no sales tax and is flagged",
   it("an over-return of a product with a window line is sold, not never-sold, and makes at most one whole-history read (guard)", async () => {
     await setup("8");
     db.invoice.findMany.mockResolvedValue([invoiceWith(1.75, 0.0875)]);
+    db.invoiceItem.findFirst.mockResolvedValue({ id: "item-1" });
     const q = await quote(3); // 2 matched + 1 beyond the sale
     const over = q.chunks.find((c) => !c.sourceOrderId)!;
     expect(over).toMatchObject({ subtotal: 10, taxAmount: 0.88 });
@@ -222,7 +227,79 @@ describe("SA-1060 PR-2: a never-sold chunk carries no sales tax and is flagged",
   it("an over-return of a product with a window line is not flagged: neverSold is false (RED on master: the field does not exist)", async () => {
     await setup("8");
     db.invoice.findMany.mockResolvedValue([invoiceWith(1.75, 0.0875)]);
+    db.invoiceItem.findFirst.mockResolvedValue({ id: "item-1" });
     const q = await quote(3);
     expect(q.chunks.find((c) => !c.sourceOrderId)!.neverSold).toBe(false);
+  });
+
+  // ─── NS-14 (SA-1060 A-4): the never-sold read is its own findFirst, once per product per quote ───
+
+  it("NS-14: two items of one never-sold product make ONE never-sold read (a single findFirst)", async () => {
+    await setup("8");
+    db.invoice.findMany.mockResolvedValue([]);
+    db.invoiceItem.findFirst.mockResolvedValue(null);
+    await service.quote(
+      {
+        customerId: "cust-1",
+        items: [
+          { productId: "prod-1", boxes: 0, pieces: 1 },
+          { productId: "prod-1", boxes: 0, pieces: 2 },
+        ],
+      } as any,
+      OPERATOR,
+    );
+    expect(db.invoiceItem.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("the never-sold read: one findFirst, customerId and productId set, qty > 0, no order filter, live statuses only", async () => {
+    await setup("8");
+    db.invoice.findMany.mockResolvedValue([]);
+    db.invoiceItem.findFirst.mockResolvedValue(null);
+    await quote(3);
+    expect(db.invoiceItem.findFirst).toHaveBeenCalledTimes(1);
+    const where = db.invoiceItem.findFirst.mock.calls[0][0].where;
+    expect(where.productId).toBe("prod-1");
+    expect(where.qty).toEqual({ gt: 0 });
+    expect(where.invoice.customerId).toBe("cust-1");
+    expect(where.invoice).not.toHaveProperty("orderId"); // an invoice with no order is a sale
+    expect(where.invoice).not.toHaveProperty("id"); // nothing excluded outside an order edit
+    expect(where.invoice.OR).toEqual([
+      { status: { notIn: ["DRAFT", "VOID"] } }, // ACCRUAL_REVENUE_STATUSES: WRITTEN_OFF is a sale
+      { status: "DRAFT", order: { status: { in: ["DELIVERED", "PARTIALLY_DELIVERED"] } } },
+    ]);
+  });
+
+  it("an order edit's quote leaves the invoices the edit reverts out of the never-sold read (the same ids the dry run excludes)", async () => {
+    await setup("8");
+    db.invoice.findMany.mockImplementation((args: any) =>
+      Promise.resolve(
+        args?.where?.status?.in
+          ? [{ id: "inv-sent", invoiceNumber: "I-1", internalNotes: null, depositPercent: null }]
+          : [],
+      ),
+    );
+    db.order.findFirst.mockResolvedValue({
+      id: "ord-edit",
+      status: "CONFIRMED",
+      fulfillPath: "ROUTE",
+      shippedAt: null,
+      tenantId: "t1",
+    });
+    db.invoiceItem.findFirst.mockResolvedValue(null);
+    await service.quote(
+      {
+        customerId: "cust-1",
+        editingOrderId: "ord-edit",
+        items: [{ productId: "prod-1", boxes: 0, pieces: 3 }],
+      } as any,
+      OPERATOR,
+    );
+    expect(db.order.findFirst.mock.calls[0][0].where).toEqual({
+      id: "ord-edit",
+      customerId: "cust-1",
+    });
+    expect(db.invoiceItem.findFirst.mock.calls[0][0].where.invoice.id).toEqual({
+      notIn: ["inv-sent"],
+    });
   });
 });

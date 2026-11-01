@@ -27,7 +27,9 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { customerPricing } from "../orders/units-prices-v2";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
-import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
+import { ACCRUAL_REVENUE_STATUSES, REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { quoteExcludedInvoiceIds } from "../invoices/order-edit-revert-set";
 import { currentTaxRate } from "../common/tax-rate";
 import { finiteStoredLevy } from "../common/money-invariants.util";
 import { getTierPrice, isWholeCents, packFromOwnSplit, roundMoney } from "@routeflow/pricing";
@@ -135,6 +137,8 @@ export class InlineReturnsQuoteService {
     private readonly systemConfig: SystemConfigService,
     // S19: the customer layer (flag.units_prices_v2) prices an unreferenced return like the sale; absent = master's tier.
     @Optional() private readonly entitlements?: EntitlementsService,
+    // SA-1060 A-4: reads the business's billing moment, so the quote knows whether an edited order is with the carrier.
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   async quote(
@@ -151,7 +155,13 @@ export class InlineReturnsQuoteService {
     }
   > {
     const db = this.prisma.forTenant();
-    const priced = await this.priceInlineReturn(dto, user, db);
+    // SA-1060 A-4 (M1): on an order edit the screen prices the same post-revert matching set the edit's dry run and capture do.
+    // Staff only: a buyer is refused inside `priceInlineReturn` before any read, and this read is order data.
+    const excludeInvoiceIds =
+      dto.editingOrderId && user.role !== UserRole.CUSTOMER
+        ? await quoteExcludedInvoiceIds(db, dto.customerId, dto.editingOrderId, this.featureConfig)
+        : [];
+    const priced = await this.priceInlineReturn(dto, user, db, { excludeInvoiceIds });
     // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
     // only; POST /returns/inline/:id/refund re-checks everything under its locks.
     const [customer, source] = await Promise.all([
@@ -378,28 +388,18 @@ export class InlineReturnsQuoteService {
       return (await this.creditNotedPiecesOutsideReturns(db, lines)) > 0;
     };
 
-    // SA-1060 PR-2: ONE product-filtered read of the customer's sold lines (null window = whole history; only invoices that HAVE
-    // the product), cached per product. `lifetimeExhausted` and `neverSoldToCustomer` both read it, so a product costs one read.
-    const lifetimeLinesCache = new Map<string, CandidateInvoiceLine[]>();
-    const lifetimeLines = async (productId: string): Promise<CandidateInvoiceLine[]> => {
-      const cached = lifetimeLinesCache.get(productId);
-      if (cached !== undefined) return cached;
-      const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
-        soldWindowDays: null,
-        excludeInvoiceIds: opts.excludeInvoiceIds,
-      });
-      const lines = lifeSet.filter((l) => l.productId === productId);
-      lifetimeLinesCache.set(productId, lines);
-      return lines;
-    };
-
     // B961 (SA-071f): Σ returned + Σ credit-noted pieces >= Σ sold pieces across ALL this customer's live invoices of the product.
     // Cached per product; an unclassifiable prior return counts as exhausted (fail toward staff review).
     const lifetimeCache = new Map<string, boolean>();
     const lifetimeExhausted = async (productId: string): Promise<boolean> => {
       const cached = lifetimeCache.get(productId);
       if (cached !== undefined) return cached;
-      const lines = await lifetimeLines(productId);
+      // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
+      const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
+        soldWindowDays: null,
+        excludeInvoiceIds: opts.excludeInvoiceIds,
+      });
+      const lines = lifeSet.filter((l) => l.productId === productId);
       const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
       let exhausted = false;
       if (sold > 0) {
@@ -416,12 +416,38 @@ export class InlineReturnsQuoteService {
       return exhausted;
     };
 
-    // SA-1060 PR-2: the customer has NO live invoice line of this product in their whole history, so goods past what was bought
-    // did not come from us. A product with a line in the pricing window is sold without a read; otherwise the cached whole-history
-    // read decides. Asked only for a product that has a no-sale chunk.
+    // SA-1060 A-4 (MUST 5): the customer has NO live invoice line of this product in their whole history, so goods past what was
+    // bought did not come from us. Its own read, NOT `fetchMatchingSet` (which keeps only invoices that have an order and is the
+    // pricing pool): a sale on an invoice with no order (an estimate convert, an import, a manual invoice, a duplicate) is a sale.
+    // Live = ACCRUAL_REVENUE_STATUSES (a written-off sale counts: the goods left and the tax was charged) plus a DRAFT of a delivered
+    // order; a line needs qty > 0. Asked only for a product with a no-sale chunk, cached per product (one findFirst on the
+    // product index, however many items name it).
+    const neverSoldCache = new Map<string, boolean>();
     const neverSoldToCustomer = async (productId: string): Promise<boolean> => {
-      if (matchingSet.some((l) => l.productId === productId)) return false;
-      return (await lifetimeLines(productId)).length === 0;
+      const cached = neverSoldCache.get(productId);
+      if (cached !== undefined) return cached;
+      // Prisma drops an undefined `where` key: refuse here rather than read every customer's or every product's sales
+      if (!dto.customerId || !productId)
+        throw new Error("neverSoldToCustomer needs a customer and a product");
+      const excluded = opts.excludeInvoiceIds ?? [];
+      const sale = await db.invoiceItem.findFirst({
+        where: {
+          productId,
+          qty: { gt: 0 },
+          invoice: {
+            customerId: dto.customerId,
+            ...(excluded.length > 0 ? { id: { notIn: [...excluded] } } : {}),
+            OR: [
+              { status: ACCRUAL_REVENUE_STATUSES },
+              { status: InvoiceStatus.DRAFT, order: { status: { in: DELIVERED_ORDER_STATUSES } } },
+            ],
+          },
+        },
+        select: { id: true },
+      });
+      const never = sale == null;
+      neverSoldCache.set(productId, never);
+      return never;
     };
 
     for (const item of dto.items) {
