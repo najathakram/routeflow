@@ -21,6 +21,7 @@ import {
   calendarDateFromIso,
   overdueCutoff,
   startOfCalendarDay,
+  startOfLocalDay,
   tenantTodayDay,
 } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
@@ -64,12 +65,17 @@ const isoOf = (d: Date | string): string => (d instanceof Date ? d : new Date(d)
 export async function buildAccountStatement(
   prisma: PrismaService,
   customer: { id: string; businessName: string; email?: string | null },
-  opts: { staff: boolean },
+  opts: { staff: boolean; now?: Date },
 ): Promise<AccountStatement> {
-  const now = new Date();
+  // One clock per statement: asOf, daysLate, overdue, openBalance and the window all read this instant (A-3).
+  const now = opts.now ?? new Date();
   const zone = await tenantTimeZone(prisma);
   const tenantDay = tenantTodayDay(zone, now);
-  const since = addCalendarDays(startOfCalendarDay(now, zone), -STATEMENT_RECENT_DAYS);
+  // Local midnight of the tenant's day 30 back, as a real instant, so the window holds across a clock change.
+  const since = startOfLocalDay(
+    calendarDateFromIso(addCalendarDays(startOfCalendarDay(now, zone), -STATEMENT_RECENT_DAYS)),
+    zone,
+  );
 
   const [invoices, creditNotes, advances, payments] = await Promise.all([
     prisma.forTenant().invoice.findMany({
@@ -104,7 +110,8 @@ export async function buildAccountStatement(
     prisma.forTenant().advancePayment.findMany({
       where: { customerId: customer.id, balance: { gt: 0 } },
       orderBy: { receivedAt: "asc" },
-      select: { id: true, balance: true, reference: true, notes: true, receivedAt: true },
+      // `notes` is a staff form field and never reaches a customer's statement (A-3).
+      select: { id: true, balance: true, reference: true, receivedAt: true },
     }),
     // Confirmed money on any invoice of this customer, dated by when it was collected (`settledAt ?? paidAt`).
     // The window is applied here; the newest-first order and the cap in code, because that date is a coalesce.
@@ -126,8 +133,8 @@ export async function buildAccountStatement(
   ]);
 
   const cutoff = overdueCutoff(now, zone);
-  const openBalance = statementOutstandingAmount(invoices, zone);
-  const overdue = statementOverdueAmount(invoices, zone);
+  const openBalance = statementOutstandingAmount(invoices, zone, now);
+  const overdue = statementOverdueAmount(invoices, zone, now);
 
   const openInvoices: AccountStatementInvoice[] = [];
   let waitingToClear = 0;
@@ -160,7 +167,7 @@ export async function buildAccountStatement(
       kind: "CREDIT_NOTE",
       id: c.id,
       number: c.creditNoteNumber,
-      date: isoOf(c.createdAt),
+      date: tenantTodayDay(zone, c.createdAt),
       reason: c.reason ?? null,
       remaining,
       expiresAt: c.expiresAt ? isoOf(c.expiresAt) : null,
@@ -171,8 +178,8 @@ export async function buildAccountStatement(
       kind: "ADVANCE",
       id: a.id,
       number: a.reference ?? null,
-      date: isoOf(a.receivedAt),
-      reason: a.notes ?? null,
+      date: tenantTodayDay(zone, a.receivedAt),
+      reason: null,
       remaining: roundMoney(Number(a.balance)),
       expiresAt: null,
     });
@@ -185,7 +192,7 @@ export async function buildAccountStatement(
   const recentPayments: AccountStatementPayment[] = dated
     .slice(0, STATEMENT_RECENT_PAYMENTS)
     .map(({ p, at }) => ({
-      date: at.toISOString(),
+      date: tenantTodayDay(zone, at),
       // A credit-note or advance application reduces the invoice like money but is not a new payment.
       kind:
         p.method === CREDIT_NOTE_METHOD || p.method === ADVANCE_METHOD
