@@ -62,7 +62,7 @@ export async function selectEditRevertedInvoices(
  * edit's own routing rule, never a second copy: `resyncsInPlace(order.status, carrierEditGuard)` is true for an order that is out
  * for delivery, partly or fully delivered, or with the carrier, and then nothing reverts, so `[]`. Otherwise the revert runs and
  * the ids are `selectEditRevertedInvoices`' own (the order's non-batch SENT/VIEWED/OVERDUE invoices, minus an exempt deposit
- * mirror). `featureConfig` is the one reader of the business's billing moment; absent, no order is with the carrier, as in the edit.
+ * mirror). `featureConfig` is the one reader of the business's billing moment, and it is required, so no caller reads as not with the carrier by leaving it out.
  */
 export async function quoteExcludedInvoiceIds(
   db: Omit<RevertSetDb, "order"> & {
@@ -70,7 +70,7 @@ export async function quoteExcludedInvoiceIds(
   },
   customerId: string,
   orderId: string,
-  featureConfig?: Parameters<typeof carrierEditGuard>[0]["featureConfig"],
+  featureConfig: Parameters<typeof carrierEditGuard>[0]["featureConfig"],
 ): Promise<string[]> {
   const order: (CarrierOrder & { id: string; status: string }) | null = await db.order.findFirst({
     where: { id: orderId, customerId },
@@ -79,7 +79,7 @@ export async function quoteExcludedInvoiceIds(
   if (!order) {
     throw new BadRequestException({
       code: API_ERROR_CODES.SOURCE_SALE_INVALID,
-      message: "That order is not this customer's.",
+      message: "That order isn't this customer's.",
     });
   }
   const guard = await carrierEditGuard(

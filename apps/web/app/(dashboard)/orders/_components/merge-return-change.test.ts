@@ -72,6 +72,14 @@ describe("mergeReturnChange (SA-1060 A-5)", () => {
     expect(mergeReturnChange(box, merged)).toBe("If you merge, this return is $55.00.");
   });
 
+  it("the same total with a stock flip still shows a line (tax-exempt: $30 on both sides)", () => {
+    const soldExempt = quote(30, [chunk({ taxAmount: 0 })]);
+    expect(mergeReturnChange(soldExempt, NEVER)).toBe(
+      "If you merge, this return is $30.00, not added to stock.",
+    );
+    expect(mergeReturnChange(NEVER, soldExempt)).toBe("If you merge, this return is $30.00.");
+  });
+
   it("a total that moves by a cent of float noise is not a change", () => {
     expect(mergeReturnChange(quote(32.4), quote(32.4000001))).toBeNull();
   });
