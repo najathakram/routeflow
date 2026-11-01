@@ -415,7 +415,8 @@ export class CreditNotesService {
     }
     // SA-1042 A-4: a typed row on a REGULATED line must fit what the ledger can still reverse on its order line (the remaining
     // reverseCreditNoteEntries clamps to), or the item would store a levy the filing never books. A return-refund row carries no
-    // category, a line with no live SALE row is skipped by the ledger too, so neither is bound.
+    // category, and a line that never booked a SALE row is skipped by the ledger too, so neither is bound. A row that takes all
+    // the qty left may pass the money remaining by the money side's own drift allowance (SA-1054 A-3).
     const roomRefusal = await creditRoomRefusal(db, cnItemsData, {
       excludeCreditNoteId: opts.excludeCreditNoteId,
     });

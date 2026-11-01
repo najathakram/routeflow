@@ -2374,6 +2374,7 @@ export class RegulatedLedgerService {
         qty: already.qty + bookedQty,
         unitBasis: already.unitBasis + bookedUnitBasis,
         tax: already.tax + bookedTax,
+        items: already.items + 1,
       });
     }
     if (rows.length === 0) return;

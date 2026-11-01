@@ -20,6 +20,8 @@
  *   G-L10 for each accepted credit: the tax the reversal booked equals the levy the items store (within the closing drift).
  *   G-L3c (SA-1054 A-2) the money fits, the qty does not: refused (the qty arm). G-L12 two items on one order line and invoice: each
  *         fits, together they don't (the fold). G-L13 a line a re-sync offset and never re-booked: observed.
+ *   CD-*  (SA-1054 A-3) a row that takes ALL the qty left may pass the ledger's money remaining by the money side's drift allowance
+ *         (`creditDriftTol`): 10.00 / 6 pcs with 1 pc back twice leaves 6.67 on the money and 6.66 on the ledger, both at 4 pcs.
  *
  * Every tenant is a throwaway `qa-a4-<run>-<n>` slug approved by `assertTestTenant`, deleted in FK order in afterAll.
  */
@@ -35,6 +37,8 @@ import { AuditService } from "../audit/audit.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
+import { CreditNoteReissueService } from "../credit-notes/credit-note-reissue.service";
+import { IdempotencyService } from "../common/idempotency.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -53,6 +57,8 @@ interface Shape {
 }
 const PIECES: Shape = { qty: 200, boxes: 20, pack: 10, unitPrice: 0.25, net: 50, levy: 5 };
 const BOXED: Shape = { qty: 60, boxes: 5, pack: 12, unitPrice: 1, net: 60, levy: 6 };
+/** SA-1054 A-3: 10.00 over 6 pcs. 1 pc back twice leaves 6.67 on the money (it telescopes) and 6.66 on the ledger (a share of what is left). */
+const SIX: Shape = { qty: 6, boxes: 6, pack: 1, unitPrice: 1.67, net: 10, levy: 1 };
 
 describeDb(
   "SA-1042 A-4: a typed credit on a regulated line fits what the ledger can still reverse — real Postgres",
@@ -61,6 +67,7 @@ describeDb(
     let tenantCtx: TenantContextService;
     let returns: ReturnsService;
     let creditNotes: CreditNotesService;
+    let reissue: CreditNoteReissueService;
     let ledger: RegulatedLedgerService;
     const tenantIds: string[] = [];
     let seq = 0;
@@ -80,6 +87,8 @@ describeDb(
       const mod = await Test.createTestingModule({
         providers: [
           CreditNotesService,
+          CreditNoteReissueService,
+          IdempotencyService,
           ReturnsService,
           RegulatedLedgerService,
           CommissionEngineService,
@@ -100,6 +109,7 @@ describeDb(
       }).compile();
       returns = mod.get(ReturnsService);
       creditNotes = mod.get(CreditNotesService);
+      reissue = mod.get(CreditNoteReissueService);
       ledger = mod.get(RegulatedLedgerService);
     });
 
@@ -696,6 +706,169 @@ describeDb(
         typed: "ledger room (A-4)",
         lump: null,
       });
+    });
+
+    /** SA-1054 A-3: 10.00 / 6 pcs on A, 1 pc back twice: the ledger leaves 6.66 / 4 pcs, the money 6.67. */
+    async function twoPartialReturns(label: string) {
+      const s = await seed(label, { shape: SIX });
+      await returnAndRefund(s, 1);
+      await returnAndRefund(s, 1);
+      return s;
+    }
+
+    it("CD-1: a typed 6.67 / 4 pcs closes the line: accepted, the reversal books 6.66 / 4, A nets 0 / 0, the item stores 6.67", async () => {
+      const s = await twoPartialReturns("cd1");
+      const before = await lineA(s);
+      expect({ net: before.net, qty: before.qty }).toEqual({ net: 6.66, qty: 4 }); // the ledger's remaining, as the seat measured it
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67, 4);
+      expect(codeOf(err)).toBeNull();
+      const after = await lineA(s);
+      expect({ net: after.net, qty: after.qty, tax: after.tax }).toEqual({
+        net: 0,
+        qty: 0,
+        tax: 0,
+      });
+      expect(after.creditRows).toEqual([{ net: -6.66, qty: -4 }]);
+      const item = await prisma.creditNoteItem.findFirstOrThrow({
+        where: { tenantId: s.tenantId },
+      });
+      expect(Number(item.amount)).toBe(6.67); // stored 6.67, booked 6.66: the cent the allowance covers
+    });
+
+    it("CD-2: 6.67 / 3 of the 4 left (not closing) is still refused", async () => {
+      const s = await twoPartialReturns("cd2");
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67, 3);
+      expect({ door: doorOf(err), items: await itemCount(s) }).toEqual({
+        door: "ledger room (A-4)",
+        items: 0,
+      });
+    });
+
+    it("CD-3: 6.66 / 4 is accepted, as before", async () => {
+      const s = await twoPartialReturns("cd3");
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 6.66, 4))).toBeNull();
+      expect((await lineA(s)).qty).toBe(0);
+    });
+
+    it("CD-4: 6.70 / 4 is past the allowance: refused by the bind", async () => {
+      const s = await twoPartialReturns("cd4");
+      const err = await typedCredit(s, s.invoiceA.id, s.iA.id, 6.7, 4);
+      expect({ door: doorOf(err), items: await itemCount(s) }).toEqual({
+        door: "ledger room (A-4)",
+        items: 0,
+      });
+    });
+
+    it("CD-5: two rows on the line, 3.34 / 2 and 3.33 / 2: the second closes and is accepted", async () => {
+      const s = await twoPartialReturns("cd5");
+      const err = await typedCreditItems(s, s.invoiceA.id, [
+        { invoiceItemId: s.iA.id, amount: 3.34, qty: 2 },
+        { invoiceItemId: s.iA.id, amount: 3.33, qty: 2 },
+      ]);
+      expect(codeOf(err)).toBeNull();
+      const after = await lineA(s);
+      expect({ net: after.net, qty: after.qty }).toEqual({ net: 0, qty: 0 });
+    });
+
+    it("CD-9: an amount-only 6.67 (no qty typed) derives 4 pcs and is accepted, as CD-1", async () => {
+      const s = await twoPartialReturns("cd9");
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67))).toBeNull();
+      expect((await lineA(s)).qty).toBe(0);
+    });
+
+    it("CD-10: a reissue of CD-1's note passes the dry run (the old note excluded) and the in-tx re-cap", async () => {
+      const s = await twoPartialReturns("cd10");
+      expect(codeOf(await typedCredit(s, s.invoiceA.id, s.iA.id, 6.67, 4))).toBeNull();
+      const old = await prisma.creditNote.findFirstOrThrow({
+        where: { tenantId: s.tenantId, status: { not: "VOID" }, items: { some: {} } },
+      });
+      const res: any = await tenantCtx.run(s.tenantId, () =>
+        reissue.reissue(
+          old.id,
+          { amount: 6.67, items: [{ invoiceItemId: s.iA.id, amount: 6.67, qty: 4 }] } as any,
+          `cd10-${RUN}`,
+          null,
+        ),
+      );
+      expect(res).toBeTruthy();
+      const after = await lineA(s);
+      expect({ net: after.net, qty: after.qty }).toEqual({ net: 0, qty: 0 });
+    });
+
+    /**
+     * SA-1054 A-4: CD-11 at the DB, one row per shape. The line's money left is 6.67 in all three. These rows pin today's
+     * behaviour on purpose: on an order with two or more live invoices a closing credit of 6.68 ends the line a cent over
+     * (notes sum 10.01), the money side's own tolerance; when that row lands, CD-11b and CD-11c change with it.
+     */
+    const noteSum = async (s: Seed) =>
+      round2(
+        Number(
+          (
+            await prisma.creditNote.aggregate({
+              where: { tenantId: s.tenantId, status: { not: "VOID" } },
+              _sum: { amount: true },
+            })
+          )._sum.amount ?? 0,
+        ),
+      );
+    async function twoReturnsOn(label: string, v: { voidB?: boolean; named?: boolean }) {
+      const s = await seed(label, { shape: SIX });
+      if (v.voidB)
+        await prisma.invoice.update({ where: { id: s.invoiceB.id }, data: { status: "VOID" } });
+      await returnAndRefund(s, 1, v.named ? s.lineA.id : null);
+      await returnAndRefund(s, 1, v.named ? s.lineA.id : null);
+      return s;
+    }
+
+    it("CD-11a: one live invoice: 6.68 / 4 is refused by the money check (no item); 6.67 / 4 is accepted and the ledger reads 0 / 0", async () => {
+      const refused = await twoReturnsOn("cd11a1", { voidB: true });
+      const itemsBefore = await itemCount(refused);
+      const err = await typedCredit(refused, refused.invoiceA.id, refused.iA.id, 6.68, 4);
+      expect(codeOf(err)).toBe("CREDIT_NOTE_OVER_HEADROOM");
+      expect(doorOf(err)).toMatch(/would exceed invoice line subtotal/);
+      expect(await itemCount(refused)).toBe(itemsBefore);
+
+      const ok = await twoReturnsOn("cd11a2", { voidB: true });
+      expect(codeOf(await typedCredit(ok, ok.invoiceA.id, ok.iA.id, 6.67, 4))).toBeNull();
+      const after = await lineA(ok);
+      expect({ net: after.net, qty: after.qty }).toEqual({ net: 0, qty: 0 });
+    });
+
+    it("CD-11b: two invoices, the return names line A: 6.68 / 4 is accepted (notes sum 10.01, ledger 0 / 0); 6.69 / 4 is refused by the pinned door", async () => {
+      const ok = await twoReturnsOn("cd11b1", { named: true });
+      expect(codeOf(await typedCredit(ok, ok.invoiceA.id, ok.iA.id, 6.67, 4))).toBeNull();
+
+      const accepted = await twoReturnsOn("cd11b2", { named: true });
+      expect(
+        codeOf(await typedCredit(accepted, accepted.invoiceA.id, accepted.iA.id, 6.68, 4)),
+      ).toBeNull();
+      expect(await noteSum(accepted)).toBe(10.01);
+      const after = await lineA(accepted);
+      expect({ net: after.net, qty: after.qty }).toEqual({ net: 0, qty: 0 });
+
+      const refused = await twoReturnsOn("cd11b3", { named: true });
+      const err = await typedCredit(refused, refused.invoiceA.id, refused.iA.id, 6.69, 4);
+      expect(doorOf(err)).toBe("pinned (A-3)");
+      expect(String(err?.getResponse?.()?.message)).toContain("6.67 left");
+      expect(await itemCount(refused)).toBe(0);
+    });
+
+    it("CD-11c: two invoices, the return names no line: 6.68 / 4 is accepted (notes sum 10.01, ledger 0 / 0); 6.69 / 4 is refused by the room", async () => {
+      const ok = await twoReturnsOn("cd11c1", {});
+      expect(codeOf(await typedCredit(ok, ok.invoiceA.id, ok.iA.id, 6.67, 4))).toBeNull();
+
+      const accepted = await twoReturnsOn("cd11c2", {});
+      expect(
+        codeOf(await typedCredit(accepted, accepted.invoiceA.id, accepted.iA.id, 6.68, 4)),
+      ).toBeNull();
+      expect(await noteSum(accepted)).toBe(10.01);
+      const after = await lineA(accepted);
+      expect({ net: after.net, qty: after.qty }).toEqual({ net: 0, qty: 0 });
+
+      const refused = await twoReturnsOn("cd11c3", {});
+      const err = await typedCredit(refused, refused.invoiceA.id, refused.iA.id, 6.69, 4);
+      expect(doorOf(err)).toBe("ledger room (A-4)");
+      expect(await itemCount(refused)).toBe(0);
     });
   },
 );

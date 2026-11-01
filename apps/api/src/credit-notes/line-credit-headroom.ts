@@ -73,6 +73,16 @@ const EPS = 0.001;
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 const CENT = 0.01 + 1e-9;
 
+/**
+ * SA-1054 A-3: the money side's drift allowance for a line that already carries `priorItems` credit items: a cent plus half a
+ * cent per prior item, capped at 5 cents. Two rounding methods (the per-item shares here, the ledger's share of what is left)
+ * part by about that much after several partial credits or returns; the regulated ledger's room bind (credit-reversal-room.ts)
+ * uses the SAME figure for a row that takes all the qty left, so there is one tolerance and not two.
+ */
+export function creditDriftTol(priorItems: number): number {
+  return CENT + Math.min(0.04, 0.005 * priorItems);
+}
+
 export interface RefundRefusal {
   productId: string;
   requestedAmount: number;
@@ -123,7 +133,7 @@ export function planProductRefund(
   const roomQty = round3(rooms.reduce((t, r) => t + r.qty, 0));
   const roomAmount = roundMoney(rooms.reduce((t, r) => t + r.amount, 0));
   const priorItems = rooms.reduce((t, r) => t + r.prior, 0);
-  const tol = CENT + Math.min(0.04, 0.005 * priorItems);
+  const tol = creditDriftTol(priorItems);
   const refuse = (): {
     items: RefundItem[];
     price: number;
@@ -194,7 +204,7 @@ export function lineTakeRefusal(
   const remainingQty = Math.max(0, round3(line.qty - d.qty));
   const hasMoney = line.subtotal > EPS;
   const remainingAmount = hasMoney ? Math.max(0, roundMoney(line.subtotal - d.amount)) : 0;
-  const tol = CENT + Math.min(0.04, 0.005 * (d.items ?? 0));
+  const tol = creditDriftTol(d.items ?? 0);
   const qtyOver = take.qty > remainingQty + EPS;
   const moneyOver = hasMoney && take.amount > remainingAmount + tol;
   if (!qtyOver && !moneyOver) return null;
@@ -735,7 +745,7 @@ export function pooledTakeRefusal(
   }
   remainingQty = round3(remainingQty);
   remainingAmount = roundMoney(remainingAmount);
-  const tol = CENT + Math.min(0.04, 0.005 * priorItems);
+  const tol = creditDriftTol(priorItems);
   const moneyOver = take.amount > remainingAmount + tol;
   const qtyOver = take.qty != null && take.qty > remainingQty + qtyTol;
   if (!moneyOver && !qtyOver) return null;

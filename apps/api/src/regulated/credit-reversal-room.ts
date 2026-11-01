@@ -8,6 +8,7 @@
  * line -> the live SALE rows -> per-ORDER-LINE SALE and REVERSAL bags.
  */
 import { roundMoney } from "@routeflow/pricing";
+import { creditDriftTol } from "../credit-notes/line-credit-headroom";
 import { deadSaleIdsOf } from "./regulated-ledger.service";
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -15,8 +16,9 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 /** The ledger's own tolerance on the money axis (`remNet >= -0.005` = nothing left). */
 export const ROOM_EPS = 0.005;
 
-export type LineBag = { net: number; qty: number; unitBasis: number; tax: number };
-export const emptyBag = (): LineBag => ({ net: 0, qty: 0, unitBasis: 0, tax: 0 });
+/** `items`: how many ledger rows the bag folds in (the "prior items" a closing row's drift allowance scales with, SA-1054 A-3). */
+export type LineBag = { net: number; qty: number; unitBasis: number; tax: number; items: number };
+export const emptyBag = (): LineBag => ({ net: 0, qty: 0, unitBasis: 0, tax: 0, items: 0 });
 
 /** The credit item fields the room reads (a stored CreditNoteItem, or a row about to be written). */
 export interface RoomItem {
@@ -269,6 +271,7 @@ export async function loadCreditReversalRoom(
     cur.qty += Number(r.qty);
     cur.unitBasis += Number(r.unitBasisQty);
     cur.tax += Number(r.categoryTax);
+    cur.items += 1;
     bag.set(lk, cur);
   }
   return {
@@ -361,10 +364,15 @@ export interface CreditRoomRefusal {
 
 /**
  * SA-1042 A-4: the first typed row that asks for more than the ledger can still reverse on its order line, or `null`.
- * Compares the row's amount and qty (typed or derived) to the SAME remaining `reverseCreditNoteEntries` clamps to, past the
- * same 0.005, and folds each accepted row into a local copy of the line's reversed bag so a second row on one order line
- * sees the reduced remaining. Not bound (`creditItemRoom` returns null): a line with no live SALE row, and any row without a
- * tracked category (non-regulated lines, SA-628 return-refund rows). Reads only: no notice, no write.
+ * Compares the row's amount and qty (typed or derived) to the SAME remaining `reverseCreditNoteEntries` clamps to, past
+ * 0.005, and folds each accepted row into a local copy of the line's reversed bag so a second row on one order line sees the
+ * reduced remaining. One exception (SA-1054 A-3): a row that takes ALL the qty left may pass the money remaining by the drift
+ * the money side already allows (`creditDriftTol`, scaled by the rows the line already carries). The ledger books a share of
+ * what is left and the money telescopes, so after a second partial return they part by a cent: the clerk crediting "the rest"
+ * at the money's figure must not be refused (CD-1), and the clamp books the exact remaining. The qty arm never changes.
+ * Not bound (`creditItemRoom` returns null): a line that never booked a SALE row (a line a re-sync offset and never re-booked
+ * is bound, and refused with 0 left), and any row without a tracked category (non-regulated lines, SA-628 return-refund rows).
+ * Reads only: no notice, no write.
  */
 export async function creditRoomRefusal(
   db: any,
@@ -381,7 +389,10 @@ export async function creditRoomRefusal(
     // a fully reversed line (`remNet >= -0.005`) has nothing left: any row on it is past the tolerance
     const remainingAmount = Math.max(0, roundMoney(-left.remNet));
     const remainingQty = Math.max(0, round3(-left.remQty));
-    if (row.amount > remainingAmount + ROOM_EPS || row.qty > remainingQty + ROOM_EPS) {
+    // a closing row takes all the qty left; `remainingQty > ROOM_EPS` keeps a closed line from reading as closing (CD-6)
+    const closing = remainingQty > ROOM_EPS && row.qty >= remainingQty - ROOM_EPS;
+    const moneyTol = closing ? creditDriftTol(left.already.items) : ROOM_EPS;
+    if (row.amount > remainingAmount + moneyTol || row.qty > remainingQty + ROOM_EPS) {
       return {
         invoiceItemId: row.invoiceItemId,
         requestedAmount: roundMoney(row.amount),
@@ -394,6 +405,7 @@ export async function creditRoomRefusal(
       ...left.already,
       net: left.already.net - Math.min(row.amount, remainingAmount),
       qty: left.already.qty - Math.min(row.qty, remainingQty),
+      items: left.already.items + 1,
     });
   }
   return null;
