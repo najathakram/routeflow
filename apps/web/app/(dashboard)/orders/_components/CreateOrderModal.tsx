@@ -816,13 +816,11 @@ export function CreateOrderModal({
     !isPickup,
   );
 
-  // scan_v2 / owner ruling D1: the customer's price applies IMMEDIATELY, including to lines scanned
-  // BEFORE the customer was chosen (the classic modal never re-priced them). Only lines whose price
-  // is still the auto-derived tier price move; an operator's one-time price, an upsell, or a
-  // history-prefilled override stands, as do unlisted lines and lines added before this snapshot
-  // existed (no `tierPrices`). Behind the gate so the classic modal's behaviour is untouched,
-  // except B755: a price pre-filled from ANOTHER customer's history is dropped in both modes, and
-  // SA-1068 M27: a linked line follows its customer until a person prices it.
+  // Owner ruling D1, SA-1076: the customer's price applies IMMEDIATELY, including to lines scanned
+  // BEFORE the customer was chosen. Only lines whose price is still the auto-derived tier price
+  // move; an operator's one-time price, an upsell, or a history-prefilled override stands, as do
+  // unlisted lines and lines added before this snapshot existed (no `tierPrices`). B755: a price
+  // pre-filled from ANOTHER customer's history is dropped.
   // S19b: the layer's content for the cart's products, so new layer data (not just "ready") re-runs the effect.
   const layerSig = priceLayer.enabled
     ? `${priceLayer.ready}|` +
@@ -837,8 +835,6 @@ export function CreateOrderModal({
         let li = line;
         // a unit line is re-priced by its own picker from the product's ladder, not the pack's tiers
         if (li.isUnlisted || !li.tierPrices || li.unitLabel) return li;
-        // classic modal (scan_v2 off): only a linked line moves (B755 below, SA-1068 M27)
-        if (!scanV2 && !(li.prefillCustomerId != null && selectedCustomer != null)) return li;
         // B755: a price pre-filled from ANOTHER customer's history is not this customer's one-time price: it drops to
         // a plain line and re-prices below. (A price the operator typed cleared prefillCustomerId when it was typed.)
         // (no customer chosen yet, e.g. mid-switch, is not "another customer": the line waits for the next one)
@@ -855,8 +851,8 @@ export function CreateOrderModal({
             overrideReason: undefined,
           };
         }
-        // SA-1068 M28: a resume re-prices its own lines and writes the note, so a linked line waits for it
-        if (!scanV2 && !fromOtherCustomer && resuming) return li;
+        // SA-1068 M28: a resume re-prices its own lines and writes the note, so a line waits for it
+        if (!fromOtherCustomer && resuming) return li;
         // an operator's MANUAL / DISCOUNTED price always carries a one-time price; a MANUAL line without one is the layer's
         // above-list price (the system's), so it re-prices with the customer
         if (!fromOtherCustomer && li.priceType === "DISCOUNTED") return li;
@@ -880,17 +876,11 @@ export function CreateOrderModal({
           return li;
         }
         changed = true;
-        return {
-          ...li,
-          unitPrice: tierPrice,
-          priceType,
-          specialPrice,
-          prefillCustomerId: line.prefillCustomerId != null ? selectedCustomer?.id : undefined, // SA-1068 M27
-        };
+        return { ...li, unitPrice: tierPrice, priceType, specialPrice };
       });
       return changed ? next : prev;
     });
-  }, [scanV2, selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig, priceHistory]);
+  }, [selectedCustomer?.id, selectedCustomer?.pricingTier, cpMap, layerSig, priceHistory]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -1059,7 +1049,7 @@ export function CreateOrderModal({
       discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
       // a price the system pre-filled from history: the layer replaces it if one turns out to price this line (review 1)
       systemPrefill: hasHistOverride && priceLayer.enabled ? true : undefined,
-      prefillCustomerId: hasHistOverride || memory != null ? selectedCustomer?.id : undefined,
+      prefillCustomerId: hasHistOverride ? selectedCustomer?.id : undefined,
       // the pre-layer (master) values, restored if the layer's row goes away
       layerFrom: linePrice.layered
         ? masterLayerFrom(
@@ -1504,7 +1494,7 @@ export function CreateOrderModal({
             ...li,
             discountedPrice: undefined,
             systemPrefill: undefined,
-            prefillCustomerId: memory != null ? selectedCustomer?.id : undefined, // SA-1068 M26
+            prefillCustomerId: undefined,
             overrideReason: undefined,
             unitPrice: memory ?? li.specialPrice ?? li.listPrice,
             priceType: memory != null ? "MANUAL" : li.specialPrice != null ? "SPECIAL" : "STANDARD",
