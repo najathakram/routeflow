@@ -9963,6 +9963,13 @@
   letter-spacing: -0.05em;
   text-wrap: balance;
 }
+.rf-marketing .glass-page .glass-hero-copy .button {
+  font-size: 1.25rem;
+  padding: 16px 28px;
+}
+.rf-marketing .glass-page .glass-hero-copy .text-link {
+  font-size: 1.25rem;
+}
 .rf-marketing .glass-page .glass-hero-copy > p:not(.eyebrow) {
   font-size: 1.25rem;
   line-height: 1.6;
