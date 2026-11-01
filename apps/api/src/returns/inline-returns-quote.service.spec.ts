@@ -99,6 +99,31 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
     await expect(service.quote(dto, DRIVER)).rejects.toThrow(ForbiddenException);
   });
 
+  it("SA-1060 A-4 check order: a DRIVER with an editingOrderId and no routeRunStopId gets the same refusal whether or not the order exists, with no order read", async () => {
+    const withOrder = { ...dto, editingOrderId: "ord-edit" };
+    (db.order.findFirst as jest.Mock).mockResolvedValue({ id: "ord-edit", status: "CONFIRMED" });
+    const present = await service.quote(withOrder, DRIVER).catch((e) => e);
+    (db.order.findFirst as jest.Mock).mockReset().mockResolvedValue(null);
+    const missing = await service.quote(withOrder, DRIVER).catch((e) => e);
+    expect(present).toBeInstanceOf(ForbiddenException);
+    expect(missing).toBeInstanceOf(ForbiddenException);
+    expect(missing.getStatus()).toBe(present.getStatus());
+    expect(missing.message).toBe(present.message);
+    expect(db.order.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("SA-1060 A-4 check order: a DRIVER on another customer's stop, with an editingOrderId, is refused before any order read", async () => {
+    (db.routeRunStop.findFirst as jest.Mock).mockResolvedValue({
+      id: "stop-1",
+      routeRunId: "run-1",
+      customerId: "cust-OTHER",
+    });
+    await expect(
+      service.quote({ ...dto, routeRunStopId: "stop-1", editingOrderId: "ord-edit" }, DRIVER),
+    ).rejects.toThrow(ForbiddenException);
+    expect(db.order.findFirst).not.toHaveBeenCalled();
+  });
+
   it("Opus fix-round MAJOR/B309 parity: refuses a COMPLETED stop", async () => {
     (db.routeRunStop.findFirst as jest.Mock).mockResolvedValue({
       id: "stop-1",
@@ -891,7 +916,40 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     (db.returnItem.findMany as jest.Mock).mockResolvedValue([]);
   });
 
-  it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax)", async () => {
+  it("prices tax at the tenant's CURRENT 8% rate — $50.00 subtotal, $4.00 tax (revert ⇒ $0.00 tax) — for goods sold to this customer before, outside the window", async () => {
+    // SA-1060 A-4: the customer HAS a live sale of the product, outside the window (the never-sold read finds it), so the 5
+    // pieces are an unreferenced chunk of a SOLD-BEFORE product. (A product never sold to them takes no tax: the next test.)
+    (db.invoiceItem.findFirst as jest.Mock).mockResolvedValue({ id: "item-old" });
+    (db.invoice.findMany as jest.Mock).mockImplementation((args: any) =>
+      Promise.resolve(
+        args?.where?.issueDate === undefined
+          ? [
+              {
+                orderId: "ord-old",
+                subtotal: 20,
+                discount: 0,
+                taxAmount: 1.6,
+                items: [
+                  {
+                    id: "item-old",
+                    orderItemId: "oi-old",
+                    productId: "prod-1",
+                    qty: 2,
+                    unitPrice: 10,
+                    subtotal: 20,
+                    boxes: null,
+                    pieces: null,
+                    unitsPerBox: null,
+                    promoFreeUnits: null,
+                    taxRate: 0.08,
+                    categoryTaxAmount: 0,
+                  },
+                ],
+              },
+            ]
+          : [],
+      ),
+    );
     const result = await service.quote(
       {
         customerId: "cust-1",
@@ -904,6 +962,20 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     expect(result.taxAmount).toBe(4.0);
     expect(result.taxAmount).not.toBe(0);
     expect(systemConfig.get).toHaveBeenCalledWith("settings.taxRate");
+  });
+
+  it("SA-1060 PR-2: the same 5 pieces of a product on none of this customer's invoices, ever, carry no tax", async () => {
+    const result = await service.quote(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
+      OPERATOR,
+    );
+
+    expect(result.subtotal).toBe(50.0);
+    expect(result.taxAmount).toBe(0);
+    expect(result.chunks[0].neverSold).toBe(true);
   });
 
   it("still charges $0.00 tax for an exempt customer, even with a non-zero tenant rate", async () => {
@@ -922,6 +994,29 @@ describe("InlineReturnsQuoteService — PR-1c: unreferenced-chunk tax fallback r
     );
 
     expect(result.taxAmount).toBe(0);
+  });
+
+  it("SA-1060 A-4 (M2): an exempt customer's SOLD-BEFORE product is untaxed by the exemption, with neverSold false", async () => {
+    // The product HAS a live sale to this customer (the never-sold read finds it), so only isTaxExempt can zero the
+    // tax: $50.00 at 8% is $4.00 without it.
+    (db.invoiceItem.findFirst as jest.Mock).mockResolvedValue({ id: "item-old" });
+    (db.customer.findFirst as jest.Mock).mockResolvedValue({
+      id: "cust-1",
+      pricingTier: 1,
+      isTaxExempt: true,
+    });
+
+    const result = await service.quote(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 5 } as QuoteInlineReturnItemDto],
+      },
+      OPERATOR,
+    );
+
+    expect(result.subtotal).toBe(50.0);
+    expect(result.taxAmount).toBe(0);
+    expect(result.chunks[0].neverSold).toBe(false);
   });
 
   it("reads the tenant rate ONCE per quote — not once per item", async () => {
@@ -977,6 +1072,7 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
       },
     ]);
     // 10 pieces sold at $5.00 on a 5% snapshot line, $2.00 excise booked.
+    (db.invoiceItem.findFirst as jest.Mock).mockResolvedValue({ id: "invitem-1" }); // SA-1060 A-4: a live sale exists
     (db.invoice.findMany as jest.Mock).mockResolvedValue([
       {
         orderId: "order-1",
@@ -1034,6 +1130,7 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
           categoryTax: 0.8,
           priceSource: "SOURCE_INVOICE",
           unitPrice: 5,
+          neverSold: false,
         },
       ]),
     );
