@@ -1,5 +1,6 @@
 import React from "react";
 import { sortInvoiceLines } from "./invoice-line-order";
+import { withFamilyNames } from "./invoice-line-name";
 import { SEND_SNAPSHOT_INCLUDE, type SendSnapshot } from "./invoice-send-snapshot";
 import { writeInvoicePdfPointer } from "./invoice-pdf-pointer";
 import { Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
@@ -157,7 +158,7 @@ export class InvoicePdfService {
 
     // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
     // mapper the template model is built from (the findUnique above includes whole item rows).
-    const shownLines = sortInvoiceLines(inv.items); // SA-1058: a copy, `inv` is what the send hashes
+    const shownLines = sortInvoiceLines(withFamilyNames(inv.items)); // SA-1058: a copy, `inv` is what the send hashes; the family name composes before the sort
     const itemsWithBarcodes = await Promise.all(
       shownLines.map(withoutOverrideStamp).map(async (item) => {
         const barcodeText = invoiceItemCode((item as any).product);

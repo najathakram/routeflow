@@ -38,6 +38,7 @@ import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-li
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { LINE_NAME_PRODUCT_SELECT, displayLineDescription } from "./invoice-line-name";
 import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
@@ -471,7 +472,7 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
       untouched: false,
       attestedPack,
       data: {
-        description: item.description,
+        description: displayLineDescription(item.description, product), // a bare variant name is stored composed
         productId: item.productId,
         // An edit that does not name the order line keeps the stored link (the editors never send it).
         orderItemId: item.orderItemId ?? (productChanged ? null : (row?.orderItemId ?? null)),
@@ -633,7 +634,7 @@ export async function loadEditCatalog(
           where: { id: { in: productIds } },
           select: {
             id: true,
-            name: true,
+            ...LINE_NAME_PRODUCT_SELECT, // name + family: a variant line is stored "<Family> - <Variant>"
             kind: true,
             unit: true,
             unitsPerBox: true,

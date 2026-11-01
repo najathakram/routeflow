@@ -1,3 +1,4 @@
+import { LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
 import { roundMoney, type LadderUnit } from "@routeflow/pricing";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
@@ -48,7 +49,7 @@ export async function loadManualLineContext(
           where: { id: { in: productIds } },
           select: {
             id: true,
-            name: true,
+            ...LINE_NAME_PRODUCT_SELECT, // name + family: a variant line is stored "<Family> - <Variant>"
             kind: true,
             unit: true,
             baseUnitLabel: true,
