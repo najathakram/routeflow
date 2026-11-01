@@ -156,12 +156,10 @@ export class InlineReturnsQuoteService {
   > {
     const db = this.prisma.forTenant();
     // SA-1060 A-4 (M1): on an order edit the screen prices the same post-revert matching set the edit's dry run and capture do.
-    // Staff only: a buyer is refused inside `priceInlineReturn` before any read, and this read is order data.
-    const excludeInvoiceIds =
-      dto.editingOrderId && user.role !== UserRole.CUSTOMER
-        ? await quoteExcludedInvoiceIds(db, dto.customerId, dto.editingOrderId, this.featureConfig)
-        : [];
-    const priced = await this.priceInlineReturn(dto, user, db, { excludeInvoiceIds });
+    // `priceInlineReturn` resolves `editingOrderId` itself, after its buyer and driver checks (check order: those run first).
+    const priced = await this.priceInlineReturn(dto, user, db, {
+      editingOrderId: dto.editingOrderId,
+    });
     // SA-727 (additive): what the counter dialog needs to offer a cash/card/check refund. Read-only and unlocked: a hint
     // only; POST /returns/inline/:id/refund re-checks everything under its locks.
     const [customer, source] = await Promise.all([
@@ -201,7 +199,13 @@ export class InlineReturnsQuoteService {
     // #2178: invoices to leave out of the matching set — the order-edit preflight passes the ones
     // the edit's revert is about to turn into DRAFTs of an undelivered order (which §3.1 excludes).
     // SA-740: `defaultSourceOrderId` is the capture's carrying order, the source a WALK-IN return defaults to.
-    opts: { excludeInvoiceIds?: readonly string[]; defaultSourceOrderId?: string | null } = {},
+    // SA-1060 A-4: `editingOrderId` (the quote's order edit) is resolved into the invoices to leave out AFTER the buyer and driver
+    // checks below, so those refusals never depend on it; an explicit `excludeInvoiceIds` wins and nothing is read.
+    opts: {
+      excludeInvoiceIds?: readonly string[];
+      defaultSourceOrderId?: string | null;
+      editingOrderId?: string;
+    } = {},
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -263,6 +267,12 @@ export class InlineReturnsQuoteService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
+    const excludeInvoiceIds: readonly string[] =
+      opts.excludeInvoiceIds ??
+      (opts.editingOrderId
+        ? await quoteExcludedInvoiceIds(db, dto.customerId, opts.editingOrderId, this.featureConfig)
+        : []);
+
     // SA-740 (row 190): the walk-in is decided HERE from the row, never from the client. A walk-in names its source sale
     // (the quote requires it; the capture defaults to the carrying order); a named customer is pinned only if they send one.
     const walkIn = customer.isWalkIn === true;
@@ -313,7 +323,7 @@ export class InlineReturnsQuoteService {
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
     const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap, {
-      excludeInvoiceIds: opts.excludeInvoiceIds,
+      excludeInvoiceIds,
       sourceOrderId,
       withPriorCredits: true, // B905: the pricing set telescopes over what each line already had credited
     });
@@ -397,7 +407,7 @@ export class InlineReturnsQuoteService {
       // ONE product-filtered read of the sold lines (null window = whole history; only invoices that HAVE the product)
       const lifeSet = await this.fetchMatchingSet(db, dto.customerId, [productId], productUpbMap, {
         soldWindowDays: null,
-        excludeInvoiceIds: opts.excludeInvoiceIds,
+        excludeInvoiceIds,
       });
       const lines = lifeSet.filter((l) => l.productId === productId);
       const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
@@ -429,7 +439,7 @@ export class InlineReturnsQuoteService {
       // Prisma drops an undefined `where` key: refuse here rather than read every customer's or every product's sales
       if (!dto.customerId || !productId)
         throw new Error("neverSoldToCustomer needs a customer and a product");
-      const excluded = opts.excludeInvoiceIds ?? [];
+      const excluded = excludeInvoiceIds;
       const sale = await db.invoiceItem.findFirst({
         where: {
           productId,

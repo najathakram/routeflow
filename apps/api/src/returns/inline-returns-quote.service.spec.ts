@@ -87,6 +87,31 @@ describe("InlineReturnsQuoteService — M8 driver scoping", () => {
     await expect(service.quote(dto, DRIVER)).rejects.toThrow(ForbiddenException);
   });
 
+  it("SA-1060 A-4 check order: a DRIVER with an editingOrderId and no routeRunStopId gets the same refusal whether or not the order exists, with no order read", async () => {
+    const withOrder = { ...dto, editingOrderId: "ord-edit" };
+    (db.order.findFirst as jest.Mock).mockResolvedValue({ id: "ord-edit", status: "CONFIRMED" });
+    const present = await service.quote(withOrder, DRIVER).catch((e) => e);
+    (db.order.findFirst as jest.Mock).mockReset().mockResolvedValue(null);
+    const missing = await service.quote(withOrder, DRIVER).catch((e) => e);
+    expect(present).toBeInstanceOf(ForbiddenException);
+    expect(missing).toBeInstanceOf(ForbiddenException);
+    expect(missing.getStatus()).toBe(present.getStatus());
+    expect(missing.message).toBe(present.message);
+    expect(db.order.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("SA-1060 A-4 check order: a DRIVER on another customer's stop, with an editingOrderId, is refused before any order read", async () => {
+    (db.routeRunStop.findFirst as jest.Mock).mockResolvedValue({
+      id: "stop-1",
+      routeRunId: "run-1",
+      customerId: "cust-OTHER",
+    });
+    await expect(
+      service.quote({ ...dto, routeRunStopId: "stop-1", editingOrderId: "ord-edit" }, DRIVER),
+    ).rejects.toThrow(ForbiddenException);
+    expect(db.order.findFirst).not.toHaveBeenCalled();
+  });
+
   it("Opus fix-round MAJOR/B309 parity: refuses a COMPLETED stop", async () => {
     (db.routeRunStop.findFirst as jest.Mock).mockResolvedValue({
       id: "stop-1",
