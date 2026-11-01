@@ -71,9 +71,6 @@ describe("SignupPage — hands the Workspace ID on (W2 B1)", () => {
     fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
       target: { value: "Sup3rSecret!x9" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Re-enter your password"), {
-      target: { value: "Sup3rSecret!x9" },
-    });
     fireEvent.submit(document.querySelector("form") as HTMLFormElement);
 
     await waitFor(() => expect(push).toHaveBeenCalled());
