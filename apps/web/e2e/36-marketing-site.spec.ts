@@ -559,9 +559,28 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
     const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
     const token = `${b64({ alg: "none" })}.${b64({ role: "SUPER_ADMIN", exp: 4102444800 })}.x`;
     await page.addInitScript((t) => localStorage.setItem("superAdminToken", t), token);
-    await page.route("**/api/v1/**", (route) => route.fulfill({ json: {} }));
+    // The dashboard reads `planBreakdown` and the tenant counts on first paint, so its stats call
+    // gets a full empty shape; every other call gets `{}`.
+    const stats = {
+      tenants: { total: 0, active: 0, trial: 0, suspended: 0 },
+      totalUsers: 0,
+      newTenantsThisMonth: 0,
+      mrr: 0,
+      ledgerMrr: 0,
+      planBreakdown: {},
+      recentTenants: [],
+      trialsExpiringSoon: [],
+      atRiskTenants: [],
+    };
+    await page.route("**/api/v1/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/platform-admin/stats")) return route.fulfill({ json: stats });
+      if (path.endsWith("/platform-admin/stats/growth")) return route.fulfill({ json: [] });
+      return route.fulfill({ json: {} });
+    });
     await page.goto("/admin/dashboard");
     await expect(page.getByRole("navigation").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Platform Dashboard" })).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(page.locator(UMAMI_SCRIPT)).toHaveCount(0);
   });
@@ -664,7 +683,6 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
     await page.getByLabel("Business name").fill("Acme Distribution Co.");
     await page.getByLabel("Email").fill("owner@acme.com");
     await page.locator("#signup-password").fill("Sample-pass1");
-    await page.locator("#signup-confirm").fill("Sample-pass1");
     await page.locator('button[type="submit"]').click();
     await page.waitForURL("**/signup/check-email?email=**");
     await settled(page);
