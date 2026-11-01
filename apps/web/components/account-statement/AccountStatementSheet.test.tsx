@@ -19,11 +19,17 @@ jest.mock("@/lib/api/account-statement", () => ({
   useMayOpenStatement: () => mockMay,
 }));
 
+// a tenant west of UTC: a day sent as "YYYY-MM-DD" must never go through a zone (SA-1078 A-3)
+jest.mock("@/lib/tenant-timezone", () => ({
+  ...jest.requireActual("@/lib/tenant-timezone"),
+  useTenantTimeZone: () => "America/Chicago",
+}));
+
 const inv = (n: number, over: Record<string, unknown> = {}) => ({
   id: `inv-${n}`,
   invoiceNumber: `INV-${1000 + n}`,
-  issueDate: "2026-10-01T00:00:00.000Z",
-  dueDate: "2026-10-15T00:00:00.000Z",
+  issueDate: "2026-10-01",
+  dueDate: "2026-10-15",
   total: 100,
   paid: 40,
   credit: 0,
@@ -39,7 +45,7 @@ beforeEach(() => {
   mockMay = true;
   failRead = false;
   statement = {
-    asOf: "2026-10-31T15:00:00.000Z",
+    asOf: "2026-10-31",
     customer: { id: "c1", businessName: "Acme Wholesale" },
     emailOnFile: "ap@acme.test",
     openBalance: 120,
@@ -244,6 +250,64 @@ describe("AccountStatementSheet", () => {
     for (const raw of ["CHECK", "CREDIT_NOTE", "ADVANCE"]) {
       expect(text).not.toContain(raw);
     }
+  });
+
+  it("A-3: As of prints the day the server sent, even for a tenant west of UTC", async () => {
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    expect(await screen.findByTestId("account-statement-subtitle")).toHaveTextContent(
+      "As of Oct 31, 2026",
+    );
+  });
+
+  it("A-3: payment and credit dates print as the day sent", async () => {
+    statement.recentPayments = [
+      {
+        date: "2026-10-30",
+        kind: "PAYMENT",
+        method: "CHECK",
+        reference: null,
+        invoiceNumber: "INV-1001",
+        amount: 10,
+      },
+    ];
+    statement.credits = [
+      {
+        kind: "CREDIT_NOTE",
+        id: "cn1",
+        number: "CN-7",
+        date: "2026-10-18",
+        reason: "Damaged",
+        remaining: 25,
+        expiresAt: null,
+      },
+    ];
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    expect((await screen.findByTestId("account-statement-payments")).textContent).toContain(
+      "Oct 30, 2026",
+    );
+    expect(screen.getByTestId("account-statement-credits").textContent).toContain("Oct 18, 2026");
+  });
+
+  it("A-3: a credit with an expiry prints it, and one without prints none", async () => {
+    const credit = (id: string, expiresAt: string | null) => ({
+      kind: "CREDIT_NOTE" as const,
+      id,
+      number: id,
+      date: "2026-10-18",
+      reason: null,
+      remaining: 25,
+      expiresAt,
+    });
+    statement.credits = [credit("CN-1", "2026-12-05"), credit("CN-2", null)];
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    const list = await screen.findByTestId("account-statement-credits");
+    const rows = Array.from(list.querySelectorAll("li"));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("Expires Dec 5, 2026");
+    expect(rows[1].textContent).not.toContain("Expires");
   });
 
   it("U13: with no credit available neither credit line shows", async () => {

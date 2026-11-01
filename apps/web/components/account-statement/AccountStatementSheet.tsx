@@ -7,7 +7,6 @@ import type { AccountStatement } from "@routeflow/types";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useAccountStatement } from "@/lib/api/account-statement";
 import { paymentMethodLabel } from "@/lib/payment-methods";
-import { tenantDateOf, useTenantTimeZone } from "@/lib/tenant-timezone";
 import {
   STATEMENT_COPY,
   daysLateLabel,
@@ -55,9 +54,9 @@ export function AccountStatementBody({
   statement: AccountStatement;
   linkInvoices: boolean;
 }) {
-  const zone = useTenantTimeZone();
   const shape = statementShape(statement);
-  const asOf = fmtCalendarDate(tenantDateOf(statement.asOf, zone) || statement.asOf);
+  // every date on the statement is already the tenant's day ("YYYY-MM-DD", SA-1078 A-3): no zone is run over it
+  const asOf = fmtCalendarDate(statement.asOf);
   return (
     <div className="space-y-5" data-testid="account-statement-body">
       <div>
@@ -223,6 +222,7 @@ export function AccountStatementBody({
                   {c.number ?? (c.kind === "ADVANCE" ? "Advance" : "Credit")} ·{" "}
                   {fmtCalendarDate(c.date)}
                   {c.reason ? ` · ${c.reason}` : ""}
+                  {c.expiresAt ? ` · Expires ${fmtCalendarDate(c.expiresAt)}` : ""}
                 </span>
                 <span className="font-medium tabular-nums">{fmt(c.remaining)}</span>
               </li>
