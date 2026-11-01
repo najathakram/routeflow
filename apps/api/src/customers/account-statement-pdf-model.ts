@@ -1,5 +1,5 @@
 import { roundMoney } from "@routeflow/pricing";
-import type { AccountStatement } from "@routeflow/types";
+import type { AccountStatement, PaymentMethod } from "@routeflow/types";
 import { fmtPdfDate } from "../common/pdf-date";
 
 /**
@@ -12,7 +12,7 @@ export const fmtMoney = (n: number): string => `$${roundMoney(Math.abs(n)).toFix
 const dayOf = (day: string): string => fmtPdfDate(`${day}T00:00:00.000Z`);
 
 /** What a stored method prints as. An unknown future method reads as "Payment", never as its raw code. */
-const METHOD_WORDS: Record<string, string> = {
+const METHOD_WORDS: Record<PaymentMethod, string> = {
   CASH: "Cash",
   CHECK: "Check",
   ZELLE: "Zelle",
@@ -22,7 +22,8 @@ const METHOD_WORDS: Record<string, string> = {
   CREDIT_NOTE: "Credit note",
   ADVANCE: "Advance",
 };
-export const methodWords = (method: string): string => METHOD_WORDS[method] ?? "Payment";
+export const methodWords = (method: string): string =>
+  METHOD_WORDS[method as PaymentMethod] ?? "Payment";
 
 export const daysLateWords = (days: number): string =>
   `${days} ${days === 1 ? "day" : "days"} late`;
