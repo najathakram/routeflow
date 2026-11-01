@@ -111,6 +111,7 @@ test.describe("W1 — the first question on a new account", () => {
     await page.getByLabel("Password", { exact: true }).fill(trial.password);
     await page.getByLabel("Confirm password").fill(trial.password);
     const create = page.getByRole("button", { name: "Create account" });
+    assertWriteTarget(trial.slug, trial);
     await create.click();
     // The public register route allows 5 a minute per address: if an earlier run used them up, wait the window out once.
     const throttled = page.getByText(/too many requests/i);
