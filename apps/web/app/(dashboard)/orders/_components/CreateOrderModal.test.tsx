@@ -963,57 +963,66 @@ describe("CreateOrderModal", () => {
     });
 
     describe("owner ruling D1 - the customer's price applies to lines scanned BEFORE the customer", () => {
-      it("choosing a tier-2 customer afterwards re-prices the scanned line to their tier price", async () => {
-        mockScanV2 = true;
-        mockCustomers = [acme];
-        mockResolveProductByCode.mockResolvedValue(tiered);
-        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-        capturedOnScan!("111");
-        expect(await screen.findByText("$10.00 / each")).toBeInTheDocument();
+      it.each([true, false])(
+        "choosing a tier-2 customer afterwards re-prices the scanned line to their tier price (scan_v2 %s)",
+        async (scanV2) => {
+          mockScanV2 = scanV2;
+          mockCustomers = [acme];
+          mockResolveProductByCode.mockResolvedValue(tiered);
+          renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          capturedOnScan!("111");
+          expect(await screen.findByText("$10.00 / each")).toBeInTheDocument();
 
-        await pickCustomer("Acme Foods");
+          await pickCustomer("Acme Foods");
 
-        expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
-        expect(screen.getByText("Special price")).toBeInTheDocument();
-      });
+          expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+          expect(screen.getByText("Special price")).toBeInTheDocument();
+        },
+      );
 
-      it("a customer-specific product tier (customer prices) wins over the customer's default tier", async () => {
-        mockScanV2 = true;
-        mockCustomers = [acme];
-        mockCustomerPrices = [{ productId: "prod-1", pricingTier: 3 }];
-        mockResolveProductByCode.mockResolvedValue(tiered);
-        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-        capturedOnScan!("111");
-        await screen.findByText("$10.00 / each");
+      it.each([true, false])(
+        "a customer-specific product tier (customer prices) wins over the customer's default tier (scan_v2 %s)",
+        async (scanV2) => {
+          mockScanV2 = scanV2;
+          mockCustomers = [acme];
+          mockCustomerPrices = [{ productId: "prod-1", pricingTier: 3 }];
+          mockResolveProductByCode.mockResolvedValue(tiered);
+          renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          capturedOnScan!("111");
+          await screen.findByText("$10.00 / each");
 
-        await pickCustomer("Acme Foods");
+          await pickCustomer("Acme Foods");
 
-        expect(await screen.findByText("$7.00 / each")).toBeInTheDocument();
-      });
+          expect(await screen.findByText("$7.00 / each")).toBeInTheDocument();
+        },
+      );
 
-      it("an operator's one-time price is NOT overwritten by the customer's tier", async () => {
-        mockScanV2 = true;
-        mockCustomers = [acme];
-        mockResolveProductByCode.mockResolvedValue(tiered);
-        renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-        capturedOnScan!("111");
-        await screen.findByText("$10.00 / each");
-        // #2696 (b): the price is changed by tapping it — the sheet owns the one-time price.
-        fireEvent.click(screen.getAllByLabelText("Change price")[0]);
-        const sheet = await screen.findByRole("dialog", { name: /^edit /i });
-        fireEvent.change(within(sheet).getByPlaceholderText("10.00"), {
-          target: { value: "9.00" },
-        });
-        fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
-        expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
+      it.each([true, false])(
+        "an operator's one-time price is NOT overwritten by the customer's tier (scan_v2 %s)",
+        async (scanV2) => {
+          mockScanV2 = scanV2;
+          mockCustomers = [acme];
+          mockResolveProductByCode.mockResolvedValue(tiered);
+          renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+          capturedOnScan!("111");
+          await screen.findByText("$10.00 / each");
+          // #2696 (b): the price is changed by tapping it — the sheet owns the one-time price.
+          fireEvent.click(screen.getAllByLabelText("Change price")[0]);
+          const sheet = await screen.findByRole("dialog", { name: /^edit /i });
+          fireEvent.change(within(sheet).getByPlaceholderText("10.00"), {
+            target: { value: "9.00" },
+          });
+          fireEvent.click(within(sheet).getByRole("button", { name: "Done" }));
+          expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
 
-        await pickCustomer("Acme Foods");
+          await pickCustomer("Acme Foods");
 
-        expect(screen.getByText("$9.00 / each")).toBeInTheDocument();
-        expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
-      });
+          expect(screen.getByText("$9.00 / each")).toBeInTheDocument();
+          expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
+        },
+      );
 
-      it("flag OFF: the classic modal is unchanged - choosing a customer afterwards does NOT re-price", async () => {
+      it("T10, SA-1076: flag OFF: the default builder follows the customer too", async () => {
         mockScanV2 = false;
         mockCustomers = [acme];
         mockResolveProductByCode.mockResolvedValue(tiered);
@@ -1023,8 +1032,8 @@ describe("CreateOrderModal", () => {
 
         await pickCustomer("Acme Foods");
 
-        expect(screen.getByText("$10.00 / each")).toBeInTheDocument();
-        expect(screen.queryByText("$8.00 / each")).not.toBeInTheDocument();
+        expect(await screen.findByText("$8.00 / each")).toBeInTheDocument();
+        expect(screen.queryByText("$10.00 / each")).not.toBeInTheDocument();
       });
 
       it("a line scanned AFTER the customer is chosen is priced for them immediately", async () => {
