@@ -122,11 +122,9 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
     expect(offenders).toEqual([]);
   });
 
-  // The ONE exemption: the office price-edit sites stay dark until the owner's perms flip (SA-1034 r6); #3977 moves them.
-  const DARK_OFFICE_PRICE_SITES = {
-    "invoices/invoice-line-override.ts": 1,
-    "orders/orders.service.ts": 2,
-  };
+  // The ONE exemption: price-edit-answer.ts's roleMayEditPrice, the role-only (shadow) answer of the office sites; they
+  // stay dark until the owner's perms flip (SA-1034 r8). Everything else reads the caller's groups.
+  const DARK_OFFICE_PRICE_SITES = { "auth/permissions/price-edit-answer.ts": 1 };
   const emptyDenials = (a: string[]) => /^(\[\s*\]|undefined|null)$/.test(a[2] ?? "");
 
   it("no staffMay call hands in an empty denials literal: a request path reads the caller's real groups", () => {
@@ -141,7 +139,7 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
     expect(offenders).toEqual([]);
   });
 
-  it("the exemption is exact: EDIT_LINE_PRICE only, and only the three dark office sites", () => {
+  it("the exemption is exact: EDIT_LINE_PRICE only, and only the shadow branch", () => {
     const found = Object.fromEntries(
       Object.entries(sources())
         .map(
@@ -177,11 +175,9 @@ describe("staffMay call inventory: every call passes deniedGroups (W-870)", () =
       decideStaffWrite: callsOf("decideStaffWrite"),
     }).toEqual({
       staffMay: {
-        "invoices/invoice-line-override.ts": 1, // dark until the owner's perms flip (SA-1034 r6); #3977 moves it
-        "orders/counter-sale/counter-sale.service.ts": 1,
+        "auth/permissions/price-edit-answer.ts": 2, // roleMayEditPrice ([], the shadow answer) + mayEditPrice
         "orders/counter-sale/till-permission.guard.ts": 2,
         "orders/fulfil-path-resolver.ts": 1,
-        "orders/orders.service.ts": 2, // dark until the owner's perms flip (SA-1034 r6); #3977 moves them
         "selling-restrictions/restriction-warning.ts": 1,
       },
       mayUseTill: {

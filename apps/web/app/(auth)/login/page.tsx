@@ -13,6 +13,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
+import { readLastWorkspace } from "@/lib/last-workspace";
 import { safeOperatorRedirect, landingForRole } from "@/lib/portal-routing";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
@@ -74,6 +75,8 @@ export default function LoginPage() {
     register,
     handleSubmit,
     watch,
+    setValue,
+    getValues,
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -81,6 +84,14 @@ export default function LoginPage() {
   });
 
   const workspaceValue = watch("workspace");
+
+  // W2 B3: fill in the Workspace ID this device last signed in with. It runs after mount (the page
+  // prerenders without storage) and never overwrites what the person has already typed.
+  React.useEffect(() => {
+    if (!showWorkspaceField || getValues("workspace")) return;
+    const last = readLastWorkspace();
+    if (last) setValue("workspace", last);
+  }, [showWorkspaceField, getValues, setValue]);
 
   // Countdown timer for throttle display
   React.useEffect(() => {
@@ -243,15 +254,23 @@ export default function LoginPage() {
         ) : null}
 
         {showWorkspaceField && (
-          <Input
-            label="Workspace"
-            placeholder="e.g. acme-logistics"
-            autoComplete="organization"
-            autoCapitalize="none"
-            spellCheck={false}
-            register={register("workspace")}
-            error={errors.workspace?.message}
-          />
+          <div className="flex flex-col gap-1">
+            <Input
+              label="Workspace ID"
+              placeholder="e.g. acme-logistics"
+              autoComplete="organization"
+              autoCapitalize="none"
+              spellCheck={false}
+              register={register("workspace")}
+              error={errors.workspace?.message}
+              aria-describedby={errors.workspace ? undefined : "workspace-hint"}
+            />
+            {!errors.workspace && (
+              <p id="workspace-hint" className="text-xs text-navy/70">
+                It&rsquo;s in your sign-up email.
+              </p>
+            )}
+          </div>
         )}
         <Input
           label="Username or email"
