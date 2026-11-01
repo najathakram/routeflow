@@ -263,7 +263,10 @@ export function OperationStory({ compact = false }: { compact?: boolean }) {
       </div>
       <div className="story-intro">
         <span className="story-chapter-count">0{chapter + 1} / 06</span>
-        <h3 ref={heading} tabIndex={-1}>
+        {/* W8 / S5: this heading sits right under the page h1 in the hero, so it is level 2 to a
+            reader. It stays an h3 element because eight `.story-intro h3` rules in marketing.css
+            and glass-site.css style it, and the `.glass-page h2` rules would restyle an h2. */}
+        <h3 ref={heading} tabIndex={-1} aria-level={2}>
           {current.title}
         </h3>
       </div>
