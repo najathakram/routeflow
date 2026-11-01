@@ -4,8 +4,8 @@ import { ArrowUpRight, CalendarDays, MessageSquare, Route, Users } from "lucide-
 import { DEMO_CTA, routes, site } from "../lib/site";
 import { Eyebrow } from "../components/marketing";
 
-// Words: COPY.md 2j (W6). Email stays the way in (Q4): no phone, hours or street address, and no
-// reply promise until the owner sets one.
+// Words: COPY.md 2j (W6). Email stays the way in (Q4): no phone, hours or street address. The one
+// promise is the reply time the owner set (SA-1075 A-5): "We reply within one business day."
 // Inside the marketing chrome; the old `app/contact/page.tsx` is deleted
 // (spec.md R8).
 //
@@ -54,7 +54,9 @@ export default function ContactPage() {
             Email us or <br />
             <em>book a video call.</em>
           </h1>
-          <p className="lead">Email a question and include your company name.</p>
+          <p className="lead">
+            Email a question and include your company name. We reply within one business day.
+          </p>
           <div className="demo-agenda">
             <h2>What we do on the call.</h2>
             {AGENDA.map(([Icon, title, text]) => (

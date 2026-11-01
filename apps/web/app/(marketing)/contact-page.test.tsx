@@ -1,6 +1,6 @@
 // W6 / C2 and 2j — /contact says the two ways in: email us, or book a video call. Email stays the
-// way in (Q4), so the page carries no phone number, hours or street address. The reply promise is
-// not set yet, so the page ships without one.
+// way in (Q4), so the page carries no phone number, hours or street address. The reply time is the
+// owner's (SA-1075 A-5): one sentence, said once, and no other time promise.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ContactPage from "./contact/page";
@@ -22,8 +22,8 @@ describe("/contact words (W6, COPY.md 2j)", () => {
     expect(doc.querySelector("h1")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
       "Email us or book a video call.",
     );
-    expect(doc.querySelector("p.lead")?.textContent?.trim()).toBe(
-      "Email a question and include your company name.",
+    expect(doc.querySelector("p.lead")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Email a question and include your company name. We reply within one business day.",
     );
   });
 
@@ -52,8 +52,14 @@ describe("/contact words (W6, COPY.md 2j)", () => {
     expect(mail?.textContent?.trim()).toBe(site.email);
   });
 
-  it("C2: no phone number, hours or street address, and no reply promise yet", () => {
+  it("A-5: the page says the reply time once, in the owner's words", () => {
     const { text } = page();
+    expect(text.split("We reply within one business day.")).toHaveLength(2);
+  });
+
+  it("C2: no phone number, hours or street address, and no other time promise", () => {
+    // The one sentence the owner set is taken out first, so everything else is held to the old rules.
+    const text = page().text.replace("We reply within one business day.", "");
     expect(text).not.toMatch(/\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/);
     expect(text).not.toMatch(/tel:|\bphone\b|\bcall us\b/i);
     expect(text).not.toMatch(/\b(hours|open|monday|business days|mon\b|fri\b)/i);
