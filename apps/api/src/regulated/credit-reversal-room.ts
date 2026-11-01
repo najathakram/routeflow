@@ -46,6 +46,11 @@ export interface CreditReversalRoom {
   saleByLine: Map<string, LineBag>;
   /** Everything already reversed per order line; the caller accumulates what it books here. */
   revByLine: Map<string, LineBag>;
+  /**
+   * Every SALE / REVERSAL row of the credited lines, after a reissue's exclude (SA-1054 A-2). The census nets these itself,
+   * WITHOUT the return and credit REVERSALs: it asks whether a SALE was unbooked, not whether the line has room left.
+   */
+  lineRows: any[];
 }
 
 /** What one credit item can still reverse: the live key it books under and the line's remaining (signed, <= 0). */
@@ -274,6 +279,7 @@ export async function loadCreditReversalRoom(
     deadSaleIds,
     saleByLine,
     revByLine,
+    lineRows,
   };
 }
 

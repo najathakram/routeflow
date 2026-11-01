@@ -3,14 +3,20 @@
  *
  * Counts the credit notes whose REVERSAL rows booked LESS levy than their typed items stored, over the items the ledger can
  * actually reverse: an item counts only when it has a LIVE SALE row, found by `loadCreditReversalRoom` (the loader
- * `reverseCreditNoteEntries` and the A-4 bind both read) and not named dead by `deadSaleIdsOf` (a SALE a re-sync or void
- * offset, or whose key is square). Items with no live SALE (SA-628 return-refund rows, lines that never booked, a line whose only
- * SALE is dead) are reported apart and never read as a mismatch: the ledger reverses nothing for them.
+ * `reverseCreditNoteEntries` and the A-4 bind both read). "Live" here means no re-sync or void offset the SALE: a return or a
+ * credit REVERSAL reverses a sale, it does not unbook it (SA-1054 A-2). So the census feeds `deadSaleIdsOf` the line's rows
+ * WITHOUT the return and credit REVERSALs; the room's own `deadSaleIds` (return and credit REVERSALs included, so a line they
+ * closed reads dead) is what the ledger's walks need and is not used here. Without this the census would leave out the closed
+ * line it exists to find (the S1 shape: a return closed the line, the typed credit booked nothing).
+ * Items with no live SALE (SA-628 return-refund rows, lines that never booked, a line whose only SALE a re-sync offset) are
+ * reported apart in `itemsWithoutLiveSale` and never read as a mismatch. Above 0 there is a list to read, never a clean result:
+ * a deleted invoice item whose old SALE was offset lands there too (SA-1054 A-3).
  *
  * `apps/api/scripts/report-a4-credit-reversal-census.mjs` is the thin runner (local database only, read-only session).
  */
 import { CreditNoteStatus } from "@prisma/client";
 import { loadCreditReversalRoom } from "./credit-reversal-room";
+import { deadSaleIdsOf } from "./regulated-ledger.service";
 
 const TAX_EPS = 0.01;
 const BATCH = 500;
@@ -129,6 +135,15 @@ export async function censusOldTypedCredits(
   for (let i = 0; i < items.length; i += BATCH) {
     const batch = items.slice(i, i + BATCH);
     const room = await loadCreditReversalRoom(db, batch);
+    // a return or credit REVERSAL reverses a sale, it does not unbook it: leave them out of the "is this SALE dead" read
+    const dead = room
+      ? deadSaleIdsOf(
+          room.lineRows.filter(
+            (r: any) =>
+              !(r.entryType === "REVERSAL" && (r.returnId != null || r.creditNoteId != null)),
+          ),
+        )
+      : new Set<string>();
     for (const it of batch) {
       let live = false;
       if (room && it.invoiceItemId) {
@@ -136,7 +151,7 @@ export async function censusOldTypedCredits(
           room.creditedItems.find((c: any) => c.id === it.invoiceItemId)?.orderItemId ?? null;
         live = room.liveSaleRows.some(
           (s: any) =>
-            !room.deadSaleIds.has(s.id) &&
+            !dead.has(s.id) &&
             (s.trackedCategoryId == null || s.trackedCategoryId === it.trackedCategoryId) &&
             (s.invoiceItemId === it.invoiceItemId ||
               (orderItemId != null && s.orderItemId === orderItemId)),

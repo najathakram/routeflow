@@ -3,9 +3,10 @@ import { join, relative } from "path";
 
 /**
  * SA-1042 A-4 pin G4 (OP-7): `CreditNoteItem.categoryTax` is the levy a typed credit REQUESTED, the figure
- * `reverseCreditNoteEntries` reads as input. The regulated ledger is the one source for "levy reversed": since A-4 binds a
- * typed row to the ledger's remaining, the two differ only by a closing credit's cent drift. A reader that summed the stored
- * field instead of the ledger would re-open that gap, so every non-spec file that touches the item table (`creditNoteItem`
+ * `reverseCreditNoteEntries` reads as input. The regulated ledger is the one source for "levy reversed": A-4 binds a typed row
+ * to the ledger's remaining, and the stored figure and the ledger still differ in three cases (SA-1042 A-5): by a closing
+ * credit's cent drift, on bound lines; in full, on a line that never booked a SALE row; and SA-628's return rows store 0 by design.
+ * A reader that summed the stored field instead of the ledger would re-open that gap, so every non-spec file that touches the item table (`creditNoteItem`
  * / `"CreditNoteItem"`) AND mentions `categoryTax` as a whole word is classed here. An unclassified file fails the build, and
  * so does a classed file that stops matching.
  *  - WRITER: writes the item rows (the one place the requested levy is computed).
