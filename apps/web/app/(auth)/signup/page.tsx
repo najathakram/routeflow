@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
+import { UmamiScript } from "@/components/UmamiScript";
 import { safeTextBodyCopy } from "@/lib/safe-text-error-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -461,8 +462,12 @@ function browserTimeZone(): string | undefined {
 
 export default function SignupPage() {
   return (
-    <React.Suspense fallback={null}>
-      <SignupInner />
-    </React.Suspense>
+    <>
+      {/* Visit counts (W3): /signup is one of the two places it runs; with no site ID it renders nothing. */}
+      <UmamiScript />
+      <React.Suspense fallback={null}>
+        <SignupInner />
+      </React.Suspense>
+    </>
   );
 }

@@ -7,7 +7,7 @@ import SignupPage from "./page";
  * to the check-email screen, which shows it (sign-in asks for it typed).
  */
 const push = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push }), usePathname: () => "/signup" }));
 
 function mockFetch(registerBody: object = { emailSent: true }) {
   global.fetch = jest.fn(async (url: string | URL | Request) => {
