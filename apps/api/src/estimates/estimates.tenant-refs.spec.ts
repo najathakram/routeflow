@@ -27,10 +27,13 @@ describe("EstimatesService.create — tenant refs (681 site 4)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
 
   const create = (customerId: string, productId?: string) =>
-    service.create({
-      customerId,
-      items: [{ description: "Line", productId, unitPrice: 10, qty: 1 }],
-    } as never, NO_PRICE_RIGHTS);
+    service.create(
+      {
+        customerId,
+        items: [{ description: "Line", productId, unitPrice: 10, qty: 1 }],
+      } as never,
+      NO_PRICE_RIGHTS,
+    );
 
   beforeEach(async () => {
     prisma = createMockPrisma();

@@ -727,7 +727,9 @@ describe("RecurringInvoicesService.create — removed customer (B131)", () => {
   it("REG-B131 T17: creating a recurring invoice for a removed customer is refused", async () => {
     await boot(REMOVED_AT);
 
-    await expect(service.create(dto, NO_PRICE_RIGHTS)).rejects.toThrow(new NotFoundException("Customer not found"));
+    await expect(service.create(dto, NO_PRICE_RIGHTS)).rejects.toThrow(
+      new NotFoundException("Customer not found"),
+    );
     expect(prisma.recurringInvoice.create).not.toHaveBeenCalled();
   });
 

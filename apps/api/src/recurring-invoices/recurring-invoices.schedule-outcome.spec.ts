@@ -323,9 +323,13 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
         return Promise.resolve({ id: "ri-1", ...a.data });
       });
 
-      await service.update("ri-1", {
-        items: [{ description: "d", qty: 1, unitPrice: 5 } as any],
-      }, NO_PRICE_RIGHTS);
+      await service.update(
+        "ri-1",
+        {
+          items: [{ description: "d", qty: 1, unitPrice: 5 } as any],
+        },
+        NO_PRICE_RIGHTS,
+      );
 
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
       expect(calls).toEqual(["delete", "update"]);

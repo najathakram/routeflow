@@ -82,7 +82,10 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
       Promise.resolve({ id: "est-1", ...args.data }),
     );
 
-    await service.create({ customerId: "cust-1", items: [], taxAmount: -1000 } as any, NO_PRICE_RIGHTS);
+    await service.create(
+      { customerId: "cust-1", items: [], taxAmount: -1000 } as any,
+      NO_PRICE_RIGHTS,
+    );
 
     const data = prisma.estimate.create.mock.calls[0][0].data;
     expect(data.taxAmount).toBe(0); // computed from the (empty) lines, not the -1000 sent
@@ -95,12 +98,15 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
       Promise.resolve({ id: "est-1", ...args.data }),
     );
 
-    await service.create({
-      customerId: "cust-1",
-      items: [],
-      tenantId: "attacker-tenant",
-      status: "ACCEPTED",
-    } as any, NO_PRICE_RIGHTS);
+    await service.create(
+      {
+        customerId: "cust-1",
+        items: [],
+        tenantId: "attacker-tenant",
+        status: "ACCEPTED",
+      } as any,
+      NO_PRICE_RIGHTS,
+    );
 
     const createCall = prisma.estimate.create.mock.calls[0][0];
     expect(createCall.data.status).toBe("DRAFT");

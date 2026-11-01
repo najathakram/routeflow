@@ -12,7 +12,8 @@ import { PACK_WRITE_PATH_COMPLETE } from "@routeflow/pricing";
  *
  * The scan is a text tripwire, not a proof: a non-spec file counts as a writer when it names a column as an object key
  * with a value (not a select flag, type member, orderBy direction or where operator), as a shorthand key or as an
- * assignment target AND it makes a DB write call, or when it has a raw `UPDATE ... SET` on a column.
+ * assignment target, or builds its data with `pickPriceColumns(...)` (computed keys), AND it makes a DB write call, or when
+ * it has a raw `UPDATE ... SET` on a column. A `false`/`null` value counts as a write (only `true` is a select flag).
  */
 
 /** Files that ARE the write path (empty until S9 lands it). */
@@ -46,6 +47,7 @@ const OUTSIDE_WRITERS: readonly string[] = [
   "apps/api/src/invoices/invoice-display-unit.ts", // SA-827/SA-1029: display snapshot writes only; its tier-price selects trip the text scan
   "apps/api/src/invoices/invoice-restriction-lines.ts",
   "apps/api/src/orders/testing/units-fold-db-harness.ts", // a test fixture that seeds units-fold tenants (qa-ufold-*), never production
+  "apps/api/src/products/family-price.ts", // propagateFamilyPrice updateMany writes all five columns through pickPriceColumns (computed keys)
   "apps/api/src/products/product-families.service.ts",
   "apps/api/src/products/product-units.service.ts",
   "apps/api/src/products/products.service.ts",
@@ -67,9 +69,12 @@ const RAW_SQL = new RegExp(`\\bSET\\b[^;\`]{0,400}"?${KEY}"?\\s*=`, "i");
 const KEY_VALUE = new RegExp(
   // The exclusion sits right after the colon and owns the whitespace: a trailing `\s*` outside it backtracks to
   // zero spaces, the lookahead then sees the space, and `pricePerUnit: true` was never excluded.
-  `\\b${KEY}\\s*:(?!\\s*(?:true\\b|false\\b|["'](?:asc|desc)["']|\\{|(?:number|string|boolean|unknown|any|null|Numeric|Decimal|Prisma\\.Decimal)\\b))`,
+  `\\b${KEY}\\s*:(?!\\s*(?:true\\b|["'](?:asc|desc)["']|\\{|(?:number|string|boolean|unknown|any|Numeric|Decimal|Prisma\\.Decimal)\\b))`,
 );
 const SHORTHAND = new RegExp(`[{,]\\s*${KEY}\\s*[,}]`);
+// A data object built by `pickPriceColumns(...)` (family-price.ts) carries all five columns under computed keys, so no column
+// name appears next to the write. Naming the picker in a file that also writes counts as a writer.
+const COMPUTED = /\bpickPriceColumns\s*\(/;
 const DB_WRITE =
   /\.(?:create|createMany|update|updateMany|upsert)\s*\(|\$executeRaw|INSERT\s+INTO|UPDATE\s+["\w]/;
 
@@ -80,7 +85,11 @@ function writesPackColumns(src: string): boolean {
   const code = stripComments(src);
   if (RAW_SQL.test(code)) return true;
   const keyed =
-    DATA_BLOCK.test(code) || ASSIGN.test(code) || KEY_VALUE.test(code) || SHORTHAND.test(code);
+    DATA_BLOCK.test(code) ||
+    ASSIGN.test(code) ||
+    KEY_VALUE.test(code) ||
+    SHORTHAND.test(code) ||
+    COMPUTED.test(code);
   return keyed && DB_WRITE.test(code);
 }
 
@@ -199,6 +208,52 @@ describe("SA-795 (h): writers of the pack price columns", () => {
     expect(KEY_VALUE.test("pricePerUnit: true")).toBe(false);
     expect(KEY_VALUE.test("pricePerUnit:true")).toBe(false);
     expect(KEY_VALUE.test("pricePerUnit: price")).toBe(true);
+  });
+
+  describe("the detector (W-930 slice 1)", () => {
+    const UPDATE = "await db.product.update({ where: { id } });";
+    it("a select flag, a type member and an orderBy direction do not trip", () => {
+      for (const src of [
+        `${UPDATE} const r = await db.product.findMany({ select: { pricePerUnit: true, priceTier2: true } });`,
+        `${UPDATE} const r = await db.product.findFirst({ select: { packAuto: true } });`,
+        `${UPDATE} type Row = { pricePerUnit: Prisma.Decimal; priceTier3: number };`,
+        `${UPDATE} const r = await db.product.findMany({ orderBy: { pricePerUnit: "asc" } });`,
+        `${UPDATE} const where = { pricePerUnit: { gt: 0 } };`,
+      ]) {
+        expect(writesPackColumns(src)).toBe(false);
+      }
+    });
+    it("a planted real write still trips, in every shape the scan was written for", () => {
+      for (const src of [
+        "await db.product.createMany({ data: rows.map((p) => ({ name: p.n, pricePerUnit: p.price })) });",
+        "await db.product.update({ where: { id }, data: { pricePerUnit: x } });",
+        "const d = { priceTier2: v }; await db.product.update({ where: { id }, data: d });",
+        "const d = { pricePerUnit, name }; await db.product.update({ where: { id }, data: d });",
+        "p.packAuto = true; await db.product.update({ where: { id }, data: p });",
+        'await db.$executeRaw`UPDATE "Product" SET "priceTier4" = ${v} WHERE id = ${id}`;',
+      ]) {
+        expect(writesPackColumns(src)).toBe(true);
+      }
+    });
+    it("a write through a variable holding false or null counts (the exclusion is for select flags, not values)", () => {
+      for (const src of [
+        "const d = { packAuto: false }; await db.product.update({ where: { id }, data: d });",
+        "const d = { priceTier2: null }; await db.product.updateMany({ where: { id }, data: d });",
+      ]) {
+        expect(writesPackColumns(src)).toBe(true);
+      }
+    });
+    it("a write whose keys are computed by pickPriceColumns counts (no column name appears in the file)", () => {
+      expect(
+        writesPackColumns(
+          "const data = pickPriceColumns(family); await tx.product.updateMany({ where: { id }, data });",
+        ),
+      ).toBe(true);
+      expect(writesPackColumns("const row = pickPriceColumns(family); return row;")).toBe(false);
+    });
+    it("a key that is only read or typed, with no write call in the file, is never a writer", () => {
+      expect(writesPackColumns("const x = { pricePerUnit: 5 };")).toBe(false);
+    });
   });
 
   it("the scan does see the known writers (a broken scan would pass vacuously)", () => {
