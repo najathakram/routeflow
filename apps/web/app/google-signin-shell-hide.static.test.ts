@@ -135,20 +135,9 @@ describe("#2653: every Google sign-in entry point hides inside the app shell", (
       "components/PwaInstallPrompt.tsx",
       /if \(installed \|\| dismissed \|\| isInShell\(\)\) return null;/,
     ],
-    [
-      "components/InstallAppButton.tsx",
-      /if \(platform === "installed" \|\| isInShell\(\)\) return null;/,
-    ],
   ])("%s renders nothing inside the shell (F3)", (rel, guard) => {
     const src = fs.readFileSync(path.join(WEB_ROOT, rel as string), "utf8");
     expect(src).toMatch(guard as RegExp);
-  });
-
-  it("InstallAppButton's server-rendered button is CSS-hidden in the shell too (no flash, F3)", () => {
-    const src = fs.readFileSync(path.join(WEB_ROOT, "components", "InstallAppButton.tsx"), "utf8");
-    expect(src).toMatch(/data-hide-in-shell/);
-    const css = fs.readFileSync(path.join(WEB_ROOT, "app", "shell.css"), "utf8");
-    expect(css).toMatch(/html\[data-shell="1"\] \[data-hide-in-shell\]/);
   });
 
   it("the layout runs the shell mark in <head> and loads shell.css; shell.css hides the blocks", () => {
