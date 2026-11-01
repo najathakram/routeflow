@@ -2082,11 +2082,14 @@ export class PlatformAdminService {
    *   signups      tenants created
    *   verified     tenants whose admin opened the email link (the `user.activate` audit row that
    *                verifyEmailAndLogin writes with reason `email_verify`)
-   *   firstOrder   tenants whose earliest order was placed that week
-   *   firstRoute   tenants whose earliest route was made that week
+   *   firstOrder   tenants signed up inside the window whose earliest order was placed that week
+   *   firstRoute   tenants signed up inside the window whose earliest route was made that week
    *   demoBookings demo bookings made that week (not tenant rows, so no tenant filter applies)
    * The sixth, `answered`, reads W1's first-question marker, which does not exist yet, so it is
-   * left out here and added with W1. Every tenant count leaves out non-PRODUCTION tenants
+   * left out here and added with W1. The first-order and first-route reads are bounded to the sign-up
+   * cohort (tenants created inside the window), so they read only that cohort's rows, not every order
+   * and route on the platform; an older tenant that places its first order inside the window is not a
+   * sign-up and is not counted (review-c on #4062, cohort bound approved by the Lead). Every tenant count leaves out non-PRODUCTION tenants
    * (test, demo, internal: `class` is set from the approved test-tenant list) and soft-deleted ones,
    * the same two filters as every count in getStats().
    */
@@ -2107,7 +2110,7 @@ export class PlatformAdminService {
     const live = { class: "PRODUCTION" as const, deletedAt: null };
     const firstEver = {
       by: ["tenantId" as const],
-      where: { tenantId: { not: null }, tenant: live },
+      where: { tenantId: { not: null }, tenant: { ...live, createdAt: { gte: windowStart } } },
       _min: { createdAt: true as const },
       // Only tenants whose FIRST row falls inside the window; an older tenant's later row is not a first.
       having: { createdAt: { _min: { gte: windowStart } } },

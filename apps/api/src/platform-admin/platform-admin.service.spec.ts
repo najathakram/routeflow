@@ -3616,6 +3616,8 @@ describe("PlatformAdminService — audit provenance", () => {
       { id: "p2", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-28") },
       { id: "p3", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-14") },
       { id: "old", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-01") },
+      // signed up before the window and places its FIRST order inside it: not part of the sign-up cohort
+      { id: "late", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-15") },
       { id: "qa", class: "TEST", deletedAt: null, createdAt: iso("2026-10-27") },
       { id: "demo", class: "DEMO", deletedAt: null, createdAt: iso("2026-10-27") },
       { id: "internal", class: "INTERNAL", deletedAt: null, createdAt: iso("2026-10-27") },
@@ -3680,6 +3682,7 @@ describe("PlatformAdminService — audit provenance", () => {
       { tenantId: "p3", createdAt: iso("2026-10-28") }, // a later order is not a first order
       { tenantId: "old", createdAt: iso("2026-08-02") }, // first order before the window
       { tenantId: "old", createdAt: iso("2026-10-27") }, // ...so this later one must not count
+      { tenantId: "late", createdAt: iso("2026-10-27") }, // first order in the window, but not a window sign-up
       { tenantId: "qa", createdAt: iso("2026-10-27") },
       { tenantId: "demo", createdAt: iso("2026-10-27") },
       { tenantId: "internal", createdAt: iso("2026-10-27") },
@@ -3687,6 +3690,7 @@ describe("PlatformAdminService — audit provenance", () => {
     ];
     const routes = [
       { tenantId: "p3", createdAt: iso("2026-10-21") },
+      { tenantId: "late", createdAt: iso("2026-10-22") },
       { tenantId: "qa", createdAt: iso("2026-10-21") },
       { tenantId: "gone", createdAt: iso("2026-10-21") },
     ];
@@ -3838,6 +3842,29 @@ describe("PlatformAdminService — audit provenance", () => {
           demoBookings: 2,
         },
       ]);
+    });
+
+    it("M1: the first-order and first-route reads are bounded to the sign-up cohort, on every query", async () => {
+      await service.getStats();
+      const windowStart = new Date("2026-09-07T00:00:00.000Z"); // Monday of the first of eight weeks
+      for (const groupBy of [(prisma as any).order.groupBy, (prisma as any).route.groupBy]) {
+        expect(groupBy).toHaveBeenCalledTimes(1);
+        const args = groupBy.mock.calls[0][0];
+        expect(args.where.tenant).toEqual({
+          class: "PRODUCTION",
+          deletedAt: null,
+          createdAt: { gte: windowStart },
+        });
+      }
+    });
+
+    it("M1: a tenant that signed up before the window and orders for the first time inside it is not a first order", async () => {
+      const stats: any = await service.getStats();
+      const total = (key: string) =>
+        stats.weeklyFunnel.weeks.reduce((n: number, w: any) => n + w[key], 0);
+      // p1 and p3 only: "late" ordered and routed inside the window but signed up before it.
+      expect(total("firstOrder")).toBe(2);
+      expect(total("firstRoute")).toBe(1);
     });
 
     it("M1: the sixth number, answered, is not invented before W1 lands", async () => {
