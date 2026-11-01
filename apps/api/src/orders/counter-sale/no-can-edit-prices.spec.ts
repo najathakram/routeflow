@@ -37,8 +37,11 @@ describe("no canEditPrices is defined anywhere (SA-762r)", () => {
     expect(DEFINES.test("const staffMay = 1; // canEditPrices was deleted")).toBe(false);
   });
 
-  it("the counter passes through staffMay", () => {
+  it("the counter passes the live answer over the operator's denied groups (W-870, SA-1034 r8)", () => {
     const src = readFileSync(join(__dirname, "counter-sale.service.ts"), "utf8");
-    expect(src).toMatch(/staffMay\(\s*user\.role,\s*"EDIT_LINE_PRICE",/);
+    expect(src).toMatch(
+      /priceEditAllowed:\s*mayEditPrice\(\s*user\.role,\s*await operatorDeniedGroups\(this\.prisma,\s*user\)/,
+    );
+    expect(src).not.toMatch(/staffMay|EDIT_LINE_PRICE/);
   });
 });

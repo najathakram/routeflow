@@ -8,6 +8,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { EntitlementsService } from "../billing/entitlements.service";
+
+// SA-1034: this spec tests estimate / template behaviour, not the price-edit capability (see price-edit-sites.pin.spec.ts).
+jest.mock("../auth/permissions/price-edit", () => ({
+  priceEditAllowedFor: jest.fn().mockResolvedValue(true),
+}));
 
 /**
  * F13 red set — B46 (MONTHLY schedule), B106 (failure/success outcome recording),
@@ -45,6 +52,7 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
@@ -300,7 +308,11 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
 
   describe("recurring template item replace (R25, B92)", () => {
     it("REG-B92 T31 — item replacement runs inside one tenantTransaction with tenantId stamped on nested creates", async () => {
-      prisma.recurringInvoice.findUnique.mockResolvedValue({ id: "ri-1", customerId: "c1" });
+      prisma.recurringInvoice.findUnique.mockResolvedValue({
+        id: "ri-1",
+        customerId: "c1",
+        items: [],
+      });
       const calls: string[] = [];
       prisma.recurringInvoiceItem.deleteMany.mockImplementation(() => {
         calls.push("delete");
@@ -311,9 +323,13 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
         return Promise.resolve({ id: "ri-1", ...a.data });
       });
 
-      await service.update("ri-1", {
-        items: [{ description: "d", qty: 1, unitPrice: 5 } as any],
-      });
+      await service.update(
+        "ri-1",
+        {
+          items: [{ description: "d", qty: 1, unitPrice: 5 } as any],
+        },
+        NO_PRICE_RIGHTS,
+      );
 
       expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
       expect(calls).toEqual(["delete", "update"]);

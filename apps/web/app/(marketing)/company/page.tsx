@@ -10,6 +10,7 @@ import {
   Users2,
 } from "lucide-react";
 import { routes, site } from "../lib/site";
+import { marketingMetadata } from "../lib/metadata";
 import { CTA, Eyebrow, CheckList } from "../components/marketing";
 
 // Copy verbatim from the redesign's app/[page]/page.tsx `Company()` (M1 §2e).
@@ -23,18 +24,11 @@ import { CTA, Eyebrow, CheckList } from "../components/marketing";
 
 const route = routes.find((r) => r.slug === "company")!;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
+  path: "/company",
   title: route.title,
   description: route.description,
-  alternates: { canonical: "/company" },
-  openGraph: {
-    title: route.title,
-    description: route.description,
-    url: "/company",
-    siteName: site.name,
-    type: "website",
-  },
-};
+});
 
 const PRINCIPLES: Array<[typeof BookOpen, string, string]> = [
   [

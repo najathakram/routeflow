@@ -71,7 +71,9 @@ import {
   inheritHeldUnit,
   inPlacePatch,
   matchEditLines,
+  assertEditAuthoredPrices,
 } from "./invoice-edit-plan";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { customerInvoiceList, invoiceDetailFor } from "../common/staff-only-fields";
 import { CONFIRMED_PAYMENT, splitConfirmed, sumConfirmed } from "./payment-predicates";
@@ -237,7 +239,7 @@ import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lin
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { assertEditStillJudged } from "./invoice-restriction-lines";
 import { buildManualInvoiceLines, lineGuardCtx, type LineGuardSite } from "./manual-invoice-lines";
-import { loadOverride, type ManualInvoiceDto } from "./invoice-line-override";
+import { loadOverride, type InvoiceSource, type ManualInvoiceDto } from "./invoice-line-override";
 import {
   allocateOrderRegularTax,
   applyOrderDerivedTaxRate,
@@ -437,7 +439,12 @@ export class InvoicesService {
    * SA-135: an internal caller's line may carry `packSnapshot` (ManualLineItem); the HTTP DTO never can. `actor` (HTTP
    * only): the H3b price-override author (`actor.sub`) and the row-510 restriction-override principal.
    */
-  async create(dto: ManualInvoiceDto, actor?: JwtPayload, opts?: { warnSite?: LineGuardSite }) {
+  async create(
+    dto: ManualInvoiceDto,
+    actor?: JwtPayload,
+    /** SA-1034 rule 6: a call with no options is a "request" (both price-edit checks apply); only the recurring run says otherwise. */
+    opts?: { source: InvoiceSource; warnSite?: LineGuardSite },
+  ) {
     const issueDateInput = dto.issueDate ? issueDateStamp(dto.issueDate) : null; // #2197: 400 first
     const due = dueDateStamps(dto); // #2256: the due dates too, refused before any read or write
     assertFiniteInvoiceInput(dto); // N4: NaN is a 400, not a silent $0
@@ -476,13 +483,24 @@ export class InvoicesService {
     );
 
     // Manual-invoice line builder: see manual-invoice-lines.ts (verbatim move; units_v1 4c-1 prefactor).
+    const override = await loadOverride(
+      this.prisma,
+      dto,
+      unitsByProduct,
+      actor,
+      opts?.source ?? "request",
+      this.entitlements,
+    );
+    // SA-1034 rule 4 (AUTHORING): a typed custom charge needs price rights. Here, beside loadOverride, and never inside
+    // buildManualInvoiceLines, which the estimate convert shares (that copies an authored price). No actor = internal.
+    if (override) assertCustomPricesAllowed(dto.items, override.priceEditAllowed);
     const { itemsData } = buildManualInvoiceLines(dto.items, {
       productMap,
       categoryMap,
       ...lineGuardCtx(this.prisma, actor, opts?.warnSite), // tenant, role, and POST /invoices' census site (SA-982 PR-2)
       clampFreeUnits: (free, boxes, qty) => this.clampLineFreeUnits(free, boxes, qty),
       resolved,
-      override: await loadOverride(this.prisma, dto, unitsByProduct, actor, this.entitlements),
+      override,
     });
     // A regulated line makes this a filable sale — the SALE ledger rows are written below.
     const hasRegulated = itemsData.some((it: any) => it.trackedCategoryId != null);
@@ -3135,6 +3153,7 @@ export class InvoicesService {
         { ...inv, items },
         unitsByProduct,
         actor,
+        "request",
         this.entitlements,
       );
 
@@ -3161,6 +3180,7 @@ export class InvoicesService {
         const { storedRows, isTaxExempt, invoice: cur } = locked;
         const matches = matchEditLines(items, storedRows);
         if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
+        assertEditAuthoredPrices(items, matches, override); // SA-1034 rule 4: before any write
         assertNsfLinesUntaxed(
           items,
           matches.map((m) => m.row),

@@ -389,3 +389,21 @@ describe("F08: a typed 0 says why it became 1", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
+
+// SA-1077 / W-1093: the struck list on a SPECIAL line follows pricing's `isAboveListLine`, as the order table's does.
+describe("the struck list price on a SPECIAL line", () => {
+  it("12 over a list of 10: the Special price pill stays and the list is not struck", () => {
+    const { container } = renderRow(
+      makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 10, unitPrice: 12 }),
+    );
+    expect(screen.getByText("Special price")).toBeInTheDocument();
+    expect(container.querySelector(".line-through")).toBeNull();
+  });
+
+  it("8 under a list of 10: the list is struck", () => {
+    const { container } = renderRow(
+      makeProps({ ...plainItem, priceType: "SPECIAL", listPrice: 10, unitPrice: 8 }),
+    );
+    expect(container.querySelector(".line-through")).toHaveTextContent("$10.00");
+  });
+});

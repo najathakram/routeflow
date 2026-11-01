@@ -1143,6 +1143,17 @@ export default defineConfig({
               storageState: path.join(AUTH_DIR, "operator.json"),
             },
           },
+          // SA-1073 PR-2: a dialog opened from a menu leaves the page working. Same guards as spec 71.
+          {
+            name: "menu-dialog-freeze",
+            testMatch: /81-menu-dialog-freeze.spec.ts/,
+            dependencies: ["setup"],
+            use: {
+              ...devices["Desktop Chrome"],
+              viewport: { width: 1280, height: 800 },
+              storageState: path.join(AUTH_DIR, "operator.json"),
+            },
+          },
           {
             name: "counter-pos-stack",
             testMatch: /(72-counter-pos-stack|75-sa1067-price-history-keys)\.spec\.ts/,

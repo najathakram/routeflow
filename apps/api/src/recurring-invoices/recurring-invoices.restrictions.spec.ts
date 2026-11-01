@@ -16,6 +16,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
   let service: RecurringInvoicesService;
@@ -52,6 +53,7 @@ describe("RecurringInvoicesService — selling restrictions (F-05)", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RecurringInvoicesService,
+        { provide: EntitlementsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },

@@ -27,6 +27,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { customerPricing } from "../orders/units-prices-v2";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { ACCRUAL_REVENUE_STATUSES, REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { quoteExcludedInvoiceIds } from "../invoices/order-edit-revert-set";
@@ -84,10 +85,15 @@ const CREDIT_OVERRIDE_ROLES: ReadonlySet<string> = new Set([
  * before any read, on the quote and the capture alike (both reach `priceInlineReturn`), so the two
  * can never price different chunks. `undefined` is "not sent"; any other value (null included) is
  * a field the caller sent.
+ *
+ * SA-1034: the PRICE half reads the one price-edit capability (`priceEditAllowed`, from `priceEditAllowedFor`), the
+ * same right as a typed sale price; the status and code stay the 400 RETURN_CREDIT_OVERRIDE_FORBIDDEN clients map. The
+ * "already returned" confirmation reason is not a price and keeps its role set.
  */
 export function creditOverridesOf(
   items: readonly QuoteInlineReturnItemDto[],
   user: JwtPayload,
+  priceEditAllowed: boolean,
 ): Map<QuoteInlineReturnItemDto, CreditOverride> {
   const out = new Map<QuoteInlineReturnItemDto, CreditOverride>();
   for (const item of items) {
@@ -101,7 +107,7 @@ export function creditOverridesOf(
       });
     }
     if (price === undefined && rawReason === undefined) continue;
-    if (!CREDIT_OVERRIDE_ROLES.has(user.role)) {
+    if (!priceEditAllowed) {
       throw new BadRequestException({
         code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
         message: "Only office staff can override a return's credit price.",
@@ -215,7 +221,12 @@ export class InlineReturnsQuoteService {
       throw new ForbiddenException("Buyers cannot capture returns at order entry");
     }
     // #2695: a driver's override is a 400 before any read; staff overrides are validated here too.
-    const overrides = creditOverridesOf(dto.items, user);
+    const priceEditAllowed = await priceEditAllowedFor(
+      this.prisma,
+      user,
+      "InlineReturnsQuoteService.priceInlineReturn",
+    );
+    const overrides = creditOverridesOf(dto.items, user, priceEditAllowed);
 
     // M8 scoping (§7): a DRIVER may only quote for the customer of a stop on their
     // OWN currently-IN_PROGRESS run — mirrors orders.service.ts's B309 driver-

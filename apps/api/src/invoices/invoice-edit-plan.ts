@@ -36,6 +36,7 @@ import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
 import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
@@ -148,6 +149,33 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     out[i] = { row, untouched: true, productChanged: false };
   });
   return out;
+}
+
+/**
+ * SA-1034 rule 4: the payload lines that AUTHOR a custom (no product) price on an edit: a line with no stored row, or a
+ * stored custom line re-sent at another price. A server-priced row (`systemKind`, e.g. NSF) and a custom line whose
+ * price is only echoed back (a qty or note change) are not authoring. Feed it to `assertCustomPricesAllowed`.
+ */
+export function authoredCustomEditLines(
+  items: EditPayloadLine[],
+  matches: LineMatch[],
+): EditPayloadLine[] {
+  return items.filter((item, i) => {
+    if (item.productId) return false;
+    const row = matches[i].row;
+    if (row?.systemKind) return false;
+    return !row || !same(item.unitPrice, row.unitPrice);
+  });
+}
+
+/** SA-1034 rule 4 at an edit: a custom line this edit authors needs price rights, before any write; no `override` = internal. */
+export function assertEditAuthoredPrices(
+  items: EditPayloadLine[],
+  matches: LineMatch[],
+  override: { priceEditAllowed: boolean } | undefined,
+): void {
+  if (!override) return;
+  assertCustomPricesAllowed(authoredCustomEditLines(items, matches), override.priceEditAllowed);
 }
 
 /** The payload with an absent `unitLabel` filled from the matched row's unit (SA-070: absent = unchanged). */
