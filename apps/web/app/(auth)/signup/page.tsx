@@ -117,7 +117,13 @@ function SignupInner() {
   const businessName = watch("businessName");
   const slugValue = watch("slug");
   const usernameValue = watch("adminUsername");
-  const showUsernameField = usernameOpen || usernameStatus === "taken" || !!errors.adminUsername;
+  const usernameProblem = usernameStatus === "taken" || !!errors.adminUsername;
+  const showUsernameField = usernameOpen || usernameProblem;
+  // The field that opened by itself stays open: the first keystroke clears "taken" (status goes to checking), and
+  // a field that closed under the person's hands dropped focus to the page.
+  React.useEffect(() => {
+    if (usernameProblem) setUsernameOpen(true);
+  }, [usernameProblem]);
 
   // Auto-derive slug from business name (unless user has manually edited it)
   React.useEffect(() => {

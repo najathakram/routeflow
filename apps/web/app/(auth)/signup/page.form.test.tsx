@@ -84,6 +84,27 @@ describe("SignupPage — four fields and a username line (W2 B8)", () => {
     ).toBeInTheDocument();
   });
 
+  it("a field that opened by itself stays open and keeps focus while the person types in it", async () => {
+    usernameAvailable = false;
+    const user = userEvent.setup();
+    render(<SignupPage />);
+    typeBusiness();
+    const field = await screen.findByLabelText("Username");
+    usernameAvailable = true;
+    await user.click(field);
+    await user.type(field, "2");
+    // The first keystroke clears "taken"; the field must not close under the cursor.
+    expect(screen.getByLabelText("Username")).toBe(field);
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue("acme_distribution_admin2");
+    await user.type(field, "x");
+    await waitFor(() =>
+      expect(screen.getByText("This username is available.")).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText("Username")).toHaveFocus();
+    expect(screen.getByLabelText("Username")).toHaveValue("acme_distribution_admin2x");
+  });
+
   it("still sends the username with the sign-up", async () => {
     render(<SignupPage />);
     typeBusiness();
