@@ -6,6 +6,7 @@ import { Button, Input, useToast } from "@routeflow/ui/web";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { sendAccountStatementEmail } from "@/lib/api/account-statement";
 import { STATEMENT_COPY, sentToLabel } from "@/lib/account-statement-display";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
 
 /**
@@ -24,14 +25,16 @@ type Problem = string | null;
 /** Customers with a send in flight. Module level on purpose: closing the sheet unmounts the button, the request goes on. */
 const sending = new Map<string, Promise<void>>();
 
+/**
+ * SA-1078 A-8: the button never reads the server's words. Its own two codes get their own sentences (the send failure names the
+ * address and Settings → Email, because a provider can refuse the address in view); everything else goes through the app's
+ * shared copy, with `emailFailed` for an uncoded 400, 409 or 422 (the validator's raw text, often an array, never shows).
+ */
 function problemOf(e: unknown): string {
-  const data = (e as { response?: { data?: { code?: string; message?: unknown } } })?.response
-    ?.data;
-  if (data?.code === API_ERROR_CODES.EMAIL_NOT_CONFIGURED) return STATEMENT_COPY.emailNotSetUp;
-  // A coded refusal (EMAIL_SEND_FAILED) carries the transport's reason in words. A 400 with no code is the validator's raw
-  // text ("email must be an email", often an array): the person reads the plain sentence instead.
-  if (data?.code && typeof data.message === "string" && data.message) return data.message;
-  return STATEMENT_COPY.emailFailed;
+  const code = (e as { response?: { data?: { code?: string } } })?.response?.data?.code;
+  if (code === API_ERROR_CODES.EMAIL_NOT_CONFIGURED) return STATEMENT_COPY.emailNotSetUp;
+  if (code === API_ERROR_CODES.EMAIL_SEND_FAILED) return STATEMENT_COPY.emailSendFailed;
+  return genericToastCopy(e, STATEMENT_COPY.emailFailed);
 }
 
 export function StatementEmailButton({
@@ -66,7 +69,14 @@ export function StatementEmailButton({
   async function post(to: string) {
     try {
       const res = await sendAccountStatementEmail(customerId, to);
-      if (!alive.current) return;
+      if (!alive.current) {
+        // An email can't be called back: a person who sees nothing may send it again.
+        toast({
+          title: sentToLabel(res.sentTo),
+          ...(res.warning ? { description: res.warning } : {}),
+        });
+        return;
+      }
       setSent({ to: res.sentTo, ...(res.warning ? { warning: res.warning } : {}) });
       setOpen(false);
     } catch (err) {

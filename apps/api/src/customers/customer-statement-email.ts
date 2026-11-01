@@ -84,16 +84,8 @@ export async function sendCustomerStatementEmail(
   const now = deps.now ?? new Date();
   const statement = await buildAccountStatement(deps.prisma, customer, { staff: false, now });
   const tenant = await deps.statementPdf.loadTenant();
-  let pdf: Buffer;
-  try {
-    pdf = await deps.statementPdf.renderCurrent(statement, tenant, now);
-  } catch {
-    // The body says the PDF is attached, so a statement without one is never sent (and no delivery row is written).
-    throw new BadRequestException({
-      code: API_ERROR_CODES.EMAIL_SEND_FAILED,
-      message: "The statement couldn't be prepared, so it wasn't sent. Try again.",
-    });
-  }
+  // A render that throws is a 500: nothing is sent, because the body says the PDF is attached (and no delivery row is written).
+  const pdf = await deps.statementPdf.renderCurrent(statement, tenant, now);
   const mail = buildStatementEmail(statement, tenant?.businessName);
 
   const tenantId = deps.prisma.getTenantId();

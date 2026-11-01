@@ -28,6 +28,8 @@ export const STATEMENT_COPY = {
   send: "Send",
   emailNotSetUp: "Email isn't set up yet. An account admin can set it up under Settings → Email.",
   emailFailed: "Couldn't send the statement. Check the address and try again.",
+  emailSendFailed:
+    "Couldn't send the statement. Check the address and Settings → Email, then try again.",
   emailFailedTitle: "Couldn't email the statement",
 } as const;
 

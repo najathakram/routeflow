@@ -3,13 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { act, fireEvent } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { API_ERROR_CODES } from "@routeflow/types";
+import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { StatementEmailButton } from "./StatementEmailButton";
 
 /**
  * SA-1078 W-1096 PR-4 (web): E3 (no address on file → the sheet asks), E4/E5 (the failure lines, typed address kept),
  * E7 (warning), E9 (double tap = one send), E10 (read-only: disabled with the hint), E15 (the address the server used is the
- * one shown), E16 (a refused address reads as a sentence), E19 (the same-tick guard), E20 (closing the sheet mid-send).
+ * one shown), E16 (a refused address reads as a sentence), E19 (the same-tick guard), E20 (closing the sheet mid-send),
+ * A-8: E21 to E24 (every failure reads as a fixed sentence, never the server's words), E25 (a send that succeeds after the sheet
+ * closed is a toast), E26 (two customers send at once), E27 (a coded read-only refusal).
  */
 
 const mockPost = jest.fn();
@@ -85,7 +88,11 @@ describe("the Email control", () => {
     await user.click(screen.getByRole("button", { name: "Email" }));
     await user.type(screen.getByLabelText("Send to"), "typed@acme.example");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("couldn't be emailed");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(
+      "Couldn't send the statement. Check the address and Settings → Email, then try again.",
+    );
+    expect(alert).not.toHaveTextContent("550");
     expect(screen.getByLabelText("Send to")).toHaveValue("typed@acme.example");
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
     mockPost.mockResolvedValueOnce({ data: { success: true, sentTo: "typed@acme.example" } });
@@ -182,6 +189,89 @@ describe("the Email control", () => {
     expect(await screen.findByText("Statement sent to ap@acme.example")).toBeInTheDocument();
   });
 
+  describe("SA-1078 A-8: every failure reads as a fixed sentence", () => {
+    const plain = (status: number, message: unknown) =>
+      Object.assign(new Error("Request failed"), { response: { status, data: { message } } });
+    const alertFor = async (err: unknown) => {
+      mockPost.mockRejectedValue(err);
+      const user = userEvent.setup();
+      renderWithProviders(<StatementEmailButton customerId="a8" emailOnFile="ap@acme.example" />);
+      await user.click(screen.getByRole("button", { name: "Email" }));
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      return screen.findByRole("alert");
+    };
+    it.each([
+      [
+        "E21 removed customer",
+        plain(409, "Restore the customer first"),
+        "This customer has been removed. Restore it first.",
+      ],
+      ["E22 403", plain(403, "Forbidden resource"), "You don't have permission to do that."],
+      [
+        "E22 404",
+        plain(404, "Customer not found"),
+        "That item no longer exists. Refresh and try again.",
+      ],
+      [
+        "E22 429",
+        plain(429, "ThrottlerException"),
+        "Too many requests. Wait a moment and try again.",
+      ],
+      [
+        "E22 500",
+        plain(500, "Internal server error"),
+        "Something went wrong on our side. Please try again.",
+      ],
+      [
+        "E23b an unknown plain 400 is never the server's words",
+        plain(400, "some server words"),
+        "Couldn't send the statement. Check the address and try again.",
+      ],
+      [
+        "E23 no address on file",
+        plain(400, "No email address on file for this customer. Provide an email address."),
+        "No email address on file for this customer. Provide an email address.",
+      ],
+      [
+        "E23 transport failure, through the alert",
+        apiError("EMAIL_SEND_FAILED", "The statement couldn't be emailed (550)."),
+        "Couldn't send the statement. Check the address and Settings → Email, then try again.",
+      ],
+      [
+        "E24 no response",
+        Object.assign(new Error("Network Error"), { request: {}, code: "ERR_NETWORK" }),
+        "We couldn't confirm whether this went through. Refresh and check before trying again.",
+      ],
+      [
+        "E27 coded read-only refusal",
+        Object.assign(new Error("Request failed"), {
+          response: { status: 403, data: { code: "READ_ONLY", message: "server text" } },
+        }),
+        READ_ONLY_SENTENCE,
+      ],
+    ])("%s", async (_name, err, sentence) => {
+      expect((await alertFor(err)).textContent).toBe(sentence);
+    });
+
+    it("E26: a send for one customer does not block another's", async () => {
+      mockPost.mockReturnValue(new Promise(() => undefined));
+      const user = userEvent.setup();
+      renderWithProviders(
+        <>
+          <StatementEmailButton customerId="a8-1" emailOnFile="a@acme.example" />
+          <StatementEmailButton customerId="a8-2" emailOnFile="b@acme.example" />
+        </>,
+      );
+      const [one, two] = screen.getAllByRole("button", { name: "Email" });
+      await user.click(one!);
+      await user.click(two!);
+      const sends = screen.getAllByRole("button", { name: "Send" });
+      await user.click(sends[0]!);
+      await user.click(sends[1]!);
+      await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
+    });
+  });
+
   describe("E20: the sheet closes mid-send", () => {
     function Sheet() {
       const [shown, setShown] = React.useState(true);
@@ -215,6 +305,20 @@ describe("the Email control", () => {
       });
       expect(await screen.findByText("Couldn't email the statement")).toBeInTheDocument();
       await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+    });
+
+    it("E25: a send that succeeds after closing is a toast naming where it went", async () => {
+      let finish: (v: unknown) => void = () => undefined;
+      mockPost.mockReturnValue(new Promise((r) => (finish = r)));
+      const user = userEvent.setup();
+      renderWithProviders(<Sheet />);
+      await user.click(screen.getByRole("button", { name: "Email" }));
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await user.click(screen.getByRole("button", { name: "toggle sheet" })); // close
+      await act(async () => {
+        finish({ data: { success: true, sentTo: "ap@acme.example" } });
+      });
+      expect(await screen.findByText("Statement sent to ap@acme.example")).toBeInTheDocument();
     });
   });
 });

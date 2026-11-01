@@ -213,11 +213,10 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     expect(a.deps.storage).toBeUndefined();
   });
 
-  it("E14: a render that throws sends nothing and writes no delivery row (EMAIL_SEND_FAILED)", async () => {
+  it("E14 (SA-1078 A-8): a render that throws rejects with its own error (a 500), sends nothing and writes no delivery row", async () => {
     const a = arrange({ renderFails: true });
-    await expect(sendCustomerStatementEmail(a.deps, "cust-1")).rejects.toMatchObject({
-      response: { code: API_ERROR_CODES.EMAIL_SEND_FAILED },
-    });
+    await expect(sendCustomerStatementEmail(a.deps, "cust-1")).rejects.toThrow("react-pdf blew up");
+    // the send, which carries the delivery row, is never reached: the body says the PDF is attached
     expect(a.send).not.toHaveBeenCalled();
   });
 
