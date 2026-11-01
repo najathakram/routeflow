@@ -113,6 +113,11 @@ describe("FAQ — W6 (COPY.md 2i)", () => {
     expect(container.textContent).not.toMatch(/trial|14 days|free for 14/i);
   });
 
+  it("promises no driver sign-in: drivers need an add-on a new account does not have (SA-1080 F4)", () => {
+    const { container } = render(<FAQ />);
+    expect(container.textContent).not.toMatch(/drivers? sign in|driver app/i);
+  });
+
   it("answers in the site's names: no 'wholesaler', 'workspace' or 'demo'", () => {
     const { container } = render(<FAQ />);
     const text = container.textContent ?? "";

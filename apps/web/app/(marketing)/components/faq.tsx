@@ -21,7 +21,7 @@ const GENERAL: Array<[string, string]> = [
   ],
   [
     "What does my team use it on?",
-    "Your office and retailers use a web browser, on a phone or computer. There’s nothing to install. Drivers sign in on their phones.",
+    "Your office and retailers use a web browser, on a phone or computer. There’s nothing to install.",
   ],
   [
     "Does RouteFlow work with QuickBooks?",
