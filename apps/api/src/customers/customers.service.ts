@@ -2,6 +2,7 @@ import { assertNotWalkIn, assertWalkInLoginUntouched, excludeWalkIn } from "./wa
 import { sellerDisplayName } from "../common/seller-display-name";
 import { restoredUsernameFor } from "./restore-username";
 import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
+import { buildAccountStatement } from "./account-statement";
 import { buildMyStatement, buildOperatorStatement } from "./customer-statement";
 import {
   BadRequestException,
@@ -933,6 +934,11 @@ export class CustomersService {
   async getStatementForOperator(customerId: string, opts?: { includeExposure?: boolean }) {
     await this.findCustomerOrThrow(customerId);
     return buildOperatorStatement(this.prisma, customerId, opts);
+  }
+
+  /** SA-1078: the account statement read; `staff` adds emailOnFile + toCollect (the buyer's own view omits them). */
+  async getAccountStatement(customerId: string, opts: { staff: boolean }) {
+    return buildAccountStatement(this.prisma, await this.findCustomerOrThrow(customerId), opts);
   }
 
   // ─── Advance payments ──────────────────────────────────────────────────────
