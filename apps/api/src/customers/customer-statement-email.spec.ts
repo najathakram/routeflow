@@ -103,6 +103,16 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     expect(sent.html).toContain("$350.00");
   });
 
+  it("E1b: the customer read asks for THIS customer, through the tenant-scoped client", async () => {
+    // the mock returns one fixed customer whatever is asked, so only the argument can prove the read is for `customerId`
+    const a = arrange();
+    await sendCustomerStatementEmail(a.deps, "cust-1");
+    expect(a.findFirst).toHaveBeenCalledTimes(1);
+    expect(a.findFirst.mock.calls[0][0].where).toEqual({ id: "cust-1" });
+    await sendCustomerStatementEmail(a.deps, "cust-2");
+    expect(a.findFirst.mock.calls[1][0].where).toEqual({ id: "cust-2" });
+  });
+
   it("E2: a typed address wins over the on-file one", async () => {
     const a = arrange();
     const res = await sendCustomerStatementEmail(a.deps, "cust-1", "billing@acme.example");
@@ -211,6 +221,39 @@ describe("sendCustomerStatementEmail (SA-1078 PR-4)", () => {
     expect(a.send).not.toHaveBeenCalled();
   });
 
+  it('E17: a removed customer is a 409 "Restore the customer first": nothing rendered, sent or recorded, on-file or typed address (SA-1078 A-7)', async () => {
+    const removed = {
+      id: "cust-1",
+      businessName: "Acme Corp",
+      email: "ap@acme.example",
+      deletedAt: new Date(),
+    };
+    for (const typed of [undefined, "billing@acme.example"]) {
+      const a = arrange({ customer: removed });
+      await expect(sendCustomerStatementEmail(a.deps, "cust-1", typed)).rejects.toMatchObject({
+        status: 409,
+        message: "Restore the customer first",
+      });
+      expect(a.isEmailConfigured).not.toHaveBeenCalled();
+      expect(a.renderCurrent).not.toHaveBeenCalled();
+      expect(a.send).not.toHaveBeenCalled();
+    }
+  });
+
+  it("E17b: the read selects deletedAt, and a customer that is not removed still sends", async () => {
+    const a = arrange({
+      customer: {
+        id: "cust-1",
+        businessName: "Acme Corp",
+        email: "ap@acme.example",
+        deletedAt: null,
+      },
+    });
+    await sendCustomerStatementEmail(a.deps, "cust-1");
+    expect(a.findFirst.mock.calls[0][0].select).toMatchObject({ deletedAt: true });
+    expect(a.send).toHaveBeenCalledTimes(1);
+  });
+
   it("a customer the tenant does not have is a 404 before anything else", async () => {
     const a = arrange({ customer: null });
     await expect(sendCustomerStatementEmail(a.deps, "nope")).rejects.toBeInstanceOf(
@@ -234,9 +277,12 @@ describe("buildStatementEmail (SA-1078 PR-4)", () => {
     expect(buildStatementEmail(STATEMENT, null).subject).toBe("Your account statement");
   });
 
-  it("a business name with markup is escaped in the HTML body and never executable", () => {
+  it("a business name with markup goes in the subject only; the HTML body never carries it", () => {
+    // the body holds a date and two figures, so nothing a tenant types can reach it; this row says so rather than claim escaping
     const m = buildStatementEmail(STATEMENT, `<script>alert("x")</script>`);
-    expect(m.html).not.toContain("<script>");
+    expect(m.subject).toBe(`Your statement from <script>alert("x")</script>`);
+    expect(m.html).not.toContain("script");
+    expect(m.text).not.toContain("script");
   });
 
   it("the PDF's file name names the customer's day, not the clock", () => {

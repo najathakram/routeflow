@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type { AccountStatement } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -57,9 +62,12 @@ export async function sendCustomerStatementEmail(
 ) {
   const customer = await deps.prisma.forTenant().customer.findFirst({
     where: { id: customerId },
-    select: { id: true, businessName: true, email: true },
+    select: { id: true, businessName: true, email: true, deletedAt: true },
   });
   if (!customer) throw new NotFoundException("Customer not found");
+  // SA-1078 A-7: an email cannot be called back, and staff writes on a removed customer are refused everywhere else (REG-B170).
+  // Reads and Print stay; restore the customer to send a final statement. A 409, not a 404: the customer's page is still there.
+  if (customer.deletedAt) throw new ConflictException("Restore the customer first");
 
   const recipientEmail = resolveRecipientEmail(overrideEmail, customer.email);
 
