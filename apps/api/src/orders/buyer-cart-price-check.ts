@@ -13,7 +13,7 @@ export function assertBuyerCartPricesCurrent(args: {
   productMap: ReadonlyMap<string, any>;
   cpMap: ReadonlyMap<string, number | null>;
   defaultTier: number;
-  priceHistory: Record<string, { lastPrice?: number | null } | undefined>;
+  priceHistory: Record<string, { stickyPrice?: number | null } | undefined>;
   /** S19, flag.units_prices_v2 only: the pack's customer-layer price; it is their current price, above sticky history. */
   layerOf?: (productId: string) => { price: number } | null;
 }): void {
@@ -40,7 +40,7 @@ export function assertBuyerCartPricesCurrent(args: {
         effectiveBuyerPrice(
           Number(getTierPrice(product, tierForProduct)),
           Number(product.pricePerUnit),
-          priceHistory[item.productId]?.lastPrice ?? null,
+          priceHistory[item.productId]?.stickyPrice ?? null,
         );
       if (Math.abs(currentPrice - item.unitPrice) > 0.01) {
         changedItems.push({

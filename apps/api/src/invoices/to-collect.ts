@@ -1,5 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { InvoiceStatus, type Prisma } from "@prisma/client";
+import { roundMoney } from "@routeflow/pricing";
 import { confirmedBalance } from "./invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 
@@ -152,7 +153,7 @@ export function toCollectByCustomer(
       balance: 0,
     };
     cur.count += 1;
-    cur.balance = Math.round((cur.balance + r.balance) * 100) / 100;
+    cur.balance = roundMoney(cur.balance + r.balance);
     by.set(r.customerId, cur);
   }
   return [...by.values()].sort((a, b) => (a.customerId < b.customerId ? -1 : 1));
@@ -160,7 +161,7 @@ export function toCollectByCustomer(
 
 /**
  * The customer detail's "To collect" tile (staff only): how many of the customer's invoices read To collect and the sum of
- * their balance due. No new money math: each balance is `confirmedBalance` (the statement's own basis), summed in cents.
+ * their balance due. No new money math: each balance is `confirmedBalance` (the statement's own basis), summed via roundMoney.
  */
 export function toCollectSummary(
   invoices: readonly {
@@ -171,11 +172,11 @@ export function toCollectSummary(
   }[],
 ): { count: number; balance: number } {
   let count = 0;
-  let cents = 0;
+  let balance = 0;
   for (const i of invoices) {
     if (toCollectState(i) === "NONE") continue;
     count += 1;
-    cents += Math.round(confirmedBalance(i.total, i.payments) * 100);
+    balance = roundMoney(balance + confirmedBalance(i.total, i.payments));
   }
-  return { count, balance: cents / 100 };
+  return { count, balance };
 }

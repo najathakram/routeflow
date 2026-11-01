@@ -213,6 +213,53 @@ describe("counterShipDraftInput", () => {
   });
 });
 
+describe("SA-1068 M16: a price the clerk typed", () => {
+  const typed = (over: Partial<SaleLine> = {}): SaleLine => ({
+    ...PLAIN_LINE,
+    unitPrice: 2,
+    listPrice: 2.5,
+    tierPrice: 2.5,
+    priceEdited: true,
+    override: { mode: "set", value: 2, reason: "  Damaged box " },
+    ...over,
+  });
+  const draftLine = (l: SaleLine) => counterCartToDraftPayload([l], CUSTOMER).lineItems[0];
+
+  it("T15: goes to the draft with its reason, classed so the builder sends it", () => {
+    expect(draftLine(typed())).toMatchObject({
+      unitPrice: 2,
+      discountedPrice: 2,
+      overrideReason: "Damaged box",
+      priceType: "DISCOUNTED",
+    });
+  });
+
+  it("T15: a raised price is MANUAL, and no reason means no reason key", () => {
+    const d = draftLine(typed({ unitPrice: 3, override: { mode: "set", value: 3 } }));
+    expect(d).toMatchObject({ discountedPrice: 3, priceType: "MANUAL" });
+    expect(d).not.toHaveProperty("overrideReason");
+  });
+
+  it("T15: a remembered line typed back to list is still sent, or the server books the memory", () => {
+    const d = draftLine(
+      typed({ unitPrice: 2.5, tierPrice: 3, priceType: "MANUAL", remembered: true }),
+    );
+    expect(d).toMatchObject({ unitPrice: 2.5, discountedPrice: 2.5, priceType: "MANUAL" });
+  });
+
+  it("T15: a special-priced line keeps the system price as its base, not the typed net", () => {
+    const d = draftLine(typed({ unitPrice: 2, tierPrice: 2.25, priceType: "SPECIAL" }));
+    expect(d).toMatchObject({ specialPrice: 2.25, discountedPrice: 2, priceType: "DISCOUNTED" });
+  });
+
+  it("a line nobody typed on carries no price to send", () => {
+    const d = draftLine({ ...PLAIN_LINE, unitPrice: 3, priceType: "MANUAL", remembered: true });
+    expect(d).toMatchObject({ unitPrice: 3, priceType: "MANUAL" });
+    expect(d).not.toHaveProperty("discountedPrice");
+    expect(d).not.toHaveProperty("overrideReason");
+  });
+});
+
 describe("copy", () => {
   it("is the exact spec copy", () => {
     expect(COUNTER_SHIP_FAILED_COPY).toBe("Couldn't move this sale to shipping. Try again.");

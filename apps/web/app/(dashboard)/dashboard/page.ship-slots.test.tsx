@@ -8,6 +8,7 @@ import DashboardPage from "./page";
 // always did (the invariant half of this file).
 
 let authRole = "OPERATOR";
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

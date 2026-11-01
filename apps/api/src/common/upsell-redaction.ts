@@ -1,13 +1,13 @@
-import { isUpsellLine } from "@routeflow/pricing";
+import { isAboveListLine } from "@routeflow/pricing";
 
 /**
- * Customer-facing redaction for UPSELL lines.
+ * Customer-facing redaction for lines charged ABOVE catalog.
  *
  * An upsell (operator sold a line ABOVE catalog) is stored as a MANUAL override
  * with the catalog base in `originalPrice` and the higher net in `unitPrice`
- * (see the discount convention in pricing.ts). The customer must never learn the
- * base price nor that they were upsold, so before any order/invoice reaches a
- * customer we:
+ * (see the discount convention in pricing.ts). A tier above Retail is stored the
+ * same way as SPECIAL (SA-1072). The customer must never learn the base price,
+ * so before any order/invoice reaches a customer we:
  *   - null `originalPrice`  → no strikethrough / "was" price
  *   - set `priceType = STANDARD` → no "Special"/"Adjusted" pill
  *   - drop `product.pricePerUnit` (the base sitting next to a higher unitPrice is
@@ -34,7 +34,7 @@ interface RedactableLine {
 export function redactUpsellLines(lines: unknown): void {
   if (!Array.isArray(lines)) return;
   for (const line of lines as RedactableLine[]) {
-    if (isUpsellLine(line as Parameters<typeof isUpsellLine>[0])) {
+    if (isAboveListLine(line as Parameters<typeof isAboveListLine>[0])) {
       line.originalPrice = null;
       line.priceType = "STANDARD";
     }

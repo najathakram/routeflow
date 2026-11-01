@@ -238,6 +238,44 @@ describe("W-1042 save, then scan again", () => {
   });
 });
 
+describe("SA-1071 I1: the regulated question explains itself", () => {
+  const FIRST = "Regulated items need their category and tax set in Products.";
+  const cat = (name: string, active = true) => ({ id: `tc-${name}`, name, active });
+  /** the whole text of the question box, so a missing sentence reads as what is there instead */
+  const questionText = async () => {
+    const heading = await screen.findByText("Is this a licensed or regulated item?");
+    return (heading.closest("[role='dialog']") as HTMLElement).textContent;
+  };
+
+  it("I1: the line names the business's own tracked categories, three and then 'and N more'", async () => {
+    tracked = [cat("Tobacco"), cat("Vapor"), cat("Beer"), cat("Wine"), cat("Spirits")];
+    await missThenCreate();
+    expect(await questionText()).toBe(
+      `Is this a licensed or regulated item?${FIRST} Tracked categories: Tobacco, Vapor, Beer and 2 more.CancelNoYes`,
+    );
+  });
+
+  it("I1: up to three are listed whole, and an inactive category is left out", async () => {
+    tracked = [cat("Tobacco"), cat("Vapor"), cat("Old stuff", false)];
+    await missThenCreate();
+    expect(await questionText()).toContain(`${FIRST} Tracked categories: Tobacco, Vapor.`);
+  });
+
+  it("I1: when the read has not answered, only the first sentence shows", async () => {
+    (apiClient.get as jest.Mock).mockImplementation(async (url: string) => {
+      if (url === "/tracked-categories") return Promise.reject({ response: { status: 500 } });
+      if (url === "/settings") return { data: { taxRate: 0 } };
+      if (url === "/products/categories") return { data: [] };
+      if (url.startsWith("/products/barcode/"))
+        return Promise.reject({ response: { status: 404 } });
+      if (url === "/products") return { data: { data: [] } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    await missThenCreate();
+    expect(await questionText()).toBe(`Is this a licensed or regulated item?${FIRST}CancelNoYes`);
+  });
+});
+
 describe("W-1042 MUST 12: regulated goods", () => {
   it("R10: a tracked business is asked first, and Yes stops: nothing is created, the cart stays", async () => {
     tracked = [TOBACCO];
@@ -336,5 +374,131 @@ describe("W-1042 MUST 14a at the screen: the counter holds scans while a window 
     await new Promise((r) => setTimeout(r, 80));
     expect(field().value).toBe("");
     expect(lines()).toHaveLength(0);
+  });
+});
+
+describe("SA-1066 F10: the regulated question takes focus on its box, never a button, and has Cancel", () => {
+  const box = () => screen.getByRole("dialog").firstElementChild as HTMLElement;
+  const COLA_ROW = {
+    id: "p-cola",
+    name: "Sample Cola",
+    sku: "200000000001",
+    unit: "each",
+    pricePerUnit: 2.5,
+    unitsPerBox: null,
+    isActive: true,
+  };
+
+  it("R10: opening moves focus into the dialog box (tabIndex -1), not onto a button", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    expect(document.activeElement).toBe(box());
+    expect(box()).toHaveAttribute("tabindex", "-1");
+    expect(document.activeElement?.tagName).not.toBe("BUTTON");
+  });
+
+  it("R10: the step change (Yes) puts focus back on the box, still not a button", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    // A real click moves focus onto the button it presses; fireEvent.click does not. Without this the box would still hold
+    // focus and the test would pass even if the step change stopped re-focusing it.
+    screen.getByRole("button", { name: "Yes" }).focus();
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await screen.findByText("Add it from Products, so its category and tax are set.");
+    expect(document.activeElement).toBe(box());
+  });
+
+  it("R10: the box takes focus with preventScroll, on open and on the step change, so the page does not jump", async () => {
+    tracked = [TOBACCO];
+    const focusSpy = jest.spyOn(HTMLElement.prototype, "focus");
+    try {
+      await missThenCreate();
+      await screen.findByText("Is this a licensed or regulated item?");
+      const focusedBox = () =>
+        (focusSpy.mock.instances as unknown[]).some(
+          (el, i) =>
+            el === box() &&
+            JSON.stringify(focusSpy.mock.calls[i]?.[0]) === JSON.stringify({ preventScroll: true }),
+        );
+      expect(focusedBox()).toBe(true);
+      focusSpy.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+      await screen.findByText("Add it from Products, so its category and tax are set.");
+      expect(focusedBox()).toBe(true);
+    } finally {
+      focusSpy.mockRestore();
+    }
+  });
+
+  it("R10: the question has a Cancel that closes it like Esc, leaving the cart alone", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(openDialog()).toBeNull();
+    expect(posts).toHaveLength(0);
+    expect(lines()).toHaveLength(0);
+  });
+
+  it("R10a: a wedge code and its Enter while the question is open add no line and press no answer", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    await userEvent.keyboard("200000008888{Enter}");
+    await new Promise((r) => setTimeout(r, 80));
+    expect(lines()).toHaveLength(0);
+    expect(screen.queryByText("Is this a licensed or regulated item?")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "New product" })).toBeNull();
+    expect(screen.queryByText("Add it from Products, so its category and tax are set.")).toBeNull();
+  });
+
+  it("R10b: a re-arm that fires while the question is open leaves focus on the box", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.blur(field());
+    await new Promise((r) => setTimeout(r, 80));
+    expect(document.activeElement).toBe(box());
+  });
+
+  it("R10c: Cancel, then the same scan adds a line", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    created = COLA_ROW;
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    submitScan("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(lines()[0]).toHaveTextContent("Sample Cola");
+  });
+});
+
+describe("SA-1066 F11: the dim layer fills the screen under a space-y parent", () => {
+  // `[data-scan-pause]` is fixed inset-0 but sits in a space-y-4 column, which gives it margin-top 16px: a white strip.
+  it("the question's overlay root has no top margin", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    expect(openDialog()?.className).toMatch(/(^|\s)!mt-0(\s|$)/);
+  });
+
+  it("the New product window's overlay root has no top margin either", async () => {
+    await missThenCreate();
+    await screen.findByRole("heading", { name: "New product" });
+    expect(openDialog()?.className).toMatch(/(^|\s)!mt-0(\s|$)/);
+  });
+});
+
+describe("SA-1066 F14: Open Products reads white on a darker teal", () => {
+  it("the link is bg-brand-600, not the lighter bg-brand-500", async () => {
+    tracked = [TOBACCO];
+    await missThenCreate();
+    await screen.findByText("Is this a licensed or regulated item?");
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    const link = screen.getByRole("link", { name: /open products/i });
+    expect(link.className).toMatch(/(^|\s)bg-brand-600(\s|$)/);
+    expect(link.className).not.toMatch(/bg-brand-500/);
   });
 });

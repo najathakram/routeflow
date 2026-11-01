@@ -3,7 +3,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { Camera, X, Zap, ZapOff } from "lucide-react";
-import { cn } from "@routeflow/ui/web";
+import { cn, useOptionalToast } from "@routeflow/ui/web";
 import {
   classifyScannerError,
   hasTorch,
@@ -27,9 +27,9 @@ interface BarcodeScannerButtonProps {
   /**
    * Called with a plain-language message whenever the webcam path can't start —
    * permission denied, no camera present, or an insecure origin (getUserMedia is
-   * unavailable outside https/localhost). Optional so existing call sites keep
-   * their prior (silent) behavior; new call sites should surface it (a toast,
-   * an inline message) rather than leaving the operator staring at nothing.
+   * unavailable outside https/localhost). Optional: without it the button shows
+   * the same message as a toast (SA-1067 C1), so no mount leaves the operator
+   * staring at nothing. A mount that passes it owns the message and gets no toast.
    */
   onError?: (message: string) => void;
   /**
@@ -73,8 +73,15 @@ export function BarcodeScannerButton({
   // effect from tearing the stream down and reopening it whenever the parent re-renders.
   const onScanRef = React.useRef(onScan);
   onScanRef.current = onScan;
-  const onErrorRef = React.useRef(onError);
-  onErrorRef.current = onError;
+  // SA-1067 C1: no onError means "show it for me". The optional hook keeps a tree with no ToastProvider (a test, a bare
+  // preview) silent instead of throwing; the app mounts one at the root, so every real mount has it.
+  const toasts = useOptionalToast();
+  const report = (message: string) => {
+    if (onError) onError(message);
+    else toasts?.toast({ title: message, variant: "error" });
+  };
+  const reportRef = React.useRef(report);
+  reportRef.current = report;
 
   // ── USB / physical scanner auto-submit ──────────────────────────────────
   // B672: every real caller passes `onScan` as a fresh inline closure (e.g.
@@ -131,7 +138,7 @@ export function BarcodeScannerButton({
     // the overlay at all so the operator gets an immediate, specific message instead of a
     // black video panel that silently fails a moment later.
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      onError?.(
+      report(
         "Camera scanning needs a secure connection (https). Type the SKU instead, or open this page over https.",
       );
       return;
@@ -192,7 +199,7 @@ export function BarcodeScannerButton({
       } catch (err) {
         stream?.getTracks().forEach((t) => t.stop());
         console.error("Barcode scanner error:", err);
-        if (active) onErrorRef.current?.(classifyScannerError(err));
+        if (active) reportRef.current(classifyScannerError(err));
         setScannerOpen(false);
       }
     }

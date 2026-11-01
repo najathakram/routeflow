@@ -15,6 +15,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { FulfilmentEditGuard } from "./fulfilment-edit";
 import { SettingsFulfilmentService } from "./settings-fulfilment.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Preview and change are throttled to 10 per 60 s (the ordinary 100 would let a script hammer the
  * aggregate counts behind the preview). The throttle key is the guard's default, the client IP, per
@@ -26,6 +27,7 @@ const EDIT_THROTTLE = { default: { ttl: 60_000, limit: 10 } };
 // Reads OPERATOR; preview and change are TENANT_ADMIN (SUPER_ADMIN satisfies it via the RolesGuard
 // hierarchy; OPERATOR gets 403) AND the `canEditFulfilment` predicate. Bodies are `unknown`: the
 // service parses them into coded 400s, which the global whitelist pipe would otherwise pre-empt.
+@PermissionBase("settings read for every staff user, SA-977")
 @ApiTags("settings")
 @ApiBearerAuth()
 @Controller("settings/fulfilment")

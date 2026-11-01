@@ -115,3 +115,12 @@ package (for example `packages/pricing`) is covered by that package's own full r
 api/web/mobile tests that reach it only through the workspace link, and specs that read repo files by
 path (scripts, hooks) are not "related" to those files. CI catches these on the train; a local full run
 catches them earlier.
+
+**A pass is a token, not an exit code (W-1045):** the pre-push hook runs `node scripts/verify-gate.mjs run`,
+which gives the `verify` chain a nonce and refuses the push unless `verify-turbo.mjs` wrote a matching token
+(every planned turbo call returned the number 0) and the chain's last link (`verify-gate.mjs commit`) promoted
+it. A verify that is killed, crashed or cut short exits non-zero or writes no token: the push is refused and no
+marker is written. Fast mode takes the same path. A marker now has an evidence sibling, `rf-verified.json`.
+To find markers that pre-date this (no evidence, so unproven): `node scripts/verify-gate.mjs audit` (lists every
+worktree's marker; delete any `UNPROVEN` one and re-push). The heavy-slot `history.jsonl` is the second place
+to look: a real verify has a `label:"verify"` line with `exit:0` and a `heldSec` that matches its plan.

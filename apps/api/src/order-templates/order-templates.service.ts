@@ -1100,7 +1100,7 @@ export class OrderTemplatesService {
         activePromos,
         qtyPieces,
         qtyUnits,
-        priceHistory[item.productId]?.lastPrice ?? null,
+        priceHistory[item.productId]?.stickyPrice ?? null,
         { boxes: null, pieces: null, unitsPerBox: upb },
         // S19: the 8th argument exists only when the pack is in the customer layer (flag off: master's 7 arguments).
         ...((layer ? [layer] : []) as [CustomerLayerPrice] | []),

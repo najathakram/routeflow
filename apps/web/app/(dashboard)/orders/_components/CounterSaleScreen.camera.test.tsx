@@ -174,12 +174,14 @@ beforeEach(() => {
   window.sessionStorage.clear();
   barcodeFor = {};
   listFor = {};
+  quickKeys = { register: "main", cap: 12, keys: [] };
   mockCamera.opts = null;
   mockCamera.mounted = 0;
   clock = 1_000_000;
   dateSpy = jest.spyOn(Date, "now").mockImplementation(() => clock);
   (apiClient.get as jest.Mock).mockImplementation(async (url: string, cfg?: any) => {
     if (url === "/settings") return { data: { taxRate: 0 } };
+    if (url === "/orders/counter-sale/quick-keys") return { data: quickKeys };
     if (url.startsWith("/products/barcode/")) {
       const code = decodeURIComponent(url.slice("/products/barcode/".length));
       return barcodeFor[code] ? { data: await barcodeFor[code]() } : notFound();
@@ -213,6 +215,7 @@ afterEach(() => {
   delete (window as unknown as Record<string, unknown>).matchMedia;
 });
 
+let quickKeys: { register: string; cap: number; keys: unknown[] };
 const scanField = () => screen.getByLabelText("Scan or search items") as HTMLInputElement;
 const wedge = async (text: string) => {
   fireEvent.change(scanField(), { target: { value: text } });
@@ -820,13 +823,13 @@ describe("MUST 9/10 and C12: the camera button is for touch-first devices only",
     expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
   });
 
-  it("C12: not touch-first, there is no camera button, the scan field autofocuses, and a letter is not routed", () => {
+  it("C12: not touch-first, there is no camera button, the scan field autofocuses, and a lowercase letter is not routed (SA-1067 M4: a capital is)", () => {
     setTouchFirst(false);
     renderTill(<CounterSaleScreen />);
     expect(screen.queryByRole("button", { name: "Scan with camera" })).toBeNull();
     expect(document.activeElement).toBe(scanField());
     scanField().blur();
-    fireEvent.keyDown(document.body, { key: "A" });
+    fireEvent.keyDown(document.body, { key: "a" });
     expect(document.activeElement).not.toBe(scanField());
     fireEvent.keyDown(document.body, { key: "7" });
     expect(document.activeElement).toBe(scanField());
@@ -922,6 +925,49 @@ describe("MUST 10: opening the strip brings the scan bar to the top of the scrol
     renderTill(<CounterSaleScreen />);
     openCamera();
     expect(scrollTo).toHaveBeenCalledWith({ top: 500, behavior: "smooth" });
+  });
+
+  // SA-1066 F44: the strip's scroll must not leave the page where it put it. jsdom has no scroll, so this proves the CALL;
+  // the browser row reads `#main-content`.scrollTop before opening and after Close camera (they must be equal).
+  describe("F44: closing the strip puts the page back where it was", () => {
+    it("closing scrolls the container back to the scrollTop it had when the strip opened", () => {
+      layout({ barTop: 505, scrollHeight: 3000, scrollTop: 242 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      expect(scrollTo).toHaveBeenLastCalledWith({
+        top: 242 + (505 - MAIN_TOP),
+        behavior: "smooth",
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+      expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 242, behavior: "auto" });
+    });
+
+    it("a page that never moved (scrollTop 0) goes back to 0", () => {
+      layout({ barTop: 505, scrollHeight: 3000, scrollTop: 0 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: "auto" });
+    });
+
+    it("leaving the till with the strip open scrolls nothing (the next page owns the scroller)", () => {
+      layout({ barTop: 505, scrollHeight: 3000, scrollTop: 242 });
+      const { unmount } = renderTill(<CounterSaleScreen />);
+      openCamera();
+      scrollTo.mockClear();
+      unmount();
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("from md up nothing was moved, so nothing is put back", () => {
+      setTouchFirst(true, false, true);
+      layout({ barTop: 505, scrollHeight: 1000, scrollTop: 242 });
+      renderTill(<CounterSaleScreen />);
+      openCamera();
+      fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+      expect(scrollTo).not.toHaveBeenCalled();
+    });
   });
 
   describe("coming back from a receipt, and a cart that changes", () => {
@@ -1059,5 +1105,292 @@ describe("W-1041: the new-customer window pauses the camera", () => {
         await waitFor(() => expect(rows()).toHaveLength(2));
       },
     );
+  });
+});
+
+describe("SA-1066 camera: Added on the picture, Close at bottom-left, who is buying in the bar", () => {
+  const strip = () => screen.getByTestId("counter-camera-strip");
+
+  it("R8: a read puts `Added <name>` on the viewfinder (aria-hidden) and announces it once, in the status region", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    const overlay = await within(strip()).findByText("Added Sample Cola");
+    expect(overlay).toHaveAttribute("aria-hidden", "true");
+    const announced = screen
+      .getAllByRole("status")
+      .filter((el) => el.textContent?.includes("Added Sample Cola"));
+    expect(announced).toHaveLength(1);
+    expect(strip().contains(announced[0])).toBe(false);
+  });
+
+  it("R8a: Close camera sits bottom-left at 44 px and closes the camera like the toggle", () => {
+    renderPhoneTill();
+    const close = within(strip()).getByRole("button", { name: "Close camera" });
+    expect(close.className).toMatch(/\bleft-1\b/);
+    expect(close.className).toMatch(/\bbottom-1\b/);
+    expect(close.className).toMatch(/\bh-11\b/);
+    expect(close.className).toMatch(/\bw-11\b/);
+    fireEvent.click(close);
+    expect(screen.queryByTestId("counter-camera-strip")).toBeNull();
+    expect(screen.getByRole("button", { name: "Scan with camera" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("R8b: with the camera open, the sticky bar names the buyer in one line below md; shut, nothing", () => {
+    renderTill(<CounterSaleScreen />); // taps Walk-in, like the clerk
+    expect(screen.queryByTestId("counter-camera-who")).toBeNull();
+    openCamera();
+    const who = screen.getByTestId("counter-camera-who");
+    expect(who).toHaveTextContent(/^Walk-in$/);
+    expect(who.className).toMatch(/\bmd:hidden\b/);
+    expect(screen.getByTestId("counter-scan-bar").contains(who)).toBe(true);
+  });
+
+  it("R8b: before anyone is chosen there is no line to claim a buyer", () => {
+    renderWithProviders(<CounterSaleScreen />); // the question is still unanswered
+    openCamera();
+    expect(screen.queryByTestId("counter-camera-who")).toBeNull();
+  });
+});
+
+describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed camera say so", () => {
+  const strip = () => screen.getByTestId("counter-camera-strip");
+  const HELD_CUE = "Move it away to add another";
+  const OFF_CUE = "Camera off. Tap Scan with camera to turn it back on.";
+  const undoBtn = () => within(strip()).queryByRole("button", { name: "Undo" });
+
+  it("K1: a code held in view after it counted says to move it away, and counts once with one beep", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 12);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect({
+      cue: within(strip()).queryAllByText(HELD_CUE).length,
+      qty: lines()[0].textContent?.includes("× 1"),
+      beeps: (playScanCue as jest.Mock).mock.calls.length,
+    }).toEqual({ cue: 1, qty: true, beeps: 1 });
+  });
+
+  it("K1: the cue goes once the code has left the picture", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 12);
+    await waitFor(() => expect(within(strip()).queryAllByText(HELD_CUE)).toHaveLength(1));
+    await waitFor(() => expect(within(strip()).queryAllByText(HELD_CUE)).toHaveLength(0), {
+      timeout: 3000,
+    });
+    expect(lines()[0]).toHaveTextContent("× 1");
+  });
+
+  it("K1: a code that is lifted and shown again is a new count and carries no cue at that moment", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 12);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    clock += 700;
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+  });
+
+  it("K3: Undo on the picture takes back a read that made the line: the line goes", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    const undo = await waitFor(() => {
+      const b = undoBtn();
+      expect(b).not.toBeNull();
+      return b as HTMLElement;
+    });
+    expect(undo.closest('[aria-hidden="true"]')).toBeNull();
+    expect(undo.className).toMatch(/\bmin-h-11\b/);
+    fireEvent.click(undo);
+    await waitFor(() => expect(lines()).toHaveLength(0));
+    expect(undoBtn()).toBeNull();
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$0.00");
+  });
+
+  it("K3: Undo on a read that raised a two-unit line takes one unit back; the line stays", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    clock += 700;
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(undoBtn()!);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    expect(lines()).toHaveLength(1);
+    expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
+  });
+
+  it("K3: when the line was edited since the read, Undo steps it down by what the read added; the line stays", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Add one Sample Cola" }));
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    fireEvent.click(undoBtn()!);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    expect(lines()).toHaveLength(1);
+  });
+
+  it("K3 (review-a): a quick key after a read ends that read's Undo, so it can't take the wrong line", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    quickKeys.keys = [
+      {
+        productId: CHIPS.id,
+        name: CHIPS.name,
+        sellLevel: "UNIT",
+        pinned: true,
+        product: CHIPS,
+      },
+    ];
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(await screen.findByTestId(`quick-key-${CHIPS.id}`));
+    await waitFor(() => expect(lines()).toHaveLength(2));
+    if (undoBtn()) fireEvent.click(undoBtn()!);
+    await act(async () => {});
+    expect(
+      lines()
+        .map((l) => l.textContent)
+        .join(" "),
+    ).toContain(COLA.name);
+    expect(
+      lines()
+        .map((l) => l.textContent)
+        .join(" "),
+    ).toContain(CHIPS.name);
+    expect(undoBtn()).toBeNull();
+  });
+
+  it("K3: Undo on a case read takes back one case, not one can", async () => {
+    barcodeFor[PACK24.sku] = () => PACK24;
+    renderPhoneTill();
+    hold(PACK24.sku, 4);
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00"));
+    clock += 700;
+    hold(PACK24.sku, 4);
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$60.00"));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(undoBtn()!);
+    await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$30.00"));
+  });
+
+  it("K3: Undo on a read of 3 takes back all 3", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await wedge("3");
+    clock += 700;
+    hold("200000000001", 4);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 4"));
+    await waitFor(() => expect(undoBtn()).not.toBeNull());
+    fireEvent.click(undoBtn()!);
+    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    expect(lines()).toHaveLength(1);
+  });
+
+  it("K4: closing the camera says what happened, until the camera opens again", () => {
+    renderPhoneTill();
+    expect(screen.queryByText(OFF_CUE)).toBeNull();
+    fireEvent.click(within(strip()).getByRole("button", { name: "Close camera" }));
+    const cue = screen.getByText(OFF_CUE);
+    expect(cue.closest("[role='status']")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+    expect(screen.queryByText(OFF_CUE)).toBeNull();
+  });
+
+  it("K4: the line goes at the next scan", async () => {
+    barcodeFor["200000000001"] = () => COLA;
+    renderPhoneTill();
+    fireEvent.click(within(strip()).getByRole("button", { name: "Close camera" }));
+    expect(screen.getByText(OFF_CUE)).toBeInTheDocument();
+    await wedge("200000000001");
+    await waitFor(() => expect(lines()).toHaveLength(1));
+    expect(screen.queryByText(OFF_CUE)).toBeNull();
+  });
+
+  it("K4: a camera that was never opened has no such line", () => {
+    renderTill(<CounterSaleScreen />);
+    expect(screen.queryByText(OFF_CUE)).toBeNull();
+  });
+});
+
+describe("SA-1071 K2: Payment shows once", () => {
+  type IO = {
+    cb: IntersectionObserverCallback;
+    targets: Element[];
+    opts?: IntersectionObserverInit;
+  };
+  let observers: IO[] = [];
+  const realIO = (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver;
+  beforeEach(() => {
+    observers = [];
+    (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = class {
+      private rec: IO;
+      constructor(cb: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
+        this.rec = { cb, targets: [], opts };
+        observers.push(this.rec);
+      }
+      observe(el: Element) {
+        this.rec.targets.push(el);
+      }
+      unobserve() {}
+      disconnect() {
+        this.rec.targets = [];
+      }
+      takeRecords() {
+        return [];
+      }
+    };
+  });
+  afterEach(() => {
+    (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver = realIO;
+  });
+  const tenderRow = () => screen.queryAllByTestId("counter-bar-tender");
+  /** the Payment section reports it is (not) in view */
+  const paymentInView = (inView: boolean) => {
+    const section = screen.getByRole("region", { name: "Payment" });
+    const live = observers.filter((o) => o.targets.includes(section));
+    // no observer yet (the base): nothing can report, and the row's count is what is read next
+    act(() => {
+      for (const o of live)
+        o.cb(
+          [{ isIntersecting: inView, target: section } as unknown as IntersectionObserverEntry],
+          {} as never,
+        );
+    });
+  };
+
+  it("K2: Payment on screen hides the bar's tender row; scrolled off, it comes back", () => {
+    renderPhoneTill();
+    expect(tenderRow()).toHaveLength(1);
+    paymentInView(true);
+    expect(tenderRow()).toHaveLength(0);
+    paymentInView(false);
+    expect(tenderRow()).toHaveLength(1);
+  });
+
+  it("K2: Total and Amount due stay where F7 put them while the row is gone", () => {
+    renderPhoneTill();
+    paymentInView(true);
+    expect(screen.getByTestId("running-total")).toBeInTheDocument();
+  });
+
+  it("K2: until the observer has answered (or with none), the row is there as before", () => {
+    (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver = undefined;
+    renderPhoneTill();
+    expect(tenderRow()).toHaveLength(1);
   });
 });

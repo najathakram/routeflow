@@ -9,6 +9,10 @@ import { API_ERROR_CODES } from "./api/error-codes";
 export const COUNTER_COPY = {
   counterSale: "Counter sale",
   storePickup: "Store pickup",
+  /** W-854 (SA-940): the New order menu's other choice, and the switch's word at W-855 */
+  regularOrder: "Regular order",
+  /** SA-1069 A-3: the builder's Fulfillment segment. The POS switch beside it stays "Store pickup": invoiced now. */
+  pickupLater: "Pickup later",
   completeAtCounter: "Complete at counter",
   completeConfirm: "Complete",
   completed: "Completed at counter.",

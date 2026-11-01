@@ -28,6 +28,7 @@ import { ExportMovementsDto } from "./dto/export-movements.dto";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { CreatePurchaseOrderDto, ReceivePurchaseOrderDto } from "./dto/create-purchase-order.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
+import { ProductCountDto } from "./dto/product-count.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
@@ -45,6 +46,8 @@ import {
 } from "./dto/stock-count-session.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
 
+import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
+@RequirePermission("CATALOG")
 @Controller("inventory")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)
@@ -54,6 +57,7 @@ export class InventoryController {
     private readonly movementsExporter: InventoryMovementsExportService,
   ) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get("overview")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   getStockOverview() {
@@ -93,6 +97,17 @@ export class InventoryController {
   @Post("movements/adjustment")
   recordAdjustment(@Body() dto: RecordAdjustmentDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.recordAdjustment(dto, user.id);
+  }
+
+  // SA-828 (row 657): set a product's stock to a count, or adjust it, in one of its units.
+  @Post("products/:id/count")
+  @Roles(UserRole.OPERATOR)
+  countProduct(
+    @Param("id") id: string,
+    @Body() dto: ProductCountDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.inventoryService.countProduct(id, dto, user.id);
   }
 
   @Post("stock-count/commit")
@@ -163,11 +178,13 @@ export class InventoryController {
   }
 
   // ── Cost basis & valuation ──
+  @RequirePermission("PRICING", "REPORTS")
   @Get("valuation")
   getValuation() {
     return this.inventoryService.getValuation();
   }
 
+  @RequirePermission("PRICING")
   @Patch("products/:id/cost-basis")
   setCostBasis(
     @Param("id") id: string,
@@ -177,6 +194,7 @@ export class InventoryController {
     return this.inventoryService.setCostBasis(id, dto, user.id);
   }
 
+  @RequirePermission("PRICING")
   @Post("cost-basis/bulk")
   bulkSetCostBasis(@Body() dto: BulkSetCostBasisDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.bulkSetCostBasis(dto, user.id);

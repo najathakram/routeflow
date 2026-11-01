@@ -91,6 +91,15 @@ export const RETURN_HOLD_REASON_VALUES = [
 ] as const;
 export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];
 
+/** SA-1060 PR-1: the holds staff can approve or reject on an INLINE return. The one list the service and the approval screen both read. */
+export const INLINE_HOLD_REASONS = [
+  "DRIVER_CAP",
+  "ALREADY_RETURNED",
+] as const satisfies readonly ReturnHoldReason[];
+export type InlineHoldReason = (typeof INLINE_HOLD_REASONS)[number];
+export const isInlineHoldReason = (reason: string | null | undefined): reason is InlineHoldReason =>
+  reason != null && (INLINE_HOLD_REASONS as readonly string[]).includes(reason);
+
 export const RETURN_PRICE_SOURCE_VALUES = [
   "SOURCE_INVOICE",
   "CUSTOMER_PRICE",
@@ -354,6 +363,16 @@ export const ADJUSTMENT_REASON_VALUES = [
   "OTHER",
 ] as const;
 export type AdjustmentReason = (typeof ADJUSTMENT_REASON_VALUES)[number];
+
+/** Labels shared by web and mobile, in picker order. */
+export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReason, string> = {
+  COUNT_CORRECTION: "Count correction",
+  DAMAGED: "Damaged",
+  EXPIRED: "Expired",
+  THEFT: "Theft or loss",
+  SAMPLE: "Sample",
+  OTHER: "Other",
+};
 
 export const CRM_CONNECTION_STATUS_VALUES = [
   "CONNECTED",

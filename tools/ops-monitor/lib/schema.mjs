@@ -21,6 +21,8 @@ export const STATUSES = [
 export const DONE_STATUSES = ["live", "verified", "parked", "dropped"];
 /** Statuses `rf next` may hand out. */
 export const PICKABLE_STATUSES = ["planned", "spec"];
+/** A `blockedBy` item in one of these no longer holds its dependant: parked work can still return. */
+export const CLEARED_BLOCKER_STATUSES = ["live", "verified", "dropped"];
 
 export const TYPES = [
   "bug",
@@ -79,6 +81,11 @@ const ITEM_FIELDS = {
   related: (v) =>
     Array.isArray(v) &&
     v.length <= 50 &&
+    v.every((t) => typeof t === "string" && ITEM_ID_RE.test(t)),
+  // Items that must land first: `rf next` holds this one, and it is flagged once they have.
+  blockedBy: (v) =>
+    Array.isArray(v) &&
+    v.length <= 20 &&
     v.every((t) => typeof t === "string" && ITEM_ID_RE.test(t)),
   links: (v) => isLinks(v, false),
   // PR numbers the register merely cites as background (never a fix link, never alarmed on).

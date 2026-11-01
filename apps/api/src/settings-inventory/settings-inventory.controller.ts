@@ -10,6 +10,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { SettingsInventoryService } from "./settings-inventory.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 // Reads OPERATOR; the change is TENANT_ADMIN (SUPER_ADMIN satisfies it via the RolesGuard
 // hierarchy; OPERATOR gets 403). The body is validated by the service (a coded 400), so it is
 // typed `unknown` here: the global whitelist pipe would otherwise turn extra fields into errors.
@@ -20,6 +21,7 @@ import { SettingsInventoryService } from "./settings-inventory.service";
 export class SettingsInventoryController {
   constructor(private readonly settings: SettingsInventoryService) {}
 
+  @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
   @Get()
   @Roles(UserRole.OPERATOR)
   @ApiOperation({ summary: "Inventory & ordering settings (out-of-stock ordering)" })

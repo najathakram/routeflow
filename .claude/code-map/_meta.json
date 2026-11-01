@@ -1,6 +1,6 @@
 {
-  "mappedSha": "2a8f10dd79f6f89d1c30b44d6cf5ef1c45621f17",
-  "generatedAt": "2026-10-30T22:32:25.848Z",
+  "mappedSha": "ccf3eb39db0a18985991151458c42833683036d8",
+  "generatedAt": "2026-10-31T23:45:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-10-30 W28a (merge 3ba29d8a5f) and W30a (merge 2a8f10dd79): api/web/packages landing notes + TOC rows; see CHANGELOG.md."
+  "notes": "2026-10-31 train Z (merge ccf3eb39db): api/web/packages landing notes, TOC rows; see CHANGELOG.md."
 }

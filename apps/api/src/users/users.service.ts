@@ -25,6 +25,7 @@ import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { issueSetPasswordLink } from "./set-password-token";
+import { hasActiveBuyerLink } from "./also-buyer";
 
 @Injectable()
 export class UsersService {
@@ -130,6 +131,21 @@ export class UsersService {
       ...rest
     } = user;
     return { ...rest, googleLinked: !!googleId, hasPassword: !!password };
+  }
+
+  /**
+   * W-839 / SA-937: GET /users/me only. The caller's own record (findById) plus `alsoBuyer`: is this staff user also an
+   * ACTIVE buyer of their own tenant (`hasActiveBuyerLink`, on the STORED email and tenant). Never in findById, which also
+   * serves admins' GET /users/:id, and never on a list (MUST 2). Boolean only (MUST 4).
+   */
+  async getMe(id: string) {
+    const user = await this.findById(id);
+    if (!user) return null;
+    const alsoBuyer = await hasActiveBuyerLink(this.prisma, {
+      email: user.email,
+      tenantId: user.tenantId,
+    });
+    return { ...user, alsoBuyer };
   }
 
   /**

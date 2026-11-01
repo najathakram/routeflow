@@ -90,6 +90,24 @@ describe("invoice edit page — pending-mirror draft (#2791)", () => {
     expect(updateMutate).not.toHaveBeenCalled();
   });
 
+  it("R3c: the toast says handed over for a PICKUP order, delivered for a ROUTE order", () => {
+    mockInvoice = { ...base, order: { ...base.order, fulfillPath: "PICKUP" } };
+    const { unmount } = renderWithProviders(<EditInvoicePage />);
+    expect(toastMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        description: "It can't be edited until the order is handed over — edit the order instead.",
+      }),
+    );
+    unmount();
+    mockInvoice = { ...base, order: { ...base.order, fulfillPath: "ROUTE" } };
+    renderWithProviders(<EditInvoicePage />);
+    expect(toastMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        description: "It can't be edited until the order is delivered — edit the order instead.",
+      }),
+    );
+  });
+
   it.each(["DELIVERED", "PARTIALLY_DELIVERED"])(
     "does NOT redirect once the order is %s (edit form as before)",
     (orderStatus) => {

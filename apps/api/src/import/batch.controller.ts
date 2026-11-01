@@ -25,9 +25,11 @@ import { CreateBatchDto } from "./dto/create-batch.dto";
 import { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 /**
  * Batch invoice import queue (spec §4). TENANT_ADMIN satisfies @Roles(OPERATOR).
  */
+@RequirePermission("CATALOG")
 @Controller("import/batch")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.OPERATOR)

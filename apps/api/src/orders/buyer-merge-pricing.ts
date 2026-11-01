@@ -15,6 +15,7 @@ import {
   normalizeBoxesPieces,
   promotionMatchesProduct,
   isSpecialPrice,
+  isStickyUpsell,
   roundMoney,
   type CustomerLayerPrice,
   type PromoContext,
@@ -325,7 +326,7 @@ export function resolveBuyerLinePrice(
   // base so the operator sees the upsell and the customer's read is redacted
   // (upsell-redaction.ts). A premium tier (tierBase > list) is the customer's
   // normal price, NOT an upsell — it must not trip this branch.
-  if (remembered != null && Number(remembered) > listPrice) {
+  if (isStickyUpsell(remembered, listPrice)) {
     return {
       unitPrice: roundMoney(Number(remembered)),
       originalPrice: listPrice,

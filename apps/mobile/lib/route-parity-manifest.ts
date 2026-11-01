@@ -14,6 +14,10 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(auth)/admin/login": { mobile: ["(auth)/login", "(auth)/sign-in"] },
   "(auth)/auth/google/callback": { mobile: ["(auth)/auth/google/callback"] },
   "(auth)/callback": { mobile: ["(auth)/google-callback"] },
+  "(auth)/choose-role": {
+    webOnly:
+      "the driver/buyer role step after staff sign-in (W-839); the hybrid shell's WebView renders it, and the native role-picker is the unrelated operator/driver dev gate",
+  },
   "(auth)/forgot-password": { mobile: ["(auth)/forgot-password"] },
   "(auth)/login": { mobile: ["(auth)/login"] },
   "(auth)/platform/auth/callback": { webOnly: "platform admin" },

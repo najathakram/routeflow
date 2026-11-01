@@ -20,6 +20,10 @@ const GATED_TAGS = new Set(["WriteButton", "WriteLink"]);
 
 /** file (posix, from apps/web) -> the exact label texts reviewed as intentionally NOT gated, with why. */
 const EXEMPT: Record<string, { labels: string[]; why: string }> = {
+  "app/(dashboard)/orders/_components/NewOrderButton.tsx": {
+    labels: ["New order"],
+    why: "the menu trigger: Radix needs a ref under `Trigger asChild` and WriteButton doesn't forward one (SA-940 A-1.4). It reads useReadOnlyGate itself: disabled, with the hint id and the line, and the menu can't open while read-only; the other two answers are WriteButtons",
+  },
   "app/(dashboard)/invoices/[id]/page.tsx": {
     labels: ["Mark Bounced", "Record payment", "Write off"],
     why: "(1) the mark-bounced, record-payment and write-off MODALS' own submits: they open only from gated triggers and the server refuses the write; (2) the read-only twin of the Record payment trigger, a deliberately disabled button",

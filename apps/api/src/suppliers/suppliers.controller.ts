@@ -20,9 +20,11 @@ import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { ListSuppliersDto } from "./dto/list-suppliers.dto";
 
+import { RequirePermission } from "../auth/permissions/permission.decorators";
 // WP5b (R3b.3, R3b.5): flag.suppliers ships dark (DARK_PLAN_FLAGS in
 // plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
 // PLAN_FLAG_ENFORCEMENT switch flips on.
+@RequirePermission("CATALOG")
 @Controller("suppliers")
 @UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.suppliers")

@@ -137,7 +137,12 @@ describeDb("B562 PR-1 effectiveAt — real Postgres", () => {
     const bought = await purchase(w, 10, 4, d2);
     const adjusted = await inTenant(w, () =>
       service.recordAdjustment(
-        { productId: w.productId, quantity: -1, effectiveDate: d3.toISOString() },
+        {
+          productId: w.productId,
+          quantity: -1,
+          effectiveDate: d3.toISOString(),
+          reason: "COUNT_CORRECTION",
+        },
         w.userId,
       ),
     );

@@ -93,8 +93,10 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   tier: Tier,
   /** S19b: the customer's layer rows for the target product (flag on); omitted = master's tier restore. */
   layer?: readonly CustomerLayerUnit[] | null,
+  /** SA-1068 M22: the customer's remembered price, for a line back on its pack. */
+  remembered?: number | null,
 ): T[] {
-  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier, layer).lines;
+  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier, layer, remembered).lines;
 }
 
 export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
@@ -104,6 +106,7 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   refresh: boolean,
   tier: Tier,
   layer?: readonly CustomerLayerUnit[] | null,
+  remembered?: number | null,
 ): { lines: T[]; fold?: UnitFold<T> } {
   const target = prev.find((li) => li.tempId === tempId);
   if (!target) return { lines: prev };
@@ -112,7 +115,7 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   // Re-applying the unit the line ALREADY holds (a stale picker after the resolver ran) keeps its quantity (N2).
   const sameUnit = option.kind !== "pack" && target.unitLabel === option.value;
   const next = {
-    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit, layer }),
+    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit, layer, remembered }),
     startOnDefaultUnit: false,
     pendingTaps: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
@@ -169,10 +172,13 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
   line: T,
   units: readonly ProductUnitLevel[],
   tier: Tier,
+  remembered?: number | null,
 ): T {
   if (!isPendingDefaultUnit(line)) return line;
   const option = defaultOptionFor(line, units, tier);
-  const [only] = option ? applyUnitToLines([line], line.tempId, option, false, tier) : [];
+  const [only] = option
+    ? applyUnitToLines([line], line.tempId, option, false, tier, undefined, remembered)
+    : [];
   return (only as T | undefined) ?? settleOnPack(line);
 }
 
@@ -190,6 +196,8 @@ export interface DefaultUnitDeps {
   unitsKnown: boolean;
   getUnits: (productId: string) => Promise<ProductUnitLevel[]>;
   tierFor: (productId: string) => Tier;
+  /** SA-1068 M25: required, so every caller decides. A derived Piece is a pack line, which the server books at the memory. */
+  rememberedOf: (productId: string) => number | null | undefined;
 }
 
 /** "Try again" on the blocked message: the shared rule (@routeflow/pricing), kept under its old name for callers. */
@@ -237,7 +245,16 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
       const tier = deps.tierFor(line.productId);
       const option = defaultOptionFor(line, units, tier);
       if (option) {
-        const applied = applyUnitToLinesDetailed(out, line.tempId, option, false, tier);
+        const remembered = deps.rememberedOf(line.productId);
+        const applied = applyUnitToLinesDetailed(
+          out,
+          line.tempId,
+          option,
+          false,
+          tier,
+          undefined,
+          remembered,
+        );
         out = applied.lines;
         if (applied.fold) folds.push(applied.fold);
       } else {

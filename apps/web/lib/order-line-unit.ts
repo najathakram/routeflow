@@ -77,7 +77,13 @@ const snapshot = (li: PackBase): PackBase => ({
 export function applyLineUnit<T extends UnitLine>(
   li: T,
   option: UnitOption,
-  ctx: { tier: number; keepQty?: boolean; layer?: readonly CustomerLayerUnit[] | null },
+  ctx: {
+    tier: number;
+    keepQty?: boolean;
+    layer?: readonly CustomerLayerUnit[] | null;
+    /** SA-1068 M22: the customer's remembered price, which the server books for a plain pack line. */
+    remembered?: number | null;
+  },
 ): T {
   // A derived-base line is the pack with a piece count: leave that shape first, so a snapshot or a restore
   // below always sees the PACK (never the pieces state).
@@ -148,7 +154,11 @@ export function applyLineUnit<T extends UnitLine>(
  */
 function restorePack<T extends UnitLine>(
   line: T,
-  ctx: { tier: number; layer?: readonly CustomerLayerUnit[] | null },
+  ctx: {
+    tier: number;
+    layer?: readonly CustomerLayerUnit[] | null;
+    remembered?: number | null;
+  },
   dropOneTime: boolean,
   /** The pack price the picker already shows at the customer's tier: the fallback when the line has no tier columns. */
   shownPackPrice?: number,
@@ -174,9 +184,13 @@ function restorePack<T extends UnitLine>(
       product: line.tierPrices as unknown as Record<string, unknown>,
       tier: ctx.tier,
       layer: ctx.layer,
+      // SA-1068 M24: also the derived Piece's start, which the server books as a pack line. One-time prices still drop.
+      remembered: ctx.remembered,
     });
     restored.unitPrice = lp.price;
-    if (lp.layered) {
+    if (lp.remembered) {
+      restored.priceType = "MANUAL"; // at the memory, so the tier stays the snapshot's baseline
+    } else if (lp.layered) {
       restored.listPrice = lp.listPrice ?? restored.listPrice;
       restored.priceType = lp.priceType;
       restored.specialPrice = customerLineSpecial(lp);
@@ -188,9 +202,14 @@ function restorePack<T extends UnitLine>(
   return restored;
 }
 
-/** The special (baseline) price a layered line carries: the layer price, so a typed change is judged against it. */
-export const customerLineSpecial = (lp: CustomerLinePrice): number | undefined =>
-  lp.isSpecial || lp.priceType === "MANUAL" ? lp.price : undefined;
+/**
+ * The special (baseline) price a layered line carries: the layer price, so a typed change is judged against it.
+ * SA-1068 M21: a remembered price isn't a baseline, so a line moved to its memory keeps the one it had (`keep`).
+ */
+export const customerLineSpecial = (lp: CustomerLinePrice, keep?: number): number | undefined => {
+  if (lp.remembered) return keep;
+  return lp.isSpecial || lp.priceType === "MANUAL" ? lp.price : undefined;
+};
 
 function withLayerLine<T extends PackBase>(line: T, lp: CustomerLinePrice): T {
   return {

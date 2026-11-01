@@ -47,6 +47,8 @@ export function useStaffFulfilment() {
     /** Show the per-order / per-customer fulfilment picker (more than one method the form can hold). */
     choice: formMethods.length > 1,
     methods: caps.methods as FulfilmentMethod[],
+    /** The till's setting: `mayCompleteAtCounter` reads it with `methods`. */
+    counter: caps.counter,
     /** The ROUTE / SHIP options the account offers, in order. */
     formMethods,
     staffDefault: caps.staffDefault,

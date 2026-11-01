@@ -233,6 +233,26 @@ body {
   }
 }
 
+/* iOS zooms into a focused field under 16px. Touch only: desktop keeps its sizes.
+   The query is TOUCH_FIRST_QUERY (lib/touch-first.ts). */
+@media (hover: none) and (pointer: coarse) {
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="file"],
+    [type="color"],
+    [type="hidden"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"]
+  ),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 /* Print (WP4, R6.10) — hide the dashboard chrome so a printed invoice/PDF
    isn't framed by the sidebar/topbar. */
 @media print {

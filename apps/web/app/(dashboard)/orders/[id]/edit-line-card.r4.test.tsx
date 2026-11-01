@@ -1,7 +1,7 @@
 /**
  * apple-ux r4 PR-GH (Q28, Q29, Q30): one line-card style in Edit Items.
  *  - a boxed line (cases) and a plain line (qty) share one quantity input style and one control height
- *  - Unit price and "$ off / unit" use that same control height
+ *  - The price field and "$ off / unit" use that same control height
  *  - at phone width every row of the card starts at one left edge (no 44px indent under the name)
  * jsdom has no layout, so the claims are pinned on the class tokens the CSS keys off; the measured
  * heights and left edges are the host-run capture's job.
@@ -100,13 +100,13 @@ describe("Q28: one line-card variant", () => {
   });
 });
 
-describe("Q30: one control height for qty, Unit price and $ off", () => {
+describe("Q30: one control height for qty, the price field and $ off", () => {
   const H = "h-9";
   it("the qty fields and both price fields carry the same height token", () => {
     renderWithProviders(<Harness />);
     expect(boxesInput()).toHaveClass(H);
     expect(qtyInput()).toHaveClass(H);
-    for (const label of screen.getAllByLabelText(/^unit price/i)) {
+    for (const label of screen.getAllByLabelText(/^price (per|each)/i)) {
       expect(label.closest("span.rounded") as HTMLElement).toHaveClass(H);
     }
     for (const label of screen.getAllByLabelText(/\$ off/i)) {
@@ -119,7 +119,7 @@ describe("Q29: one left edge at phone width", () => {
   it("the price row and the note start at the card's own edge below sm (the 44px indent is sm and up)", () => {
     renderWithProviders(<Harness />);
     const priceRows = screen
-      .getAllByText(/^unit price$/i)
+      .getAllByText(/^price (per|each)/i)
       .map((s) => s.closest("div") as HTMLElement);
     expect(priceRows).toHaveLength(2);
     for (const row of priceRows) {

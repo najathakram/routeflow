@@ -25,6 +25,7 @@ import type { JwtPayload } from "../../auth/jwt-payload.interface";
 import { ListParkedDto, ParkCartDto, ResumeParkedDto } from "./counter-park.dto";
 import { CounterParkService } from "./counter-park.service";
 
+import { RequirePermission } from "../../auth/permissions/permission.decorators";
 /**
  * Parked counter sales (SA-748): `POST|GET /orders/counter-sale/parked`, `POST .../parked/:id/resume`,
  * `DELETE .../parked/:id`. OPERATOR (admits TENANT_ADMIN through RolesGuard's hierarchy), tenant-scoped, every route
@@ -32,6 +33,7 @@ import { CounterParkService } from "./counter-park.service";
  * Registered right after `CounterSaleController` in OrdersModule; every path has the literal `counter-sale/parked`
  * segment, so neither `counter-sale/by-key/:key` nor `orders/:id` can take them (a route-table spec pins it).
  */
+@RequirePermission("ORDERS")
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, TillPermissionGuard)
