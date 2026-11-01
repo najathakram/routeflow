@@ -105,6 +105,20 @@ describe("applyLineUnit", () => {
       specialPrice: tier === 2 ? 21 : undefined,
     });
 
+    it("T25: a line at its memory comes back to the memory, not the tier", () => {
+      const atMemory = { ...autoPriced(2), unitPrice: 50, priceType: "MANUAL" as const };
+      const asCase = applyLineUnit(atMemory, by(options(2), "Case"), { tier: 2, remembered: 50 });
+      const back = applyLineUnit(asCase, by(options(2), ""), { tier: 2, remembered: 50 });
+      expect(back).toMatchObject({ unitPrice: 50, priceType: "MANUAL", specialPrice: 21 });
+      expect(back.discountedPrice).toBeUndefined();
+    });
+
+    it("a memory at or below list leaves the tier price on the way back", () => {
+      const asCase = applyLineUnit(autoPriced(2), by(options(2), "Case"), { tier: 2 });
+      const back = applyLineUnit(asCase, by(options(2), ""), { tier: 2, remembered: 40 });
+      expect(back).toMatchObject({ unitPrice: 21, priceType: "SPECIAL", specialPrice: 21 });
+    });
+
     it("re-derives the auto price at the CURRENT tier, not the snapshot's (tier 2 -> 1)", () => {
       const opts = options();
       const asCase = applyLineUnit(autoPriced(2), by(options(2), "Case"), { tier: 2 });
@@ -252,6 +266,60 @@ describe("SA-728 / units P0b: a derived-Piece pick is a PACK-PIECES line (previe
     const caseLine = applyLineUnit(one, by(opts, "Case"), { tier: 1 });
     const back = applyLineUnit(caseLine, by(opts, ""), { tier: 1 });
     expect(back).toMatchObject({ unitsPerBox: 3, boxes: 1, pieces: 0, qty: 3 });
+  });
+});
+
+// A derived Piece has no unitLabel: it reaches the server as a pack line with pieces, so the memory books it.
+describe("SA-1068 A-6: a derived Piece keeps the memory", () => {
+  const box = { unit: "Box", unitsPerBox: 6, pricePerUnit: "12.00" };
+  const opts = buildUnitOptions(box, [level("Case", 24, "40.00")], 1);
+  const atMemory: UnitLine & { tempId: string; productId: string } = {
+    tempId: "t6",
+    productId: "p6",
+    unit: "Box",
+    qty: 6,
+    unitsPerBox: 6,
+    boxes: 1,
+    pieces: 0,
+    sellBy: "case",
+    listPrice: 12,
+    unitPrice: 15,
+    priceType: "MANUAL",
+    tierPrices: { pricePerUnit: "12.00" } as never,
+  };
+  const ctx = { tier: 1, remembered: 15 };
+  const shown = (li: UnitLine) =>
+    computeLineSubtotal({
+      unitPrice: li.unitPrice,
+      qty: li.qty,
+      boxes: li.boxes ?? null,
+      pieces: li.pieces ?? null,
+      unitsPerBox: li.unitsPerBox ?? null,
+    });
+
+  it("T31: to the Piece, the line shows $2.50 and sends nothing", () => {
+    const piece = applyLineUnit(atMemory, by(opts, "Piece"), ctx);
+    expect(piece).toMatchObject({ unitPrice: 15, priceType: "MANUAL", boxes: 0, pieces: 1 });
+    expect(piece.discountedPrice).toBeUndefined();
+    expect(shown(piece)).toBe(2.5);
+  });
+
+  it("T32 guard: back to the pack, the line is at the memory", () => {
+    const piece = applyLineUnit(atMemory, by(opts, "Piece"), ctx);
+    const back = applyLineUnit(piece, by(opts, ""), ctx);
+    expect(back).toMatchObject({ unitPrice: 15, priceType: "MANUAL", boxes: 1, pieces: 0 });
+    expect(back.derivedBase).toBeUndefined();
+  });
+
+  it("T34 guard: a price typed on a Case is gone on the Piece, which shows $2.50", () => {
+    const asCase = {
+      ...applyLineUnit(atMemory, by(opts, "Case"), ctx),
+      discountedPrice: 30,
+      unitPrice: 30,
+    };
+    const piece = applyLineUnit(asCase, by(opts, "Piece"), ctx);
+    expect(piece.discountedPrice).toBeUndefined();
+    expect(shown(piece)).toBe(2.5);
   });
 });
 

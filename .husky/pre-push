@@ -138,7 +138,9 @@ dirty="$(git status --porcelain 2>/dev/null | head -1)"
 fast_stamp=""
 if [ "$verify_mode" = "fast" ]; then fast_stamp="fast: not proof (related tests only; run FULL_VERIFY=1 or CI before a merge-ready claim)"; fi
 
-if [ -z "$dirty" ] && [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
+# W-1045: a marker counts only with the evidence file the gate writes beside it; markers from before the gate (some
+# false) carry none, so they are re-verified once instead of trusted.
+if [ -z "$dirty" ] && [ -f "$marker" ] && [ -f "$marker.json" ] && [ "$(cat "$marker" 2>/dev/null)" = "$tree_key" ]; then
   echo "✓ tree $tree already passed 'npm run verify' locally — skipping (clean tree, unchanged content).${fast_stamp:+ $fast_stamp}"
   exit 0
 fi
@@ -149,9 +151,12 @@ fi
 # 2026-10-10 the tests are further narrowed to the ones RELATED to the diff (FAST VERIFY, above).
 # FULL_VERIFY=1 (the coordinator's landing run) is the ONLY override and runs the whole chain, as
 # does CI. No other environment variable narrows the run (RF_VERIFY_MODE is set here, from the policy).
-npm run verify || exit 1
+#
+# W-1045: a pass is a POSITIVE token, not an exit code. A verify that is killed, crashed or cut short has been seen to
+# surface as exit 0 on Windows, so the gate hands the chain a nonce and refuses unless verify-turbo wrote a matching
+# token for this tree key (scripts/verify-gate.mjs, lib/verify-result.mjs). Fast mode runs the same path. The marker
+# is recorded by the gate, only after the token checks out, and only for a clean tree (as before).
+record=""
+if [ -z "$dirty" ] && [ "$tree" != "none" ]; then record="--record-marker"; fi
+node scripts/verify-gate.mjs run --result-file "$(git rev-parse --git-dir)/rf-verify-result" --tree-key "$tree_key" --marker "$marker" $record || exit 1
 if [ -n "$fast_stamp" ]; then echo "$fast_stamp"; fi
-
-if [ -z "$dirty" ] && [ "$tree" != "none" ]; then
-  printf '%s' "$tree_key" > "$marker"
-fi

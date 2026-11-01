@@ -101,6 +101,9 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { withAdvisoryLock } from "../common/db-locks";
+import { prismaQueryable } from "../common/testing/blocked-wait";
+import { awaitBlockedWrite } from "../common/testing/await-blocked-write";
+import { warmLockPool } from "../common/testing/warm-lock-pool";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -2189,8 +2192,14 @@ describeDb(
       // test takes the lock first and holds it, fires a real update() that must wait on it,
       // confirms the order is genuinely UNCHANGED while the lock is held (not just eventually
       // consistent), then releases and confirms the blocked call completes.
+      //
+      // Load-independent: nothing here is a clock. The lock pool is warmed first (the update must
+      // not open a cold connection inside the pool's 5 s checkout budget), and the "still blocked"
+      // look waits for the database to report the update waiting behind this test's hold
+      // (awaitBlockedWrite), not for 300 ms to pass.
       it("a concurrent recompute genuinely BLOCKS on the order-keyed advisory lock (not just Postgres row-lock serialization)", async () => {
         const { order, lineB, invoice } = await seedPartiallyInvoicedOrder("o1");
+        await warmLockPool("order-merge", 2);
 
         let releaseTestLock: () => void = () => {};
         const testLockHeld = new Promise<void>((resolve) => {
@@ -2215,8 +2224,8 @@ describeDb(
         // test's own lock-holding connection, or a genuine (probe) failure here hangs the whole
         // suite on a dangling advisory-lock session instead of reporting a clean red.
         try {
-          await new Promise((r) => setTimeout(r, 300));
-          // Still blocked on the lock this test holds -- the write must not have landed yet.
+          await awaitBlockedWrite(prismaQueryable(prisma), updatePromise);
+          // Provably blocked on the lock this test holds -- the write must not have landed yet.
           const midOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
           expect(Number(midOrder.shippingFee)).toBe(0);
         } finally {
