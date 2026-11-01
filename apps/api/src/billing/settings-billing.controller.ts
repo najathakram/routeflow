@@ -9,7 +9,6 @@ import {
   Param,
   Post,
   Query,
-  Optional,
   ServiceUnavailableException,
   UseGuards,
 } from "@nestjs/common";
@@ -25,7 +24,6 @@ import { INTERACTIVE_STRIPE_REQUEST, trimBillingViewForRole } from "./subscripti
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
-import { OwnerAlertService, type PlanChangeKind } from "../email/owner-alert.service";
 import { BillingService } from "./billing.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
@@ -61,19 +59,7 @@ export class SettingsBillingController {
     private readonly proration: ProrationService,
     private readonly mutations: SubscriptionMutationService,
     private readonly billing: BillingService,
-    @Optional() private readonly ownerAlerts?: OwnerAlertService,
   ) {}
-
-  /** W1 (COPY 2q): after a plan change COMMITTED, tell the owner when the account has no card. Never fails the change. */
-  private async alertIfNoCard<T>(
-    user: AuthUser,
-    kind: PlanChangeKind,
-    done: Promise<T>,
-  ): Promise<T> {
-    const result = await done;
-    this.ownerAlerts?.planChangeNoCard(this.tenantIdOf(user), kind)?.catch(() => undefined);
-    return result;
-  }
 
   /**
    * These are TENANT self-service views. A platform SUPER_ADMIN satisfies
@@ -182,11 +168,7 @@ export class SettingsBillingController {
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Commit a subscription / convert a trial by picking a plan" })
   subscribe(@CurrentUser() user: AuthUser, @Body() dto: SubscribeDto) {
-    return this.alertIfNoCard(
-      user,
-      "subscribe",
-      this.mutations.subscribe(this.tenantIdOf(user), dto, user.sub),
-    );
+    return this.mutations.subscribe(this.tenantIdOf(user), dto, user.sub);
   }
 
   @Post("subscription")
@@ -195,11 +177,7 @@ export class SettingsBillingController {
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Upgrade to a higher plan (instant + prorated)" })
   upgrade(@CurrentUser() user: AuthUser, @Body() dto: UpgradeDto) {
-    return this.alertIfNoCard(
-      user,
-      "upgrade",
-      this.mutations.upgrade(this.tenantIdOf(user), dto.planKey, user.sub),
-    );
+    return this.mutations.upgrade(this.tenantIdOf(user), dto.planKey, user.sub);
   }
 
   @Post("subscription/downgrade")
@@ -208,15 +186,11 @@ export class SettingsBillingController {
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Schedule a downgrade at period end (nothing deleted)" })
   downgrade(@CurrentUser() user: AuthUser, @Body() dto: DowngradeDto) {
-    return this.alertIfNoCard(
-      user,
-      "downgrade",
-      this.mutations.downgrade(
-        this.tenantIdOf(user),
-        dto.targetPlanKey,
-        dto.retainedUserIds ?? [],
-        user.sub,
-      ),
+    return this.mutations.downgrade(
+      this.tenantIdOf(user),
+      dto.targetPlanKey,
+      dto.retainedUserIds ?? [],
+      user.sub,
     );
   }
 
@@ -226,11 +200,7 @@ export class SettingsBillingController {
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Schedule cancellation at period end" })
   cancel(@CurrentUser() user: AuthUser) {
-    return this.alertIfNoCard(
-      user,
-      "cancel",
-      this.mutations.cancel(this.tenantIdOf(user), user.sub),
-    );
+    return this.mutations.cancel(this.tenantIdOf(user), user.sub);
   }
 
   @Post("subscription/resume")
@@ -239,11 +209,7 @@ export class SettingsBillingController {
   @NoImpersonation("billing")
   @ApiOperation({ summary: "Undo a scheduled cancellation" })
   resume(@CurrentUser() user: AuthUser) {
-    return this.alertIfNoCard(
-      user,
-      "resume",
-      this.mutations.resume(this.tenantIdOf(user), user.sub),
-    );
+    return this.mutations.resume(this.tenantIdOf(user), user.sub);
   }
 
   /**

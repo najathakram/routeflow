@@ -9,6 +9,7 @@ const TENANT = {
   name: "Acme Foods",
   slug: "acme-trial",
   createdAt: new Date("2026-11-01T10:00:00.000Z"),
+  status: "ACTIVE",
 };
 
 function build(sub: Record<string, unknown> | null = null, tenant: unknown = TENANT) {
@@ -125,6 +126,15 @@ describe("OwnerAlertService", () => {
       await svc.planChangeNoCard("t-1", "upgrade");
       expect(email.send).not.toHaveBeenCalled();
     });
+
+    it.each(["TRIAL", "READ_ONLY", "SUSPENDED", "CANCELLED"])(
+      "%s: not an ACTIVE account, so nothing is billed by hand: nothing is sent",
+      async (status) => {
+        const { svc, email } = build(noCard, { ...TENANT, status });
+        await svc.planChangeNoCard("t-1", "upgrade");
+        expect(email.send).not.toHaveBeenCalled();
+      },
+    );
 
     it("an account with no subscription row sends nothing", async () => {
       const { svc, email } = build(null);

@@ -63,6 +63,7 @@ import {
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
+import { OwnerAlertService, type PlanChangeKind } from "../email/owner-alert.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { DunningService } from "./dunning.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
@@ -366,9 +367,27 @@ export class SubscriptionMutationService {
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
     // SA-774: the dark platform switch for the card-first gate (absent or off = today's behaviour).
     @Optional() private readonly cardFirst?: CardFirstFlagService,
+    // W1 (COPY 2q): the owner's "plan change, no card" mail. Last and optional, like `dunning`, because many specs build this
+    // service by position; owner-alert-routes.spec.ts pins that the real module graph supplies it.
+    @Optional() private readonly ownerAlerts?: OwnerAlertService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
+
+  /**
+   * W1 (COPY 2q, PLAN F24): after a plan change COMMITTED, tell the owner when this account has no card. Each caller decides
+   * from the row it read first whether the call changed anything, so a repeat sends nothing; the alert service itself sends
+   * only for an ACTIVE account with no Stripe subscription. Never throws and never fails the change.
+   */
+  private async alertNoCard(tenantId: string, kind: PlanChangeKind): Promise<void> {
+    try {
+      await this.ownerAlerts?.planChangeNoCard(tenantId, kind);
+    } catch (e) {
+      this.logger.warn(
+        `owner alert "${kind}" for tenant ${tenantId} threw: ${(e as Error)?.message ?? e}`,
+      );
+    }
+  }
 
   /**
    * SA-774 (card first, then active): the ONE gate every self-serve plan entry point runs first. Off (the
@@ -982,6 +1001,8 @@ export class SubscriptionMutationService {
     this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
     this.tenantStatus.invalidate(tenantId);
+    // A repeat pick is refused by the B58 guard above, so reaching here is always a change (a first pick or a cycle switch).
+    await this.alertNoCard(tenantId, "subscribe");
     await this.dunning?.clearPauseAfterCommit(exitBox.exit); // leaving a pause also leaves Stripe's pause_collection
     // SA-787 C3, STRIPE: an add-on the old plan included is billed after the commit (a throw flags the tenant).
     await billLeavingAddonsAfterCommit({ prisma: this.prisma, logger: this.logger }, this, {
@@ -1586,6 +1607,9 @@ export class SubscriptionMutationService {
     this.planTransition.invalidateCaches(tenantId, preparedTransition);
     this.entitlements.invalidate(tenantId);
 
+    // A same-or-lower plan is refused above ("not an upgrade"), so reaching here is always a change.
+    await this.alertNoCard(tenantId, "upgrade");
+
     // N3: best-effort admin notification, never blocks the upgrade above. `proratedNow` is
     // the SAME value just committed to the event/ledger above — never recomputed here.
     const fromDef = version.definitions.find((d) => d.planKey === fromKey);
@@ -1688,6 +1712,9 @@ export class SubscriptionMutationService {
         { amountDelta: 0, actorId, tx },
       );
     });
+
+    // Only a different target is a change: scheduling the same downgrade again sends nothing.
+    if (sub.downgradeToPlanKey !== targetPlanKey) await this.alertNoCard(tenantId, "downgrade");
 
     // N3: best-effort admin notification, never blocks the schedule write above.
     const fromDefDown = version.definitions.find((d) => d.planKey === fromKey);
@@ -1878,6 +1905,11 @@ export class SubscriptionMutationService {
         { actorId, tx },
       );
     });
+    // Only an ACTIVE account's first cancel is a plan change: a trial's cancel (above) and a read-only no-op never reach
+    // here, and a repeat finds it already armed.
+    if (tenant?.status === "ACTIVE" && !sub.cancelAtPeriodEnd) {
+      await this.alertNoCard(tenantId, "cancel");
+    }
     // R1 Option B: the cancellation just cleared a scheduled downgrade whose LOWER price may already have been
     // pushed for the renewal - put Stripe back on the current plan's price (best effort, alerted on failure).
     if (sub.stripeSubId && sub.downgradeToPlanKey) {
@@ -1971,6 +2003,8 @@ export class SubscriptionMutationService {
       });
       await this.events.emit(tenantId, BILLING_EVENTS.SUBSCRIPTION_RESUMED, {}, { actorId, tx });
     });
+    // Only undoing something armed is a change: an undo with nothing armed sends nothing.
+    if (sub.cancelAtPeriodEnd || sub.downgradeToPlanKey) await this.alertNoCard(tenantId, "resume");
     // R1 option B: the downgrade this clears may already have had its LOWER price pushed for the renewal
     // (invoice.upcoming / the 48 h sweep) - put Stripe back on the plan the tenant is keeping.
     if (sub.stripeSubId && sub.downgradeToPlanKey) {

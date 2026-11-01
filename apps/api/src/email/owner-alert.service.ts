@@ -8,7 +8,7 @@ import { webBaseUrl } from "../config/web-base-url";
 /** The self-service plan routes that can change what an account owes (settings-billing.controller.ts). */
 export type PlanChangeKind = "subscribe" | "upgrade" | "downgrade" | "cancel" | "resume";
 
-type AlertTenant = { id: string; name: string; slug: string; createdAt: Date };
+type AlertTenant = { id: string; name: string; slug: string; createdAt: Date; status: string };
 
 /** `Team` from `TEAM`: the plan name as a person reads it. */
 function planLabel(key: string | null | undefined): string {
@@ -67,8 +67,8 @@ export class OwnerAlertService {
   }
 
   /**
-   * An account with no card on file changed its plan, so nothing bills it: the owner does it by hand. An account
-   * with a Stripe subscription is billed by Stripe and sends nothing.
+   * An ACTIVE account with no card on file changed its plan, so nothing bills it: the owner does it by hand. An account
+   * with a Stripe subscription is billed by Stripe, and a trial or a read-only account owes nothing: neither sends anything.
    */
   async planChangeNoCard(tenantId: string, kind: PlanChangeKind): Promise<void> {
     await this.guarded("plan-change", tenantId, async () => {
@@ -84,7 +84,8 @@ export class OwnerAlertService {
           downgradeEffectiveAt: true,
         },
       });
-      if (!t || !sub || sub.stripeSubId) return;
+      // Only an ACTIVE account with no Stripe subscription is billed by hand: a trial, a read-only account and a locked one are not.
+      if (!t || t.status !== "ACTIVE" || !sub || sub.stripeSubId) return;
       const plan = planLabel(sub.planKey);
       const first = {
         subscribe: `${t.name} picked ${plan}, billed ${sub.cycle === "ANNUAL" ? "annually" : "monthly"}. No card was taken.`,
@@ -134,7 +135,7 @@ export class OwnerAlertService {
   private tenant(id: string): Promise<AlertTenant | null> {
     return this.prisma.tenant.findUnique({
       where: { id },
-      select: { id: true, name: true, slug: true, createdAt: true },
+      select: { id: true, name: true, slug: true, createdAt: true, status: true },
     });
   }
 

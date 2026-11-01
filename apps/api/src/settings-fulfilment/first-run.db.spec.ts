@@ -24,6 +24,7 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { FeatureConfigStore } from "../billing/feature-config.store";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { FIRST_RUN_KEY, closeFirstRun, createPendingFirstRun } from "../billing/first-run-marker";
+import { BILLING_EVENTS } from "../billing/plan-catalog.constants";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { _resetLockPoolForTests } from "../common/db-locks";
@@ -216,6 +217,26 @@ describeDb("first question - real Postgres (W1)", () => {
       hasOrder: false,
     });
     expect(ownerAlerts.keptSetup).not.toHaveBeenCalled();
+  });
+
+  it("F18: a Delivery answer runs the comps under the held lock, logged as signup.setup by the TENANT_USER who clicked", async () => {
+    const t = await seed();
+    expect(await answer(t, { delivery: true })).toEqual({ outcome: "applied", state: "answered" });
+    const events = await raw.billingEvent.findMany({
+      where: { tenantId: t.tenantId, type: BILLING_EVENTS.ADDON_STATE_CHANGED },
+    });
+    // Delivery comps at least one add-on: every such event names the tenant path, never the back office.
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) {
+      expect(e.payload).toMatchObject({
+        source: "signup.setup",
+        actor: { kind: "TENANT_USER", id: t.admin.sub },
+      });
+      expect(e.actorId).toBe(t.admin.sub);
+    }
+    expect(await auditActions(t.tenantId)).toEqual(
+      expect.arrayContaining(["ADDON_COMPED", "BUSINESS_PROFILE_APPLIED"]),
+    );
   });
 
   it("F11: a second answer is a 409 FIRST_RUN_CLOSED and moves nothing", async () => {

@@ -1,19 +1,38 @@
 /**
- * W1 (COPY 2q): every tenant billing route that changes what an account owes either tells the owner about a no-card account
- * or says why it need not. A new `@NoImpersonation("billing")` route fails here until it is listed, so a plan change that
- * nobody bills cannot be added silently. The five plan routes are also driven: the alert fires AFTER the change commits,
- * never when it is refused, and a failing alert never fails the change.
+ * W1 (COPY 2q, PLAN F24f): every tenant billing route that changes what an account owes either tells the owner about a
+ * no-card account or says why it need not. A new `@NoImpersonation("billing")` route fails here until it is listed, so a
+ * plan change that nobody bills cannot be added silently.
+ *
+ * The mail itself is sent by `SubscriptionMutationService`, AFTER each change commits and from the row it read first
+ * (rows F24, F24b-h are driven on Postgres in `owner-alert-plan-change.db.spec.ts`). This file pins what a unit lane can:
+ *   - the route inventory, and that each alerting route calls the method that sends its own kind;
+ *   - the controller sends nothing itself (the old wrapper judged the route's outcome, not the commit);
+ *   - the wiring: all the `ownerAlerts` consumers are `@Optional()`, so a module slip would go SILENT. The Nest module
+ *     metadata and the constructor tokens must stay what makes the real graph supply `OwnerAlertService` to every one of them.
  */
 import "reflect-metadata";
+import * as fs from "fs";
+import * as path from "path";
 import { NO_IMPERSONATION_KEY } from "../auth/guards/no-impersonation.guard";
+import { AuthModule } from "../auth/auth.module";
+import { AuthService } from "../auth/auth.service";
+import { EmailModule } from "../email/email.module";
+import { OwnerAlertService } from "../email/owner-alert.service";
+import { FirstRunService } from "../settings-fulfilment/first-run.service";
+import { SettingsFulfilmentModule } from "../settings-fulfilment/settings-fulfilment.module";
+import { TenantsModule } from "../tenants/tenants.module";
+import { TenantsService } from "../tenants/tenants.service";
+import { BillingModule } from "./billing.module";
 import { SettingsBillingController } from "./settings-billing.controller";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
 
+/** controller route -> the mutation method it calls, the method that holds its body, and the kind it mails. */
 const ALERTING = {
-  subscribe: "subscribe",
-  upgrade: "upgrade",
-  downgrade: "downgrade",
-  cancel: "cancel",
-  resume: "resume",
+  subscribe: { method: "subscribe", body: "subscribe", kind: "subscribe" },
+  upgrade: { method: "upgrade", body: "upgradeLocked", kind: "upgrade" },
+  downgrade: { method: "downgrade", body: "downgrade", kind: "downgrade" },
+  cancel: { method: "cancel", body: "cancel", kind: "cancel" },
+  resume: { method: "resume", body: "resume", kind: "resume" },
 } as const;
 
 /** Routes that move no plan: a hosted page, or a priced add-on on a card the owner never sees. */
@@ -23,6 +42,24 @@ const EXEMPT: Record<string, string> = {
   enableAddon: "add-ons are priced through the plan's own billing path, with the add-on ledger",
   disableAddon: "add-ons are priced through the plan's own billing path, with the add-on ledger",
 };
+
+const read = (...p: string[]) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
+
+/** The text of `async name(` up to the closing brace at the method's own indent. */
+function methodBody(src: string, name: string): string {
+  const start = src.search(new RegExp(`\\n  (private )?async ${name}\\(`));
+  expect(start).toBeGreaterThan(-1);
+  const end = src.indexOf("\n  }\n", start);
+  expect(end).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
+/** The text of a controller method named `name`, from its signature to the next 2-space closing brace. */
+function controllerRoute(src: string, name: string): string {
+  const start = src.search(new RegExp(`\\n  ${name}\\(`));
+  expect(start).toBeGreaterThan(-1);
+  return src.slice(start, src.indexOf("\n  }\n", start));
+}
 
 const billingRoutes = Object.getOwnPropertyNames(SettingsBillingController.prototype).filter(
   (name) =>
@@ -39,58 +76,74 @@ describe("owner alerts on tenant billing routes", () => {
     expect([...billingRoutes].sort()).toEqual(known);
   });
 
-  const user = { tenantId: "t-1", sub: "u-1" };
-  function make(mutation: jest.Mock, alert: jest.Mock) {
-    const mutations = {
-      subscribe: mutation,
-      upgrade: mutation,
-      downgrade: mutation,
-      cancel: mutation,
-      resume: mutation,
-    };
-    return new SettingsBillingController(
-      {} as never,
-      {} as never,
-      mutations as never,
-      {} as never,
-      { planChangeNoCard: alert } as never,
-    );
-  }
-  const call = (c: SettingsBillingController, route: keyof typeof ALERTING) =>
-    (c as any)[route](user, { planKey: "TEAM", cycle: "MONTHLY", targetPlanKey: "STARTER" });
+  describe("the mail is sent by the mutation service, after the commit", () => {
+    const controller = read("settings-billing.controller.ts");
+    const service = read("subscription-mutation.service.ts");
 
-  it.each(Object.entries(ALERTING))(
-    "%s alerts after it commits, with its own kind",
-    async (route, kind) => {
-      const alert = jest.fn(async () => undefined);
-      const mutation = jest.fn(async () => ({ ok: true }));
-      await expect(call(make(mutation, alert), route as keyof typeof ALERTING)).resolves.toEqual({
-        ok: true,
-      });
-      expect(alert).toHaveBeenCalledWith("t-1", kind);
-      expect(mutation.mock.invocationCallOrder[0]).toBeLessThan(alert.mock.invocationCallOrder[0]);
-    },
-  );
-
-  it.each(Object.keys(ALERTING))("%s refused: no alert", async (route) => {
-    const alert = jest.fn();
-    const mutation = jest.fn(async () => {
-      throw new Error("refused");
+    it("the controller sends no alert of its own (it cannot see whether the change committed)", () => {
+      expect(controller).not.toMatch(
+        /ownerAlerts|OwnerAlertService|planChangeNoCard|alertIfNoCard/,
+      );
     });
-    await expect(call(make(mutation, alert), route as keyof typeof ALERTING)).rejects.toThrow(
-      "refused",
+
+    it.each(Object.entries(ALERTING))(
+      "%s calls the mutation method that mails its own kind, once, after its write",
+      (route, { method, body, kind }) => {
+        expect(controllerRoute(controller, route)).toMatch(
+          new RegExp(`this\\.mutations\\.${method}\\(`),
+        );
+        const text = methodBody(service, body);
+        const calls = text.match(/this\.alertNoCard\(/g) ?? [];
+        expect(calls).toHaveLength(1);
+        expect(text).toContain(`this.alertNoCard(tenantId, "${kind}")`);
+        // After the transaction that wrote the change, never before it.
+        expect(text.indexOf("this.alertNoCard(")).toBeGreaterThan(text.indexOf("$transaction("));
+      },
     );
-    expect(alert).not.toHaveBeenCalled();
+
+    it("cancel: only an ACTIVE account's first cancel mails (a trial and a read-only no-op return earlier)", () => {
+      expect(methodBody(service, "cancel")).toMatch(
+        /if \(tenant\?\.status === "ACTIVE" && !sub\.cancelAtPeriodEnd\) \{\s*await this\.alertNoCard\(tenantId, "cancel"\)/,
+      );
+    });
+
+    it("resume mails only when something was armed; downgrade only for a different target", () => {
+      expect(methodBody(service, "resume")).toMatch(
+        /if \(sub\.cancelAtPeriodEnd \|\| sub\.downgradeToPlanKey\) await this\.alertNoCard\(tenantId, "resume"\)/,
+      );
+      expect(methodBody(service, "downgrade")).toMatch(
+        /if \(sub\.downgradeToPlanKey !== targetPlanKey\) await this\.alertNoCard\(tenantId, "downgrade"\)/,
+      );
+    });
   });
 
-  it("a rejected alert never fails the change", async () => {
-    const alert = jest.fn(async () => {
-      throw new Error("mail down");
+  describe("wiring: an @Optional() consumer must not go silent", () => {
+    const resolve = (i: any) => (i && typeof i === "object" && i.forwardRef ? i.forwardRef() : i);
+    const importsOf = (m: unknown) =>
+      ((Reflect.getMetadata("imports", m as object) ?? []) as unknown[]).map(resolve);
+
+    it.each([
+      ["AuthModule", AuthModule],
+      ["TenantsModule", TenantsModule],
+      ["BillingModule", BillingModule],
+      ["SettingsFulfilmentModule", SettingsFulfilmentModule],
+    ])("%s imports EmailModule, which exports OwnerAlertService", (_n, mod) => {
+      expect(importsOf(mod)).toContain(EmailModule);
     });
-    const c = make(
-      jest.fn(async () => ({ ok: true })),
-      alert,
-    );
-    await expect(call(c, "upgrade")).resolves.toEqual({ ok: true });
+
+    it("EmailModule provides and exports OwnerAlertService", () => {
+      expect(Reflect.getMetadata("providers", EmailModule)).toContain(OwnerAlertService);
+      expect(Reflect.getMetadata("exports", EmailModule)).toContain(OwnerAlertService);
+    });
+
+    it.each([
+      ["SubscriptionMutationService", SubscriptionMutationService],
+      ["AuthService", AuthService],
+      ["TenantsService", TenantsService],
+      ["FirstRunService", FirstRunService],
+    ])("%s asks Nest for the OwnerAlertService class itself", (_n, cls) => {
+      const tokens = (Reflect.getMetadata("design:paramtypes", cls) ?? []) as unknown[];
+      expect(tokens).toContain(OwnerAlertService);
+    });
   });
 });

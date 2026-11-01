@@ -12,8 +12,9 @@
  *   - any source file other than `addon.service.ts` (the definition) and `business-profile-apply.service.ts` mentions
  *     `lockHeld` in code (src, scripts, prisma; comments are ignored);
  *   - a `lockHeld` in the apply service sits outside `applyResolvedLocked`, or in an options object without
- *     `comp: true`. Whoever passes `lockHeld` holds the lock: every caller of `applyResolvedLocked` takes
- *     `withConfirmLock` first (the controller does today);
+ *     `comp: true`. Whoever passes `lockHeld` holds the lock, so EVERY non-spec call of `applyResolvedLocked` must sit
+ *     inside a `withConfirmLock(` callback (the two back-office confirm routes and the tenant's first question today).
+ *     The method is public, so this is a check on its callers, not a comment;
  *   - the service honours `lockHeld` without also requiring `comp`.
  */
 import * as fs from "node:fs";
@@ -58,12 +59,39 @@ function strayLockHeldFiles(list: string[]): string[] {
     .filter((f) => mentionsLockHeld(fs.readFileSync(f, "utf8")));
 }
 
-/** Body of `applyResolvedLocked` in the apply service source (comments kept out). */
+/** Body of `applyResolvedLocked` in the apply service source (comments kept out): from its signature to its own closing brace. */
 function applyLockedBody(code: string): { start: number; end: number } {
   const start = code.indexOf("async applyResolvedLocked(");
   if (start < 0) throw new Error("applyResolvedLocked not found in the apply service");
-  // the method is the last member of the class, so the end of the file ends it
-  return { start, end: code.length };
+  // a class member closes at its own two-space indent; the next such brace after the signature is this method's end
+  const close = code.indexOf("\n  }\n", start);
+  if (close < 0) throw new Error("the end of applyResolvedLocked was not found");
+  return { start, end: close + "\n  }".length };
+}
+
+/**
+ * Offsets of every `.applyResolvedLocked(` CALL in `code` that is not inside a `withConfirmLock(...)` argument list.
+ * It looks back to the nearest `withConfirmLock(` and follows the parentheses from there: if they close before the call,
+ * the call is outside the callback.
+ */
+export function callsOutsideConfirmLock(code: string): number[] {
+  const outside: number[] = [];
+  for (const m of code.matchAll(/\.applyResolvedLocked\(/g)) {
+    const at = m.index as number;
+    const lock = code.lastIndexOf("withConfirmLock(", at);
+    let inside = false;
+    if (lock >= 0) {
+      let depth = 1;
+      let i = lock + "withConfirmLock(".length;
+      for (; i < at && depth > 0; i++) {
+        if (code[i] === "(") depth++;
+        else if (code[i] === ")") depth--;
+      }
+      inside = depth > 0;
+    }
+    if (!inside) outside.push(at);
+  }
+  return outside;
 }
 
 describe("SA-769 - `lockHeld` has exactly one caller", () => {
@@ -97,6 +125,36 @@ describe("SA-769 - `lockHeld` has exactly one caller", () => {
       const open = code.lastIndexOf("{", at);
       const close = code.indexOf("}", at);
       expect(code.slice(open, close)).toMatch(/\bcomp:\s*true\b/);
+    }
+  });
+
+  it("the call detector trips on a call outside withConfirmLock and passes one inside (a check matching nothing would report green)", () => {
+    const inside =
+      "return this.profiles.withConfirmLock(id, async () => {\n  await this.apply.applyResolvedLocked(a, b);\n});";
+    const after =
+      "await this.profiles.withConfirmLock(id, async () => { await x(); });\nawait this.apply.applyResolvedLocked(a, b);";
+    const bare = "async other() { return this.apply.applyResolvedLocked(a, b); }";
+    expect(callsOutsideConfirmLock(inside)).toEqual([]);
+    expect(callsOutsideConfirmLock(after)).toHaveLength(1);
+    expect(callsOutsideConfirmLock(bare)).toHaveLength(1);
+  });
+
+  it("every non-spec call of applyResolvedLocked sits inside a withConfirmLock callback, and there is at least one", () => {
+    const callers = files.filter((f) =>
+      /\.applyResolvedLocked\(/.test(codeOnly(fs.readFileSync(f, "utf8"))),
+    );
+    expect(callers.map((f) => path.relative(API_ROOT, f).split(path.sep).join("/")).sort()).toEqual(
+      [
+        "src/platform-admin/platform-admin.controller.ts",
+        "src/settings-fulfilment/first-run.service.ts",
+      ],
+    );
+    for (const f of callers) {
+      const code = codeOnly(fs.readFileSync(f, "utf8"));
+      expect({ file: path.relative(API_ROOT, f), outside: callsOutsideConfirmLock(code) }).toEqual({
+        file: path.relative(API_ROOT, f),
+        outside: [],
+      });
     }
   });
 
