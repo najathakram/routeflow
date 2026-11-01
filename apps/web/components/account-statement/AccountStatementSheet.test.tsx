@@ -150,13 +150,31 @@ describe("OpenBalanceButton", () => {
 
   it("the footer actions slot renders what the caller hands it", async () => {
     renderWithProviders(
-      <OpenBalanceButton customerId="c1" actions={<button type="button">Email</button>}>
+      <OpenBalanceButton customerId="c1" actions={<button type="button">Pay now</button>}>
         $120.00
       </OpenBalanceButton>,
     );
     await open();
     const actions = await screen.findByTestId("account-statement-actions");
-    expect(within(actions).getByRole("button", { name: "Email" })).toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+  });
+
+  it("E1 (PR-4): the footer carries Email beside Print, and its form starts at the on-file address", async () => {
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    const user = await open();
+    const actions = await screen.findByTestId("account-statement-actions");
+    expect(within(actions).getByRole("button", { name: "Print" })).toBeInTheDocument();
+    await user.click(within(actions).getByRole("button", { name: "Email" }));
+    expect(within(actions).getByLabelText("Send to")).toHaveValue("ap@acme.test");
+  });
+
+  it("E3 (PR-4): with no address on file the form starts empty", async () => {
+    statement = { ...statement, emailOnFile: null };
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    const user = await open();
+    const actions = await screen.findByTestId("account-statement-actions");
+    await user.click(within(actions).getByRole("button", { name: "Email" }));
+    expect(within(actions).getByLabelText("Send to")).toHaveValue("");
   });
 
   it("PD6: the footer carries Print, and a failed print leaves the sheet and its figures on screen", async () => {

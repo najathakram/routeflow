@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfTemplate, StatementTenantInfo } from "./statement-pdf-template";
+import type { AccountStatement } from "@routeflow/types";
 import { buildAccountStatement } from "../customers/account-statement";
 import { AccountStatementPdfTemplate } from "../customers/account-statement-pdf-template";
 
@@ -67,30 +68,42 @@ export class StatementPdfService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
+    const { pdf } = await this.buildCurrentPdf(customer);
+
+    const key = `statement-pdfs/${customerId}/current.pdf`;
+    await this.storage.upload(key, pdf, "application/pdf");
+    return this.storage.presignedUrl(key);
+  }
+
+  /**
+   * SA-1078 PR-4: the current statement as bytes, for the email (stores nothing). Returns the very `AccountStatement`
+   * the page was drawn from and the letterhead it used, so the email's subject, body and attachment come from one object.
+   */
+  async buildCurrentPdf(customer: {
+    id: string;
+    businessName: string;
+    email?: string | null;
+  }): Promise<{ statement: AccountStatement; tenant: StatementTenantInfo | null; pdf: Buffer }> {
     const statement = await buildAccountStatement(this.prisma, customer, { staff: false });
     const tenant = await this.loadTenant();
 
-    this.logger.log(`Generating current statement PDF for customer ${customerId}`);
+    this.logger.log(`Generating current statement PDF for customer ${customer.id}`);
 
-    let pdfBuffer: Buffer;
     try {
       const element = React.createElement(AccountStatementPdfTemplate as any, {
         statement,
         tenant,
         generatedAt: new Date(),
       });
-      pdfBuffer = await renderToBuffer(element as any);
+      const pdf = await renderToBuffer(element as any);
+      return { statement, tenant, pdf };
     } catch (err) {
       this.logger.error(
-        `Current statement PDF render failed for customer ${customerId}`,
+        `Current statement PDF render failed for customer ${customer.id}`,
         err instanceof Error ? err.stack : String(err),
       );
       throw new Error(`Statement PDF render failed: ${err}`);
     }
-
-    const key = `statement-pdfs/${customerId}/current.pdf`;
-    await this.storage.upload(key, pdfBuffer, "application/pdf");
-    return this.storage.presignedUrl(key);
   }
 
   /** The letterhead data for a render: the tenant's config plus its logo as a data URI (a logo that fails to load is skipped). */

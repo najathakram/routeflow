@@ -292,6 +292,20 @@ describe("service: PD2 letterhead fallback, the current key, PD5 the monthly key
     expect(storage.presignedUrl).toHaveBeenCalledWith("statement-pdfs/c1/current.pdf");
   });
 
+  it("E1 (PR-4): buildCurrentPdf returns the statement it rendered, the letterhead and the bytes, and stores nothing", async () => {
+    mockBuild.mockClear();
+    const s = statement();
+    mockBuild.mockResolvedValue(s);
+    const { service, storage } = setup();
+    const built = await service.buildCurrentPdf({ id: "c1", businessName: "Buyer Co" });
+    expect(built.statement).toBe(s); // one read: the object the page was drawn from
+    expect(mockBuild).toHaveBeenCalledTimes(1);
+    expect(mockRendered[0].props.statement).toBe(s);
+    expect(built.pdf.toString()).toBe("%PDF-test");
+    expect(built.tenant?.businessName).toBe("Acme Wholesale");
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
+
   it("404s on a customer that is not this tenant's, before any render", async () => {
     const { service, prisma } = setup();
     prisma.customer.findFirst.mockResolvedValue(null);
