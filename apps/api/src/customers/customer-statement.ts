@@ -12,6 +12,7 @@ import { sweepableCredits } from "../credit-notes/auto-apply-candidates";
 import { loadCreditExposure, OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
 import {
   classifyInvoiceBalance,
+  summarizeOpenInvoices,
   type ClassifiableInvoice,
 } from "../invoices/invoice-balance-classify";
 import { overdueCutoff } from "../common/calendar-date";
@@ -27,17 +28,31 @@ import { toCollectSummary } from "../invoices/to-collect";
  */
 
 /**
+ * SA-1078 PR-1: the statement's outstanding figure = Σ the clamped balance of every open invoice
+ * (`summarizeOpenInvoices`), so an overpaid invoice adds 0 and never nets down the others. The ONE total:
+ * both builders and the account statement read it (account-statement.ts), so the rows always add up to it.
+ */
+export function statementOutstandingAmount(
+  open: ReadonlyArray<ClassifiableInvoice>,
+  timeZone: string | null,
+  now: Date = new Date(),
+): number {
+  return summarizeOpenInvoices(open, overdueCutoff(now, timeZone)).unpaidTotal;
+}
+
+/**
  * Row 309 (SA-770 "one predicate"): the statement's overdue figure = Σ the POSITIVE balance of every open
  * invoice the one classifier calls overdue: a balance is due AND the due DAY has ended in the statement's
  * own tenant zone (RF-202: an invoice due today is NOT overdue; UTC when the tenant has no zone). The zone
  * is resolved ONCE per statement by the caller. Each contribution is the classifier's
  * clamped balance (max(0, roundMoney(total - confirmed))), so an overpaid open invoice adds 0.
  */
-function statementOverdueAmount(
+export function statementOverdueAmount(
   open: ReadonlyArray<ClassifiableInvoice>,
   timeZone: string | null,
+  now: Date = new Date(),
 ): number {
-  const cutoff = overdueCutoff(new Date(), timeZone);
+  const cutoff = overdueCutoff(now, timeZone);
   let sum = 0;
   for (const inv of open) {
     const { balanceDue, isOverdue } = classifyInvoiceBalance(inv, cutoff);
@@ -152,14 +167,13 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
   const openInvoicesWithPaid = withPaid(openInvoices);
   const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
 
-  // H2: every money figure this statement returns is rounded to cents —
-  // a float reduce over many invoices leaks binary-float dust
-  // (0.1 + 0.2 = 0.30000000000000004) straight into the UI.
-  const outstanding = roundMoney(
-    openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
-  );
+  // H2: every money figure this statement returns is rounded to cents.
+  // SA-1078 PR-1: the total is the sum of each invoice's CLAMPED balance (`summarizeOpenInvoices`), never
+  // `total - paid` summed raw, which netted an overpaid invoice against the others.
+  const statementZone = await tenantTimeZone(prisma);
+  const outstanding = statementOutstandingAmount(openInvoicesWithPaid, statementZone);
 
-  const overdue = statementOverdueAmount(openInvoicesWithPaid, await tenantTimeZone(prisma));
+  const overdue = statementOverdueAmount(openInvoicesWithPaid, statementZone);
 
   // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
   // (not face amount) prevents the double-count — a partial credit already sits on
@@ -390,14 +404,13 @@ export async function buildOperatorStatement(
   const openInvoicesWithPaid = withPaid(openInvoices);
   const ledgerInvoicesWithPaid = withPaid(ledgerInvoices);
 
-  // H2: every money figure this statement returns is rounded to cents —
-  // a float reduce over many invoices leaks binary-float dust
-  // (0.1 + 0.2 = 0.30000000000000004) straight into the UI.
-  const outstanding = roundMoney(
-    openInvoicesWithPaid.reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0),
-  );
+  // H2: every money figure this statement returns is rounded to cents.
+  // SA-1078 PR-1: the total is the sum of each invoice's CLAMPED balance (`summarizeOpenInvoices`), never
+  // `total - paid` summed raw, which netted an overpaid invoice against the others.
+  const statementZone = await tenantTimeZone(prisma);
+  const outstanding = statementOutstandingAmount(openInvoicesWithPaid, statementZone);
 
-  const overdue = statementOverdueAmount(openInvoicesWithPaid, await tenantTimeZone(prisma));
+  const overdue = statementOverdueAmount(openInvoicesWithPaid, statementZone);
 
   // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
   // (not face amount) prevents the double-count — a partial credit already sits on
