@@ -1,11 +1,18 @@
 #!/usr/bin/env node
-// Self-test for tools/ci-runner/launch-once.mjs. Plain node; exit 1 on failure. No gh, no Docker:
+// Self-test for tools/ci-runner/runner-lib.mjs. Plain node; exit 1 on failure. No gh, no Docker:
 // every outside call is a fake, so this runs anywhere `npm run verify` runs.
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import {
   EXIT_FOREIGN_QUEUED,
+  EXIT_LIVE_RUNNER,
+  EXIT_UNREADABLE,
+  checkNoRunner,
   EXIT_NOT_PRIVATE,
   REPO,
   deleteRunner,
@@ -18,8 +25,7 @@ import {
   parseFlags,
   pollOnce,
   runContainer,
-} from "./launch-once.mjs";
-import { EXIT_LIVE_RUNNER, EXIT_UNREADABLE, checkNoRunner } from "./check-no-runner.mjs";
+} from "./runner-lib.mjs";
 import { isCappedLabel, withHeavySlot } from "../../scripts/lib/heavy-slot.mjs";
 
 let passed = 0;
@@ -646,6 +652,60 @@ check(
     "refused",
   );
   check("R8 a timeout is refused", deleteRunner(7, failing("")), "refused");
+}
+
+// The flip and the launcher start from these two files, however node was started. A link in the path
+// must not skip their work. PATH holds no gh, so the check can only refuse: it never reaches GitHub.
+{
+  const dir = fileURLToPath(new URL(".", import.meta.url));
+  const tmp = mkdtempSync(path.join(tmpdir(), "rf-runner-link-"));
+  const link = path.join(tmp, "dir");
+  const fileLink = path.join(tmp, "check.mjs");
+  const run = (script) => {
+    const { status, stderr } = spawnSync(process.execPath, [script], {
+      cwd: tmp,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { SystemRoot: process.env.SystemRoot, PATH: tmp },
+    });
+    return [status, stderr.includes("refusing")];
+  };
+  symlinkSync(dir, link, "junction"); // A junction on Windows, a symlink elsewhere.
+  try {
+    check("E1 the check refuses with no gh", run(path.join(dir, "check-no-runner.mjs")), [2, true]);
+    check(
+      "E2 the check still runs through a linked folder",
+      run(path.join(link, "check-no-runner.mjs")),
+      [2, true],
+    );
+    check(
+      "E3 the launcher still runs through a linked folder",
+      run(path.join(link, "launch-once.mjs")),
+      [2, true],
+    );
+    let fileLinks = true;
+    try {
+      symlinkSync(path.join(dir, "check-no-runner.mjs"), fileLink);
+    } catch (e) {
+      if (e.code !== "EPERM") throw e;
+      fileLinks = false;
+      console.log("  skip E4: this Windows account can't make file symlinks");
+    }
+    if (fileLinks) {
+      check("E4 the check still runs through a linked file", run(fileLink), [2, true]);
+      unlinkSync(fileLink);
+    }
+  } finally {
+    unlinkSync(link);
+    rmdirSync(tmp);
+  }
+  for (const file of ["check-no-runner.mjs", "launch-once.mjs"]) {
+    check(
+      `E5 ${file} has no entry guard`,
+      /import\.meta|process\.argv\[1\]/.test(readFileSync(path.join(dir, file), "utf8")),
+      false,
+    );
+  }
 }
 
 console.log(`\nlaunch-once self-test: ${passed} passed, ${failed} failed`);

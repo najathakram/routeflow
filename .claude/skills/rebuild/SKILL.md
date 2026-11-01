@@ -67,7 +67,7 @@ run dies as a 0-step failure, so CI needs the public window below.
 #    POSIX:   nohup node scripts/visibility-watchdog.mjs --minutes 45 >/dev/null 2>&1 &
 
 # 1. Make public
-gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences
+node tools/ci-runner/check-no-runner.mjs && gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences
 
 # 2. Find the open PR on the current branch (or pass the PR number explicitly)
 gh pr list --state open --json number,headRefName

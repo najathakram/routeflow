@@ -27,7 +27,7 @@ The launcher takes its own heavy seat, so do not wrap it in `heavy-slot run`. Ru
 
 The branch needs this PR's `ci.yml`, because a dispatch reads the workflow from the branch.
 
-**One-time setup on the PC.** Both are done. When `Dockerfile` or `entrypoint.sh` changes, bump the tag here and in `launch-once.mjs`, then rebuild. A launcher that can't find its tag fails instead of running an old image.
+**One-time setup on the PC.** Both are done. When `Dockerfile` or `entrypoint.sh` changes, bump the tag here and in `runner-lib.mjs`, then rebuild. A launcher that can't find its tag fails instead of running an old image.
 
 ```bash
 docker build -t routeflow-ci-runner:2.338.2-r2 tools/ci-runner
