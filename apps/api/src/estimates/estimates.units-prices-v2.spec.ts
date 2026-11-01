@@ -53,7 +53,10 @@ describe("EstimatesService.create: the customer layer (S19)", () => {
     };
   };
   const quote = async () => {
-    await service.create({ customerId: "cust-1", items: [{ productId: "p1", qty: 2 }] } as never, NO_PRICE_RIGHTS);
+    await service.create(
+      { customerId: "cust-1", items: [{ productId: "p1", qty: 2 }] } as never,
+      NO_PRICE_RIGHTS,
+    );
     return prisma.estimate.create.mock.calls[0][0].data.items.create[0];
   };
 

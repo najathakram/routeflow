@@ -221,6 +221,50 @@ export function rulingLineIndex(
   return withQty >= 0 ? withQty : lines.findIndex((l) => l.productId === productId);
 }
 
+/**
+ * SA-1079: the wire holds ONE item per product (`mergeDuplicateProductItems`), so these fields belong to the product, not the
+ * row. Boxes and pieces stay per row. `patchReturnLine` writes a product-wide field to every row of the product.
+ */
+export const PRODUCT_WIDE_FIELDS = [
+  "reason",
+  "note",
+  "creditUnitPrice",
+  "overrideReason",
+  "alreadyReturnedReason",
+] as const satisfies readonly (keyof InlineReturnLineDraft)[];
+
+/** Applies `patch` to row `at`; the product-wide keys in it also go to every other row of the same product. */
+export function patchReturnLine<L extends InlineReturnLineDraft>(
+  lines: readonly L[],
+  at: number,
+  patch: Partial<InlineReturnLineDraft>,
+): L[] {
+  const target = lines[at];
+  if (!target) return [...lines];
+  const wide: Partial<InlineReturnLineDraft> = {};
+  for (const key of PRODUCT_WIDE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      (wide as Record<string, unknown>)[key] = patch[key];
+    }
+  }
+  return lines.map((l, i) =>
+    i === at ? { ...l, ...patch } : l.productId === target.productId ? { ...l, ...wide } : l,
+  );
+}
+
+/** A row put back (Undo) takes the product-wide values its product's rows hold now; its own when no row is left. */
+export function adoptProductValues<L extends InlineReturnLineDraft>(
+  lines: readonly L[],
+  line: L,
+): L {
+  const at = rulingLineIndex(lines, line.productId);
+  const source = at >= 0 ? lines[at] : undefined;
+  if (!source) return line;
+  const adopted: Partial<InlineReturnLineDraft> = {};
+  for (const key of PRODUCT_WIDE_FIELDS) (adopted as Record<string, unknown>)[key] = source[key];
+  return { ...line, ...adopted };
+}
+
 /** "Get quote" enables when any line has boxes > 0 or pieces > 0. */
 export function hasAnyQtyEntered(lines: InlineReturnLineDraft[]): boolean {
   return lines.some((l) => parseNonNegativeInt(l.boxes) > 0 || parseNonNegativeInt(l.pieces) > 0);

@@ -71,7 +71,10 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
 
   it("create(): rate > 0 ⇒ 400 NSF_LINE_UNTAXED before the customer is even read", async () => {
     const caught: any = await service
-      .create({ customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0.08)] } as any, NO_PRICE_RIGHTS)
+      .create(
+        { customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0.08)] } as any,
+        NO_PRICE_RIGHTS,
+      )
       .catch((e) => e);
     expect(codeOf(caught)).toBe("NSF_LINE_UNTAXED");
     expect(prisma.customer.findUnique).not.toHaveBeenCalled();
@@ -90,7 +93,10 @@ describe("RecurringInvoicesService — #2656 an NSF-described template line is n
   it("create(): the same line at 0 passes the guard (reaches the customer read)", async () => {
     prisma.customer.findUnique.mockResolvedValue(null); // then the normal 404 — past the guard
     const caught: any = await service
-      .create({ customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0)] } as any, NO_PRICE_RIGHTS)
+      .create(
+        { customerId: "c-1", frequency: "MONTHLY", items: [nsfLine(0)] } as any,
+        NO_PRICE_RIGHTS,
+      )
       .catch((e) => e);
     expect(codeOf(caught)).toBeUndefined();
     expect(prisma.customer.findUnique).toHaveBeenCalled();

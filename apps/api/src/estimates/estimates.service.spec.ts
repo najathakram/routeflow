@@ -413,10 +413,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       });
 
       await expect(
-        service.create({
-          customerId: "cust-1",
-          items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
-        }, NO_PRICE_RIGHTS),
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+          },
+          NO_PRICE_RIGHTS,
+        ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -429,10 +432,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       prisma.estimate.create.mockRejectedValue(err);
 
       await expect(
-        service.create({
-          customerId: "cust-1",
-          items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
-        }, NO_PRICE_RIGHTS),
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ description: "Widget", unitPrice: 10, qty: 1 }],
+          },
+          NO_PRICE_RIGHTS,
+        ),
       ).rejects.toBe(err);
     });
   });
@@ -1097,10 +1103,13 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       ]);
       prisma.estimate.create.mockResolvedValue({ id: "est-645" });
 
-      await service.create({
-        customerId: "cust-645",
-        items: [{ productId: "prod-645", boxes: 1, unitPrice: 10 }],
-      }, NO_PRICE_RIGHTS);
+      await service.create(
+        {
+          customerId: "cust-645",
+          items: [{ productId: "prod-645", boxes: 1, unitPrice: 10 }],
+        },
+        NO_PRICE_RIGHTS,
+      );
 
       const createdItem = prisma.estimate.create.mock.calls[0][0].data.items.create[0];
       expect(createdItem.boxes).toBe(1);

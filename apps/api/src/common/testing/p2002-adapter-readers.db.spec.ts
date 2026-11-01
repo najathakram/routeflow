@@ -121,7 +121,9 @@ describeDb("B1186: unique-violation readers match the pg adapter's P2002 shape",
     });
     jest.spyOn(numbering, "reserveNext").mockResolvedValue(`E-${run}` as never);
     const e = await errorOf(
-      tenantCtx.run(tenantId, () => est.create({ customerId: c.id, items: [] } as never, NO_PRICE_RIGHTS)),
+      tenantCtx.run(tenantId, () =>
+        est.create({ customerId: c.id, items: [] } as never, NO_PRICE_RIGHTS),
+      ),
     );
     expect(e?.getStatus?.()).toBe(409);
   }, 60_000);
@@ -146,7 +148,9 @@ describeDb("B1186: unique-violation readers match the pg adapter's P2002 shape",
       });
     }) as never);
     const e = await errorOf(
-      tenantCtx.run(tenantId, () => est.create({ customerId: c.id, items: [] } as never, NO_PRICE_RIGHTS)),
+      tenantCtx.run(tenantId, () =>
+        est.create({ customerId: c.id, items: [] } as never, NO_PRICE_RIGHTS),
+      ),
     );
     jest.restoreAllMocks();
     expect(e?.code).toBe("P2002"); // propagates untouched
