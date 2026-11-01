@@ -124,3 +124,35 @@ describe.each([
     await waitFor(() => expect(screen.getByText("Acme Co")).toBeInTheDocument());
   });
 });
+
+describe("U9: the next open reads the statement again", () => {
+  it("a reopened sheet shows Loading, not the figure it held when it closed", async () => {
+    mockSearch = "report=ar-aging";
+    const user = userEvent.setup();
+    let statementReads = 0;
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/customers/c1/account-statement") {
+        statementReads += 1;
+        return statementReads === 1
+          ? Promise.resolve({ data: STATEMENT })
+          : new Promise(() => undefined);
+      }
+      if (url === "/bookkeeping/reports/ar-aging-invoices")
+        return Promise.resolve({ data: AR_AGING });
+      return Promise.resolve({ data: [] });
+    });
+    renderWithProviders(<FinanceReportsPage />);
+
+    const row = (await screen.findByText("Acme Co")).closest("tr")!;
+    await user.click(within(row).getByTestId("open-balance-button"));
+    const first = await screen.findByRole("dialog", { name: "Statement" });
+    await waitFor(() => expect(within(first).queryByText("Loading…")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(within(row).getByTestId("open-balance-button"));
+    const second = await screen.findByRole("dialog", { name: "Statement" });
+    expect(statementReads).toBe(2);
+    expect(within(second).getByText("Loading…")).toBeInTheDocument();
+  });
+});
