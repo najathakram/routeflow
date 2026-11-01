@@ -50,6 +50,7 @@ import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 import { SupplierSelect } from "./SupplierSelect";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 import { ProductCreateModal } from "./ProductCreateModal";
+import { PDF_PREVIEW_UNAVAILABLE, PdfPreview } from "@/components/PdfPreview";
 import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
@@ -1832,11 +1833,18 @@ export function ScanInvoiceModal({
                     )}
                     <div className="flex-1 overflow-hidden">
                       {previewType === "pdf" ? (
-                        <iframe
-                          src={previewUrl ?? undefined}
-                          className="h-full w-full"
-                          style={{ minHeight: "500px" }}
+                        <PdfPreview
+                          src={previewUrl ?? ""}
                           title="Invoice PDF"
+                          className="h-full min-h-[500px] w-full"
+                          getBytes={async () => {
+                            const file = active?.files[previewIndex];
+                            if (!file) throw new Error("No file to preview");
+                            return file;
+                          }}
+                          fallback={
+                            <p className="text-sm text-navy/70">{PDF_PREVIEW_UNAVAILABLE}</p>
+                          }
                         />
                       ) : (
                         (() => {

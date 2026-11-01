@@ -93,6 +93,8 @@ Every check is appended to `local-assets/proof-stack.jsonl`.
 | `create-order-customer-keyboard` | `68-create-order-customer-keyboard.spec.ts` | Create Order (PKG-4): keyboard-only customer pick, Tab parity, Escape closes only the list, Change customer + Undo; 1440 + 390. Read-only (never dismisses a started order).                                                                                             |
 | `settings-search`                | `settings-search.spec.ts`                   | Settings hub search by the user's words (carrier, low stock) at 1440 and 390: answer row, deep link to the notifications tab, Clear Search, no horizontal scroll. Read-only.                                                                                             |
 | `return-by-line`                 | `77-return-by-line.spec.ts`                 | A return counted by line (SA-1042): 1 Case through the form reads 200 pcs (1 Case) and credits 45.00; no sideways swipe at 1280 or 390. Local lane only, it leaves its documents behind.                                                                                 |
+| `pdf-preview`                    | `80-pdf-preview-touch.spec.ts`              | W-1064: the PDF preview scrolls on phone settings, the worker loads with no CSP error, desktop keeps its iframe                                                                                                                                                          |
+| `ios-zoom`                       | `81-ios-zoom-touch.spec.ts`                 | SA-1071 A-2: every field reads 16px on touch, desktop keeps its sizes, boxes and pieces hold 3 digits clear of Rate                                                                                                                                                      |
 
 Projects needing `PLAYWRIGHT_SA_*` (`super-admin`, `impersonation-signout`) are excluded from
 the allow-list — those secrets are not expected to be present on every contributor's machine.
@@ -263,3 +265,10 @@ checks no horizontal overflow and saves a screenshot under `test-results/`. No b
 asserts that the centre of Boxes, Pieces and Unit Price each hit-tests (`elementFromPoint`) to that input, that Boxes and
 Pieces are at least 44 px, and that the "box" / "pcs" labels are visible. It never saves the form and deletes what it
 created in a `finally`. jsdom cannot see an overlap, so this is the guard for the edit grid's layout.
+
+## `counter-return-iphone` (R-1 M17): local lane only
+
+`playwright.config.ts` registers `counter-return-iphone` (the counter-return spec's 390 tests on WebKit as an iPhone 13) in the same
+local-only block as spec 71. CI, post-deploy and nightly run `npx playwright test` with no project filter and install chromium
+only, so the project is not registered there (`GITHUB_ACTIONS=true` lists none of its tests). Locally it needs
+`npx playwright install webkit`; run it with `--project=counter-return-iphone`.

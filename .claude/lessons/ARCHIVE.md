@@ -4543,3 +4543,81 @@ citations, closed-out with its own post-init assertion guard).
   style, an element's actual reachable size), never a scrape of the source file's literal
   text.**
 - **Guard:** the fix (rewriting both to DOM-behavior assertions) is being built into #910.
+
+### L-176 · 2026-09-16/22/23 · tooling · worktree without its own node_modules resolves to the main checkout (recurred three times: 2026-09-22, 2026-09-23)
+
+- **Symptom:** a worktree with no `node_modules` of its own resolved workspace deps up to the
+  MAIN checkout's — a stale compiled `@routeflow/pricing` dist threw a missing-function error.
+  RECURRED 2026-09-22, twice: after a `@routeflow/pricing` change landed on master, other
+  worktrees' `packages/pricing/dist` stayed stale, so api/web tests there imported the OLD money
+  math and silently produced wrong zeros or drift instead of an error — same root cause, a
+  quieter failure shape (wrong numbers, not a thrown missing-function error). RECURRED a third
+  time, 2026-09-23 (B660 PR B lane, `apps/web` + `@routeflow/returns`, same worktree/session, no
+  master-sync involved): editing `packages/returns/src/*.ts` had zero effect on a web dialog test
+  (still failing on the PRE-fix value) though the package's own source-direct suite passed —
+  `apps/web`'s jest config has no `moduleNameMapper` for `@routeflow/returns` (unlike
+  `apps/mobile`'s), so it resolves via `node_modules` → `package.json`'s `main`/`types` → the
+  STALE PREBUILT `dist/index.js`. Fixed by `npm run build -w packages/returns`; not a pipeline
+  risk since turbo's task graph rebuilds it correctly during `npm run verify`.
+- **Root cause:** npm workspace symlinks/junctions in a worktree missing its own `npm ci` fall
+  back to whatever the main checkout last had installed/built — never a guarantee of freshness.
+  The third recurrence adds a distinct wrinkle: even within one freshly-`npm ci`'d worktree, a
+  consumer's jest config may resolve a package via prebuilt `dist` instead of live `src` absent a
+  `moduleNameMapper` override — inconsistent per app, so one app going green proves nothing about
+  another.
+- **Lesson:** **A worktree needs its OWN `npm ci` before running web/api tests. After any
+  `packages/*` change lands on master, rebuild the shared dist in EVERY worktree that will test
+  against it (`npx turbo run build --filter=@routeflow/pricing --force` after fetching master),
+  not just the main checkout — a stale `packages/pricing/dist` can fail quietly (wrong money
+  values) as easily as it fails loudly (a missing-function throw). Same rule applies mid-session,
+  same worktree: after editing a
+  workspace package's own `src`, before trusting a DIFFERENT app's test result against it, check
+  that app's jest config for a `moduleNameMapper` override — absent one, `npm run build -w <pkg>`
+  first.**
+- **Guard:** still none automated after two recurrences — propose a pre-test check comparing
+  `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
+  `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
+  consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
+
+### L-193 · 2026-09-17 · tooling · bugs.mjs index carries catalogue-only fields forward BY ID POSITION
+
+- **Symptom:** renumbering 17 filed bug records (to dodge an id collision) then running
+  `bugs.mjs index` scrambled every shifted row's `symptom`/`filedAt` onto the WRONG finding — the
+  new id briefly carried one finding's title with a different finding's symptom text.
+- **Root cause:** catalogue-only fields (`symptom`, `filedAt`) have no home in a record's own
+  front matter, so `index` cannot re-derive them — it carries forward whatever the PRIOR
+  catalogue row held at that SAME id, which after a rename is a stale, orphaned row.
+- **Lesson:** **`bugs.mjs index`/`expand` carry a catalogue-only field forward by id lookup, not
+  by identity — renaming a record's file to change its id does NOT bring these fields with it.
+  To renumber, pull each row's ORIGINAL entry from git history, remap only `id`, and splice it
+  back directly; never trust `index`'s carry-forward across an id change. Diff for net-zero
+  before committing any bulk-id rewrite.**
+- **Recurred 2026-10-02:** marking bugs fixed with `move` + `already-fixed` writes the ledger but leaves each record's `closed:` flag to the refresh. Run `node scripts/campaign/bugs.mjs sync`, then the read-only `sync --check` ("N record(s) mirror the ledger") and the full `self-test`, before the commit; `campaign-check` does not cover the record-to-ledger mirror. #3062 skipped it and master's self-test (T13b/R9) stayed red until #3067.
+- **Guard:** none yet — propose a `bugs.mjs renumber <old> <new>` command doing the safe remap
+  atomically, or a self-test asserting `index` refuses/warns on a renamed fixture.
+  The record-to-ledger mirror is pinned by `bugs.mjs self-test` T13b/R9 (run by `common/bugs-self-test-script.spec.ts`).
+
+### L-167 · 2026-09-16 · domain · #781 (B156/B158/B170)
+
+- **Symptom:** three separately-reported bugs all traced to the same root cause — a
+  customer-list filter predicate living in more than one place.
+- **Root cause:** `findAll`'s `where` clause and `exportCustomers`'s hand-rolled one had drifted
+  apart, and neither was consulted by the removed-customer guard.
+- **Lesson:** **When an entity has more than one read/export/guard path, its filter predicate
+  belongs in exactly ONE shared builder consumed by all of them — call-site-specific copies will
+  silently drift, and each drift surfaces as its own "unrelated" bug report.**
+- **Guard:** shared `buildListWhere()` backs `findAll`, `exportCustomers`, and the status-change
+  guards; a test asserting every consumer calls the _same_ function reference (not just a
+  matching result) is flagged, not yet added.
+
+### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
+
+- **Symptom:** an OAuth/booking token traveled as a URL query parameter — the exact shape that
+  ends up in server access logs, browser history, `Referer` headers, and analytics scripts.
+- **Root cause:** a query string is the easiest place to carry a value across a redirect, but
+  also the least private transport HTTP offers.
+- **Lesson:** **Never carry an OAuth token, booking token, or any other bearer-shaped secret in
+  a URL query string — use a fragment (`#`, never sent to the server) for a client-side handoff,
+  or a POST body for a server-side one.**
+- **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
+  named query params on any new route.

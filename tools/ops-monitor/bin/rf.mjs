@@ -17,6 +17,7 @@ import {
   specsRemote,
 } from "../lib/config.mjs";
 import {
+  BUG_ID_RE,
   DONE_STATUSES,
   STATUSES,
   TYPES,
@@ -26,7 +27,8 @@ import {
 } from "../lib/schema.mjs";
 import { newEventId } from "../lib/ids.mjs";
 import { fold } from "../lib/fold.mjs";
-import { laneNow, rankCandidates } from "../lib/next.mjs";
+import { freedItems, laneNow, rankCandidates } from "../lib/next.mjs";
+import { linkMatches, readPrTitle } from "../lib/link-check.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
 import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
 import { runStatusSync } from "../lib/status-sync.mjs";
@@ -49,6 +51,7 @@ class UsageError extends Error {}
 
 const BOOLEAN_FLAGS = new Set([
   "steal",
+  "force",
   "claim",
   "json",
   "no-push",
@@ -92,11 +95,12 @@ const USAGE = `usage: rf <command> [args]
   event <kind> [<item>] [--lane L] [--status S] [--note T] [--by X] [--unblocker Y] [--ref R]
         [--summary S] [--question Q] [--answer A] [--recommended R] [--text T] [--pr N]...
         [--branch B]... [--url U]... [--sha S] [--repo O/R] [--action A] [--number N]
+        link refuses an unknown item, or a PR whose title shares no word with the item's: [--force]
   claim <id> [--lane L] [--branch B] [--steal]     release <id> [--lane L]
   status <id> <status> [--note T]                  block <id> --by X [--unblocker Y]   unblock <id>
   next [--lane L] [--claim] [--json]
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
-           [--parent ID] [--eta E] [--gate G] [--id ID]
+           [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
            [--problem "what is wrong"] [--impact "who it hurts, what it costs"] [--solution "how we fix it"]
            [--owner-ask "what we need from the owner"] [--harm live|latent|none|null]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
@@ -217,6 +221,10 @@ function itemFields(flags, c) {
     f.lane = CLEAR_WORDS.has(String(flags.lane)) ? null : resolveLane(flags.lane, c);
   }
   for (const k of ["tags", "members", "related"]) if (flags[k] !== undefined) f[k] = list(flags[k]);
+  if (flags["blocked-by"] !== undefined) {
+    const raw = String(flags["blocked-by"]);
+    f.blockedBy = CLEAR_WORDS.has(raw) ? [] : list(raw);
+  }
   const links = {};
   if (flags.pr) links.prs = flags.pr.map((n) => Number(n));
   if (flags.branch) links.branches = flags.branch;
@@ -224,6 +232,14 @@ function itemFields(flags, c) {
   if (Object.keys(links).length) f.links = links;
   for (const k of NULLABLE) if (typeof f[k] === "string" && CLEAR_WORDS.has(f[k])) f[k] = null;
   return f;
+}
+
+/** A typo in --blocked-by would hold the item for good: the id must be a known item. */
+function assertKnownBlockers(c, fields) {
+  if (!fields.blockedBy?.length) return;
+  const { items } = stateOf(c);
+  const unknown = fields.blockedBy.filter((id) => !items.has(id));
+  if (unknown.length) throw new UsageError(`--blocked-by: unknown item ${unknown.join(", ")}`);
 }
 
 function print(flags, json, text) {
@@ -357,10 +373,39 @@ async function cmdEvent(positional, flags, env) {
   const kind = KIND_ALIASES[kindRaw] ?? kindRaw;
   const item = positional[1] ?? null;
   if (NEEDS_ITEM.has(kind) && !item) throw new UsageError(`rf event ${kind} needs an item id`);
-  const c = await prepare(ctxFor(env), flags, { sync: false });
+  // A link reads the item's title, so it needs the items as they stand now.
+  const c = await prepare(ctxFor(env), flags, { sync: kind === "link" });
   const lane = resolveLane(flags.lane, c, { required: kind === "claim" || kind === "release" });
   const data = buildEventData(kind, flags);
-  return writeCmd(c, flags, [makeEvent(c, kind, item, data, lane)]);
+  const events = [makeEvent(c, kind, item, data, lane)];
+  if (kind !== "link") return writeCmd(c, flags, events);
+  const linked = stateOf(c).items.get(item);
+  const problem = flags.force ? null : linkProblem(c, item, linked, data.prs);
+  if (problem) {
+    if (flags.json)
+      process.stdout.write(JSON.stringify({ ok: false, errors: [problem] }, null, 2) + "\n");
+    else process.stderr.write(`refused: ${problem}\n`);
+    return 1;
+  }
+  return writeCmd(c, flags, events, linked ? () => `linked ${item} "${linked.title}"` : undefined);
+}
+
+/**
+ * Why this link looks wrong, or null. A PR title gh cannot read warns and links: this catches a
+ * wrong id, and a link must still work with gh down. A bug with no item yet has no title to compare.
+ */
+function linkProblem(c, id, item, prs = []) {
+  if (!item)
+    return BUG_ID_RE.test(id) ? null : `unknown item ${id}. Check the id, or pass --force.`;
+  for (const pr of prs) {
+    const title = readPrTitle(pr, { env: c.env });
+    if (title === null) {
+      process.stderr.write(`warning: could not read PR #${pr}, so its title was not checked\n`);
+    } else if (!linkMatches(item, title)) {
+      return `PR #${pr} "${title}" shares no word with ${id} "${item.title}". Check the id, or pass --force.`;
+    }
+  }
+  return null;
 }
 
 async function cmdSimple(kind, positional, flags, env) {
@@ -427,9 +472,10 @@ async function cmdNext(flags, env) {
 async function cmdItem(positional, flags, env) {
   const sub = positional[0];
   if (sub === "new") {
-    const c = await prepare(ctxFor(env), flags, { sync: false });
+    const c = await prepare(ctxFor(env), flags, { sync: flags["blocked-by"] !== undefined });
     const fields = itemFields(flags, c);
     if (!fields.title || !fields.type) throw new UsageError("rf item new needs --title and --type");
+    assertKnownBlockers(c, fields);
     if (needsBusinessStory({ priority: "P2", ...fields }) && (!fields.problem || !fields.impact)) {
       throw new UsageError(
         'a P0/P1 bug, feature or incident needs --problem "<what is wrong, in customer terms>" and --impact "<who it hurts and what it costs>"',
@@ -448,10 +494,11 @@ async function cmdItem(positional, flags, env) {
   if (sub === "edit") {
     const id = positional[1];
     if (!id) throw new UsageError("rf item edit <id> [fields]");
-    const c = await prepare(ctxFor(env), flags, { sync: false });
+    const c = await prepare(ctxFor(env), flags, { sync: flags["blocked-by"] !== undefined });
     const fields = itemFields(flags, c);
     if (Object.keys(fields).length === 0)
       throw new UsageError("rf item edit needs at least one field flag");
+    assertKnownBlockers(c, fields);
     // A human edit of the story confirms it (clears the "draft" mark the summary import set).
     if (["problem", "impact", "solution"].some((k) => fields[k] !== undefined))
       fields.summaryDraft = false;
@@ -478,7 +525,7 @@ async function cmdItem(positional, flags, env) {
       `area ${it.area ?? "-"}  parent ${it.parent ?? "-"}  eta ${it.eta ?? "-"}  gate ${it.gate ?? "-"}`,
       `claimed by ${it.claimedBy ?? "-"}${it.claimedAt ? ` since ${iso(it.claimedAt)}` : ""}${it.blocked ? `  BLOCKED by ${it.blocked.by}` : ""}`,
       `links  prs ${it.links.prs.join(",") || "-"}  branches ${it.links.branches.join(",") || "-"}`,
-      `children ${it.children.join(",") || "-"}  updated ${iso(it.updatedAt)}`,
+      `children ${it.children.join(",") || "-"}  blocked by ${it.blockedBy.join(",") || "-"}  updated ${iso(it.updatedAt)}`,
       "history:",
       ...it.history
         .slice(-5)
@@ -621,8 +668,20 @@ async function cmdSync(flags, env) {
     push: !flags["no-push"],
     bugIds,
   });
+  // A skipped pass (a busy lock, the generated register) still reports what is free to start.
+  const freed = res.ran ? res.freed : freedItems(stateOf(c));
+  const freedText = freed
+    .map((f) => {
+      const by = f.blockers.map((b) => `${b.id} ${b.status}`).join(", ");
+      return `\nFREE TO START: ${f.id} (${by}): ${f.title}`;
+    })
+    .join("");
   if (!res.ran) {
-    print(flags, { ran: false, reason: res.reason }, `sync skipped (${res.reason})`);
+    print(
+      flags,
+      { ran: false, reason: res.reason, freed },
+      `sync skipped (${res.reason})${freedText}`,
+    );
     return 0;
   }
   const s = res.summary;
@@ -641,7 +700,8 @@ async function cmdSync(flags, env) {
     (res.collisions?.length
       ? `\nREFUSED register row(s) sharing a number with a monitor item: ${res.collisions.join(", ")}`
       : "") +
-    (res.refused ? `\nREFUSED the register: ${res.refused}` : "");
+    (res.refused ? `\nREFUSED the register: ${res.refused}` : "") +
+    freedText;
   print(
     flags,
     {
@@ -651,6 +711,7 @@ async function cmdSync(flags, env) {
       summary: s,
       refused: res.refused ?? null,
       collisions: res.collisions ?? [],
+      freed,
       appended: res.appended,
       pushed: res.pushed,
       warnings: res.warnings,

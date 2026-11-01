@@ -10,7 +10,7 @@ import {
 /**
  * The staff "Backorder" tag on an order line (SA-714): its own block under the product name, never
  * inside the name's run of text. The pill itself never wraps (`whitespace-nowrap`) and states the
- * shortfall in the line's own unit; what it means ("Ships when stock arrives") is visible text beside
+ * shortfall in the line's own unit; what it means ("Available when stock arrives") is visible text beside
  * it, which wraps as a whole under it on a narrow card rather than clipping the pill.
  */
 export function BackorderTag({

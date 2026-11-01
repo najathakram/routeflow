@@ -1,8 +1,8 @@
 /**
- * R7b Batch 3 (mocked reads, nothing written): New Return by order number (B1264, 1280), the unit price's unit on the
+ * R-1 (one-step return capture, 1440/768/390) and R7b Batch 3 (mocked reads, nothing written): New Return by order number (B1264, 1280), the unit price's unit on the
  * order page (B1261, 390). Role: OPERATOR (pre-authed storage state). Registered as the "counter-return" project.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
 
 const WALKIN_ORDER = {
@@ -28,6 +28,17 @@ const WALKIN_ORDER = {
     },
   ],
 };
+
+/** Wide screens show Record return in the action bar; at phone width it sits in the "More actions" menu (apple-ux r4). */
+async function openRecordReturn(page: Page) {
+  const more = page.getByRole("button", { name: "More actions" });
+  if (await more.isVisible()) {
+    await more.click();
+    await page.getByRole("menuitem", { name: /record return|return items/i }).click();
+    return;
+  }
+  await page.getByRole("button", { name: /record return|return items/i }).click();
+}
 
 test("B1264: New Return, type an order number, the return form for that order opens (1280)", async ({
   page,
@@ -78,7 +89,7 @@ test("R7b 3.1: Remove then Undo brings the return line back (390)", async ({
   );
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
   await page.goto("/orders/e2e-r1");
-  await page.getByRole("button", { name: /record return|return items/i }).click();
+  await openRecordReturn(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Cola 12oz Can");
   await dialog.getByLabel(/^pieces$/i).fill("1");
@@ -89,7 +100,34 @@ test("R7b 3.1: Remove then Undo brings the return line back (390)", async ({
   await expect(dialog.getByLabel(/^pieces$/i)).toHaveValue("1");
 });
 
-test("W-711 F23: the optional line fields sit behind More; the pieces field stays in view (390)", async ({
+const QUOTE_ONE = {
+  chunks: [
+    {
+      sourceOrderId: "e2e-r1",
+      sourceInvoiceItemId: "inv-1",
+      sourceOrderItemId: "l1",
+      productId: "p1",
+      pieces: 1,
+      subtotal: 1.5,
+      taxAmount: 0,
+      categoryTax: 0,
+      priceSource: "SOURCE_INVOICE",
+      unitPrice: 1.5,
+    },
+  ],
+  subtotal: 1.5,
+  taxAmount: 0,
+  categoryTax: 0,
+  total: 1.5,
+  productBreakdown: {},
+  canRefund: true,
+  paidInFull: true,
+  paidMethods: ["CASH"],
+  paidWithStoreCredit: false,
+  customerIsWalkIn: true,
+};
+
+test("R-1: the optional line fields sit in a collapsed options row; the pieces field stays in view (390)", async ({
   page,
   context,
   baseURL,
@@ -101,33 +139,80 @@ test("W-711 F23: the optional line fields sit behind More; the pieces field stay
   );
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
   await page.goto("/orders/e2e-r1");
-  await page.getByRole("button", { name: /record return|return items/i }).click();
+  await openRecordReturn(page);
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel(/^pieces$/i)).toBeVisible();
   // collapsed: the panel stays mounted but hidden
   await expect(dialog.getByLabel(/note \(optional\)/i)).toBeHidden();
-  const more = dialog.getByRole("button", { name: "More for Cola 12oz Can" });
-  await expect(more).toHaveAttribute("aria-expanded", "false");
-  await more.click();
-  await expect(dialog.getByRole("button", { name: "Less for Cola 12oz Can" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  const options = dialog.getByRole("button", { name: /options for cola 12oz can/i });
+  await expect(options).toHaveAttribute("aria-expanded", "false");
+  await options.click();
+  await expect(options).toHaveAttribute("aria-expanded", "true");
   await dialog.getByLabel(/note \(optional\)/i).fill("Dented can");
-  // a note keeps its line open and its value
+  // a note keeps its line open and its value, even across Remove and Undo
+  await dialog.getByLabel(/^pieces$/i).fill("1");
   await dialog.getByRole("button", { name: "Remove" }).click();
   await dialog.getByRole("button", { name: "Undo" }).click();
-  await expect(dialog.getByRole("button", { name: "Less for Cola 12oz Can" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  await expect(options).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByLabel(/note \(optional\)/i)).toHaveValue("Dented can");
-  await page.screenshot({ path: "test-results/w783-returns-more-390.png" });
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.screenshot({ path: "test-results/w783-returns-more-1280.png" });
+  await page.screenshot({ path: "test-results/r1-returns-options-390.png" });
 });
 
-test("W-711 F22 + W-712 F25: the quote names the product and says where the money goes (390)", async ({
+for (const width of [1440, 768, 390]) {
+  test(`R-1: one list, the credit follows the quantity by itself, and another product can still be added (${width})`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await setTenantCookie(context, baseURL ?? "");
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.route(/\/api\/v1\/tenants\/me\/addons/, (r) =>
+      r.fulfill({ json: { addons: ["orders_inline_returns"] } }),
+    );
+    await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
+    await page.route(/\/api\/v1\/products\?/, (r) =>
+      r.fulfill({
+        json: {
+          data: [{ id: "p2", name: "Chips Large", unit: "each", unitsPerBox: null }],
+          meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
+        },
+      }),
+    );
+    let quotes = 0;
+    await page.route(/\/api\/v1\/returns\/inline\/quote$/, (r) => {
+      quotes += 1;
+      return r.fulfill({ json: QUOTE_ONE });
+    });
+    await page.goto("/orders/e2e-r1");
+    await openRecordReturn(page);
+    const dialog = page.getByRole("dialog");
+    // one render: no Get quote and no Back, from the first screen
+    await expect(dialog.getByRole("button", { name: /get quote/i })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: /^back$/i })).toHaveCount(0);
+    await expect(dialog.getByLabel(/reason for all items/i)).toHaveValue("EXCESS_ORDER");
+    await dialog.getByLabel(/^pieces$/i).fill("1");
+    // the credit is worked out on its own, and the line says what it will do
+    await expect(dialog.getByTestId("return-summary")).toContainText("Total");
+    await expect(dialog.getByTestId("return-summary")).toContainText("$1.50");
+    await expect(dialog.getByTestId("return-line-summary-p1")).toContainText(
+      /Credit \$1\.50 · .+ · Back to stock/,
+    );
+    expect(quotes).toBeGreaterThan(0);
+    // the add box is still there after pricing: a second product joins at 1 piece, Qty selected
+    await dialog.getByLabel(/add another product/i).fill("Chips");
+    await dialog.getByRole("button", { name: "Chips Large" }).click();
+    const second = dialog.getByTestId("return-line-p2");
+    await expect(second).toBeVisible();
+    await expect(second.getByLabel(/^pieces$/i)).toHaveValue("1");
+    await expect(second.getByLabel(/^pieces$/i)).toBeFocused();
+    // nothing runs off the side of the screen
+    const overflow = await dialog.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `test-results/r1-returns-one-step-${width}.png` });
+  });
+}
+
+test("R-1 + W-712 F25: the confirm button carries the real amount and the walk-in refund sentence (390)", async ({
   page,
   context,
   baseURL,
@@ -138,52 +223,14 @@ test("W-711 F22 + W-712 F25: the quote names the product and says where the mone
     r.fulfill({ json: { addons: ["orders_inline_returns"] } }),
   );
   await page.route(/\/api\/v1\/orders\/e2e-r1$/, (r) => r.fulfill({ json: WALKIN_ORDER }));
-  await page.route(/\/api\/v1\/returns\/inline\/quote$/, (r) =>
-    r.fulfill({
-      json: {
-        chunks: [
-          {
-            sourceOrderId: "e2e-r1",
-            sourceInvoiceItemId: "inv-1",
-            sourceOrderItemId: "l1",
-            productId: "p1",
-            pieces: 1,
-            subtotal: 1.5,
-            taxAmount: 0,
-            categoryTax: 0,
-            priceSource: "SOURCE_INVOICE",
-            unitPrice: 1.5,
-          },
-        ],
-        subtotal: 1.5,
-        taxAmount: 0,
-        categoryTax: 0,
-        total: 1.5,
-        productBreakdown: {},
-        canRefund: true,
-        paidInFull: true,
-        paidMethods: ["CASH"],
-        paidWithStoreCredit: false,
-        customerIsWalkIn: true,
-      },
-    }),
-  );
+  await page.route(/\/api\/v1\/returns\/inline\/quote$/, (r) => r.fulfill({ json: QUOTE_ONE }));
   await page.goto("/orders/e2e-r1");
-  await page.getByRole("button", { name: /record return|return items/i }).click();
+  await openRecordReturn(page);
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel(/^pieces$/i).fill("1");
-  await dialog.getByLabel(/^reason$/i).selectOption({ index: 1 });
-  await dialog.getByRole("button", { name: /get quote/i }).click();
-  // the quote line is titled by its product; the order is the quieter line under it
-  const quoteRow = dialog
-    .locator("div.rounded-lg")
-    .filter({ hasText: /From order #ORD-00001/ })
-    .last();
-  await expect(quoteRow.getByText("Cola 12oz Can")).toBeVisible();
-  await expect(quoteRow.getByText(/From order #ORD-00001/)).toBeVisible();
-  const rowText = await quoteRow.innerText();
-  expect(rowText.indexOf("Cola 12oz Can")).toBeGreaterThanOrEqual(0);
-  expect(rowText.indexOf("Cola 12oz Can")).toBeLessThan(rowText.indexOf("From order #ORD-00001"));
+  // the order the goods came from is in the line's options, titled by the product
+  await dialog.getByRole("button", { name: /options for cola 12oz can/i }).click();
+  await expect(dialog.getByText(/From order #ORD-00001/)).toBeVisible();
   // walk-in sales refund: ONE sentence says why (mm-ux judge, notes/apple-ux/2026-10-25-w783-judge-3748.md: no second
   // "goes back" line) and the button carries the real amount
   await expect(dialog).toContainText("Walk-in sales can't hold store credit, so refund the money.");
@@ -192,7 +239,5 @@ test("W-711 F22 + W-712 F25: the quote names the product and says where the mone
     dialog.getByRole("button", { name: "Take back items and refund $1.50" }),
   ).toBeVisible();
   await expect(dialog).not.toContainText(/credit note/i);
-  await page.screenshot({ path: "test-results/w783-returns-quote-390.png" });
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.screenshot({ path: "test-results/w783-returns-quote-1280.png" });
+  await page.screenshot({ path: "test-results/r1-returns-quote-390.png" });
 });

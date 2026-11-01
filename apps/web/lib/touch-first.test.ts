@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { TOUCH_FIRST_QUERY, isTouchFirst } from "./touch-first";
 
 /** SA-1059 MUST 5: touch-first is a media query, and anything short of a clear yes is a desktop till. */
@@ -33,5 +35,46 @@ describe("isTouchFirst", () => {
       throw new Error("blocked");
     });
     expect(isTouchFirst()).toBe(false);
+  });
+});
+
+/** SA-1071 A-2: the iOS zoom rule in `globals.css` keys on the same query, so the two can't drift. */
+describe("the 16px field rule", () => {
+  const css = fs.readFileSync(path.resolve(__dirname, "../app/globals.css"), "utf8");
+  const block = css.slice(css.indexOf("iOS zooms into a focused field"));
+
+  it("sits under TOUCH_FIRST_QUERY", () => {
+    expect(block).toContain(`@media ${TOUCH_FIRST_QUERY} {`);
+  });
+
+  it("sets 16px on input, textarea and select", () => {
+    expect(block).toMatch(
+      /input:not\([\s\S]*?\),\s+textarea,\s+select\s+\{\s+font-size: 16px !important;/,
+    );
+  });
+
+  it("leaves out exactly the types that take no typing", () => {
+    const excluded = /input:not\(([\s\S]*?)\),/.exec(block)?.[1] ?? "";
+    expect([...excluded.matchAll(/\[type="([a-z]+)"\]/g)].map((m) => m[1])).toEqual([
+      "checkbox",
+      "radio",
+      "range",
+      "file",
+      "color",
+      "hidden",
+      "button",
+      "submit",
+      "reset",
+    ]);
+  });
+
+  it("the invoice line's touch-only classes use the same query", () => {
+    const page = fs.readFileSync(
+      path.resolve(__dirname, "../app/(dashboard)/invoices/new/page.tsx"),
+      "utf8",
+    );
+    const variant = `[@media${TOUCH_FIRST_QUERY.replace(/: /g, ":").replace(/ /g, "_")}]`;
+    expect(page.split(`${variant}:w-11`)).toHaveLength(3); // boxes and pieces
+    expect(page).toContain(`${variant}:flex-wrap`);
   });
 });

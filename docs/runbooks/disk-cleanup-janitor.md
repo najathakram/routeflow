@@ -44,6 +44,44 @@ node scripts/janitor.mjs --paths drop-safe.txt --apply
 - Every `--worktrees-only` or `--paths` removal is the junction unlink + rescan-to-0 (B817/B818), then a **plain**
   `git worktree remove`. Never `--force`, never a recursive delete: a tree git refuses stays, and the
   run reports it as FAILED.
+- Before **anything** under a listed tree is touched (local-assets salvage, link unlink, `git worktree
+remove`, a `node_modules` clear), `--apply` checks that no running process names the tree (command line
+  or executable path, any path form; the process list is read once per run; an unreadable list refuses),
+  then renames the root to `<tree>.janitor-probe` and straight back (see "The rename probe" below). Either
+  check refuses just that tree, which stays complete.
+
+### Clearing only `node_modules` (`--paths <file> --modules-only`)
+
+```bash
+node scripts/janitor.mjs --paths trees.txt --modules-only            # report: files per tree, seconds, refusals
+node scripts/janitor.mjs --paths trees.txt --modules-only --sizes    # same, plus exact GB (slow: one stat per file)
+node scripts/janitor.mjs --paths trees.txt --modules-only --apply    # clear tree by tree, GB freed per tree
+```
+
+Clears only the **real** `node_modules` folders (root, `apps/*`, `packages/*`) of each listed tree,
+whatever its git state; never source, uncommitted work, `local-assets`, `.env` or the worktree
+registration. A `node_modules` that is itself a link is left alone; links inside one are unlinked
+(proven gone by the rescan-to-0) and never followed. A tree is **refused**, and the run moves on, when:
+it is the main checkout, a protected name or a locked worktree; another tree's `node_modules` links into
+it (one scan of every worktree; a failed scan refuses); a running process names it on its command line
+or executable path, in any path form including Git Bash `/c/...` (an unreadable process list refuses
+every tree); HEAD or the index moved in the last 24 hours (the janitor's one idle number,
+`RECENT_ACTIVITY_HOURS`) or is unknown; any `node_modules` path cannot be read; or the rename probe
+finds it in use. One failed tree is reported and the next still runs; the exit code is 1 if any failed.
+
+### The rename probe
+
+Windows has no per-process working-directory API, so a shell or `node dist/main.js` started from inside
+a tree names nothing in it on the command line. But Windows refuses to rename a folder something holds.
+At `--apply` time, immediately before a tree is cleared (`--modules-only`) or removed (`--paths`), its
+root is renamed to `<tree>.janitor-probe` beside it and back:
+
+- renaming away fails (EBUSY and the like): the tree is **in use**, refused, the run moves on;
+- renaming back fails: the tree is sitting under the probe name. The whole run **stops**, loudly, naming both paths
+  to rename by hand; no later tree is touched;
+- a `.janitor-probe` name already beside any registered worktree at the start (a run died between
+  its renames) is reported as `LEFTOVER PROBE`, and an `--apply` run changes nothing until it is dealt with;
+- on macOS/Linux a rename never fails for a held cwd, so only the `lsof` cwd list and the 24h rule guard there.
 
 ## What it reclaims, in order
 

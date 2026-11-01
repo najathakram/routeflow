@@ -57,6 +57,7 @@ import {
   withStale,
 } from "./lib/verify-scope.mjs";
 import { resolveVerifyMode } from "./verify-mode.mjs";
+import { describeMissing, importClosure, relativeImports } from "./lib/import-closure.mjs";
 // Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
 // direct-execution guard means importing it does NOT spawn turbo or call process.exit.
 import {
@@ -68,11 +69,13 @@ import {
   excludedLine,
   executePlan,
   finishRun,
+  settlesReports,
   jestPassthrough,
   jestWorkerBudget,
   LOW_MEM_THRESHOLD_BYTES,
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
+  loadCrossScriptSpecs,
   planPins,
   planTurboCalls,
 } from "./verify-turbo.mjs";
@@ -171,9 +174,11 @@ function isUnder(root, p, pathImpl = path) {
 // This file runs INSIDE the pre-push hook, which exports RF_VERIFY_MODE=fast (and a held heavy-slot
 // token), and a developer may have FULL_VERIFY / CI / VERIFY_EXCLUDE / JEST_MAX_WORKERS set: any of
 // them would silently change the plan a fixture's main() runs. So no ambient verify knob reaches a
-// spawned script; a case sets what it needs explicitly on top.
+// spawned script; a case sets what it needs explicitly on top. The W-1045 gate exports its nonce, result path and tree
+// key around the whole chain too: a nested main() that inherited them would write the pass stage with the REAL nonce
+// before the real verify-turbo runs (proven on Linux, where these cases run).
 const AMBIENT_VERIFY_KNOBS =
-  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
 const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
   Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
 
@@ -398,14 +403,15 @@ check(
   true,
 );
 // SP8: adding a stale workspace to the filter regenerates its report only on a turbo cache MISS —
-// on a HIT turbo replays without running jest. The `--freshness-only` pre-step forces a real run on
-// a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the order.
+// on a HIT turbo replays without running jest. In CI the `--freshness-only` pre-step forces a real
+// run on a HIT, so it MUST come before verify-turbo in the verify chain; nothing else enforces the
+// order. Locally it defers to `--reports-only`, which verify-turbo runs inside its slot.
 {
   const chain = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.verify;
   const fresh = chain.indexOf("--freshness-only");
   const scoped = chain.indexOf("verify-turbo.mjs");
   check(
-    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (forces a real run on a cache HIT)",
+    "SP8 verify runs campaign-check --freshness-only BEFORE verify-turbo (in CI it forces a real run on a cache HIT)",
     fresh !== -1 && scoped !== -1 && fresh < scoped,
     true,
   );
@@ -975,6 +981,76 @@ check(
   ],
 );
 
+check(
+  "RS4 settlesReports: only a green, full-enforcement run off CI",
+  [
+    settlesReports({ fast: false, status: 0, env: {} }),
+    settlesReports({ fast: true, status: 0, env: {} }),
+    settlesReports({ fast: false, status: 1, env: {} }),
+    settlesReports({ fast: false, status: 0, env: { CI: "1" } }),
+  ],
+  [true, false, false, false],
+);
+// VC: the scratch-repo fixture below runs verify-turbo.mjs from a COPY, so the copy list must hold every local file the
+// script imports, transitively. It is derived from the script's own imports (scripts/lib/import-closure.mjs), never
+// hand-kept, and a file the script imports that is missing fails with a named message. Pure rows run on every OS (the
+// fixture itself is POSIX only); a hand-kept list went stale the day verify-turbo.mjs gained an import.
+{
+  const tree = {
+    "s/a.mjs":
+      'import x from "./lib/b.mjs";\nimport { createRequire } from "node:module";\nconst c = createRequire(import.meta.url)("./lib/c.cjs");\nawait import("./d.mjs");\nimport pkg from "left-pad";\n',
+    "s/lib/b.mjs": '// from "./nope.mjs" is only a comment\nexport * from "../e.mjs";\n',
+    "s/lib/c.cjs": 'module.exports = require("./b.mjs"); // cycle\n',
+    "s/d.mjs": "export {};\n",
+    "s/e.mjs": 'const url = "https://example.com/x.mjs";\nexport {};\n',
+  };
+  const seams = { exists: (r) => r in tree, read: (r) => tree[r] };
+  const cl = importClosure("/", "s/a.mjs", seams);
+  check(
+    "VC1 closure follows from / dynamic import / createRequire / require, transitively, ignoring comments and bare specifiers",
+    [cl.files, cl.missing],
+    [["s/d.mjs", "s/e.mjs", "s/lib/b.mjs", "s/lib/c.cjs"], []],
+  );
+  check(
+    "VC2 a relative import of a file that does not exist is reported with its importer",
+    importClosure("/", "s/a.mjs", { ...seams, exists: (r) => r in tree && r !== "s/e.mjs" })
+      .missing,
+    [{ from: "s/lib/b.mjs", spec: "../e.mjs" }],
+  );
+  check(
+    "VC3 the missing-file message names the importer, the specifier and the fix",
+    describeMissing([{ from: "scripts/verify-turbo.mjs", spec: "./lib/gone.mjs" }]),
+    "fixture copy list: scripts/verify-turbo.mjs imports ./lib/gone.mjs, which does not exist; fix the import or restore the file",
+  );
+  check(
+    "VC4 relativeImports ignores a URL in a string and a commented import",
+    relativeImports(
+      'const u = "https://a.b/c.mjs"; // import x from "./z.mjs"\n/* from "./y.mjs" */',
+    ),
+    [],
+  );
+  check(
+    "VC4b a `/*` inside a string or glob does not open a comment that swallows the imports after it",
+    relativeImports('const g = "apps/*";\nimport x from "./real.mjs";\n/* later */\n'),
+    ["./real.mjs"],
+  );
+  const real = importClosure(ROOT, "scripts/verify-turbo.mjs");
+  check(
+    "VC5 the real verify-turbo.mjs closure resolves completely and holds every file the fixture hand-listed",
+    [
+      real.missing,
+      [
+        "scripts/lib/check-git-hooks.mjs",
+        "scripts/lib/heavy-slot.mjs",
+        "scripts/lib/prisma-fresh.mjs",
+        "scripts/lib/scrubbed-git-env.cjs",
+        "scripts/lib/verify-scope.mjs",
+      ].every((f) => real.files.includes(f)),
+    ],
+    [[], true],
+  );
+}
+
 // End to end: the REAL main() with a stub `npx` first on PATH that records its argv. CI=1 makes
 // the scope FULL without touching git; JEST_MAX_WORKERS selects the split path. POSIX only (the
 // stub is a shell script; Windows' npx is a .cmd and `shell: true`).
@@ -1108,6 +1184,68 @@ if (process.platform !== "win32") {
       [3, 2],
     );
 
+    // VT1-VT5 (W-1045): the pass token verify-turbo stages for the pre-push gate. A hook run exports the three
+    // RF_VERIFY_* names around the whole chain; the real main() runs here with them set explicitly (VT2-VT5) or only
+    // in the OUTER process (VT1, the leak the T2 read proved on Linux).
+    const stageDir = mkdtempSync(join(tmpdir(), "verify-stage-"));
+    try {
+      const tokenFile = join(stageDir, "rf-verify-result");
+      const stage = `${tokenFile}.turbo`;
+      const tokenEnv = {
+        RF_VERIFY_RESULT_FILE: tokenFile,
+        RF_VERIFY_NONCE: "nonce-under-test",
+        RF_VERIFY_TREE_KEY: "tree-under-test",
+      };
+      const staged = () => (existsSync(stage) ? JSON.parse(readFileSync(stage, "utf8")) : null);
+
+      rmSync(stage, { force: true });
+      const savedTok = Object.fromEntries(Object.keys(tokenEnv).map((k) => [k, process.env[k]]));
+      Object.assign(process.env, tokenEnv);
+      try {
+        runMain({});
+      } finally {
+        for (const [k, v] of Object.entries(savedTok)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+      check(
+        "VT1 a nested main() does not inherit the gate's nonce: no stage is written from the outer env",
+        staged(),
+        null,
+      );
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv });
+      const green = staged();
+      check(
+        "VT2 a fully green run stages the pass: this run's nonce and tree key, every planned call counted",
+        [green?.nonce, green?.treeKey, green?.planned, green?.ran],
+        ["nonce-under-test", "tree-under-test", 1, 1],
+      );
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "7" });
+      check("VT3 a run whose call exits non-zero stages nothing", staged(), null);
+
+      rmSync(stage, { force: true });
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "0,3", JEST_MAX_WORKERS: "2" });
+      check("VT4 one failed call in a split run stages nothing", staged(), null);
+
+      writeFileSync(
+        stage,
+        JSON.stringify({ v: 1, nonce: "someone-else", treeKey: "x", planned: 1, ran: 1 }),
+      );
+      runMain({ ...tokenEnv, STUB_EXIT_SEQ: "7" });
+      check(
+        "VT5 a stage already on disk is cleared at the start, so a failing run cannot inherit it",
+        staged(),
+        null,
+      );
+    } finally {
+      rmSync(stageDir, { recursive: true, force: true });
+    }
+
     // AFFECTED needs a real scoped decision, so main() runs from a scratch repo that holds a copy of
     // the script and its lib, a feature branch one apps/api file ahead of origin/master, and no
     // campaign-check (staleWorkspaces fails open to []). Same B420 discipline as runMoveFixture:
@@ -1125,25 +1263,37 @@ if (process.platform !== "win32") {
           mkdirSync(dirname(join(fixDir, rel)), { recursive: true });
           writeFileSync(join(fixDir, rel), text);
         };
-        for (const f of ["verify-turbo.mjs"]) {
-          put(`scripts/${f}`, readFileSync(join(ROOT, "scripts", f), "utf8"));
+        // The copy list is the script plus everything it imports, derived (VC); a file it imports that is
+        // missing fails here by name instead of as an unexplained fixture crash.
+        const closure = importClosure(ROOT, "scripts/verify-turbo.mjs");
+        check("VX25a the fixture copy list is complete", describeMissing(closure.missing), "");
+        for (const rel of ["scripts/verify-turbo.mjs", ...closure.files]) {
+          put(rel, readFileSync(join(ROOT, rel), "utf8"));
         }
-        for (const f of [
-          "verify-scope.mjs",
-          "check-git-hooks.mjs",
-          "scrubbed-git-env.cjs",
-          "heavy-slot.mjs",
-          "prisma-fresh.mjs",
-        ]) {
-          put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
-        }
+        // The report step's stub: it records its argv and whether the slot is held, then exits with
+        // STUB_REPORTS_EXIT. The real script would force real test runs in this fixture.
+        put(
+          "scripts/campaign-check.mjs",
+          [
+            'import { appendFileSync } from "node:fs";',
+            'if (!process.argv.includes("--reports-only")) process.exit(0);',
+            "const held = process.env.RF_HEAVY_SLOT_TOKEN ? 'held' : 'free';",
+            "appendFileSync(process.env.STUB_REPORTS_LOG, `--reports-only ${held}\\n`);",
+            "process.exit(Number(process.env.STUB_REPORTS_EXIT || 0));",
+            "",
+          ].join("\n"),
+        );
         for (const [dir, name] of [
           ["apps/api", "@routeflow/api"],
           ["apps/control", "@routeflow/control"],
           ["packages/pricing", "@routeflow/pricing"],
         ]) {
-          put(`${dir}/package.json`, JSON.stringify({ name }));
+          // main() discovers the repo-truth workspaces from package.json (cross-workspace-lane.spec):
+          // the root declares the workspace globs and api carries the lane script, as in the real repo.
+          const scripts = dir === "apps/api" ? { "test:repo-truth": "jest" } : undefined;
+          put(`${dir}/package.json`, JSON.stringify({ name, scripts }));
         }
+        put("package.json", JSON.stringify({ workspaces: ["apps/*", "packages/*"] }));
         // The Prisma freshness preflight runs here too (CI is unset, api is in the plan), so the
         // fixture carries a schema folder and a generated client that is FRESH for it, resolved the
         // way apps/api finds its own (@prisma/client -> .prisma/client). Same text on both sides is
@@ -1168,12 +1318,36 @@ if (process.platform !== "win32") {
         put("apps/api/src/x.ts", "export const x = 1;\n");
         fgit("add", "-A");
         fgit("commit", "-q", "-m", "change");
+        const reportsLog = join(stubDir, "reports.log");
         const aff = (extraEnv) =>
-          runMain(extraEnv, {
-            ci: false,
-            cwd: fixDir,
-            script: join(fixDir, "scripts", "verify-turbo.mjs"),
-          });
+          runMain(
+            { STUB_REPORTS_LOG: reportsLog, ...extraEnv },
+            {
+              ci: false,
+              cwd: fixDir,
+              script: join(fixDir, "scripts", "verify-turbo.mjs"),
+            },
+          );
+        const reportRuns = (extraEnv) => {
+          writeFileSync(reportsLog, "");
+          const r = aff(extraEnv);
+          return [r.status, readFileSync(reportsLog, "utf8").split("\n").filter(Boolean)];
+        };
+        check(
+          "RS1 main(): a green plan settles its reports once, inside the slot",
+          reportRuns({ JEST_MAX_WORKERS: "" }),
+          [0, ["--reports-only held"]],
+        );
+        check(
+          "RS2 main(): a report step that fails fails the verify with its status",
+          reportRuns({ JEST_MAX_WORKERS: "", STUB_REPORTS_EXIT: "9" }),
+          [9, ["--reports-only held"]],
+        );
+        check(
+          "RS3 main(): a red plan forces no tests",
+          reportRuns({ JEST_MAX_WORKERS: "", STUB_EXIT_SEQ: "3" }),
+          [3, []],
+        );
         const affUnsplit = aff({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "" });
         check(
           "VX25 main() AFFECTED unsplit: the scope is really AFFECTED, 2 calls ran, first non-zero (3) wins",
@@ -1233,6 +1407,21 @@ if (process.platform !== "win32") {
     rmSync(stubDir, { recursive: true, force: true });
   }
 }
+
+// VT0 (W-1045): runs on every platform, unlike the main() cases above. The gate's nonce, result path and tree key are
+// ambient verify state: cleanVerifyEnv must drop each, or a nested verify-turbo would stage a pass with the real nonce.
+check(
+  "VT0 cleanVerifyEnv drops RF_VERIFY_RESULT_FILE, RF_VERIFY_NONCE and RF_VERIFY_TREE_KEY",
+  Object.keys(
+    cleanVerifyEnv({
+      RF_VERIFY_RESULT_FILE: "f",
+      RF_VERIFY_NONCE: "n",
+      RF_VERIFY_TREE_KEY: "t",
+      KEEP_ME: "1",
+    }),
+  ),
+  ["KEEP_ME"],
+);
 
 // HS: every heavy local entry point takes the machine-wide slot INSIDE the script (so root
 // package.json, which busts every turbo cache when edited, never changes). A future heavy entry point
@@ -1646,7 +1835,7 @@ check(
     "FV7a hook asks scripts/verify-mode.mjs, before the marker comparison and before `npm run verify`",
     at("scripts/verify-mode.mjs") > -1 &&
       at("scripts/verify-mode.mjs") < at('[ -f "$marker" ]') &&
-      at("scripts/verify-mode.mjs") < at("npm run verify || exit 1"),
+      at("scripts/verify-mode.mjs") < at("scripts/verify-gate.mjs run"),
     true,
   );
   check(
@@ -1771,7 +1960,7 @@ check(
     [
       hook.includes(`fast_stamp="${STAMP}"`),
       /not proof|\$fast_stamp|\$\{fast_stamp\}/.test(skipLine),
-      /npm run verify \|\| exit 1[\s\S]*fast_stamp/.test(hook),
+      /verify-gate\.mjs run[\s\S]*fast_stamp/.test(hook),
     ],
     [true, true, true],
   );
@@ -1905,9 +2094,22 @@ check(
     [await executePlan(calls, run), ran, await executePlan([{ id: "z" }], async () => 0)],
     [1, ["a", "pin", "c"], 0],
   );
+  {
+    // W-1045: `null ?? 0` read a signal-killed call as green. A non-number status is a failure, and `ran` gets every one.
+    const got = [];
+    check(
+      "FR7a (W-1045) a null status from a killed call is a failure, never a pass; ran records every status",
+      [
+        await executePlan([{}, {}], async () => null, got),
+        got,
+        await executePlan([{}], async () => undefined),
+      ],
+      [1, [null, null], 1],
+    );
+  }
   check(
     "FR7b main() delegates the tail to executePlan and finishRun",
-    (({ vt }) => [/executePlan\(plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
+    (({ vt }) => [/executePlan\(\s*plan\.calls/.test(vt), /finishRun\(\{/.test(vt)])({
       vt: readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8"),
     }),
     [true, true],
@@ -2046,6 +2248,39 @@ check(
     [none.scriptSpecs, /no -script specs/.test(none.scriptLine ?? "")],
     ["all", true],
   );
+  // R3C-l: a -script spec that reads ANOTHER workspace (inferred-goods-rate-parity-script reads apps/mobile) is not
+  // related by name to an apps/mobile edit, and no PIN_TRIGGER matches that path: it must be selected by what it reads.
+  const xSpec = "src/common/xread-script.spec.ts";
+  const xSpecs = [S("xread-script.spec.ts", "mentions none of the changed names"), ...specs];
+  const cross = [{ file: xSpec, reads: ["apps/mobile"] }];
+  const xPlan = (files, crossScript) =>
+    planPins({ fast: true, files, excluded: [], specs: xSpecs, crossScript });
+  check(
+    "R3C-l an edit under a directory a cross-workspace -script spec reads runs the pins and selects it",
+    (({ pins, scriptSpecs }) => [pins, scriptSpecs])(xPlan(["apps/mobile/lib/a.ts"], cross)),
+    [true, [AUDIT, xSpec]],
+  );
+  check(
+    "R3C-l2 the same edit with no cross list plans no pins (the old miss); an edit elsewhere still plans none",
+    [xPlan(["apps/mobile/lib/a.ts"], []).pins, xPlan(["apps/web/app/page.tsx"], cross).pins],
+    [null, null],
+  );
+  check(
+    "R3C-l3 the real repo derives its cross-workspace -script specs (inferred-goods-rate-parity is one)",
+    loadCrossScriptSpecs(ROOT).some((c) =>
+      /inferred-goods-rate-parity-script.spec.ts$/.test(c.file),
+    ),
+    true,
+  );
+  // R3C-m: web and mobile configure the campaign reporter; a lane run that kept it would overwrite
+  // .campaign/runs/<ws>.json with the lane's few specs, and campaign-check then refuses the push as PARTIAL.
+  check(
+    "R3C-m the workspace lane runner drops the campaign reporter",
+    readFileSync(join(ROOT, "scripts", "run-cross-workspace-specs.mjs"), "utf8").includes(
+      '"--reporters=default"',
+    ),
+    true,
+  );
   // (e) FR2 covers every pin that walks apps/api/scripts
   const walkers = REPO_WIDE_PINS.filter((p) => /apps\/api\/scripts/.test(p.why)).map((p) =>
     p.file.replace(/^apps\/api\/src\/common\//, ""),
@@ -2073,5 +2308,50 @@ check(
   ],
   [true, true, []],
 );
+
+// XW: every workspace that defines test:repo-truth gets the always-run lane (cross-workspace-lane.spec.ts). A web-only
+// diff used to run only the api lane, whose hand-kept list missed api-error-codes-parity.
+{
+  const repoTruth = ["@routeflow/api", "@routeflow/web", "@routeflow/mobile"];
+  const lane = (plan) =>
+    plan.calls.filter((c) => c.args[0] === "test:repo-truth").map((c) => c.args);
+  const want = [
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/web",
+      "--filter=@routeflow/mobile",
+    ],
+  ];
+  check(
+    "XW1 AFFECTED: the lane runs every repo-truth workspace, on a diff that selects only web",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, repoTruth })),
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: true, repoTruth })),
+    ],
+    [want, want],
+  );
+  check(
+    "XW2 FAST: the lane runs every repo-truth workspace, FULL (no changedSince), on a web-only diff",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, repoTruth })),
+      planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, repoTruth }).calls.find(
+        (c) => c.args[0] === "test:repo-truth",
+      ).changedSince,
+    ],
+    [want, undefined],
+  );
+  check(
+    "XW3 an excluded workspace is dropped from the lane; the default stays api only",
+    [
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false, excluded: [WEB], repoTruth })),
+      lane(planTurboCalls({ scope: AFF([WEB]), splitJest: false })),
+    ],
+    [
+      [["test:repo-truth", "--filter=@routeflow/api", "--filter=@routeflow/mobile"]],
+      [["test:repo-truth", "--filter=@routeflow/api"]],
+    ],
+  );
+}
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

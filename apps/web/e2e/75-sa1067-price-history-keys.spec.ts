@@ -1,7 +1,9 @@
 /**
  * SA-1067 M1 / P4 in a real browser, two doors on the price history panel at the counter. P1: a scanner's digits and Enter
  * use no price (the scan-focus listener sends them to the scan box and the panel stays open). P4: Down then Enter, straight
- * after the panel opens, uses the newest row and closes it. Jest cannot see where focus really lands: AnchoredPopover
+ * after the panel opens, uses the newest row and closes it. SA-1071 P1: on an ordinary line that Use sets the line's price at
+ * once (no dialog); a special-tier line still opens the price dialog. Either way the panel closes, which is what P4 reads, and
+ * the cart is client-side state that is never completed. Jest cannot see where focus really lands: AnchoredPopover
  * focuses its own shell once placed, so the keys have to be handled there.
  *
  * LOCAL LANE ONLY, same guards as 72: the tenant is put on the in_store_shipping_retailer profile (counter on) and restored

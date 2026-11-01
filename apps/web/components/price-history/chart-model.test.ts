@@ -274,21 +274,15 @@ describe("the notes", () => {
   it("line 2 empty only", () => {
     const m = model({ comparison: [entry({ likeForLike: [] })] });
     expect(m.notes.map((n) => [n.id, n.lines])).toEqual([["ph-note-like", ["like"]]]);
-    expect(m.notes[0]!.text).toBe(
-      "Other customers: no average for Box of 12 yet. It needs 3 other buyers in a month.",
-    );
+    expect(m.notes[0]!.text).toBe("All customers: nothing to compare in Box of 12 yet.");
   });
   it("line 3 empty only", () => {
     const m = model({ comparison: [entry({ converted: [] })] });
-    expect(m.notes.map((n) => n.text)).toEqual([
-      "All units: no average yet. It needs 3 other buyers in a month.",
-    ]);
+    expect(m.notes.map((n) => n.text)).toEqual(["All units: nothing to compare yet."]);
   });
   it("both empty: one line replaces both", () => {
     const m = model({ comparison: [entry({ likeForLike: [], converted: [] })] });
-    expect(m.notes.map((n) => n.text)).toEqual([
-      "No averages yet. Each needs 3 other buyers in a month.",
-    ]);
+    expect(m.notes.map((n) => n.text)).toEqual(["Nothing to compare yet."]);
   });
   it("an older server (no comparison field)", () => {
     const m = model({ comparison: undefined });

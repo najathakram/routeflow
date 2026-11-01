@@ -2,6 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import DashboardPage from "./page";
 
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

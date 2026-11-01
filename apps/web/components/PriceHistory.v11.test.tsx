@@ -62,7 +62,14 @@ const base = (over: Partial<PriceHistoryResponse> = {}): PriceHistoryResponse =>
   ],
   summaries: [{ unitLabel: "case", last: 13, low: 10, high: 13, qtySold: 8, currentAvgCost: 6.5 }],
   references: { listPrice: 14, tierPrice: 12.5, changeSinceLast: 0.03 },
-  aggregate: { low: 9, median: 11.5, high: 15, customers: 7, unitLabel: "case" },
+  aggregate: {
+    low: 9,
+    median: 11.5,
+    high: 15,
+    customers: 7,
+    unitLabel: "case",
+    newestMonth: "2026-09",
+  },
   ...over,
 });
 
@@ -205,7 +212,7 @@ describe("references, compare, margin, markers", () => {
     const dialog = await screen.findByRole("dialog", { name: "Price history" });
     expect(await within(dialog).findByText(/List \$14\.00/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Their tier price \$12\.50/)).toBeInTheDocument();
-    expect(within(dialog).getByText("+3% since last order")).toBeInTheDocument();
+    expect(within(dialog).getByText("Up 3% from the order before")).toBeInTheDocument();
   });
 
   it("Compare: the base request has no compare; the panel asks with ?compare=all on open and All customers shows low / typical / high, never names", async () => {
@@ -229,7 +236,7 @@ describe("references, compare, margin, markers", () => {
     );
     expect(panel).toHaveTextContent("$9.00");
     expect(panel).toHaveTextContent("$15.00");
-    expect(panel).toHaveTextContent("7 in all");
+    expect(panel).toHaveTextContent("7 other customers, 6 months to Sep 2026");
     fireEvent.click(within(dialog).getByRole("button", { name: "This customer" }));
     expect(within(dialog).queryByTestId("compare-panel")).not.toBeInTheDocument();
   });

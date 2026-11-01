@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { useFleetAccess } from "@/lib/api/addons";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
+import { counterSaleGate } from "@/lib/counter-sale";
 import { useAuth } from "@/lib/auth-context";
 import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
 import { useInventorySettings } from "@/lib/api/inventory-settings";
@@ -63,7 +64,10 @@ export function useSettingsNav({ isAdmin }: { isAdmin: boolean }) {
     "out-of-stock-ordering": oversellValue(inventory.data),
     "route-defaults": fleet ? routeValue(route.data) : undefined,
     "card-payments": stripeValue(stripe.data),
-    "counter-sales": gate.capability ? counterValue(counter) : undefined,
+    // What the business has set, not this viewer's till: `counter` above follows the till (SA-940 note, W58).
+    "counter-sales": gate.capability
+      ? counterValue(counterSaleGate(gate.capability).showButton)
+      : undefined,
   };
   return { entries, trailing, fleet, counter };
 }

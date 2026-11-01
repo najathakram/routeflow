@@ -493,3 +493,7 @@ Catch-up (2026-10-31, train W31): [packages/landing-2026-10-31-w31.md](packages/
 Catch-up (2026-10-31, train W32): [packages/landing-2026-10-31-w32.md](packages/landing-2026-10-31-w32.md): money-rounding pin spec and `turbo.json` inputs, staff order email types and settings-registry rows.
 Catch-up (2026-10-31, train W33): [packages/landing-2026-10-31-w33.md](packages/landing-2026-10-31-w33.md): `CreateReturnLineItemDto`.
 Catch-up (2026-10-31, train U): [packages/landing-2026-10-31-u.md](packages/landing-2026-10-31-u.md): `MAX_UNIT_PRICE`, `createPausableClock` in `@routeflow/scanning`, toast viewport z-index.
+Catch-up (2026-10-31, train V): [packages/landing-2026-10-31-v.md](packages/landing-2026-10-31-v.md): `countFactorOf` / `countPieces`, `isWriteOff` / `writeOffValue`, `ProductCountRequest`, `ADJUSTMENT_REASON_LABELS`, `isStickyUpsell`, `remembered` on `customerLinePrice`.
+Catch-up (2026-10-31, train X): [packages/landing-2026-10-31-x.md](packages/landing-2026-10-31-x.md): toast text wraps, `changeSinceLast` doc, percent-site pin count.
+Catch-up (2026-10-31, train Y): [packages/landing-2026-10-31-y.md](packages/landing-2026-10-31-y.md): `COUNTER_COPY.regularOrder` and `pickupLater`.
+Catch-up (2026-10-31, train Z): [packages/landing-2026-10-31-z.md](packages/landing-2026-10-31-z.md): `ReadyForPickupRecord`, `isAboveListLine`, `stickyPrice`, `rulingLineIndex`, `signalHeld`.

@@ -2,7 +2,7 @@ import * as React from "react";
 import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import OrdersPage from "./page";
 
-/** W20-L2: the Orders page Counter sale button is staff-only, from the REAL useCounterSaleGate with cached add-on data. */
+/** W20-L2, W-854: the Orders page way to the Counter sale is staff-only, from the REAL useCounterSaleGate with cached add-on data. */
 const push = jest.fn();
 const replace = jest.fn();
 let search = "";
@@ -67,11 +67,12 @@ describe("Orders page — Counter sale button is staff-only (W20-L2)", () => {
   it.each(["OPERATOR", "TENANT_ADMIN"])("%s with cached add-on data: button shown", (r) => {
     role = r;
     renderWithProviders(<OrdersPage />);
-    expect(screen.getByRole("button", { name: "Counter sale" })).toBeInTheDocument();
+    expect(screen.getByTestId("new-order-open")).toBeInTheDocument();
   });
   it.each(["DRIVER", "CUSTOMER"])("%s with cached add-on data: no button", (r) => {
     role = r;
     renderWithProviders(<OrdersPage />);
+    expect(screen.queryByTestId("new-order-open")).toBeNull();
     expect(screen.queryByRole("button", { name: "Counter sale" })).toBeNull();
   });
 });

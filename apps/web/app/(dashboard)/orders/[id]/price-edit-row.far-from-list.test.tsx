@@ -8,6 +8,7 @@ jest.mock("@/lib/api-client", () => ({ apiClient: { get: jest.fn() } }));
 const row = (unitPrice: number, basePrice = 6.99) =>
   renderWithProviders(
     <PriceEditRow
+      unitWord="case"
       basePrice={basePrice}
       unitPrice={unitPrice}
       originalUnitPrice={basePrice}

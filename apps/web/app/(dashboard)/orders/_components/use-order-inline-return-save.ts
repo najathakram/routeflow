@@ -53,6 +53,8 @@ export interface OrderInlineReturnSave {
   /** The order-edit page's save sites: `build` plus the missing-reason toast. `null` = blocked
    *  (the caller just returns), `undefined` = no return on this save. */
   prepare(customerId: string, orderId: string): InlineReturnLinesRequest | null | undefined;
+  /** The words for a blocked save: the draft's own problem sentence, else the fixed one. */
+  blockedMessage(why: "missing-reason" | "needs-quote"): string;
   /** Wraps a save's onError: a guardError-owned refusal keeps the returnKey, any other 4xx mints
    *  a fresh one; then `next` runs as before. */
   chainError(sent: unknown, next: (err: unknown) => void): (err: unknown) => void;
@@ -61,16 +63,18 @@ export interface OrderInlineReturnSave {
 /** The toast a blocked return save shows (both hosts). */
 export const RETURN_SAVE_BLOCKED = {
   "missing-reason": "Choose a reason for the return before saving",
-  "needs-quote": "Get a quote for the return before saving",
+  "needs-quote": "Working out the return credit. Try again in a moment.",
 } as const;
 
 export function useOrderInlineReturnSave(
   returnsRef: React.RefObject<OrderInlineReturnsSectionHandle | null>,
-  onBlocked?: (why: "missing-reason" | "needs-quote") => void,
+  onBlocked?: (why: "missing-reason" | "needs-quote", message: string) => void,
 ): OrderInlineReturnSave {
   const keyRef = React.useRef("");
   const idemRef = React.useRef("");
   const genRef = React.useRef(0);
+  // M14: the draft's own sentence when a credit price is half-typed, else the fixed one
+  const problemRef = React.useRef<string | null>(null);
   const [refusalMessage, setRefusalMessage] = React.useState("");
   const [refusalReturn, setRefusalReturn] =
     React.useState<OrderInlineReturnSave["refusalReturn"]>(null);
@@ -81,8 +85,13 @@ export function useOrderInlineReturnSave(
     prepare(customerId, orderId) {
       const built = api.build(customerId, orderId);
       if (built !== "missing-reason" && built !== "needs-quote") return built;
-      onBlocked?.(built);
+      onBlocked?.(built, api.blockedMessage(built));
       return null;
+    },
+    blockedMessage(why) {
+      return why === "needs-quote" && problemRef.current
+        ? problemRef.current
+        : RETURN_SAVE_BLOCKED[why];
     },
     chainError(sent, next) {
       return (err) => {
@@ -101,6 +110,7 @@ export function useOrderInlineReturnSave(
       const draft = returnsRef.current?.getDraft() ?? null;
       if (!draft) return undefined;
       if (!draft.captureReason) return "missing-reason";
+      problemRef.current = draft.problem;
       if (!draft.quoted) return "needs-quote";
       if (!keyRef.current) {
         keyRef.current = mintReturnKey();

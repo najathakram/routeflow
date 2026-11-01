@@ -1,11 +1,12 @@
 /**
- * SA-954 on real Postgres: the ONE compare read (every customer's issued invoices of the product, the last 180 days) and
- * the in-memory split into `aggregate`, line 2 and line 3, run against real rows. F6's fixture, one month:
+ * SA-954 on real Postgres: the ONE compare read (every customer's issued invoices of the product, newest 2000, no date
+ * bound since W-1058 H-2.5) and the in-memory split into `aggregate`, line 2 and line 3, run against real rows. F6's fixture, one month:
  * this customer buys a Box of 12 at 25.00; others buy a Box of 24 at 46.80, a Piece at 2.15, a Case of 48 at 105.00,
  * and a pre-snapshot Box at 9.99 whose pack is unknown. Line 3 for the Box of 12 is 25.11 (never the round-first 25.08);
- * line 2 is empty (no other buyer bought a Box of 12); the aggregate keeps its own floor (the most-sold unit has 2 other buyers, so it is null); no customer id or name
- * leaves. A fifth other buyer is absent on purpose: with the unknown-pack buyer left out there are exactly 3 known-pack
- * other buyers, the floor.
+ * line 2 is empty (no other buyer bought a Box of 12); no customer id or name leaves. Run as an OPERATOR denied ORDERS and
+ * FINANCE (W-1058 H-2.10) the floor of 3 holds: the most-sold unit has 2 other buyers, so the aggregate is null. A fifth
+ * other buyer is absent on purpose: with the unknown-pack buyer left out there are exactly 3 known-pack other buyers, the
+ * floor. Run as normal staff the aggregate is drawn from those 2 buyers, with its newest month.
  *
  * Collected only by jest.db.config.js (npm run local:test:db). One throwaway `qa-ph-<run>` tenant approved by
  * `assertTestTenant`; afterAll deletes exactly what it made.
@@ -32,7 +33,7 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
   let productId = "";
   const customerIds: Record<string, string> = {};
   const userIds: string[] = [];
-  /** Last month, the 10th, UTC: always inside the 180-day window. */
+  /** Last month, the 10th, UTC: always inside the aggregate's 180-day window. */
   const issued = (() => {
     const d = new Date();
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 10));
@@ -134,9 +135,23 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
     await prisma?.$disconnect();
   }, 120_000);
 
+  /** An OPERATOR denied ORDERS and FINANCE: the floor of 3 applies. */
   const history = () =>
     tenantCtx.run(tenantId, () =>
-      service.getHistory(customerIds.c1!, productId, { role: UserRole.OPERATOR, compare: "all" }),
+      service.getHistory(customerIds.c1!, productId, {
+        role: UserRole.OPERATOR,
+        compare: "all",
+        deniedGroups: ["ORDERS", "FINANCE"],
+      }),
+    );
+  /** Normal staff: no floor. */
+  const historyNoFloor = () =>
+    tenantCtx.run(tenantId, () =>
+      service.getHistory(customerIds.c1!, productId, {
+        role: UserRole.OPERATOR,
+        compare: "all",
+        deniedGroups: [],
+      }),
     );
 
   it("F6: line 3 for this customer's Box of 12 is 25.11, line 2 is empty", async () => {
@@ -147,10 +162,18 @@ describeDb("SA-954 price history comparison — real Postgres", () => {
     expect(e.likeForLike).toEqual([]);
   });
 
-  it("the aggregate keeps its own floor: the most-sold unit (Box) has 2 other buyers, so it is null, while line 3 clears its floor across units", async () => {
+  it("an OPERATOR denied ORDERS and FINANCE keeps the floor: the most-sold unit (Box) has 2 other buyers, so the aggregate is null, while line 3 clears its floor across units", async () => {
     const r = await history();
     expect(r.aggregate).toBeNull();
     expect(r.comparison!.find((x) => x.unitsPerBox === 12)!.converted).toHaveLength(1);
+  });
+
+  it("normal staff have no floor: the aggregate is drawn from the 2 other buyers of the most-sold unit, with its newest month", async () => {
+    const r = await historyNoFloor();
+    expect(r.aggregate).toMatchObject({ unitLabel: "Box", customers: 2, newestMonth: month });
+    expect(r.comparison!.find((x) => x.unitsPerBox === 12)!.converted).toEqual([
+      { month, average: 25.11 },
+    ]);
   });
 
   it("another tenant's invoices for the same product id are never counted (SA-954: tenant isolation)", async () => {

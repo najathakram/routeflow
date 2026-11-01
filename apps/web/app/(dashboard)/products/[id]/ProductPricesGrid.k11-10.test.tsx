@@ -4,6 +4,9 @@ import type { ProductPriceGridDto } from "@routeflow/types";
 import { ProductPricesGrid } from "./ProductPricesGrid";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
+import { setWideViewport } from "@/test-utils/viewport";
+
+setWideViewport();
 
 // K11-10: all five tiers fit at 1440 (read and edit), or the grid says what is clipped. Jest cannot lay anything out, so
 // the barcode, Contains and box sizes are asserted as classes and the overflow cue is driven through a mocked

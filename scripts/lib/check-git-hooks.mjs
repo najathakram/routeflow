@@ -29,6 +29,18 @@ const FIX =
   "run `node scripts/ensure-git-hooks.mjs` at the worktree root (it copies the main checkout's hooks; husky must not be run in a linked worktree: it rewrites the shared core.hooksPath)";
 
 /**
+ * `.husky/_` is TRACKED on master. A tree on a branch that predates that, or that moved back to one, has git delete the
+ * files at checkout: it loses its hooks the moment it switches, and nothing else says so. Name that cause loudly when
+ * the missing directory is the repo's own `.husky/_`.
+ */
+export function olderBranchNote(dir) {
+  return path.basename(dir) === "_" && path.basename(path.dirname(dir)) === ".husky"
+    ? " If this tree was working before, it moved to a branch that predates the tracked .husky/_ (git deleted the files " +
+        "on checkout): merge master into the branch to keep hooks on every switch."
+    : "";
+}
+
+/**
  * The process environment WITHOUT git's own variables (GIT_DIR, GIT_WORK_TREE ... — a git hook exports
  * them into every child, and they override the repository git would discover from a cwd: the B420
  * shape). The single definition lives in ./scrubbed-git-env.cjs so ts-jest CJS specs share it.
@@ -154,13 +166,13 @@ export function checkGitHooks({
       status: 1,
       message:
         `check-git-hooks: GIT HOOKS ARE NOT INSTALLED — ${where} resolves to ${dir}, which does not exist. ` +
-        `Git treats that as "no hooks" and exits 0, so pushes from this tree skip the pre-push verify silently. Fix: ${FIX}.`,
+        `Git treats that as "no hooks" and exits 0, so pushes from this tree skip the pre-push verify silently. Fix: ${FIX}.${olderBranchNote(dir)}`,
     };
   }
   if (!isFile(path.join(dir, "pre-push"))) {
     return {
       status: 1,
-      message: `check-git-hooks: GIT HOOKS ARE NOT INSTALLED — ${dir} has no pre-push hook. Fix: ${FIX}.`,
+      message: `check-git-hooks: GIT HOOKS ARE NOT INSTALLED — ${dir} has no pre-push hook. Fix: ${FIX}.${olderBranchNote(dir)}`,
     };
   }
   // Git IGNORES a hook that is not executable (only a hint), so a complete .husky/_ whose files lost

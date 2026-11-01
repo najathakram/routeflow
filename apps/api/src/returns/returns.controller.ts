@@ -24,7 +24,7 @@ import { ReturnsService } from "./returns.service";
 import { ParkedRestockResolutionService } from "./parked-restock-resolution.service";
 import { ResolveParkedRestockDto } from "./dto/resolve-parked-restock.dto";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
-import { InlineReturnsService } from "./inline-returns.service";
+import { InlineReturnsService, INLINE_HOLD_REASONS } from "./inline-returns.service";
 import { ReceiveReturnDto } from "./dto/receive-return.dto";
 import { ProcessRefundDto } from "./dto/process-refund.dto";
 import { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
@@ -42,6 +42,17 @@ const RETURN_KIND_FILTER_VALUES = [...Object.values(ReturnKind), "ALL"] as const
 type ReturnKindFilter = (typeof RETURN_KIND_FILTER_VALUES)[number];
 const isReturnKindFilter = (value: string): value is ReturnKindFilter =>
   (RETURN_KIND_FILTER_VALUES as readonly string[]).includes(value);
+
+/** SA-1060 PR-1: `GET /returns?holdReason=DRIVER_CAP,ALREADY_RETURNED` — the held-returns screen's filter. Every item must be one of the
+ * holds staff can approve (the service's one list); an empty item or any other string is a 400 BEFORE the service is called. */
+function parseHoldReasonFilter(raw: string): string[] {
+  const items = raw.split(",");
+  const known = INLINE_HOLD_REASONS as readonly string[];
+  if (!items.every((i) => known.includes(i))) {
+    throw new BadRequestException(`Invalid holdReason filter: ${raw}`);
+  }
+  return items;
+}
 
 // This controller also serves CUSTOMER and DRIVER roles (not just OPERATOR), so
 // gating it must stay behind the kill switch until the v7-STARTER audit question
@@ -193,6 +204,7 @@ export class ReturnsController {
     @Query("limit") limit?: string,
     @Query("kind") kind?: string,
     @Query("pendingRefund") pendingRefund?: string,
+    @Query("holdReason") holdReason?: string,
   ) {
     // #2406: default STANDARD keeps the existing Returns list unchanged; INLINE/ALL are opt-in.
     // Whitelisted BEFORE the service is called — an unrecognized value never reaches `where.kind`.
@@ -206,6 +218,7 @@ export class ReturnsController {
       reason,
       search,
       kind: (kind as ReturnKindFilter | undefined) ?? "STANDARD",
+      holdReason: holdReason === undefined ? undefined : parseHoldReasonFilter(holdReason),
       // SA-727b: ?pendingRefund=true lists INLINE returns captured for a refund that is not recorded yet
       pendingRefund: pendingRefund === "true",
       page: page ? +page : 1,

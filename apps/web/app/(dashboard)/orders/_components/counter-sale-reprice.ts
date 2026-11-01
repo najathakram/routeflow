@@ -4,6 +4,7 @@ import {
   type CustomerLayerUnit,
 } from "@routeflow/pricing";
 import { resolveCounterPriceEdit } from "@/lib/counter-price-edit";
+import { priceEditUnitWord } from "./counter-sale-price-edit";
 import type { SaleLine } from "./counter-sale-scan";
 
 /**
@@ -74,6 +75,7 @@ export function repriceLines(
             boxes: l.boxes,
             pieces: l.pieces,
             unitsPerBox: l.unitsPerBox,
+            unitWord: priceEditUnitWord(l),
           },
           l.override.reason,
         );

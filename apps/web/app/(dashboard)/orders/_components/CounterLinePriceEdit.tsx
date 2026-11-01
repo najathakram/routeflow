@@ -59,13 +59,13 @@ const MODES: ReadonlyArray<{ mode: PriceEditMode; label: string }> = [
 ];
 
 /** The word a plain line is priced per: its own unit ("case"); "each", "unit" or none read as "item". */
-function plainUnitWord(word: string | undefined): string {
-  const w = (word ?? "").trim().toLowerCase();
+function plainUnitWord(word: string): string {
+  const w = word.trim().toLowerCase();
   return !w || w === "each" || w === "unit" ? "item" : w;
 }
 
-function fieldLabel(mode: PriceEditMode, boxed: boolean, word?: string): string {
-  const unit = boxed ? "box" : plainUnitWord(word);
+function fieldLabel(mode: PriceEditMode, word: string): string {
+  const unit = plainUnitWord(word);
   if (mode === "set") return `Price per ${unit}`;
   if (mode === "percent") return "Percent off";
   return `Amount off per ${unit}`;
@@ -131,8 +131,30 @@ export function CounterLinePriceEdit({
   const armedEnter = useArmedEnter(editKey);
   const { disarm } = armedEnter;
 
+  // SA-1071 P1: the effect below reads the live props through this ref, so a re-render never re-fires a pick.
+  const live = React.useRef({ line, onApply, onClosed, locked, canEditPrices });
+  live.current = { line, onApply, onClosed, locked, canEditPrices };
+
   React.useEffect(() => {
     if (!openWith) return;
+    // SA-1071 P1: pressing Use is already the confirm. When the shared rule needs no reason and refuses nothing, the pick is
+    // the write (`onApply`, the one write; Reset price is the undo). Otherwise the dialog opens prefilled, as it always did.
+    const cur = live.current;
+    if (!cur.canEditPrices) return;
+    const picked = roundMoney(openWith.value);
+    const resolved = resolveCounterPriceEdit("set", picked, cur.line, "");
+    if (resolved.ok) {
+      if (cur.locked) return;
+      cur.onApply({
+        mode: "set",
+        value: picked,
+        unitPrice: resolved.unitPrice,
+        override: resolved.override,
+      });
+      // the history panel hands focus to a field beside it a tick later; the till's scan field takes it after that
+      const t = setTimeout(() => live.current.onClosed?.(), 0);
+      return () => clearTimeout(t);
+    }
     setMode("set");
     setValue(roundMoney(openWith.value).toFixed(2));
     setReason("");
@@ -144,7 +166,7 @@ export function CounterLinePriceEdit({
   if (!canEditPrices) return null;
 
   const boxed = isBoxedLine(line);
-  const unitWord = boxed ? "box" : plainUnitWord(line.unitWord);
+  const unitWord = plainUnitWord(line.unitWord);
   // CQ-14: the label says what Apply will do. The reason is required for exactly the lines the shared rule
   // (`decideStaffOverride`, which `resolveCounterPriceEdit` runs) refuses without one: a special-tier line.
   const reasonRequired = line.isSpecial ?? isSpecialTier(line.tier);
@@ -269,7 +291,7 @@ export function CounterLinePriceEdit({
 
           <Input
             ref={valueRef}
-            label={fieldLabel(mode, boxed, line.unitWord)}
+            label={fieldLabel(mode, line.unitWord)}
             type="text"
             inputMode="decimal"
             autoComplete="off"

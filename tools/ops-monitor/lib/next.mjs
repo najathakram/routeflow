@@ -1,5 +1,5 @@
 // "What next" ranking for a lane. Pure.
-import { DONE_STATUSES, PICKABLE_STATUSES } from "./schema.mjs";
+import { CLEARED_BLOCKER_STATUSES, DONE_STATUSES, PICKABLE_STATUSES } from "./schema.mjs";
 import { parseEta } from "./ids.mjs";
 import { areaDomain } from "./areas.mjs";
 
@@ -29,6 +29,28 @@ function compareIds(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** The `blockedBy` ids still holding an item. An id the monitor does not know still holds it. */
+function openBlockers(item, items) {
+  return (item.blockedBy ?? []).filter(
+    (id) => !CLEARED_BLOCKER_STATUSES.includes(items.get(id)?.status),
+  );
+}
+
+/**
+ * Open items nobody claimed whose every blocker has cleared: `{ id, title, blockers }`. Without
+ * this a landed blocker changes nothing on the item, and W-853 sat planned for 3 days.
+ */
+export function freedItems(state) {
+  const out = [];
+  for (const item of state.items.values()) {
+    if (!item.blockedBy?.length || item.claimedBy || DONE_STATUSES.includes(item.status)) continue;
+    if (openBlockers(item, state.items).length > 0) continue;
+    const blockers = item.blockedBy.map((id) => ({ id, status: state.items.get(id).status }));
+    out.push({ id: item.id, title: item.title, blockers });
+  }
+  return out;
+}
+
 /** Ranked list of `{ item, reason }` the lane may take, best first. */
 export function rankCandidates(state, laneId, config, { now = Date.now() } = {}) {
   const lane = config?.lanes?.find((l) => l.id === laneId);
@@ -37,7 +59,7 @@ export function rankCandidates(state, laneId, config, { now = Date.now() } = {})
   for (const item of state.items.values()) {
     if (!PICKABLE_STATUSES.includes(item.status)) continue;
     if (item.type === "release" || item.type === "epic") continue;
-    if (item.blocked || item.claimedBy) continue;
+    if (item.blocked || item.claimedBy || openBlockers(item, state.items).length > 0) continue;
     const openChild = item.children.some((c) => {
       const ch = state.items.get(c);
       return ch && !DONE_STATUSES.includes(ch.status);

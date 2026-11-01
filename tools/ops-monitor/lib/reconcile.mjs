@@ -4,6 +4,7 @@ import { DONE_STATUSES } from "./schema.mjs";
 import { resolveLaneId } from "./config.mjs";
 import { itemIdsFromBranch, parseEta } from "./ids.mjs";
 import { DOMAINS, areaDomain } from "./areas.mjs";
+import { freedItems } from "./next.mjs";
 import { isLegacyMonitorItem, isRegisterOwned } from "./sync.mjs";
 
 const SEV_ORDER = { error: 0, warn: 1, info: 2 };
@@ -503,6 +504,18 @@ export function reconcile({
       for (const id of fixLinksFor({ branch: b.branch }, knownIds).filter((x) => /^B\d/.test(x)))
         flag(id, { branch: b.branch }, `Branch ${b.branch}`);
     }
+  }
+
+  // blocker-cleared: its blockers landed and nobody took the item.
+  for (const f of freedItems(state)) {
+    const by = f.blockers.map((b) => `${b.id} is ${b.status}`).join(", ");
+    add({
+      kind: "blocker-cleared",
+      severity: "warn",
+      message: `${f.id} can start: ${by} and nobody has claimed it`,
+      item: f.id,
+      suggest: `rf claim ${f.id}, or rf item edit ${f.id} --blocked-by -`,
+    });
   }
 
   // unknown-status: the register said a status word the monitor does not know (item reads planned).

@@ -7,6 +7,7 @@ import DashboardPage from "./page";
 // existing fleet-off tenant keeps "Out for delivery". A fleet-ON tenant sees exactly the dashboard it
 // always did (the invariant half of this file).
 
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),

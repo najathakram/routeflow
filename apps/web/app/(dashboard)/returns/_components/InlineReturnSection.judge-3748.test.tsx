@@ -6,8 +6,8 @@ import type { InlineReturnQuoteChunk, InlineReturnQuoteResponse } from "@routefl
 
 // #3748 judge pass (mm-ux 2026-10-25): the words and the one conditional the return form was scored down for.
 //  - a sold line reads "2 sold", not "Sold 2 each" (which reads like a price); a piece count says "2 pcs"
-//  - the quote step is titled "Check the return"; its "more than one earlier order" helper shows only when the
-//    quote's lines really come from more than one order
+//  - there is no separate "Check the return" step in the one-step UI (R-1): the summary sits under the list; the
+//    "more than one earlier order" helper shows only when the quote's lines really come from more than one order
 //  - the placeholders carry no ellipsis (W-785)
 //  - "Why the lower price?" appears only once a credit price has been typed; no "(optional)" on the credit price
 const mockEntryOrder = {
@@ -71,14 +71,16 @@ beforeEach(() => {
   authRole = undefined;
 });
 
+// real timers: the quote is asked by itself 350 ms after the last change, inside waitFor's default window
 async function toQuote(chunks: InlineReturnQuoteChunk[]) {
   renderWithProviders(<InlineReturnSection customerId="cust-1" entryOrderId="order-entry" />);
   fireEvent.change(await screen.findByLabelText(/^pieces$/i), { target: { value: "2" } });
-  fireEvent.change(screen.getByLabelText(/^reason$/i), { target: { value: "DAMAGED" } });
-  fireEvent.click(screen.getByRole("button", { name: /get quote/i }));
+  fireEvent.change(screen.getByLabelText(/reason for all items/i), {
+    target: { value: "DAMAGED" },
+  });
   await waitFor(() => expect(quoteMutate).toHaveBeenCalledTimes(1));
   act(() => quoteMutate.mock.calls[0][1].onSuccess(quoteOf(chunks)));
-  await screen.findByText(/check the return/i);
+  await screen.findByTestId("return-summary");
 }
 
 describe("#3748 judge pass: words", () => {
@@ -91,7 +93,8 @@ describe("#3748 judge pass: words", () => {
   it("the placeholders carry no ellipsis", async () => {
     renderWithProviders(<InlineReturnSection customerId="cust-1" entryOrderId="order-entry" />);
     expect(await screen.findByPlaceholderText("Search or scan a product")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Choose a reason" })).toBeInTheDocument();
+    // the reason list starts on a real reason: there is no "Choose a reason" placeholder option any more
+    expect(screen.queryByRole("option", { name: "Choose a reason" })).toBeNull();
     expect(screen.queryByText(/…|\.\.\./)).toBeNull();
   });
 
@@ -103,11 +106,13 @@ describe("#3748 judge pass: words", () => {
   });
 });
 
-describe("#3748 judge pass: the quote step", () => {
-  it("is titled 'Check the return', not 'Quote'", async () => {
+describe("#3748 judge pass: the quote", () => {
+  it("has no 'Check the return' step or 'Quote' title: the summary sits under the same list", async () => {
     await toQuote([chunk()]);
-    expect(screen.getByRole("heading", { name: "Check the return" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Check the return" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Quote" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "What came back" })).toBeInTheDocument();
+    expect(screen.getByTestId("return-summary")).toHaveTextContent("Total$4.40");
   });
 
   it("the 'more than one earlier order' helper is absent when every line came from one order", async () => {
@@ -128,7 +133,7 @@ describe("#3748 judge pass: the staff credit price", () => {
   async function openMore() {
     authRole = "OPERATOR";
     renderWithProviders(<InlineReturnSection customerId="cust-1" entryOrderId="order-entry" />);
-    fireEvent.click(await screen.findByRole("button", { name: /^more for /i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^options for /i }));
   }
 
   it("'Why the lower price?' is absent until a credit price is typed, then appears with its question mark", async () => {

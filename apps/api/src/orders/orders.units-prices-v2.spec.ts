@@ -247,7 +247,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
     flags.add(V2);
     typed(["u-case", 450]);
     jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
-      "prod-1": { lastPrice: 50, listPriceAtTime: 42 },
+      "prod-1": { lastPrice: 50, stickyPrice: 50, listPriceAtTime: 42 },
     });
     await create([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }]);
     expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 50, priceType: "MANUAL" });
@@ -256,7 +256,7 @@ describe("OrdersService.create: billing reads typed customer unit prices (S19)",
   it("S19-a: typed pack $33 beats a remembered above-list $50 (flag on); flag off the $50 sticky MANUAL holds (guard)", async () => {
     typed(["pack", 33]);
     jest.spyOn(service, "getCustomerPriceHistory").mockResolvedValue({
-      "prod-1": { lastPrice: 50, listPriceAtTime: 42 },
+      "prod-1": { lastPrice: 50, stickyPrice: 50, listPriceAtTime: 42 },
     });
     await create([{ productId: "prod-1", qty: 1, boxes: 1, pieces: 0 }]);
     expect(orderData().lineItems.create[0]).toMatchObject({ unitPrice: 50, priceType: "MANUAL" });

@@ -44,6 +44,12 @@ export const POLL_MS = 1_000;
 export const WAIT_LOG_MS = 60_000;
 export const HISTORY_MAX_LINES = 500;
 export const TIMEOUT_EXIT_CODE = 75;
+/**
+ * Version of the grant rule (who is first in line) a waiter applies. Every ticket records it; bump it when nextGrant
+ * changes what a waiter does, so a fresh waiter can tell a ticket whose waiter follows an older rule (or none: tickets
+ * written before this field) and not queue behind it. See ticketStale / formatStatus.
+ */
+export const GRANT_RULE = 1;
 
 // ---------------------------------------------------------------------------------------------
 // Pure helpers (exported for the self-test; no fs, no clock unless passed in)
@@ -438,6 +444,11 @@ export function ticketName(ms, pid, rand) {
   return `${String(ms).padStart(15, "0")}-${pid}-${rand}.json`;
 }
 
+/** True when a ticket was written under an older grant rule than this code applies, or under none. */
+export function ticketStale(entry) {
+  return !Number.isInteger(entry?.rule) || entry.rule < GRANT_RULE;
+}
+
 /** Oldest first. Entries are `{ name, ... }`. Does not mutate. */
 export function orderTickets(entries) {
   return [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -496,10 +507,14 @@ export function nextGrant({
   capped,
   cappedHeld = 0,
   cappedMax = Infinity,
+  stale,
 }) {
   const idx = order.indexOf(myName);
   const atCap = cappedHeld >= cappedMax;
-  const head = order.find((n) => !(atCap && capped?.has(n)));
+  // A ticket written under an older grant rule (or none) is not first in line: its waiter does not apply this rule, so
+  // it may be unable to take the free slot, and everyone behind it would wait on a slot nobody takes. It keeps its
+  // position (the wait line stays truthful) and still gets the slot if it wins the lock itself.
+  const head = order.find((n) => !(n !== myName && stale?.has(n)) && !(atCap && capped?.has(n)));
   return {
     position: idx + 1, // 0 = my ticket is not in the list
     total: order.length,
@@ -808,6 +823,7 @@ async function acquire(cfg, state) {
     cwd: process.cwd(),
     queuedAt,
     heartbeatAt: queuedAt,
+    rule: GRANT_RULE,
   };
   writeJson(ticketFile, base);
   const beat = setInterval(() => {
@@ -863,6 +879,7 @@ async function acquire(cfg, state) {
         capped,
         cappedHeld: snap.holders.filter((h) => isCappedLabel(h.entry.label)).length,
         cappedMax: cfg.cappedMax,
+        stale: new Set(snap.tickets.filter((t) => ticketStale(t.entry)).map((t) => t.name)),
       });
       // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
@@ -1107,11 +1124,13 @@ export function formatStatus(
     now = Date.now(),
     hostname = os.hostname(),
     maxHoldMs = parseMaxHoldMs(process.env.RF_HEAVY_SLOT_MAX_HOLD_MIN),
+    slots = parseSlots(process.env.RF_HEAVY_SLOTS),
   } = {},
 ) {
   const st = readState(dir, { now, hostname }, false);
   const out = [`heavy-slot dir: ${dir}`];
   const sf = inspectSlotsFile(dir);
+  const slotCount = sf.state === "ok" ? sf.value : slots;
   out.push(
     sf.state === "ok"
       ? `slots file: ${path.join(dir, "slots")} = ${sf.value} (overrides every waiter's RF_HEAVY_SLOTS)`
@@ -1134,9 +1153,18 @@ export function formatStatus(
   st.tickets.forEach((t, i) => {
     const e = t.entry;
     out.push(
-      `queue ${i + 1} of ${st.tickets.length}: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, waiting ${min(now - e.queuedAt)} min`,
+      `queue ${i + 1} of ${st.tickets.length}: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, waiting ${min(now - e.queuedAt)} min` +
+        (ticketStale(e)
+          ? ` **OLD GRANT RULE (ticket rule ${Number.isInteger(e.rule) ? e.rule : "none"}, current ${GRANT_RULE}): fresh waiters skip it; its waiter needs a restart**`
+          : ""),
     );
   });
+  const free = Math.max(0, slotCount - st.holders.length);
+  if (free > 0 && st.tickets.length) {
+    out.push(
+      `**${free} of ${slotCount} slots free with ${st.tickets.length} waiting: nobody is taking them (a waiter on an old rule, or a load gate)**`,
+    );
+  }
   for (const s of st.stale) {
     out.push(`stale ${s.kind} (${s.reason}): ${s.name} — will be reclaimed by the next waiter`);
   }

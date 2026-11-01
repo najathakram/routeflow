@@ -1,6 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, fireEvent } from "@/test-utils/render";
-import { CounterBuyerChoice } from "./CounterBuyerChoice";
+import { CounterBuyerChoice, CounterBuyerLine } from "./CounterBuyerChoice";
 
 describe("CounterBuyerChoice (S5)", () => {
   it("asks, with Walk-in one tap, and draws no New customer button until S6 supplies one", () => {
@@ -45,5 +45,22 @@ describe("CounterBuyerChoice (S5)", () => {
   it("is off while the cart is frozen", () => {
     renderWithProviders(<CounterBuyerChoice kind={null} disabled onWalkIn={jest.fn()} />);
     expect(screen.getByRole("button", { name: "Walk-in" })).toBeDisabled();
+  });
+});
+
+describe("CounterBuyerLine (SA-1066 F3)", () => {
+  it("names the customer, or Walk-in, in one line shown below md only", () => {
+    const { rerender } = renderWithProviders(
+      <CounterBuyerLine kind="customer" customerName="Acme Cafe" />,
+    );
+    expect(screen.getByTestId("counter-camera-who")).toHaveTextContent(/^Acme Cafe$/);
+    expect(screen.getByTestId("counter-camera-who").className).toMatch(/\bmd:hidden\b/);
+    rerender(<CounterBuyerLine kind="walk-in" />);
+    expect(screen.getByTestId("counter-camera-who")).toHaveTextContent(/^Walk-in$/);
+  });
+
+  it("draws nothing until a buyer is chosen", () => {
+    renderWithProviders(<CounterBuyerLine kind={null} />);
+    expect(screen.queryByTestId("counter-camera-who")).toBeNull();
   });
 });
