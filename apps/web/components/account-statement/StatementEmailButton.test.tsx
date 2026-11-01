@@ -1,6 +1,7 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { StatementEmailButton } from "./StatementEmailButton";
 
@@ -62,7 +63,7 @@ describe("the Email control", () => {
   });
 
   it("E4: email not set up says so, in words an operator can act on, and nothing else changes", async () => {
-    mockPost.mockRejectedValue(apiError("EMAIL_NOT_CONFIGURED"));
+    mockPost.mockRejectedValue(apiError(API_ERROR_CODES.EMAIL_NOT_CONFIGURED));
     const user = userEvent.setup();
     renderWithProviders(<StatementEmailButton customerId="c1" emailOnFile="ap@acme.example" />);
     await user.click(screen.getByRole("button", { name: "Email" }));

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Mail } from "lucide-react";
 import { Button, Input } from "@routeflow/ui/web";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { sendAccountStatementEmail } from "@/lib/api/account-statement";
 import { STATEMENT_COPY, sentToLabel } from "@/lib/account-statement-display";
 import { useReadOnlyGate } from "@/lib/read-only-gate";
@@ -21,7 +22,7 @@ type Problem = string | null;
 
 function problemOf(e: unknown): Problem {
   const data = (e as { response?: { data?: { code?: string; message?: string } } })?.response?.data;
-  if (data?.code === "EMAIL_NOT_CONFIGURED") return STATEMENT_COPY.emailNotSetUp;
+  if (data?.code === API_ERROR_CODES.EMAIL_NOT_CONFIGURED) return STATEMENT_COPY.emailNotSetUp;
   // EMAIL_SEND_FAILED carries the transport's reason; a 400 on the address carries the validator's.
   return data?.message || STATEMENT_COPY.emailFailed;
 }
