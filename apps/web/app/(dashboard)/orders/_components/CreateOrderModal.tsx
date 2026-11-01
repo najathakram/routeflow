@@ -1832,6 +1832,9 @@ export function CreateOrderModal({
   // SA-1068 M14: the remembered prices are part of the customer's price read, so the re-price waits for them too.
   const resumePricesReady =
     priceLayer.ready && customerPricesData !== undefined && !priceHistoryRead.isPending;
+  // SA-1076: the resume's product read can land after a customer change, so it prices from these, not the effect's capture.
+  const pricingNowRef = React.useRef({ tierForProduct, priceLayer, rememberedOf });
+  pricingNowRef.current = { tierForProduct, priceLayer, rememberedOf };
   React.useEffect(() => {
     if (!repriceAfterResumeRef.current || !selectedCustomer || lineItems.length === 0) return;
     if (!resumePricesReady) return;
@@ -1842,24 +1845,24 @@ export function CreateOrderModal({
       return;
     }
     repriceAfterResumeRef.current = false;
-    const tierFor = tierForProduct; // the one tier chain this modal prices with
-    const layerOf = priceLayer.enabled
-      ? (productId: string) => priceLayer.layerOf(productId)
-      : undefined;
     void fetchCurrentTierPrices(productsToRefresh(lineItems), (id) =>
       apiClient.get(`/products/${id}`).then((r) => r.data),
     ).then((fresh) => {
       setPricesNotRefreshed(fresh.failed);
       if (fresh.byProduct.size === 0) return;
-      setLineItems(
-        (prev) =>
-          repriceResumedLines(
-            withFreshTierPrices(prev, fresh.byProduct),
-            tierFor,
-            layerOf,
-            rememberedOf,
-          ).lines,
-      );
+      setLineItems((prev) => {
+        // read here: the customer can change while the product read is out
+        const now = pricingNowRef.current;
+        const layerOf = now.priceLayer.enabled
+          ? (productId: string) => now.priceLayer.layerOf(productId)
+          : undefined;
+        return repriceResumedLines(
+          withFreshTierPrices(prev, fresh.byProduct),
+          now.tierForProduct, // the one tier chain this modal prices with
+          layerOf,
+          now.rememberedOf,
+        ).lines;
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumePricesReady, selectedCustomer?.id, lineItems.length, repriceTick]);

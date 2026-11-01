@@ -963,6 +963,44 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
               await settlesAt(atNote);
             });
 
+            it("T30: the product read is out, a switch to C, it lands: C's price, no note", async () => {
+              await parked(memory);
+              realReads(noRows, remembers({ c1: 50 }));
+              const hold = holdProductRead();
+              await resume();
+              await productReadIsOut();
+              await changeTo("Cedar Cafe");
+              await flush();
+              hold.release();
+              await settlesAt({ ...atNote, price: "$38.00 / each", note: null });
+            });
+
+            it("T30: the same on a tier line, A to B: B's memory, no note", async () => {
+              await parked(read({}));
+              realReads(noRows, remembers({ c1: 45, c2: 50 }));
+              const hold = holdProductRead();
+              await resume();
+              await productReadIsOut();
+              await changeTo("Beta Bakery");
+              await flush();
+              hold.release();
+              await settlesAt({ ...atNote, note: null });
+            });
+
+            it("T31 guard: the product read is out, chip x, it lands, Undo: no false note", async () => {
+              await parked(memory);
+              realReads(noRows, remembers({ c1: 50 }));
+              const hold = holdProductRead();
+              await resume();
+              await productReadIsOut();
+              fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+              await shows("42");
+              hold.release();
+              await flush();
+              fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+              await settlesAt({ ...atNote, note: null });
+            });
+
             it("T32 guard: a draft parked with no customer, pick A: A's price, with the note", async () => {
               const payload = await parked(read({}));
               mockLoadedDraft = {
@@ -992,6 +1030,35 @@ describe("CreateOrderModal - draft autosave and resume (SA-817 A)", () => {
               realReads(noRows, remembers({ c1: 50 }));
               await resume();
               await settlesAt({ ...atNotice, productReads: 1 });
+            });
+
+            it("T34: T30 with the catalog tier now $40: the new price, with the note", async () => {
+              await parked(memory);
+              mockProductNow = { p1: { id: "p1", ...columns, priceTier2: "40" } };
+              realReads(noRows, remembers({ c1: 50 }));
+              const hold = holdProductRead();
+              await resume();
+              await productReadIsOut();
+              await changeTo("Cedar Cafe");
+              await flush();
+              hold.release();
+              await settlesAt({ ...atNote, price: "$40.00 / each", note: "$38.00 → $40.00" });
+            });
+
+            it("T35: the product read lands before C's reads do: C's price, no note", async () => {
+              await parked(memory);
+              realReads(noRows, remembers({ c1: 50 }));
+              const hold = holdProductRead();
+              await resume();
+              await productReadIsOut();
+              const history = held();
+              mockHistoryAnswer = () => history.answer;
+              await changeTo("Cedar Cafe");
+              await flush();
+              hold.release();
+              await flush();
+              history.release(await remembers({})("c3"));
+              await settlesAt({ ...atNote, price: "$38.00 / each", note: null });
             });
           });
         });
