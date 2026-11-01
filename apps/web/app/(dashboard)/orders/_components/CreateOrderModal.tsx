@@ -2846,7 +2846,10 @@ export function CreateOrderModal({
                 hasLines={lineItems.length > 0}
                 addedProductIds={addedProductIds}
                 onAddProduct={suggestionActions.addProduct}
-                onOrderAgain={(order) => void suggestionActions.orderAgain(order)}
+                onOrderAgain={(order) => {
+                  setLastPick(null); // "Order again" adds many lines: no single Undo, so the last one goes too
+                  void suggestionActions.orderAgain(order);
+                }}
                 error={orderSuggestionsError}
                 menuOpen={suggestionsMenuOpen}
                 onMenuOpenChange={setSuggestionsMenuOpen}
