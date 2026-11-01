@@ -27,8 +27,11 @@ interface PlatformStats {
   tenants: { total: number; active: number; trial: number; suspended: number };
   totalUsers: number;
   newTenantsThisMonth: number;
-  /** W3 / M1. Absent from an API that predates it, so the card is left out then. */
-  weeklyFunnel?: { weeks: FunnelWeek[] };
+  /**
+   * W3 / M1. Absent from an API that predates it, so the card is left out then. `unavailable`
+   * means the read failed, and the card says so.
+   */
+  weeklyFunnel?: { weeks: FunnelWeek[] } | { unavailable: true };
   mrr: number;
   ledgerMrr: number;
   planBreakdown: Record<string, number>;
@@ -83,7 +86,15 @@ const weekLabel = (weekStart: string) =>
     new Date(`${weekStart}T00:00:00Z`),
   );
 
-function WeeklyFunnelCard({ weeks }: { weeks: FunnelWeek[] }) {
+function WeeklyFunnelCard({ funnel }: { funnel: NonNullable<PlatformStats["weeklyFunnel"]> }) {
+  if ("unavailable" in funnel) {
+    return (
+      <AdminCard title="Sign-ups by week">
+        <p className="text-sm text-slate-400">These numbers can&apos;t be shown right now.</p>
+      </AdminCard>
+    );
+  }
+  const { weeks } = funnel;
   return (
     <AdminCard title="Sign-ups by week" noPadding>
       <div
@@ -254,7 +265,7 @@ export default function AdminDashboardPage() {
         <MrrCard mrr={stats.mrr} ledgerMrr={stats.ledgerMrr} />
       </div>
 
-      {stats.weeklyFunnel && <WeeklyFunnelCard weeks={stats.weeklyFunnel.weeks} />}
+      {stats.weeklyFunnel && <WeeklyFunnelCard funnel={stats.weeklyFunnel} />}
 
       {/* Charts Row */}
       <div className="grid gap-6 lg:grid-cols-3">

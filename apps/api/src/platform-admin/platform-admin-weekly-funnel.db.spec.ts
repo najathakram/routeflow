@@ -263,8 +263,11 @@ describeDb("W3 weekly sign-up funnel (real Postgres)", () => {
 
   it("getStats() still resolves with the funnel next to the other dashboard reads", async () => {
     const stats = await svc.getStats();
-    expect(stats.weeklyFunnel.weeks).toHaveLength(WEEK_STARTS.length);
-    expect(stats.weeklyFunnel.weeks.map((w: Week) => Object.keys(w).sort())).toEqual(
+    // A failed funnel read would come back as { unavailable: true }; here it must be the weeks.
+    if (!("weeks" in stats.weeklyFunnel)) throw new Error("the funnel read failed");
+    const { weeks: funnelWeeks } = stats.weeklyFunnel;
+    expect(funnelWeeks).toHaveLength(WEEK_STARTS.length);
+    expect(funnelWeeks.map((w: Week) => Object.keys(w).sort())).toEqual(
       WEEK_STARTS.map(() => [
         "demoBookings",
         "firstOrder",

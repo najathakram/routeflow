@@ -3874,6 +3874,40 @@ describe("PlatformAdminService — audit provenance", () => {
         expect(week).not.toHaveProperty("answered");
       }
     });
+
+    describe("when a funnel read fails", () => {
+      const fail = () => jest.fn().mockRejectedValue(new Error("funnel read failed"));
+      const reads: Array<[string, () => void]> = [
+        ["orders", () => ((prisma as any).order.groupBy = fail())],
+        ["routes", () => ((prisma as any).route.groupBy = fail())],
+        ["demo bookings", () => ((prisma as any).demoBooking.findMany = fail())],
+        [
+          "activations",
+          () => {
+            (prisma.auditLog.findMany as jest.Mock).mockImplementation(async (args: any) => {
+              if (args?.where?.action === "user.activate") throw new Error("funnel read failed");
+              return [];
+            });
+          },
+        ],
+      ];
+
+      it.each(reads)(
+        "%s: the dashboard still loads and says the funnel is out",
+        async (_n, breakIt) => {
+          breakIt();
+          const logged = jest.spyOn((service as any).logger, "error").mockImplementation(() => {});
+
+          const stats: any = await service.getStats();
+
+          expect(stats.weeklyFunnel).toEqual({ unavailable: true });
+          expect(stats.tenants).toBeDefined();
+          expect(stats.mrr).toBeDefined();
+          expect(logged).toHaveBeenCalledTimes(1);
+          expect(String(logged.mock.calls[0][0])).toContain("funnel read failed");
+        },
+      );
+    });
   });
 
   describe("getTenant — estMrrUsd card (REG-743-N1)", () => {

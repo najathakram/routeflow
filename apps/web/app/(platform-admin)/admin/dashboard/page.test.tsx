@@ -156,6 +156,18 @@ describe("AdminDashboardPage — weekly funnel (W3 M1)", () => {
     expect(screen.queryByRole("columnheader", { name: /answered/i })).not.toBeInTheDocument();
   });
 
+  it("says the numbers can't be shown when the funnel read failed, and the page still loads", async () => {
+    mockStatsAndGrowth(baseStats({ weeklyFunnel: { unavailable: true } }));
+
+    render(<AdminDashboardPage />);
+
+    expect(await screen.findByText("These numbers can't be shown right now.")).toBeInTheDocument();
+    expect(screen.getByText("Sign-ups by week")).toBeInTheDocument();
+    expect(screen.getByText("Platform Dashboard")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Sign-ups by week" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Sign-ups" })).not.toBeInTheDocument();
+  });
+
   it("leaves the card out when the API sends no funnel, instead of showing zeros", async () => {
     mockStatsAndGrowth(baseStats({}));
 

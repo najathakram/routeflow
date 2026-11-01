@@ -171,6 +171,9 @@ export interface WeeklyFunnelWeek {
   demoBookings: number;
 }
 
+/** The dashboard funnel: the weeks, or the mark that its read failed and the card should say so. */
+export type WeeklyFunnel = { weeks: WeeklyFunnelWeek[] } | { unavailable: true };
+
 @Injectable()
 export class PlatformAdminService {
   private readonly logger = new Logger(PlatformAdminService.name);
@@ -2026,7 +2029,7 @@ export class PlatformAdminService {
         select: { id: true, slug: true, name: true, status: true, plan: true, trialEndsAt: true },
       }),
       this.mrrService.computeOverview(),
-      this._weeklyFunnel(now),
+      this._weeklyFunnelOrUnavailable(now),
     ]);
 
     // Plan distribution keyed on the current catalog's planKey (STARTER/GROWTH/
@@ -2180,6 +2183,16 @@ export class PlatformAdminService {
     for (const r of firstRoutes) bump(r._min?.createdAt, "firstRoute");
     for (const b of bookings) bump(b.createdAt, "demoBookings");
     return { weeks };
+  }
+
+  /** The funnel sits inside getStats()'s Promise.all, so a bad read here must not fail the page. */
+  private async _weeklyFunnelOrUnavailable(now: Date): Promise<WeeklyFunnel> {
+    try {
+      return await this._weeklyFunnel(now);
+    } catch (e) {
+      this.logger.error(`Weekly funnel read failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { unavailable: true };
+    }
   }
 
   /** Human-readable "why at risk" for the dashboard At-Risk table. */
