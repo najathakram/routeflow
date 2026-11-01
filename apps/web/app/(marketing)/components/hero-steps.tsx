@@ -4,7 +4,7 @@ import { ArrowRight, ClipboardList, ReceiptText, Truck } from "lucide-react";
 // three steps, so the picture says what the headline says with the words hidden.
 //
 // CSS only: no new binary, no motion, no script. It is a PICTURE, not tabs, so nothing here is a
-// button, a link or a focus stop. The labels are at least 20 px at every width (marketing.css,
+// button, a link or a focus stop. The labels are at least 20 px at every width (one-look.css,
 // `.hero-steps-label`). The accessible name is the alt text; the parts inside are hidden from
 // assistive tech so the three labels are not read twice.
 
