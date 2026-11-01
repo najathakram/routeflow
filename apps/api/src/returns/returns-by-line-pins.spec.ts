@@ -31,11 +31,25 @@ describe("the wire's `line` (rule 8)", () => {
       { id: "A", productId: "P", qty: 400, boxes: 2, unitsPerBox: 200, unitLabel: "Case" },
     ],
   };
+  it("carries a loose line's pieces, which the pieces-only count reads", () => {
+    const loose = {
+      lineItems: [{ id: "L", productId: "P", qty: 5, boxes: null, pieces: 5, unitsPerBox: 10 }],
+    };
+    expect(lineOfItem({ sourceOrderItemId: "L" }, loose as any)).toEqual({
+      unitLabel: null,
+      unitsPerBox: 10,
+      boxes: null,
+      pieces: 5,
+      qty: 5,
+    });
+  });
+
   it("names the item's order line from its snapshot, null when pooled or unknown", () => {
     expect(lineOfItem({ sourceOrderItemId: "A" }, order as any)).toEqual({
       unitLabel: "Case",
       unitsPerBox: 200,
       boxes: 2,
+      pieces: null,
       qty: 400,
     });
     expect(lineOfItem({ sourceOrderItemId: null }, order as any)).toBeNull();

@@ -26,7 +26,8 @@ export const lineQtyLabel = (l: SaleLine): string => {
 };
 
 /**
- * The register line's quantity: `lineQtyLabel`'s shape in the tenant's pack word (`unitWords`), then the pack size. A boxed line
+ * The register line's quantity: `lineQtyLabel`'s shape in the words the caller passes (the row builds them from the line's own
+ * `packLabel` / `baseLabel`, SA-934 A-1; a line without them reads Box / pcs), then the pack size. A boxed line
  * with whole boxes only reads "1 box of 24"; with loose pieces "1 box + 3 pcs · box of 24" (so the pack is always named).
  * The receipt keeps `lineQtyLabel` unchanged. Money is never derived here.
  */
@@ -43,6 +44,17 @@ export const registerQtyLabel = (l: SaleLine, words: UnitWords): string => {
   const size = l.unitsPerBox;
   if (!n.pieces) return `${boxes} ${pack} of ${size}`;
   return `${boxes} ${pack} + ${n.pieces} ${words.base.short.other} · ${words.pack.lower} of ${size}`;
+};
+
+/**
+ * The selling unit a box step moves by, always visible on the stepper: "1 Box (24 pcs)" in the words passed in, which the row
+ * takes from the line's own labels ("1 Case (24 trays)"); a line without labels reads Box / pcs.
+ * Display only: the step itself is `stepLine`, which re-splits through `normalizeBoxesPieces`.
+ */
+export const sellingUnitLabel = (l: SaleLine, words: UnitWords): string => {
+  const size = l.unitsPerBox ?? 0;
+  const pack = words.pack.lower;
+  return `1 ${pack.charAt(0).toUpperCase()}${pack.slice(1)} (${size} ${words.baseShortFor(size)})`;
 };
 
 /** The register line's price: per pack, then the per-piece figure (`perUnitPrice`); a plain line per its unit word. */
@@ -142,6 +154,25 @@ export interface TypedQty {
 
 const WHOLE = /^\d+$/;
 
+/** The most one counter line holds, in pieces (mirrors the API DTO's Max on qty, boxes and pieces). */
+export const COUNTER_MAX_LINE_QTY = 100_000;
+
+/** True when the typed text is a whole number only the per-line cap refuses (the row then says so). */
+export function typedQtyOverCap(l: SaleLine, typed: TypedQty): boolean {
+  if (isBoxedLine(l)) {
+    const b = (typed.boxes ?? String(l.boxes ?? 0)).trim();
+    const p = (typed.pieces ?? String(l.pieces ?? 0)).trim();
+    if (!WHOLE.test(b) || !WHOLE.test(p)) return false;
+    return (
+      Number(b) > COUNTER_MAX_LINE_QTY ||
+      Number(p) > COUNTER_MAX_LINE_QTY ||
+      Number(b) * (l.unitsPerBox ?? 0) + Number(p) > COUNTER_MAX_LINE_QTY
+    );
+  }
+  const q = (typed.qty ?? String(l.qty)).trim();
+  return WHOLE.test(q) && Number(q) > COUNTER_MAX_LINE_QTY;
+}
+
 /**
  * The line after a TYPED quantity, or null when the text is not a usable quantity (the editor then reverts; removal stays the
  * x button). A plain line takes a whole qty >= 1. A boxed line takes whole boxes and pieces (>= 0, at least one piece in
@@ -154,12 +185,13 @@ export function setLineQty(l: SaleLine, typed: TypedQty): SaleLine | null {
     const p = (typed.pieces ?? String(l.pieces ?? 0)).trim();
     if (!WHOLE.test(b) || !WHOLE.test(p)) return null;
     const total = Number(b) * upb + Number(p);
-    if (!Number.isSafeInteger(total) || total < 1) return null;
+    if (!Number.isSafeInteger(total) || total < 1 || total > COUNTER_MAX_LINE_QTY) return null;
+    if (Number(b) > COUNTER_MAX_LINE_QTY || Number(p) > COUNTER_MAX_LINE_QTY) return null;
     const norm = normalizeBoxesPieces({ qty: total, unitsPerBox: upb });
     return { ...l, boxes: norm.boxes ?? 0, pieces: norm.pieces ?? 0, qty: norm.qty };
   }
   const q = (typed.qty ?? String(l.qty)).trim();
   if (!WHOLE.test(q)) return null;
   const n = Number(q);
-  return Number.isSafeInteger(n) && n >= 1 ? { ...l, qty: n } : null;
+  return Number.isSafeInteger(n) && n >= 1 && n <= COUNTER_MAX_LINE_QTY ? { ...l, qty: n } : null;
 }

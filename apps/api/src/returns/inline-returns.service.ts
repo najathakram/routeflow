@@ -16,7 +16,9 @@
  * transaction for this customer (the specific race those source-order locks close for
  * STANDARD's single-order case), and a source order's INVOICE lines — the only thing capture
  * reads from it — are immutable once issued on every path capture can reach. Documented rather
- * than silently assumed.
+ * than silently assumed. The lock also covers approve() (SA-1060 A-3, which then takes the carrying
+ * and source orders itself); receive() and the parked resolve() are outside it and hold the source
+ * order instead.
  *
  * Opus review (BLOCK) fix round, same PR: HIGH-1/2/4 restructure the capture→issue relationship
  * (see `issueCreditInTx`'s doc comment and `sumInlineReturnCredit`'s), HIGH-3 moves approve's
@@ -35,7 +37,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, UserRole } from "@prisma/client";
+import { MovementType, Prisma, UserRole } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
 import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -46,6 +49,7 @@ import {
   creditPaymentTargets,
   lockCreditNotes,
   lockOrderRow,
+  lockOrderRows,
 } from "../credit-notes/credit-note-locks";
 import { NumberingService } from "../import/numbering.service";
 import {
@@ -129,7 +133,12 @@ export const INLINE_RETURN_ERROR_CODES = {
 
 /** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
 export const ALREADY_RETURNED_HOLD_REASON = "ALREADY_RETURNED";
-const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
+/**
+ * SA-1060 PR-1: the holds staff can approve or reject. This is the api's one list (a VALUE import of @routeflow/types crashes the
+ * compiled api at boot, so it cannot read the shared copy); the approval screen reads `INLINE_HOLD_REASONS` from @routeflow/types,
+ * and inline-hold-reasons.shared.spec.ts pins the two set-equal.
+ */
+export const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
 const isInlineHold = (reason: string | null | undefined): boolean =>
   reason != null && (INLINE_HOLD_REASONS as readonly string[]).includes(reason);
 
@@ -1098,7 +1107,7 @@ export class InlineReturnsService {
    * Lock contract (SA-706c): the caller holds the Return AND the carrying Order (FOR UPDATE)
    * before this runs — the intent insert below takes KEY SHARE on the Order and settle upgrades
    * it. Every entry: captureInTx (its first statement locks the Order), issueCredit() and
-   * approve() (`lockOrderRow` right after the Return lock).
+   * approve() (`lockCustomerInTx`, the Return, then `lockOrderRows` over the carrying and source orders; SA-1060 A-3).
    */
   private async issueCreditInTx(
     tx: any,
@@ -1280,7 +1289,7 @@ export class InlineReturnsService {
       return this.withParkedReversals(current);
     }
     if (pre.status !== "RECEIVED" || !isInlineHold(pre.holdReason) || pre.creditNoteId) {
-      throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
+      throw new BadRequestException("Only a return awaiting approval can be approved");
     }
     const heldAmountPre = roundMoney(Number(pre.heldAmount ?? 0));
     const requestedPre = dto?.amount != null ? roundMoney(dto.amount) : heldAmountPre;
@@ -1309,6 +1318,9 @@ export class InlineReturnsService {
 
     let minted: any;
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
+      // SA-1060 A-3 (B841): the customer return lock is the tx's FIRST statement, as capture and the order create/edit paths take
+      // it, so an approval and a capture for one customer serialize. House order: advisory -> Return -> Orders (SA-214).
+      await this.lockCustomerInTx(tx, pre.customerId);
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
       const fresh = await tx.return.findFirst({
         where: { id, kind: "INLINE" },
@@ -1322,8 +1334,13 @@ export class InlineReturnsService {
       ) {
         return { skipped: true as const };
       }
-      // SA-706c: as issueCredit() — the Order right after the Return, before restock/mint/insert.
-      await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-1060 A-3: the carrying Order AND every source order, one statement in id order, right after the Return and before
+      // restock / ledger reversal / mint, as refund() does. Two approvals (or an approval and receive()) can no longer both
+      // reverse one sale from the same stale read.
+      await lockOrderRows(tx, tenantId, [
+        fresh.orderId,
+        ...fresh.items.map((i: any) => i.sourceOrderId).filter(Boolean),
+      ]);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
@@ -1792,7 +1809,7 @@ export class InlineReturnsService {
       data: { status: "REJECTED", approvedById: user.sub, approvedAt: new Date() },
     });
     if (claimed.count === 0) {
-      throw new BadRequestException("Only a driver-cap hold awaiting approval can be rejected");
+      throw new BadRequestException("Only a return awaiting approval can be rejected");
     }
     return this.prisma.forTenant().return.findUnique({ where: { id }, include: { items: true } });
   }
@@ -1886,35 +1903,27 @@ export class InlineReturnsService {
         fresh.status === "REFUNDED" || (fresh.status === "RECEIVED" && !fresh.holdReason);
       let amendedPeriod: FiledPeriod | null = null;
       if (wasApplied) {
-        for (const item of fresh.items as any[]) {
-          if (!item.restock) continue;
-          const product = await tx.product.findFirst({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          const qty = new Prisma.Decimal(item.qty);
-          const currentStock = product?.currentStock ?? new Prisma.Decimal(0);
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { currentStock: { decrement: qty } },
-          });
-          // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
-          // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
-          // audit trail (a delete erased history; the prefix match also risks colliding
-          // across two returns whose ids happen to share their first 8 characters).
-          await tx.stockMovement.create({
-            data: {
-              productId: item.productId,
-              type: "RETURN",
-              quantity: qty.neg(),
-              unitCost: product?.averageCost ?? null,
-              avgCostAfter: product?.averageCost ?? null,
-              stockAfter: currentStock.sub(qty),
+        // LOW: a COMPENSATING movement (negative qty) rather than deleting the original
+        // RETURN movement by a fragile 8-char reference-prefix match — preserves the full
+        // audit trail (a delete erased history; the prefix match also risks colliding
+        // across two returns whose ids happen to share their first 8 characters).
+        // SA-927: through the one writer (lock, tenant-scoped counter read, stockAfter, one insert).
+        const restocked = (fresh.items as any[]).filter((item) => item.restock);
+        await applyStockMovements(
+          tx,
+          this.prisma.getTenantId() as string,
+          (locked) =>
+            restocked.map((item) => ({
+              productId: item.productId as string,
+              type: MovementType.RETURN,
+              quantity: new Prisma.Decimal(item.qty).neg(),
+              unitCost: locked.get(item.productId)?.averageCost ?? null,
+              average: "keep" as const,
               performedById: user.sub,
               reference: `RET-CANCEL-${fresh.id.slice(0, 8)}`,
-            },
-          });
-        }
+            })),
+          { productIds: restocked.map((item) => item.productId as string) },
+        );
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.
         const settled = await this.ledger.settleRegulatedLedger(tx, {

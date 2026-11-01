@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fold } from "../lib/fold.mjs";
-import { rankCandidates, pickNext, laneNow } from "../lib/next.mjs";
+import { freedItems, rankCandidates, pickNext, laneNow } from "../lib/next.mjs";
 import { LEGACY_CONFIG as DEFAULT_CONFIG } from "./legacy-config.mjs";
 
 const NOW = Date.UTC(2026, 9, 19, 6, 0, 0);
@@ -125,4 +125,41 @@ test("free-text ETAs rank as no ETA (after dated ones), never as a date", () => 
   ]);
   const r = rankCandidates(s, "pc-lane", config, { now: NOW });
   assert.deepEqual(ids(r), ["21", "23", "20", "22"]);
+});
+
+test("blockedBy: rf next holds an item until every blocker has cleared", () => {
+  const events = [
+    mk("30", { lane: "pc-lane", status: "building" }),
+    mk("31", { lane: "pc-lane", status: "building" }),
+    mk("32", { lane: "pc-lane", blockedBy: ["30", "31"] }),
+  ];
+  const offered = (s) => ids(rankCandidates(s, "pc-lane", config, { now: NOW }));
+  assert.deepEqual(offered(fold(events)), []);
+  events.push(ev("status", "30", { status: "live" }));
+  assert.deepEqual(offered(fold(events)), [], "one blocker is still building");
+  events.push(ev("status", "31", { status: "verified" }));
+  assert.deepEqual(offered(fold(events)), ["32"]);
+});
+
+test("freedItems: open, unclaimed, every blocker cleared", () => {
+  const s = fold([
+    mk("40", { status: "live", title: "Landed work" }),
+    mk("41", { status: "building" }),
+    mk("42", { status: "parked" }),
+    mk("43", { status: "dropped" }),
+    mk("50", { title: "Free to start", blockedBy: ["40"] }),
+    mk("51", { blockedBy: ["41"] }),
+    mk("52", { blockedBy: ["42"] }),
+    mk("53", { blockedBy: ["no-such"] }),
+    mk("54", { blockedBy: ["40", "41"] }),
+    mk("55", { blockedBy: ["40"] }),
+    ev("claim", "55", {}, "someone"),
+    mk("56", { blockedBy: ["40"], status: "live" }),
+    mk("57", { blockedBy: ["43"], title: "Blocker dropped" }),
+    mk("58"),
+  ]);
+  assert.deepEqual(freedItems(s), [
+    { id: "50", title: "Free to start", blockers: [{ id: "40", status: "live" }] },
+    { id: "57", title: "Blocker dropped", blockers: [{ id: "43", status: "dropped" }] },
+  ]);
 });

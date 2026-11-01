@@ -11,6 +11,7 @@ import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
 import { AuthShell } from "@/components/auth";
 import { isInShell } from "@/lib/in-shell";
+import { takeBuyerLoginEmail } from "@/lib/role-choice";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 function BuyerLoginInner() {
   const router = useRouter();
   const params = useSearchParams();
+  const [prefillEmail] = React.useState(() => takeBuyerLoginEmail() ?? "");
   const { login, isAuthenticated } = useBuyerAuth();
   const presence = usePortalPresence();
   const [isLoading, setIsLoading] = React.useState(false);
@@ -57,6 +59,9 @@ function BuyerLoginInner() {
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
+    // W-839 / SA-937 MUST 5: the staff role step's "Shop" stashes the user's email (read once, never from the URL,
+    // #3731 review 4); the password is theirs to type.
+    defaultValues: { email: prefillEmail },
   });
 
   const onSubmit = async (data: LoginFormValues) => {

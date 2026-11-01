@@ -189,6 +189,16 @@ export const API_ERROR_CODES = {
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  /**
+   * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
+   * before any write; re-created lines would lose the invoice's provenance. Change the lines one at a time. 409.
+   */
+  LINES_REPLACE_AFTER_DELIVERY: "LINES_REPLACE_AFTER_DELIVERY",
+  /**
+   * W-861 (SA-944): a walk-in sale with a live payment on its invoice cannot be edited (the shared Walk-in customer
+   * cannot owe). Ring up added items as a new sale, or take items back with a Return. 409, nothing written.
+   */
+  WALK_IN_SALE_PAID: "WALK_IN_SALE_PAID",
   ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
   CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
   MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
@@ -247,6 +257,9 @@ export const API_ERROR_CODES = {
   /** SA-997: locking a filing is switched off (FILING_LOCK_READY) until the sale-routing work lands. */
   FILING_LOCK_NOT_READY: "FILING_LOCK_NOT_READY",
   STOCK_DATE_IN_FILED_PERIOD: "STOCK_DATE_IN_FILED_PERIOD",
+  COUNT_FRACTIONAL_PACK: "COUNT_FRACTIONAL_PACK",
+  // SA-828a: two parts of one count name the same unit (at most one part per ladder level).
+  COUNT_DUPLICATE_UNIT: "COUNT_DUPLICATE_UNIT",
   // 683 (SA-896): DELETE /settings/financial-data refused while the tenant holds regulated records.
   FINANCIAL_WIPE_BLOCKED_REGULATED: "FINANCIAL_WIPE_BLOCKED_REGULATED",
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
@@ -561,6 +574,11 @@ export const API_ERROR_CODES = {
    * PENDING, PARTIALLY_DELIVERED, or CANCELLED). Nothing was written.
    */
   PICKUP_NOT_READY: "PICKUP_NOT_READY",
+  /**
+   * 409 from POST /orders/:id/ready-for-pickup (W-1043): the order is not a PICKUP, non-counter order at PENDING or
+   * CONFIRMED (a ROUTE / SHIP order, a counter sale, or one already past Ready). Nothing was written.
+   */
+  ORDER_NOT_READYABLE: "ORDER_NOT_READYABLE",
   /** I-120 (SA-861 rule 2): POST /orders/:id/pickup-complete, 409: this business does not hand orders over at the store (no PICKUP method and the counter off). */
   COUNTER_COMPLETE_UNAVAILABLE: "COUNTER_COMPLETE_UNAVAILABLE",
   /**
@@ -577,6 +595,11 @@ export const API_ERROR_CODES = {
   COUNTER_COMPLETE_ON_RUN: "COUNTER_COMPLETE_ON_RUN",
   /** I-120 R8: POST /orders/:id/pickup-complete, 409: the driver has started that stop (with or without `takeOffRun`). Nothing written. */
   COUNTER_COMPLETE_STOP_STARTED: "COUNTER_COMPLETE_STOP_STARTED",
+  /**
+   * Row 590 (SA-978a): PATCH /orders/:id/status to DELIVERED, 409: the order rides a run stop that is not COMPLETED. The stop is the
+   * one writer of a run order's delivery; complete it on the route, or take the order off the run first. Nothing written.
+   */
+  ORDER_DELIVERED_ON_ROUTE_STOP: "ORDER_DELIVERED_ON_ROUTE_STOP",
   /**
    * W-776 (SA-925): POST /orders/:id/pickup-complete, 409: the register's day is closed, refused by the PRE-CHECK before the
    * first write (nothing changed, the order stays as it was). COUNTER_SALE_DAY_CLOSED from this endpoint now means only "the
@@ -755,6 +778,8 @@ export const API_ERROR_CODES = {
   CUSTOMER_MERGE_TENANT_MISMATCH: "CUSTOMER_MERGE_TENANT_MISMATCH",
   /** 409 from an inline return cancel: the credit note gained a payment on another invoice while the cancel locked its rows (SA-920). Retryable: the retry locks the full set. */
   RETURN_CANCEL_RETRY: "RETURN_CANCEL_RETRY",
+  /** 422 from the products list / ids / CSV when the Low or In-stock filter would match more than LOW_STOCK_ID_CAP products: narrow the filter (SA-1002). */
+  LOW_STOCK_TOO_MANY: "LOW_STOCK_TOO_MANY",
   /** 409 from DELETE /routes/:id and DELETE /route-runs/:id: the route or run holds delivery records (POD, signatures, payments); deactivate it instead (SA-842). Nothing was written. */
   ROUTE_HAS_DELIVERY_EVIDENCE: "ROUTE_HAS_DELIVERY_EVIDENCE",
 } as const satisfies Record<string, ApiErrorCode>;

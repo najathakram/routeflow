@@ -418,6 +418,10 @@
     "permanent": true,
     "why": "classification: the server text only classifies a duplicate, it is never displayed"
   },
+  "lib/return-error-text.ts": {
+    "count": 1,
+    "why": "SA-1042 B9c review: the cap refusal says what earlier returns left and only the server knows that, so a new return shows it and the count-shape sentence. Only those two; a mixed-unit refusal gets fixed copy and everything else the retry line."
+  },
   "lib/order-error-text.ts": {
     "count": 1,
     "why": "B991 / B987-E (codes + structured fields first): an UNCODED order-delete refusal keeps the server's own sentence (e.g. void the invoice first); coded ones are fixed copy; pending"

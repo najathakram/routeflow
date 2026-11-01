@@ -9,6 +9,10 @@ import { API_ERROR_CODES } from "./api/error-codes";
 export const COUNTER_COPY = {
   counterSale: "Counter sale",
   storePickup: "Store pickup",
+  /** W-854 (SA-940): the New order menu's other choice, and the switch's word at W-855 */
+  regularOrder: "Regular order",
+  /** SA-1069 A-3: the builder's Fulfillment segment. The POS switch beside it stays "Store pickup": invoiced now. */
+  pickupLater: "Pickup later",
   completeAtCounter: "Complete at counter",
   completeConfirm: "Complete",
   completed: "Completed at counter.",
@@ -32,7 +36,13 @@ export function onDriverRunCopy(driverName: unknown): string {
  */
 export function counterCompleteRefusalCopy(
   body:
-    | { code?: unknown; limit?: unknown; exposure?: unknown; driverName?: unknown }
+    | {
+        code?: unknown;
+        limit?: unknown;
+        exposure?: unknown;
+        driverName?: unknown;
+        runId?: unknown;
+      }
     | null
     | undefined,
   money: (n: number) => string,
@@ -42,15 +52,16 @@ export function counterCompleteRefusalCopy(
     case API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED:
       return "Nothing changed. This order has shipped with the carrier.";
     case API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN:
-      return `Nothing changed. ${onDriverRunCopy(body.driverName)}`;
+      // W-778: a question the clerk can answer with "Take off run and complete", not an error, so it never says "Nothing changed."
+      return onDriverRunCopy(body.driverName);
     case API_ERROR_CODES.COUNTER_COMPLETE_STOP_STARTED:
       return "Nothing changed. The driver has started this stop. Finish it on the route.";
     // SA-913 R8: the take-off lost a race (a dispatch or the run finishing moved the link); the removal rolled back
     case API_ERROR_CODES.ORDER_RUN_LINK_CHANGED:
       return "Nothing changed. This order's delivery run just changed. Reload and try again.";
-    // W-776 (SA-925): the pre-check refused a closed day before any write. The words are W-778's; no button is named until web has one.
+    // W-776 (SA-925): the pre-check refused a closed day before any write. W-778: it names where the fix is (the till).
     case API_ERROR_CODES.COUNTER_COMPLETE_DAY_CLOSED:
-      return "Nothing changed. This register's day is closed. A manager or owner can reopen it.";
+      return "Nothing changed. This register's day is closed. Ask a manager or owner to reopen it.";
     case API_ERROR_CODES.COUNTER_COMPLETE_UNAVAILABLE:
       return "Nothing changed. This business doesn't hand orders over at the store.";
     case API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED: {

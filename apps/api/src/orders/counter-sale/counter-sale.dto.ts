@@ -23,6 +23,7 @@ import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ac
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 import { TO_COLLECT_METHOD_VALUES, type ToCollectMethod } from "../../invoices/to-collect";
+import { MAX_UNIT_PRICE } from "@routeflow/pricing";
 
 /** Mirrors `COUNTER_SALE_PAYMENT_METHOD_VALUES` in @routeflow/types (API source never value-imports that package). */
 export const COUNTER_SALE_METHODS = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
@@ -38,7 +39,7 @@ export class CounterSaleItemDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
   /** SA-1040 B4a: sell by a unit of the product (a Case, a Pallet). Same decorators as `OrderItemDto.unitLabel`; create() decides everything else. */
   @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
-  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(1_000_000) unitPrice?: number;
+  @IsOptionalNotNull() @IsNumber() @Min(0) @Max(MAX_UNIT_PRICE) unitPrice?: number;
   @IsOptional() @IsString() @MaxLength(200) priceReason?: string;
   /** POS-3: an optional per-line note, stored on OrderItem.notes (max 200, HTML stripped). */
   @IsOptional() @StripHtml() @IsString() @MaxLength(200) note?: string;

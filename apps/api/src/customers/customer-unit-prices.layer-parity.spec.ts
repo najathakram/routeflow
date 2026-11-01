@@ -76,6 +76,7 @@ function service(opts: {
               {
                 productId: PRODUCT.id,
                 unitPrice: String(opts.remembered),
+                priceType: "MANUAL",
                 originalPrice: "42.00",
               },
             ]

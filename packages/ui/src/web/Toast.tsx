@@ -104,7 +104,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               >
                 {config.icon()}
               </span>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 <RadixToast.Title className="text-[13px] font-semibold text-ink-900">
                   {t.title}
                 </RadixToast.Title>
@@ -141,7 +141,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             </RadixToast.Root>
           );
         })}
-        <RadixToast.Viewport className="fixed bottom-[max(1rem,var(--toast-bottom-inset,1rem))] right-4 z-[100] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
+        {/* z-[400]: above every app modal (z-[200], the draft dock z-[210]) and popover (z-[300]), so a message raised from inside
+            a window is readable, not dimmed behind it (SA-1067 C1). The camera overlay (z-[9999]) closes before it reports. */}
+        <RadixToast.Viewport className="fixed bottom-[max(1rem,var(--toast-bottom-inset,1rem))] right-4 z-[400] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2 outline-none" />
       </RadixToast.Provider>
     </ToastContext.Provider>
   );

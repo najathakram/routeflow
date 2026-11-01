@@ -105,6 +105,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-addon-default-grant-flip.mjs": "read-only",
   "apps/api/scripts/report-addon-gate-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-billing-pause-blast-radius.mjs": "read-only",
+  "apps/api/scripts/report-bookkeeping-month-shift-census.mjs": "read-only",
   "apps/api/scripts/report-operator-account-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-b1043-stale-tax-state.mjs": "read-only",
   "apps/api/scripts/report-a4-credit-reversal-census.mjs": "read-only", // SA-1042 A-4 G5: SELECT only, default_transaction_read_only = on

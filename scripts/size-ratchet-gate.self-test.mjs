@@ -42,7 +42,10 @@ ok(
 for (const [label, re] of [
   ["the SKIP_VERIFY hatch", /^if \[ "\$SKIP_VERIFY" = "1" \]/],
   ["the verified-tree fast path", /already passed 'npm run verify'/],
-  ["npm run verify", /^npm run verify/],
+  [
+    "the verify gate (W-1045 replaced the bare `npm run verify`)",
+    /^node scripts\/verify-gate\.mjs run\b/,
+  ],
 ]) {
   const i = at(re);
   ok(
@@ -98,6 +101,8 @@ function plant(name, { over = null, dropSpec = false } = {}) {
     GATE,
     "apps/api/package.json",
     "apps/api/jest.repo-truth.config.js",
+    // the lane config derives its spec list from this (cross-workspace-lane.spec.ts)
+    "scripts/lib/cross-workspace-specs.cjs",
     "apps/api/tsconfig.json",
   ]) {
     copy(rel);

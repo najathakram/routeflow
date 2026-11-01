@@ -7,11 +7,13 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { CustomerOrderSuggestionsService } from "./customer-order-suggestions.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * "Usually buys" + "Order again" for the staff New Order builder. Staff only: OPERATOR admits
  * OPERATOR and TENANT_ADMIN through the RolesGuard hierarchy; a DRIVER or CUSTOMER gets 403.
  * Kept apart from CustomersController so that controller's constructor is untouched.
  */
+@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
 @ApiTags("customers")
 @ApiBearerAuth()
 @Controller("customers")

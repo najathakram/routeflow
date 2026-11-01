@@ -509,3 +509,88 @@ describe("in-flight scans are never dropped silently", () => {
     expect(s.buffer.pending.length + 1 + dropped).toBe(40);
   });
 });
+
+describe("continuousFrameScanned: SA-1071 K1, a held code says so (opt-in)", () => {
+  const HELD = { signalHeld: true } as const;
+  const heldOf = (step: { held?: true }) => step.held;
+
+  const hold = (extra: { signalHeld?: boolean }, ms = 3000) => {
+    let s = createContinuousScanState();
+    const out: Array<{
+      accepted: boolean;
+      held: boolean | undefined;
+      indicator: unknown;
+      keys: string[];
+    }> = [];
+    for (let t = 0; t <= ms; t += 100) {
+      const step = continuousFrameScanned(s, "HELD-CODE", T0 + t, {
+        bounds: IN_BOX_BOUNDS,
+        aimBox: IN_BOX,
+        ...extra,
+      });
+      s = step.next;
+      out.push({
+        accepted: step.startResolving === "HELD-CODE",
+        held: heldOf(step),
+        indicator: step.indicator,
+        keys: Object.keys(step),
+      });
+    }
+    return out;
+  };
+
+  it("K1: a code held in view after its accept reports held on every later frame, with no second accept", () => {
+    const steps = hold(HELD);
+    const acceptAt = steps.findIndex((x) => x.accepted);
+    expect(acceptAt).toBeGreaterThanOrEqual(0);
+    expect(steps.filter((x) => x.accepted)).toHaveLength(1);
+    const after = steps.slice(acceptAt + 1);
+    expect({ frames: after.length, held: after.filter((x) => x.held === true).length }).toEqual({
+      frames: after.length,
+      held: after.length,
+    });
+    // the accept frame and the ramp-up before it are not held
+    expect(steps.slice(0, acceptAt + 1).filter((x) => x.held)).toHaveLength(0);
+  });
+
+  it("K1a: without the option the step is exactly as before (no held key at all)", () => {
+    const steps = hold({});
+    expect(steps.filter((x) => x.keys.includes("held"))).toHaveLength(0);
+    expect(steps.filter((x) => x.accepted)).toHaveLength(1);
+  });
+
+  it("K1: a lift and a re-present is a new accept and is not held", () => {
+    let s = createContinuousScanState();
+    const accepts: number[] = [];
+    const held: number[] = [];
+    const feed = (t: number) => {
+      const step = continuousFrameScanned(s, "HELD-CODE", T0 + t, {
+        bounds: IN_BOX_BOUNDS,
+        aimBox: IN_BOX,
+        ...HELD,
+      });
+      s = step.next;
+      if (step.startResolving) {
+        accepts.push(t);
+        s = scanSettled(s).next;
+      }
+      if (heldOf(step)) held.push(t);
+    };
+    for (let t = 0; t <= 1500; t += 100) feed(t);
+    const heldBeforeLift = held.length;
+    const lift = 1500 + STEADY_ABSENCE_GAP_MS + 2000;
+    for (let t = lift; t <= lift + 1500; t += 100) feed(t);
+    expect(accepts).toHaveLength(2);
+    expect(heldBeforeLift).toBeGreaterThan(0);
+    expect(held.filter((t) => t === accepts[1])).toHaveLength(0);
+  });
+
+  it("K1: an empty decode is never held", () => {
+    let s = createContinuousScanState();
+    for (let t = 0; t <= 600; t += 100) {
+      const step = continuousFrameScanned(s, "  ", T0 + t, { ...HELD });
+      s = step.next;
+      expect(heldOf(step)).toBeUndefined();
+    }
+  });
+});

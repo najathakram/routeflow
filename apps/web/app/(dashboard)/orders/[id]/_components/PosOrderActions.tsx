@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
   Bell,
@@ -21,14 +22,29 @@ import { useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { ActionTier } from "./ActionTier";
 import { PickupHandOverButton } from "./PickupHandOver";
 
-type PosOrder = Pick<Order, "invoices">;
+type PosOrder = Pick<Order, "invoices"> & { fulfillPath?: string | null };
 
 /** A VOID invoice is not an invoice for the order's purposes (no step done, nothing to pay or print). */
 const invoicesOf = (order: PosOrder) => (order.invoices ?? []).filter((i) => i.status !== "VOID");
 
+/** The Invoice card's Generate Invoice button, which the Invoice step in the progress row takes you to (SA-1066 F01). */
+export const GENERATE_INVOICE_ID = "generate-invoice-button";
+
+/** The Invoice card itself: where the step lands when no Generate Invoice button is drawn (only a voided invoice exists). */
+export const INVOICE_CARD_ID = "invoice-card";
+
+function goToGenerateInvoice() {
+  const button = document.getElementById(GENERATE_INVOICE_ID);
+  const target = button ?? document.getElementById(INVOICE_CARD_ID);
+  if (!target) return;
+  target.scrollIntoView({ block: "center" });
+  if (button) button.focus({ preventScroll: true });
+}
+
 /**
  * POS-mode order page (SA-763r P-2): Confirmed -> Invoice (draft) -> Handed over. There is no Out-for-delivery
- * step: hand-over IS the completion. The invoice step reads "(draft)" until every invoice has been issued.
+ * step: hand-over IS the completion. The invoice step reads "(draft)" only while a draft invoice exists; with no
+ * invoice at all it reads "Invoice" and is not done.
  */
 export function PosProgress({ order, status }: { order: PosOrder; status: string }) {
   if (status === "DRAFT" || status === "CANCELLED") return null;
@@ -37,7 +53,8 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
     status === "CONFIRMED" || status === "OUT_FOR_DELIVERY" || status === "DELIVERED";
   const handedOver = status === "DELIVERED";
   const hasInvoice = invoices.length > 0;
-  const invoiceIsDraft = !hasInvoice || invoices.some((i) => i.status === "DRAFT");
+  const first = invoices[0];
+  const invoiceIsDraft = hasInvoice && invoices.some((i) => i.status === "DRAFT");
   const steps = [
     { key: "confirmed", label: POS_COPY.stepConfirmed, done: confirmed },
     {
@@ -45,7 +62,15 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
       label: invoiceIsDraft ? POS_COPY.stepInvoiceDraft : POS_COPY.stepInvoice,
       done: hasInvoice,
     },
-    { key: "handed", label: POS_COPY.stepHandedOver, done: handedOver },
+    {
+      key: "handed",
+      // W-1043: a PICKUP order that is Ready is not handed over yet; the step says what is true until DELIVERED.
+      label:
+        order.fulfillPath === "PICKUP" && status === "OUT_FOR_DELIVERY"
+          ? POS_COPY.readyForPickup
+          : POS_COPY.stepHandedOver,
+      done: handedOver,
+    },
   ];
   const current = steps.findIndex((s) => !s.done);
   return (
@@ -68,7 +93,33 @@ export function PosProgress({ order, status }: { order: PosOrder; status: string
         >
           {s.done && <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />}
           {i === current && <Circle className="h-3 w-3" aria-hidden />}
-          {s.label}
+          {s.key === "invoice" && !s.done ? (
+            // F01: no invoice yet, so the step is the way to the card's Generate Invoice button. The padding is the
+            // 44 x 44 tap area; the negative margins keep the pill's own size (24 high).
+            <button
+              type="button"
+              onClick={goToGenerateInvoice}
+              className="-mx-0.5 -my-[14px] min-w-11 px-0.5 py-[14px] text-center underline"
+            >
+              {s.label}
+            </button>
+          ) : (
+            s.label
+          )}
+          {s.key === "invoice" && first?.invoiceNumber ? (
+            // SA-1071 V1: the number once one exists, as a link to it ("+N" for a mixed order's other invoices). Same 44 px
+            // tap area trick as the Generate step: the padding is the target, the negative margins keep the pill's size.
+            <>
+              {" "}
+              <Link
+                href={`/invoices/${first.id}`}
+                className="-mx-0.5 -my-[14px] min-w-11 px-0.5 py-[14px] text-center underline"
+              >
+                {first.invoiceNumber}
+              </Link>
+              {invoices.length > 1 ? <span>+{invoices.length - 1}</span> : null}
+            </>
+          ) : null}
           {s.done && <span className="sr-only"> (completed)</span>}
           {i === current && <span className="sr-only"> (next step)</span>}
         </li>
@@ -101,8 +152,8 @@ export function posMoveOptions(
 }
 
 /**
- * The action-bar slice of a POS order: ONE primary per state. PENDING offers only the switch (its primary is the
- * page's existing Confirm Order); CONFIRMED: Create invoice, then Hand over; DELIVERED: Record payment / Print.
+ * The action-bar slice of a POS order: ONE primary per state. PENDING: Ready for pickup (Confirm order, which the
+ * page renders, steps down to secondary) and the switch; CONFIRMED: Create invoice, then Hand over; DELIVERED: Record payment / Print.
  * Edit order and the status demotions stay where the page already renders them.
  */
 export function PosOrderActions({
@@ -112,6 +163,7 @@ export function PosOrderActions({
   onHandOver,
   onReadyForPickup,
   readyPending,
+  onConfirm,
   moveOptions = { delivery: "ROUTE", ship: false },
   onMove,
 }: {
@@ -122,6 +174,8 @@ export function PosOrderActions({
   /** "Ready for pickup": the customer notification (the order's OUT_FOR_DELIVERY step, kept out of the 3-step layout). */
   onReadyForPickup: () => void;
   readyPending?: boolean;
+  /** "Confirm order" for a PENDING POS order: Ready for pickup is its primary now, so Confirm lives here as a secondary. */
+  onConfirm: () => void;
   moveOptions?: PosMoveOptions;
   /** Moves the order off pickup (the page asks first): "Switch to delivery" / "Ship by carrier…". */
   onMove: (path: "ROUTE" | "SHIP") => void;
@@ -168,14 +222,14 @@ export function PosOrderActions({
       </ActionTier>
     ) : null;
 
-  if (status === "PENDING") return switchToDelivery;
-
-  const readyForPickup = (
-    <ActionTier tier="secondary">
+  // W-1043: at PENDING it is the order's one primary action (the page's Confirm order steps down); at CONFIRMED it
+  // follows Create invoice / Hand over. One server step either way (POST /orders/:id/ready-for-pickup).
+  const readyForPickup = (primary: boolean) => (
+    <ActionTier tier={primary ? "primary" : "secondary"}>
       <Button
         size="sm"
         className="h-11"
-        variant="secondary"
+        variant={primary ? undefined : "secondary"}
         leftIcon={<Bell className="h-4 w-4" />}
         onClick={onReadyForPickup}
         loading={readyPending}
@@ -184,6 +238,63 @@ export function PosOrderActions({
       </Button>
     </ActionTier>
   );
+
+  // The same mutation and write gate wherever it is offered. CONFIRMED: the primary. Ready (SA-1066 M2): a secondary
+  // while no invoice exists, so Hand over stays the one primary (hand-over does not wait for it; SA-1026 B issues then).
+  const createInvoiceTier = (primary: boolean) => (
+    <ActionTier tier={primary ? "primary" : "secondary"}>
+      <Button
+        size="sm"
+        className="h-11"
+        variant={primary ? undefined : "secondary"}
+        leftIcon={<FileText className="h-4 w-4" />}
+        loading={createInvoice.isPending}
+        onClick={() =>
+          createInvoice.mutate(orderId, {
+            onSuccess: (made) => {
+              const number = made?.[0]?.invoiceNumber;
+              toast({
+                title: number
+                  ? POS_COPY.invoiceCreatedNamed(number, made.length - 1)
+                  : POS_COPY.invoiceCreated,
+                variant: "success",
+              });
+            },
+            onError: (err) =>
+              toast({
+                title: codedToastCopy(err) ?? POS_COPY.invoiceFailed,
+                variant: "error",
+              }),
+          })
+        }
+      >
+        {POS_COPY.createInvoice}
+      </Button>
+    </ActionTier>
+  );
+
+  if (status === "PENDING") {
+    return (
+      <>
+        {readyForPickup(true)}
+        <ActionTier tier="secondary">
+          <Button
+            size="sm"
+            className="h-11"
+            variant="secondary"
+            leftIcon={<CheckCircle2 className="h-4 w-4" />}
+            onClick={onConfirm}
+            loading={readyPending}
+          >
+            {POS_COPY.confirmOrder}
+          </Button>
+        </ActionTier>
+        {/* SA-1066 F02: billing was only on the Invoice card, far down the page. Same button and write gate as at Ready. */}
+        {!firstInvoice && createInvoiceTier(false)}
+        {switchToDelivery}
+      </>
+    );
+  }
 
   if (status === "CONFIRMED") {
     const handOver = (primary: boolean) => (
@@ -205,34 +316,17 @@ export function PosOrderActions({
           handOver(true)
         ) : (
           <>
-            <ActionTier tier="primary">
-              <Button
-                size="sm"
-                className="h-11"
-                leftIcon={<FileText className="h-4 w-4" />}
-                loading={createInvoice.isPending}
-                onClick={() =>
-                  createInvoice.mutate(orderId, {
-                    onSuccess: () => toast({ title: POS_COPY.invoiceCreated, variant: "success" }),
-                    onError: (err) =>
-                      toast({
-                        title: codedToastCopy(err) ?? POS_COPY.invoiceFailed,
-                        variant: "error",
-                      }),
-                  })
-                }
-              >
-                {POS_COPY.createInvoice}
-              </Button>
-            </ActionTier>
+            {createInvoiceTier(true)}
             {handOver(false)}
           </>
         )}
-        {readyForPickup}
+        {readyForPickup(false)}
         {switchToDelivery}
       </>
     );
   }
+
+  if (status === "OUT_FOR_DELIVERY") return firstInvoice ? null : createInvoiceTier(false);
 
   if (status === "DELIVERED" && firstInvoice) {
     const paid = invoices.every((i) => i.status === "PAID");

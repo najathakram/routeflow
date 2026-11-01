@@ -868,7 +868,7 @@ export class PaymentRequestsService {
 
     if (mismatched) {
       this.logger.error(
-        `CRITICAL: amount mismatch settling request ${request.id} — requested $${requestAmount.toFixed(2)}, Stripe charged $${providerAmount.toFixed(2)}. Recording the charged amount.`,
+        `CRITICAL: amount mismatch settling request ${request.id} — requested $${roundMoney(requestAmount).toFixed(2)}, Stripe charged $${roundMoney(providerAmount).toFixed(2)}. Recording the charged amount.`,
       );
     }
 
@@ -881,7 +881,7 @@ export class PaymentRequestsService {
     // falls back to paidAt); ACH settles at the moment Stripe confirms it.
     const settledAt = method === "ACH" ? evt.created.toISOString() : null;
     const notes = mismatched
-      ? `Card payment via Stripe (amount discrepancy: requested $${requestAmount.toFixed(2)}, charged $${providerAmount.toFixed(2)} — recorded the charged amount)`
+      ? `Card payment via Stripe (amount discrepancy: requested $${roundMoney(requestAmount).toFixed(2)}, charged $${roundMoney(providerAmount).toFixed(2)} — recorded the charged amount)`
       : "Card payment via Stripe";
 
     // SA-837b: the money already moved at Stripe, so it is NEVER refused as a duplicate reference: a repeat is recorded

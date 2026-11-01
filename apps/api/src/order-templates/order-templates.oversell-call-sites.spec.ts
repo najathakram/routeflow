@@ -27,6 +27,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 import { decrementStockForSale } from "../orders/order-stock";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
@@ -45,6 +46,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 describe("OrderTemplatesService oversell call sites", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   let read: jest.Mock;
   const resolve = resolveOversellAllowed as unknown as jest.Mock;
   const decrement = decrementStockForSale as jest.Mock;
@@ -52,6 +54,7 @@ describe("OrderTemplatesService oversell call sites", () => {
 
   async function build(policy: unknown) {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     read = jest.fn().mockResolvedValue(policy);
     resolve.mockClear();
     decrement.mockClear();

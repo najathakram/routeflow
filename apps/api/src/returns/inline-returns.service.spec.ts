@@ -85,6 +85,9 @@ function priced(total = 30, subtotal = 28, taxAmount = 2, categoryTax = 0) {
 }
 
 import { inlineReturnItemsFingerprint } from "./inline-return-fingerprint";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const CAPTURE_DTO = {
   customerId: "cust-1",
@@ -122,6 +125,7 @@ describe("InlineReturnsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     quoteService = { priceInlineReturn: jest.fn().mockResolvedValue(priced()) };
     creditNotes = {
       // Echoes back the requested amount/customer so a test that mints a DIFFERENT amount
@@ -252,7 +256,7 @@ describe("InlineReturnsService", () => {
     // restockReturnItems: one StockMovement + one Product increment for the single item.
     expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
     expect(prisma.product.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+      expect.objectContaining({ data: { currentStock: expect.anything() } }),
     );
     // Ledger reversal keyed to the SOURCE order, not the carrying order.
     expect(ledger.reverseReturnEntries).toHaveBeenCalledWith(
@@ -708,6 +712,7 @@ describe("InlineReturnsService", () => {
 
     it("the audit row is written on the capture's OWN tx client, never the root prisma", async () => {
       const tx = createMockPrisma();
+      stock = wireStockHelper(tx, { ample: true });
       tx.order.findFirst.mockResolvedValue({
         id: "ord-carrying",
         customerId: "cust-1",
@@ -1317,6 +1322,14 @@ describe("InlineReturnsService", () => {
       items: [{ productId: "prod-1", qty: 6, restock: true, sourceOrderId: "src-order-1" }],
     };
 
+    it("SA-1060 PR-1: a return that is not a hold is refused in words that fit every hold, not 'driver-cap'", async () => {
+      prisma.return.findFirst.mockResolvedValue({ ...HELD, holdReason: null });
+      const err: any = await service.approve("ret-held", OPERATOR).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.message).toBe("Only a return awaiting approval can be approved");
+      expect(err.message).not.toMatch(/driver-cap/i);
+    });
+
     it("HIGH-4: approving restocks + reverses the ledger NOW (deferred from capture), then mints the full held amount", async () => {
       prisma.return.findFirst.mockResolvedValue(HELD);
       prisma.return.updateMany.mockResolvedValue({ count: 1 });
@@ -1325,7 +1338,7 @@ describe("InlineReturnsService", () => {
 
       expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { increment: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       expect(ledger.reverseReturnEntries).toHaveBeenCalled();
       expect(creditNotes.mintStandaloneInTx).toHaveBeenCalledWith(
@@ -1587,6 +1600,12 @@ describe("InlineReturnsService", () => {
       prisma.return.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.reject("ret-held", OPERATOR)).rejects.toThrow(BadRequestException);
     });
+
+    it("SA-1060 PR-1: the refusal does not name the driver cap, since ALREADY_RETURNED holds are rejectable too", async () => {
+      prisma.return.updateMany.mockResolvedValue({ count: 0 });
+      const err: any = await service.reject("ret-held", OPERATOR).catch((e: unknown) => e);
+      expect(err.message).toBe("Only a return awaiting approval can be rejected");
+    });
   });
 
   // ─── cancel (m-5, HIGH-4's "was anything applied" redefinition) ─────────────
@@ -1668,7 +1687,7 @@ describe("InlineReturnsService", () => {
       await service.cancel("ret-received", OPERATOR);
 
       expect(prisma.product.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { currentStock: { decrement: expect.anything() } } }),
+        expect.objectContaining({ data: { currentStock: expect.anything() } }),
       );
       // LOW: a compensating (negative-qty) movement — never a delete of the original entry.
       expect(prisma.stockMovement.create).toHaveBeenCalledWith(

@@ -106,6 +106,8 @@ async function main() {
           // before Phase 1 issues the first invoice off this tenant (see parent spec's
           // owner-decision list, item 3).
           businessName: "RouteFlow HQ",
+          // SA-1067 Z3: named, equal to the column default, so this row is no longer stored by accident.
+          timezone: "America/New_York",
         },
       });
       return t;

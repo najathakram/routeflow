@@ -58,6 +58,7 @@ const deps = (units: ProductUnitLevel[] | Error, over = {}) => ({
     return units;
   }),
   tierFor: () => 1,
+  rememberedOf: () => undefined,
   ...over,
 });
 
@@ -500,6 +501,42 @@ describe("N3 (SA-632): a settle on the PACK keeps the tap count (N taps = N pack
     );
     expect(lines[0]).toMatchObject({ qty: 3, boxes: 3, pieces: 0, startOnDefaultUnit: false });
     expect(mergeQtyIntoLine(lines[0], 1)).toMatchObject({ qty: 4, boxes: 4 });
+  });
+});
+
+describe("SA-1068 A-6 M25: a default start on a derived Piece keeps the memory", () => {
+  const units = [
+    lvl({ label: "Piece", factorToBase: 1, price: null, isDefaultSelling: true }),
+    lvl({ label: "Case", factorToBase: 24, price: null }),
+  ];
+  const pending = () =>
+    line({
+      unit: "Box",
+      qty: 6,
+      unitsPerBox: 6,
+      boxes: 1,
+      pieces: 0,
+      listPrice: 12,
+      unitPrice: 15,
+      priceType: "MANUAL",
+      tierPrices: { pricePerUnit: "12.00" } as never,
+    });
+
+  it("T33: resolved on add, it shows the memory's $2.50, not the tier's $2.00", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [pending()],
+      deps(units, { rememberedOf: () => 15 }),
+    );
+    expect(lines[0]).toMatchObject({ boxes: 0, pieces: 1, unitPrice: 15, priceType: "MANUAL" });
+    expect(lines[0]!.derivedBase).toBeTruthy();
+  });
+
+  it("T33: startLineOnDefault too", () => {
+    expect(startLineOnDefault(pending(), units, 1, 15)).toMatchObject({
+      pieces: 1,
+      unitPrice: 15,
+      priceType: "MANUAL",
+    });
   });
 });
 

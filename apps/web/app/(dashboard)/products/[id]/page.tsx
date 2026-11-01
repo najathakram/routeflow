@@ -3,6 +3,7 @@
 import { priceRowLabel } from "@/lib/product-unit-label";
 import { expectedPackFor, packWordToSend } from "@/lib/product-edit-unit";
 import type { ProductPackAtOpen } from "@routeflow/types";
+import { getDetailStockStatus } from "../_components/product-status";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
 import * as React from "react";
 import Link from "next/link";
@@ -73,6 +74,7 @@ import { CropModal } from "./CropModal";
 import { ProductImagesEmpty } from "./ProductImagesEmpty";
 import { ProductImageActions } from "./ProductImageActions";
 import { ProductStockCostCard } from "./ProductStockCostCard";
+import { CountAdjustModal } from "./CountAdjustModal";
 import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { useReactivateFlow } from "./useReactivateFlow";
 import { ProductHeaderControls } from "./ProductHeaderControls";
@@ -120,16 +122,6 @@ const VARIANT_NAME_INPUT_ID = "edit-variant-name";
 const UW = unitWords();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-
-function getStockStatus(currentStock: number, isActive: boolean, kind?: string): StockStatus {
-  if (kind === "FAMILY") return "IN_STOCK"; // a non-stocked container: no stock badge
-  if (!isActive) return "OUT_OF_STOCK";
-  if (currentStock <= 0) return "OUT_OF_STOCK";
-  if (currentStock <= 5) return "LOW";
-  return "IN_STOCK";
-}
 
 // ─── Info row ─────────────────────────────────────────────────────────────────
 
@@ -347,6 +339,7 @@ export default function ProductDetailPage() {
 
   // ── Set-cost modal state ──────────────────────────────────────────────────
   const [showCostModal, setShowCostModal] = React.useState(false);
+  const [showCountModal, setShowCountModal] = React.useState(false);
 
   // ── Variant-split modal state (PR-D) ──────────────────────────────────────
   const [showVariantSplit, setShowVariantSplit] = React.useState(false);
@@ -399,7 +392,12 @@ export default function ProductDetailPage() {
 
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
-  const stockStatus = getStockStatus(currentStock, product.isActive, product.kind);
+  const stockStatus = getDetailStockStatus(
+    currentStock,
+    product.isActive,
+    product.kind,
+    product.reorderPoint,
+  );
   /** K11-23: the prices region is its own grid item, right after Details in the DOM. */
   const pricingSplit = v2 && product.kind !== "FAMILY";
   // K11-20c: on a product whose prices the window can edit (not a family, recipe or variant), Details shows its
@@ -1256,6 +1254,12 @@ export default function ProductDetailPage() {
           onClose={() => setShowCostModal(false)}
         />
       )}
+      {showCountModal && (
+        <CountAdjustModal
+          product={{ ...product, currentStock }}
+          onClose={() => setShowCountModal(false)}
+        />
+      )}
       {/* Variant-split modal (PR-D) — moves this product's unassigned stock
           onto its variants. Same component as the Inventory Stock tab row
           action and the vendor-bill line badge. */}
@@ -2095,6 +2099,7 @@ export default function ProductDetailPage() {
                 stockStatus={stockStatus}
                 currentStock={currentStock}
                 onSetCost={() => setShowCostModal(true)}
+                onCount={isStaff ? () => setShowCountModal(true) : undefined}
                 pricesV2={v2}
               />
             )}

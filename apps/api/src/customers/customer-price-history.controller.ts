@@ -7,23 +7,30 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { operatorDeniedGroups } from "../orders/counter-sale/till-permission.guard";
+import { PrismaService } from "../prisma/prisma.service";
 import { CustomerPriceHistoryService } from "./customer-price-history.service";
 
+import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * Step 2A — one customer's price history for one product (order-entry popover). Staff only:
  * OPERATOR admits OPERATOR and TENANT_ADMIN through the RolesGuard hierarchy; a DRIVER or CUSTOMER
  * gets 403. Kept apart from CustomersController so that controller's constructor is untouched.
  */
+@PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
 @ApiTags("customers")
 @ApiBearerAuth()
 @Controller("customers")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CustomerPriceHistoryController {
-  constructor(private readonly history: CustomerPriceHistoryService) {}
+  constructor(
+    private readonly history: CustomerPriceHistoryService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get(":customerId/products/:productId/price-history")
   @Roles(UserRole.OPERATOR)
-  getPriceHistory(
+  async getPriceHistory(
     @Param("customerId") customerId: string,
     @Param("productId") productId: string,
     @Query("limit") limit: string | undefined,
@@ -38,6 +45,9 @@ export class CustomerPriceHistoryController {
       compare,
       role: user.role,
       excludeOrderId,
+      // W-1058 H-2.10: only the compare read uses the denials (they set its floor), so only it pays for the read; the
+      // service treats an OPERATOR with none passed in as denied (fails closed).
+      deniedGroups: compare === "all" ? await operatorDeniedGroups(this.prisma, user) : undefined,
     });
   }
 

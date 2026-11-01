@@ -12,6 +12,8 @@ import {
   ListCommissionStatementsDto,
   RecordCommissionPayoutDto,
 } from "./commission-statements.controller";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { paidInstantOf } from "../common/paid-instant";
 
 type PendingLine = {
   kind: "CLAIM" | "ADJUSTMENT" | "CARRYFORWARD";
@@ -327,6 +329,7 @@ export class CommissionStatementsService {
   }
 
   async recordPayout(id: string, dto: RecordCommissionPayoutDto) {
+    const tz = await tenantTimeZone(this.prisma); // SA-943: once per request, outside the tx
     return this.prisma.tenantTransaction(async (tx) => {
       const statement = await tx.commissionStatement.findUnique({
         where: { id },
@@ -351,7 +354,7 @@ export class CommissionStatementsService {
       if (amount <= 0) throw new BadRequestException("Payout amount must be positive.");
       if (amount > remaining + COMMISSION_EPS) {
         throw new BadRequestException(
-          `Payout of ${amount.toFixed(2)} exceeds the remaining balance of ${remaining.toFixed(2)}.`,
+          `Payout of ${roundMoney(amount).toFixed(2)} exceeds the remaining balance of ${roundMoney(remaining).toFixed(2)}.`,
         );
       }
 
@@ -364,12 +367,15 @@ export class CommissionStatementsService {
         });
       }
 
-      const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+      // SA-943: the payout row's paidAt is an INSTANT (tenant-local day, today = now); Expense.date is a CALENDAR column
+      // and keeps its date-only value exactly as before (never through the paid-instant helper).
+      const paidAt = paidInstantOf(dto.paidAt, tz);
+      const expenseDate = dto.paidAt ? new Date(dto.paidAt) : new Date();
       const expense = await tx.expense.create({
         data: {
           categoryId: category.id,
           amount,
-          date: paidAt,
+          date: expenseDate,
           paymentMethod: dto.method,
           status: "PAID",
           paidAt,

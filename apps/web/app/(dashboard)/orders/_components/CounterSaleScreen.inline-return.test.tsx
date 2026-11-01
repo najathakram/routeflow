@@ -1,11 +1,13 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { RETURN_SAVE_BLOCKED } from "./use-order-inline-return-save";
 
 /**
  * W-863 (SA-945 PR-1): the counter sale carries Create Order's inline return. The Returns section itself is Create Order's
- * (tested there); a stand-in drives its handle and quote total so this file proves the COUNTER glue: the quote gates Complete,
- * the credit nets against the tender, the request carries the return (one returnKey across a retry), a return worth more than
+ * (tested there); a stand-in drives its handle and quote total so this file proves the COUNTER glue: a quote that is not
+ * current for the lines on screen (still being worked out, or the quantity just changed) gates Complete, the credit nets
+ * against the tender, the request carries the return (one returnKey across a retry), a return worth more than
  * the sale shows the store credit left, and a walk-in is told returns are refunded.
  */
 jest.mock("@/lib/auth-context", () => ({
@@ -20,6 +22,17 @@ jest.mock("@/lib/barcode-resolve", () => ({
   ...jest.requireActual("@/lib/barcode-resolve"),
   resolveProductByCode: async (code: string) =>
     code === "BIG" ? { product: BIG, source: "sku" } : { notFound: true },
+}));
+// SA-1068: the till reads the customer's remembered prices (an empty, answered read here: no sticky upsell).
+jest.mock("@/lib/api/orders", () => ({
+  ...jest.requireActual("@/lib/api/orders"),
+  useCustomerPriceHistory: () => ({
+    data: {},
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [{ id: "c1", businessName: "Acme Co", pricingTier: 1 }] } }),
@@ -50,7 +63,10 @@ jest.mock("@/lib/api/counter-sale", () => ({
   useCounterSaleByKey: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
-// The stand-in for Create Order's Returns section: a "Quote" button sets a quoted draft worth `quoteAmount`.
+// The stand-in for Create Order's Returns section (R-1, one step): there is no "Get quote" — the real section asks by
+// itself and the draft is `quoted` only while the latest quote is for the lines on screen. "Return quote answers" is the
+// quote for the entered lines coming back (worth `quoteAmount`); "Change return quantity" is a keystroke in Qty, which
+// drops the quote at once (credit 0, not quoted) until it answers again.
 let quoteAmount = 4;
 jest.mock("./OrderInlineReturnsSection", () => {
   const React = jest.requireActual("react");
@@ -96,7 +112,16 @@ jest.mock("./OrderInlineReturnsSection", () => {
             props.onQuoteTotalChange?.(quoteAmount);
           }}
         >
-          Get return quote
+          Return quote answers
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setQuoted(false);
+            props.onQuoteTotalChange?.(0);
+          }}
+        >
+          Change return quantity
         </button>
         {props.refusalMessage ? <p>{props.refusalMessage}</p> : null}
       </div>
@@ -149,14 +174,38 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     expect(screen.getByTestId("counter-return-walkin-note")).toHaveTextContent("refunded");
   });
 
-  it("a return that was not quoted blocks Complete and sends nothing", async () => {
+  it("a return whose quote is still being worked out blocks Complete and sends nothing", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("BIG");
     pickAcme();
     fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
     complete();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Get a quote for the return");
+    expect(await screen.findByRole("alert")).toHaveTextContent(RETURN_SAVE_BLOCKED["needs-quote"]);
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("changing the return after its quote drops the credit at once and blocks Complete until the new quote answers", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("BIG");
+    pickAcme();
+    fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $6.00");
+
+    fireEvent.click(screen.getByRole("button", { name: "Change return quantity" }));
+    // the old $4 credit is gone, not left off the amount due
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $10.00");
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10" } });
+    complete();
+    expect(await screen.findByRole("alert")).toHaveTextContent(RETURN_SAVE_BLOCKED["needs-quote"]);
+    expect(mutateAsync).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "6" } });
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $0.00");
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].dto.inlineReturn).toBeDefined();
   });
 
   it("the quoted credit nets against the amount due, and the request carries the return", async () => {
@@ -164,7 +213,7 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     await scan("BIG");
     pickAcme();
     fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
-    fireEvent.click(screen.getByRole("button", { name: "Get return quote" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
     expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $6.00");
     expect(screen.getByTestId("running-total")).toHaveTextContent("$10.00");
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "6" } });
@@ -184,7 +233,7 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     await scan("BIG");
     pickAcme();
     fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
-    fireEvent.click(screen.getByRole("button", { name: "Get return quote" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
     expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $0.00");
     expect(screen.getByTestId("return-store-credit")).toHaveTextContent("Store credit $2.00");
   });
@@ -207,7 +256,7 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     await scan("BIG");
     pickAcme();
     fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
-    fireEvent.click(screen.getByRole("button", { name: "Get return quote" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "6" } });
     complete();
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));

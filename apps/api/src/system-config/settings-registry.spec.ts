@@ -153,20 +153,18 @@ describe("settings registry — rules", () => {
     expect(validateSettingsRegistry([planted]).join("\n")).toMatch(
       /pending rows cannot claim a screen/,
     );
-    const staffBuyer = SETTINGS_REGISTRY.find((r) => r.key === "staffBuyerChangeEmail")!;
-    expect(staffBuyer.screen).toBeUndefined();
-    expect(staffBuyer.plannedSurface).toBeTruthy();
   });
 
-  it("both staff-email prefs name the My account 'Email me about' card as their planned surface", () => {
+  it("SA-1063: both staff-email prefs are live on the Notifications tab (the personal opt-out row)", () => {
     for (const k of ["staffOrderEmail", "staffBuyerChangeEmail"]) {
       const r = SETTINGS_REGISTRY.find((x) => x.key === k)!;
-      expect(r.screen).toBeUndefined();
-      expect(r.plannedSurface).toMatch(/My account/);
+      expect(r.status).toBe("live");
+      expect(r.screen).toBe("/settings?tab=notifications");
+      expect(r.plannedSurface).toBeUndefined();
     }
   });
 
-  it("seeds the policy rows by the SA's camelCase names, pending #1337", () => {
+  it("seeds the policy rows by the SA's camelCase names; only the credit rows are still pending #1337", () => {
     const policy = SETTINGS_REGISTRY.filter((r) => r.home === "policy");
     expect(policy.map((r) => r.key).sort()).toEqual([
       "credit.enforceDelivery",
@@ -176,7 +174,7 @@ describe("settings registry — rules", () => {
     ]);
     for (const r of policy) {
       expect(r).toMatchObject({
-        status: r.key === "orders.buyerOversell" ? "live" : "pending #1337",
+        status: r.key.startsWith("credit.") ? "pending #1337" : "live",
         kind: "behaviour",
       });
     }
@@ -275,6 +273,7 @@ describe("settings registry — every SystemConfig key the settings writers writ
     await controller.updateInvoiceSettings({
       defaultTerms: "Net 30",
       hideOriginalPrice: true,
+      hideBarcodes: true,
       depositDefaultPercent: 10,
       depositCollectAtOrder: true,
     } as any);
@@ -538,14 +537,21 @@ describe("settings registry — structural source scan of every SystemConfig wri
     expect(scanKeys(email.src, NAMESPACES)).toContain("email.sendingDomain");
   });
 
-  it("messaging/staff-email-settings writes ONE key, from one constant, and it is registered", () => {
+  it("messaging/staff-email-settings writes the staffCc config key (one constant) and the SA-1063 policy key, both registered", () => {
     const w = writers.find((x) => x.rel === "messaging/staff-email-settings.service.ts")!;
     expect(w.src).toMatch(/const STAFF_CC_KEY = "notifications\.staffCc"/);
-    // every `key:` in the file is that constant (no second key can slip in)
+    // every `key:` in the file is that constant or the one policy key (no third key can slip in)
     const keyArgs = [...w.src.matchAll(/\bkey\s*:\s*([^,}\s]+)/g)].map((m) => m[1]);
     expect(keyArgs.length).toBeGreaterThan(0);
-    expect(new Set(keyArgs)).toEqual(new Set(["STAFF_CC_KEY"]));
-    expect(scanKeys(w.src, NAMESPACES)).toEqual(["notifications.staffCc"]);
+    expect(new Set(keyArgs)).toEqual(new Set(["STAFF_CC_KEY", '"notifications.staffOrderEmail"']));
+    expect(scanKeys(w.src, NAMESPACES).sort()).toEqual([
+      "notifications.staffCc",
+      "notifications.staffOrderEmail",
+    ]);
+    expect(SETTINGS_REGISTRY.find((r) => r.key === "notifications.staffOrderEmail")).toMatchObject({
+      home: "policy",
+      status: "live",
+    });
     expect(SETTINGS_REGISTRY.find((r) => r.key === "notifications.staffCc")).toMatchObject({
       home: "systemConfig",
       kind: "config",

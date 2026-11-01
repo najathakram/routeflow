@@ -43,6 +43,7 @@ import { NumberingService } from "../import/numbering.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { txConflictState } from "../common/tx-retry";
+import { IdempotencyService } from "../common/idempotency.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -202,7 +203,7 @@ describeDb(
         new NumberingService(base),
         { hasAddon: jest.fn().mockResolvedValue(true) } as any,
         {} as any,
-        {} as any,
+        new IdempotencyService(), // approve() takes the customer lock through it (SA-1060 A-3)
       );
     }
 

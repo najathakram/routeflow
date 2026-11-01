@@ -38,6 +38,7 @@ jest.mock("@react-pdf/renderer", () => ({
 import { readFileSync } from "fs";
 import { join } from "path";
 import { Test, TestingModule } from "@nestjs/testing";
+import { baseUnitSuffix } from "@routeflow/pricing";
 import { InvoicePdfService, invoicePdfStorageKey } from "./invoice-pdf.service";
 import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
 import { PrismaService } from "../prisma/prisma.service";
@@ -364,6 +365,49 @@ describe("InvoicePdfService.getOrGenerate — pointer written only on change", (
   });
 });
 
+describe("InvoicePdfService — per-piece word on a pieces-layout line (SA-1029 A-1 PDF-R2)", () => {
+  beforeEach(() => {
+    mockCapturedInvoice = null;
+    jest.clearAllMocks();
+  });
+
+  it("PDF-R2: a pieces-layout Bag line with an MSRP hands the template the Bag word, so the note prints /bag", async () => {
+    const prisma = createMockPrisma();
+    const fixture = baseInvoiceFixture({ status: "SENT", subtotal: 96, total: 96 });
+    // Issued with a Piece/1 snapshot: reads in pieces. 2 boxes of 24 @ $48.00, the word frozen as Bag, MSRP $3.49.
+    fixture.items = [
+      {
+        ...fixture.items[0],
+        description: "Acme case",
+        qty: 48, // pieces: a line that carries a split stores its qty in pieces
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 24,
+        unitPrice: 48,
+        subtotal: 96,
+        originalPrice: null,
+        priceType: "STANDARD",
+        promoFreeUnits: null,
+        msrp: 3.49,
+        invoiceUnitLabel: "Piece",
+        invoiceUnitFactor: 1,
+        baseLabel: "Bag",
+        productId: "p1",
+      } as never,
+    ];
+    prisma.invoice.findUnique.mockResolvedValue(fixture as any);
+    prisma.tenantConfig.findUnique.mockResolvedValue(TENANT_CONFIG as any);
+
+    const service = await makeService(prisma, makeStorage(), null);
+    await service.generateAndUpload("inv-1");
+
+    const item = mockCapturedInvoice.items[0];
+    expect(item.display?.layout).toBe("pieces");
+    // the template prints `MSRP {fmt(item.msrp)}/{baseUnitSuffix(item.perBaseUnit)}` (pinned in invoice-pdf-per-piece.spec.ts)
+    expect(baseUnitSuffix(item.perBaseUnit)).toBe("bag");
+  });
+});
+
 /**
  * R9's renderer half. `./invoice-pdf-template` is swapped out wholesale by
  * apps/api/package.json's moduleNameMapper, so the .tsx never executes under Jest and
@@ -408,6 +452,19 @@ describe("invoice-pdf-item — BOGO/promo line display (T-B103, R9, REG-B103)", 
       true,
     );
   });
+
+  it("B17 (SA-1072): a tier price above list never strikes the lower list price", () => {
+    expect(
+      showOriginalPrice({ unitPrice: 12, originalPrice: 10, priceType: "SPECIAL" }, false),
+    ).toBe(false);
+  });
+
+  it.each(["SPECIAL", "DISCOUNTED"])(
+    "B19 (SA-1072): a %s line below list still strikes it",
+    (priceType) => {
+      expect(showOriginalPrice({ unitPrice: 8, originalPrice: 10, priceType }, false)).toBe(true);
+    },
+  );
 });
 
 describe("invoice-pdf-item — qty cell text (B653)", () => {

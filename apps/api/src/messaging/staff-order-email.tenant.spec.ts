@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import { NotificationEvent } from "@prisma/client";
 import { StaffOrderEmailService } from "./staff-order-email";
+import { PolicyService } from "../policy/policy.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { EmailDeliveryService } from "../email/email-delivery.service";
@@ -79,6 +80,7 @@ async function build(h: ReturnType<typeof makeFake>) {
       { provide: PrismaService, useValue: h.prisma },
       { provide: EmailService, useValue: h.email },
       { provide: EmailDeliveryService, useValue: h.deliveries },
+      { provide: PolicyService, useValue: { resolve: jest.fn().mockResolvedValue("dark") } },
     ],
   }).compile();
   return mod.get(StaffOrderEmailService);

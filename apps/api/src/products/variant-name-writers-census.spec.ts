@@ -182,14 +182,9 @@ const BLOCKS: Record<string, BlockPin> = {
   },
   "src/inventory/inventory.service.ts": {
     blocks: {
-      "assignToVariants:update+": 1,
       "createVariantRowInTx:create+": 1,
-      "postPoReceipt:update": 1,
-      "recordPurchase:update": 1,
-      "reversePoReceipts:update": 1,
-      "setCostBasisInTx:update": 1,
     },
-    why: "the stock split's new variant is built from bareVariantLabel; recordPurchase / setCostBasisInTx write a cost-update variable (averageCost / standardCost columns only); assignToVariants, postPoReceipt and reversePoReceipts write stock / averageCost patches with a conditional spread (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); none names a label",
+    why: "the stock split's new variant is built from bareVariantLabel; the stock / cost writes moved to inventory/stock-movements.ts (SA-927, its own entry)",
   },
   "src/products/family-price.ts": {
     blocks: { "propagateFamilyPrice:updateMany": 2 },
@@ -214,13 +209,23 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "test fixture: seeds a standalone product for the order-stock db specs (B284), never production",
     standalone: true,
   },
+  "src/inventory/testing/sa802-world.ts": {
+    blocks: { "afterAll:create": 1 },
+    why: "test fixture: seeds a standalone product for the SA-802 / SA-828 db specs (qa-sa802-*), never production",
+    standalone: true,
+  },
+  "src/orders/testing/units-fold-db-harness.ts": {
+    blocks: { "seedFoldTenant:create": 1 },
+    why: "test fixture: seeds standalone products for the D3 units-fold db specs (qa-ufold-* tenants), never production",
+    standalone: true,
+  },
   "src/import/variant-resolution.service.ts": {
     blocks: { "completeSetup:update": 1 },
     why: "completes an import-created product's price / unit / unitsPerBox / category with conditional spreads (`...(dto.x !== undefined && { x })`, surfaced by the parenthesised-spread rule); the dto has no name field and the row's label is never touched",
   },
-  "src/vendor-bills/vendor-bills.service.ts": {
-    blocks: { "receive:update": 1, "appendBillReversals:update": 1 },
-    why: "bill receive, and the one shared reversal revert and void both go through (SA-808), move currentStock and averageCost (`...(updatesAverage ? { averageCost } : {})`, surfaced by the parenthesised-spread rule); they write no name",
+  "src/inventory/stock-movements.ts": {
+    blocks: { "applyStockMovements:update": 1 },
+    why: "SA-927: the one stock writer. Its single product.update writes currentStock (absolute) and, when a receipt or reversal moved it, averageCost and standardCost (conditional spreads, surfaced by the parenthesised-spread rule); it writes no name",
   },
   "prisma/seed.ts": {
     blocks: { "main:upsert": 1 },

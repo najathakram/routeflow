@@ -24,7 +24,8 @@ export const VALID_RETURN_REASONS = [
 // Reasons where the returned goods are physically unsellable never restock by
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
-import { Prisma } from "@prisma/client";
+import { MovementType, Prisma } from "@prisma/client";
+import { applyStockMovements } from "../inventory/stock-movements";
 import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -234,6 +235,8 @@ export interface FindAllReturnsOptions {
   /** SA-727b: only INLINE returns captured for a REFUND whose refund is not recorded yet (RECEIVED, EXTERNAL_REFUND stored,
    * refundedAt null, no credit note). Overrides `kind` and `status`. */
   pendingRefund?: boolean;
+  /** SA-1060 PR-1: only returns held for one of these reasons (the controller whitelists them). */
+  holdReason?: string[];
   page?: number;
   limit?: number;
 }
@@ -601,6 +604,7 @@ export class ReturnsService {
       search,
       kind = "STANDARD",
       pendingRefund = false,
+      holdReason,
       page = 1,
       limit = 20,
     } = options;
@@ -627,6 +631,7 @@ export class ReturnsService {
       where.refundedAt = null;
       where.creditNoteId = null;
     }
+    if (holdReason?.length) where.holdReason = { in: holdReason };
     if (reason) where.reason = reason;
     if (search) {
       where.OR = [
@@ -1796,28 +1801,25 @@ export class ReturnsService {
         for (const m of moved)
           undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
         // B562 PR-2 (SA-136 §2): nothing deletes a movement. The undo APPENDS one reversing RETURN row
-        // per product (negative quantity, same reference, notes RETURN_CANCELLED) with `stockAfter`
-        // read from the decrement's own result, so the reference nets to zero and the history stays.
-        for (const [productId, qty] of undo) {
-          if (qty === 0) continue;
-          const updated = await tx.product.update({
-            where: { id: productId },
-            data: { currentStock: { decrement: qty } },
-          });
-          await tx.stockMovement.create({
-            data: {
+        // per product (negative quantity, same reference, notes RETURN_CANCELLED), so the reference nets
+        // to zero and the history stays. SA-927: through the one writer (stockAfter from the locked read).
+        const undoProductIds = [...undo.entries()].filter(([, q]) => q !== 0).map(([id]) => id);
+        await applyStockMovements(
+          tx,
+          this.prisma.getTenantId() as string,
+          (locked) =>
+            undoProductIds.map((productId) => ({
               productId,
-              type: "RETURN",
-              quantity: new Prisma.Decimal(qty).neg(),
-              unitCost: updated.averageCost ?? null,
-              avgCostAfter: updated.averageCost ?? null,
-              stockAfter: updated.currentStock,
+              type: MovementType.RETURN,
+              quantity: new Prisma.Decimal(undo.get(productId) as number).neg(),
+              unitCost: locked.get(productId)?.averageCost ?? null,
+              average: "keep" as const,
               reference: returnRef,
               notes: "RETURN_CANCELLED",
               performedById: user?.sub ?? null,
-            },
-          });
-        }
+            })),
+          { productIds: undoProductIds },
+        );
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
         // to reversing the stock movements above). cancel() blocks REFUNDED returns,
         // so a finalized reversal is never touched. SA-839 (B705): counter-entries for this

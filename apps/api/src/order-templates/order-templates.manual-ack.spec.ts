@@ -33,6 +33,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 const operator = { sub: "u-op", role: "OPERATOR", tenantId: "test-tenant" } as JwtPayload;
@@ -52,6 +53,7 @@ const warning = () =>
 describe("OrderTemplatesService — a manual STAFF run warns and takes the ack (row 510)", () => {
   let service: OrderTemplatesService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stock: ReturnType<typeof wireStockHelper>;
   const decision = { stamp: jest.fn() };
   const restrictions = { assertLinesSellable: jest.fn(), checkLinesSellable: jest.fn() };
   const notifications = { sendToCustomer: jest.fn(), sendToUser: jest.fn() };
@@ -84,6 +86,7 @@ describe("OrderTemplatesService — a manual STAFF run warns and takes the ack (
   beforeEach(async () => {
     jest.clearAllMocks();
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
     prisma.getTenantId.mockReturnValue("test-tenant");
     decision.stamp.mockResolvedValue(1);
     restrictions.assertLinesSellable.mockResolvedValue(decision);

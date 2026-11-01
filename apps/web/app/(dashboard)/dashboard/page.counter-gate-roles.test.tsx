@@ -1,11 +1,13 @@
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
 import DashboardPage from "./page";
 
 /**
  * W20 fold: the dashboard's Counter sale entry uses the SAME staff-only predicate as the shell and the palette.
  * The REAL useCounterSaleGate runs over a CACHED "always" answer: only `enabled` can hide it for non-staff.
  */
+jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
 jest.mock("next/navigation", () => ({
   ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
@@ -64,11 +66,13 @@ describe("Dashboard counter entry by role (cached always capability)", () => {
     authRole = role;
     renderWithProviders(<DashboardPage />);
     expect(screen.queryByText("Counter sale")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-order-open")).toBeNull();
   });
 
-  it("OPERATOR: Counter sale entry is shown", () => {
+  it("OPERATOR: Counter sale entry is shown", async () => {
     authRole = "OPERATOR";
     renderWithProviders(<DashboardPage />);
-    expect(screen.getByText("Counter sale")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByTestId("new-order-open"));
+    expect(await screen.findByRole("menuitem", { name: /counter sale/i })).toBeInTheDocument();
   });
 });

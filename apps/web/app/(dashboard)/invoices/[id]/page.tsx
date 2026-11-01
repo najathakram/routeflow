@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceItemDisplayLines, showPerPieceColumn } from "@/lib/invoice-item-display-lines";
 import * as React from "react";
 import Link from "next/link";
 import {
@@ -73,12 +74,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { useCustomerAdvancePayments } from "@/lib/api/customers";
-import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  basePriceText,
   editPaymentCap,
-  invoiceDisplayLines,
-  invoiceDisplayCategoryTax,
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
   resolveConfirmedAmounts,
 } from "@routeflow/pricing";
 import { useInvoiceTaxSplit } from "@/lib/use-invoice-tax-split";
@@ -86,11 +88,7 @@ import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
-import {
-  InvoiceDisplayRows,
-  displayQtyText,
-  formatUnitPrice4,
-} from "@/components/InvoiceDisplayRows";
+import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 import { CHECK_TRANSITIONS, PAYMENT_NO_LONGER_FITS_COPY, withRecordAnyway } from "@routeflow/types";
 import { unvoidAmendedPeriodNote, type UnvoidInvoiceResult } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
@@ -117,12 +115,18 @@ import { ReviewFlagNotice } from "@/components/ReviewFlagNotice";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { isPaidAtSale, termsAndConditionsToShow } from "@/lib/invoice-sale-terms";
-import { useTenantTimeZone } from "@/lib/tenant-timezone";
+import {
+  tenantDateOf,
+  tenantTodayIso,
+  useResyncOnZone,
+  useTenantTimeZone,
+} from "@/lib/tenant-timezone";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
 import { unvoidRefusalCopy } from "@/lib/unvoid-refusal-copy";
+import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { voidFailureDescription } from "@/lib/invoice-void-copy";
 import { isOpenInvoiceStatus } from "@/lib/open-invoice-status";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
@@ -382,11 +386,6 @@ const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 
-/** YYYY-MM-DD slice of a stored timestamp, for a native date input. */
-function dateInputValue(iso?: string | null): string {
-  return iso ? new Date(iso).toISOString().slice(0, 10) : "";
-}
-
 function RecordPaymentModal({
   isOpen,
   onClose,
@@ -403,14 +402,18 @@ function RecordPaymentModal({
   /** SA-824: the unknown-outcome "Check payment status" state (Record is off while it is unknown). */
   statusCheck: PaymentStatusCheckState;
 }) {
+  const zone = useTenantTimeZone(); // SA-943: the business's today, not the UTC day
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
-    paidAt: todayIso(),
+    paidAt: tenantTodayIso(zone),
     settledAt: "",
     reference: "",
     notes: "",
   });
+  useResyncOnZone(zone, tenantTodayIso, form.paidAt, (paidAt) =>
+    setForm((f) => ({ ...f, paidAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const [file, setFile] = React.useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -420,7 +423,7 @@ function RecordPaymentModal({
       setForm({
         method: "ACH",
         amount: balanceDue > 0 ? balanceDue.toFixed(2) : "",
-        paidAt: todayIso(),
+        paidAt: tenantTodayIso(zone),
         settledAt: "",
         reference: "",
         notes: "",
@@ -428,6 +431,7 @@ function RecordPaymentModal({
       setAmountError("");
       setFile(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SA-943: the zone arriving mid-open must not wipe what was typed
   }, [isOpen, balanceDue]);
 
   function handleSubmit(e: React.FormEvent) {
@@ -705,14 +709,28 @@ function EditPaymentModal({
   isPending: boolean;
 }) {
   const { toast } = useToast();
+  const zone = useTenantTimeZone(); // SA-943: the edit box shows the stored instant's TENANT-local day
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
-    paidAt: todayIso(),
+    paidAt: tenantTodayIso(zone),
     settledAt: "",
     reference: "",
     notes: "",
   });
+  // The edit box shows the stored instants in the zone that arrives after the modal opened.
+  useResyncOnZone(
+    zone,
+    (z) => (payment ? tenantDateOf(payment.paidAt ?? payment.createdAt, z) : tenantTodayIso(z)),
+    form.paidAt,
+    (paidAt) => setForm((f) => ({ ...f, paidAt })),
+  );
+  useResyncOnZone(
+    zone,
+    (z) => tenantDateOf(payment?.settledAt, z),
+    form.settledAt,
+    (settledAt) => setForm((f) => ({ ...f, settledAt })),
+  );
   const [amountError, setAmountError] = React.useState("");
   const imageFileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPaymentImage = useUploadPaymentImage();
@@ -724,13 +742,14 @@ function EditPaymentModal({
       setForm({
         method: payment.method as PaymentFormState["method"],
         amount: Number(payment.amount).toFixed(2),
-        paidAt: dateInputValue(payment.paidAt ?? payment.createdAt),
-        settledAt: dateInputValue(payment.settledAt),
+        paidAt: tenantDateOf(payment.paidAt ?? payment.createdAt, zone),
+        settledAt: tenantDateOf(payment.settledAt, zone),
         reference: payment.reference ?? "",
         notes: payment.notes ?? "",
       });
       setAmountError("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- SA-943: the zone arriving mid-open must not wipe what was typed
   }, [isOpen, payment]);
 
   function handleViewImage() {
@@ -1512,17 +1531,23 @@ export default function InvoiceDetailPage() {
   const printInvoice = usePrintInvoice();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
+  const rw = useRestrictionWarningRetry(); // row 460: an unvoid re-sells the whole invoice, so staff may be warned
   const updateShipment = useUpdateInvoiceShipment();
   const updateTerms = useUpdateInvoiceTerms();
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
   const stampZone = useTenantTimeZone(seesHandOverStamp(user?.role)); // row 342: the hand-over time
-  // A store-only business is POS-forced: its order is handed over, never delivered (the draft's wording follows).
+  // The draft's wording follows the ORDER first (a PICKUP order is handed over at a mixed business too), then a
+  // store-only business, which is POS-forced and never delivers. null = not known yet: neither moment is claimed.
   const { capability: fulfilmentCapability } = useCounterSaleGate();
-  const mirrorCopy = pendingMirrorCopy(
-    fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
-  );
+  const orderStoreOnly: boolean | null =
+    invoice?.order?.fulfillPath === "PICKUP"
+      ? true
+      : fulfilmentCapability == null
+        ? null
+        : isStoreOnly(fulfilmentCapability);
+  const mirrorCopy = pendingMirrorCopy(orderStoreOnly);
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   // SA-824: one Idempotency-Key per open, kept across a Cancel -> reopen while the outcome is unknown
@@ -1597,6 +1622,8 @@ export default function InvoiceDetailPage() {
   );
   // CQ-03 / row 398: the levy is its own named charge under Tax (one hook, one pricing helper, every staff screen).
   const taxSplit = useInvoiceTaxSplit(invoice, !!invoice);
+  // SA-1029: the Per piece column shows only when a today-layout line has a per-piece price.
+  const showPerPiece = showPerPieceColumn(invoice?.items);
   const sectionedRows = React.useMemo(() => {
     const its = invoice?.items ?? [];
     const inline: typeof its = [];
@@ -2201,15 +2228,8 @@ export default function InvoiceDetailPage() {
 
         {/* Zoho-style action toolbar */}
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Pending mirror: this draft tracks an un-delivered order. Edit/Send are
-              hidden until the order is delivered — edit the order, not the invoice. */}
-          {isPendingMirror && (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
-              <Info className="h-3.5 w-3.5" />
-              {mirrorCopy.badge}
-            </span>
-          )}
-
+          {/* Pending mirror: this draft tracks an order not yet handed over or delivered. Edit is hidden
+              and Send is locked with its reason beside it; the note below explains (edit the order). */}
           {/* Edit — only for a draft that isn't a pending mirror */}
           {status === "DRAFT" && !isPendingMirror && (
             <Button
@@ -2230,9 +2250,7 @@ export default function InvoiceDetailPage() {
             <EmailInvoiceAction
               sendState={invoice.sendState}
               sendLocked={invoice.sendLocked}
-              lockedLabel={sendsAfterLabel(
-                fulfilmentCapability == null ? null : isStoreOnly(fulfilmentCapability),
-              )}
+              lockedLabel={sendsAfterLabel(orderStoreOnly)}
               loading={sendInvoiceEmail.isPending || sendInvoice.isPending}
               onSend={handleSend}
             />
@@ -2481,9 +2499,8 @@ export default function InvoiceDetailPage() {
             >
               order #{invoice.order?.orderNumber ?? ""}
             </Link>{" "}
-            and updates automatically until it&apos;s{" "}
-            {isStoreOnly(fulfilmentCapability) ? "handed over" : "delivered"}. To change what&apos;s
-            billed, edit the order — {mirrorCopy.note}
+            and updates automatically until it&apos;s {orderStoreOnly ? "handed over" : "delivered"}
+            . To change what&apos;s billed, edit the order — {mirrorCopy.note}
           </div>
         </div>
       )}
@@ -2513,7 +2530,14 @@ export default function InvoiceDetailPage() {
                 {balanceDue > 0 && (
                   <div className="text-right">
                     <p className="eyebrow-label">Balance due</p>
-                    <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
+                    <p
+                      className={cn(
+                        "money text-2xl font-semibold",
+                        status === "DRAFT" ? "text-navy" : "text-danger",
+                      )}
+                    >
+                      {fmt(balanceDue)}
+                    </p>
                   </div>
                 )}
                 {balanceDue === 0 && status === "PAID" && (
@@ -2582,6 +2606,10 @@ export default function InvoiceDetailPage() {
               </div>
             </div>
 
+            {/* SA-1071 V2: SA-1058 lists the lines by printed name on every copy; one caption says so (nothing to say for one line) */}
+            {(invoice.items?.length ?? 0) > 1 ? (
+              <p className="mb-2 text-xs text-navy/70">Listed by product name.</p>
+            ) : null}
             {/* Line items table — Ledger surface header */}
             <div className="-mx-8 overflow-x-auto">
               <table className="w-full text-sm">
@@ -2590,6 +2618,9 @@ export default function InvoiceDetailPage() {
                     <th className="eyebrow-label px-8 py-2.5 text-left">Item</th>
                     <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
                     <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+                    {showPerPiece && (
+                      <th className="eyebrow-label px-4 py-2.5 text-right">Per piece</th>
+                    )}
                     <th className="eyebrow-label px-8 py-2.5 text-right">Amount</th>
                   </tr>
                 </thead>
@@ -2599,7 +2630,7 @@ export default function InvoiceDetailPage() {
                       return (
                         <tr key={`section-${row.label}`} className="bg-amber-50/40">
                           <td
-                            colSpan={4}
+                            colSpan={showPerPiece ? 5 : 4}
                             className="px-8 py-2 text-[11px] font-semibold uppercase tracking-wider text-amber-700"
                           >
                             {row.label} · regulated
@@ -2609,30 +2640,7 @@ export default function InvoiceDetailPage() {
                     }
                     const item = row.item;
                     // SA-827: pieces / components layouts come from pricing; "today" keeps the row below.
-                    const display = invoiceDisplayLines(
-                      {
-                        description: item.description,
-                        qty: Number(item.qty),
-                        boxes: item.boxes,
-                        pieces: item.pieces,
-                        unitsPerBox: item.unitsPerBox,
-                        unitLabel: item.unitLabel,
-                        unitPrice: Number(item.unitPrice),
-                        subtotal: Number(item.subtotal),
-                        categoryTax: invoiceDisplayCategoryTax(item),
-                      },
-                      (item.components ?? []).map((c) => ({
-                        componentProductId: c.componentProductId,
-                        name: c.name,
-                        qty: Number(c.qty),
-                        unitSku: c.unitSku,
-                        unitBarcode: c.unitBarcode,
-                        displayUnitPrice4:
-                          c.displayUnitPrice4 == null ? null : Number(c.displayUnitPrice4),
-                        position: c.position,
-                      })),
-                      item.displayUnit,
-                    );
+                    const display = invoiceItemDisplayLines(item);
                     const groupRow = (
                       <tr
                         key={item.id}
@@ -2685,7 +2693,7 @@ export default function InvoiceDetailPage() {
                             <InvoiceLinePrice
                               item={item}
                               hideOriginal={hideOriginal}
-                              chargedText={formatUnitPrice4(display.unitPrice)}
+                              chargedText={basePriceText(display.unitPrice)}
                               noStrike
                             />
                           ) : (
@@ -2697,10 +2705,17 @@ export default function InvoiceDetailPage() {
                               loses the MSRP addon. */}
                           {item.msrp != null && (
                             <p className="mt-0.5 text-[10px] text-navy/50">
-                              MSRP {fmt(Number(item.msrp))}/pc
+                              MSRP {fmt(Number(item.msrp))}/{baseUnitSuffix(item.perBaseUnit)}
                             </p>
                           )}
                         </td>
+                        {showPerPiece && (
+                          <td className="mono px-4 py-3 text-right text-navy/70">
+                            {item.perBaseUnit && display.layout === "today"
+                              ? formatPerBaseUnitPrice(item.perBaseUnit)
+                              : null}
+                          </td>
+                        )}
                         <InvoiceLineAmount item={item} />
                       </tr>
                     );
@@ -2712,6 +2727,7 @@ export default function InvoiceDetailPage() {
                           itemId={item.id}
                           fmt={fmt}
                           variant="staff"
+                          perPieceCol={showPerPiece}
                         >
                           {groupRow}
                         </InvoiceDisplayRows>
@@ -2735,6 +2751,7 @@ export default function InvoiceDetailPage() {
                 creditApplied={creditApplied}
                 advanceApplied={advanceApplied}
                 balanceDue={balanceDue}
+                isDraft={status === "DRAFT"}
               />
             </div>
 
@@ -3042,7 +3059,11 @@ export default function InvoiceDetailPage() {
               <div
                 className={cn(
                   "flex items-center justify-between border-t border-surface-border pt-2 font-semibold",
-                  balanceDue > 0 ? "text-danger" : "text-success",
+                  status === "DRAFT"
+                    ? "text-navy"
+                    : balanceDue > 0
+                      ? "text-danger"
+                      : "text-success",
                 )}
               >
                 <dt>Balance due</dt>
@@ -3224,25 +3245,32 @@ export default function InvoiceDetailPage() {
             <Button
               variant="primary"
               onClick={() => {
-                unvoid.mutate(invoice.id, {
-                  onSuccess: (res: UnvoidInvoiceResult | undefined) => {
-                    setIsUnvoidOpen(false);
-                    // SA-839 §3: one more line when the void sat in an already-filed month.
-                    const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
-                    toast({
-                      title: "Invoice unvoided — now a draft",
-                      variant: "success",
-                      ...(note ? { description: note } : {}),
-                    });
-                  },
-                  onError: (e: any) =>
-                    toast({
-                      title: "Failed to unvoid the invoice",
-                      description:
-                        unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
-                      variant: "error",
-                    }),
-                });
+                const run = () =>
+                  unvoid.mutate(rw.attach(invoice.id), {
+                    onSuccess: (res: UnvoidInvoiceResult | undefined) => {
+                      setIsUnvoidOpen(false);
+                      // SA-839 §3: one more line when the void sat in an already-filed month.
+                      const note = unvoidAmendedPeriodNote(res?.amendedPeriod);
+                      toast({
+                        title: "Invoice unvoided — now a draft",
+                        variant: "success",
+                        ...(note ? { description: note } : {}),
+                      });
+                    },
+                    onError: (e: any) => {
+                      if (rw.handle(e, run)) {
+                        setIsUnvoidOpen(false); // the warning dialog owns the screen; "Sell anyway" re-runs this
+                        return;
+                      }
+                      toast({
+                        title: "Failed to unvoid the invoice",
+                        description:
+                          unvoidRefusalCopy(e) ?? e?.response?.data?.message ?? "Please try again.",
+                        variant: "error",
+                      });
+                    },
+                  });
+                run();
               }}
               loading={unvoid.isPending}
             >
@@ -3282,6 +3310,7 @@ export default function InvoiceDetailPage() {
         />
       )}
       {duplicateDialog}
+      {rw.dialog}
     </div>
   );
 }

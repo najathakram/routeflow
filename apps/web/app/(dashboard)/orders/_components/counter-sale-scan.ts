@@ -2,11 +2,13 @@ import {
   customerLinePrice,
   normalizeBoxesPieces,
   type CustomerLayerUnit,
+  type CustomerLinePrice,
   type SellLevel,
 } from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
 import type { PriceOverride } from "@/lib/counter-price-edit";
 import { mergePieceIntoLine, mergeQtyIntoLine, newLineQtyForLevel } from "./add-line-merge";
+import { COUNTER_MAX_LINE_QTY } from "./counter-sale-line-edit";
 
 /**
  * Pure line logic of the counter-sale till (B1208): what a scan lands on the cart, and the box/piece stepper.
@@ -21,6 +23,12 @@ export interface SaleLine {
   unitPrice: number;
   qty: number;
   unitsPerBox?: number;
+  /**
+   * SA-934 A-1: the product's own pack and base words, snapshotted when the line was added (display only: `toSaleItem`
+   * names its fields, so the request does not change). Absent on a line held before this: the row prints Box / pcs.
+   */
+  packLabel?: string | null;
+  baseLabel?: string | null;
   boxes?: number;
   pieces?: number;
   /** POS-3: an optional per-line note (max NOTE_MAX); sent as the wire item's `note`. */
@@ -32,12 +40,14 @@ export interface SaleLine {
    */
   listPrice?: number;
   unit?: string;
-  priceType?: "STANDARD" | "SPECIAL";
+  priceType?: CustomerLinePrice["priceType"];
   /**
    * S19b: set ONLY while the customer's price layer prices this line (flag on): the layer's `isSpecial`, which the edit-reason
    * gate reads in place of the tier. Absent otherwise, so the gate keeps master's tier rule.
    */
   special?: boolean;
+  /** SA-1068: set ONLY while the line sits at the customer's remembered above-list price (the till says "Last price"). */
+  remembered?: true;
   category?: string;
   /** The product's regulated category when the line was added: the estimate adds its levy (excise / deposit). */
   trackedCategoryId?: string | null;
@@ -72,18 +82,22 @@ export function addScannedProduct(
   tier: number,
   /** S19b: the customer's price layer for this product (flag on); omitted = master's tier price. */
   layer?: readonly CustomerLayerUnit[],
+  /** SA-1068: the customer's remembered price for this product (the server's sticky upsell); omitted = none. */
+  remembered?: number | null,
 ): SaleLine[] {
   const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
   const unitScan = level === "UNIT" && (upb ?? 0) > 1;
   const idx = prev.findIndex((l) => l.productId === product.id);
   if (idx >= 0) {
-    return prev.map((l, i) =>
-      i === idx ? (unitScan ? mergePieceIntoLine(l, n) : mergeQtyIntoLine(l, n)) : l,
-    );
+    const merged = unitScan ? mergePieceIntoLine(prev[idx], n) : mergeQtyIntoLine(prev[idx], n);
+    // a line holds at most COUNTER_MAX_LINE_QTY pieces (the server's cap): a scan past it leaves the cart as it was
+    if (merged.qty > COUNTER_MAX_LINE_QTY) return prev;
+    return prev.map((l, i) => (i === idx ? merged : l));
   }
   // A UNIT multiplier at or over the pack size (x30 on a 24-pack) rolls into boxes: 1 box + 6 pcs, never 0 boxes + 30 pcs.
-  const lp = customerLinePrice({ product, tier, layer });
+  const lp = customerLinePrice({ product, tier, layer, remembered });
   const born = newLineQtyForLevel(upb, level, n);
+  if (born.qty > COUNTER_MAX_LINE_QTY) return prev;
   const qty = unitScan && upb ? normalizeBoxesPieces({ qty: born.qty, unitsPerBox: upb }) : null;
   return [
     ...prev,
@@ -93,10 +107,13 @@ export function addScannedProduct(
       name: displayProductName(product),
       unitPrice: lp.price,
       unitsPerBox: upb,
+      ...(product.packLabel ? { packLabel: String(product.packLabel) } : {}),
+      ...(product.baseUnitLabel ? { baseLabel: String(product.baseUnitLabel) } : {}),
       listPrice: Number(product.pricePerUnit ?? 0),
       unit: product.unit ?? "each",
-      priceType: lp.isSpecial ? "SPECIAL" : "STANDARD",
+      priceType: lp.priceType,
       ...(lp.layered ? { special: lp.isSpecial } : {}),
+      ...(lp.remembered ? { remembered: true as const } : {}),
       ...(product.category ? { category: String(product.category) } : {}),
       ...(product.trackedCategoryId
         ? { trackedCategoryId: String(product.trackedCategoryId) }
@@ -124,10 +141,10 @@ export function stepLine(l: SaleLine, unit: StepUnit, dir: 1 | -1): SaleLine {
   const upb = l.unitsPerBox ?? 0;
   if (upb > 1) {
     const total = (l.boxes ?? 0) * upb + (l.pieces ?? 0) + dir * (unit === "box" ? upb : 1);
-    if (total < 1) return l;
+    if (total < 1 || total > COUNTER_MAX_LINE_QTY) return l;
     const norm = normalizeBoxesPieces({ qty: total, unitsPerBox: upb });
     return { ...l, boxes: norm.boxes ?? 0, pieces: norm.pieces ?? 0, qty: norm.qty };
   }
   const next = mergeQtyIntoLine(l, dir);
-  return next.qty < 1 ? l : next;
+  return next.qty < 1 || next.qty > COUNTER_MAX_LINE_QTY ? l : next;
 }

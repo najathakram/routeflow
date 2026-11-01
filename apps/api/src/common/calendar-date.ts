@@ -44,18 +44,8 @@ function addUtcCalendarDays(
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
-/**
- * The true UTC instant of 00:00:00 local wall-clock time, on the given
- * calendar day, in `timeZone`. DST-safe: reads the zone's actual UTC offset
- * AT the midnight instant itself (one Intl pass), never assumes a fixed
- * offset. Midnight is never the literal DST-transition moment in any IANA
- * zone this codebase targets (US transitions land at 2am local), so this
- * single-correction approach never lands on the transition's own
- * ambiguous/skipped hour.
- */
-function localMidnightUtc(year: number, month: number, day: number, timeZone: string): Date {
-  const guess = Date.UTC(year, month - 1, day, 0, 0, 0);
-  let offsetMs = 0;
+/** The zone's UTC offset (ms) at `instantMs`; 0 for an unknown zone, never throws. */
+function zoneOffsetMs(instantMs: number, timeZone: string): number {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -66,7 +56,7 @@ function localMidnightUtc(year: number, month: number, day: number, timeZone: st
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-    }).formatToParts(new Date(guess));
+    }).formatToParts(new Date(instantMs));
     const at = (t: string) => Number(parts.find((p) => p.type === t)?.value);
     const shownAsUtc = Date.UTC(
       at("year"),
@@ -76,11 +66,31 @@ function localMidnightUtc(year: number, month: number, day: number, timeZone: st
       at("minute"),
       at("second"),
     );
-    offsetMs = shownAsUtc - guess;
+    return shownAsUtc - instantMs;
   } catch {
-    offsetMs = 0; // unknown zone — fall back to UTC, never throw
+    return 0; // unknown zone — fall back to UTC, never throw
   }
-  return new Date(guess - offsetMs);
+}
+
+/**
+ * The true UTC instant at which the given calendar day STARTS in `timeZone` (SA-985): two candidates, the offset
+ * taken at 00:00Z and the offset re-taken at that first candidate; of those, the ones whose local date IS the named
+ * day, the earliest. A single pass stores the previous day on an east-of-UTC DST-change day (the 00:00Z offset is
+ * the other side of the change); a plain second pass loses the days whose local midnight does not exist (a zone
+ * that springs forward AT 00:00 starts the day at 01:00). When neither candidate lands on the day it returns the
+ * first (the pre-SA-985 answer).
+ */
+function localMidnightUtc(year: number, month: number, day: number, timeZone: string): Date {
+  const guess = Date.UTC(year, month - 1, day, 0, 0, 0);
+  const first = guess - zoneOffsetMs(guess, timeZone);
+  const second = guess - zoneOffsetMs(first, timeZone);
+  const onDay = [first, second]
+    .filter((t) => {
+      const c = readCalendarParts(new Date(t), timeZone);
+      return c.year === year && c.month === month && c.day === day;
+    })
+    .sort((x, y) => x - y);
+  return new Date(onDay[0] ?? first);
 }
 
 const CALENDAR_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -132,6 +142,102 @@ export function localInstantWindow(
     .toISOString()
     .slice(0, 10);
   return { gte: startOfLocalDay(fromDay, timeZone), lt: startOfLocalDay(nextDay, timeZone) };
+}
+
+/** A report's range: the request's days, or a kind relative to the tenant's today (SA-906). */
+export type PeriodRange =
+  | { fromDay?: string | null; toDay?: string | null }
+  | "today"
+  | "week"
+  | "month"
+  | "quarter"
+  | "year"
+  | { month: number };
+
+export interface TenantPeriod {
+  fromDay: string;
+  toDay: string;
+  /** Filter for a CALENDAR-DATE column (`Invoice.issueDate`, `dueDate`, `Expense.date`): UTC-midnight stamps, NO zone shift. */
+  days: { gte: Date; lt: Date };
+  /** Filter for a REAL-INSTANT column (`CreditNote.createdAt`, `Return.refundedAt`, `Invoice.writtenOffAt`, `StockMovement.effectiveAt`): the tenant's own days. */
+  instants: { gte: Date; lt: Date };
+}
+
+const dayStamp = (day: string) => new Date(`${day}T00:00:00.000Z`);
+const shiftDay = (day: string, n: number) =>
+  addCalendarDays(dayStamp(day), n).toISOString().slice(0, 10);
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * The ONE period every Bookkeeping / analytics report windows on (SA-906, W-728; SA-869's `localInstantWindow` is its instant half).
+ * A report is "this month" or "Oct 1 to Oct 31" in the BUSINESS'S OWN calendar, so the zone (the tenant's, `tenantTimeZone`) decides
+ * which day it is now and where each instant falls. Two column classes, never mixed:
+ *   - `days`: calendar-date columns hold a UTC-midnight stamp that IS the day, so they are filtered by stamps, never zone-shifted
+ *     (applying `instants` to them would move every one-day row for a west-of-UTC tenant);
+ *   - `instants`: real-instant columns written by the system clock are filtered on the tenant-local day.
+ * Kinds are relative to `tenantTodayDay(zone, now)`: to-date (week starts Sunday), and `{ month }` is a whole month (0-based) of
+ * the tenant's current year. Explicit `{ fromDay, toDay }` take their first ten characters (a client date); a missing or invalid
+ * side defaults to the tenant's Jan 1 / today. A null or unknown zone is UTC. Not used by the regulated period bucket (UTC by contract).
+ */
+export function tenantPeriod(
+  range: PeriodRange,
+  zone: string | null | undefined,
+  now: Date = new Date(),
+): TenantPeriod {
+  const today = tenantTodayDay(zone, now);
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7)); // 1-based
+  let fromDay: string;
+  let toDay: string;
+  if (range === "today") {
+    fromDay = toDay = today;
+  } else if (range === "week") {
+    const dow = dayStamp(today).getUTCDay(); // Sunday = 0
+    fromDay = shiftDay(today, -dow);
+    toDay = today;
+  } else if (range === "month") {
+    fromDay = `${year}-${pad2(month)}-01`;
+    toDay = today;
+  } else if (range === "quarter") {
+    fromDay = `${year}-${pad2(Math.floor((month - 1) / 3) * 3 + 1)}-01`;
+    toDay = today;
+  } else if (range === "year") {
+    fromDay = `${year}-01-01`;
+    toDay = today;
+  } else if ("month" in range) {
+    const m = range.month; // 0-based month of the tenant's year
+    fromDay = `${year}-${pad2(m + 1)}-01`;
+    toDay = shiftDay(`${year + Math.floor((m + 1) / 12)}-${pad2(((m + 1) % 12) + 1)}-01`, -1);
+  } else {
+    const named = (v?: string | null) =>
+      v && parseCalendarDay(v.slice(0, 10)) ? v.slice(0, 10) : null;
+    fromDay = named(range.fromDay) ?? `${year}-01-01`;
+    toDay = named(range.toDay) ?? today;
+  }
+  return {
+    fromDay,
+    toDay,
+    days: { gte: dayStamp(fromDay), lt: dayStamp(shiftDay(toDay, 1)) },
+    instants: localInstantWindow(fromDay, toDay, zone),
+  };
+}
+
+/**
+ * Optional from/to filters on a CALENDAR-DATE column (list endpoints): a missing side is open. Day stamps, never zone-shifted;
+ * `lt` is the day AFTER `to` (so the whole last day is in). Replaces the hand-built `setUTCHours(23, 59, 59, 999)`.
+ */
+export function calendarDayRange(
+  from?: string | null,
+  to?: string | null,
+): { gte?: Date; lt?: Date } {
+  const named = (v?: string | null) =>
+    v && parseCalendarDay(v.slice(0, 10)) ? v.slice(0, 10) : null;
+  const f = named(from);
+  const t = named(to);
+  return {
+    ...(f ? { gte: dayStamp(f) } : {}),
+    ...(t ? { lt: dayStamp(shiftDay(t, 1)) } : {}),
+  };
 }
 
 /** UTC-midnight instant (`iso.slice(0,10)`) → its calendar-date string. `""` for null/invalid. */

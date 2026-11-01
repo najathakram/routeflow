@@ -15,6 +15,8 @@ node_modules
 .next/
 out/
 apps/web/.next/
+# W-1064: copied from pdfjs-dist by apps/web/scripts/copy-pdfjs-fallbacks.mjs
+apps/web/public/pdfjs/
 apps/web/out/
 
 # ─── NestJS / Node builds (apps/api) ─────────────────────────────────────────

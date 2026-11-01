@@ -1,7 +1,13 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { invoiceTaxSplit, roundMoney } from "@routeflow/pricing";
+import {
+  baseUnitSuffix,
+  formatPerBaseUnitPrice,
+  invoiceTaxSplit,
+  roundMoney,
+  type PerBaseUnitPrice,
+} from "@routeflow/pricing";
 import {
   promoNote,
   qtyCellText,
@@ -131,6 +137,8 @@ export interface InvoicePdfData {
     subLines?: PdfSubLine[];
     /** SA-827: the pieces / components layout; absent = today's row. */
     display?: PdfItemDisplay;
+    /** SA-1029: price per base piece of a pack line; display only, absent = no per-piece figure. */
+    perBaseUnit?: PerBaseUnitPrice | null;
   }>;
   /** #2717 M3: PNG data URI of the order QR (order-linked invoice, mixed_packs on); absent = no QR. */
   qrDataUri?: string;
@@ -166,12 +174,18 @@ export interface InvoicePdfData {
   } | null;
 }
 
+/**
+ * SA-1058 A-1: a line's row stays whole across a page, so a name can't leave its barcode behind. Not past
+ * this many sub-lines: a row taller than a page can't wrap, and react-pdf runs it off the page, logging only.
+ */
+const MAX_WHOLE_ROW_SUBLINES = 12;
+
 const toNum = (val: DecimalLike): number => {
   if (typeof val === "number") return val;
   if (typeof val === "string") return parseFloat(val);
   return val.toNumber();
 };
-const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
+const fmt = (val: DecimalLike) => `$${roundMoney(toNum(val)).toFixed(2)}`;
 // Calendar dates (issueDate/dueDate/paidAt) are stored as UTC-midnight instants.
 // Formatting via local-time components would render them a day early for any
 // negative-UTC-offset viewer, so we read the UTC calendar components directly.
@@ -313,6 +327,7 @@ function buildStyles(primary: string, navy: string) {
     colDescription: { flex: 3 },
     colQty: { flex: 1, textAlign: "right" },
     colUnit: { flex: 1.4, textAlign: "right" },
+    colPerUnit: { flex: 1.2, textAlign: "right" },
     colSubtotal: { flex: 1.4, textAlign: "right" },
     cellText: { fontSize: 9, color: navy },
     cellTextRight: { fontSize: 9, color: navy, textAlign: "right" },
@@ -467,6 +482,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
     ),
   );
   const hideOriginalPrice = !!invoice.hideOriginalPrice;
+  const showPerPiece = invoice.items.some((i) => !i.display && !!i.perBaseUnit);
   // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
   // service (roundMoney(total*percent/100)); the remainder is simply what's
   // left of the total after it — independent of payments actually recorded.
@@ -601,10 +617,14 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           </View>
 
           {/* Line items */}
+          {/* SA-1029: the Per piece column shows only when a today-layout line has a figure. */}
           <View style={styles.tableHeader}>
             <Text style={[styles.tableHeaderText, styles.colDescription]}>Description</Text>
             <Text style={[styles.tableHeaderText, styles.colQty]}>Qty</Text>
             <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
+            {showPerPiece ? (
+              <Text style={[styles.tableHeaderText, styles.colPerUnit]}>Per piece</Text>
+            ) : null}
             <Text style={[styles.tableHeaderText, styles.colSubtotal]}>Subtotal</Text>
           </View>
           {invoice.items.map((item, idx) => {
@@ -622,10 +642,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             // SA-827: a mixed-pack line shown in pieces: one row per component, then the box row
             // carrying the stored amount, then the category-tax row. Every figure is pre-formatted by the mapper.
             const d = item.display?.layout === "components" ? item.display : null;
-            // The box line's own row, unchanged; in the components view it is the group row.
+            const subLines = item.display?.layout === "components" ? undefined : item.subLines;
+            // The box line's own row; in the components view it is the group row.
             const boxRow = (
               <View
                 key={item.id}
+                wrap={(subLines?.length ?? 0) > MAX_WHOLE_ROW_SUBLINES}
                 style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
               >
                 <View style={styles.colDescription}>
@@ -649,34 +671,29 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                     </View>
                   ) : null}
                   {/* #2717 M3: the pieces inside a mixed pack; the box line above stays authoritative. */}
-                  {(item.display?.layout === "components" ? undefined : item.subLines)?.map(
-                    (sub, subIdx) => (
-                      <View
-                        key={`${item.id}-sub-${subIdx}`}
-                        style={{ marginTop: 3, marginLeft: 8 }}
-                      >
-                        <Text style={{ fontSize: 7, color: "#334155" }}>
-                          {[
-                            sub.name,
-                            sub.qtyText,
-                            sub.unitSku ? `SKU ${sub.unitSku}` : null,
-                            sub.priceText,
-                          ]
-                            .filter(Boolean)
-                            .join("  |  ")}
-                        </Text>
-                        {sub.barcodeDataUri ? (
-                          <Image
-                            src={sub.barcodeDataUri}
-                            style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
-                          />
-                        ) : null}
-                        {sub.barcodeText ? (
-                          <Text style={{ fontSize: 6, color: "#64748b" }}>{sub.barcodeText}</Text>
-                        ) : null}
-                      </View>
-                    ),
-                  )}
+                  {subLines?.map((sub, subIdx) => (
+                    <View key={`${item.id}-sub-${subIdx}`} style={{ marginTop: 3, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 7, color: "#334155" }}>
+                        {[
+                          sub.name,
+                          sub.qtyText,
+                          sub.unitSku ? `SKU ${sub.unitSku}` : null,
+                          sub.priceText,
+                        ]
+                          .filter(Boolean)
+                          .join("  |  ")}
+                      </Text>
+                      {sub.barcodeDataUri ? (
+                        <Image
+                          src={sub.barcodeDataUri}
+                          style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
+                        />
+                      ) : null}
+                      {sub.barcodeText ? (
+                        <Text style={{ fontSize: 6, color: "#64748b" }}>{sub.barcodeText}</Text>
+                      ) : null}
+                    </View>
+                  ))}
                 </View>
                 <View style={styles.colQty}>
                   <Text style={styles.cellTextRight}>
@@ -706,6 +723,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   ) : null}
                 </View>
                 <View style={styles.colUnit}>
+                  <Text style={styles.cellTextRight}>
+                    {item.display?.layout === "pieces"
+                      ? item.display.priceText
+                      : fmt(item.unitPrice)}
+                  </Text>
                   {itemShowOriginal && item.display?.layout !== "pieces" ? (
                     <Text
                       style={{
@@ -718,17 +740,21 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                       {fmt(item.originalPrice as DecimalLike)}
                     </Text>
                   ) : null}
-                  <Text style={styles.cellTextRight}>
-                    {item.display?.layout === "pieces"
-                      ? item.display.priceText
-                      : fmt(item.unitPrice)}
-                  </Text>
                   {item.msrp != null ? (
                     <Text style={{ fontSize: 6.5, color: GRAY, textAlign: "right", marginTop: 1 }}>
-                      MSRP {fmt(item.msrp)}/pc
+                      MSRP {fmt(item.msrp)}/{baseUnitSuffix(item.perBaseUnit)}
                     </Text>
                   ) : null}
                 </View>
+                {showPerPiece ? (
+                  <View style={styles.colPerUnit}>
+                    <Text style={styles.cellTextRight}>
+                      {!item.display && item.perBaseUnit
+                        ? formatPerBaseUnitPrice(item.perBaseUnit)
+                        : ""}
+                    </Text>
+                  </View>
+                ) : null}
                 <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
               </View>
             );
@@ -738,6 +764,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 {d.rows.map((row, rowIdx) => (
                   <View
                     key={`${item.id}-row-${rowIdx}`}
+                    wrap={false}
                     style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
                   >
                     <View style={styles.colDescription}>
@@ -761,17 +788,22 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                     <View style={styles.colUnit}>
                       <Text style={styles.cellTextRight}>{row.priceText}</Text>
                     </View>
+                    {showPerPiece ? <View style={styles.colPerUnit} /> : null}
                     <Text style={[styles.cellTextRight, styles.colSubtotal]}>{row.amountText}</Text>
                   </View>
                 ))}
                 {boxRow}
                 {d.categoryTax ? (
-                  <View style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
+                  <View
+                    wrap={false}
+                    style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
+                  >
                     <View style={styles.colDescription}>
                       <Text style={styles.cellText}>{d.categoryTax.label}</Text>
                     </View>
                     <View style={styles.colQty} />
                     <View style={styles.colUnit} />
+                    {showPerPiece ? <View style={styles.colPerUnit} /> : null}
                     <Text style={[styles.cellTextRight, styles.colSubtotal]}>
                       {d.categoryTax.amountText}
                     </Text>

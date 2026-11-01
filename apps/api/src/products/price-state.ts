@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 
+import { roundMoney } from "@routeflow/pricing";
 /** A money column as the fingerprint sees it: a fixed two-decimal string, or null. Decimal/string/number all agree. */
 const cents = (v: unknown): string | null => {
   if (v == null) return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(2) : null;
+  return Number.isFinite(n) ? roundMoney(n).toFixed(2) : null;
 };
 
 export interface PriceStateProduct {

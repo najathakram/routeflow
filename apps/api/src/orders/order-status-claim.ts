@@ -10,7 +10,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 export function buildStatusUpdateData(
   order: Pick<Order, "deliveredAt" | "orderDate" | "fulfillPath" | "shippedAt" | "notes">,
   status: OrderStatus,
-  opts: { isDeliveredDemotion: boolean; noteAppend?: string },
+  opts: { isDeliveredDemotion: boolean; reason?: string },
 ) {
   return {
     status,
@@ -26,7 +26,14 @@ export function buildStatusUpdateData(
     ...(status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
       ? { shippedAt: order.shippedAt ?? new Date() }
       : {}),
-    ...(opts.noteAppend ? { notes: (order.notes ?? "") + opts.noteAppend } : {}),
+    // The reason joins the order's notes, its status history.
+    ...(opts.reason
+      ? {
+          notes:
+            (order.notes ?? "") +
+            `\n[${new Date().toLocaleDateString()} – status changed to ${status}: ${opts.reason}]`,
+        }
+      : {}),
   };
 }
 

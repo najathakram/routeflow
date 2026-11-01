@@ -17,6 +17,7 @@ import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
+import { wireStockHelper, StockHelperMock } from "./testing/stock-helper-mock";
 
 /**
  * SA-767 L-2 (r-note Nit 5 + Nit 6): the manual stock writers (purchase, adjustment, counts, cost
@@ -62,6 +63,24 @@ const WRITERS: Writer[] = [
     label: "inventory.recordAdjustment",
     method: "recordAdjustment",
     call: (svc) => svc.recordAdjustment({ productId: "prod-1", quantity: 5 } as any, "user-1"),
+    alerts: ["prod-1"],
+    clean: { movement: 1, lot: 1, product: 1 },
+  },
+  {
+    name: "countProduct",
+    label: "inventory.countProduct",
+    method: "countProduct",
+    call: (svc) =>
+      svc.countProduct(
+        "prod-1",
+        {
+          mode: "ADJUST",
+          parts: [{ unit: null, quantity: 5 }],
+          sign: "+",
+          reason: "COUNT_CORRECTION",
+        } as any,
+        "user-1",
+      ),
     alerts: ["prod-1"],
     clean: { movement: 1, lot: 1, product: 1 },
   },
@@ -129,9 +148,11 @@ describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let alerts: jest.SpyInstance;
+  let stock: StockHelperMock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma); // SA-927: the real stock helper over the mock
     const row = {
       id: "prod-1",
       name: "Widget",
@@ -163,7 +184,7 @@ describe.each(WRITERS)("$name tx retry (SA-767 L-2)", (writer) => {
   });
 
   const writes = () => ({
-    movement: prisma.stockMovement.create.mock.calls.length,
+    movement: stock.written().length,
     lot: prisma.stockLot.create.mock.calls.length,
     product: prisma.product.update.mock.calls.length,
   });

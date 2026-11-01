@@ -34,6 +34,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { overpaidByOf, statusFromPayments } from "./invoice-status";
 import { voidPaymentInTx } from "./payment-void-tx";
 import { TENANT_ZONE_SELECT, configuredZone, tenantTimeZone } from "../common/tenant-time-zone";
+import { givenPaidInstant, paidInstantOf, settledInstantOf } from "../common/paid-instant";
+import { resolveEditedPaymentDates } from "./payment-edit-dates";
 import { assertNoDuplicateLineIds } from "../common/duplicate-line-ids";
 import { StorageService } from "../storage/storage.service";
 import {
@@ -176,6 +178,7 @@ import {
   tenantPreferredRate,
 } from "./stored-tax-state";
 import { buildInvoiceEmailPayload } from "./invoice-email-payload";
+import { sortInvoiceLines } from "./invoice-line-order";
 import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -214,6 +217,7 @@ import {
   isSoleBillingDraftIn,
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
+import { loadReopenableInvoice } from "./invoice-reopen-guard";
 import {
   issueDateStamp,
   overdueCutoff,
@@ -221,7 +225,6 @@ import {
   startOfCalendarDay,
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
-import { lockRowsNoWait } from "../common/db-locks";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { planInvoicedQtyAdjustment } from "./unvoid-billing-claim";
@@ -229,6 +232,7 @@ import { UNVOID_REFUSAL_COPY, assertUnvoidOrderNotCancelled } from "./unvoid-bil
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import * as iGate from "./invoice-restriction-gate";
+import * as uGate from "./invoice-unvoid-gate";
 import { flagSplitRestrictedLines } from "../selling-restrictions/restricted-lines-flag";
 import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { assertEditStillJudged } from "./invoice-restriction-lines";
@@ -270,7 +274,7 @@ import {
   externalPaidOn,
   writeOffRefusal,
 } from "./invoice-send-guard";
-import { selectEditRevertedInvoices } from "./order-edit-revert-set";
+import { revertLinkedInvoicesToDraft } from "./order-edit-revert-set";
 import { assertNoCashRefundOnInvoice } from "./invoice-cash-refund-guard";
 import { assertPartialRequestShape, bumpInvoicedQtyCas } from "./partial-invoice-cas";
 
@@ -3051,6 +3055,7 @@ export class InvoicesService {
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     stampHandedOverBy(inv.order, user); // row 342: staff only (`invoiceDetailFor` drops `order` for a buyer)
     await iGate.stampOverrideNames(this.prisma.forTenant(), inv.items, user); // row 510: staff only
+    const db = this.prisma.forTenant();
     return invoiceDetailFor(user, {
       ...inv,
       ...deriveInvoiceDetailFields(
@@ -3059,7 +3064,7 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: await du.itemsWithDisplayUnits(this.prisma.forTenant(), inv, this.entitlements), // #2717 M3 + SA-827
+      items: sortInvoiceLines(await du.itemsWithDisplayUnits(db, inv, this.entitlements)), // SA-1058; #2717 M3 + SA-827
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
@@ -3518,6 +3523,11 @@ export class InvoicesService {
   private async markSent(id: string, orderId: string | null, emailSent = false) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const units = await du.resolveDraftIssueUnits(this.prisma.forTenant(), id, this.entitlements); // SA-827: resolved off-tx (no catalog read in the snapshot); written below only at DRAFT -> issued
+    const words = await du.loadDraftBaseLabels(
+      this.prisma.forTenant(),
+      this.prisma.getTenantId(),
+      id,
+    ); // SA-1029: the base words, read off-tx and flag-free (SA-967)
     return retryCreditTx(`invoice mark-sent id=${id}`, () =>
       this.prisma.tenantTransaction(
         async (tx) => {
@@ -3537,6 +3547,7 @@ export class InvoicesService {
             data: { status: nextStatus, sentAt: locked.sentAt ?? new Date() }, // #2088: a re-send keeps the FIRST sentAt
           });
           await du.writeIssueDisplayUnits(tx, id, locked.status === "DRAFT" ? units : null);
+          if (issuing) await du.writeIssueBaseLabels(tx, id, this.prisma.getTenantId(), words); // SA-1029: never gated on a pieces line (D-R2)
           const auto = await runSendCredits(this.creditNotes, tx, id, issuing, updated);
           // A credit pre-applied at order time can already cover this invoice. Auto-apply
           // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
@@ -3963,35 +3974,9 @@ export class InvoicesService {
   }
 
   /**
-   * When an order with a SENT (non-draft) pending-mirror invoice is edited, bring
-   * that invoice back to DRAFT so the edit re-syncs into it instead of silently
-   * diverging (the "edit after send" price-drift class). Only invoices with ZERO
-   * payments are auto-reverted; a paid/partly-paid invoice throws instead — money
-   * must never silently detach from a sent document. Per-batch delivery invoices
-   * (deliveryBatchId != null, only on delivered orders) are never touched. Returns
-   * the reverted invoice ids (empty when there's nothing to revert). Call BEFORE
-   * mutating the order, so a payment-block aborts the whole edit cleanly.
-   *
-   * WP-D1 EXEMPTION (B1): a deposit mirror issued at ORDER PLACEMENT is SENT on
-   * purpose and must survive an edit. Reverting it would be IRREVERSIBLE — a
-   * pre-delivery order-linked DRAFT can never be re-sent (assertOrderInvoiceUnlocked
-   * refuses without the create-path-only `allowPreDelivery` hatch), so the deposit
-   * the customer was asked to pay would silently un-issue. It doesn't need reverting
-   * either: reconcileOrderDraftInvoice's widened branch keeps exactly this invoice in
-   * lockstep with the edit while it stays SENT. The exemption therefore mirrors that
-   * branch's fence EXACTLY — deposit-carrying, the order's SOLE non-void invoice, and
-   * the order not yet DELIVERED/CANCELLED — so an invoice is skipped here only when
-   * the reconcile provably picks it up. Anything outside the fence (split/partial
-   * siblings, a delivered order) keeps the legacy revert, including its
-   * throw-on-payments guard.
-   *
-   * `opts.lockRows` takes the SAME Invoice row lock `recordPayment` holds before counting that
-   * invoice's payments, so a payment cannot commit between the count and the DRAFT flip. It is
-   * opt-in because only a caller already inside a transaction can hold it usefully, and because
-   * the row is then held for the rest of that tx — the caller owns keeping Invoice last in the
-   * lock order (`lockRowsNoWait`). Contention surfaces as a retryable 409 (NOWAIT), not a wait.
-   * `opts.preflightOnly` (row 586, SA-814a item 4): only the payment-block throw, nothing written, so a caller outside
-   * a transaction can refuse a paid mirror early without committing a revert a later binding 409 cannot undo.
+   * Brings an order's SENT pending-mirror invoices back to DRAFT before the order is edited (zero payments only; a
+   * paid one throws). Body, rules and the WP-D1 deposit-mirror exemption: `revertLinkedInvoicesToDraft` in
+   * order-edit-revert-set.ts (SA-065 extraction, row 460). Call BEFORE mutating the order.
    */
   async revertLinkedInvoicesForOrderEdit(
     orderId: string,
@@ -3999,51 +3984,24 @@ export class InvoicesService {
     opts?: { lockRows?: boolean; preflightOnly?: boolean },
   ): Promise<string[]> {
     const db = tx ?? this.prisma.forTenant();
-    // #2178: the ONE selection (incl. the exempt deposit mirror, which stays SENT) — shared with the
-    // inline-return preflight, which prices against the matching set as it will be after this revert.
-    const linked = await selectEditRevertedInvoices(db, orderId);
-    const reverted: string[] = [];
-    for (const inv of linked) {
-      // Under the caller's tx: hold the row before the count, so the payment-block below reads a
-      // state no concurrent recordPayment can change until this tx commits or rolls back.
-      if (opts?.lockRows) await lockRowsNoWait(db, "Invoice", [inv.id], "INVOICE_BUSY");
-      // B314: same live-payments filter as revertInvoiceToDraft — a VOID (bounced) payment
-      // carries no money and must never block an edit that would otherwise revert cleanly.
-      // Existence check, not a money sum — see the identical note on revertInvoiceToDraft
-      // above; a DRAFT payment must still block this edit.
-      // scan-ok: draft-payment-not-void — see comment above.
-      const paymentCount = await db.invoicePayment.count({
-        where: { invoiceId: inv.id, status: { not: "VOID" } },
-      });
-      if (paymentCount > 0) {
-        throw new BadRequestException(
-          `This order can't be edited while invoice ${inv.invoiceNumber} has payments recorded. ` +
-            `Void the invoice or remove its payments first.`,
-        );
-      }
-      if (opts?.preflightOnly) continue; // row 586: the read-only pre-tx check; the revert runs in the edit tx
-      const auditLine = `[${new Date().toLocaleDateString()} — reverted to Draft: source order edited]`;
-      await db.invoice.update({
-        where: { id: inv.id },
-        data: {
-          status: InvoiceStatus.DRAFT,
-          sentAt: null,
-          pdfUrl: null,
-          internalNotes: inv.internalNotes ? `${inv.internalNotes}\n${auditLine}` : auditLine,
-        },
-      });
-      reverted.push(inv.id);
-    }
+    const reverted = await revertLinkedInvoicesToDraft(db, orderId, opts);
+    for (const id of reverted) await du.clearIssueDisplayUnits(db, id); // SA-827 rule 5 / B1275: a DRAFT renders live
     return reverted;
   }
 
-  async unvoidInvoice(id: string) {
+  async unvoidInvoice(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.VOID) {
       throw new BadRequestException(
         `Only VOID invoices can be unvoided. Current status: ${inv.status}`,
       );
     }
+    // Row 460 (SA-272): unvoid is a new sale of the whole invoice: every line judged (STAFF) before any write.
+    const gate = await uGate.unvoidParams(this.prisma, inv, actor, ack);
+    const restriction = await this.sellingRestrictions.assertLinesSellable({
+      ...gate.params,
+      channel: "STAFF",
+    });
     // Voiding RELEASED this invoice's invoicedQty back to the order; bringing it
     // back to DRAFT re-claims that qty so a later invoice can't double-bill the
     // same lines, and re-books the regulated ledger (SA-839 / B706). Atomic with the status flip.
@@ -4056,6 +4014,8 @@ export class InvoicesService {
           message: "The invoice changed while it was being restored. Refresh and try again.",
         });
       await assertUnvoidOrderNotCancelled(tx, inv.orderId); // B693: 409 before any write
+      const held = await uGate.lockedUnvoidHeld(tx, id, gate.judged); // row 460: the judged lines, under the lock
+      const overridden = restriction?.recheck(held);
       // B299 / SA-814 R4-5: the re-claim runs FIRST and is not clamped - if another invoice now bills these
       // goods (or the line is CANCELLED) it throws 409 ORDER_BILLING_CHANGED before the status flip writes.
       await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
@@ -4063,6 +4023,8 @@ export class InvoicesService {
         where: { id },
         data: { status: InvoiceStatus.DRAFT },
       });
+      await overridden?.stamp(tx, id); // row 460: the staff override of a restricted line
+      await du.clearIssueDisplayUnits(tx, id); // SA-827 rule 5 / B1275: a DRAFT renders live
       // SA-839 F2 (B706): re-book from the items read in this tx, in the UNVOID's period (§3); the void's
       // rows stay. `amendedPeriod` (never a refusal): the void sat in a FILED month (SA-182 shape).
       const items = await tx.invoiceItem.findMany({ where: { invoiceId: id } });
@@ -4074,15 +4036,13 @@ export class InvoicesService {
   }
 
   async reopenInvoice(id: string) {
-    const inv = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
-    if (!inv) throw new NotFoundException("Invoice not found");
-    if (inv.status !== InvoiceStatus.PAID)
-      throw new BadRequestException("Only PAID invoices can be reopened");
+    await loadReopenableInvoice(this.prisma.forTenant(), id); // PAID only; W-861: never a paid walk-in sale
 
     // Sales agents & commissions: PAID→DRAFT is the nastiest clawback path —
     // if commission was already claimed, sync emits the negative adjustment
     // atomically with the status flip.
     return this.prisma.tenantTransaction(async (tx) => {
+      await du.clearIssueDisplayUnits(tx, id); // SA-827 rule 5 / B1275: BEFORE the update, whose items must not carry the old word
       const reopened = await tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.DRAFT, paidAt: null },
@@ -4340,7 +4300,7 @@ export class InvoicesService {
         tx,
         till,
         inv.orderId,
-        dto,
+        { ...dto, paidAt: givenPaidInstant(dto.paidAt, tz) },
         paymentStatus,
         opts?.paymentGroupId,
       );
@@ -4366,7 +4326,7 @@ export class InvoicesService {
           notes: dto.notes,
           paidAt,
           // Never clamped: a post-dated check settles in the future.
-          settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
+          settledAt: settledInstantOf(dto.settledAt, tz),
           bankCharges: roundMoneyOrNull(dto.bankCharges),
           status: paymentStatus as any,
           paymentNumber,
@@ -4439,6 +4399,11 @@ export class InvoicesService {
     return du.loadStopDisplayUnitCatalog(this.prisma, stop, this.entitlements);
   }
 
+  /** SA-1029 A-1: the other pre-tx half of the delivery freeze, the products' base words (no plan flag gates it). */
+  loadBaseLabels(stop: { orders: { id: string }[] }) {
+    return du.loadStopBaseLabels(this.prisma, stop);
+  }
+
   /**
    * Record a driver-collected payment at stop completion, resolving the target
    * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
@@ -4473,6 +4438,7 @@ export class InvoicesService {
     amount: number,
     method: string,
     catalog: du.DisplayUnitCatalog | null, // SA-967: REQUIRED, loaded BEFORE the tx (loadUnitCatalog); null = legacy
+    baseLabels: ReadonlyMap<string, string> | null, // SA-1029: REQUIRED, loaded BEFORE the tx (loadBaseLabels); null = nothing freezes
     context?: { runId?: string; stopId?: string },
   ): Promise<{
     applied: number;
@@ -4580,7 +4546,10 @@ export class InvoicesService {
           ...(wasDraft ? { sentAt: new Date() } : {}),
         },
       });
-      if (wasDraft) await du.freezeIssueUnitsFromCatalog(tx, inv, catalog); // SA-827
+      if (wasDraft) {
+        await du.freezeIssueUnitsFromCatalog(tx, inv, catalog); // SA-827
+        await du.writeIssueBaseLabels(tx, inv.id, inv.tenantId, baseLabels); // SA-1029: its own call, so no early return gates the word
+      }
       await this.commissionEngine.syncInvoiceCommissionSafe(inv.id, tx);
       after.defer(this.gateway).emitInvoiceUpdated(this.prisma.getTenantId(), {
         invoiceId: inv.id,
@@ -4740,7 +4709,8 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
-      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dto); // per-row closed window, then till-CASH before the close
+      const dated = await resolveEditedPaymentDates(tx, dto, payment, tz);
+      await counterPay.assertEditDated(tx, till, inv.orderId, payment, dated.datedDto); // per-row closed window, then till-CASH before the close
 
       // F03/R5/T-B81: read the STORED method, not just the incoming dto — the same
       // guard deletePayment (:4653) and voidPayment (:4941) already have. Neither
@@ -4799,11 +4769,8 @@ export class InvoicesService {
           method: dto.method,
           reference: dto.reference,
           notes: dto.notes,
-          ...(dto.paidAt && { paidAt: new Date(dto.paidAt) }),
-          // Key present = set or (null) clear; key absent = keep what is stored.
-          ...(dto.settledAt !== undefined && {
-            settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
-          }),
+          ...(dated.movedPaidAt && { paidAt: dated.movedPaidAt }),
+          ...(dated.keptSettledAt !== undefined && { settledAt: dated.keptSettledAt }),
           ...(dto.bankCharges !== undefined && { bankCharges: roundMoneyOrNull(dto.bankCharges) }),
           status: newPaymentStatus,
         },
@@ -5064,9 +5031,9 @@ export class InvoicesService {
   private async writeStandalonePayment(dto: StandalonePaymentDto, opts?: StandalonePaymentOpts) {
     const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, once per call
     const paymentGroupId = randomUUID();
-    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const paidAt = paidInstantOf(dto.paidAt, tz); // SA-943: tenant-local day, today = now
     // One bank date for the whole allocation group — the money landed once.
-    const settledAt = dto.settledAt ? new Date(dto.settledAt) : null;
+    const settledAt = settledInstantOf(dto.settledAt, tz);
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
@@ -5318,7 +5285,7 @@ export class InvoicesService {
       // historical payment into the current period and restate a closed one. Absent
       // an explicit date the column stays as it is (NULL rows keep falling back to
       // paidAt); an explicit date is authoritative and drives both fields.
-      const explicitSettledAt = dto.settledAt ? new Date(dto.settledAt) : null;
+      const explicitSettledAt = settledInstantOf(dto.settledAt, tz); // SA-943: tenant-local day
 
       // SA ruling C: RECORDED -> DEPOSITED / CLEARED takes no close lock (accepted): it changes the CHECK grouping of a fresh
       // fold, never cash and never a stored close.

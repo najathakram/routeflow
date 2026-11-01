@@ -15,10 +15,15 @@ export const DELIVERY_FIX_KEY_VALUES = [
 export type DeliveryFixKey = (typeof DELIVERY_FIX_KEY_VALUES)[number];
 
 /** Closed set of delivery `kind` labels (the API's `EMAIL_KINDS`, pinned by a parity spec). */
-export const EMAIL_KIND_VALUES = [
+/** The three emails the office gets about a customer's order (SA-1063); one list, so no consumer retypes it. */
+export const STAFF_ORDER_EMAIL_KIND_VALUES = [
   "STAFF_NEW_ORDER",
   "BUYER_ORDER_EDITED",
   "BUYER_ORDER_CANCELLED",
+] as const;
+
+export const EMAIL_KIND_VALUES = [
+  ...STAFF_ORDER_EMAIL_KIND_VALUES,
   "LOW_STOCK_DIGEST",
   "INVOICE_SENT",
   "AUTH_OTHER",

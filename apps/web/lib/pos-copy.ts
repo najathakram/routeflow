@@ -30,11 +30,15 @@ export const POS_COPY = {
   stepInvoice: "Invoice",
   stepHandedOver: "Handed over",
   readyForPickup: "Ready for pickup",
+  confirmOrder: "Confirm order",
   createInvoice: "Create invoice",
   handOver: "Hand over",
   recordPayment: "Record payment",
   printInvoice: "Print invoice",
   invoiceCreated: "Invoice created",
+  // SA-1071 V1: the sentence names the invoice when the answer has a number; a mixed order may return several.
+  invoiceCreatedNamed: (number: string, more: number) =>
+    more > 0 ? `Invoice ${number} and ${more} more created` : `Invoice ${number} created`,
   switchToDelivery: "Switch to delivery",
   shipByCarrier: "Ship by carrier…",
   invoiceFailed: "Couldn't create the invoice. Try again.",

@@ -96,7 +96,7 @@ export function ArrivedStopSheet({
               icon={<PackagePlus className="h-5 w-5" />}
               title="New order at door"
               subtitle="Open the order builder for this delivery"
-              onClick={() => go("/orders?action=new")}
+              onClick={() => go("/orders?action=new&builder=1")}
             />
             <ActionTile
               icon={<CreditCard className="h-5 w-5" />}

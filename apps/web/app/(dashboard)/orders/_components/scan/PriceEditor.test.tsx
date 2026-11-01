@@ -116,6 +116,11 @@ describe("PriceEditor", () => {
     });
 
     // #2696(c): a SPECIAL line is editable; its special price is the default (placeholder).
+    it("T26: a line at its memory has the memory as the placeholder", () => {
+      setup(line({ priceType: "MANUAL", unitPrice: 15, specialPrice: 7.5 }));
+      expect(screen.getByLabelText("Price")).toHaveAttribute("placeholder", "15.00");
+    });
+
     it("a SPECIAL line's price is editable, the special price as the placeholder", () => {
       const props = setup(line({ priceType: "SPECIAL", unitPrice: 7.5, specialPrice: 7.5 }));
       const input = screen.getByLabelText("Price");

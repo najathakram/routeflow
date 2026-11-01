@@ -2,7 +2,7 @@ import { BACKORDER_TAG_LABEL } from "@routeflow/types";
 import { invoiceLineQtyText, plural } from "@routeflow/pricing";
 
 /** What the tag means, as visible text beside it (a hover title is invisible on touch). */
-export const BACKORDER_HINT = "Ships when stock arrives";
+export const BACKORDER_HINT = "Available when stock arrives";
 
 /** The stored facts that say which unit a line was sold in (L-332). Every field is optional. */
 export interface BackorderUnit {

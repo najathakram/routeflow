@@ -317,8 +317,10 @@ describe("marketing.css is delivered from the root layout — R-MKT T6", () => {
 // colour, mirrored in the Ledger token source) on the same #2080/#2497 precedent: a dashboard
 // control token, not marketing leakage. Re-pinned again by W-928 (the `prefers-reduced-motion` rule
 // that stops the Tailwind enter / exit animation on every overlay) on the same precedent: an
-// accessibility rule for the dashboard overlays, not marketing leakage.
-const GLOBALS_CSS_SHA256 = "2d154367dfa3ffa38a47f3aafdd1fa76ab27a36c3dbd3481a10384317d30df45";
+// accessibility rule for the dashboard overlays, not marketing leakage. Re-pinned again by SA-1071 A-2
+// (the 16px field rule on touch, so iOS doesn't zoom) on the same precedent: an app-wide rule, not
+// marketing leakage.
+const GLOBALS_CSS_SHA256 = "8585aff1ebd04ca6b1854eb08bb6d6aa9d3a0908ee4a5ee22ba6ef6557902c02";
 // tailwind.config.ts re-pinned by #2329: the preset now builds its values from the shared
 // Ledger token source (packages/ui/src/tokens/ledger.ts). Behaviour-preserving — the compiled
 // web CSS is byte-identical before and after — and unrelated to the marketing port.

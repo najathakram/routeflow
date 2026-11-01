@@ -17,6 +17,12 @@ export class UpdateInvoiceSettingsDto {
   @IsBoolean()
   hideOriginalPrice?: boolean;
 
+  // SA-1031: SystemConfig `invoice.hideBarcodes`. When true the invoice PDF prints no product barcode (line or piece) and no
+  // code under it. Absent = shown, so every tenant stays on until an admin turns it off.
+  @IsOptional()
+  @IsBoolean()
+  hideBarcodes?: boolean;
+
   // WP-D1: tenant-wide deposit policy. Absent/0 = no tenant deposit default (a
   // customer's own defaultDepositPercent, or no deposit at all, still applies via
   // InvoicesService.resolveDefaultTerms's effectiveDepositPercent resolution). Send 0 to clear: null is refused (652).

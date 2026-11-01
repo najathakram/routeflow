@@ -54,6 +54,9 @@ import { CommissionEngineService } from "../sales-agents/commission-engine.servi
 import { EntitlementsService } from "../billing/entitlements.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { Prisma } from "@prisma/client";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const MOCK_ORDER = {
   id: "ord-1",
@@ -157,6 +160,7 @@ describe("OrdersService.updateOrderItems — driver lines resolve the customer's
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

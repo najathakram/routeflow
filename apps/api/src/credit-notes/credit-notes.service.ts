@@ -209,7 +209,7 @@ export class CreditNotesService {
         ) {
           throw cnBad(
             API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
-            `This credit note would take the order past what it was billed (${orderBilled}). ${unlinked.amount.toFixed(2)} was already refunded as store credit for its returns before the order was invoiced.`,
+            `This credit note would take the order past what it was billed (${orderBilled}). ${roundMoney(unlinked.amount).toFixed(2)} was already refunded as store credit for its returns before the order was invoiced.`,
           );
         }
       }

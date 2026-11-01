@@ -1,5 +1,5 @@
 import * as React from "react";
-import { TAP_TARGET, cn } from "@routeflow/ui/web";
+import { TAP_TARGET, buttonVariants, cn } from "@routeflow/ui/web";
 import { formatReceiptMoney as money, unitWords } from "@routeflow/pricing";
 import { priceUnitWord } from "@/lib/product-unit-label";
 import { cartTotals } from "@/lib/counter-sale";
@@ -8,18 +8,39 @@ import {
   isBoxedLine,
   registerPriceLabel,
   registerQtyLabel,
+  sellingUnitLabel,
+  typedQtyOverCap,
   type TypedQty,
 } from "./counter-sale-line-edit";
-import { qtyRefusalMessage, type QtyFieldKind } from "./counter-qty-refusal";
+import {
+  qtyRefusalMessage,
+  QTY_AT_CAP_HINT,
+  QTY_TOO_LARGE_COPY,
+  type QtyFieldKind,
+} from "./counter-qty-refusal";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
+import { PriceHistoryButton } from "@/components/PriceHistory";
 
-// A boxed line prints the default pack word; a plain line prints its product's own unit (row 298), else the default base word.
-const UW = unitWords();
+// SA-934 A-1: the words are the builder's call, per line (LineItemRow): the product's own pack and base words when the line
+// carries them, else the defaults (a line held before this has neither and prints Box / pcs). A plain line prints its own unit (row 298).
+const wordsOf = (l: SaleLine) => unitWords({ packLabel: l.packLabel, baseUnitLabel: l.baseLabel });
 
 /** Every compact line control is a full 44 px target (TAP_TARGET) however small it looks. */
 const LINE_BTN = cn(TAP_TARGET, "rounded border px-2 text-xs disabled:opacity-40");
+
+/** SA-1071 P2: History reads as Change price's sibling; `[&>span]` is its word. */
+const HISTORY_BTN = cn(
+  buttonVariants({ variant: "secondary", size: "sm" }),
+  "min-h-[44px] min-w-[44px] gap-1 lg:min-h-0 lg:min-w-0 [&>span]:text-[12.5px] [&>span]:text-navy",
+);
+
+/** W-717: the note buttons are secondary to the steppers, so they drop the border (one weight per role, not six equal boxes). */
+const LINE_BTN_QUIET = cn(
+  TAP_TARGET,
+  "rounded px-2 text-xs text-navy/70 underline-offset-2 hover:underline disabled:opacity-40",
+);
 
 /** B1208: a boxed line steps by a box or a piece; a plain line by one. Nothing steps a line to zero (x removes it). */
 export function LineStepper({
@@ -31,27 +52,41 @@ export function LineStepper({
   locked: boolean;
   onStep: (tempId: string, unit: StepUnit, dir: 1 | -1) => void;
 }) {
+  const hintId = React.useId();
+  // A "+" that is off only because the line is full says so (a disabled button alone gives no reason).
+  const atCap = (unit: StepUnit, dir: 1 | -1) =>
+    dir === 1 && !locked && stepLine(line, unit, dir) === line;
+  const anyAtCap = atCap("piece", 1) || (isBoxedLine(line) && atCap("box", 1));
+  const hint = anyAtCap ? (
+    <span id={hintId} className="basis-full text-xs text-navy/70" data-testid="counter-line-full">
+      {QTY_AT_CAP_HINT}
+    </span>
+  ) : null;
   const btn = (label: string, text: string, unit: StepUnit, dir: 1 | -1) => (
     <button
       type="button"
       className={LINE_BTN}
       aria-label={label}
+      aria-describedby={atCap(unit, dir) ? hintId : undefined}
       disabled={locked || stepLine(line, unit, dir) === line}
       onClick={() => onStep(line.tempId, unit, dir)}
     >
       {text}
     </button>
   );
+  const w = wordsOf(line);
+  const unitLabel = sellingUnitLabel(line, w);
   return isBoxedLine(line) ? (
     <span
       className="flex flex-wrap items-center gap-1"
       role="group"
       aria-label={`Quantity of ${line.name}`}
     >
-      {btn(`Remove a box from ${line.name}`, "\u2212 box", "box", -1)}
-      {btn(`Add a box to ${line.name}`, "+ box", "box", 1)}
-      {btn(`Remove a piece from ${line.name}`, "\u2212 pc", "piece", -1)}
-      {btn(`Add a piece to ${line.name}`, "+ pc", "piece", 1)}
+      {btn(`Remove a box from ${line.name}`, `\u2212 ${unitLabel}`, "box", -1)}
+      {btn(`Add a box to ${line.name}`, `+ ${unitLabel}`, "box", 1)}
+      {btn(`Remove a piece from ${line.name}`, `\u2212 1 ${w.baseShortFor(1)}`, "piece", -1)}
+      {btn(`Add a piece to ${line.name}`, `+ 1 ${w.baseShortFor(1)}`, "piece", 1)}
+      {hint}
     </span>
   ) : (
     <span
@@ -61,6 +96,7 @@ export function LineStepper({
     >
       {btn(`Remove one ${line.name}`, "\u2212", "piece", -1)}
       {btn(`Add one ${line.name}`, "+", "piece", 1)}
+      {hint}
     </span>
   );
 }
@@ -75,6 +111,7 @@ function QtyField({
   value,
   locked,
   onCommit,
+  overCap,
   onEnter,
   tabOut = false,
 }: {
@@ -83,6 +120,8 @@ function QtyField({
   value: number;
   locked: boolean;
   onCommit: (text: string) => boolean;
+  /** A clean whole number the cap alone refuses (a boxed line's boxes and pieces together): the row words it. */
+  overCap?: (text: string) => boolean;
   onEnter?: () => void;
   /** The LAST quantity field of the line: Tab with a typed draft commits it and hands focus to the scan box. */
   tabOut?: boolean;
@@ -94,7 +133,11 @@ function QtyField({
     if (draft === null) return;
     const text = draft;
     setDraft(null); // accepted or refused, the field re-reads the line
-    setRefusal(onCommit(text) ? null : qtyRefusalMessage(text, kind));
+    setRefusal(
+      onCommit(text)
+        ? null
+        : (qtyRefusalMessage(text, kind) ?? (overCap?.(text) ? QTY_TOO_LARGE_COPY : null)),
+    );
   };
   return (
     <>
@@ -106,7 +149,7 @@ function QtyField({
         aria-label={label}
         aria-invalid={refusal ? true : undefined}
         aria-describedby={refusal ? messageId : undefined}
-        className="min-h-[44px] w-16 rounded border px-2 text-center text-sm disabled:opacity-40"
+        className="min-h-[44px] w-20 rounded border px-2 text-center text-sm disabled:opacity-40"
         disabled={locked}
         value={draft ?? String(value)}
         onChange={(e) => {
@@ -161,6 +204,7 @@ function LineQtyEditor({
         value={line.boxes ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { boxes: t })}
+        overCap={(t) => typedQtyOverCap(line, { boxes: t })}
         onEnter={onEnter}
       />
       <QtyField
@@ -169,6 +213,7 @@ function LineQtyEditor({
         value={line.pieces ?? 0}
         locked={locked}
         onCommit={(t) => onQty(line.tempId, { pieces: t })}
+        overCap={(t) => typedQtyOverCap(line, { pieces: t })}
         onEnter={onEnter}
         tabOut
       />
@@ -180,6 +225,7 @@ function LineQtyEditor({
       value={line.qty}
       locked={locked}
       onCommit={(t) => onQty(line.tempId, { qty: t })}
+      overCap={(t) => typedQtyOverCap(line, { qty: t })}
       onEnter={onEnter}
       tabOut
     />
@@ -204,6 +250,7 @@ export function CounterLineRow({
   canEditPrices = false,
   priceTier = 1,
   customerName,
+  historyCustomerId = null,
   onPriceEdit,
   onPriceReset,
   onPriceClosed,
@@ -224,6 +271,8 @@ export function CounterLineRow({
   /** POS-5: the customer's pricing tier for this product (a special tier needs a reason for a real change) */
   priceTier?: number;
   customerName?: string;
+  /** W-853: the NAMED customer (never a walk-in) whose past prices the line offers; shown only with `canEditPrices`. */
+  historyCustomerId?: string | null;
   onPriceEdit?: (tempId: string, edit: CounterPriceEdit) => void;
   onPriceReset?: (tempId: string) => void;
   onPriceClosed?: () => void;
@@ -235,6 +284,7 @@ export function CounterLineRow({
   hideOriginalPrice?: boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
+  const [historyPick, setHistoryPick] = React.useState<{ value: number } | null>(null);
   const noteAtOpenRef = React.useRef(""); // Escape puts the note back to what it was when the field opened
   const closeNote = () => {
     setEditing(false);
@@ -246,7 +296,7 @@ export function CounterLineRow({
     <li className="flex flex-col gap-2 p-3 text-sm">
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 break-words">
-          {l.name} · {registerQtyLabel(l, UW)}
+          {l.name} · {registerQtyLabel(l, wordsOf(l))}
           <span className="block text-xs text-navy/70">
             {cartStrikesList(l, hideOriginalPrice) ? (
               <s className="mr-1 tabular-nums text-navy/50" data-testid="line-unit-price-was">
@@ -254,7 +304,7 @@ export function CounterLineRow({
               </s>
             ) : null}
             <span className="tabular-nums" data-testid="line-unit-price">
-              {registerPriceLabel(l, UW, money, priceUnitWord)}
+              {registerPriceLabel(l, wordsOf(l), money, priceUnitWord)}
             </span>
           </span>
         </span>
@@ -289,9 +339,27 @@ export function CounterLineRow({
           customerName={customerName}
           locked={locked}
           onApply={(edit) => onPriceEdit?.(l.tempId, edit)}
+          openWith={historyPick}
           onReset={() => onPriceReset?.(l.tempId)}
           onClosed={onPriceClosed}
         />
+        {canEditPrices && historyCustomerId && l.productId ? (
+          <fieldset disabled={locked} className="contents">
+            <PriceHistoryButton
+              customerId={historyCustomerId}
+              customerName={customerName}
+              productId={l.productId}
+              productName={l.name}
+              unitHint={isBoxedLine(l) ? "case" : l.unit}
+              packHint={l.unitsPerBox ?? null}
+              label="History"
+              // SA-1071 P2: the same button as Change price beside it, at the same heights.
+              className={HISTORY_BTN}
+              // Use opens the price dialog at that number: nothing is priced until Apply (the one write)
+              onUsePrice={(price) => !locked && setHistoryPick({ value: price })}
+            />
+          </fieldset>
+        ) : null}
         {edited ? (
           <span
             className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"
@@ -300,9 +368,17 @@ export function CounterLineRow({
             {edited.chip}
           </span>
         ) : null}
+        {l.remembered && !l.override ? (
+          <span
+            className="rounded bg-navy/5 px-2 py-1 text-xs text-navy"
+            data-testid="line-last-price-chip"
+          >
+            Last price
+          </span>
+        ) : null}
         <button
           type="button"
-          className={LINE_BTN}
+          className={LINE_BTN_QUIET}
           aria-label={`${hasNote ? "Edit the note on" : "Add a note to"} ${l.name}`}
           aria-expanded={editing}
           disabled={locked}
@@ -317,7 +393,7 @@ export function CounterLineRow({
         {hasNote ? (
           <button
             type="button"
-            className={LINE_BTN}
+            className={LINE_BTN_QUIET}
             aria-label={`Clear the note on ${l.name}`}
             disabled={locked}
             onClick={() => {

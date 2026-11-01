@@ -1,4 +1,4 @@
-import { type InlineReturnLineDraft } from "./inline-return-state";
+import { rulingLineIndex, type InlineReturnLineDraft } from "./inline-return-state";
 
 /** The product fields a scan resolves to (web `useScanCodeHandler`, mobile `resolveProductByCode`). */
 export interface ScannedReturnProduct {
@@ -27,7 +27,8 @@ export function applyReturnScan<L extends InlineReturnLineDraft>(
   product: ScannedReturnProduct,
   makeLine: (base: InlineReturnLineDraft) => L,
 ): { lines: L[]; created: boolean } {
-  const at = lines.findIndex((l) => l.productId === product.id);
+  // the ruling row (first with a quantity): a piece added to a blank first row would make it the row whose reason rules
+  const at = rulingLineIndex(lines, product.id);
   if (at >= 0) {
     const next = lines.slice();
     next[at] = { ...lines[at], pieces: String(piecesOf(lines[at].pieces) + 1) };

@@ -9,6 +9,7 @@ import { MESSAGE_PROVIDER } from "./providers/message-provider.interface";
 import { EmailChannelProvider } from "./providers/email-channel.provider";
 import { EntitlementsModule } from "../billing/entitlements.module";
 import { EmailModule } from "../email/email.module";
+import { PolicyModule } from "../policy/policy.module";
 
 /**
  * P6-2 messaging engine. MESSAGE_PROVIDER → `EmailChannelProvider` (N1) — a
@@ -23,7 +24,7 @@ import { EmailModule } from "../email/email.module";
  * event×channel rules matrix + template CRUD + settings the engine consults.
  */
 @Module({
-  imports: [EntitlementsModule, EmailModule],
+  imports: [EntitlementsModule, EmailModule, PolicyModule],
   controllers: [MessagingController],
   providers: [
     MessagingService,

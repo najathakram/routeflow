@@ -1,5 +1,5 @@
 import { isSpecialPrice } from "./customer-unit-price";
-import { isSpecialTier } from "./pricing";
+import { isSpecialTier, isStickyUpsell, roundMoney } from "./pricing";
 import { getTierPrice } from "./tier-pricing";
 import { namesBase, namesPack, packFactorOf, type LadderProduct } from "./unit-levels";
 
@@ -36,6 +36,8 @@ export interface CustomerLinePrice {
   priceType: "STANDARD" | "SPECIAL" | "MANUAL";
   /** True = came from the customer layer (skip the last-given pre-fill, SA-811a R3). */
   layered: boolean;
+  /** SA-1068: true only when the price is the customer's remembered above-list price (a sticky upsell); absent otherwise. */
+  remembered?: true;
 }
 
 const norm = (s: string) => s.trim().toLowerCase();
@@ -88,6 +90,12 @@ export function customerLinePrice(i: {
   unitLabel?: string | null;
   /** Unit lines: the caller's unit-levels price (master); the pack omits it. */
   tierPrice?: number;
+  /**
+   * SA-1068: the customer's remembered price for this product (`loadCustomerPriceHistory`). Used ONLY for the pack, ONLY with
+   * no layer row, and ONLY when it is a sticky upsell (`isStickyUpsell`): the server books it, so the display shows it.
+   * Omitted, every other caller is unchanged.
+   */
+  remembered?: number | null;
 }): CustomerLinePrice {
   const row = i.layer
     ? layerRowForLabel(i.product as unknown as LadderProduct, i.layer, i.unitLabel)
@@ -100,6 +108,19 @@ export function customerLinePrice(i: {
       isSpecial,
       priceType: row.aboveList ? "MANUAL" : isSpecial ? "SPECIAL" : "STANDARD",
       layered: true,
+    };
+  }
+  if (
+    isPackLabel(i.product as unknown as LadderProduct, i.unitLabel) &&
+    isStickyUpsell(i.remembered, Number(i.product.pricePerUnit))
+  ) {
+    return {
+      price: roundMoney(Number(i.remembered)),
+      listPrice: Number(i.product.pricePerUnit),
+      isSpecial: false,
+      priceType: "MANUAL",
+      layered: false,
+      remembered: true,
     };
   }
   const isSpecial = isSpecialTier(i.tier);

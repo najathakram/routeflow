@@ -28,6 +28,7 @@ import {
   withRfInvoiceNumberLock,
 } from "./rf-invoice-number";
 
+import { roundMoney } from "@routeflow/pricing";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The subscriptions the issuer considers (also read by the platform-admin summary, so the two never disagree). */
@@ -347,7 +348,7 @@ export class RfInvoiceIssuerService {
               tenantId: sub.tenantId,
               actorId,
               action: RF_INVOICE_AUDIT_ACTIONS.ISSUED,
-              message: `RouteFlow invoice ${number} issued for ${draft.total.toFixed(2)} ${draft.currency}, due ${periodKey.slice(0, 10)}.`,
+              message: `RouteFlow invoice ${number} issued for ${roundMoney(draft.total).toFixed(2)} ${draft.currency}, due ${periodKey.slice(0, 10)}.`,
               meta: {
                 invoiceId: row.id,
                 number,

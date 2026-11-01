@@ -32,6 +32,17 @@ const CUSTOMERS = [
   { id: "c-plain", businessName: "Plain Cafe", pricingTier: 1 },
   { id: "c-walkin", businessName: "Walk-in Record", pricingTier: 1, isWalkIn: true },
 ];
+// SA-1068: the till reads the customer's remembered prices (an empty, answered read here: no sticky upsell).
+jest.mock("@/lib/api/orders", () => ({
+  ...jest.requireActual("@/lib/api/orders"),
+  useCustomerPriceHistory: () => ({
+    data: {},
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  }),
+}));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: CUSTOMERS } }),
   useCustomerPrices: () => ({
@@ -414,8 +425,11 @@ describe("a restored sale keeps the tender it was saved with", () => {
       renderTill(<CounterSaleScreen />);
       await screen.findByTestId("counter-cart-restored");
       expect(screen.getByLabelText("Amount paying now")).toHaveValue("5");
-      expect(screen.getByTestId("counter-part-pay-split").textContent).toBe(
-        "Pay $5.00 now \u00b7 $2.50 goes on account",
+      // The customer's credit read answers after the restore, and the figure waits for it.
+      await waitFor(() =>
+        expect(screen.getByTestId("counter-part-pay-split").textContent).toBe(
+          "Pay $5.00 now \u00b7 $2.50 goes on account",
+        ),
       );
     },
   );

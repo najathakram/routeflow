@@ -20,10 +20,7 @@ describe("iGate.edit line keys (W-748 Q2, SA-1017)", () => {
     expect(
       keysFor(
         [{ productId: "p-held", qtyDelta: 1 }],
-        [
-          { id: "line-1", productId: "p-held" },
-          { productId: "p-held" },
-        ],
+        [{ id: "line-1", productId: "p-held" }, { productId: "p-held" }],
       ),
     ).toEqual(["n:1"]);
   });
@@ -50,11 +47,7 @@ describe("iGate.edit line keys (W-748 Q2, SA-1017)", () => {
           { productId: "p-held", qtyDelta: 1 },
           { productId: "p-new", qtyDelta: 1 },
         ],
-        [
-          { id: "line-1", productId: "p-held" },
-          { productId: "p-held" },
-          { productId: "p-new" },
-        ],
+        [{ id: "line-1", productId: "p-held" }, { productId: "p-held" }, { productId: "p-new" }],
       ),
     ).toEqual(["n:1", "n:2"]);
   });

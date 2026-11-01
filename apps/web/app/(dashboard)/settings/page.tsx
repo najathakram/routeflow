@@ -112,6 +112,7 @@ import { isReadOnlyRefusal, showReadOnlyRefusal } from "@/lib/read-only-refusal"
 import { userStatusRefusalCopy } from "@/lib/user-status-refusal";
 import { newPasswordSchema, passwordErrorMessage } from "@/lib/password-policy";
 import { PasswordChecklist } from "@/components/auth";
+import { isZoneUnset } from "@/lib/tenant-timezone";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -167,6 +168,8 @@ function BusinessProfileTab() {
     queryKey: ["settings"],
     queryFn: () => apiClient.get("/settings").then((r) => r.data),
   });
+  // SA-1067 Z4: said only to the admin who can pick the city, and from the SAVED zone (not the field being typed in).
+  const zoneUnset = canEditTimeZone && isZoneUnset(savedSettings?.timezone);
 
   const saveSettings = useMutation({
     // `timezone` rides along only when an admin actually changed it.
@@ -375,7 +378,7 @@ function BusinessProfileTab() {
                 list="settings-timezone-zones"
                 autoComplete="off"
                 id="settings-timezone"
-                aria-describedby={`settings-timezone-help${errors.timezone ? " settings-timezone-error" : ""}`}
+                aria-describedby={`settings-timezone-help${zoneUnset ? " settings-timezone-unset" : ""}${errors.timezone ? " settings-timezone-error" : ""}`}
                 register={register("timezone", {
                   onBlur: (e) => {
                     // Tidy the spelling when the admin leaves the field; text that is not a zone stays for the save check.
@@ -397,10 +400,15 @@ function BusinessProfileTab() {
           <p id="settings-timezone-help" className="mt-1 text-xs text-navy/70">
             Applies to receipts and today&apos;s sales from now on
           </p>
+          {zoneUnset ? (
+            <p id="settings-timezone-unset" className="mt-1 text-xs text-navy/70">
+              Not set yet. Dates use UTC until you pick your city.
+            </p>
+          ) : null}
         </div>
       </Card>
 
-      <Card title="Business address">
+      <Card id="business-address" title="Business address">
         <div className="space-y-3">
           <AddressAutocomplete
             label="Street"
@@ -2667,6 +2675,27 @@ function InvoicingTab() {
     );
   };
 
+  const handleHideBarcodesChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { hideBarcodes: !checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Barcode display updated.",
+            variant: "success",
+          }),
+        onError: (err) =>
+          isReadOnlyRefusal(err) ||
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleHideOriginalPriceChange = (checked: boolean) => {
     updateSettings.mutate(
       { hideOriginalPrice: !checked },
@@ -2819,6 +2848,26 @@ function InvoicingTab() {
                 aria-label="Show original price on discounted lines"
                 checked={!invoiceSettings?.hideOriginalPrice}
                 onChange={(e) => handleHideOriginalPriceChange(e.target.checked)}
+                disabled={isLoading || updateSettings.isPending}
+                className="h-4 w-4 rounded border-surface-border"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">Show barcodes on invoices</p>
+              <p className="text-xs text-navy/70">
+                Prints each product&apos;s barcode and code on its line. Turn off to print invoices
+                without them.
+              </p>
+            </div>
+            <label className="inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                aria-label="Show barcodes on invoices"
+                checked={!invoiceSettings?.hideBarcodes}
+                onChange={(e) => handleHideBarcodesChange(e.target.checked)}
                 disabled={isLoading || updateSettings.isPending}
                 className="h-4 w-4 rounded border-surface-border"
               />

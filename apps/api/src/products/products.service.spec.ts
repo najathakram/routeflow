@@ -17,6 +17,9 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
+
+let stock!: ReturnType<typeof wireStockHelper>;
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -40,6 +43,7 @@ describe("ProductsService", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stock = wireStockHelper(prisma, { ample: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -942,7 +946,7 @@ describe("ProductsService", () => {
           fn({
             ...prisma.forTenant(),
             $executeRaw: exec,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
           }),
         );
         await service.update("prod-1", { unitsPerBox: 12 } as any, {
@@ -964,7 +968,7 @@ describe("ProductsService", () => {
           fn({
             ...prisma.forTenant(),
             $executeRaw: exec,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
           }),
         );
 
@@ -1026,7 +1030,7 @@ describe("ProductsService", () => {
           fn({
             ...prisma.forTenant(),
             $executeRaw: exec,
-            $queryRaw: jest.fn().mockResolvedValue([]),
+            $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
           }),
         );
         await service.update("prod-1", { name: "Renamed" } as any, {
@@ -2673,6 +2677,8 @@ describe("ProductsService", () => {
     it("writes a PURCHASE movement carrying the opening qty + cost when currentStock is nonzero", async () => {
       prisma.product.findFirst.mockResolvedValue(null); // no name/sku/barcode collisions
       prisma.product.create.mockResolvedValue({ id: "new-prod-1" });
+      // a freshly created product starts at 0 on hand: the opening row is its whole stock
+      stock.setState((ids) => ids.map((id) => ({ id, currentStock: 0, averageCost: null })));
 
       const result = await service.importFromZoho({
         items: [
@@ -2949,7 +2955,7 @@ function makeBulkDeleteReferenceStore() {
           if (v[0] === "product-barcode") advisoryLocks.push(String(v[1]).split(":")[1]);
           return Promise.resolve(0);
         }),
-        $queryRaw: jest.fn().mockResolvedValue([]),
+        $queryRaw: stock.queryRaw(jest.fn().mockResolvedValue([])),
       }),
     ),
   };

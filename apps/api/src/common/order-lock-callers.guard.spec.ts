@@ -103,7 +103,7 @@ const SETTLE_CALLERS: Record<string, string> = {
   "orders/orders.service.ts#changeStatus":
     "settle is the tx's first statement: its own lockOrderCreditSettle takes the Order first",
   "returns/inline-returns.service.ts#issueCreditInTx":
-    "caller holds the Order: captureInTx's first statement; issueCredit()/approve() lockOrderRow after the Return (SA-706c)",
+    "caller holds the Order: captureInTx's first statement; issueCredit() lockOrderRow after the Return (SA-706c); approve() takes the customer lock, the Return, then lockOrderRows over the carrying and source orders (SA-1060 A-3)",
 };
 
 /**
@@ -147,24 +147,48 @@ describe("order-lock callers: every settle / invoice-create caller declares its 
     );
   });
 
-  it("issueCredit() and approve() take the Order right after the Return, before restock / mint / insert", () => {
+  it("issueCredit() takes the Order right after the Return, before restock / mint / insert", () => {
     const src = strip(fs.readFileSync(path.join(SRC, "returns/inline-returns.service.ts"), "utf8"));
-    for (const method of ["issueCredit", "approve"]) {
-      const start = src.indexOf(`async ${method}(`);
-      expect(start).toBeGreaterThan(-1);
-      const body = src.slice(start, start + 6000);
-      const returnLock = body.indexOf('FROM "Return"');
-      const orderLock = body.indexOf("lockOrderRow(tx, tenantId, fresh.orderId)");
-      const firstWrite = Math.min(
-        ...["restockReturnItems(", "issueCreditInTx("]
-          .map((n) => body.indexOf(n))
-          .filter((i) => i > -1),
-      );
-      expect(returnLock).toBeGreaterThan(-1);
-      expect(orderLock).toBeGreaterThan(returnLock);
-      expect(orderLock).toBeLessThan(firstWrite);
-    }
+    const start = src.indexOf("async issueCredit(");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, start + 6000);
+    const returnLock = body.indexOf('FROM "Return"');
+    const orderLock = body.indexOf("lockOrderRow(tx, tenantId, fresh.orderId)");
+    const firstWrite = Math.min(
+      ...["restockReturnItems(", "issueCreditInTx("]
+        .map((n) => body.indexOf(n))
+        .filter((i) => i > -1),
+    );
+    expect(returnLock).toBeGreaterThan(-1);
+    expect(orderLock).toBeGreaterThan(returnLock);
+    expect(orderLock).toBeLessThan(firstWrite);
   });
+
+  it("SA-1060 A-3 (L5): approve() takes the customer lock first, then the Return, then ONE lockOrderRows over the carrying and every source order, before any write", () => {
+    const src = strip(fs.readFileSync(path.join(SRC, "returns/inline-returns.service.ts"), "utf8"));
+    const start = src.indexOf("async approve(");
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf("\n  async ", start + 10);
+    const body = src.slice(start, next > -1 ? next : undefined);
+    const txStart = body.indexOf("tenantTransaction(");
+    const customerLock = body.indexOf("this.lockCustomerInTx(tx, pre.customerId)");
+    const returnLock = body.indexOf('FROM "Return"');
+    const orderLocks = body.indexOf("lockOrderRows(tx, tenantId, [");
+    const firstWrite = Math.min(
+      ...["restockReturnItems(", "reverseLedgerForReturn(", "issueCreditInTx("]
+        .map((n) => body.indexOf(n))
+        .filter((i) => i > -1),
+    );
+    expect(txStart).toBeGreaterThan(-1);
+    expect(customerLock).toBeGreaterThan(txStart); // inside the tx
+    expect(returnLock).toBeGreaterThan(customerLock); // the customer lock is the tx's first statement
+    expect(body.slice(txStart, customerLock)).not.toMatch(/\$executeRaw|\.update\(|\.create\(/);
+    expect(orderLocks).toBeGreaterThan(returnLock);
+    expect(orderLocks).toBeLessThan(firstWrite);
+    expect(body.slice(orderLocks, orderLocks + 220)).toContain("sourceOrderId");
+    expect(body).not.toContain("lockOrderRow(");
+  });
+
   it("SA-706d: every transaction that claims a stop locks the stop's Orders FIRST (Order -> RouteRunStop, one order on every path)", () => {
     const offenders: string[] = [];
     let claims = 0;
@@ -488,6 +512,8 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "orders/orders.service.ts#approveChangeRequestAtStop": "Order > Invoice",
     "orders/orders.service.ts#deleteOrder": "Order > Invoice",
     "orders/orders.service.ts#forceConsolidateCustomer": "Order > Invoice",
+    "orders/orders.service.ts#updateOrderItems": "Order > Invoice",
+    "orders/replace-after-delivery.ts#lockEditedOrder": "Order > Invoice",
     "regulated/ledger-locks.ts#lockLedgerDocumentRows": "Order > Invoice",
     "regulated/parked-reversal-resolution.service.ts#resolve": "Return > Order",
     "returns/inline-returns.service.ts#approve": "Return > Order",

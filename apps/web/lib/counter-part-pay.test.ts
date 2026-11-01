@@ -13,6 +13,7 @@ import {
   partPayAmountProblem,
   partPayCopy,
   partPaySplit,
+  tenderAmount,
 } from "./counter-part-pay";
 import { resolveCounterDefaultTender } from "./counter-default-tender";
 
@@ -31,6 +32,12 @@ describe("counterPaymentAmount: what the payment body carries (S4)", () => {
       counterPaymentAmount({ ...sale, isWalkIn: true, method: "CASH", tendered: 12.5 }),
     ).toEqual({
       amount: 12.5,
+    });
+  });
+
+  it("CASH rounds a half cent up like every write (a typed half cent is refused upstream, A-3, so this only guards the write)", () => {
+    expect(counterPaymentAmount({ ...sale, method: "CASH", tendered: 10.005 })).toEqual({
+      amount: 10.01,
     });
   });
 
@@ -318,5 +325,30 @@ describe("partPayAmountProblem with the customer's open credit (server parity)",
     expect(at("50", null)).toBe(PART_PAY_CREDIT_PENDING_COPY);
     expect(at("", null)).toBeNull();
     expect(at("95", null, "CASH")).toBeNull();
+  });
+});
+
+/** SA-1067 A-3 (A3-8): the one tender reader. Text that is not dollars and cents reads as no tender at all. */
+describe("tenderAmount: only plain money reads as a tender", () => {
+  it.each([
+    ["", 0],
+    ["   ", 0],
+    ["0", 0],
+    ["28.004011", 0],
+    ["28.4011", 0],
+    ["3E1", 0],
+    ["10.005", 0],
+    ["5,00", 0],
+    ["abc", 0],
+    ["-5", 0],
+    ["+20", 0],
+    [".", 0],
+    ["20", 20],
+    ["20.", 20],
+    [" 20 ", 20],
+    [".5", 0.5],
+    ["20.50", 20.5],
+  ])("%j reads as %d", (text, want) => {
+    expect(tenderAmount(text)).toBe(want);
   });
 });

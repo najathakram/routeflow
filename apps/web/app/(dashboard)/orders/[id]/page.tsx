@@ -34,7 +34,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON, SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
-import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
@@ -75,6 +75,8 @@ import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
 import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
 import { OrderLineItemCards } from "./_components/OrderLineItemCards";
+import { createInvoiceVariant } from "./_components/create-invoice-variant";
+import { creditSelectionsFromOrder, formatDateOnly } from "./order-detail-helpers";
 import { ActionTier } from "./_components/ActionTier";
 import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useScrollAfterSave } from "./_components/use-scroll-after-save";
@@ -89,13 +91,19 @@ import {
   PosCutAfterHandOverNote,
   PosOrderActions,
   PosProgress,
+  GENERATE_INVOICE_ID,
+  INVOICE_CARD_ID,
   posMoveOptions,
 } from "./_components/PosOrderActions";
+import { useReadyForPickupAction } from "./_components/use-ready-for-pickup";
+import { ReadyEmailLine } from "./_components/ReadyEmailLine";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
+import { ReopenDeliveredTier } from "./_components/ReopenDeliveredTier";
 import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { OrderStaffFlags } from "./_components/OrderStaffFlags";
-import { InvoicedEditNotice } from "./_components/InvoicedEditNotice";
+import { EditClosedChip } from "./_components/EditClosedChip";
+import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedEditNotice";
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
@@ -105,7 +113,7 @@ import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authori
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
-import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -139,29 +147,6 @@ import {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-/**
- * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
- * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
- */
-function formatDateOnly(iso: string): string {
-  const [y, m, d] = iso.split("T")[0].split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-/** Map the order's stored credit-note intents into the picker's selection shape. */
-function creditSelectionsFromOrder(o: {
-  orderCreditNotes?: Array<{ creditNoteId: string; amount?: number | string | null }>;
-}): CreditSelection[] {
-  return (o.orderCreditNotes ?? []).map((oc) => ({
-    creditNoteId: oc.creditNoteId,
-    amount: oc.amount != null ? Number(oc.amount) : undefined,
-  }));
-}
-
 export default function OrderDetailPage() {
   const params = useParams();
   const id = params.id as string;
@@ -169,7 +154,6 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
-  const statusLabel = useOrderStatusLabel();
   const staffFulfilment = useStaffFulfilment();
   // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
   // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
@@ -234,6 +218,12 @@ export default function OrderDetailPage() {
   const updateStatus = useUpdateOrderStatus();
   // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
   const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
+  const ready = useReadyForPickupAction({
+    orderId: order?.id,
+    customerName: order?.customer?.businessName,
+    onReady: () => setLocalStatus("OUT_FOR_DELIVERY"),
+    onError: (err) => guardError(() => ready.press())(err),
+  });
   const reopenOrder = useReopenOrder();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const deleteOrder = useDeleteOrder({ localErrorToast: true });
@@ -374,8 +364,8 @@ export default function OrderDetailPage() {
   const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
-  const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
-    toast({ title: RETURN_SAVE_BLOCKED[why], variant: "error" }),
+  const returnSave = useOrderInlineReturnSave(returnsRef, (_why, message) =>
+    toast({ title: message, variant: "error" }),
   );
 
   // Demotion modal
@@ -729,7 +719,7 @@ export default function OrderDetailPage() {
   };
   // A SHIP order asks for tracking first (one shipped email that carries it); other orders ship at once.
   const handleMarkShipped = () =>
-    order.fulfillPath === "SHIP" ? setShowShipDialog(true) : handleLock();
+    order.fulfillPath === "SHIP" ? setShowShipDialog(true) : (isPos ? ready.press : handleLock)();
 
   const handleCancel = () => setShowCancelConfirm(true);
 
@@ -768,13 +758,13 @@ export default function OrderDetailPage() {
       {
         // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
         onError: guardError(() => handleDeliver()),
-        onSuccess: () => {
+        onSuccess: (done: unknown) => {
           setLocalStatus("DELIVERED");
-          // #2089 (owner ruling): "automatically open the invoice, then ask if you
-          // want to send it" — offline is checked FIRST and unconditionally
-          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
-          // network call below, since a dropped connection right after delivery
-          // must read as "try again once synced," never as "no invoice."
+          routeHeldNotice(done, order.lineItems, toast); // row 590: lines the driver's figure holds
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you want to
+          // send it" — offline is checked FIRST and unconditionally (postDeliveryInvoicePrompt's
+          // own contract), before ever attempting the network call below, since a dropped
+          // connection right after delivery must read as "try again once synced," not "no invoice."
           if (
             postDeliveryInvoicePrompt({
               invoice: undefined,
@@ -1040,7 +1030,7 @@ export default function OrderDetailPage() {
           className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:[&>:not([data-tier])]:order-5"
         >
           {/* Edit Items button */}
-          {canEdit && access.editItems && !isEditing && (
+          {canEdit && !order?.editItemsLocked && access.editItems && !isEditing && (
             <ActionTier tier="secondary">
               <WriteButton
                 size="sm"
@@ -1081,17 +1071,9 @@ export default function OrderDetailPage() {
               </ActionTier>
             ))}
 
-          {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
-              ("STATUS"); the buyer-facing window instead closes once dispatched
-              ("DISPATCHED") — see the canEdit comment above. Either reason shows here. */}
-          {!canEdit && order?.editWindow?.closedReason && !isEditing && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              {order.editWindow.closedReason === "DISPATCHED"
-                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
-                : "Order cancelled — editing closed"}
-            </span>
-          )}
+          <EditClosedChip show={!canEdit && !isEditing} order={order} />
 
+          <EditItemsLockedNote show={!!order?.editItemsLocked && access.editItems && !isEditing} />
           {/* P5-08: revision count + log (append-only edit history), one tap (row 330d). */}
           {!isEditing && <OrderRevisionLog revisions={order?.revisions ?? []} />}
 
@@ -1148,7 +1130,7 @@ export default function OrderDetailPage() {
           {/* PENDING actions */}
           {localStatus === "PENDING" && !isEditing && (
             <>
-              {access.staff && (
+              {access.staff && !isPos && (
                 <ActionTier tier="primary">
                   <Button
                     size="sm"
@@ -1174,9 +1156,19 @@ export default function OrderDetailPage() {
               status={localStatus}
               onHandOver={() => setPickupOpen(true)}
               onReadyForPickup={handleMarkShipped}
-              readyPending={updateStatus.isPending}
+              onConfirm={handleConfirm}
+              readyPending={updateStatus.isPending || ready.pending}
               moveOptions={posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault)}
               onMove={setPendingPath}
+            />
+          )}
+          {/* W-1060: what the customer was last emailed (or what marking ready would do), once and with Send again. */}
+          {isPos && access.staff && !isEditing && order.fulfillPath === "PICKUP" && (
+            <ReadyEmailLine
+              orderId={order.id}
+              status={localStatus}
+              customerName={order.customer?.businessName}
+              onError={(err) => guardError(() => ready.resend())(err)}
             />
           )}
 
@@ -1245,7 +1237,7 @@ export default function OrderDetailPage() {
                   fulfillPath={order.fulfillPath}
                   v2={orderUiV2.enabled}
                   onMarkShipped={handleMarkShipped}
-                  pending={updateStatus.isPending}
+                  pending={updateStatus.isPending || ready.pending}
                 />
               )}
               {order.fulfillPath === "PICKUP" && !isPos && (
@@ -1333,22 +1325,10 @@ export default function OrderDetailPage() {
               special-cased UI needed here. */}
           {access.staff && localStatus === "DELIVERED" && (
             <>
-              <ActionTier tier="secondary">
-                <div className="flex flex-col items-start gap-1">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    leftIcon={<RotateCcw className="h-4 w-4" />}
-                    onClick={() => setDemoteTarget("CONFIRMED")}
-                  >
-                    Reopen order
-                  </Button>
-                  <p className="text-[11px] text-navy/50">
-                    Reopening keeps the invoice in sync while you edit. Orders delivered on a route
-                    reopen at their original stop.
-                  </p>
-                </div>
-              </ActionTier>
+              <ReopenDeliveredTier
+                locked={!!order.editItemsLocked}
+                onReopen={() => setDemoteTarget("CONFIRMED")}
+              />
               <ActionTier tier="danger">
                 {renderDeleteOrderAction(
                   "Delete this delivered order? Its delivery record is removed permanently.",
@@ -1665,12 +1645,14 @@ export default function OrderDetailPage() {
               <OrderLineItemCards
                 lineItems={order.lineItems}
                 orderStatus={order.status}
+                fulfillPath={order.fulfillPath}
                 total={total}
               />
             ) : (
               <OrderLineItemsTable
                 lineItems={order.lineItems}
                 orderStatus={order.status}
+                fulfillPath={order.fulfillPath}
                 total={total}
               />
             )}
@@ -1945,7 +1927,10 @@ export default function OrderDetailPage() {
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
           {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
-            <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
+            <Card
+              id={INVOICE_CARD_ID}
+              title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}
+            >
               {/* r4 F07: always mounted (empty), so the sentence is read out when it appears. */}
               <p
                 role="status"
@@ -2054,10 +2039,9 @@ export default function OrderDetailPage() {
                           No invoice has been generated for this order.
                         </p>
                         <Button
+                          id={GENERATE_INVOICE_ID}
                           size="sm"
-                          // One filled primary leads the page: while PENDING that is Confirm Order
-                          // (apple-ux r3 Q16), so invoicing is secondary until the order is confirmed.
-                          variant={localStatus === "PENDING" || isEditing ? "secondary" : "primary"}
+                          variant={createInvoiceVariant(localStatus, isEditing, isPos)}
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
                           disabled={isEditing}
