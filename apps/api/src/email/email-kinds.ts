@@ -12,6 +12,7 @@ export const EMAIL_KINDS = [
   "Z_REPORT",
   "RECEIPT",
   "PAYMENT_FAILED",
+  "CUSTOMER_STATEMENT",
 ] as const;
 
 export type EmailKind = (typeof EMAIL_KINDS)[number];
@@ -34,6 +35,7 @@ export const EMAIL_KIND_AUDIENCE: Record<EmailKind, EmailAudience> = {
   Z_REPORT: "tenant",
   RECEIPT: "tenant",
   PAYMENT_FAILED: "platform",
+  CUSTOMER_STATEMENT: "tenant",
 };
 export const PLATFORM_AUDIENCE_KINDS: readonly EmailKind[] = EMAIL_KINDS.filter(
   (k) => EMAIL_KIND_AUDIENCE[k] === "platform",
