@@ -160,13 +160,16 @@ export function buildCounterReceipt(input: {
   let change: number | null = null;
   let changeAsEntered = false;
   if (hasTender) {
-    if (enteredTender != null) {
+    // SA-1077 / W-1090: Tendered is the figure the server STORED (`cashTendered`), exactly as the reprint prints it. It is never
+    // worked out: `paid` also holds the store credit applied to the sale, so paid + change read $16.00 for $6.00 of cash. The
+    // clerk's typed figure is only the fallback for a sale the server stored none for (a recovered cash sale); with neither,
+    // there is no Tendered row.
+    if (receipt.cashTendered != null) {
+      tendered = receipt.cashTendered;
+    } else if (enteredTender != null) {
       tendered = enteredTender;
       tenderedAsEntered = true;
-    } else if (method === "CASH") {
-      // the server's `paid` is what the invoice absorbed; cash handed over = paid + the change given
-      tendered = roundMoney(receipt.paid + (serverChange ?? 0));
-    } // card / check: exactly what was charged, which the Paid row already says
+    }
     if (serverChange != null) change = serverChange;
     // As-entered fallback ONLY for a paid sale the server stored no tender for (a recovered or legacy cash sale). A stored
     // tender (`cashTendered`) or a balance still owing means the server's null IS the answer: no Change row.

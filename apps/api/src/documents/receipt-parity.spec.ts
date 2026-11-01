@@ -9,6 +9,7 @@ import {
 } from "../../../web/lib/counter-receipt";
 import { buildCounterSaleResponse } from "../orders/counter-sale/counter-sale-readback";
 import {
+  counterReturnSplit,
   toTodaysSaleRow,
   type ReturnProvenance,
   type TodayOrderRecord,
@@ -83,6 +84,8 @@ interface Scenario {
   cashier?: string;
   /** what the clerk typed at the till (the live screen's `enteredTender`); every other surface never sees it */
   entered?: number | null;
+  /** the method the clerk rang at the till (the POST's `payment.method`); omitted = a by-key read, whose method is derived */
+  liveMethod?: "CASH" | "CARD" | "CHECK" | "ON_ACCOUNT";
   /** the order's lines, and the same lines as the live cart rang them (cart prices are NET; the default carries a $1.00 discount) */
   lines?: ReceiptOrderInput["lineItems"];
   live?: Parameters<typeof buildCounterReceipt>[0]["lines"];
@@ -225,8 +228,21 @@ function build(s: Scenario) {
     profile: { businessName: BRANDING.businessName, hideOriginalPrice: !!s.hide },
   });
 
-  // the live receipt, from the POST / by-key response
+  // the live receipt, from the POST / by-key response. SA-1077: the service serves the SAME `counterReturnSplit` the row and the
+  // email call, over the same reads; an older server serves none
+  const split = s.oldServer
+    ? undefined
+    : counterReturnSplit({
+        orderId: "ord-1",
+        invoiceIds: ["inv-1"],
+        payments,
+        returns: s.returns ?? [],
+        carriedReturns: s.carried ?? [],
+        creditNotes,
+      });
   const response = buildCounterSaleResponse({
+    ...(s.liveMethod ? { payment: { method: s.liveMethod } } : {}),
+    ...(split ? { split } : {}),
     order: {
       id: "ord-1",
       orderNumber: "ORD-1001",
@@ -1515,5 +1531,80 @@ describe("row 317b: the unit word ('each') is ONE text on the live receipt, the 
         "1 box + 3 pcs × $12.00 per box",
       ]);
     }
+  });
+});
+
+describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint", () => {
+  const money = formatReceiptMoney;
+  const lines = (m: ReceiptModel): string[] => [
+    ...(m.methodLabel ? [`Payment method ${m.methodLabel}`] : []),
+    ...(m.showPaid ? [`Paid ${money(m.paid)}`] : []),
+    ...(m.returned ? [`Returned −${money(m.returned)}`] : []),
+    ...(m.refunded ? [`Refunded ${money(m.refunded)} (returned items)`] : []),
+    ...(m.creditKept ? [`Credit kept ${money(m.creditKept)} (returned items)`] : []),
+    ...(m.creditUsed ? [`Credit used ${money(m.creditUsed)} (returned items)`] : []),
+    ...(m.showBalance ? [`Balance due ${money(m.balanceDue)}`] : []),
+    ...(m.returnPending ? ["Return in progress"] : []),
+    ...(m.tendered != null ? [`Tendered ${money(m.tendered)}`] : []),
+    ...(m.change != null ? [`Change ${money(m.change)}`] : []),
+  ];
+  const cash = (amount: string): Pay => ({ method: "CASH", amount });
+  const card = (amount: string): Pay => ({ method: "CREDIT_CARD", amount });
+  /** store credit from a return filed on ANOTHER order (the goods were sold earlier), applied here: a tender (SA-838 d) */
+  const credit = (amount: string, id = "cn-1"): Pay => ({
+    method: "CREDIT_NOTE",
+    amount,
+    creditNoteId: id,
+  });
+  const olderReturn = (n: string): ReturnProvenance => ({
+    id: "r-older",
+    creditNoteId: "cn-1",
+    orderId: "ord-b",
+    kind: "INLINE",
+    status: "REFUNDED",
+    refundMethod: "CREDIT_NOTE",
+    refundedAt: null,
+    items: [{ sourceOrderId: "ord-a", subtotal: n, taxAmount: "0", categoryTax: null }],
+  });
+  const applied = (n: number) => ({ "cn-1": { status: "APPLIED", appliedAnywhere: n } });
+  /** T1: a $16.00 sale, a $10.00 return of an older sale, $6.00 cash */
+  const t1 = (over: Partial<Scenario> = {}) =>
+    build({
+      total: "16.00",
+      tax: "0.00",
+      payments: [cash("6.00"), credit("10.00")],
+      carried: [olderReturn("10.00")],
+      notes: applied(10),
+      tendered: "6.00",
+      ...over,
+    });
+
+  it("R2 (written first) T2: a $20.00 note on the same sale prints Tendered $20.00, not $30.00; Change $14.00", () => {
+    const b = t1({ tendered: "20.00" });
+    expect(b.live.tendered).toBe(20);
+    expect(b.live.change).toBe(14);
+  });
+
+  it("R1 T1: Tendered is the stored $6.00, not paid + change ($16.00)", () => {
+    const b = t1();
+    expect(b.live.tendered).toBe(6);
+    expect(b.live.change).toBe(0);
+    expect(b.live.paid).toBe(16);
+  });
+
+  it("R7 T6: older credit auto-applied, no return at all: Tendered is the stored $6.00", () => {
+    const b = build({
+      total: "16.00",
+      tax: "0.00",
+      payments: [cash("6.00"), credit("10.00", "cn-9")],
+      tendered: "6.00",
+    });
+    expect(b.live.tendered).toBe(6);
+  });
+
+  it("R8: a CASH sale with nothing stored and nothing entered prints no Tendered row", () => {
+    const b = build({ total: "10.00", tax: "0.00", payments: [cash("10.00")] });
+    expect(b.live.tendered).toBeNull();
+    expect(b.reprint.tendered).toBeNull();
   });
 });
