@@ -9,7 +9,7 @@ import { NotFoundException } from "@nestjs/common";
 import { roundMoney } from "@routeflow/pricing";
 import { CustomersController } from "./customers.controller";
 import { CustomersService } from "./customers.service";
-import { RECENT_PAYMENTS_MAX, buildAccountStatement, daysLateOn } from "./account-statement";
+import { STATEMENT_RECENT_PAYMENTS, buildAccountStatement, daysLateOn } from "./account-statement";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -326,13 +326,17 @@ describe("SA-1078 account statement (PR-1)", () => {
     });
 
     it("S14: 51 payments in 30 days read as 50 rows and truncated; 50 are not truncated", async () => {
-      arrange({ payments: Array.from({ length: RECENT_PAYMENTS_MAX + 1 }, (_, i) => row(i + 1)) });
+      arrange({
+        payments: Array.from({ length: STATEMENT_RECENT_PAYMENTS + 1 }, (_, i) => row(i + 1)),
+      });
       let res = await read();
       expect(res.recentPayments).toHaveLength(50);
       expect(res.recentPaymentsTruncated).toBe(true);
       expect(res.recentPayments[0].invoiceNumber).toBe("INV-1"); // the newest survives the cut
 
-      arrange({ payments: Array.from({ length: RECENT_PAYMENTS_MAX }, (_, i) => row(i + 1)) });
+      arrange({
+        payments: Array.from({ length: STATEMENT_RECENT_PAYMENTS }, (_, i) => row(i + 1)),
+      });
       res = await read();
       expect(res.recentPayments).toHaveLength(50);
       expect(res.recentPaymentsTruncated).toBe(false);

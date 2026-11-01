@@ -37,9 +37,9 @@ import { statementOutstandingAmount, statementOverdueAmount } from "./customer-s
  */
 
 /** Payments older than this many calendar days (tenant zone) are not listed. Day 30 is in, day 31 is out. */
-export const RECENT_PAYMENTS_WINDOW_DAYS = 30;
+export const STATEMENT_RECENT_DAYS = 30;
 /** The payments list is cut here, newest first; `recentPaymentsTruncated` says when rows were left out. */
-export const RECENT_PAYMENTS_MAX = 50;
+export const STATEMENT_RECENT_PAYMENTS = 50;
 
 /**
  * Whole calendar days past the due date on the tenant's own calendar. `tenantDay` is the tenant's "today"
@@ -69,7 +69,7 @@ export async function buildAccountStatement(
   const now = new Date();
   const zone = await tenantTimeZone(prisma);
   const tenantDay = tenantTodayDay(zone, now);
-  const since = addCalendarDays(startOfCalendarDay(now, zone), -RECENT_PAYMENTS_WINDOW_DAYS);
+  const since = addCalendarDays(startOfCalendarDay(now, zone), -STATEMENT_RECENT_DAYS);
 
   const [invoices, creditNotes, advances, payments] = await Promise.all([
     prisma.forTenant().invoice.findMany({
@@ -183,7 +183,7 @@ export async function buildAccountStatement(
     .map((p) => ({ p, at: new Date(collectedDateOf(p) as Date) }))
     .sort((a, b) => b.at.getTime() - a.at.getTime());
   const recentPayments: AccountStatementPayment[] = dated
-    .slice(0, RECENT_PAYMENTS_MAX)
+    .slice(0, STATEMENT_RECENT_PAYMENTS)
     .map(({ p, at }) => ({
       date: at.toISOString(),
       // A credit-note or advance application reduces the invoice like money but is not a new payment.
@@ -208,7 +208,7 @@ export async function buildAccountStatement(
     waitingToClear: roundMoney(waitingToClear),
     openInvoices,
     recentPayments,
-    recentPaymentsTruncated: dated.length > RECENT_PAYMENTS_MAX,
+    recentPaymentsTruncated: dated.length > STATEMENT_RECENT_PAYMENTS,
     credits,
   };
 }
