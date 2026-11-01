@@ -1,27 +1,39 @@
 "use client";
 
 // Visitor counts with Umami (W3 / M2-M4). Cookie-free, so nothing to consent to; the Privacy
-// Policy names it. Four rules, each pinned in UmamiScript.test.tsx:
+// Policy names it. Five rules, each pinned in UmamiScript.test.tsx:
 //   1. No site ID baked in at build time means no script at all (a local or test stack sends
 //      nothing). The ID is the build variable NEXT_PUBLIC_UMAMI_WEBSITE_ID and is never in git.
 //   2. Only the public marketing pages and /signup count. Never the dashboard, the retailer
 //      portal, the admin area or any sign-in page, whatever mounts this component.
 //   3. `data-domains` keeps Umami to the live site's hostname, so a preview or local host that
 //      does carry the ID still reports nothing.
-//   4. The tracker never watches navigation itself. Once loaded it stays in the document, and by
-//      default it wraps `history.pushState` and sends every new URL with its query string, which
-//      Next's router calls on every in-app move: /signup to /signup/check-email?email=... would
-//      send the person's email address, and a move to /login or the dashboard would count too.
-//      So `data-auto-track="false"` (read from the tracker at cloud.umami.is/script.js on
-//      2026-11-01: with it, the tracker never wraps history or sends a view by itself), and this
-//      component sends one view per counted page, pathname only, from an effect. A page that does
-//      not count sends nothing, even though the tracker is still loaded. `data-exclude-search`
-//      is set as well, as a second lock on the query string.
+//   4. The tracker never follows the page. Left to itself it wraps history.pushState, and Next's
+//      router moves through pushState, so a script loaded on /signup would go on to report
+//      /signup/check-email?email=... and every signed-in page after it. `data-auto-track="false"`
+//      turns that off, and this component sends each pageview itself.
+//   5. A pageview carries the five fields in umamiPageview and nothing else: the Privacy Policy's
+//      list, whatever a later tracker adds to its own payload.
 
-import * as React from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Script from "next/script";
 import { usePathname } from "next/navigation";
 import { routes, site } from "@/app/(marketing)/lib/site";
+
+interface UmamiPayload {
+  website?: string;
+  hostname?: string;
+  screen?: string;
+  url?: string;
+  referrer?: string;
+}
+
+declare global {
+  interface Window {
+    // Hands `build` the tracker's own payload and posts what it returns. No `name` means a pageview.
+    umami?: { track?: (build: (tracker: UmamiPayload) => UmamiPayload) => unknown };
+  }
+}
 
 export const UMAMI_SCRIPT_SRC = "https://cloud.umami.is/script.js";
 
@@ -33,6 +45,9 @@ const COUNTED_PATHS: ReadonlySet<string> = new Set([
   "/book-a-demo",
   "/signup",
 ]);
+
+// www, the bare domain and every tenant's host. A tenant's host names a client.
+const OWN_DOMAIN = new URL(site.origin).hostname.replace(/^www\./, "");
 
 export function umamiAllowedPath(pathname: string | null): boolean {
   return pathname !== null && COUNTED_PATHS.has(pathname);
@@ -51,26 +66,45 @@ export function umamiScriptProps(websiteId: string | undefined, pathname: string
   };
 }
 
-type PageviewPayload = Record<string, unknown>;
-type UmamiGlobal = { track?: (build: (props: PageviewPayload) => PageviewPayload) => unknown };
-
-// The last counted path in this document. It stops a double send when the script's ready callback
-// and the pathname effect both fire, and it is the referrer of the next in-app view.
-let lastCounted: string | null = null;
-
-/** Sends one view for `pathname` (the path alone, never the query) if the tracker has loaded. */
-export function sendUmamiPageview(pathname: string): boolean {
-  const umami = (window as unknown as { umami?: UmamiGlobal }).umami;
-  if (typeof umami?.track !== "function" || lastCounted === pathname) return false;
-  const referrer = lastCounted;
-  lastCounted = pathname;
-  umami.track((props) => ({ ...props, url: pathname, ...(referrer ? { referrer } : {}) }));
-  return true;
+// The referring site, as a bare origin. A referrer from our own hosts is dropped: it can name a
+// sign-in page or a client, and Referrer-Policy lets a same-origin one carry `?email=`.
+function referringSite(referrer: string | undefined): string {
+  if (!referrer) return "";
+  try {
+    const url = new URL(referrer, site.origin);
+    const ours = url.hostname === OWN_DOMAIN || url.hostname.endsWith(`.${OWN_DOMAIN}`);
+    return ours || !url.protocol.startsWith("http") ? "" : url.origin;
+  } catch {
+    return "";
+  }
 }
 
-/** For tests: forget the last counted path. */
-export function resetUmamiPageviews(): void {
-  lastCounted = null;
+function umamiPageview(tracker: UmamiPayload, path: string, firstView: boolean): UmamiPayload {
+  return {
+    website: tracker.website,
+    hostname: tracker.hostname,
+    screen: tracker.screen,
+    url: path,
+    referrer: firstView ? referringSite(tracker.referrer) : "",
+  };
+}
+
+// Trackers that have sent a pageview. One tracker lives as long as the document, and the marketing
+// layout and /signup each mount their own UmamiScript, so this can't live in a ref.
+const trackersUsed = new WeakSet<object>();
+
+function sendPageviews(paths: string[]) {
+  const umami = window.umami;
+  if (typeof umami?.track !== "function") return;
+  for (const path of paths.splice(0)) {
+    const firstView = !trackersUsed.has(umami);
+    trackersUsed.add(umami);
+    try {
+      umami.track((tracker) => umamiPageview(tracker, path, firstView));
+    } catch {
+      // Analytics never takes a page down with it (M3).
+    }
+  }
 }
 
 export function UmamiScript() {
@@ -78,29 +112,24 @@ export function UmamiScript() {
   // Written out in full so Next inlines it at build time.
   const props = umamiScriptProps(process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID, pathname);
   const counted = props !== null;
-  const pathRef = React.useRef(pathname);
-  pathRef.current = pathname;
+  // Counted pages the tracker hasn't had yet. The first waits here until the script has loaded.
+  const waiting = useRef<string[]>([]);
+  const lastCounted = useRef<string | null>(null);
 
-  React.useEffect(() => {
+  // Next calls a script's onLoad from the first render's props, so this reads only the ref.
+  const flush = useCallback(() => sendPageviews(waiting.current), []);
+
+  useEffect(() => {
     if (!counted || pathname === null) {
-      // Left the counted pages: the next counted page starts fresh and has no in-app referrer.
-      lastCounted = null;
+      lastCounted.current = null;
       return;
     }
-    sendUmamiPageview(pathname);
-  }, [counted, pathname]);
+    if (pathname === lastCounted.current) return;
+    lastCounted.current = pathname;
+    waiting.current.push(pathname);
+    flush();
+  }, [counted, pathname, flush]);
 
   if (!props) return null;
-  return (
-    <Script
-      strategy="afterInteractive"
-      {...props}
-      // Fires after the first load and again on a later mount: the first view of a fresh document.
-      onReady={() => {
-        if (pathRef.current !== null && umamiAllowedPath(pathRef.current)) {
-          sendUmamiPageview(pathRef.current);
-        }
-      }}
-    />
-  );
+  return <Script strategy="afterInteractive" {...props} onLoad={flush} />;
 }

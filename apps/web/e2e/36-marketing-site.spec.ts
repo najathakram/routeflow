@@ -410,7 +410,8 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
 // rows read which case this stack is in from the home page itself, so the same spec holds on a
 // local stack (no ID: M4, no script anywhere) and on one built with a made-up test ID. No real ID
 // is ever used in a test.
-const UMAMI_SCRIPT = 'script[src="https://cloud.umami.is/script.js"]';
+const UMAMI_TRACKER_URL = "https://cloud.umami.is/script.js";
+const UMAMI_SCRIPT = `script[src="${UMAMI_TRACKER_URL}"]`;
 const COUNTED_ROUTES = [
   "/",
   "/product",
@@ -436,11 +437,113 @@ const NEVER_COUNTED_ROUTES = [
   "/dashboard",
 ];
 
+// The preload tag is in the server's HTML, so this needs no wait for hydration.
+async function stackHasSiteId(page: import("@playwright/test").Page) {
+  return (await (await page.request.get("/")).text()).includes(UMAMI_TRACKER_URL);
+}
+
 async function umamiScriptCount(page: import("@playwright/test").Page, route: string) {
   await page.goto(route);
   await page.waitForLoadState("networkidle");
   return page.locator(UMAMI_SCRIPT).count();
 }
+
+// A stand-in for cloud.umami.is/script.js. The real tracker turns itself off on this host
+// (data-domains), so this one leaves that check out and keeps the rest of what it does: it honours
+// data-auto-track and data-exclude-search, wraps pushState and replaceState when auto-track is on,
+// exposes umami.track with the real call shape, and posts to the real address. Read from the
+// tracker as served on 2026-10-31.
+const FAKE_UMAMI_TRACKER = `(() => {
+  const script = document.currentScript;
+  const autoTrack = script.getAttribute("data-auto-track") !== "false";
+  const excludeSearch = script.getAttribute("data-exclude-search") === "true";
+  const filter = (href) => {
+    if (!href) return href;
+    const url = new URL(href, location.href);
+    if (excludeSearch) url.search = "";
+    return url.toString();
+  };
+  let current = filter(location.href);
+  let previous = filter(document.referrer);
+  const payload = () => ({
+    website: script.getAttribute("data-website-id"),
+    screen: "1440x900",
+    language: navigator.language,
+    title: document.title,
+    hostname: location.hostname,
+    url: current,
+    referrer: previous.startsWith(location.origin) ? previous.slice(location.origin.length) : previous,
+  });
+  const track = (build) => {
+    const body = typeof build === "function" ? build(payload()) : payload();
+    fetch("https://gateway.umami.is/api/send", {
+      method: "POST",
+      keepalive: true,
+      body: JSON.stringify({ type: "event", payload: body }),
+      headers: { "Content-Type": "application/json" },
+      credentials: "omit",
+    }).catch(() => {});
+  };
+  window.umami = { track };
+  if (!autoTrack) return;
+  track();
+  for (const name of ["pushState", "replaceState"]) {
+    const original = history[name];
+    history[name] = function (state, title, next) {
+      const result = original.apply(this, arguments);
+      if (next) {
+        previous = current;
+        current = filter(next);
+        if (current !== previous) setTimeout(track, 300);
+      }
+      return result;
+    };
+  }
+})();`;
+
+interface UmamiSend {
+  url?: string;
+  referrer?: string;
+}
+
+/** Serves the stand-in and catches every post, so nothing reaches Umami. */
+async function catchUmamiSends(page: import("@playwright/test").Page) {
+  const sent: UmamiSend[] = [];
+  await page.route(UMAMI_TRACKER_URL, (route) =>
+    route.fulfill({ contentType: "text/javascript", body: FAKE_UMAMI_TRACKER }),
+  );
+  await page.route("https://gateway.umami.is/api/send", (route) => {
+    sent.push(route.request().postDataJSON().payload);
+    return route.fulfill({ json: {}, headers: { "access-control-allow-origin": "*" } });
+  });
+  return sent;
+}
+
+/** The tracker reports a move 300 ms after it, so "nothing went out" needs longer than that. */
+async function settled(page: import("@playwright/test").Page) {
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(800);
+}
+
+/**
+ * Opens a counted page and waits for its pageview, so it has hydrated and a link click is a client
+ * move. Then marks the document, so a row can prove the next move was not a full page load.
+ */
+async function openCounted(
+  page: import("@playwright/test").Page,
+  sent: UmamiSend[],
+  route: string,
+) {
+  const before = sent.length;
+  await page.goto(route);
+  await expect.poll(() => sent.length).toBeGreaterThan(before);
+  await settled(page);
+  await page.evaluate(() => {
+    (window as unknown as { sameDocument?: boolean }).sameDocument = true;
+  });
+}
+const stillSameDocument = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => (window as unknown as { sameDocument?: boolean }).sameDocument === true);
 
 test.describe("T13b — W3 M2-M4: visitor counts", () => {
   test("T13b — sign-in pages, the retailer portal and the dashboard never load the script", async ({
@@ -464,7 +567,7 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
   });
 
   test("T13b — M4: a stack built with no site ID sends no script on any page", async ({ page }) => {
-    test.skip((await umamiScriptCount(page, "/")) > 0, "this stack was built with a site ID");
+    test.skip(await stackHasSiteId(page), "this stack was built with a site ID");
     for (const route of [...COUNTED_ROUTES, ...NEVER_COUNTED_ROUTES]) {
       expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(0);
     }
@@ -473,7 +576,7 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
   test("T13b — with a site ID, every marketing page and /signup carries one deferred script for the live host", async ({
     page,
   }) => {
-    test.skip((await umamiScriptCount(page, "/")) === 0, "this stack has no site ID (M4)");
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
     for (const route of COUNTED_ROUTES) {
       expect(await umamiScriptCount(page, route), `${route} analytics scripts`).toBe(1);
       const script = page.locator(UMAMI_SCRIPT);
@@ -490,7 +593,7 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
   test("T13b — M3: with the script blocked, pages still work and the page raises no error", async ({
     page,
   }) => {
-    test.skip((await umamiScriptCount(page, "/")) === 0, "this stack has no site ID (M4)");
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
     await page.route("https://cloud.umami.is/**", (route) => route.abort());
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
@@ -510,6 +613,72 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
     }
     expect(pageErrors).toEqual([]);
     expect(consoleErrors).toEqual([]);
+  });
+
+  test("T13b — client moves from a marketing page to a sign-in page report nothing past the marketing pages", async ({
+    page,
+  }) => {
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
+    const sent = await catchUmamiSends(page);
+
+    await openCounted(page, sent, "/");
+    await page
+      .getByRole("navigation", { name: "Primary" })
+      .getByRole("link", { name: "Pricing" })
+      .click();
+    await page.waitForURL("**/pricing");
+    await settled(page);
+
+    // The header's own sign-in links are full page loads, so this is the router call a client
+    // move to /login comes down to (the one /login itself makes into the dashboard).
+    await page.evaluate(() =>
+      (window as unknown as { next: { router: { push(href: string): void } } }).next.router.push(
+        "/login",
+      ),
+    );
+    await page.waitForURL("**/login");
+    await settled(page);
+    expect(await stillSameDocument(page), "the move to /login was a client one").toBe(true);
+
+    await openCounted(page, sent, "/retailers");
+    await page.locator("a.retailer-login").click();
+    await page.waitForURL("**/buyer/login**");
+    await settled(page);
+    expect(await stillSameDocument(page), "the move to /buyer/login was a client one").toBe(true);
+
+    expect(sent.map((s) => s.url)).toEqual(["/", "/pricing", "/retailers"]);
+  });
+
+  test("T13b — submitting /signup sends nothing about the person to Umami", async ({ page }) => {
+    test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
+    const sent = await catchUmamiSends(page);
+    const apiHeaders = { "access-control-allow-origin": "*" };
+    await page.route("**/public/tenants/*-available**", (route) =>
+      route.fulfill({ json: { available: true }, headers: apiHeaders }),
+    );
+    await page.route("**/public/tenants/register", (route) =>
+      route.fulfill({ json: { emailSent: true }, headers: apiHeaders }),
+    );
+
+    await openCounted(page, sent, "/signup");
+    await page.getByLabel("Business name").fill("Acme Distribution Co.");
+    await page.getByLabel("Email").fill("owner@acme.com");
+    await page.locator("#signup-password").fill("Sample-pass1");
+    await page.locator("#signup-confirm").fill("Sample-pass1");
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL("**/signup/check-email?email=**");
+    await settled(page);
+    expect(await stillSameDocument(page), "the move to check-email was a client one").toBe(true);
+
+    // "Sign up again" is a full page load, so the browser's referrer is the check-email address,
+    // query string and all. It stops at the browser.
+    await page.locator('a[href="/signup"]').click();
+    await page.waitForURL("**/signup");
+    await settled(page);
+
+    expect(sent.map((s) => s.url)).toEqual(["/signup", "/signup"]);
+    expect(sent.map((s) => s.referrer)).toEqual(["", ""]);
+    expect(JSON.stringify(sent)).not.toMatch(/acme|email|check-email|\?/i);
   });
 });
 

@@ -2,25 +2,18 @@
 // /signup only, and only when a site ID was baked in at build time. Every test ID below is a made-up
 // string; no real ID belongs in a test, a fixture or git.
 import * as React from "react";
-import { act, render } from "@testing-library/react";
-import {
-  UMAMI_SCRIPT_SRC,
-  UmamiScript,
-  resetUmamiPageviews,
-  umamiAllowedPath,
-  umamiScriptProps,
-} from "./UmamiScript";
+import { render } from "@testing-library/react";
+import { UMAMI_SCRIPT_SRC, UmamiScript, umamiAllowedPath, umamiScriptProps } from "./UmamiScript";
 
 let mockPathname: string | null = "/";
+// The script's load event, as next/script would fire it.
+const mockScript: { onLoad?: () => void } = {};
 jest.mock("next/navigation", () => ({ usePathname: () => mockPathname }));
 jest.mock("next/script", () => ({
   __esModule: true,
   default: (props: Record<string, unknown>) => {
-    const { strategy: _strategy, onReady, ...rest } = props;
-    // Next runs onReady once the script has loaded, and again on a later mount.
-    React.useEffect(() => {
-      if (typeof onReady === "function") onReady();
-    }, [onReady]);
+    const { strategy: _strategy, onLoad, ...rest } = props;
+    mockScript.onLoad = onLoad as (() => void) | undefined;
     return (
       <script data-testid="umami" {...(rest as React.ScriptHTMLAttributes<HTMLScriptElement>)} />
     );
@@ -140,125 +133,175 @@ describe("<UmamiScript />", () => {
   });
 });
 
-/**
- * Verdict on #4062 (review-c, 2026-11-01): the tracker wraps history.pushState and sends every new URL, query
- * string included, unless told not to. Next's router moves through pushState, so /signup -> /signup/check-email?email=...
- * would have sent the person's email address. The tracker below is a stand-in that models only that one behaviour as
- * the live script (cloud.umami.is/script.js) has it: it wraps history and sends location.href after every move unless
- * data-auto-track is "false", and it exposes window.umami.track(build) for a view sent by hand.
- */
-describe("the tracker never watches navigation itself", () => {
+// The tracker wraps history.pushState when auto-track is on, and Next's router moves through
+// pushState, so a guard at mount is not enough. This stand-in hands `track` the same payload the
+// real tracker builds: the URL it loaded on, and the referrer it read then.
+describe("<UmamiScript /> pageviews", () => {
   const OLD = process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
-  let sent: { url: string; referrer?: string }[];
-  let restoreHistory: () => void;
+  type Payload = { url?: string; referrer?: string };
+  let sent: Payload[];
 
-  function installLikeUmami(attrs: { get: (name: string) => string | null }) {
-    const { pushState, replaceState } = window.history;
-    const excludeSearch = attrs.get("data-exclude-search") === "true";
-    const base = (): { url: string; referrer?: string } => ({
-      url: excludeSearch
-        ? window.location.pathname
-        : window.location.pathname + window.location.search,
-    });
-    if (attrs.get("data-auto-track") !== "false") {
-      const wrap = (fn: History["pushState"]): History["pushState"] =>
-        function (this: History, ...a) {
-          const out = fn.apply(this, a);
-          sent.push(base());
-          return out;
-        };
-      window.history.pushState = wrap(pushState);
-      window.history.replaceState = wrap(replaceState);
-    }
-    (window as unknown as { umami: unknown }).umami = {
-      track: (build: (p: Record<string, unknown>) => { url: string; referrer?: string }) =>
-        sent.push(build({ ...base(), referrer: "https://search.example/?q=acme" })),
-    };
-    restoreHistory = () => {
-      window.history.pushState = pushState;
-      window.history.replaceState = replaceState;
-      delete (window as unknown as { umami?: unknown }).umami;
+  function installTracker(referrer = "") {
+    sent = [];
+    window.umami = {
+      track: (build) =>
+        sent.push(
+          build({
+            website: FAKE_ID,
+            hostname: "www.routeflow.info",
+            screen: "1440x900",
+            language: "en-US",
+            title: "A page",
+            url: "https://www.routeflow.info/signup?email=owner%40acme.com",
+            referrer,
+          } as Parameters<typeof build>[0]),
+        ),
     };
   }
 
+  const urls = () => sent.map((p) => p.url);
+  const at = (path: string) => {
+    mockPathname = path;
+    return <UmamiScript />;
+  };
+
   beforeEach(() => {
-    sent = [];
-    resetUmamiPageviews();
     process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID = FAKE_ID;
-    window.history.replaceState(null, "", "/");
+    mockScript.onLoad = undefined;
+    sent = [];
+    delete window.umami;
   });
+
   afterEach(() => {
-    restoreHistory?.();
+    delete window.umami;
     if (OLD === undefined) delete process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
     else process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID = OLD;
   });
 
-  function mountAt(path: string) {
-    window.history.replaceState(null, "", path);
-    mockPathname = path.split("?")[0] as string;
-    // The tracker is loaded by the time the script's onReady runs, and reads the attributes the component gives it.
-    const attrs = umamiScriptProps(FAKE_ID, mockPathname) as Record<string, unknown>;
-    installLikeUmami({ get: (n) => (typeof attrs[n] === "string" ? (attrs[n] as string) : null) });
-    return render(<UmamiScript />);
-  }
-  /** What Next's router does on a client move: pushState, then a render with the new pathname. */
-  function navigate(view: ReturnType<typeof render>, to: string) {
-    act(() => {
-      window.history.pushState(null, "", to);
-      mockPathname = to.split("?")[0] as string;
-      view.rerender(<UmamiScript />);
-    });
-  }
-
-  it("sets data-auto-track=false and data-exclude-search=true on the script", () => {
-    mockPathname = "/signup";
-    const script = render(<UmamiScript />).container.querySelector("script");
-    expect(script?.getAttribute("data-auto-track")).toBe("false");
-    expect(script?.getAttribute("data-exclude-search")).toBe("true");
+  it("sends one pageview for the page it mounts on, as the bare pathname", () => {
+    installTracker();
+    render(at("/pricing"));
+    expect(urls()).toEqual(["/pricing"]);
   });
 
-  it("control: without data-auto-track=false the stand-in tracker WOULD send the email (the row can fail)", () => {
-    installLikeUmami({ get: () => null });
-    window.history.pushState(null, "", "/signup/check-email?email=owner%40acme.com&workspace=acme");
-    expect(sent.map((v) => v.url)).toEqual([
-      "/signup/check-email?email=owner%40acme.com&workspace=acme",
-    ]);
+  it("holds the first pageview until the script has loaded, then sends it once", () => {
+    render(at("/pricing"));
+    expect(sent).toEqual([]);
+    installTracker();
+    mockScript.onLoad?.();
+    mockScript.onLoad?.();
+    expect(urls()).toEqual(["/pricing"]);
   });
 
-  it("/signup submits and moves to check-email: nothing is sent for the move, and no query string ever", () => {
-    const view = mountAt("/signup?utm_source=acme-newsletter");
-    expect(sent).toEqual([{ url: "/signup", referrer: "https://search.example/?q=acme" }]);
-    navigate(view, "/signup/check-email?email=owner%40acme.com&workspace=acme");
-    expect(sent).toHaveLength(1);
-    expect(JSON.stringify(sent)).not.toMatch(/email|owner|acme.com|workspace|utm_source/);
+  it("keeps a page left before the script loaded, and still sends each one once", () => {
+    const view = render(at("/"));
+    view.rerender(at("/pricing"));
+    installTracker();
+    mockScript.onLoad?.();
+    expect(urls()).toEqual(["/", "/pricing"]);
   });
 
-  it("a marketing page to /login, then the dashboard: nothing is sent after the counted page", () => {
-    const view = mountAt("/pricing");
-    expect(sent.map((v) => v.url)).toEqual(["/pricing"]);
-    navigate(view, "/login");
-    navigate(view, "/dashboard");
-    navigate(view, "/dashboard/orders?customer=acme");
-    expect(sent.map((v) => v.url)).toEqual(["/pricing"]);
+  it("does not send twice when Strict Mode runs the effect twice", () => {
+    installTracker();
+    render(<React.StrictMode>{at("/pricing")}</React.StrictMode>);
+    expect(urls()).toEqual(["/pricing"]);
   });
 
-  it("moves between counted pages send one view each, pathname only, the previous page as referrer", () => {
-    const view = mountAt("/pricing");
-    navigate(view, "/company");
-    navigate(view, "/contact?topic=acme");
+  it("a re-render on the same page sends nothing more", () => {
+    installTracker();
+    const view = render(at("/pricing"));
+    view.rerender(at("/pricing"));
+    expect(urls()).toEqual(["/pricing"]);
+  });
+
+  it("sends each allowed page on a client move, and again on a return", () => {
+    installTracker();
+    const view = render(at("/"));
+    view.rerender(at("/pricing"));
+    view.rerender(at("/"));
+    expect(urls()).toEqual(["/", "/pricing", "/"]);
+  });
+
+  it.each(NEVER)("sends nothing on a client move to %j", (path) => {
+    installTracker();
+    const view = render(at("/pricing"));
+    view.rerender(at(path));
+    expect(urls()).toEqual(["/pricing"]);
+  });
+
+  it("sends nothing for a disallowed page even when the script finishes loading on it", () => {
+    const view = render(at("/sign-in"));
+    view.rerender(at("/login"));
+    installTracker();
+    mockScript.onLoad?.();
+    expect(sent).toEqual([]);
+  });
+
+  it("counts an allowed page again after a stop on a disallowed one", () => {
+    installTracker();
+    const view = render(at("/pricing"));
+    view.rerender(at("/sign-in"));
+    view.rerender(at("/pricing"));
+    expect(urls()).toEqual(["/pricing", "/pricing"]);
+  });
+
+  it("never lets the query string out on an allowed page", () => {
+    installTracker("https://www.routeflow.info/signup/check-email?email=owner%40acme.com");
+    render(at("/signup"));
+    expect(urls()).toEqual(["/signup"]);
+    const body = JSON.stringify(sent);
+    expect(body).not.toContain("?");
+    expect(body).not.toContain("owner");
+  });
+
+  it("sends only what the Privacy Policy names", () => {
+    installTracker("https://news.example.com/story");
+    render(at("/pricing"));
     expect(sent).toEqual([
-      { url: "/pricing", referrer: "https://search.example/?q=acme" },
-      { url: "/company", referrer: "/pricing" },
-      { url: "/contact", referrer: "/company" },
+      {
+        website: FAKE_ID,
+        hostname: "www.routeflow.info",
+        screen: "1440x900",
+        url: "/pricing",
+        referrer: "https://news.example.com",
+      },
     ]);
   });
 
-  it("the same page rendering again sends no second view; coming back after a gap counts again", () => {
-    const view = mountAt("/pricing");
-    view.rerender(<UmamiScript />);
-    expect(sent).toHaveLength(1);
-    navigate(view, "/login");
-    navigate(view, "/pricing");
-    expect(sent.map((v) => v.url)).toEqual(["/pricing", "/pricing"]);
+  it.each([
+    ["our own page, as a path", "/signup/check-email?email=owner%40acme.com", ""],
+    ["our own page, in full", "https://www.routeflow.info/login", ""],
+    ["our own host with no www", "https://routeflow.info/", ""],
+    ["a tenant's host, which names a client", "https://acme.routeflow.info", ""],
+    ["an app link", "android-app://com.google.android.gm/", ""],
+    ["nonsense", "http://", ""],
+    ["no referrer", "", ""],
+    [
+      "another site, with a path and query",
+      "https://news.example.com/a?b=c",
+      "https://news.example.com",
+    ],
+  ])("referrer: %s", (_name, referrer, expected) => {
+    installTracker(referrer);
+    render(at("/"));
+    expect(sent[0]?.referrer).toBe(expected);
+  });
+
+  it("gives the referring site to the first pageview only", () => {
+    installTracker("https://news.example.com/story");
+    const view = render(at("/"));
+    view.rerender(at("/pricing"));
+    expect(sent.map((p) => p.referrer)).toEqual(["https://news.example.com", ""]);
+  });
+
+  it("M3: a tracker that throws, or has no track, leaves the page alone", () => {
+    window.umami = {
+      track: () => {
+        throw new Error("blocked");
+      },
+    };
+    expect(() => render(at("/pricing"))).not.toThrow();
+    window.umami = {};
+    expect(() => render(at("/product"))).not.toThrow();
   });
 });
