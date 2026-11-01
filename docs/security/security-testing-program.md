@@ -6,7 +6,7 @@ This is the standing security program and its research basis — the framework/t
 that justifies the tiers below, not a findings report. Finding-level detail (repro notes,
 severity rationale) lives in the gitignored root `SECURITY_AUDIT.md`, which is never committed
 because the repo goes public during CI windows. Current remediation status per finding lives in
-[`docs/audit/security-findings-index.md`](../audit/security-findings-index.md); this document is
+`archive/docs-audit/security-findings-index.md` in the private rf-specs repo; this document is
 the program those statuses feed into and get re-verified against.
 
 **Disclosure discipline:** everything below is status and one-line description only. No exploit
