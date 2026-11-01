@@ -37,6 +37,20 @@ import { statementOutstandingAmount, statementOverdueAmount } from "./customer-s
  * open set (REG-B110), so the total always covers every row.
  */
 
+/**
+ * SA-1078 PR-5: the ONE basis of "what a customer owes" on a list. The statement, the customers list and its CSV all read the
+ * invoices this where selects with this select (see `open-balances.ts`) and sum them with `statementOutstandingAmount`, so a
+ * figure printed anywhere is the sheet's figure. DRAFT, PAID, VOID and WRITTEN_OFF are never receivable.
+ */
+export const OPEN_BALANCE_INVOICE_WHERE = { status: { notIn: KPI_SUMMARY_EXCLUDED } } as const;
+export const OPEN_BALANCE_INVOICE_SELECT = {
+  customerId: true,
+  total: true,
+  status: true,
+  dueDate: true,
+  payments: { select: { amount: true, status: true } },
+} as const;
+
 /** Payments older than this many calendar days (tenant zone) are not listed. Day 30 is in, day 31 is out. */
 export const STATEMENT_RECENT_DAYS = 30;
 /** The payments list is cut here, newest first; `recentPaymentsTruncated` says when rows were left out. */
@@ -80,7 +94,7 @@ export async function buildAccountStatement(
   const [invoices, creditNotes, advances, payments] = await Promise.all([
     prisma.forTenant().invoice.findMany({
       // The same set as the older statements: DRAFT, PAID, VOID and WRITTEN_OFF are never receivable.
-      where: { customerId: customer.id, status: { notIn: KPI_SUMMARY_EXCLUDED } },
+      where: { customerId: customer.id, ...OPEN_BALANCE_INVOICE_WHERE },
       orderBy: [{ issueDate: "asc" }, { createdAt: "asc" }],
       select: {
         id: true,

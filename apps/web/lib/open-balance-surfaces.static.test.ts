@@ -38,6 +38,11 @@ const SURFACES: { file: string; label: string; figure: RegExp }[] = [
     figure: /\{parts\[0\]\}/g,
   },
   {
+    file: "app/(dashboard)/customers/page.tsx",
+    label: "customers list Open balance column",
+    figure: /\{fmt\(balance\)\}/g,
+  },
+  {
     file: "app/(dashboard)/finance/reports/page.tsx",
     label: "AR aging total",
     figure: /\{fmt\(rowTotal\)\}/g,

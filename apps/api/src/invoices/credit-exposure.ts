@@ -20,8 +20,8 @@ import { CREDIT_EXPOSURE_EXCLUDED, CREDIT_NOT_APPLICABLE } from "./invoice-statu
  *   3. ONLY drafts with NO open or delivered order behind them (standalone / orderId null,
  *      order CANCELLED or DRAFT-status, quotes, bank-import drafts) are excluded from the
  *      block and reported as `pendingExposure`. `isUnbackedDraft` is the single place that
- *      decides this — the customers list Receivables and the CSV export sum `receivableBalance`
- *      (which calls it), so every surface follows the same basis.
+ *      decides this. (The customers list and CSV no longer read this basis: since SA-1078 PR-5 they
+ *      show the statement's Open balance, which counts issued invoices only.)
  *
  * READ THIS BEFORE "SIMPLIFYING": the unbilled REMAINDER (order total minus what its invoices
  * cover) is counted only for an order that is OPEN or that carries a counted DRAFT. A DELIVERED
@@ -241,26 +241,6 @@ function invoiceBalance(inv: BalancedInvoice): number {
     .filter((p) => p.status !== "VOID")
     .reduce((sum, p) => sum + toNumber(p.amount), 0);
   return toNumber(inv.total) - paid;
-}
-
-/** The invoice slice `receivableBalance` reads — the `select` for every receivables read. */
-export const RECEIVABLE_INVOICE_SELECT = {
-  total: true,
-  status: true,
-  order: { select: { status: true } },
-  payments: { select: { amount: true, status: true } },
-} as const;
-
-/**
- * What ONE invoice adds to a receivables total (customers list Receivables + CSV export): 0 for
- * an unbacked DRAFT (`isUnbackedDraft`), else its balance on the same non-VOID payment basis the
- * hard block uses. Both surfaces sum THIS instead of filtering/netting on their own
- * (`credit-exposure-coverage.spec.ts` fails the build if either stops calling it).
- */
-export function receivableBalance(
-  inv: BalancedInvoice & { status: string; order: { status: string } | null },
-): number {
-  return isUnbackedDraft(inv) ? 0 : invoiceBalance(inv);
 }
 
 /**

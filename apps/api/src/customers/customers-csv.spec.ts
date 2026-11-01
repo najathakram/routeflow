@@ -7,7 +7,7 @@ const customer = (over: Record<string, unknown> = {}) => ({
   phone: null,
   customerType: "RETAIL",
   status: null,
-  receivables: 0,
+  openBalance: 0,
   credits: 0,
   ...over,
 });

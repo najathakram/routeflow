@@ -57,7 +57,7 @@ import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
 import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { RECEIVABLE_INVOICE_SELECT, receivableBalance } from "../invoices/credit-exposure";
+import { openBalancesByCustomer } from "./open-balances";
 import {
   geocodeAddress,
   GeocodableAddress,
@@ -254,7 +254,7 @@ export class CustomersService {
     // Build orderBy. F4-002: sortBy reaches Prisma's orderBy, so it MUST be an
     // allowlisted scalar column — a free-form field name lets a caller inject an
     // unknown/relation field (Prisma 500 → DoS) or probe relation ordering.
-    // Non-scalar UI columns (e.g. "receivables", computed post-query) and any
+    // Non-scalar UI columns (e.g. "receivables", a retired computed column) and any
     // unknown value fall back to the safe default instead of hitting Prisma.
     const validSortFields: Record<string, string> = {
       businessName: "businessName",
@@ -300,18 +300,11 @@ export class CustomersService {
       this.prisma.forTenant().customer.count({ where }),
     ]);
 
-    // Compute receivables and unusedCredits for each customer
+    // Open balance (SA-1078 PR-5: the statement's own figure) and unusedCredits for each customer
     const customerIds = data.map((c) => c.id);
 
-    const [invoices, advancePayments] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        where: {
-          customerId: { in: customerIds },
-          // D6 / B462: drafts included — `receivableBalance` drops only UNBACKED ones.
-          status: { notIn: CREDIT_NOT_APPLICABLE },
-        },
-        select: { customerId: true, ...RECEIVABLE_INVOICE_SELECT },
-      }),
+    const [openBalances, advancePayments] = await Promise.all([
+      openBalancesByCustomer(this.prisma, customerIds, new Date()),
       this.prisma.forTenant().advancePayment.findMany({
         where: {
           customerId: { in: customerIds },
@@ -321,13 +314,6 @@ export class CustomersService {
       }),
     ]);
 
-    const receivablesMap: Record<string, number> = {};
-    for (const inv of invoices) {
-      // Basis + unbacked-draft skip: invoices/credit-exposure.ts (DRAFT-PAYMENT follow-up open).
-      receivablesMap[inv.customerId] =
-        (receivablesMap[inv.customerId] ?? 0) + receivableBalance(inv);
-    }
-
     const creditsMap: Record<string, number> = {};
     for (const ap of advancePayments) {
       creditsMap[ap.customerId] = (creditsMap[ap.customerId] ?? 0) + Number(ap.balance);
@@ -335,7 +321,7 @@ export class CustomersService {
 
     const enriched = data.map((c) => ({
       ...c,
-      receivables: roundMoney(receivablesMap[c.id] ?? 0),
+      openBalance: roundMoney(openBalances.get(c.id) ?? 0),
       unusedCredits: roundMoney(creditsMap[c.id] ?? 0),
       regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
@@ -1529,11 +1515,6 @@ export class CustomersService {
       where,
       include: {
         user: { select: { status: true } },
-        invoices: {
-          // D6 / B462: drafts included — `receivableBalance` drops only UNBACKED ones.
-          where: { status: { notIn: CREDIT_NOT_APPLICABLE } },
-          select: RECEIVABLE_INVOICE_SELECT,
-        },
         advancePayments: {
           where: { balance: { gt: 0 } },
           select: { balance: true },
@@ -1542,8 +1523,12 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
-    // receivableBalance itself); the CSV builder only formats.
+    // The same figure as the list and the sheet (open-balances.ts); the CSV builder only formats.
+    const openBalances = await openBalancesByCustomer(
+      this.prisma,
+      customers.map((c) => c.id),
+      new Date(),
+    );
     return buildCustomersCsv(
       customers.map((c) => ({
         businessName: c.businessName,
@@ -1552,7 +1537,7 @@ export class CustomersService {
         phone: c.phone,
         customerType: c.customerType,
         status: c.user?.status,
-        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        openBalance: openBalances.get(c.id) ?? 0,
         credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
       })),
     );

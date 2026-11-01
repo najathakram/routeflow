@@ -1,5 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
+import { useQuery } from "@tanstack/react-query";
 import type { AccountStatement } from "@routeflow/types";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { OpenBalanceButton } from "./OpenBalanceButton";
@@ -524,5 +525,58 @@ describe("AccountStatementSheet", () => {
     await screen.findByTestId("account-statement-invoices");
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.getAllByText("INV-1001").length).toBeGreaterThan(0);
+  });
+});
+
+describe("L9 (PR-5): closing the sheet refreshes the customers list", () => {
+  it("a list query keyed ['customers', params] is read again after a loaded close, and shows the fresh figure", async () => {
+    let listed = 0;
+    function ListRow() {
+      const q = useQuery({
+        queryKey: ["customers", { page: 1, limit: 20 }],
+        queryFn: async () => {
+          listed += 1;
+          return { openBalance: listed === 1 ? 120 : 80 };
+        },
+      });
+      return <span data-testid="list-figure">{q.data ? q.data.openBalance : "…"}</span>;
+    }
+    renderWithProviders(
+      <>
+        <ListRow />
+        <OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>
+      </>,
+    );
+    expect(await screen.findByText("120")).toBeInTheDocument();
+    const user = await open();
+    await screen.findByTestId("account-statement-sheet");
+    await screen.findByTestId("account-statement-open-balance"); // the sheet's read has landed
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByTestId("list-figure")).toHaveTextContent("80"));
+    expect(listed).toBe(2);
+  });
+
+  it("a sheet that never loaded refreshes nothing", async () => {
+    failRead = true;
+    let listed = 0;
+    function ListRow() {
+      useQuery({
+        queryKey: ["customers", { page: 1 }],
+        queryFn: async () => ++listed,
+      });
+      return null;
+    }
+    renderWithProviders(
+      <>
+        <ListRow />
+        <OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>
+      </>,
+    );
+    await waitFor(() => expect(listed).toBe(1));
+    const user = await open();
+    await screen.findByRole("alert");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("account-statement-sheet")).toBeNull());
+    expect(listed).toBe(1);
   });
 });

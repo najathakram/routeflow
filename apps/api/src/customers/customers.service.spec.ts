@@ -1462,13 +1462,15 @@ describe("CustomersService", () => {
       expect(result.overdueAmount).toBe(150);
     });
 
-    it("findAll: customer receivables exclude VOID payments", async () => {
+    it("findAll: customer Open balance excludes VOID payments", async () => {
       prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
       prisma.customer.count.mockResolvedValue(1);
       prisma.invoice.findMany.mockResolvedValue([
         {
           customerId: "cust-1",
+          status: "SENT",
           total: 100,
+          dueDate: null,
           payments: [
             { amount: 100, status: "VOID" },
             { amount: 40, status: "PAID" },
@@ -1480,31 +1482,34 @@ describe("CustomersService", () => {
       const result = await service.findAll({ page: 1, limit: 20 });
 
       // 100 − 40 (VOID ignored) = 60, not 0.
-      expect((result.data[0] as any).receivables).toBe(60);
+      expect((result.data[0] as any).openBalance).toBe(60);
     });
 
-    it("exportCustomers: CSV receivables column excludes VOID payments", async () => {
+    it("exportCustomers: CSV Open Balance column excludes VOID payments", async () => {
       prisma.customer.findMany.mockResolvedValue([
         {
           ...MOCK_CUSTOMER,
           customerType: "RETAIL",
           user: { status: "ACTIVE" },
-          invoices: [
-            {
-              total: 100,
-              payments: [
-                { amount: 100, status: "VOID" },
-                { amount: 25, status: "PAID" },
-              ],
-            },
-          ],
           advancePayments: [],
+        },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          customerId: "cust-1",
+          status: "SENT",
+          total: 100,
+          dueDate: null,
+          payments: [
+            { amount: 100, status: "VOID" },
+            { amount: 25, status: "PAID" },
+          ],
         },
       ]);
 
       const csv = await service.exportCustomers({});
       const dataLine = csv.split("\n")[1];
-      // Receivables 75.00, Credits 0.00 → row tail ",75.00,0.00" (VOID's 100 ignored).
+      // Open Balance 75.00, Credits 0.00 → row tail ",75.00,0.00" (VOID's 100 ignored).
       expect(dataLine).toContain(",75.00,0.00");
     });
 

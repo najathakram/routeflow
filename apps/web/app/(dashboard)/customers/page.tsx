@@ -61,6 +61,7 @@ import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 
 // Below `sm` the lower-value columns hide (a RELOCATION: phone + tags move to a secondary line in
@@ -86,7 +87,7 @@ interface Customer {
   phone?: string;
   email?: string;
   customerType?: string;
-  receivables?: number;
+  openBalance?: number;
   unusedCredits?: number;
   /** Count of authorizations against license-requiring tracked categories (server-side, WP15). */
   regulatedCount?: number;
@@ -579,18 +580,18 @@ export default function CustomersPage() {
       {
         id: "receivables",
         meta: TIGHT_SMALL_BELOW_SM,
-        header: () => <SortHeader col="receivables">Receivables</SortHeader>,
+        header: () => <SortHeader col="receivables">Open balance</SortHeader>,
         cell: ({ row }) => {
-          const val = row.original.receivables ?? 0;
+          const balance = row.original.openBalance ?? 0;
           return (
             <span
-              data-testid="receivables-cell"
+              data-testid="open-balance-cell"
               className={cn(
                 "block text-right font-medium tabular-nums",
-                val > 0 ? "text-danger" : "text-navy/70",
+                balance > 0 ? "text-danger" : "text-navy/70",
               )}
             >
-              {fmt(val)}
+              <OpenBalanceButton customerId={row.original.id}>{fmt(balance)}</OpenBalanceButton>
             </span>
           );
         },
