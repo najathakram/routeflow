@@ -77,7 +77,9 @@ const MONEY = (l: any) => [Number(l.qty), Number(l.unitPrice), Number(l.subtotal
 
 describe("order line -> invoice line (writer C1: buildInvoiceItemData)", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const service = new InvoicesService(...(Array(15).fill(undefined) as any[]));
+  const service = new (InvoicesService as unknown as new (...a: unknown[]) => InvoicesService)(
+    ...Array(15).fill(undefined),
+  );
   const build = (li: any) => (service as any).buildInvoiceItemData(li, 3, "test-tenant");
   const orderLine = (product: any, over: Record<string, unknown> = {}) => ({
     id: "oi-1",

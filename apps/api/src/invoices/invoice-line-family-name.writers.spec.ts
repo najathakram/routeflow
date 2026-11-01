@@ -117,7 +117,7 @@ describe("manual / estimate-converted / recurring lines (C5: buildManualInvoiceL
     buildManualInvoiceLines(
       [{ description, productId, qty: 2, unitPrice: 10 }] as any,
       {
-        productMap: new Map([
+        productMap: new Map<string, any>([
           ["p-variant", variantRow],
           ["p-solo", soloRow],
         ]),
