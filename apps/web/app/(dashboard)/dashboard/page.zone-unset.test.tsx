@@ -40,6 +40,7 @@ jest.mock("@/lib/api/routes", () => ({ useRouteRuns: () => q() }));
 jest.mock("@/lib/api/drivers", () => ({ useDrivers: () => q() }));
 jest.mock("@/lib/api/products", () => ({ useProducts: () => q() }));
 let zone: string | undefined = "UTC";
+let firstRun: string | null = null;
 const mockGet = jest.fn();
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
@@ -52,15 +53,25 @@ const PROMPT =
 beforeEach(() => {
   authRole = "TENANT_ADMIN";
   zone = "UTC";
+  firstRun = null;
   mockGet.mockReset();
   mockGet.mockImplementation((url: string) =>
     Promise.resolve({
       data:
         url === "/settings"
           ? { businessName: "Acme Foods", ownerName: "Jane", timezone: zone }
-          : url === "/users/me/permissions"
-            ? { role: authRole, isAccountAdmin: false, groups: [], version: 1, mode: "shadow" }
-            : {},
+          : url === "/settings/fulfilment/first-run"
+            ? {
+                state: firstRun,
+                workspaceId: "acme",
+                delivery: false,
+                shipping: true,
+                counter: false,
+                hasOrder: false,
+              }
+            : url === "/users/me/permissions"
+              ? { role: authRole, isAccountAdmin: false, groups: [], version: 1, mode: "shadow" }
+              : {},
     }),
   );
 });
@@ -90,5 +101,29 @@ describe("Dashboard: the business time zone was never picked", () => {
     await screen.findByText(/Here's what's happening at Acme Foods/);
     await act(async () => {});
     expect(screen.queryByText(PROMPT)).toBeNull();
+  });
+
+  it("W1 F29: while the first question is open the time zone card waits; once answered it comes back", async () => {
+    firstRun = "pending";
+    const { unmount } = renderWithProviders(<DashboardPage />);
+    expect(await screen.findByText("How do orders reach your customers?")).toBeInTheDocument();
+    await screen.findByText(/Here's what's happening at Acme Foods/);
+    expect(screen.queryByText(PROMPT)).toBeNull();
+    unmount();
+
+    firstRun = "answered";
+    renderWithProviders(<DashboardPage />);
+    expect(await screen.findByText(PROMPT)).toBeInTheDocument();
+    expect(screen.getByText("Your account is ready.")).toBeInTheDocument();
+  });
+
+  it("W1 F13: an operator never reads the first question", async () => {
+    authRole = "OPERATOR";
+    firstRun = "pending";
+    renderWithProviders(<DashboardPage />);
+    await screen.findByText(/Here's what's happening at Acme Foods/);
+    await act(async () => {});
+    expect(screen.queryByText("How do orders reach your customers?")).toBeNull();
+    expect(mockGet).not.toHaveBeenCalledWith("/settings/fulfilment/first-run");
   });
 });
