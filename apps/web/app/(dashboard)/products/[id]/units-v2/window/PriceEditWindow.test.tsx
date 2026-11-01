@@ -218,36 +218,18 @@ describe("K11-20a window: what it contains", () => {
   });
 });
 
-describe("K11-20a window: the missing unit's Add pointer", () => {
-  const pointers = () =>
-    [...document.querySelectorAll<HTMLElement>(`[data-testid="${T.addUnitPointer}"]`)].filter(
-      (el) => el.textContent === "Add Piece unit",
-    );
-
-  it("N3: the window's table has no Add Piece unit button (it would click a hidden page control)", async () => {
+describe("SA-1082 window: the Piece row of a business that can't sell by the piece", () => {
+  it("W-2: shows its figures and the sentence, with no input and nothing to click", async () => {
     mockGrid = { data: MISSING_PIECE_GRID, isLoading: false, isError: false };
     render();
     await screen.findByRole("dialog", { name: "Edit prices" });
-    expect(inDialog().getByTestId(T.unitsTable)).toBeTruthy();
-    expect(inDialog().getByTestId(T.row("piece"))).toBeTruthy();
-    // The inline grid behind it keeps its pointer.
-    await waitFor(() => expect(pointers().length).toBeGreaterThan(0));
-    expect(pointers().filter((el) => dialog().contains(el))).toHaveLength(0);
-  });
-
-  it("N3: the window's phone cards have none either", async () => {
-    const was = window.innerWidth;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
-    try {
-      mockGrid = { data: MISSING_PIECE_GRID, isLoading: false, isError: false };
-      render();
-      await screen.findByRole("dialog", { name: "Edit prices" });
-      expect(inDialog().getByTestId(T.card("piece"))).toBeTruthy();
-      await waitFor(() => expect(pointers().length).toBeGreaterThan(0));
-      expect(pointers().filter((el) => dialog().contains(el))).toHaveLength(0);
-    } finally {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: was });
-    }
+    const row = within(inDialog().getByTestId(T.row("piece")));
+    expect(row.getByText("$0.50")).toBeTruthy();
+    expect(row.getByTestId(T.notEditable("piece")).textContent).toBe(
+      "Follows the pack price. Selling by the piece isn't on for this business.",
+    );
+    expect(row.queryByRole("textbox")).toBeNull();
+    expect(row.queryByRole("button")).toBeNull();
   });
 });
 

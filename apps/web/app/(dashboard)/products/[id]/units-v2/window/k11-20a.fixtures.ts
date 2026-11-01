@@ -58,9 +58,10 @@ export const MISSING_PIECE_GRID: ProductPriceGridDto = {
       factor: 1,
       kind: "base",
       editable: false,
-      notEditableReason: "Add the Piece unit first.",
+      unbacked: true,
+      notEditableReason: "Follows the pack price. Selling by the piece isn't on for this business.",
       code: null,
-      cells: cells([0, 0, 0, 0, 0]),
+      cells: cells([0.5, 0.46, 0.42, 0.38, 0.33]),
     },
   ],
 };
