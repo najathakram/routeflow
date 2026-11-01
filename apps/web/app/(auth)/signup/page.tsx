@@ -241,8 +241,9 @@ function SignupInner() {
       const emailSentParam = regBody.emailSent === false ? "&emailSent=false" : "";
 
       // Redirect to "check your email" page — no auto-login, must verify first
+      // W2 B1: the Workspace ID goes along so check-email can show it; sign-in asks for it typed.
       router.push(
-        `/signup/check-email?email=${encodeURIComponent(data.adminEmail)}${emailSentParam}`,
+        `/signup/check-email?email=${encodeURIComponent(data.adminEmail)}&workspace=${encodeURIComponent(data.slug)}${emailSentParam}`,
       );
     } catch {
       setApiError("Something went wrong. Please try again.");
@@ -253,9 +254,9 @@ function SignupInner() {
   return (
     <AuthShell
       audience="distributor"
-      kicker="Distributor workspace"
-      title="Your next chapter starts here."
-      lead="Start your 14-day free trial. No card needed."
+      kicker="Distributor account"
+      title="Try it free for 14 days."
+      lead="No card needed."
       footer={
         <>
           <p className="text-xs text-navy/70">
@@ -265,9 +266,9 @@ function SignupInner() {
             </a>
           </p>
           <p className="text-xs text-navy/70">
-            Looking for the buyer portal?{" "}
+            Buying from a distributor?{" "}
             <a href="/buyer/register" className="text-brand-600 hover:underline">
-              Sign up here
+              Create a retailer account
             </a>
           </p>
         </>
@@ -313,7 +314,7 @@ function SignupInner() {
             <p className="text-xs text-success">This workspace ID is available.</p>
           ) : (
             <p className="text-xs text-navy/70">
-              Used in your sign-in URL. Lowercase letters, numbers, and hyphens.
+              You’ll need this to sign in. Use small letters, numbers, and dashes (-).
             </p>
           )}
         </div>

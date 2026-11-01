@@ -301,7 +301,7 @@ const D1_PAGES_WITH_STATES: Array<{ path: string; states: string[] }> = [
   { path: "app/buyer/invite/[token]/page.tsx", states: ["Invalid invite", "Invite accepted"] },
   {
     path: "app/verify-email/page.tsx",
-    states: ["Verifying your email…", "Email verified!", "Verification failed"],
+    states: ["Verifying your email…", "Email verified.", "Verification failed"],
   },
   {
     path: "app/buyer/verify-merge/page.tsx",
