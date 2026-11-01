@@ -10,6 +10,7 @@ import {
   Users,
   FileCheck2,
 } from "lucide-react";
+import { DEMO_CTA } from "../lib/site";
 import { Eyebrow } from "./marketing";
 
 // Copy verbatim from the redesign's components/conversion-sections.tsx (M1 §1.3, §1.6, §1.8).
@@ -192,7 +193,7 @@ export function BuyingConfidence() {
           to improve and ask the team to show you how RouteFlow handles them.
         </p>
         <Link href="/book-a-demo" className="button">
-          Book a workflow demo <ArrowRight size={18} />
+          {DEMO_CTA} <ArrowRight size={18} />
         </Link>
         <span className="confidence-note">
           Come with your questions. Leave with a clearer decision.

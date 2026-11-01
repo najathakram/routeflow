@@ -206,7 +206,7 @@ export function CapabilityStrip() {
     "Invoicing",
     "Analytics",
     "Retailer portal",
-    "AI assistance",
+    "AI invoice scanning",
     "Regulated goods",
   ];
   return (

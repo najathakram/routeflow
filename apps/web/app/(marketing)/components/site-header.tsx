@@ -7,7 +7,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Menu, X, ChevronDown, Store, Warehouse, ArrowUpRight } from "lucide-react";
 import { Brand } from "@/components/brand";
-import { routes, NAV_SLUGS } from "../lib/site";
+import { DEMO_CTA, routes, NAV_SLUGS } from "../lib/site";
 import { authLinks } from "./auth-links";
 
 // The five primary-nav items, sourced from the single `routes` table (L-072
@@ -97,7 +97,7 @@ export function SiteHeader() {
           </div>
 
           <Link className="button button-small" href="/book-a-demo">
-            Book a demo
+            {DEMO_CTA}
           </Link>
 
           <div className="mobile-menu">
@@ -143,9 +143,9 @@ export function SiteHeader() {
                         Retailer sign in <ArrowUpRight size={16} aria-hidden="true" />
                       </a>
                       {/* ux-spec §3: the sheet carries the primary CTA too — the
-                          header's "Book a demo" button is hidden ≤ 480px. */}
+                          header's call button is hidden ≤ 480px. */}
                       <Link href="/book-a-demo" onClick={() => setOpen(false)}>
-                        Book a demo <ArrowUpRight size={16} aria-hidden="true" />
+                        {DEMO_CTA} <ArrowUpRight size={16} aria-hidden="true" />
                       </Link>
                     </div>
                   </Dialog.Content>

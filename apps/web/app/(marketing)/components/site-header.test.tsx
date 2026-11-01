@@ -24,7 +24,7 @@ describe("SiteHeader portals stay inside the .rf-marketing scope", () => {
     expect(sheet.closest(".rf-marketing")).not.toBeNull();
   });
 
-  it("offers Book a demo in the open sheet (ux-spec §3, R-MKT T2)", async () => {
+  it("offers Book a video call in the open sheet (ux-spec §3, R-MKT T2)", async () => {
     const user = userEvent.setup();
     render(<SiteHeader />);
 
@@ -32,7 +32,7 @@ describe("SiteHeader portals stay inside the .rf-marketing scope", () => {
 
     const sheet = screen.getByRole("dialog");
     const links = Array.from(sheet.querySelectorAll("a"));
-    const demo = links.find((a) => /book a demo/i.test(a.textContent ?? ""));
+    const demo = links.find((a) => /book a video call/i.test(a.textContent ?? ""));
     expect(demo).toBeTruthy();
     expect(demo).toHaveAttribute("href", "/book-a-demo");
     expect(links).toHaveLength(9);

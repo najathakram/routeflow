@@ -27,6 +27,8 @@ import "./(marketing)/glass-pages.css";
 // glass-site.css's own header for why this is a separate file from
 // glass-pages.css (booking/auth) rather than a merge.
 import "./(marketing)/glass-site.css";
+// W0 one-look: the home hero and its picture. Last on purpose: it settles the hero after every layer above.
+import "./(marketing)/one-look.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
