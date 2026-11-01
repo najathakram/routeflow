@@ -96,7 +96,7 @@ describe("LoginPage (operator)", () => {
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
 
-    await user.type(screen.getByLabelText("Workspace"), "acme");
+    await user.type(screen.getByLabelText("Workspace ID"), "acme");
     await user.type(screen.getByLabelText("Username or email"), "operator1");
     await user.type(screen.getByLabelText("Password"), "s3cret-pw");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
@@ -131,7 +131,7 @@ describe("LoginPage (operator)", () => {
       );
       const u = userEvent.setup();
       renderWithProviders(<LoginPage />);
-      await u.type(screen.getByLabelText("Workspace"), "acme");
+      await u.type(screen.getByLabelText("Workspace ID"), "acme");
       await u.type(screen.getByLabelText("Username or email"), "sam");
       await u.type(screen.getByLabelText("Password"), "s3cret-pw");
       await u.click(screen.getByRole("button", { name: /sign in/i }));
@@ -198,7 +198,7 @@ describe("LoginPage (operator)", () => {
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
 
-    await user.type(screen.getByLabelText("Workspace"), "acme");
+    await user.type(screen.getByLabelText("Workspace ID"), "acme");
     await user.type(screen.getByLabelText("Username or email"), "operator1");
     await user.type(screen.getByLabelText("Password"), "s3cret-pw");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
@@ -233,7 +233,7 @@ describe("LoginPage (operator)", () => {
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
 
-    await user.type(screen.getByLabelText("Workspace"), "acme");
+    await user.type(screen.getByLabelText("Workspace ID"), "acme");
     await user.type(screen.getByLabelText("Username or email"), "operator1");
     await user.type(screen.getByLabelText("Password"), "s3cret-pw");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
@@ -300,5 +300,83 @@ describe("LoginPage — driver app link (mobile-web-proxy-redesign)", () => {
 
     const link = screen.getByRole("link", { name: /open the driver app/i });
     expect(link).toHaveAttribute("href", "https://routeflowmobile-production.up.railway.app/login");
+  });
+});
+
+// W2 B3 (COPY.md 2k): sign-in says "Workspace ID" with a line under it, and remembers the last one
+// on this device. The remembered value is its own key because sign-out clears the tenant cookie.
+describe("LoginPage — Workspace ID (W2 B3)", () => {
+  const signedIn = {
+    data: {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      user: {
+        id: "u1",
+        username: "operator1",
+        role: "OPERATOR",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantSlug: "acme",
+      },
+    },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/login");
+  });
+
+  it("labels the field Workspace ID and says where to find it", () => {
+    renderWithProviders(<LoginPage />);
+    const field = screen.getByLabelText("Workspace ID");
+    expect(screen.getByText("It’s in your sign-up email.")).toBeInTheDocument();
+    expect(field).toHaveAccessibleDescription("It’s in your sign-up email.");
+  });
+
+  it("starts empty on a device that has signed in to nothing", () => {
+    renderWithProviders(<LoginPage />);
+    expect(screen.getByLabelText("Workspace ID")).toHaveValue("");
+  });
+
+  it("fills in the last Workspace ID, and the field stays editable", async () => {
+    window.localStorage.setItem("rf-last-workspace", "acme-distribution");
+    const user = userEvent.setup();
+    renderWithProviders(<LoginPage />);
+
+    const field = screen.getByLabelText("Workspace ID");
+    await waitFor(() => expect(field).toHaveValue("acme-distribution"));
+    await user.clear(field);
+    await user.type(field, "other-co");
+    expect(field).toHaveValue("other-co");
+  });
+
+  it("remembers the Workspace ID after a successful sign-in", async () => {
+    (apiClient.post as jest.Mock).mockResolvedValueOnce(signedIn);
+    const user = userEvent.setup();
+    renderWithProviders(<LoginPage />);
+
+    await user.type(screen.getByLabelText("Workspace ID"), "acme");
+    await user.type(screen.getByLabelText("Username or email"), "operator1");
+    await user.type(screen.getByLabelText("Password"), "s3cret-pw");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => expect(window.localStorage.getItem("rf-last-workspace")).toBe("acme"));
+  });
+
+  it("does not remember a Workspace ID when sign-in fails", async () => {
+    (apiClient.post as jest.Mock).mockRejectedValueOnce({
+      response: { status: 401, data: { message: "Invalid username or password." } },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<LoginPage />);
+
+    await user.type(screen.getByLabelText("Workspace ID"), "acme");
+    await user.type(screen.getByLabelText("Username or email"), "operator1");
+    await user.type(screen.getByLabelText("Password"), "wrong-pw");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await screen.findByText("Invalid username or password.");
+    expect(window.localStorage.getItem("rf-last-workspace")).toBeNull();
   });
 });

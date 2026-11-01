@@ -93,3 +93,71 @@ describe("CheckEmailPage — emailSent=false and resend-failed branches (PR #778
     ).not.toBeInTheDocument();
   });
 });
+
+// W2 B1 + B5 (COPY.md 2l): sign-in asks for the Workspace ID typed, and no screen showed it. The box
+// shows in both states (the account exists either way), and the wrong-email line names both real doors.
+describe("CheckEmailPage — Workspace ID box and wrong-email line (W2)", () => {
+  beforeEach(() => {
+    global.fetch = jest.fn() as unknown as typeof fetch;
+    mockSearchParams = new URLSearchParams({
+      email: "owner@acme.com",
+      workspace: "acme-distribution",
+    });
+  });
+
+  it("B1: shows the Workspace ID with why it matters", () => {
+    renderWithProviders(<CheckEmailPage />);
+
+    expect(screen.getByText("Your Workspace ID")).toBeInTheDocument();
+    expect(screen.getByText("acme-distribution")).toBeInTheDocument();
+    expect(screen.getByText("You'll need it to sign in.")).toBeInTheDocument();
+    expect(screen.getByText(/we sent a verification link/i)).toBeInTheDocument();
+  });
+
+  it("B1: shows the same box when the verification email failed to send", () => {
+    mockSearchParams = new URLSearchParams({
+      email: "owner@acme.com",
+      emailSent: "false",
+      workspace: "acme-distribution",
+    });
+    renderWithProviders(<CheckEmailPage />);
+
+    expect(screen.getByText("Your Workspace ID")).toBeInTheDocument();
+    expect(screen.getByText("acme-distribution")).toBeInTheDocument();
+  });
+
+  it("shows no box on an old link that has no workspace", () => {
+    mockSearchParams = new URLSearchParams({ email: "owner@acme.com" });
+    renderWithProviders(<CheckEmailPage />);
+    expect(screen.queryByText("Your Workspace ID")).not.toBeInTheDocument();
+  });
+
+  it("shows no box for text that is not shaped like a Workspace ID (a crafted link)", () => {
+    mockSearchParams = new URLSearchParams({
+      email: "owner@acme.com",
+      workspace: "Call us now on 555 0100",
+    });
+    renderWithProviders(<CheckEmailPage />);
+    expect(screen.queryByText("Your Workspace ID")).not.toBeInTheDocument();
+    expect(screen.queryByText(/555 0100/)).not.toBeInTheDocument();
+  });
+
+  it("B5: the kicker says Distributor account", () => {
+    renderWithProviders(<CheckEmailPage />);
+    expect(screen.getByText("Distributor account")).toBeInTheDocument();
+    expect(screen.queryByText("Distributor workspace")).not.toBeInTheDocument();
+  });
+
+  it("B5: wrong-email line names both doors: sign up again, or email us", () => {
+    renderWithProviders(<CheckEmailPage />);
+
+    expect(screen.getByText(/^Wrong email/)).toHaveTextContent(
+      "Wrong email? Sign up again with a new Workspace ID, or email hello@routeflow.info.",
+    );
+    expect(screen.getByRole("link", { name: "Sign up again" })).toHaveAttribute("href", "/signup");
+    expect(screen.getByRole("link", { name: "hello@routeflow.info" })).toHaveAttribute(
+      "href",
+      "mailto:hello@routeflow.info",
+    );
+  });
+});
