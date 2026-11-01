@@ -87,6 +87,7 @@ import {
   type InvoiceTotalsLine,
   customerLinePrice,
   customerTierFor,
+  isAboveListLine,
   normalizeBoxesPieces,
   perUnitPrice,
   pendingScanDecision,
@@ -2859,11 +2860,16 @@ export default function NewInvoicePage() {
                     {/* Unit price */}
                     <div className="max-md:col-span-2">
                       <span className={MOBILE_FIELD_LABEL}>Rate</span>
-                      {item.isSpecialPrice && item.regularPrice !== undefined && (
-                        <p className="text-xs line-through text-navy/70 mb-0.5 text-right">
-                          ${item.regularPrice.toFixed(2)}
-                        </p>
-                      )}
+                      {item.isSpecialPrice &&
+                        item.regularPrice !== undefined &&
+                        !isAboveListLine({
+                          unitPrice: item.unitPrice,
+                          originalPrice: item.regularPrice,
+                        }) && (
+                          <p className="text-xs line-through text-navy/70 mb-0.5 text-right">
+                            ${item.regularPrice.toFixed(2)}
+                          </p>
+                        )}
                       <MoneyInput
                         min={0}
                         value={item.unitPrice}

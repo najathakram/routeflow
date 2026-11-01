@@ -185,3 +185,28 @@ describe("W-745: the estimate dialog fails closed on a failed customer-price rea
     expect(await within(dialog).findByText(/\$36\.00\/each/)).toBeInTheDocument();
   });
 });
+
+// SA-1077 / W-1093: a tier ABOVE Retail prices a line over its list; the TIER badge stays and the lower list is not struck.
+describe("W-1093: the struck list price on a TIER line", () => {
+  afterEach(() => {
+    PRODUCT.priceTier3 = 36;
+  });
+
+  it("a tier price above the list ($48 on $42): the badge stays, the $42.00 list is not struck", async () => {
+    flagOn = false;
+    PRODUCT.priceTier3 = 48;
+    const { user, dialog } = await openAndPickCustomer();
+    await addWidget(user, dialog);
+    expect(await within(dialog).findByText(/\$48\.00\/each/)).toBeInTheDocument();
+    expect(within(dialog).getByText("TIER")).toBeInTheDocument();
+    expect(within(dialog).queryByText("$42.00")).not.toBeInTheDocument();
+  });
+
+  it("a tier price below the list ($36 on $42): the list is struck", async () => {
+    flagOn = false;
+    const { user, dialog } = await openAndPickCustomer();
+    await addWidget(user, dialog);
+    expect(await within(dialog).findByText(/\$36\.00\/each/)).toBeInTheDocument();
+    expect(within(dialog).getByText("$42.00")).toBeInTheDocument();
+  });
+});
