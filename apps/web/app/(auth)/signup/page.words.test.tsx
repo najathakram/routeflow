@@ -83,3 +83,37 @@ describe("SignupPage — hands the Workspace ID on (W2 B1)", () => {
     expect(url.searchParams.get("workspace")).toBe("acme-distribution");
   });
 });
+
+// W2 B6 (COPY.md section 8): the password rule sits under the field, not only in a placeholder that
+// disappears when typing starts, and it stays while the person types or a field error shows.
+describe("SignupPage — password rule under the field (W2 B6)", () => {
+  beforeEach(() => mockFetch());
+
+  const rule = () => screen.getByText(/^At least 8 characters\./);
+
+  it("shows the rule under the password field from the start", () => {
+    render(<SignupPage />);
+    expect(rule()).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("At least 8 characters").parentElement?.parentElement,
+    ).toContainElement(rule());
+  });
+
+  it("keeps the rule while typing", () => {
+    render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "abc" },
+    });
+    expect(rule()).toBeInTheDocument();
+  });
+
+  it("keeps the rule next to the error after a failed submit", async () => {
+    render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "abc" },
+    });
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    expect(await screen.findByText("Password must be at least 8 characters")).toBeInTheDocument();
+    expect(rule()).toBeInTheDocument();
+  });
+});

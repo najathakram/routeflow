@@ -384,13 +384,13 @@ function SignupInner() {
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
-          {errors.adminPassword ? (
+          {/* W2 B6: the rule stays visible while typing and next to an error (COPY.md section 8). */}
+          {errors.adminPassword && (
             <p className="text-xs text-danger">{errors.adminPassword.message}</p>
-          ) : (
-            <p className="text-xs text-navy/70">
-              Uppercase, lowercase, and a number or symbol required.
-            </p>
           )}
+          <p className="text-xs text-navy/70">
+            At least 8 characters. Uppercase, lowercase, and a number or symbol required.
+          </p>
         </div>
 
         {/* Confirm Password */}
