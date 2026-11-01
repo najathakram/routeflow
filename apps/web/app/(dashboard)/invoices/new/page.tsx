@@ -98,6 +98,8 @@ import {
   type SellLevel,
 } from "@routeflow/pricing";
 import { useAuth } from "@/lib/auth-context";
+import { usePriceEditAllowed } from "@/lib/api/my-permissions";
+import { PRICE_RIGHTS_COPY, priceRightsRefusalCopy } from "@/lib/price-rights-copy";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { PendingUnitStatus } from "@/components/LineItemRow";
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
@@ -1098,6 +1100,8 @@ export default function NewInvoicePage() {
   // Staff only, and only under flag.units_v1: everyone else keeps today's row byte for byte.
   const queryClient = useQueryClient();
   const { user: authUser } = useAuth();
+  // SA-1034 rule 10: the server's answer decides whether a custom (typed-price) line may be added.
+  const priceEditAllowed = usePriceEditAllowed();
   const staff = isStaffRole(authUser?.role);
   const unitsOn = useUnitsEnabled({ enabled: staff }) && staff;
   const unitLines = React.useMemo(() => unitViews(items), [items]);
@@ -2037,7 +2041,10 @@ export default function NewInvoicePage() {
           if (rw.handle(err, () => postSale(saleDto, saleLines, send))) return; // row 510
           toast({
             title: "Could not create the sale",
-            description: unitRefusal(err, saleLines) ?? "Please check your inputs and try again.",
+            description:
+              priceRightsRefusalCopy(err) ??
+              unitRefusal(err, saleLines) ??
+              "Please check your inputs and try again.",
             variant: "error",
           });
         },
@@ -2118,7 +2125,10 @@ export default function NewInvoicePage() {
         }
         toast({
           title: "Failed to create invoice",
-          description: unitRefusal(err, lines) ?? "Please check your inputs and try again.",
+          description:
+            priceRightsRefusalCopy(err) ??
+            unitRefusal(err, lines) ??
+            "Please check your inputs and try again.",
           variant: "error",
         });
       },
@@ -3007,12 +3017,18 @@ export default function NewInvoicePage() {
                   <button
                     type="button"
                     onClick={addItem}
-                    title="Add a free-text line that isn't in your product catalog"
-                    className="flex items-center gap-1.5 text-sm font-medium text-navy/70 hover:text-navy transition-colors"
+                    disabled={!priceEditAllowed}
+                    title={
+                      priceEditAllowed
+                        ? "Add a free-text line that isn't in your product catalog"
+                        : PRICE_RIGHTS_COPY
+                    }
+                    className="flex items-center gap-1.5 text-sm font-medium text-navy/70 hover:text-navy transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-navy/70"
                   >
                     <Pencil className="h-4 w-4" />
                     Add custom item
                   </button>
+                  {!priceEditAllowed && <p className="text-xs text-navy/60">{PRICE_RIGHTS_COPY}</p>}
                 </div>
               </div>
 

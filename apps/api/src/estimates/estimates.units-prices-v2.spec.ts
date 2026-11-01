@@ -11,6 +11,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 const V2 = "flag.units_prices_v2";
 
@@ -52,7 +53,7 @@ describe("EstimatesService.create: the customer layer (S19)", () => {
     };
   };
   const quote = async () => {
-    await service.create({ customerId: "cust-1", items: [{ productId: "p1", qty: 2 }] } as never);
+    await service.create({ customerId: "cust-1", items: [{ productId: "p1", qty: 2 }] } as never, NO_PRICE_RIGHTS);
     return prisma.estimate.create.mock.calls[0][0].data.items.create[0];
   };
 

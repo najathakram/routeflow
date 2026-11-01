@@ -73,6 +73,7 @@ import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -309,7 +310,7 @@ describeDb(
         estimatesService.create({
           customerId,
           items: [{ description: "widget", qty: 1, unitPrice: 10 }],
-        } as any),
+        } as any, NO_PRICE_RIGHTS),
       );
     }
 

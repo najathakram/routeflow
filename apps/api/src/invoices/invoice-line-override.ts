@@ -1,4 +1,5 @@
 import { BadRequestException, Logger } from "@nestjs/common";
+import type { UserRole } from "@prisma/client";
 import {
   InvalidTierError,
   UnknownUnitError,
@@ -16,7 +17,8 @@ import {
 } from "@routeflow/pricing";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { staffMay } from "../auth/permissions/staff-capabilities";
+import { priceEditAllowedFor } from "../auth/permissions/price-edit";
+import type { PrismaService } from "../prisma/prisma.service";
 import {
   assertPriceEditAllowed,
   decideTierOverride,
@@ -45,6 +47,13 @@ import type { ManualLineItem } from "./manual-invoice-lines";
  */
 
 export type ManualInvoiceDto = Omit<CreateInvoiceDto, "items"> & { items: ManualLineItem[] };
+
+/**
+ * SA-1034 rule 6: who is asking for the invoice. `request` is a staff member typing lines (POST /invoices, PATCH
+ * /invoices/:id): both price-edit checks apply. `template-run` is a recurring template re-sending the lines a person
+ * with price rights authored: no one typed a price, so neither check applies (the run is a COPY site).
+ */
+export type InvoiceSource = "request" | "template-run";
 
 export type LinePriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
 
@@ -123,21 +132,18 @@ const ladderProduct = (p: PricedProduct): LadderProduct => ({
 });
 
 /**
- * The customer's tier resolver for a create/edit, or undefined when the caller is internal (no actor).
- * Two reads: the customer's default tier and its per-product CustomerPrice tiers (a null tier = msrp-only row).
+ * The customer's price baseline for these lines: its tier per product and its customer layer (SA-1034 rule 6 asks the same
+ * question for a template line as the invoice create does, so it is read here, once). Two reads: the customer's default
+ * tier and its per-product CustomerPrice tiers (a null tier = msrp-only row).
  */
-export async function loadOverride(
-  prisma: { forTenant(): any },
+export async function loadTierBaseline(
+  prisma: PrismaService,
   {
     customerId,
     items,
   }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
-  ladders: ReadonlyMap<string, readonly LadderUnit[]>,
-  actor: { sub?: string; role?: string | null } | undefined,
   entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
-): Promise<LineOverrideCtx | undefined> {
-  const actorId = actor?.sub;
-  if (!actorId) return undefined;
+): Promise<Pick<LineOverrideCtx, "tierOf" | "layerOf">> {
   const db = prisma.forTenant();
   const ids = [...new Set(items.flatMap((i) => (i.productId ? [i.productId] : [])))];
   const customer = await db.customer.findFirst({
@@ -153,13 +159,39 @@ export async function loadOverride(
     : [];
   // S19: master's `cp.pricingTier ?? customer.pricingTier ?? 1` flag off; customerTierFor + typed prices flag on.
   const pc = await customerPricing({ prisma, entitlements }, customerId, ids, customer, rows);
+  return { tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier, layerOf: pc.layer };
+}
+
+/** The customer's tier resolver for a create/edit, or undefined when the caller is internal (no actor). */
+export async function loadOverride(
+  prisma: PrismaService,
+  {
+    customerId,
+    items,
+  }: { customerId: string; items: ReadonlyArray<{ productId?: string | null }> },
+  ladders: ReadonlyMap<string, readonly LadderUnit[]>,
+  actor: { sub?: string; role?: string | null; tenantId?: string | null } | undefined,
+  /** Required, never defaulted here: `create()` and the edit say which they are (SA-1034 rule 6). */
+  source: InvoiceSource,
+  entitlements?: Parameters<typeof customerPricing>[0]["entitlements"],
+): Promise<LineOverrideCtx | undefined> {
+  const actorId = actor?.sub;
+  if (!actorId) return undefined;
+  const baseline = await loadTierBaseline(prisma, { customerId, items }, entitlements);
   return {
     actorId,
-    // SA-1034: the operator's denied groups arrive with the permissions rollout.
-    priceEditAllowed: staffMay(actor?.role, "EDIT_LINE_PRICE", []),
+    // SA-1034: the one price-edit capability, read once per request here (both callers sit before their transaction).
+    // A template run re-sends an authored price: nobody typed one, so it carries the capability without a read.
+    priceEditAllowed:
+      source === "template-run"
+        ? true
+        : await priceEditAllowedFor(
+            prisma,
+            { sub: actorId, tenantId: actor?.tenantId ?? null, role: actor?.role as UserRole },
+            "InvoicesService.loadOverride",
+          ),
     ladders,
-    tierOf: (pid) => pc.cpMap.get(pid) ?? pc.defaultTier,
-    layerOf: pc.layer,
+    ...baseline,
   };
 }
 
