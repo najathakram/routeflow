@@ -322,6 +322,16 @@ function isEditOfUnmatchedLegacyRow(ctx: PlanCtx, item: EditPayloadLine): boolea
   );
 }
 
+/** An untouched row's text: the sent one, unless it is only the composed form of the stored text (the editor posts back what `findOne` showed). */
+function keptDescription(
+  sent: string | null | undefined,
+  stored: string | null,
+  product: Parameters<typeof displayLineDescription>[1],
+): string | null {
+  if (sent == null) return stored;
+  return sent === displayLineDescription(stored, product) ? stored : sent;
+}
+
 export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
   return ctx.items.map((sentItem, i): EditedLine => {
     const { row, untouched, productChanged, leftUnit } = ctx.matches[i];
@@ -341,7 +351,12 @@ export function buildEditedLines(ctx: PlanCtx): EditedLine[] {
           subtotal: finiteStoredMoney(row.subtotal, `Invoice line ${row.id} subtotal`),
           // SA-816: a stored non-finite levy is refused (400), never carried into the rewrite verbatim.
           categoryTaxAmount: finiteStoredLevy(row, `Invoice line ${row.id} category tax`),
-          description: sentItem.description ?? row.description,
+          // F2: a sent text equal to what findOne composed for this stored line is "no change": keep the stored text
+          description: keptDescription(
+            sentItem.description,
+            row.description,
+            ctx.productMap.get(row.productId ?? ""),
+          ),
           notes: sentItem.notes ?? null,
           orderItemId: sentItem.orderItemId ?? row.orderItemId ?? null,
         },

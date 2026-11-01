@@ -1,3 +1,5 @@
+import { displayLineDescription, LINE_NAME_PRODUCT_SELECT } from "./invoice-line-name";
+
 /**
  * B297 PR4 (SA-734r2 R6): which of a draft's existing InvoiceItem rows a rebuild may KEEP in place.
  *
@@ -40,7 +42,13 @@ export function splitKeptItems(
     }
     used.add(match.id);
     keepIds.push(match.id);
-    if (!sameLine(match, data)) updates.push({ id: match.id, data });
+    // SA-1081: a stored bare variant name is the same name as what the rebuild composed. Reads compose it, and a
+    // rewrite would show an untouched sent invoice as changed since sent.
+    const next =
+      displayLineDescription(match.description, match.product) === data.description
+        ? { ...data, description: match.description }
+        : data;
+    if (!sameLine(match, next)) updates.push({ id: match.id, data: next });
   }
   return { keepIds, updates, create };
 }
@@ -121,7 +129,10 @@ function sameLine(row: Record<string, any>, data: Record<string, any>): boolean 
 /** The slice of the Prisma client `rebuildKeptItems` writes through (the caller's transaction). */
 interface KeptItemsDb {
   invoiceItem: {
-    findMany: (args: { where: { invoiceId: string } }) => Promise<Array<Record<string, any>>>;
+    findMany: (args: {
+      where: { invoiceId: string };
+      include: { product: { select: typeof LINE_NAME_PRODUCT_SELECT } };
+    }) => Promise<Array<Record<string, any>>>;
     deleteMany: (args: { where: Record<string, any> }) => Promise<unknown>;
     update: (args: { where: { id: string }; data: Record<string, any> }) => Promise<unknown>;
   };
@@ -138,7 +149,11 @@ export async function rebuildKeptItems(
   nsfKeepIds: readonly string[],
   itemsData: Array<Record<string, any>>,
 ): Promise<Array<Record<string, any>>> {
-  const kept = splitKeptItems(await db.invoiceItem.findMany({ where: { invoiceId } }), itemsData);
+  const existing = await db.invoiceItem.findMany({
+    where: { invoiceId },
+    include: { product: { select: LINE_NAME_PRODUCT_SELECT } },
+  });
+  const kept = splitKeptItems(existing, itemsData);
   await db.invoiceItem.deleteMany({
     where: { invoiceId, id: { notIn: [...nsfKeepIds, ...kept.keepIds] } },
   });
