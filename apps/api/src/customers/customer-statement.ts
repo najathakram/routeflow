@@ -28,20 +28,25 @@ import { toCollectSummary } from "../invoices/to-collect";
  */
 
 /**
- * Row 309 (SA-770 "one predicate"): the statement's overdue figure = Σ the POSITIVE balance of every open
- * invoice the one classifier calls overdue: a balance is due AND the due DAY has ended in the statement's
- * own tenant zone (RF-202: an invoice due today is NOT overdue; UTC when the tenant has no zone). The zone
- * is resolved ONCE per statement by the caller. Each contribution is the classifier's
- * clamped balance (max(0, roundMoney(total - confirmed))), so an overpaid open invoice adds 0.
+ * SA-1078 PR-1: the statement's outstanding figure = Σ the clamped balance of every open invoice
+ * (`summarizeOpenInvoices`), so an overpaid invoice adds 0 and never nets down the others. The ONE total:
+ * both builders and the account statement read it (account-statement.ts), so the rows always add up to it.
  */
-function statementOutstandingAmount(
+export function statementOutstandingAmount(
   open: ReadonlyArray<ClassifiableInvoice>,
   timeZone: string | null,
 ): number {
   return summarizeOpenInvoices(open, overdueCutoff(new Date(), timeZone)).unpaidTotal;
 }
 
-function statementOverdueAmount(
+/**
+ * Row 309 (SA-770 "one predicate"): the statement's overdue figure = Σ the POSITIVE balance of every open
+ * invoice the one classifier calls overdue: a balance is due AND the due DAY has ended in the statement's
+ * own tenant zone (RF-202: an invoice due today is NOT overdue; UTC when the tenant has no zone). The zone
+ * is resolved ONCE per statement by the caller. Each contribution is the classifier's
+ * clamped balance (max(0, roundMoney(total - confirmed))), so an overpaid open invoice adds 0.
+ */
+export function statementOverdueAmount(
   open: ReadonlyArray<ClassifiableInvoice>,
   timeZone: string | null,
 ): number {

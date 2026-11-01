@@ -210,6 +210,14 @@ export class CustomersController {
     return this.customersService.getStatementForOperator(id, { includeExposure: true });
   }
 
+  // SA-1078 (W-1096): the open-balance statement. Staff view: adds emailOnFile + toCollect per invoice.
+  @RequirePermission("FINANCE", "CUSTOMERS")
+  @Get(":id/account-statement")
+  @Roles(UserRole.OPERATOR)
+  getAccountStatement(@Param("id") id: string) {
+    return this.customersService.getAccountStatement(id, { staff: true });
+  }
+
   // Operator twins of the buyer statement-PDF endpoints (P5-15) — same
   // services, tenant-scoped by customerId. Until now a downloadable customer
   // statement existed ONLY in the buyer portal.

@@ -45,6 +45,8 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "customers/customer-statement.ts":
     "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. CLAMPED since SA-1078 PR-1 (it was the signed net, row 326): the statement's outstandingAmount (the open balance) is summarizeOpenInvoices(...).unpaidTotal, the sum of each open invoice's clamped balance, so an overpaid open invoice adds 0 and the rows add up to the total, and overdueAmount (also clamped) can no longer read above it; the ledger's per-invoice signed runningBalance is untouched",
+  "customers/account-statement.ts":
+    "SA-1078 account statement: each open row's unpaid is classifyInvoiceBalance's clamped balanceDue; openBalance and overdue come from customer-statement.ts's statementOutstandingAmount / statementOverdueAmount, so the rows add up to the total",
   "bookkeeping/bookkeeping.service.ts":
     "receivables / aging / AR / per-customer balances: clamped confirmedBalance per invoice (row 310). SIGNED by design: the Receivable Summary's invoice rows (signedBalance, owner ruling 2026-10-11), the per-customer closingBalance (invoiced - received, the Dr/Cr net position) and recordPayment's capacity guard (totalOwed - alreadyPaid)",
   "buyer/buyer.controller.ts":
@@ -251,6 +253,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     "invoices/invoice-email-payload.ts": /\bconfirmedBalance\(/,
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
     "customers/customer-statement.ts": /\bclassifyInvoiceBalance\(/,
+    "customers/account-statement.ts": /\bclassifyInvoiceBalance\(/,
     "bookkeeping/bookkeeping.service.ts": /\bconfirmedBalance\(/,
     "buyer/buyer.controller.ts": /\bsummarizeOpenInvoices\(/,
     "buyer/buyer-dashboard.service.ts": /\bsummarizeOpenInvoices\(/,
