@@ -132,6 +132,8 @@ describe("PlatformAdminService — audit provenance", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
+    // getStats()'s weekly funnel reads demo bookings (W3 M1); createMockPrisma has no such model.
+    (prisma as any).demoBooking = { findMany: jest.fn().mockResolvedValue([]) };
     (prisma as any).auditLog = {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
@@ -3598,6 +3600,252 @@ describe("PlatformAdminService — audit provenance", () => {
       const stats = await service.getStats();
       expect(stats.trialsExpiringSoon[0].userCount).toBe(4);
       expect(stats.atRiskTenants[0].riskReason).toBe("Suspended");
+    });
+  });
+
+  // W3 / M1: the weekly funnel on the admin dashboard. The prisma mock below APPLIES each query's
+  // `where` to a small data set that holds test, demo and deleted tenants next to real ones, so a
+  // count that forgot to leave them out would show the wrong number, not just a wrong call.
+  describe("getStats weekly funnel (W3 M1)", () => {
+    const iso = (d: string) => new Date(`${d}T10:00:00.000Z`);
+    // Wed 2026-10-28. The current week starts Mon 2026-10-26; eight weeks start Mon 2026-09-07.
+    const NOW = iso("2026-10-28");
+
+    const tenants = [
+      { id: "p1", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-27") },
+      { id: "p2", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-28") },
+      { id: "p3", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-10-14") },
+      { id: "old", class: "PRODUCTION", deletedAt: null, createdAt: iso("2026-08-01") },
+      { id: "qa", class: "TEST", deletedAt: null, createdAt: iso("2026-10-27") },
+      { id: "demo", class: "DEMO", deletedAt: null, createdAt: iso("2026-10-27") },
+      { id: "internal", class: "INTERNAL", deletedAt: null, createdAt: iso("2026-10-27") },
+      {
+        id: "gone",
+        class: "PRODUCTION",
+        deletedAt: iso("2026-10-29"),
+        createdAt: iso("2026-10-27"),
+      },
+    ];
+    const activations = [
+      {
+        action: "user.activate",
+        tenantId: "p1",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "p3",
+        createdAt: iso("2026-10-15"),
+        meta: { reason: "email_verify" },
+      },
+      // an admin re-activating a user is not a verified sign-up
+      {
+        action: "user.activate",
+        tenantId: "p2",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "admin_reactivate" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "qa",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "demo",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      // some other audit row that happens to carry the same reason is not an activation
+      {
+        action: "user.login",
+        tenantId: "p2",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+      {
+        action: "user.activate",
+        tenantId: "gone",
+        createdAt: iso("2026-10-27"),
+        meta: { reason: "email_verify" },
+      },
+    ];
+    // Every order and route row; the first per tenant is what counts, and only inside the eight weeks.
+    const orders = [
+      { tenantId: "p1", createdAt: iso("2026-10-28") },
+      { tenantId: "p1", createdAt: iso("2026-10-27") }, // p1's FIRST order is this one
+      { tenantId: "p3", createdAt: iso("2026-10-20") },
+      { tenantId: "p3", createdAt: iso("2026-10-28") }, // a later order is not a first order
+      { tenantId: "old", createdAt: iso("2026-08-02") }, // first order before the window
+      { tenantId: "old", createdAt: iso("2026-10-27") }, // ...so this later one must not count
+      { tenantId: "qa", createdAt: iso("2026-10-27") },
+      { tenantId: "demo", createdAt: iso("2026-10-27") },
+      { tenantId: "internal", createdAt: iso("2026-10-27") },
+      { tenantId: "gone", createdAt: iso("2026-10-27") },
+    ];
+    const routes = [
+      { tenantId: "p3", createdAt: iso("2026-10-21") },
+      { tenantId: "qa", createdAt: iso("2026-10-21") },
+      { tenantId: "gone", createdAt: iso("2026-10-21") },
+    ];
+    const bookings = [
+      { createdAt: iso("2026-10-27") },
+      { createdAt: iso("2026-10-27") },
+      { createdAt: iso("2026-10-14") },
+      { createdAt: iso("2026-08-01") },
+    ];
+
+    const tenantOf = (id: string | null) => tenants.find((t) => t.id === id);
+
+    function matches(row: any, where: any = {}): boolean {
+      return Object.entries(where).every(([key, cond]: [string, any]) => {
+        if (key === "tenant") return matches(tenantOf(row.tenantId) ?? {}, cond);
+        const value = key === "meta" ? row.meta : row[key];
+        if (cond === null) return value === null;
+        if (cond instanceof Date) return +value === +cond;
+        if (typeof cond === "object" && cond !== null) {
+          if ("path" in cond)
+            return cond.path.reduce((v: any, k: string) => v?.[k], value) === cond.equals;
+          if ("in" in cond) return cond.in.includes(value);
+          if ("not" in cond) return cond.not === null ? value !== null : value !== cond.not;
+          if ("gte" in cond && !(value >= cond.gte)) return false;
+          if ("lt" in cond && !(value < cond.lt)) return false;
+          return true;
+        }
+        return value === cond;
+      });
+    }
+
+    function groupFirst(rows: any[]) {
+      return jest.fn(async (args: any) => {
+        const firsts = new Map<string, Date>();
+        for (const row of rows.filter((r) => matches(r, args.where))) {
+          const seen = firsts.get(row.tenantId);
+          if (!seen || row.createdAt < seen) firsts.set(row.tenantId, row.createdAt);
+        }
+        const gte = args.having?.createdAt?._min?.gte as Date | undefined;
+        return [...firsts]
+          .filter(([, first]) => !gte || first >= gte)
+          .map(([tenantId, first]) => ({ tenantId, _min: { createdAt: first } }));
+      });
+    }
+
+    beforeEach(() => {
+      jest.useFakeTimers({
+        now: NOW,
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ],
+      });
+      prisma.tenant.findMany.mockImplementation(async (args: any) =>
+        tenants.filter((t) => matches(t, args?.where)),
+      );
+      (prisma.auditLog.findMany as jest.Mock).mockImplementation(async (args: any) =>
+        activations.filter((a) => matches(a, args?.where)),
+      );
+      (prisma as any).order.groupBy = groupFirst(orders);
+      (prisma as any).route.groupBy = groupFirst(routes);
+      (prisma as any).demoBooking = {
+        findMany: jest.fn(async (args: any) => bookings.filter((b) => matches(b, args?.where))),
+      };
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("M1: five numbers by week, test, demo, internal and deleted tenants left out of every one", async () => {
+      const stats: any = await service.getStats();
+
+      expect(stats.weeklyFunnel?.weeks).toEqual([
+        {
+          weekStart: "2026-09-07",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-09-14",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-09-21",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-09-28",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-10-05",
+          signups: 0,
+          verified: 0,
+          firstOrder: 0,
+          firstRoute: 0,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-10-12",
+          signups: 1,
+          verified: 1,
+          firstOrder: 0,
+          firstRoute: 0,
+          demoBookings: 1,
+        },
+        {
+          weekStart: "2026-10-19",
+          signups: 0,
+          verified: 0,
+          firstOrder: 1,
+          firstRoute: 1,
+          demoBookings: 0,
+        },
+        {
+          weekStart: "2026-10-26",
+          signups: 2,
+          verified: 1,
+          firstOrder: 1,
+          firstRoute: 0,
+          demoBookings: 2,
+        },
+      ]);
+    });
+
+    it("M1: the sixth number, answered, is not invented before W1 lands", async () => {
+      const stats: any = await service.getStats();
+      expect(stats.weeklyFunnel).toBeDefined();
+      for (const week of stats.weeklyFunnel.weeks) {
+        expect(week).not.toHaveProperty("answered");
+      }
     });
   });
 
