@@ -79,3 +79,7 @@ apps/api/scripts/data/no-caller-routes.json
 
 # prettier 3.9.10 breaks the escaped backtick in the SA-118 code span (#3040); keep this file byte-exact
 .claude/sa/RULINGS.md
+
+# Ready-made marketing pages served as-is (home, pricing, product, landing): copied byte for byte
+# from the design source, not our code to reformat.
+apps/web/public/site/

@@ -1,110 +1,32 @@
 /* RouteFlow colour and scene box. This file is the one source of colour for the site and the art.
    White first. One strong signature navy. Sun, coral and mint are the lively accents, each with a job:
    sun = money and warmth, coral = people and alerts, mint = done and paid. */
-:root {
-  --rf-brand-900: #0a1a38;
-  --rf-brand-700: #10264d;
-  --rf-brand-500: #2b4c88;
-  --rf-brand-300: #a9bad8;
-  --rf-brand-100: #e9eef7;
-  --rf-sun: #ffc933;
-  --rf-sun-soft: #fff3cf;
-  --rf-coral: #ff5e4d;
-  --rf-coral-soft: #ffe6e2;
-  --rf-mint: #14c98f;
-  --rf-mint-soft: #d8f7ec;
-  --rf-biscuit: #f6bd7c;
-  --rf-biscuit-deep: #e9a45a;
-  --rf-ink: #0f1733;
-  --rf-white: #ffffff;
-  --rf-skin-a: #f7cdac;
-  --rf-skin-b: #dc9f72;
-  --rf-skin-c: #99643f;
-  --rf-hair: #2a2c3f;
+:root{
+  --rf-brand-900:#0a1a38;--rf-brand-700:#10264d;--rf-brand-500:#2b4c88;--rf-brand-300:#a9bad8;--rf-brand-100:#e9eef7;
+  --rf-sun:#ffc933;--rf-sun-soft:#fff3cf;
+  --rf-coral:#ff5e4d;--rf-coral-soft:#ffe6e2;
+  --rf-mint:#14c98f;--rf-mint-soft:#d8f7ec;
+  --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;
+  --rf-ink:#0f1733;--rf-white:#ffffff;
+  --rf-skin-a:#f7cdac;--rf-skin-b:#dc9f72;--rf-skin-c:#99643f;
+  --rf-hair:#2a2c3f;
   /* Scene roles. A slot on a colour band changes these and the art follows. */
-  --rf-text: var(--rf-ink);
-  --rf-road: var(--rf-brand-300);
-  --rf-disc-a: var(--rf-brand-100);
-  --rf-disc-b: var(--rf-sun-soft);
-  --rf-disc-c: var(--rf-mint-soft);
-  --rf-pill-bg: var(--rf-brand-700);
-  --rf-pill-fg: var(--rf-white);
-  --rf-cargo: var(--rf-brand-500);
-  --rf-cargo-mark: var(--rf-white);
-  --rf-font:
-    "Geist", "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --rf-text:var(--rf-ink);--rf-road:var(--rf-brand-300);
+  --rf-disc-a:var(--rf-brand-100);--rf-disc-b:var(--rf-sun-soft);--rf-disc-c:var(--rf-mint-soft);
+  --rf-pill-bg:var(--rf-brand-700);--rf-pill-fg:var(--rf-white);
+  --rf-cargo:var(--rf-brand-500);--rf-cargo-mark:var(--rf-white);
+  --rf-font:"Geist","Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
 }
-.rf-on-blue {
-  --rf-text: #fff;
-  --rf-road: rgba(255, 255, 255, 0.42);
-  --rf-disc-a: rgba(255, 255, 255, 0.13);
-  --rf-disc-b: rgba(255, 255, 255, 0.13);
-  --rf-disc-c: rgba(255, 255, 255, 0.13);
-  --rf-pill-bg: #fff;
-  --rf-pill-fg: var(--rf-ink);
-  --rf-cargo: #fff;
-  --rf-cargo-mark: var(--rf-brand-700);
-}
-.rf-on-sun {
-  --rf-road: rgba(15, 23, 51, 0.28);
-  --rf-disc-a: #fff;
-  --rf-disc-b: #fff;
-  --rf-disc-c: #fff;
-}
-.rf-scene {
-  display: block;
-  position: relative;
-  width: 100%;
-  font-family: var(--rf-font);
-}
-.rf-scene > svg,
-.rf-scene > img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.rf-scene svg {
-  overflow: visible;
-  -webkit-tap-highlight-color: transparent;
-}
-.rf-scene text {
-  font-family: var(--rf-font);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  fill: var(--rf-text);
-}
+.rf-on-blue{--rf-text:#fff;--rf-road:rgba(255,255,255,.42);--rf-disc-a:rgba(255,255,255,.13);--rf-disc-b:rgba(255,255,255,.13);--rf-disc-c:rgba(255,255,255,.13);--rf-pill-bg:#fff;--rf-pill-fg:var(--rf-ink);--rf-cargo:#fff;--rf-cargo-mark:var(--rf-brand-700)}
+.rf-on-sun{--rf-road:rgba(15,23,51,.28);--rf-disc-a:#fff;--rf-disc-b:#fff;--rf-disc-c:#fff}
+.rf-scene{display:block;position:relative;width:100%;font-family:var(--rf-font)}
+.rf-scene>svg,.rf-scene>img{display:block;width:100%;height:auto}
+.rf-scene svg{overflow:visible;-webkit-tap-highlight-color:transparent}
+.rf-scene text{font-family:var(--rf-font);font-weight:700;letter-spacing:-.01em;fill:var(--rf-text)}
 /* Box and Piece labels double as buttons. The word itself stays in the art. */
-.rf-hit {
-  position: absolute;
-  bottom: 0;
-  height: 14%;
-  min-height: 44px;
-  background: none;
-  border: 0;
-  border-radius: 999px;
-  color: transparent;
-  font: inherit;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.rf-hit:hover,
-.rf-hit[aria-pressed="true"] {
-  background: rgba(127, 140, 190, 0.16);
-}
-.rf-on-blue .rf-hit:hover,
-.rf-on-blue .rf-hit[aria-pressed="true"] {
-  background: rgba(255, 255, 255, 0.16);
-}
-.rf-hit:focus-visible {
-  outline: 3px solid currentColor;
-  outline-color: var(--rf-sun);
-  outline-offset: 2px;
-}
-.rf-hit-box {
-  left: 15%;
-  width: 20%;
-}
-.rf-hit-piece {
-  left: 58%;
-  width: 24%;
-}
+.rf-hit{position:absolute;bottom:0;height:14%;min-height:44px;background:none;border:0;border-radius:999px;color:transparent;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.rf-hit:hover,.rf-hit[aria-pressed=true]{background:rgba(127,140,190,.16)}
+.rf-on-blue .rf-hit:hover,.rf-on-blue .rf-hit[aria-pressed=true]{background:rgba(255,255,255,.16)}
+.rf-hit:focus-visible{outline:3px solid currentColor;outline-color:var(--rf-sun);outline-offset:2px}
+.rf-hit-box{left:15%;width:20%}
+.rf-hit-piece{left:58%;width:24%}

@@ -12,18 +12,16 @@ window.RF_PRICES = {
   plans: {
     STARTER: { name: "Starter", monthly: 99, customers: 100 },
     GROWTH: { name: "Growth", monthly: 249, customers: 250 },
-    SCALE: { name: "Scale", monthly: 499, customers: 500 },
+    SCALE: { name: "Scale", monthly: 499, customers: 500 }
   },
   enterprise: { custom: true },
   /* Add-ons, billed monthly. Regulated items: $39 on Starter and Growth, no fee on Scale and Enterprise, switched on by us. */
   addons: {
     REGULATED: { name: "Regulated items", monthly: 39 },
-    CUSTOMER_PACK: { name: "Customer pack", monthly: 50, customers: 100, stackable: true },
-  },
+    CUSTOMER_PACK: { name: "Customer pack", monthly: 50, customers: 100, stackable: true }
+  }
 };
 (function () {
   var P = window.RF_PRICES;
-  Object.keys(P.plans).forEach(function (k) {
-    P.plans[k].yearly = P.plans[k].monthly * P.yearlyMonthsBilled;
-  });
+  Object.keys(P.plans).forEach(function (k) { P.plans[k].yearly = P.plans[k].monthly * P.yearlyMonthsBilled; });
 })();
