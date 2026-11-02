@@ -243,6 +243,14 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     expect(JSON.stringify(result)).not.toContain("12-3456789");
   });
 
+  // SA-1084: GET /buyer/profile is the buyer's own page's sibling of /buyer/me: the same last 4, never the value.
+  it("getProfile: returns the customer from context with taxIdLast4 only", async () => {
+    prisma.customer.findFirst.mockResolvedValue({ taxId: "12-3456789" });
+    const result = await controller.getProfile(MOCK_CTX as any);
+    expect(result).toEqual({ ...MOCK_CTX.customer, taxIdLast4: "6789" });
+    expect(JSON.stringify(result)).not.toContain("12-3456789");
+  });
+
   // W6b: buyer license endpoints resolve customerId from context, not the client.
   it("listAuthorizations: delegates to the service with the context customerId", () => {
     controller.listAuthorizations(MOCK_CTX as any);

@@ -755,6 +755,43 @@ describe("CustomersService", () => {
       expect(prisma.customer.update).not.toHaveBeenCalled();
     });
 
+    // SA-1084: the importer's change-only license guard (B964) compares with the STORED license, which the plain
+    // read no longer carries, so `update` asks for it by name. Without it a legacy formula-led value echoed back
+    // would read as a new one and be refused.
+    describe("importer license guard reads the stored value", () => {
+      const legacy = "=LEGACY-1";
+      const stored = () =>
+        prisma.customer.findUnique.mockImplementation(async (args: any) =>
+          args?.select?.tobaccoLicenseNo ? { tobaccoLicenseNo: legacy } : MOCK_CUSTOMER,
+        );
+
+      it("an unchanged legacy value passes; a changed formula-led one is refused", async () => {
+        stored();
+        prisma.customer.update.mockResolvedValue(MOCK_CUSTOMER);
+        await service.update("cust-1", {} as any, { compliance: { tobaccoLicenseNo: legacy } });
+        expect(prisma.customer.update).toHaveBeenCalledTimes(1);
+        expect(prisma.customer.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ select: { tobaccoLicenseNo: true } }),
+        );
+
+        prisma.customer.update.mockClear();
+        await expect(
+          service.update("cust-1", {} as any, { compliance: { tobaccoLicenseNo: "=NEW-2" } }),
+        ).rejects.toThrow();
+        expect(prisma.customer.update).not.toHaveBeenCalled();
+      });
+
+      it("a plain edit with no compliance input reads no license at all", async () => {
+        stored();
+        prisma.customer.update.mockResolvedValue(MOCK_CUSTOMER);
+        await service.update("cust-1", { businessName: "New Name" } as any);
+        const asked = prisma.customer.findUnique.mock.calls.filter(
+          (c: any[]) => c[0]?.select?.tobaccoLicenseNo,
+        );
+        expect(asked).toHaveLength(0);
+      });
+    });
+
     // ─── update: defaultDepositPercent (WP1) ────────────────────────────────
 
     it("forwards a numeric defaultDepositPercent to the update data", async () => {

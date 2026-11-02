@@ -289,6 +289,8 @@ export function CustomerFormModal({
   const onInvalid = useInvalidFocus();
 
   const customerType = watch("customerType");
+  // A typed tax ID always wins over Remove: typing means replace, so the box goes back to its replace state.
+  const removingTaxId = removeTaxId && !watch("taxId")?.trim();
   const isBusiness = customerType === "BUSINESS";
 
   // Reset form whenever the modal opens or the customer changes
@@ -303,6 +305,8 @@ export function CustomerFormModal({
       setSalesAgentId("");
       setIsAgentModalOpen(false);
       setMoreOpen(addressRequired);
+      // Remove belongs to one edit of one customer: a reopen or another customer starts from "keep".
+      setRemoveTaxId(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
@@ -456,7 +460,7 @@ export function CustomerFormModal({
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
           // Write-only: a blank box leaves the value alone, a typed one replaces it, Remove clears it.
-          taxId: removeTaxId ? null : data.taxId?.trim() || undefined,
+          taxId: data.taxId?.trim() || (removingTaxId ? null : undefined),
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: creditLimitForSubmit(
             data.creditLimit,
@@ -765,7 +769,7 @@ export function CustomerFormModal({
                 <Input
                   label="Tax ID (optional)"
                   placeholder={
-                    taxIdOnFile && !removeTaxId
+                    taxIdOnFile && !removingTaxId
                       ? `On file, ending ${taxIdOnFile}. Type to replace.`
                       : isBusiness
                         ? "XX-XXXXXXX"
@@ -779,7 +783,7 @@ export function CustomerFormModal({
                     className="mt-1 text-xs font-medium text-brand-600 hover:underline"
                     onClick={() => setRemoveTaxId((v) => !v)}
                   >
-                    {removeTaxId ? "Keep the tax ID on file" : "Remove the tax ID on file"}
+                    {removingTaxId ? "Keep the tax ID on file" : "Remove the tax ID on file"}
                   </button>
                 )}
               </div>
