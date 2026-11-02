@@ -47,6 +47,8 @@ export interface PackBase {
  */
 export interface UnitLine extends PackBase, DerivedBaseMarker {
   unitLabel?: string;
+  /** Pieces in one `unitLabel` unit: the picked option's factor, so a count can be read in pieces (live stock note). */
+  unitFactor?: number;
   packBase?: PackBase;
   /** The product's tier-price columns (the modal's snapshot) — lets a restored pack line be re-priced. */
   tierPrices?: Parameters<typeof getTierPrice>[0];
@@ -125,6 +127,7 @@ export function applyLineUnit<T extends UnitLine>(
     ...line,
     packBase: base,
     unitLabel: option.value,
+    unitFactor: option.factorToBase,
     unit: option.label,
     unitsPerBox: undefined,
     boxes: undefined,
@@ -165,7 +168,7 @@ function restorePack<T extends UnitLine>(
 ): T {
   const { packBase, ...rest } = line;
   const pb = packBase ?? snapshot(line);
-  const restored = { ...rest, ...pb, unitLabel: undefined } as T;
+  const restored = { ...rest, ...pb, unitLabel: undefined, unitFactor: undefined } as T;
   if (dropOneTime) {
     restored.discountedPrice = undefined;
     if (!line.tierPrices) {
