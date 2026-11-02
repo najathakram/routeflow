@@ -10,6 +10,7 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import type { Observable } from "rxjs";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { redactPath } from "../common/redacted-route";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PLATFORM_SCOPED_KEY } from "./platform-scoped.decorator";
 
@@ -67,7 +68,7 @@ export class TenantRequiredInterceptor implements NestInterceptor {
     const user = req?.user as JwtPayload | undefined;
     if (!user || user.tenantId != null) return next.handle();
     const method = String(req.method ?? "").toUpperCase();
-    const route = `${method} ${req.route?.path ?? req.path ?? req.url}`;
+    const route = `${method} ${req.route?.path ?? redactPath(String(req.path ?? req.url ?? ""))}`;
     if (user.role === UserRole.CUSTOMER) {
       if (!READ_VERBS.has(method) && this.once(`customer ${route}`)) {
         this.logger.warn(

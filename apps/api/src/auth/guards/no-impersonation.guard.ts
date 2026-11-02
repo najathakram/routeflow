@@ -10,6 +10,7 @@ import { Reflector } from "@nestjs/core";
 import { AuditService } from "../../audit/audit.service";
 import { AUDIT_ACTIONS } from "../../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { redactPath } from "../../common/redacted-route";
 import type { JwtPayload } from "../jwt-payload.interface";
 
 /** Metadata key `@NoImpersonation(scope)` writes; the guard reads it from the handler, then the class. */
@@ -64,7 +65,7 @@ export class NoImpersonationGuard implements CanActivate {
     if (user.impersonatedBy == null) return true;
 
     const method = String(request.method ?? "").toUpperCase();
-    const route = String(request.route?.path ?? String(request.url ?? "").split("?")[0]).slice(
+    const route = String(request.route?.path ?? redactPath(String(request.url ?? ""))).slice(
       0,
       MAX_ROUTE_CHARS,
     );

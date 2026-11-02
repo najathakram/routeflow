@@ -11,6 +11,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { BLOCKED_SELLER_STATUSES, liveBuyerLinkWhere } from "../buyer-link-scope";
 import type { BuyerJwtPayload } from "../interfaces/buyer-jwt-payload.interface";
 import { sellerAcceptsBuyerWrite, sellerUnavailableException } from "../seller-status-gate";
+import { redactedRoute } from "../../common/redacted-route";
 
 /**
  * SA-733r6 (option a): the ONLY buyer writes a READ_ONLY seller still takes - the buyer paying what is owed. One named
@@ -102,7 +103,7 @@ export class BuyerSellerContextGuard implements CanActivate {
         sellerStatus: tenant.status,
         sellerId: tenant.id,
         logger: this.logger,
-        context: `${method} ${path}`,
+        context: redactedRoute(req),
       });
       if (!verdict.allowed) throw sellerUnavailableException();
     }
