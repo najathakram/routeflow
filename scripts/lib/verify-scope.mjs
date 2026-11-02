@@ -501,3 +501,35 @@ export function withStale(scope, stale) {
     stale: pulled,
   };
 }
+
+/**
+ * FAST only: the specs that read their OWN workspace's files by path (a source pin) and whose read file, or a file
+ * under a directory they read, the diff changed. `jest --changedSince` follows imports, not `fs` reads, so such a spec
+ * never runs when only the file it reads changed (#4108). `readers` is `findSameWorkspaceReaders`'s
+ * `{ "apps/web": [{ spec, reads }] }` (spec paths workspace-relative, `reads` repo-relative, a directory ends in "/").
+ * A changed spec is not selected here: `--changedSince` already runs it. `files` null (diff not computable) selects every
+ * spec: fail closed. Returns `{ specs: { "<dir>": ["<spec>", ...] }, line }`; `line` is null when nothing is selected.
+ */
+export function selectFsReadSpecs({ files, readers }) {
+  const specs = {};
+  let count = 0;
+  const failClosed = files === null;
+  const changed = (files ?? []).map((f) => f.replaceAll("\\", "/"));
+  for (const [dir, list] of Object.entries(readers)) {
+    for (const { spec, reads } of list) {
+      const hit =
+        failClosed ||
+        reads.some((r) => changed.some((f) => (r.endsWith("/") ? f.startsWith(r) : f === r)));
+      if (!hit) continue;
+      (specs[dir] = specs[dir] || []).push(spec);
+      count++;
+    }
+  }
+  if (!count) return { specs, line: null };
+  return {
+    specs,
+    line: failClosed
+      ? `+ FS-READ SPECS: all ${count} (cannot diff, fail closed).`
+      : `+ FS-READ SPECS: ${count} spec${count === 1 ? "" : "s"} read a file this diff changed, so ${count === 1 ? "it runs" : "they run"} by path (jest --changedSince follows imports, not file reads).`,
+  };
+}

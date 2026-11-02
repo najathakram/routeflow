@@ -261,6 +261,108 @@ function findCrossWorkspaceSpecs(root) {
   return result;
 }
 
+const NARROW_DIR_WORKSPACES = new Set(["apps/api"]);
+
+// A string literal that can be a path: it has a separator or ends in a source/config extension.
+const PATHISH = /[\\/]|\.(?:[cm]?[jt]sx?|json|md|css|prisma|sql|ya?ml)$/;
+
+/**
+ * Files and directories INSIDE the spec's own workspace that `src` (comments stripped) can read, as repo-relative
+ * "/" paths ("apps/web/app/x/page.tsx"; a directory ends in "/"). Only paths that exist on disk count, so an
+ * import alias, a message or a regex that merely looks like a path names nothing. The spec itself never counts.
+ *   join  join/resolve(__dirname | process.cwd(), ...literals up to the first non-literal), resolved from the spec's dir
+ *         or the workspace root: the shape of `fs.readFileSync(path.join(__dirname, "[id]/page.tsx"))`.
+ *   lit   any other path-like literal, resolved from the spec's dir and from the workspace root: the shape of
+ *         `join(dir, "page.tsx")` where `dir` is a variable the detector cannot follow.
+ */
+function sameWorkspaceReads(src, { root, ws, specDir, self }) {
+  const wsAbs = path.join(root, ws);
+  const found = new Set();
+  const add = (candidate) => {
+    const abs = path.resolve(candidate);
+    const rel = path.relative(wsAbs, abs);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel) || abs === self) return;
+    if (rel.split(path.sep).includes("node_modules")) return;
+    let stat;
+    try {
+      stat = fs.statSync(abs);
+    } catch {
+      return; // names nothing on disk
+    }
+    if (stat.isDirectory()) {
+      // api's scanners read src/ and prisma/migrations/ whole: 160 specs would join every api push. Its directory reads
+      // count only inside the spec's own tree; the repo-wide pins and the repo-truth lane keep the broad ones.
+      const own = abs === specDir || abs.startsWith(specDir + path.sep);
+      if (NARROW_DIR_WORKSPACES.has(ws) && !own) return;
+    }
+    found.add(path.relative(root, abs).split(path.sep).join("/") + (stat.isDirectory() ? "/" : ""));
+  };
+  for (const call of src.matchAll(PATH_CALL)) {
+    const args = call[1].split(",").map((a) => a.trim());
+    const head = args[0];
+    if (head !== "__dirname" && head !== "process.cwd()") continue;
+    const segments = [];
+    for (const a of args.slice(1)) {
+      const m = [...a.matchAll(STRING_LITERAL)];
+      if (m.length !== 1 || m[0][0] !== a) break;
+      segments.push(literalText(m[0]));
+    }
+    add(path.resolve(head === "__dirname" ? specDir : wsAbs, ...segments));
+  }
+  for (const m of src.matchAll(STRING_LITERAL)) {
+    const text = literalText(m);
+    if (!text || /\s/.test(text) || !PATHISH.test(text) || /^[a-z][a-z0-9+.-]*:/i.test(text))
+      continue;
+    add(path.resolve(specDir, text));
+    add(path.resolve(wsAbs, text));
+  }
+  // dir: a scanner of its own directory, `readdirSync(__dirname)`.
+  if (/\b(?:readdirSync|readdir|globSync|glob)\(\s*__dirname\s*[,)]/.test(src)) add(specDir);
+  return [...found].sort();
+}
+
+/**
+ * { "apps/web": [{ spec: "app/x/y.test.tsx", reads: ["apps/web/app/x/page.tsx", "apps/web/lib/"] }], ... } — the specs
+ * that read a file or directory of their OWN workspace (a source pin: `fs.readFileSync(join(__dirname, "page.tsx"))`).
+ * `jest --changedSince` follows imports, not fs reads, so such a spec never runs when only the file it reads changed
+ * (#4108: a source pin went red at one sha while the fast push reported green). Derived like the cross-workspace
+ * list, never hand-kept; a false positive costs a few seconds, a miss is what the self-test rows pin. Spec paths are
+ * relative to the workspace; `reads` are repo-relative.
+ */
+function findSameWorkspaceReaders(root) {
+  const dirs = workspaceDirs(root);
+  const result = {};
+  const cache = { sources: new Map(), imports: new Map(), files: new Map(), reached: new Map() };
+  for (const ws of dirs) {
+    const files = [];
+    walkSpecs(path.join(root, ws), files);
+    for (const file of files) {
+      const src = sourceOf(file, cache);
+      const specReads = FS_READ.test(src);
+      const reads = new Set();
+      const collect = (text, from) => {
+        for (const r of sameWorkspaceReads(text, {
+          root,
+          ws,
+          specDir: path.dirname(from),
+          self: file,
+        }))
+          reads.add(r);
+      };
+      if (specReads) collect(src, file);
+      for (const helper of helperFiles(file, cache)) {
+        const hsrc = sourceOf(helper, cache);
+        if (specReads || FS_READ.test(hsrc)) collect(hsrc, helper);
+      }
+      if (!reads.size) continue;
+      const spec = path.relative(path.join(root, ws), file).split(path.sep).join("/");
+      (result[ws] = result[ws] || []).push({ spec, reads: [...reads].sort() });
+    }
+    if (result[ws]) result[ws].sort((a, b) => a.spec.localeCompare(b.spec));
+  }
+  return result;
+}
+
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** A Jest testRegex alternation matching exactly these workspace-relative spec paths (either slash). */
@@ -272,5 +374,6 @@ module.exports = {
   workspaceDirs,
   workspacesWithScript,
   findCrossWorkspaceSpecs,
+  findSameWorkspaceReaders,
   specPathsRegex,
 };

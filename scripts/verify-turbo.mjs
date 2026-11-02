@@ -16,6 +16,9 @@
 // always-run tripwires stay FULL (`@routeflow/pricing` tests, api `test:repo-truth`). CI, master,
 // FULL_VERIFY=1 and a bare `npm run verify` (no RF_VERIFY_MODE) are byte-identical to before. See
 // `planTurboCalls({ fast })`, `argvForCall` and `chooseRunMode` below.
+// `--changedSince` follows imports, not file reads, so a source pin (a spec that reads a page's text with fs) would not
+// run when only that page changed: FAST also runs, by path, every non-api spec whose read file the diff touched
+// (`planFsReadSpecs`, derived by `findSameWorkspaceReaders`; #4108).
 import { cpus as osCpus, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -34,15 +37,16 @@ import {
   loadWorkspaces,
   mergeBaseSha,
   repoPinsNeeded,
+  selectFsReadSpecs,
   selectScriptSpecs,
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
 import { createRequire } from "node:module";
 
-const { workspacesWithScript, findCrossWorkspaceSpecs } = createRequire(import.meta.url)(
-  "./lib/cross-workspace-specs.cjs",
-);
+const { workspacesWithScript, findCrossWorkspaceSpecs, findSameWorkspaceReaders } = createRequire(
+  import.meta.url,
+)("./lib/cross-workspace-specs.cjs");
 
 /**
  * The api `-script` specs that read another workspace, as { file, reads } (derived, never hand-kept). The api unit
@@ -180,10 +184,16 @@ export function planTurboCalls({
   splitJest,
   fast = false,
   pins = null,
+  fsRead = null,
   repoTruth: repoTruthNames = [API_NAME],
 }) {
   const drop = new Set(excluded);
-  if (fast) return withPins(planFastCalls({ scope, drop, excluded, repoTruthNames }), pins, drop);
+  if (fast) {
+    return withFsRead(
+      withPins(planFastCalls({ scope, drop, excluded, repoTruthNames }), pins, drop),
+      fsRead,
+    );
+  }
   if (scope.mode === "full") {
     const negatives = excluded.map((name) => `--filter=!${name}`);
     return splitJest
@@ -291,6 +301,24 @@ function withPins(plan, pins, drop) {
     ...new Set(files),
   ];
   return { ...plan, calls: [...plan.calls, { pins: true, cwd: "apps/api", argv }] };
+}
+
+/**
+ * FAST only: one more jest call per workspace in `fsRead` (`{ "apps/web": ["<spec>", ...] }` from `planFsReadSpecs`), run
+ * from that workspace by path: the specs that read a file this diff changed, which `--changedSince` cannot see (#4108).
+ * `--runTestsByPath` takes the paths literally: a Next route name such as `app/(dashboard)/[id]/page.test.tsx` is a
+ * regex to a bare pattern argument. Every flag sits BEFORE the paths. `fsRead` null leaves the plan untouched.
+ */
+function withFsRead(plan, fsRead) {
+  if (!fsRead) return plan;
+  const calls = Object.entries(fsRead)
+    .filter(([, specs]) => specs.length)
+    .map(([cwd, specs]) => ({
+      fsRead: true,
+      cwd,
+      argv: ["jest", "--passWithNoTests", "--runTestsByPath", ...specs],
+    }));
+  return calls.length ? { ...plan, calls: [...plan.calls, ...calls] } : plan;
 }
 
 /**
@@ -441,6 +469,26 @@ export function planPins({ fast, files, excluded = [], specs, crossScript }) {
 }
 
 /**
+ * FAST only: the source-pin specs (a spec that reads its own workspace's files by path) whose read file the diff
+ * changed, per workspace dir: `{ specs: { "apps/web": [...] }, line }`. Outside FAST nothing is planned
+ * (`specs: null`, CI, master and FULL_VERIFY=1 are byte-identical to before). A workspace outside the affected scope or
+ * named by VERIFY_EXCLUDE is dropped; `@routeflow/api` is never included: its specs run through a custom runner and its
+ * scanners read `src/` whole, so its readers stay with the repo-truth lane and the repo pins. `files` null fails closed.
+ */
+const FS_READ_LANE_EXCLUDED = new Set([API_NAME]);
+export function planFsReadSpecs({ fast, files, scope, excluded = [], readers, workspaces }) {
+  if (!fast) return { specs: null, line: null };
+  const nameOf = new Map(workspaces.map((w) => [w.dir, w.name]));
+  const inScope = (dir) => {
+    const name = nameOf.get(dir);
+    if (!name || FS_READ_LANE_EXCLUDED.has(name) || excluded.includes(name)) return false;
+    return scope.mode === "full" || scope.workspaces.includes(name);
+  };
+  const eligible = Object.fromEntries(Object.entries(readers).filter(([dir]) => inScope(dir)));
+  return selectFsReadSpecs({ files, readers: eligible });
+}
+
+/**
  * Runs every planned call in order (never short-circuits); the first non-zero status is the run's. A status that is not
  * a number (null from a signal) is a failure, never a pass: `null ?? 0` used to read as green (W-1045). `ran` receives
  * every status so the caller can prove all planned calls finished green.
@@ -561,11 +609,24 @@ export async function main() {
   // unsplit path that property by itself. With JEST_MAX_WORKERS set the calls are split so the
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
   let pins = null;
+  let fsRead = null;
   if (runMode.fast) {
-    const planned = planPins({ fast: true, files: changedFilesSince(ROOT), excluded });
+    const files = changedFilesSince(ROOT);
+    const planned = planPins({ fast: true, files, excluded });
     pins = planned.pins ? { scriptSpecs: planned.scriptSpecs } : null;
     if (planned.line) console.log(planned.line);
     if (planned.scriptLine) console.log(planned.scriptLine);
+    // Source pins: specs that read a file this diff changed run by path (--changedSince cannot see an fs read).
+    const reads = planFsReadSpecs({
+      fast: true,
+      files,
+      scope,
+      excluded,
+      readers: findSameWorkspaceReaders(ROOT),
+      workspaces: loadWorkspaces(ROOT),
+    });
+    fsRead = reads.specs;
+    if (reads.line) console.log(reads.line);
   }
   const plan = planTurboCalls({
     scope,
@@ -573,6 +634,7 @@ export async function main() {
     splitJest: Boolean(JEST_MAX_WORKERS),
     fast: runMode.fast,
     pins,
+    fsRead,
     repoTruth: workspacesWithScript(ROOT, "test:repo-truth").map((w) => w.name),
   });
   if (plan.note) console.log(plan.note);
@@ -598,7 +660,7 @@ export async function main() {
       (c) =>
         c.jest
           ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
-          : c.pins
+          : c.pins || c.fsRead
             ? pinJest(c)
             : turbo(c.args),
       ran,
