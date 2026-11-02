@@ -14,14 +14,14 @@ export default function InsightsPage() {
   const { setTitle } = usePageTitle();
 
   React.useEffect(() => {
-    setTitle("Insights");
+    setTitle("Product insights");
   }, [setTitle]);
 
   return (
     <div className="space-y-6 p-6">
       <PageHeader
-        title="Insights"
-        subtitle="Scan or search a product to see its sales history and demand trend."
+        title="Product insights"
+        subtitle="Scan or search a product to see how it sells over time."
       />
       <ProductFinder />
     </div>

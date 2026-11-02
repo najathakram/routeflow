@@ -23,7 +23,7 @@ export default function ProductInsightsPage() {
   const { data: product, isLoading, isError } = useProduct(id);
 
   React.useEffect(() => {
-    setTitle(product ? `Insights — ${displayProductName(product)}` : "Insights");
+    setTitle(product ? `Product insights — ${displayProductName(product)}` : "Product insights");
   }, [setTitle, product]);
 
   return (

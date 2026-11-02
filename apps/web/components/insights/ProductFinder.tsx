@@ -89,12 +89,16 @@ export function ProductFinder() {
               setQuery(e.target.value);
               setScanMessage(null);
             }}
-            placeholder="Search by name, SKU or scan a barcode…"
+            placeholder="Search by name or SKU"
             aria-label="Search products"
-            className="h-10 w-full rounded border border-surface-border bg-white pl-9 pr-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-11 w-full rounded border border-surface-border bg-white pl-9 pr-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
-        <BarcodeScannerButton onScan={handleScan} title="Scan a product to find its insights" />
+        <BarcodeScannerButton
+          onScan={handleScan}
+          title="Scan a product to find its insights"
+          className="h-11 w-11"
+        />
       </div>
 
       {scanning && (
@@ -112,7 +116,9 @@ export function ProductFinder() {
           {isLoading ? (
             <p className="p-4 text-sm text-navy/70">Searching…</p>
           ) : results.length === 0 ? (
-            <p className="p-4 text-sm text-navy/70">No products match &quot;{trimmed}&quot;.</p>
+            <p className="p-4 text-sm text-navy/70">
+              No products match &quot;{trimmed}&quot;. Try the scan button.
+            </p>
           ) : (
             <ul className="divide-y divide-surface-border">
               {results.map((p: any) => (
@@ -120,7 +126,7 @@ export function ProductFinder() {
                   <button
                     type="button"
                     onClick={() => goToProduct(p.id)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
+                    className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
                   >
                     <span>{displayProductName(p)}</span>
                     {p.sku && <span className="font-mono text-xs text-navy/50">{p.sku}</span>}

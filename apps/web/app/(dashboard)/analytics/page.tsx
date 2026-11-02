@@ -1267,8 +1267,10 @@ export default function AnalyticsPage() {
         }
       />
 
+      <FindInsightsLink className="sm:hidden" />
+
       {/* Date preset shortcuts */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2">
         {DATE_PRESETS.map((preset) => {
           const { from, to } = preset.range();
           const isActive = appliedFrom === from && appliedTo === to;
@@ -1287,12 +1289,11 @@ export default function AnalyticsPage() {
             </button>
           );
         })}
-        <FindInsightsLink className="ml-auto" />
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-surface-border">
-        <nav className="-mb-px flex gap-1 overflow-x-auto">
+      <div className="flex items-center gap-4 border-b border-surface-border">
+        <nav className="-mb-px flex min-w-0 flex-1 gap-1 overflow-x-auto">
           {tabs.map((tab) => (
             <TabButton
               key={tab.id}
@@ -1306,6 +1307,7 @@ export default function AnalyticsPage() {
             </TabButton>
           ))}
         </nav>
+        <FindInsightsLink className="hidden shrink-0 sm:inline-flex" />
       </div>
 
       {/* Tab panels */}
