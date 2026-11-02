@@ -6,6 +6,8 @@
  * word as an API error code: api-error-codes-parity.spec.ts fails on a bare error-code literal anywhere else.
  */
 export const AUDIT_ACTIONS = {
+  /** SA-1083: one driver location job run; no tenant on the row; meta {mode, cutoff, due, deleted, heldRows, noTenantRows, failedTenants, capped, perTenant}. */
+  RETENTION_DRIVER_LOCATIONS_RUN: "retention.driver-locations.run",
   /** Row 430 (SA-958): a tracked (regulated) category created; meta {before: null, after: {name, taxType, rate, unitBasis, priceIncludesTax, invoiceTreatment, requiresLicense, active}, via?}. */
   TRACKED_CATEGORY_CREATED: "tracked-category.created",
   /** Row 430 (SA-958): a tracked category edited or toggled; meta {before, after} as TRACKED_CATEGORY_CREATED. */

@@ -151,6 +151,12 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
     filter: "NONE",
     reason: "deletes the system's own expired parked carts; no business record changes",
   },
+  "retention.driverLocations": {
+    class: "HOUSEKEEPING",
+    filter: "NONE",
+    reason:
+      "SA-1083: stored driver points past 90 days on every tenant, any status; skips a held tenant; report-only until its switch is on",
+  },
   "email.pruneDeliveries": {
     class: "HOUSEKEEPING",
     filter: "NONE",

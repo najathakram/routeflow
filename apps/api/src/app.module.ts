@@ -71,6 +71,7 @@ import { SellingRestrictionsModule } from "./selling-restrictions/selling-restri
 import { CommissionsModule } from "./sales-agents/commissions.module";
 import { CrmModule } from "./crm/crm.module";
 import { DemoBookingModule } from "./demo-booking/demo-booking.module";
+import { RetentionModule } from "./retention/retention.module";
 import { OnboardingModule } from "./onboarding/onboarding.module";
 import { AppLinksModule } from "./app-links/app-links.module";
 
@@ -202,6 +203,7 @@ import { AppService } from "./app.service";
     CommissionsModule,
     CrmModule,
     DemoBookingModule,
+    RetentionModule,
     OnboardingModule,
     AppLinksModule,
   ],

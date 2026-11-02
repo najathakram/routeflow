@@ -53,6 +53,7 @@ const EXPECTED_NAMES = [
   "mailbox-alert.sweepPending",
   "email.pruneDeliveries",
   "counter.parkSweep",
+  "retention.driverLocations",
 ].sort();
 
 function collectSourceFiles(dir: string, out: string[] = [], includeSpecs = false): string[] {
@@ -151,7 +152,8 @@ describe("no bare @Cron in apps/api/src (T2, R2)", () => {
     // SA-733r7 PR-B3 added billing.dunningSweep, billing.pauseReconcile, billing.pauseReconcileFirst and the daily
     // billing.dunningDiscovery (SA-733r M2), 31 -> 35.
     // SA-788 (b) added billing.addonInvariants (the daily add-on invariant), 35 -> 36.
-    expect(declared).toBe(36);
+    // SA-1083 PR-2 added retention.driverLocations (report-only until its switch is on), 36 -> 37.
+    expect(declared).toBe(37);
     // A site that does not match the full `(expr, "name")` shape would be invisible to the name
     // assertions below, so pin the two counts together.
     expect(wellFormed).toBe(declared);
