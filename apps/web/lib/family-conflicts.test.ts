@@ -94,12 +94,10 @@ describe("getFamilyConflicts — FAMILY_ROWS_CONFLICT -> one fixed message per o
     });
   });
 
-  it("FAMILY_PRICE_AUTHORITY (mixed packs: the family owns the variants' price) -> its own kind", () => {
+  it("VM-W4: FAMILY_PRICE_AUTHORITY is no family-editor outcome any more (SA-1082 A-1)", () => {
     expect(
       getFamilyConflicts(err(409, { code: "FAMILY_PRICE_AUTHORITY", message: "RAW" })),
-    ).toEqual({
-      kind: "PRICE_AUTHORITY",
-    });
+    ).toBeNull();
   });
 
   it.each([

@@ -1,12 +1,20 @@
 import type {
   CustomerChange,
   CustomerPricingWithId,
+  FamilyCell,
+  LadderView,
   PricePlan,
   PriceTier,
 } from "@routeflow/pricing";
 import type { CustomerPriceMove } from "@routeflow/types";
 import { emptyPlan, VIEW } from "../change-prices/plan.test-utils";
-import { foldDraft, staleKeepMoves, staleOfferEntries, type DraftEntry } from "./fold-draft";
+import {
+  cellKey,
+  foldDraft,
+  staleKeepMoves,
+  staleOfferEntries,
+  type DraftEntry,
+} from "./fold-draft";
 
 const move = (over: Partial<CustomerPriceMove> = {}): CustomerPriceMove => ({
   customerId: "c1",
@@ -173,5 +181,95 @@ describe("foldDraft: a refused cell is refused only until a later entry writes i
   it("keeps a refusal typed AFTER the plan", () => {
     const r = foldDraft(VIEW, {}, [plan(33), bad], null, []);
     expect(r.problems).toHaveLength(1);
+  });
+});
+
+describe("SA-1082 rulings 6 and 7: the draft on a variant's family row", () => {
+  const family: FamilyCell[] = [
+    { value: 24, follows: true },
+    { value: 22, follows: true },
+    { value: null, follows: true },
+    { value: null, follows: true },
+    { value: null, follows: true },
+  ];
+  const ladder = (set: (number | null)[]): LadderView => ({
+    rows: [{ ref: "pack", label: "Case", factor: 12, kind: "pack", set }],
+    anchor: "pack",
+    tierAnchors: {},
+  });
+  const cell = (tier: number, text: string): DraftEntry => ({
+    kind: "cell",
+    key: cellKey("pack", tier),
+    text,
+  });
+  const fold = (
+    set: (number | null)[],
+    entries: DraftEntry[],
+    cells: FamilyCell[] | null = family,
+  ) => foldDraft(ladder(set), {}, entries, null, [], (n) => `Tier ${n}`, [], cells);
+  const setOf = (r: ReturnType<typeof fold>) => r.view.rows[0]?.set;
+
+  it("clearing Retail takes the family's number in the same write, not a refusal", () => {
+    const r = fold(
+      [30, null, null, null, null],
+      [cell(1, "")],
+      [
+        { value: 24, follows: false },
+        { value: 22, follows: false },
+        { value: null, follows: false },
+        { value: null, follows: false },
+        { value: null, follows: false },
+      ],
+    );
+    expect(r.problems).toEqual([]);
+    expect(setOf(r)?.[0]).toBe(24);
+  });
+
+  it("clearing Retail with no usable family Retail keeps today's refusal", () => {
+    const none = family.map(() => ({ value: null, follows: false }));
+    const withFamily = fold([30, null, null, null, null], [cell(1, "")], none);
+    const noFamily = fold([30, null, null, null, null], [cell(1, "")], null);
+    expect(withFamily.problems.map((p) => [p.ref, p.tier])).toEqual([["pack", 1]]);
+    expect(withFamily.problems).toEqual(noFamily.problems);
+  });
+
+  it("clearing a tier while Retail follows takes the family's number", () => {
+    const r = fold([24, 20, null, null, null], [cell(2, "")]);
+    expect(r.problems).toEqual([]);
+    expect(setOf(r)?.[1]).toBe(22);
+  });
+
+  it("clearing a tier the family has blank leaves it blank", () => {
+    const r = fold([24, 22, 20, null, null], [cell(3, "")]);
+    expect(setOf(r)?.[2]).toBeNull();
+  });
+
+  it("typing an own Retail blanks the tiers at the family's value, in the draft", () => {
+    const r = fold([24, 22, null, null, null], [cell(1, "30")]);
+    expect(r.problems).toEqual([]);
+    expect(setOf(r)?.[0]).toBe(30);
+    expect(setOf(r)?.[1]).toBeNull();
+  });
+
+  it("a tier typed in the same draft wins", () => {
+    const r = fold([24, 22, null, null, null], [cell(1, "30"), cell(2, "25")]);
+    expect(setOf(r)?.[1]).toBe(25);
+  });
+
+  it("typing a Retail equal to the family's blanks nothing", () => {
+    const r = fold([24, 22, null, null, null], [cell(1, "24")]);
+    expect(setOf(r)?.[1]).toBe(22);
+  });
+
+  it("a variant that doesn't follow keeps every tier when Retail changes", () => {
+    const off = family.map((c) => ({ ...c, follows: false }));
+    const r = fold([30, 28, null, null, null], [cell(1, "31")], off);
+    expect(setOf(r)?.[1]).toBe(28);
+  });
+
+  it("text that isn't a price keeps its own refusal, and takes nothing from the family", () => {
+    const r = fold([24, 20, null, null, null], [cell(1, "abc"), cell(2, "")]);
+    expect(r.problems.map((p) => [p.ref, p.tier])).toContainEqual(["pack", 1]);
+    expect(setOf(r)?.[1]).not.toBe(22);
   });
 });

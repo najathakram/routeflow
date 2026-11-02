@@ -56,6 +56,11 @@ import {
 } from "./_components/PortalVisibilityControls";
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
+import {
+  familyMoveResult,
+  useFamilyMoveAsk,
+  type FamilyMoveAnswer,
+} from "@/components/family/FamilyMoveAsk";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { BulkDeleteSkipReport, type SkippedProduct } from "@/components/BulkDeleteSkipReport";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -81,6 +86,7 @@ const UW = unitWords();
 
 interface ApiProduct {
   id: string;
+  kind?: string;
   name: string;
   sku?: string;
   barcode?: string;
@@ -690,9 +696,7 @@ function makeTableColumns(
               field={`priceTier${tier}`}
               value={val ? parseFloat(String(val)).toFixed(2) : ""}
               quickEditMode={quickEditMode}
-              onSave={async (newVal, rec) => {
-                await onQuickSave(p, `priceTier${tier}`, newVal || "0", rec);
-              }}
+              onSave={(newVal, rec) => onQuickSave(p, `priceTier${tier}`, newVal || "0", rec)}
             />
           );
         }
@@ -809,6 +813,21 @@ export default function ProductsPage() {
   // Refs map for barcode scanner row-jump: productId → ref of its barcode input
   const barcodeRefs = React.useRef<Record<string, React.RefObject<HTMLInputElement | null>>>({});
 
+  const familyMove = useFamilyMoveAsk();
+  const askFamilyMove = familyMove.ask;
+  /** Only a family's price save asks; anything else carries nothing extra. */
+  const askFamily = React.useCallback(
+    (product: ApiProduct, updates: Record<string, unknown>): Promise<FamilyMoveAnswer> => {
+      const prices = Object.fromEntries(
+        Object.entries(updates).filter(([k]) => k === "pricePerUnit" || k.startsWith("priceTier")),
+      );
+      return product.kind === "FAMILY" && Object.keys(prices).length > 0
+        ? askFamilyMove(product.id, prices)
+        : Promise.resolve({});
+    },
+    [askFamilyMove],
+  );
+
   const handleQuickSave = React.useCallback(
     async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
       // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
@@ -861,11 +880,16 @@ export default function ProductsPage() {
         ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
       }
 
-      await updateProduct.mutateAsync(updates);
+      // SA-1082 A-1: a family save that changes a price asks first. Closing the question saves nothing; the cell stays open.
+      const answer = await askFamily(product, updates);
+      if (!answer) return false;
+      const saved = await updateProduct.mutateAsync({ ...updates, ...answer });
       // A save that moved other tiers names them (SA: never silent).
+      const movedNote = familyMoveResult(answer.moveVariantIds?.length ?? 0, saved?.movedVariants);
+      const quickNote = [ladderNote, movedNote].filter(Boolean).join(" ");
       toast({
         title: `${field} updated`,
-        ...(ladderNote ? { description: ladderNote } : {}),
+        ...(quickNote ? { description: quickNote } : {}),
         variant: "success",
       });
 
@@ -883,7 +907,7 @@ export default function ProductsPage() {
       setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
       setRedoStack([]);
     },
-    [updateProduct, toast, tierLabels],
+    [updateProduct, toast, tierLabels, askFamily],
   );
 
   // Regulated section + subcategory save from the Section Quick-Edit cell — an
@@ -991,10 +1015,15 @@ export default function ProductsPage() {
         : {};
       Object.assign(updates, moved);
       const ladderNote = ladderChangeNote(moved, (n) => productTierLabel(tierLabels, n));
-      await updateProduct.mutateAsync(updates);
+      // SA-1082 A-1: closing the question saves nothing, and the box stays open.
+      const answer = product ? await askFamily(product, updates) : {};
+      if (!answer) return;
+      const saved = await updateProduct.mutateAsync({ ...updates, ...answer });
+      const movedNote = familyMoveResult(answer.moveVariantIds?.length ?? 0, saved?.movedVariants);
+      const note = [ladderNote, movedNote].filter(Boolean).join(" ");
       toast({
         title: "Price updated",
-        ...(ladderNote ? { description: ladderNote } : {}),
+        ...(note ? { description: note } : {}),
         variant: "success",
       });
     } catch {
@@ -1572,6 +1601,8 @@ export default function ProductsPage() {
         onClose={() => setSkipReport([])}
         nameById={skipNames}
       />
+
+      {familyMove.dialog}
 
       {/* Bulk delete confirmation */}
       <ConfirmDialog

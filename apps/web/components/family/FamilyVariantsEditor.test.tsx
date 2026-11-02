@@ -211,7 +211,7 @@ describe("FamilyVariantsEditor", () => {
     expect(screen.queryByText(/Nothing was saved/)).toBeNull();
   });
 
-  it("price authority (mixed packs): a fixed explanation, not 'try again'; one toast", async () => {
+  it("VM-W4: the family editor has no family-price refusal of its own; any 409 it doesn't know is the plain sentence", async () => {
     reject(409, { code: "FAMILY_PRICE_AUTHORITY", message: "RAW SERVER TEXT" });
     mount();
     edit();
@@ -219,11 +219,10 @@ describe("FamilyVariantsEditor", () => {
     save();
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(toast).toHaveBeenCalledWith({
-      title: "Prices are set on the family",
-      description: "Change the family price to change its variants' prices.",
+      title: "Couldn't save the variants. Please try again.",
       variant: "error",
     });
-    expect(JSON.stringify(toast.mock.calls)).not.toMatch(/RAW SERVER TEXT/);
+    expect(JSON.stringify(toast.mock.calls)).not.toMatch(/RAW SERVER TEXT|set on the family/);
   });
 
   it("more than 200 changes in one save: blocked client-side with a clear line, no request", () => {

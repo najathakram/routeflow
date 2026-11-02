@@ -405,3 +405,74 @@ describe("units v2 edit grid (S12a)", () => {
     }
   });
 });
+
+describe("VM-W3 (SA-1082): a variant's grid against its family", () => {
+  const familyCells = (follows: boolean) => [
+    { value: 24, follows },
+    { value: 22, follows },
+    { value: null, follows },
+    { value: null, follows },
+    { value: null, follows },
+  ];
+  const variantGrid = (values: number[], follows: boolean): ProductPriceGridDto => ({
+    productId: "p1",
+    anchor: "pack",
+    revision: 7,
+    priceState: "ps-1",
+    tierAnchors: {},
+    tierRules: {},
+    rows: [
+      {
+        ref: "pack",
+        label: "Case",
+        factor: 12,
+        kind: "pack",
+        editable: true,
+        code: null,
+        cells: cells(values, ["set", "set", "auto", "auto", "auto"]).map((c) => ({
+          ...c,
+          family: familyCells(follows)[c.tier - 1],
+        })),
+      },
+    ],
+  });
+  const useFamily = T.btnUseFamilyPrices;
+
+  const mount = () =>
+    render(
+      <PriceDraftProvider productId="p1">
+        <EditablePricesGrid product={product} />
+      </PriceDraftProvider>,
+    );
+
+  it("a variant at the family's prices offers nothing to take back", () => {
+    mockGrid = { data: variantGrid([24, 22, 24, 24, 24], true), isLoading: false, isError: false };
+    mount();
+    expect(screen.queryByTestId(useFamily)).toBeNull();
+    expect(screen.getAllByText("Family").length).toBeGreaterThan(0);
+  });
+
+  it("a variant away from them offers Use family prices, and it takes all five into the draft", async () => {
+    mockGrid = { data: variantGrid([30, 28, 30, 30, 30], false), isLoading: false, isError: false };
+    mount();
+    expect(screen.queryByText("Family")).toBeNull();
+    await userEvent.setup().click(screen.getByTestId(useFamily));
+    const row = screen.getAllByTestId(T.row("pack"))[0]!;
+    const boxes = within(row).getAllByRole("textbox") as HTMLInputElement[];
+    expect(boxes.map((b) => b.value)).toEqual(["", "", "", "", ""]);
+    expect(boxes[0]).toHaveAttribute("placeholder", "24.00");
+    expect(boxes[1]).toHaveAttribute("placeholder", "22.00");
+    expect(row.textContent?.match(/Family/g)).toHaveLength(5);
+  });
+
+  it("a family with no usable Retail has nothing to offer", () => {
+    const g = variantGrid([30, 28, 30, 30, 30], false);
+    g.rows[0]!.cells = g.rows[0]!.cells.map((c) => ({
+      ...c,
+      family: { value: null, follows: false },
+    }));
+    mockGrid = { data: g, isLoading: false, isError: false };
+    mount();
+    expect(screen.queryByTestId(useFamily)).toBeNull();
+  });
+});

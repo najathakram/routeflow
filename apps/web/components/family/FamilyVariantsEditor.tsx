@@ -173,14 +173,6 @@ export function FamilyVariantsEditor({
           );
           return;
         }
-        if (conflicts?.kind === "PRICE_AUTHORITY") {
-          toast({
-            title: "Prices are set on the family",
-            description: "Change the family price to change its variants' prices.",
-            variant: "error",
-          });
-          return;
-        }
         if (conflicts?.kind === "NOT_FOUND") {
           toast({ title: "This family no longer exists.", variant: "error" });
           return;
