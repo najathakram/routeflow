@@ -480,11 +480,13 @@ export interface ProductPriceGridRowDto {
   cells: ProductPriceGridCellDto[];
   /**
    * False when the price write would refuse this row (a variant, family or recipe product is priced elsewhere; the
-   * implicit piece row has no unit yet). The UI hides Edit there.
+   * implicit piece row of a business that can't sell by a unit). The UI hides Edit there.
    */
   editable: boolean;
   /** Plain words for why, set only when `editable` is false. */
   notEditableReason?: string;
+  /** SA-1082: the piece level has no unit row yet. Its figures are Auto, and a first price creates the row. */
+  unbacked?: boolean;
 }
 export interface ProductPriceGridDto {
   productId: string;

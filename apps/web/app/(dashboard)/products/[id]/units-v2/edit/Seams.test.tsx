@@ -582,7 +582,7 @@ describe("K8 seams", () => {
     expect(draft.toRequest()?.customerMoves).toEqual([]);
   });
 
-  it("a first price on the implicit base row shows the server's 'Add the Piece unit first' inline, with a pointer", async () => {
+  it("W-1: the Piece row with no unit behind it takes a price: its box starts on the Auto figure, and typing keeps the row's barcode dash", async () => {
     const packRow = {
       ref: "pack",
       label: "Case",
@@ -598,47 +598,27 @@ describe("K8 seams", () => {
       factor: 1,
       kind: "base" as const,
       editable: true,
-      code: null,
-      cells: cells([0, 0, 0, 0, 0]),
+      unbacked: true,
+      code: "200000000007",
+      cells: cells([0.5, 0.46, 0.42, 0.38, 0.33]),
     };
     mockGrid = {
       data: { ...grid, anchor: "pack", rows: [packRow, baseRow] },
       isLoading: false,
       isError: false,
     };
-    const field = document.body.appendChild(document.createElement("input"));
-    field.id = "new-unit-name";
     const user = userEvent.setup();
-    const qc = new QueryClient();
-    const ui = () => (
-      <QueryClientProvider client={qc}>
-        <ProductPricingV2 product={product} />
-      </QueryClientProvider>
-    );
-    const { rerender } = rtlRender(ui());
+    render();
     await user.click(screen.getByTestId(T.btnEdit));
-    const input = within(screen.getByTestId(T.row("base"))).getByTestId(T.input("base", 2));
+    const row = within(screen.getByTestId(T.row("base")));
+    const input = row.getByTestId(T.input("base", 2));
+    expect(input.getAttribute("placeholder")).toBe("0.46");
     await user.type(input, "0.9");
-    mockError = {
-      response: { data: { code: "PRICE_EDIT_INVALID", problems: ["Add the Piece unit first"] } },
-    };
-    rerender(ui());
-    const inRow = within(screen.getByTestId(T.row("base")));
-    expect(inRow.getByText(/Add the Piece unit first/)).toBeTruthy();
-    const describedBy = inRow.getByTestId(T.input("base", 2)).getAttribute("aria-describedby");
-    expect(describedBy).toBe(T.problem("table", "base", 2));
-    expect(document.getElementById(describedBy!)?.textContent).toContain(
-      "Add the Piece unit first",
-    );
-    await user.click(inRow.getByTestId(T.addUnitPointer));
-    expect(document.activeElement).toBe(field);
-    // typing something else is a different attempt: the old refusal no longer sticks to the cell
-    await user.type(input, "1");
-    expect(inRow.queryByTestId(T.addUnitPointer)).toBeNull();
-    field.remove();
+    expect(input).toHaveValue("0.9");
+    expect(row.getByTestId(T.code("base")).textContent).toBe("—");
   });
 
-  it("a base row the grid marks editable:false shows its reason and the add-unit pointer, with no input", async () => {
+  it("W-2: a base row the grid marks editable:false shows its figures and its reason, with no input", async () => {
     const packRow = { ...grid.rows[0], ref: "pack", label: "Case", factor: 24 };
     const baseRow = {
       ref: "base",
@@ -646,29 +626,27 @@ describe("K8 seams", () => {
       factor: 1,
       kind: "base" as const,
       editable: false,
-      notEditableReason: "Add the Piece unit first.",
+      unbacked: true,
+      notEditableReason: "Follows the pack price. Selling by the piece isn't on for this business.",
       code: null,
-      cells: cells([0, 0, 0, 0, 0]),
+      cells: cells([0.5, 0.46, 0.42, 0.38, 0.33]),
     };
     mockGrid = {
       data: { ...grid, anchor: "pack", rows: [packRow, baseRow] },
       isLoading: false,
       isError: false,
     };
-    const field = document.body.appendChild(document.createElement("input"));
-    field.id = "new-unit-name";
     const user = userEvent.setup();
     render();
     const row = within(screen.getByTestId(T.row("base")));
-    expect(row.getByTestId(T.notEditable("base")).textContent).toContain(
-      "Add the Piece unit first.",
+    expect(row.getByTestId(T.notEditable("base")).textContent).toBe(
+      "Follows the pack price. Selling by the piece isn't on for this business.",
     );
+    expect(row.getByText("$0.50")).toBeTruthy();
     expect(row.queryByRole("button", { name: /^Edit / })).toBeNull();
     await user.click(screen.getByTestId(T.btnEdit));
     expect(row.queryByTestId(T.input("base", 2))).toBeNull();
-    await user.click(row.getByTestId(T.addUnitPointer));
-    expect(document.activeElement).toBe(field);
-    field.remove();
+    expect(row.queryByRole("button")).toBeNull();
   });
 
   it("conflictRow: customer name (or 'A customer'), tier-first unit label, money as shown", () => {

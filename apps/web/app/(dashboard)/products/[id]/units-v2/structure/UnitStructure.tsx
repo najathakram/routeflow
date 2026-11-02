@@ -5,7 +5,6 @@ import { priceGrid, validateSetPrice } from "@routeflow/pricing";
 import type { ProductPriceGridDto, ProductPriceGridRowDto } from "@routeflow/types";
 import { usePriceGrid } from "@/lib/api/usePriceGrid";
 import { formatMoney } from "@/lib/format";
-import { takeAddUnitIntent, useAddUnitIntent } from "../edit/add-unit-intent";
 import { usePriceDraft } from "../edit/usePriceDraft";
 import { rulesFromGrid, viewFromGrid } from "../edit/view-from-grid";
 import {
@@ -71,8 +70,6 @@ export function UnitStructureControls({
 
   // F07 / K11-11: the grid's "Add the Piece unit first" pointer sets the shared intent for the span of its click on
   // the opener, and the opener's onOpen reads and clears it: only the pointer opens the form already set up as that Piece.
-  const intent = useAddUnitIntent();
-  const [prefillPiece, setPrefillPiece] = React.useState(false);
 
   // A price typed in Add a unit: the unit is created WITHOUT it. The create call refetches the grid before it reports
   // back, so the FIRST settled grid after the add decides, once: if it serves the new unit (matched by its id, never by
@@ -159,12 +156,10 @@ export function UnitStructureControls({
           hideHint
           hintId={hintId}
           pieceMissing={pieceMissing}
-          prefillPiece={prefillPiece}
           noPack={noPack}
           validatePrice={cellPriceProblem}
           onOpen={() => {
             setNote("");
-            setPrefillPiece(takeAddUnitIntent(intent));
           }}
           onAdded={(added) => {
             setNote("");
@@ -201,15 +196,12 @@ export function UnitStructureControls({
 }
 
 /**
- * True when the grid shows a base (Piece) row that no unit backs yet. The signal is structural, not the server's wording:
- * the implicit Piece row is the one row locked while another row of the grid is still editable. A family, recipe or
- * variant product locks EVERY row, so it never reads as a missing Piece.
+ * True when the grid shows a base (Piece) row that no unit backs yet, on a product whose other rows can change: a family,
+ * or a product every row of which is locked, has nothing to add here.
  */
 function pieceIsMissing(rows: ProductPriceGridRowDto[]): boolean {
   const base = rows.find((r) => r.kind === "base");
-  return (
-    base != null && base.editable === false && rows.some((r) => r.kind !== "base" && r.editable)
-  );
+  return base?.unbacked === true && rows.some((r) => r.kind !== "base" && r.editable);
 }
 
 /** The grid cell's own rule for a typed price (null = fine, blank included), so the panel refuses with the same words. */

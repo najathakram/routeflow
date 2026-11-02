@@ -128,7 +128,6 @@ const editApi = (): GridEditApi => ({
   setText: jest.fn(),
   changed: () => false,
   problem: () => null,
-  addUnitProblem: () => null,
   rows: null,
   focus: null,
   focused: jest.fn(),

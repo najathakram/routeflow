@@ -7,7 +7,7 @@ import {
   type ProductCodes,
 } from "@routeflow/pricing";
 import type { ProductPriceGridDto } from "@routeflow/types";
-import { ProductPriceGridService } from "./product-price-grid.service";
+import { PIECE_NOT_SOLD, ProductPriceGridService } from "./product-price-grid.service";
 
 /**
  * C0 part B: GET products/:productId/price-grid hands the web the pricing package's own grid.
@@ -61,7 +61,7 @@ const unitRow = (over: Partial<UnitRow> & Pick<UnitRow, "id" | "label" | "factor
 function build(
   product: Record<string, unknown> | null,
   rows: UnitRow[],
-  opts: { mode?: "on" | "off" } = {},
+  opts: { mode?: "on" | "off"; unitsFlag?: boolean; flagThrows?: boolean } = {},
 ) {
   const db = {
     product: {
@@ -80,8 +80,15 @@ function build(
   };
   const prisma = { forTenant: () => db, getTenantId: () => "t1" };
   const featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(opts.mode ?? "off") };
-  const service = new ProductPriceGridService(prisma as never, featureConfig as never);
-  return { service, db };
+  const entitlements = opts.flagThrows
+    ? { hasFlag: jest.fn().mockRejectedValue(new Error("down")) }
+    : { hasFlag: jest.fn().mockResolvedValue(opts.unitsFlag ?? true) };
+  const service = new ProductPriceGridService(
+    prisma as never,
+    featureConfig as never,
+    entitlements as never,
+  );
+  return { service, db, entitlements };
 }
 
 /** What the pricing package alone says the grid is, for the same rows and the same codes. */
@@ -107,7 +114,7 @@ function expected(product: ReturnType<typeof baseProduct>, rows: UnitRow[]): Pro
       ...g,
       code: unitCodeOf(codes, g.ref),
       ...(g.ref === "base" && !baseBacked
-        ? { editable: false, notEditableReason: "Add the Piece unit first." }
+        ? { editable: true, unbacked: true }
         : { editable: true }),
     })),
     revision: 0,
@@ -181,12 +188,45 @@ describe("ProductPriceGridService (units v2)", () => {
     expect(piece.code).toBe("PIECE-1");
     expect(piece.editable).toBe(true);
     expect(piece.notEditableReason).toBeUndefined();
-    // No Piece row: the implicit level stays refused.
-    const bare = (await build(baseProduct({}), []).service.get(PRODUCT_ID)).rows.find(
-      (r) => r.ref === "base",
-    )!;
-    expect(bare.editable).toBe(false);
-    expect(bare.notEditableReason).toBe("Add the Piece unit first.");
+    expect(piece.unbacked).toBeUndefined();
+  });
+
+  describe("SA-1082: the implicit piece level", () => {
+    const bareRow = async (opts: Parameters<typeof build>[2] = {}) =>
+      (await build(baseProduct({}), [], opts).service.get(PRODUCT_ID)).rows.find(
+        (r) => r.ref === "base",
+      )!;
+
+    it("VP-1: units flag on: editable with its Auto figures, and says no unit backs it", async () => {
+      const row = await bareRow();
+      expect(row.editable).toBe(true);
+      expect(row.notEditableReason).toBeUndefined();
+      expect(row.unbacked).toBe(true);
+      expect(row.cells[0].source).toBe("auto");
+      expect(row.cells[0].value).toBeGreaterThan(0);
+    });
+
+    it("VP-4: units flag off: read-only with the sentence, figures still shown", async () => {
+      const row = await bareRow({ unitsFlag: false });
+      expect(row.editable).toBe(false);
+      expect(row.notEditableReason).toBe(PIECE_NOT_SOLD);
+      expect(row.notEditableReason).toBe(
+        "Follows the pack price. Selling by the piece isn't on for this business.",
+      );
+      expect(row.unbacked).toBe(true);
+      expect(row.cells[0].value).toBeGreaterThan(0);
+    });
+
+    it("a failed flag read fails closed", async () => {
+      const row = await bareRow({ flagThrows: true });
+      expect(row.editable).toBe(false);
+      expect(row.notEditableReason).toBe(PIECE_NOT_SOLD);
+    });
+
+    it("no other row depends on the flag", async () => {
+      const dto = await build(baseProduct({}), [], { unitsFlag: false }).service.get(PRODUCT_ID);
+      expect(dto.rows.find((r) => r.ref === "pack")?.editable).toBe(true);
+    });
   });
 
   it("Box $10 of 12 -> Piece Auto $0.83", async () => {
@@ -246,11 +286,11 @@ describe("ProductPriceGridService (units v2)", () => {
       return dto.rows.map((r) => [r.label, r.editable, r.notEditableReason]);
     };
     const FAMILY_REASON = "Family prices are edited on the family page.";
-    // mode off: a variant and a recipe are their own; only the implicit base row waits on a unit
+    // mode off: a variant and a recipe are their own, the implicit base row included (SA-1082)
     for (const over of [{ parentProductId: "fam-1" }, { kind: "RECIPE" }, {}]) {
       expect(await reasons(over, "off")).toEqual([
         ["Box", true, undefined],
-        ["Piece", false, "Add the Piece unit first."],
+        ["Piece", true, undefined],
       ]);
     }
     // mode on: a variant's base level is the family's, its other levels are its own
