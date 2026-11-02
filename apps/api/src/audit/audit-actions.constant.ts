@@ -8,6 +8,8 @@
 export const AUDIT_ACTIONS = {
   /** SA-1083: one driver location job run; no tenant on the row; meta {mode, cutoff, due, deleted, heldRows, noTenantRows, failedTenants, capped, perTenant}. */
   RETENTION_DRIVER_LOCATIONS_RUN: "retention.driver-locations.run",
+  /** SA-1083: one demo booking job run; no tenant on the row; meta {mode, cutoff, due, dueWithEvent, deleted, keptWithTenant, calendarFailed, capped}. */
+  RETENTION_DEMO_BOOKINGS_RUN: "retention.demo-bookings.run",
   /** Row 430 (SA-958): a tracked (regulated) category created; meta {before: null, after: {name, taxType, rate, unitBasis, priceIncludesTax, invoiceTreatment, requiresLicense, active}, via?}. */
   TRACKED_CATEGORY_CREATED: "tracked-category.created",
   /** Row 430 (SA-958): a tracked category edited or toggled; meta {before, after} as TRACKED_CATEGORY_CREATED. */

@@ -13,6 +13,6 @@ import { EmailModule } from "../email/email.module";
   imports: [EmailModule],
   controllers: [PublicDemoBookingController],
   providers: [DemoBookingService, GoogleCalendarService],
-  exports: [DemoBookingService],
+  exports: [DemoBookingService, GoogleCalendarService],
 })
 export class DemoBookingModule {}

@@ -164,6 +164,9 @@ export const TENANT_JOBS: Readonly<Record<string, TenantJobSpec>> = {
   },
 
   // ── PLATFORM / BILLING: governed by SA-775 / SA-733, not this predicate ─────────────────────────────────────
+  "retention.demoBookings": PLATFORM(
+    "SA-1083: demo bookings have no tenant; a booking whose case has a tenant is kept; report-only until its switch is on",
+  ),
   "billing-cron.expireTrials": PLATFORM("billing lifecycle: sets tenant status itself"),
   "billing-cron.expireGrace": PLATFORM("billing lifecycle"),
   "billing-cron.applyScheduledDowngrades": PLATFORM("billing lifecycle"),
