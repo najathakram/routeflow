@@ -1,5 +1,6 @@
 // B681 correction routine -- DB access layer, READ HALF ONLY (Q-D corrected-units sheet, SA-968 §3: the apply-only
-// queries (FOR UPDATE re-read, existing-correction and parked-reversal checks) are not ported).
+// queries (FOR UPDATE re-read, existing-correction and parked-reversal checks) are not ported; SA-1088 also cuts
+// the apply-only per-row evidence hash, which the read-only sheet never calls).
 // B681 correction routine -- DB access layer. Pure query/shaping functions, no CLI concerns
 // (argv, stdout, process.exit) live here -- see b681-correct-ledger.mjs for those.
 //
@@ -10,7 +11,6 @@
 // resolvePackFactors expects -- see line-pack-factors.ts), plus the return-evidence lookup
 // SA-076/FIX 1 needs (a RETURN-driven reversal's true returned pieces) and the per-row evidence
 // hash SA-076a Ruling 2 requires (dry-run stamps it; apply re-derives and refuses on drift).
-import { createHash } from "node:crypto";
 
 /** The SELECT/FROM/JOIN body shared by the dry-run's all-lines scan and apply's scoped
  *  re-verification -- one place, so the two can never drift onto two different row shapes. */
@@ -20,7 +20,9 @@ const LEDGER_ROWS_SELECT = `
     COALESCE(l."orderItemId", l."invoiceItemId") AS line_key,
     l."orderItemId", l."invoiceItemId", l."returnId", l."creditNoteId",
     l.qty, l."unitBasisQty", l."netSales", l."categoryTax",
-    l."soldAt", l."periodBucket", l."correctsEntryId", l."createdAt",
+    l."soldAt", l."periodBucket", l."correctsEntryId",
+    -- timestamp-without-zone holds UTC; pg would read it in the client's zone, and the B661 cutoff is judged on this
+    (l."createdAt" AT TIME ZONE 'UTC') AS "createdAt",
     COALESCE(ii."boxes", oi."boxes")                              AS line_boxes,
     COALESCE(ii."pieces", oi."pieces")                            AS line_pieces,
     NULLIF(TRIM(COALESCE(ii."unitLabel", oi."unitLabel")), '')    AS line_unit_label,
@@ -41,13 +43,14 @@ const LEDGER_ROWS_SELECT = `
         AND f."periodKey" = l."periodBucket" AND f."status" = 'GENERATED'
 `;
 
-/** Every SALE/REVERSAL row on a box-unaware line (no boxes/pieces/unitLabel split), with the
+/** Every SALE/REVERSAL row of ONE tenant ($1) on a box-unaware line (no boxes/pieces/unitLabel split), with the
  *  shape/provenance evidence `computeLineCorrection` needs. One row per RegulatedSalesLedger row.
  *  `which_line` says whether the shape came from the InvoiceItem or the OrderItem (or neither) --
  *  part of the SA-076a evidence hash. */
 export const BOX_UNAWARE_ROWS_SQL = `
   ${LEDGER_ROWS_SELECT}
-  WHERE l."entryType" IN ('SALE', 'REVERSAL')
+  WHERE l."tenantId" = $1
+    AND l."entryType" IN ('SALE', 'REVERSAL')
     AND COALESCE(ii."boxes", oi."boxes") IS NULL
     AND COALESCE(ii."pieces", oi."pieces") IS NULL
     AND NULLIF(TRIM(COALESCE(ii."unitLabel", oi."unitLabel")), '') IS NULL
@@ -217,74 +220,6 @@ export function buildReturnEvidence(row, returnItemsByPair, attributionByPair, p
   return { returnId: row.returnId, kind, qtyOrPieces, attributionUnique };
 }
 
-const strOf = (v) => (v == null ? null : String(Number(v)));
-
-/**
- * SA-076a Ruling 2 -- the per-row evidence hash, EXACT contents (nothing added, nothing dropped):
- * the ledger row (qty, unitBasisQty, netSales, categoryTax, entryType, whether a correction
- * already points at it); the line's own shape (boxes, pieces, unitLabel, unitsPerBox, qty) from
- * the InvoiceItem else the OrderItem, plus which; the source-candidate set for deriveLinePack
- * (count of live non-VOID InvoiceItems on the line key; the chosen one's id, qty, boxes, pieces,
- * unitsPerBox); productPackNow as passed, null vs omitted distinguished; and for money the return
- * evidence (returnId, ReturnItem pieces or qty * pack, creditNoteId). Dry-run stamps this per
- * correction; apply re-derives it (after the row's FOR UPDATE lock) and refuses on any mismatch.
- */
-export function computeRowEvidenceHash({
-  row,
-  hasExistingCorrection,
-  lineShape,
-  lineQty,
-  sourceCandidateCount,
-  chosenSource,
-  productPackNow,
-  returnEvidence,
-  creditNoteId,
-}) {
-  const canon = {
-    row: {
-      qty: strOf(row.qty),
-      unitBasisQty: strOf(row.unitBasisQty),
-      netSales: strOf(row.netSales),
-      categoryTax: strOf(row.categoryTax),
-      entryType: row.entryType,
-      hasExistingCorrection: !!hasExistingCorrection,
-    },
-    lineShape: {
-      boxes: strOf(lineShape.boxes),
-      pieces: strOf(lineShape.pieces),
-      unitLabel: lineShape.unitLabel ?? null,
-      unitsPerBox: strOf(lineShape.unitsPerBox),
-      qty: strOf(lineQty),
-      which: lineShape.which,
-    },
-    sourceCandidateCount,
-    chosenSource: chosenSource
-      ? {
-          id: chosenSource.id,
-          qty: strOf(chosenSource.qty),
-          boxes: strOf(chosenSource.boxes),
-          pieces: strOf(chosenSource.pieces),
-          unitsPerBox: strOf(chosenSource.unitsPerBox),
-        }
-      : null,
-    productPackNow: productPackNow === undefined ? "OMITTED" : strOf(productPackNow),
-    // The RAW return evidence (kind + the ReturnItem's own qty or pieces, never pre-multiplied by
-    // a pack this function doesn't derive) -- pack itself is already fully determined by
-    // `sourceCandidateCount`/`chosenSource`/`lineShape` above, so recording it a second time here
-    // would be redundant, not additional protection.
-    returnEvidence: returnEvidence
-      ? {
-          returnId: returnEvidence.returnId,
-          kind: returnEvidence.kind,
-          qtyOrPieces: strOf(returnEvidence.qtyOrPieces),
-          attributionUnique: returnEvidence.attributionUnique,
-        }
-      : null,
-    creditNoteId: creditNoteId ?? null,
-  };
-  return createHash("sha256").update(JSON.stringify(canon)).digest("hex");
-}
-
 /** Fetches every piece of evidence `groupByLineKey`'s output needs to become
  *  `computeLineCorrection` inputs and evidence hashes, for an already-fetched set of flat ledger
  *  rows (the dry run's full scan, or apply's scoped `LINE_ROWS_BY_KEY_FOR_UPDATE_SQL` read). One
@@ -347,34 +282,15 @@ export async function buildLineContexts(client, flatRows) {
 }
 
 /** For one line entry (from `buildLineContexts().lines`) and one of its rows, returns
- *  `{ returnEvidence, hashInputs }` -- `returnEvidence` is what `computeLineCorrection` needs
- *  (`undefined` for a non-return-driven row); `hashInputs` is the full input to
- *  `computeRowEvidenceHash`, reusable by the CLI for both the dry-run stamp and apply's
- *  re-verification. */
+ *  `{ sourceLine, returnEvidence }` -- the two things `computeLineCorrection` needs
+ *  (`returnEvidence` is `undefined` for a non-return-driven row). */
 export function rowEvidence(entry, row, contexts) {
-  const { source, count, chosen } = pickSourceLine(
-    contexts.candidatesByOrderItem,
-    entry.orderItemId,
-  );
+  const { source } = pickSourceLine(contexts.candidatesByOrderItem, entry.orderItemId);
   const returnEvidence = buildReturnEvidence(
     row,
     contexts.returnItemsByPair,
     contexts.attributionByPair,
     entry.productId,
   );
-  return {
-    sourceLine: source,
-    returnEvidence,
-    hashInputs: {
-      row,
-      hasExistingCorrection: contexts.rowsWithExistingCorrection.has(row.id),
-      lineShape: entry.line,
-      lineQty: entry.line.qty,
-      sourceCandidateCount: count,
-      chosenSource: chosen ?? null,
-      productPackNow: entry.productPackNow,
-      returnEvidence,
-      creditNoteId: row.creditNoteId ?? null,
-    },
-  };
+  return { sourceLine: source, returnEvidence };
 }

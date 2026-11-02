@@ -1,15 +1,14 @@
 #!/usr/bin/env node
-// Self-test for b681-ledger-query.mjs's pure query-shaping functions -- item 3 of the ruled
-// apply-gate work (the per-row evidence hash, SA-076a Ruling 2), plus the omitted-vs-null
-// productPackNow convention its dry-run/apply comparison depends on. Fixtures only -- no
+// Self-test for b681-ledger-query.mjs's pure query-shaping functions -- the omitted-vs-null
+// productPackNow convention and the pack/return evidence pickers. Fixtures only -- no
 // database connection. Run directly: `node apps/api/scripts/lib/b681-ledger-query.self-test.mjs`.
 import assert from "node:assert/strict";
 import {
+  BOX_UNAWARE_ROWS_SQL,
   groupByLineKey,
   pickSourceLine,
   pickReturnItem,
   buildReturnEvidence,
-  computeRowEvidenceHash,
   rowEvidence,
 } from "./b681-ledger-query.mjs";
 
@@ -24,18 +23,6 @@ function t(name, fn) {
     failures.push(`${name}: ${err.message}`);
   }
 }
-
-const baseHashInputs = () => ({
-  row: { qty: "5", unitBasisQty: "60", netSales: "100.00", categoryTax: "8.00", entryType: "SALE" },
-  hasExistingCorrection: false,
-  lineShape: { boxes: null, pieces: null, unitLabel: null, unitsPerBox: 12, which: "orderItem" },
-  lineQty: "5",
-  sourceCandidateCount: 1,
-  chosenSource: { id: "ii1", qty: "5", boxes: null, pieces: null, unitsPerBox: 12 },
-  productPackNow: 24,
-  returnEvidence: null,
-  creditNoteId: null,
-});
 
 // --- groupByLineKey: productPackNow omitted (no Product row) vs explicit null -------------------
 
@@ -224,120 +211,40 @@ t("buildReturnEvidence: attribution split across >1 reversal -> attributionUniqu
   assert.equal(ev.attributionUnique, false);
 });
 
-// --- computeRowEvidenceHash: SA-076a Ruling 2's exact contents ----------------------------------
+// --- rowEvidence: glues buildLineContexts' output into computeLineCorrection's inputs ---------
 
-t("computeRowEvidenceHash: deterministic -- same inputs hash identically", () => {
-  assert.equal(computeRowEvidenceHash(baseHashInputs()), computeRowEvidenceHash(baseHashInputs()));
+t("rowEvidence: assembles sourceLine + returnEvidence from an entry+row+contexts", () => {
+  const contexts = {
+    candidatesByOrderItem: new Map([
+      ["oi1", [{ id: "ii1", qty: 5, boxes: null, pieces: null, unitsPerBox: 12 }]],
+    ]),
+    returnItemsByPair: new Map(),
+    attributionByPair: new Map(),
+    rowsWithExistingCorrection: new Set(),
+  };
+  const entry = {
+    orderItemId: "oi1",
+    productId: "p1",
+    productPackNow: 24,
+    line: {
+      boxes: null,
+      pieces: null,
+      unitLabel: null,
+      unitsPerBox: 12,
+      which: "orderItem",
+      qty: "5",
+    },
+  };
+  const row = { id: "row1", entryType: "SALE", returnId: null, creditNoteId: null };
+  const { sourceLine, returnEvidence } = rowEvidence(entry, row, contexts);
+  assert.equal(sourceLine.unitsPerBox, 12);
+  assert.equal(returnEvidence, undefined);
 });
 
-t("computeRowEvidenceHash: productPackNow OMITTED vs explicit null hash DIFFERENTLY", () => {
-  const omitted = computeRowEvidenceHash({ ...baseHashInputs(), productPackNow: undefined });
-  const explicitNull = computeRowEvidenceHash({ ...baseHashInputs(), productPackNow: null });
-  const withValue = computeRowEvidenceHash({ ...baseHashInputs(), productPackNow: 24 });
-  assert.notEqual(omitted, explicitNull, "OMITTED and null are different evidence, not the same");
-  assert.notEqual(omitted, withValue);
-  assert.notEqual(explicitNull, withValue);
+t("BOX_UNAWARE_ROWS_SQL: scoped to one tenant, and createdAt is read as UTC", () => {
+  assert.ok(BOX_UNAWARE_ROWS_SQL.includes('WHERE l."tenantId" = $1'));
+  assert.ok(BOX_UNAWARE_ROWS_SQL.includes(`(l."createdAt" AT TIME ZONE 'UTC') AS "createdAt"`));
 });
-
-t(
-  "computeRowEvidenceHash: a changed row qty changes the hash (dry-run vs apply drift detection)",
-  () => {
-    const before = computeRowEvidenceHash(baseHashInputs());
-    const after = computeRowEvidenceHash({
-      ...baseHashInputs(),
-      row: { ...baseHashInputs().row, qty: "999" },
-    });
-    assert.notEqual(before, after);
-  },
-);
-
-t("computeRowEvidenceHash: hasExistingCorrection flips the hash", () => {
-  const a = computeRowEvidenceHash({ ...baseHashInputs(), hasExistingCorrection: false });
-  const b = computeRowEvidenceHash({ ...baseHashInputs(), hasExistingCorrection: true });
-  assert.notEqual(a, b);
-});
-
-t("computeRowEvidenceHash: a changed source-candidate count changes the hash", () => {
-  const a = computeRowEvidenceHash({ ...baseHashInputs(), sourceCandidateCount: 1 });
-  const b = computeRowEvidenceHash({ ...baseHashInputs(), sourceCandidateCount: 2 });
-  assert.notEqual(a, b);
-});
-
-t("computeRowEvidenceHash: chosenSource null vs a specific candidate hash differently", () => {
-  const a = computeRowEvidenceHash({ ...baseHashInputs(), chosenSource: null });
-  const b = computeRowEvidenceHash(baseHashInputs());
-  assert.notEqual(a, b);
-});
-
-t(
-  "computeRowEvidenceHash: returnEvidence null vs present hash differently, and by kind/qty",
-  () => {
-    const none = computeRowEvidenceHash({ ...baseHashInputs(), returnEvidence: null });
-    const inline = computeRowEvidenceHash({
-      ...baseHashInputs(),
-      returnEvidence: {
-        returnId: "ret1",
-        kind: "inline",
-        qtyOrPieces: 36,
-        attributionUnique: true,
-      },
-    });
-    const standard = computeRowEvidenceHash({
-      ...baseHashInputs(),
-      returnEvidence: {
-        returnId: "ret1",
-        kind: "standard",
-        qtyOrPieces: 3,
-        attributionUnique: true,
-      },
-    });
-    assert.notEqual(none, inline);
-    assert.notEqual(inline, standard);
-  },
-);
-
-t("computeRowEvidenceHash: creditNoteId participates in the hash", () => {
-  const a = computeRowEvidenceHash({ ...baseHashInputs(), creditNoteId: null });
-  const b = computeRowEvidenceHash({ ...baseHashInputs(), creditNoteId: "cn1" });
-  assert.notEqual(a, b);
-});
-
-// --- rowEvidence: glues buildLineContexts' output into computeRowEvidenceHash's exact shape -----
-
-t(
-  "rowEvidence: assembles hashInputs from an entry+row+contexts, matching computeRowEvidenceHash",
-  () => {
-    const contexts = {
-      candidatesByOrderItem: new Map([
-        ["oi1", [{ id: "ii1", qty: 5, boxes: null, pieces: null, unitsPerBox: 12 }]],
-      ]),
-      returnItemsByPair: new Map(),
-      attributionByPair: new Map(),
-      rowsWithExistingCorrection: new Set(),
-    };
-    const entry = {
-      orderItemId: "oi1",
-      productId: "p1",
-      productPackNow: 24,
-      line: {
-        boxes: null,
-        pieces: null,
-        unitLabel: null,
-        unitsPerBox: 12,
-        which: "orderItem",
-        qty: "5",
-      },
-    };
-    const row = { id: "row1", entryType: "SALE", returnId: null, creditNoteId: null };
-    const { sourceLine, returnEvidence, hashInputs } = rowEvidence(entry, row, contexts);
-    assert.equal(sourceLine.unitsPerBox, 12);
-    assert.equal(returnEvidence, undefined);
-    assert.equal(hashInputs.sourceCandidateCount, 1);
-    assert.equal(hashInputs.productPackNow, 24);
-    // hashInputs must be a valid, directly-usable computeRowEvidenceHash argument.
-    assert.equal(typeof computeRowEvidenceHash(hashInputs), "string");
-  },
-);
 
 console.log(`b681-ledger-query self-test: ${pass} passed, ${failures.length} failed`);
 if (failures.length) {
