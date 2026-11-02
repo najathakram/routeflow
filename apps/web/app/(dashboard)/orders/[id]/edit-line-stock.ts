@@ -57,9 +57,10 @@ export function savedPiecesByProduct(items: EditStockItem[]): Map<string, number
       qty: it.originalQty,
       boxes: it.originalBoxSplit ? 0 : null,
       pieces: it.originalBoxSplit ? 0 : null,
-      unitsPerBox: it.originalUnitsPerBox ?? it.unitsPerBox,
+      // The SAVED line's own pack: the unit it is switched to now (`unitsPerBox`) is not what it held.
+      unitsPerBox: it.originalUnitsPerBox,
       unitLabel: it.originalUnitLabel,
-      unitFactor: it.originalUnitLabel ? (it.originalUnitsPerBox ?? it.unitsPerBox) : undefined,
+      unitFactor: it.originalUnitLabel ? it.originalUnitsPerBox : undefined,
     });
     saved.set(
       it.originalProductId,

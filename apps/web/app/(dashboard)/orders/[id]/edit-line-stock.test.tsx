@@ -91,6 +91,38 @@ describe("named-unit lines (read 2 hold 1)", () => {
     expect(Number.isNaN(saved.get("p1"))).toBe(true);
   });
 
+  it("saved 1 Piece, switched to Case x12, holds 1 piece (not the new unit's 12)", () => {
+    // The saved line is plain pieces with no stored pack: the line it is NOW must not lend it a factor.
+    const switched = caseLine({
+      qty: 1,
+      originalQty: 1,
+      originalUnitLabel: undefined,
+      originalUnitsPerBox: null,
+    });
+    expect(savedPiecesByProduct([switched]).get("p1")).toBe(1);
+  });
+
+  it("saved 1 Piece, Case x12 picked, 5 on hand reads as over", async () => {
+    mockGet.mockResolvedValue({
+      data: { allowOversell: true, items: [{ productId: "p1", availablePieces: 5 }] },
+    });
+    renderWithProviders(
+      <Probe
+        items={[
+          caseLine({
+            qty: 1,
+            originalQty: 1,
+            originalUnitLabel: undefined,
+            originalUnitsPerBox: null,
+          }),
+        ]}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("line-stock").getAttribute("data-level")).toBe("low"),
+    );
+  });
+
   it("saved 3 Cases raised to 5 with 5 pieces on hand is over by 24 pieces", async () => {
     mockGet.mockResolvedValue({
       data: { allowOversell: true, items: [{ productId: "p1", availablePieces: 5 }] },
