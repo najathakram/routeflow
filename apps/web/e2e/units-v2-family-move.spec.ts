@@ -133,7 +133,7 @@ for (const vp of VIEWPORTS) {
           expect(page.url(), "clicking the cell stays on the list").toContain("/products?");
           const box = row.locator('input[value="22.00"]');
           await box.fill("21");
-          await box.press("Enter");
+          await page.keyboard.press("Enter");
           await expect(page.getByRole("dialog")).toContainText(
             "Move the 2 variants at the family's prices?",
           );
