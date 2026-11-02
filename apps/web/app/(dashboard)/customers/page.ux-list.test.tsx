@@ -11,6 +11,9 @@ import CustomersPage from "./page";
  */
 
 let mockRows: any[] = [];
+let mockRole = "TENANT_ADMIN";
+let mockListLoading = false;
+let mockPermsData: any = undefined;
 let lastListParams: any = {};
 const mockApprovals: any[] = [];
 const push = jest.fn();
@@ -35,8 +38,13 @@ jest.mock("@/lib/api-client", () => ({
 
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
-  useOptionalAuth: () => ({ user: { id: "u1", username: "x", role: "TENANT_ADMIN" } }),
+  useAuth: () => ({ user: { id: "u1", username: "x", role: mockRole } }),
+  useOptionalAuth: () => ({ user: { id: "u1", username: "x", role: mockRole } }),
+}));
+// An operator's permissions are unknown until this answers (N4); an admin never asks.
+jest.mock("@/lib/api/my-permissions", () => ({
+  ...jest.requireActual("@/lib/api/my-permissions"),
+  useMyPermissions: () => ({ data: mockPermsData }),
 }));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: jest.fn() }),
@@ -53,8 +61,8 @@ jest.mock("@/lib/api/customers", () => ({
   useCustomers: (params: any) => {
     lastListParams = params;
     return {
-      data: stableData(),
-      isLoading: false,
+      data: mockListLoading ? undefined : stableData(),
+      isLoading: mockListLoading,
       isError: false,
       refetch: jest.fn(),
     };
@@ -132,6 +140,9 @@ const C = () =>
 
 beforeEach(() => {
   mockRows = [A(), B(), C()];
+  mockRole = "TENANT_ADMIN";
+  mockListLoading = false;
+  mockPermsData = undefined;
   mockFilters = { status: "", regulated: false, unassigned: false, removed: false };
   jest.clearAllMocks();
 });
@@ -228,6 +239,68 @@ describe("SA-1078 PR-5 customers list — Open balance", () => {
       expect(url.searchParams.has("statement")).toBe(false);
       expect(url.searchParams.get("page")).toBe("2");
     });
+  });
+});
+
+/**
+ * W-1117 — `?statement=<id>` for a customer who is not in the rows on screen. The list keeps only `?page=` in the URL
+ * (sort and page size are state), so a reload or a pasted link can land on a page that does not hold the row. No figure
+ * then takes the param; it used to stay, and when the row later arrived (a page change, a sort, a search) the sheet
+ * opened with nobody tapping. The list now drops a param no row took, once the rows and the permission are both known.
+ */
+describe("W-1117 customers list — ?statement for a customer not on the page", () => {
+  const statementParam = () => new URL(window.location.href).searchParams.get("statement");
+  afterEach(() => window.history.replaceState({}, "", "/"));
+
+  it("N1: the param is dropped, the rest of the URL stays, and no sheet opens", async () => {
+    window.history.replaceState({}, "", "/customers?page=2&statement=cZ");
+    renderWithProviders(<CustomersPage />);
+    await waitFor(() => expect(statementParam()).toBeNull());
+    expect(new URL(window.location.href).searchParams.get("page")).toBe("2");
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+  });
+
+  it("N2: when that customer's row arrives later the sheet does not open by itself", async () => {
+    window.history.replaceState({}, "", "/customers?page=2&statement=cZ");
+    const view = renderWithProviders(<CustomersPage />);
+    await waitFor(() => expect(statementParam()).toBeNull());
+    mockRows = [row({ id: "cZ", businessName: "Zed Foods" }), B()]; // a page change or a sort brings the row in
+    view.rerender(<CustomersPage />);
+    expect(await screen.findByText("Zed Foods")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+  });
+
+  it("N3: while the list is still loading the param is left alone, and the row then takes it", async () => {
+    window.history.replaceState({}, "", "/customers?statement=cA");
+    mockListLoading = true;
+    const view = renderWithProviders(<CustomersPage />);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statementParam()).toBe("cA");
+    mockListLoading = false;
+    view.rerender(<CustomersPage />);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+  });
+
+  it("N4: an operator whose permissions are not known yet keeps the param, and the row takes it once they are", async () => {
+    window.history.replaceState({}, "", "/customers?statement=cA");
+    mockRole = "OPERATOR";
+    const view = renderWithProviders(<CustomersPage />);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statementParam()).toBe("cA");
+    expect(screen.queryByTestId("account-statement-sheet")).toBeNull();
+    mockPermsData = { groups: ["FINANCE", "CUSTOMERS"] }; // the groups held
+    mockRows = [A(), B(), C()]; // a fresh array, so the cells render again and read the answer
+    view.rerender(<CustomersPage />);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+  });
+
+  it("N5: a customer who is on the page still reopens, and its param stays while the sheet is open", async () => {
+    window.history.replaceState({}, "", "/customers?statement=cB");
+    renderWithProviders(<CustomersPage />);
+    expect(await screen.findByTestId("account-statement-sheet")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(statementParam()).toBe("cB");
   });
 });
 
