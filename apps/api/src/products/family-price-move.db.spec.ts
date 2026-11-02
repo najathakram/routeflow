@@ -511,8 +511,101 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     },
   );
 
-  it("VM-15: under a family holding a 12-pack, a new variant, an editor add and an adoption on 6 pieces take 12 / 11", async () => {
+  /** What the list's Quick Edit of Tier 2 sends, and what its Undo sends back (SA-1082 A-5). */
+  const TIER_21 = {
+    priceTier2: "21.00",
+    priceTier3: "21.00",
+    priceTier4: "21.00",
+    priceTier5: "21.00",
+  };
+  const TIER_BACK = { priceTier2: "22.00", priceTier3: "0", priceTier4: "0", priceTier5: "0" };
+  const billed = async (id: string) => [await retail(id), await tier(id, 2), await tier(id, 3)];
+
+  it("VM-15, VM-16 (A-5): Undo with Move takes the family and the moved variant back; Redo with Move takes them forward", async () => {
     const tenantId = await tenantOf("vm15");
+    const family = await familyIn(tenantId);
+    const at = await variantOf(family, { priceTier2: "22.00" });
+    const own = await variantOf(family, { pricePerUnit: "30.00", priceTier2: "28.00" });
+    await saveFamily(tenantId, family.id, TIER_21, [at.id]);
+    expect(await billed(at.id)).toEqual([24, 21, 21]);
+
+    const preview = await asked(tenantId, family.id, TIER_BACK);
+    expect(preview.variants.map((v: { id: string }) => v.id)).toEqual([at.id]);
+    const undone = await saveFamily(tenantId, family.id, TIER_BACK, [at.id]);
+    expect(undone.movedVariants).toBe(1);
+    expect(await billed(family.id)).toEqual([24, 22, 24]);
+    expect(await billed(at.id)).toEqual([24, 22, 24]);
+    expect(await billed(own.id)).toEqual([30, 28, 30]);
+
+    await saveFamily(tenantId, family.id, TIER_21, [at.id]);
+    expect(await billed(family.id)).toEqual([24, 21, 21]);
+    expect(await billed(at.id)).toEqual([24, 21, 21]);
+    expect(await billed(own.id)).toEqual([30, 28, 30]);
+  });
+
+  it("VM-18 (A-5): a variant priced by hand between the Move and the Undo isn't listed and keeps its price, even when named", async () => {
+    const tenantId = await tenantOf("vm18");
+    const family = await familyIn(tenantId);
+    const at = await variantOf(family, { priceTier2: "22.00" });
+    await saveFamily(tenantId, family.id, TIER_21, [at.id]);
+    await savePack(tenantId, at.id, [{ tier: 1, to: 23 }]);
+
+    expect((await asked(tenantId, family.id, TIER_BACK)).count).toBe(0);
+    const undone = await saveFamily(tenantId, family.id, TIER_BACK, [at.id]);
+    expect(undone.movedVariants).toBe(0);
+    expect(await retail(at.id)).toBe(23);
+    expect(await tier(family.id, 2)).toBe(22);
+  });
+
+  it("VM-18 (A-5): a tier priced by hand between the Move and the Undo keeps its price; the tiers still following go back", async () => {
+    const tenantId = await tenantOf("vm18tier");
+    const family = await familyIn(tenantId);
+    const at = await variantOf(family, { priceTier2: "22.00" });
+    await saveFamily(tenantId, family.id, TIER_21, [at.id]);
+    await savePack(tenantId, at.id, [{ tier: 2, to: 20 }]);
+
+    await saveFamily(tenantId, family.id, TIER_BACK, [at.id]);
+    expect(await billed(at.id)).toEqual([24, 20, 24]);
+  });
+
+  it("VM-20 (A-5): an inactive variant at the family's price isn't listed and doesn't move, even when named", async () => {
+    const tenantId = await tenantOf("vm20");
+    const family = await familyIn(tenantId);
+    const at = await variantOf(family, {});
+    const inactive = await variantOf(family, { isActive: false });
+
+    const preview = await asked(tenantId, family.id, { pricePerUnit: 26 });
+    expect(preview.variants.map((v: { id: string }) => v.id)).toEqual([at.id]);
+
+    const saved = await saveFamily(tenantId, family.id, { pricePerUnit: "26.00" }, [
+      at.id,
+      inactive.id,
+    ]);
+    expect(saved.movedVariants).toBe(1);
+    expect(await retail(at.id)).toBe(26);
+    expect(await retail(inactive.id)).toBe(24);
+  });
+
+  it.each([
+    { on: true, stored: 0 },
+    { on: false, stored: 26 },
+  ])(
+    "VM-21 (A-5, flag $on): a move stores a blank tier by the business's rule, and it bills the family's Retail",
+    async ({ on, stored }) => {
+      flags = on;
+      const tenantId = await tenantOf(`vm21${on}`);
+      const family = await familyIn(tenantId, { priceTier2: "0" });
+      const at = await variantOf(family, { priceTier2: "24.00" });
+
+      await saveFamily(tenantId, family.id, { pricePerUnit: "26.00" }, [at.id]);
+
+      expect(Number((await row(at.id)).priceTier2)).toBe(stored);
+      expect(await tier(at.id, 2)).toBe(26);
+    },
+  );
+
+  it("VM-22: under a family holding a 12-pack, a new variant, an editor add and an adoption on 6 pieces take 12 / 11", async () => {
+    const tenantId = await tenantOf("vm22");
     const family = await familyIn(tenantId);
     const onSix = async (id: string) => [await retail(id), await tier(id, 2)];
 
@@ -573,10 +666,10 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     { on: true, stored: 0 },
     { on: false, stored: 30 },
   ])(
-    "VM-16 (flag $on): the family editor's own Retail takes the tiers at the family's value with it; a tier of its own stays",
+    "VM-23 (flag $on): the family editor's own Retail takes the tiers at the family's value with it; a tier of its own stays",
     async ({ on, stored }) => {
       flags = on;
-      const tenantId = await tenantOf(`vm16${on}`);
+      const tenantId = await tenantOf(`vm23${on}`);
       const family = await familyIn(tenantId);
       const at = await variantOf(family, { priceTier2: "22.00", priceTier3: "19.00" });
 
@@ -596,8 +689,8 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     },
   );
 
-  it("VM-17: a tier's own unit keeps a variant off the list and unmoved even when named; a tier on the pack doesn't", async () => {
-    const tenantId = await tenantOf("vm17");
+  it("VM-24: a tier's own unit keeps a variant off the list and unmoved even when named; a tier on the pack doesn't", async () => {
+    const tenantId = await tenantOf("vm24");
     const family = await familyIn(tenantId);
     const withUnit = await variantOf(family, {});
     const onPack = await variantOf(family, {});
@@ -619,8 +712,8 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     expect(await retail(onPack.id)).toBe(26);
   });
 
-  it("VM-18: at the family's price, an own order unit or a tier's own unit reads as its own in the grid; a pack ref still follows", async () => {
-    const tenantId = await tenantOf("vm18");
+  it("VM-25: at the family's price, an own order unit or a tier's own unit reads as its own in the grid; a pack ref still follows", async () => {
+    const tenantId = await tenantOf("vm25");
     const family = await familyIn(tenantId);
     const onPack = await variantOf(family, { orderUnitRef: "pack", priceTier2: "22.00" });
     const ownOrder = await variantOf(family, { priceTier2: "22.00" });

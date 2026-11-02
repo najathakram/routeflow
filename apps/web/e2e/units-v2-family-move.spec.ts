@@ -141,9 +141,18 @@ for (const vp of VIEWPORTS) {
           await page.getByTestId("family-move-confirm").click();
           await expect.poll(async () => (await read(at.id)).tier2).toBe(21);
           expect((await read(off.id)).tier2).toBe(21);
-          await patch(at.id, { priceTier2: "22.00" });
-          await patch(off.id, { priceTier2: "22.00" });
-          await patch(familyId, { priceTier2: "22.00" });
+
+          // Undo asks the same question, and Move takes the variants back with the family (A-5, VM-15).
+          await page.getByTitle("Undo last change").click();
+          await expect(page.getByRole("dialog")).toContainText(
+            "Move the 2 variants at the family's prices?",
+          );
+          await shot(page, info, "sa-1082-move-list-undo");
+          await page.getByTestId("family-move-confirm").click();
+          await expect(page.getByText("2 variants moved.").first()).toBeVisible();
+          await expect.poll(async () => (await read(familyId)).tier2).toBe(22);
+          expect((await read(at.id)).tier2, "Undo took the moved variant back").toBe(22);
+          expect((await read(off.id)).tier2, "Undo took the moved variant back").toBe(22);
         }
 
         // Closing the question saves nothing, and the form stays open.

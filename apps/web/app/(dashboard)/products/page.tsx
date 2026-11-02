@@ -45,7 +45,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { QuickEditCell, type CellEdit, type EditRecord } from "./_components/QuickEditCell";
 import { quickPackEdit } from "@/lib/quick-edit-pack";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
@@ -58,6 +58,7 @@ import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visi
 import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import {
   familyMoveResult,
+  familyMoveToast,
   useFamilyMoveAsk,
   type FamilyMoveAnswer,
 } from "@/components/family/FamilyMoveAsk";
@@ -324,7 +325,7 @@ function makeTableColumns(
     product: ApiProduct,
     field: string,
     newVal: string,
-    record: EditRecord,
+    record: CellEdit,
   ) => Promise<void | false>,
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
@@ -820,7 +821,10 @@ export default function ProductsPage() {
   const askFamilyMove = familyMove.ask;
   /** Only a family's price save asks; anything else carries nothing extra. */
   const askFamily = React.useCallback(
-    (product: ApiProduct, updates: Record<string, unknown>): Promise<FamilyMoveAnswer> => {
+    (
+      product: Pick<ApiProduct, "id" | "kind">,
+      updates: Record<string, unknown>,
+    ): Promise<FamilyMoveAnswer> => {
       const prices = Object.fromEntries(
         Object.entries(updates).filter(([k]) => k === "pricePerUnit" || k.startsWith("priceTier")),
       );
@@ -832,7 +836,7 @@ export default function ProductsPage() {
   );
 
   const handleQuickSave = React.useCallback(
-    async (product: ApiProduct, field: string, newVal: string, record: EditRecord) => {
+    async (product: ApiProduct, field: string, newVal: string, record: CellEdit) => {
       // SA-797a: the size as a number, with the pack the cell read; undo / redo carry their own expected pack.
       if (field === "unitsPerBox") {
         const pack = quickPackEdit(product, newVal);
@@ -845,7 +849,7 @@ export default function ProductsPage() {
         toast({ title: `${field} updated`, variant: "success" });
         setUndoStack((prev) => [
           ...prev.slice(-19),
-          { ...record, oldValue: pack.undo, newValue: pack.redo },
+          { ...record, kind: product.kind, oldValue: pack.undo, newValue: pack.redo },
         ]);
         setRedoStack([]);
         return;
@@ -907,7 +911,10 @@ export default function ProductsPage() {
         oldValue[k] = k === field ? record.oldValue : (productAsRecord[k] ?? null);
         newValue[k] = updates[k];
       }
-      setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
+      setUndoStack((prev) => [
+        ...prev.slice(-19),
+        { ...record, kind: product.kind, oldValue, newValue },
+      ]);
       setRedoStack([]);
     },
     [updateProduct, toast, tierLabels, askFamily],
@@ -960,6 +967,7 @@ export default function ProductsPage() {
         {
           productId: product.id,
           productName: product.name,
+          kind: product.kind,
           field: "section",
           oldValue: fullPrior,
           newValue: fullPatch,
@@ -979,12 +987,25 @@ export default function ProductsPage() {
       ? (value as Record<string, unknown>)
       : { [field]: value };
 
+  /** SA-1082 A-5: Undo and Redo save a family's price like any other save, so they ask first. Null: nothing was saved. */
+  const replayEdit = async (record: EditRecord, value: EditRecord["oldValue"]) => {
+    const patch = asPatch(record.field, value);
+    const answer = await askFamily({ id: record.productId, kind: record.kind }, patch);
+    if (!answer) return null;
+    const saved = await updateProduct.mutateAsync({ id: record.productId, ...patch, ...answer });
+    return familyMoveToast(answer, saved);
+  };
+
   const handleUndo = async () => {
     const record = undoStack[undoStack.length - 1];
     if (!record) return;
-    const patch = asPatch(record.field, record.oldValue);
-    await updateProduct.mutateAsync({ id: record.productId, ...patch });
-    toast({ title: `Undone: ${record.productName} · ${record.field}`, variant: "success" });
+    const note = await replayEdit(record, record.oldValue);
+    if (!note) return;
+    toast({
+      title: `Undone: ${record.productName} · ${record.field}`,
+      ...note,
+      variant: "success",
+    });
     setUndoStack((prev) => prev.slice(0, -1));
     setRedoStack((prev) => [...prev, record]);
   };
@@ -992,9 +1013,13 @@ export default function ProductsPage() {
   const handleRedo = async () => {
     const record = redoStack[redoStack.length - 1];
     if (!record) return;
-    const patch = asPatch(record.field, record.newValue);
-    await updateProduct.mutateAsync({ id: record.productId, ...patch });
-    toast({ title: `Redone: ${record.productName} · ${record.field}`, variant: "success" });
+    const note = await replayEdit(record, record.newValue);
+    if (!note) return;
+    toast({
+      title: `Redone: ${record.productName} · ${record.field}`,
+      ...note,
+      variant: "success",
+    });
     setRedoStack((prev) => prev.slice(0, -1));
     setUndoStack((prev) => [...prev, record]);
   };
