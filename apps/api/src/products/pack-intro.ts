@@ -56,6 +56,12 @@ export interface PackIntroChanges {
 const num = (v: Num): number | null => (v == null ? null : Number(v));
 const round3 = (n: number) => Number(n.toFixed(3));
 
+/** One Boxes answer's rounding on a lot's shape: the one function the conversion and an undo that looks for its lot use. */
+export const scaleLotShape = (qty: Num, unitCost: Num, n: number) => ({
+  qty: round3((num(qty) ?? 0) * n),
+  unitCost: round4((num(unitCost) ?? 0) / n),
+});
+
 /** A pack goes from blank (or 1, which behaves as blank) to N > 1. Anything else is an editor-only change. */
 export function isPackIntroduction(
   stored: number | null | undefined,
@@ -109,9 +115,8 @@ export function packIntroChanges(
     if (remaining <= 0) continue;
     const change = {
       id: lot.id,
-      qty: round3((num(lot.qty) ?? 0) * n),
+      ...scaleLotShape(lot.qty, lot.unitCost, n),
       remainingQty: round3(remaining * n),
-      unitCost: round4((num(lot.unitCost) ?? 0) / n),
     };
     if (Math.max(change.qty, change.remainingQty) > MAX_DECIMAL_10_3) overflow.push("lotQty");
     out.lots.push(change);
