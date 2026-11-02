@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 
 /**
  * W1: the one place that touches a tenant's first-question marker, a `SystemConfig` row. It starts `pending` when a
@@ -11,7 +12,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 export const FIRST_RUN_KEY = "signup.firstRun";
 export type FirstRunMarker = "pending" | "answered" | "closed";
 
-type Db = Pick<PrismaClient | Prisma.TransactionClient, "systemConfig">;
+type Db = Pick<PrismaClient | TxOrClient, "systemConfig">;
 
 export async function readFirstRun(db: Db, tenantId: string): Promise<FirstRunMarker | null> {
   const row = await db.systemConfig.findUnique({

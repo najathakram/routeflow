@@ -7,12 +7,17 @@ import { cn } from "@routeflow/ui/web";
 export interface EditRecord {
   productId: string;
   productName: string;
+  /** SA-1082 A-5: Undo and Redo ask for a family from this, so a row no longer on the page still asks. */
+  kind: string | undefined;
   field: string;
   // `Record<string, unknown>` covers the "section" field's object patch
   // ({ trackedCategoryId, trackedSubcategoryId }) saved/undone in one shot.
   oldValue: string | number | null | Record<string, unknown>;
   newValue: string | number | null | Record<string, unknown>;
 }
+
+/** What a cell knows about its edit; the page adds the product's kind when it stacks the record. */
+export type CellEdit = Omit<EditRecord, "kind">;
 
 interface QuickEditCellProps {
   productId: string;
@@ -31,7 +36,7 @@ interface QuickEditCellProps {
   /** Ref of the input in the NEXT row (provided by the parent list) */
   nextInputRef?: React.RefObject<HTMLInputElement | null>;
   /** Resolve `false` to REJECT the value: nothing was saved, so the cell stays in edit mode. */
-  onSave: (newVal: string, record: EditRecord) => Promise<void | false>;
+  onSave: (newVal: string, record: CellEdit) => Promise<void | false>;
 }
 
 export const QuickEditCell = React.forwardRef<HTMLInputElement, QuickEditCellProps>(

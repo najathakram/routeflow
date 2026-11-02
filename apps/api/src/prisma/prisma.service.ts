@@ -4,6 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { utcPoolConfig } from "../common/pg-session";
+import { CUSTOMER_IDENTITY_OMIT } from "../customers/customer-identity-fields";
 
 /**
  * The exact error Prisma's own `*OrThrow` operations raise when no row matches
@@ -129,8 +130,20 @@ export function isTxClient(db: unknown): boolean {
   return db != null && typeof (db as { $connect?: unknown }).$connect !== "function";
 }
 
+/** The client options this service is built with: the stock options plus the SA-1084 global omit, as a literal type. */
+export type RfClientOptions = Omit<Prisma.PrismaClientOptions, "omit"> & {
+  omit: typeof CUSTOMER_IDENTITY_OMIT;
+};
+/** The app's client type: query results leave out the customer identity fields (types follow the runtime omit). */
+export type RfPrismaClient = PrismaClient<RfClientOptions>;
+/** A helper that only needs the tables: it accepts a plain transaction client or the app client (SA-1084). */
+export type TxOrClient = Prisma.TransactionClient | RfPrismaClient;
+
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient<RfClientOptions>
+  implements OnModuleInit, OnModuleDestroy
+{
   /** W-720: the pool this service built; PrismaPg never ends a pool its caller supplied. */
   private readonly pgPool: Pool;
   private pgPoolEnded = false;
@@ -139,7 +152,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // Row 361: the session time zone is pinned to UTC on every connection (common/pg-session.ts).
     const pool = new Pool(utcPoolConfig({ connectionString: process.env.DATABASE_URL }));
     const adapter = new PrismaPg(pool);
-    super({ adapter });
+    // SA-1084: customer identity values leave every query unless a reader names them (customer-identity-fields.ts).
+    super({ adapter, omit: CUSTOMER_IDENTITY_OMIT });
     this.pgPool = pool;
   }
 

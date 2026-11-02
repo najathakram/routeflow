@@ -138,6 +138,11 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
 
   // ─── Operator dashboard: analytics, settings, billing (plan §1.3) ───
   "(dashboard)/analytics": { mobile: ["(operator)/analytics/index"] },
+  // SA-1087: one product's sales insights. Phones get the new web (owner ruling): the hybrid shell's WebView renders it.
+  "(dashboard)/insights/products/[id]": {
+    webOnly:
+      "one product's sales insights (SA-1087); the hybrid shell's WebView renders it, no native screen",
+  },
   "(dashboard)/settings": { mobile: ["(operator)/settings/index"] },
   "(dashboard)/settings/product-categories": { missing: "W>M, owner triage" },
   "(dashboard)/settings/restrictions": { missing: "W>M, owner triage" },
@@ -188,10 +193,7 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(marketing)/book-a-demo": { webOnly: "marketing site" },
   "(marketing)/company": { webOnly: "marketing site" },
   "(marketing)/contact": { webOnly: "marketing site" },
-  "(marketing)": { webOnly: "marketing site" },
-  "(marketing)/pricing": { webOnly: "marketing site" },
   "(marketing)/privacy": { webOnly: "marketing site" },
-  "(marketing)/product": { webOnly: "marketing site" },
   "(marketing)/retailers": { webOnly: "marketing site" },
   "(marketing)/sign-in": { webOnly: "marketing site" },
   "(marketing)/terms": { webOnly: "marketing site" },

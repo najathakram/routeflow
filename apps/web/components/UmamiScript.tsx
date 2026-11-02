@@ -18,7 +18,13 @@
 import { useCallback, useEffect, useRef } from "react";
 import Script from "next/script";
 import { usePathname } from "next/navigation";
-import { routes, site } from "@/app/(marketing)/lib/site";
+import { site } from "@/app/(marketing)/lib/site";
+import {
+  UMAMI_OWN_DOMAIN,
+  UMAMI_SCRIPT_SRC,
+  umamiAllowedPath,
+  umamiScriptProps,
+} from "@/lib/umami-tag";
 
 interface UmamiPayload {
   website?: string;
@@ -35,36 +41,10 @@ declare global {
   }
 }
 
-export const UMAMI_SCRIPT_SRC = "https://cloud.umami.is/script.js";
-
-// The marketing routes come from the one `routes` table; /book-a-demo is a marketing page that is
-// not a nav route (see app/sitemap.ts). `/sign-in` is deliberately not here.
-const COUNTED_PATHS: ReadonlySet<string> = new Set([
-  "/",
-  ...routes.map((route) => `/${route.slug}`),
-  "/book-a-demo",
-  "/signup",
-]);
-
-// www, the bare domain and every tenant's host. A tenant's host names a client.
-const OWN_DOMAIN = new URL(site.origin).hostname.replace(/^www\./, "");
-
-export function umamiAllowedPath(pathname: string | null): boolean {
-  return pathname !== null && COUNTED_PATHS.has(pathname);
-}
-
-export function umamiScriptProps(websiteId: string | undefined, pathname: string | null) {
-  const id = websiteId?.trim();
-  if (!id || !umamiAllowedPath(pathname)) return null;
-  return {
-    src: UMAMI_SCRIPT_SRC,
-    defer: true,
-    "data-website-id": id,
-    "data-domains": new URL(site.origin).hostname,
-    "data-auto-track": "false",
-    "data-exclude-search": "true",
-  };
-}
+// The counted paths, the tag's attributes and the own-domain rule live in lib/umami-tag.ts, which
+// the ready-made pages (app/site-page) read too.
+export { UMAMI_SCRIPT_SRC, umamiAllowedPath, umamiScriptProps };
+const OWN_DOMAIN = UMAMI_OWN_DOMAIN;
 
 // The referring site, as a bare origin. A referrer from our own hosts is dropped: it can name a
 // sign-in page or a client, and Referrer-Policy lets a same-origin one carry `?email=`.

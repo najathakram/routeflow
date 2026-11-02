@@ -17,7 +17,7 @@
  * override-create path uses): GRANT overrides (current + this restore's own), minus DENYs; an add-on
  * key by its active row (or a pending one); any other key by what the plan allows.
  */
-import type { Prisma } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 import type { ConfigSnapshotSkipReason } from "@routeflow/types";
 import { includedAtPlanVerdict } from "./addon-catalog-invalid";
 import { addonCodeOf, isStripeBillableAddonRow } from "./addon-row";
@@ -73,7 +73,7 @@ const isAddonKeyed = (key: string): boolean => {
 };
 
 export async function overrideRestoreVerdict(
-  _tx: Prisma.TransactionClient,
+  _tx: TxOrClient,
   _tenantId: string,
   override: SnapshotOverrideEntry,
   ctx: OverrideVerdictContext,

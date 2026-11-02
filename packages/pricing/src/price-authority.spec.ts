@@ -103,15 +103,15 @@ const EXPECTED: Record<string, Record<PriceAuthorityMode, Record<PriceAuthorityL
     off: { base: "family-page", other: "family-page" },
     on: { base: "family-page", other: "family-page" },
   },
-  variant: { off: { base: "own", other: "own" }, on: { base: "family", other: "own" } },
-  // a variant's override flag does not move authority (the write-through decision handles it)
+  // SA-1082 A-1: a variant's price is its own in both modes
+  variant: { off: { base: "own", other: "own" }, on: { base: "own", other: "own" } },
   "variant with override": {
     off: { base: "own", other: "own" },
-    on: { base: "family", other: "own" },
+    on: { base: "own", other: "own" },
   },
   "standard with a parent": {
     off: { base: "own", other: "own" },
-    on: { base: "family", other: "own" },
+    on: { base: "own", other: "own" },
   },
   "recipe with override": { off: { base: "own", other: "own" }, on: { base: "own", other: "own" } },
   "recipe with family link": {

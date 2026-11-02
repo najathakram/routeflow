@@ -66,6 +66,30 @@ describe("redactSentryEvent (beforeSend / beforeSendTransaction)", () => {
     expect(e.request.headers).toBe("nope");
   });
 
+  // SA-1084 (SI-11): the SDK keeps a request body of up to 10 KB on an error event; none of it is sent.
+  it("drops the request body whole, whatever shape it has, and keeps the rest of the request", () => {
+    const body = {
+      businessName: "Acme",
+      taxId: "12-3456789",
+      nested: { licenseNumber: "LIC-5521" },
+      password: "hunter2",
+    };
+    const shapes: unknown[] = [
+      structuredClone(body),
+      JSON.stringify(body),
+      '{"taxId":"12-3456789", broken',
+      [body],
+    ];
+    for (const data of shapes) {
+      const e = redactSentryEvent({
+        request: { url: "/api/v1/customers/c1", method: "PATCH", data },
+      } as Parameters<typeof redactSentryEvent>[0]);
+      expect(e.request).not.toHaveProperty("data");
+      expect(JSON.stringify(e)).not.toMatch(/12-3456789|LIC-5521|hunter2/);
+      expect(e.request?.url).toBe("/api/v1/customers/c1");
+    }
+  });
+
   it("redactKeyPath is case-insensitive", () => {
     expect(redactKeyPath("/api/v1/invoices/payments/BY-KEY/K9/resolve")).toBe(
       "/api/v1/invoices/payments/BY-KEY/:key/resolve",

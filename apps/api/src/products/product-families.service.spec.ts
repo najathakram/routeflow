@@ -412,7 +412,7 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
     });
   });
 
-  it("M2 price authority: with mixed_packs ON a price EDIT is 409 FAMILY_PRICE_AUTHORITY and an added variant takes the FAMILY's price", async () => {
+  it("SA-1082 A-1: with mixed_packs ON a price EDIT is the variant's own and an added variant takes the FAMILY's price", async () => {
     const famRow = {
       ...fam(),
       pricePerUnit: "9.99",
@@ -422,25 +422,21 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       priceTier5: "8.75",
     };
     const on = build({ products: [famRow, kid("k1")] }, "on");
-    await expect(
-      on.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "1" }] }, ACTOR),
-    ).rejects.toMatchObject({
-      response: { code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" },
-    });
+    await on.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "1" }] }, ACTOR);
+    expect(on.tx.products.find((p) => p.id === "k1")).toMatchObject({ pricePerUnit: "1.00" });
     await on.service.updateVariants(
       "fam",
       { add: [variant("NewOne", { pricePerUnit: "1.00" })] as never },
       ACTOR,
     );
+    const added = on.tx.products.find(
+      (p) => (p as Record<string, unknown>).name === "NewOne",
+    ) as Record<string, unknown>;
     expect(
-      on.tx.products.find((p) => (p as Record<string, unknown>).name === "NewOne"),
-    ).toMatchObject({
-      pricePerUnit: "9.99",
-      priceTier2: "9.50",
-      priceTier3: "9.25",
-      priceTier4: "9.00",
-      priceTier5: "8.75",
-    });
+      ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4", "priceTier5"].map((k) =>
+        Number(added[k]),
+      ),
+    ).toEqual([9.99, 9.5, 9.25, 9, 8.75]);
     // mode off: a price edit is an ordinary write
     const off = build({ products: [famRow, kid("k1")] }, "off");
     await expect(

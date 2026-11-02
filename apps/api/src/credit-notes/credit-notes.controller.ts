@@ -1,3 +1,4 @@
+import { CreditNoteSummaryDto } from "./dto/credit-note-summary.dto";
 import {
   Body,
   Controller,
@@ -70,6 +71,12 @@ export class CreditNotesController {
       page ? +page : 1,
       limit ? +limit : 20,
     );
+  }
+
+  // B238: registered before `:id` so "summary" is never swallowed as an id value.
+  @Get("summary")
+  getSummary(@Query() query: CreditNoteSummaryDto, @CurrentUser() user: JwtPayload) {
+    return this.creditNotesService.getSummary(query.today, user);
   }
 
   @Get(":id")

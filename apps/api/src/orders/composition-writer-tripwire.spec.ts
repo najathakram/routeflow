@@ -171,6 +171,7 @@ const REGISTRY: Record<string, Entry> = {
     reason: "purchase order items",
   },
   "returns/inline-returns.service.ts::captureInTx": { kind: "exempt", reason: "credit note items" },
+  "routes/routes.service.ts::completeStop": { kind: "exempt", reason: "deliveredQty only" },
   "routes/routes.service.ts::completeWithPayment": { kind: "exempt", reason: "deliveredQty only" },
   "routes/routes.service.ts::reopenStop": { kind: "exempt", reason: "deliveredQty/status only" },
   "inventory/testing/order-stock-world.ts::buildOrderStockWorld": {
