@@ -1,4 +1,5 @@
 import { familyCellsFor, familyMoveOf, resolveFamilyCellEdits } from "./family-move";
+import { getTierPrice } from "./tier-pricing";
 
 const row = (retail: number, t2 = 0, pack = 12, extra: object = {}) => ({
   pricePerUnit: retail,
@@ -42,6 +43,20 @@ describe("familyMoveOf (SA-1082 A-1, VM-1, VM-3)", () => {
         to: 26,
       });
     }
+  });
+
+  it("VM-12 (A-3): a family with blank tiers, a variant with tiers stored at 24: every tier ends up billing 26", () => {
+    const stored = row(24, 24, 12, { priceTier3: 24, priceTier4: 24, priceTier5: 24 });
+    const move = familyMoveOf(row(24), row(26), stored);
+    expect(move?.columns).toEqual({
+      pricePerUnit: 26,
+      priceTier2: null,
+      priceTier3: null,
+      priceTier4: null,
+      priceTier5: null,
+    });
+    const billed = { ...stored, ...move?.columns };
+    expect([1, 2, 3, 4, 5].map((t) => getTierPrice(billed, t))).toEqual([26, 26, 26, 26, 26]);
   });
 
   it("a variant with no pack has no pieces to scale by: the family's number as it is", () => {

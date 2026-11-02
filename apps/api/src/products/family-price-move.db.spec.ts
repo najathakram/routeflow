@@ -322,6 +322,23 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     expect(await retail(own.id)).toBe(24);
   });
 
+  it("VM-12 (A-3): a family with blank tiers, a variant with tiers stored at 24: every tier bills 26, none left at 24", async () => {
+    const tenantId = await tenantOf("vm12");
+    const family = await familyIn(tenantId, { priceTier2: "0" });
+    const stored = await variantOf(family, {
+      priceTier2: "24.00",
+      priceTier3: "24.00",
+      priceTier4: "24.00",
+      priceTier5: "24.00",
+    });
+
+    const preview = await asked(tenantId, family.id, { pricePerUnit: 26 });
+    expect(preview.variants.map((v: { id: string }) => v.id)).toEqual([stored.id]);
+
+    await saveFamily(tenantId, family.id, { pricePerUnit: "26.00" }, [stored.id]);
+    for (const t of [1, 2, 3, 4, 5]) expect(await tier(stored.id, t)).toBe(26);
+  });
+
   it("VM-4: typing an own Retail takes the tiers at the family's value with it: Auto, and it bills the own Retail", async () => {
     const tenantId = await tenantOf("vm4");
     const family = await familyIn(tenantId);
