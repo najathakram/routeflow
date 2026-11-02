@@ -94,6 +94,15 @@ model Tenant {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   deletedAt      DateTime?
+  // SA-1083: set by the database trigger `tenant_closed_clock`, never by the app. See the migration for the rule.
+  closedAt            DateTime?
+  retentionHoldAt     DateTime?
+  retentionHoldReason String?
+  purgeApprovedAt     DateTime?
+  purgeApprovedCounts Json?
+  purgeStartedAt      DateTime?
+  purgeNoticeAt       DateTime?
+  copyRequestOpenAt   DateTime?
 
   users                   User[]
   config                  TenantConfig?
