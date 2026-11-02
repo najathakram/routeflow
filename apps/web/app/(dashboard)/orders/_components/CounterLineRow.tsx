@@ -22,6 +22,8 @@ import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
 import { CounterLinePriceEdit, type CounterPriceEdit } from "./CounterLinePriceEdit";
 import { cartStrikesList, editedLineFigures, priceEditLineOf } from "./counter-sale-price-edit";
 import { PriceHistoryButton } from "@/components/PriceHistory";
+import { LineStockNote } from "@/components/LineStockNote";
+import type { LineStockView } from "@/lib/line-stock";
 
 // SA-934 A-1: the words are the builder's call, per line (LineItemRow): the product's own pack and base words when the line
 // carries them, else the defaults (a line held before this has neither and prints Box / pcs). A plain line prints its own unit (row 298).
@@ -257,6 +259,7 @@ export function CounterLineRow({
   onNoteClosed,
   onQtyEnter,
   hideOriginalPrice = false,
+  stock,
 }: {
   line: SaleLine;
   locked: boolean;
@@ -282,6 +285,8 @@ export function CounterLineRow({
   onQtyEnter?: () => void;
   /** The tenant's `invoice.hideOriginalPrice` (`GET /settings`): no struck catalogue price, as on the receipt. */
   hideOriginalPrice?: boolean;
+  /** SA-1086 PR-2: the live stock note for this line (one read for the cart, see `useCounterLineStock`); a note, never a gate. */
+  stock?: LineStockView;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [historyPick, setHistoryPick] = React.useState<{ value: number } | null>(null);
@@ -328,6 +333,7 @@ export function CounterLineRow({
           </button>
         </span>
       </div>
+      <LineStockNote stock={stock} />
       <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
         <LineQtyEditor line={l} locked={locked} onQty={onQty} onEnter={onQtyEnter} />
