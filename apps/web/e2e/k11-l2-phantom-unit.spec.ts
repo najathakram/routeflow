@@ -1,10 +1,9 @@
 /**
- * K11-11 (UNRUN: written on a machine with no browser or compose stack; run it on the local lane before relying on it).
- * A unit that does not exist yet shows no price: on a product with no 1-piece unit the Piece row reads as dashes with
- * one "Add Piece unit" button, and that button opens Add a unit as the Piece and never closes it when it is already open.
+ * SA-1082 (supersedes K11-11): the Piece row of a product with no 1-piece unit shows its Auto figures and takes a price.
+ * The first price creates the unit, and Undo takes it back while nothing else uses it.
  *
- * LOCAL LANE ONLY (project `units-v2`). Read-only: nothing is written. Fixture product E2E-FIX-CASEDEFAULT has no
- * 1-piece unit (apps/api/scripts/e2e-seed.js ensureUnitsFixture).
+ * LOCAL LANE ONLY (project `units-v2`), on the approved test tenant. Fixture product E2E-FIX-CASEDEFAULT has no 1-piece
+ * unit (apps/api/scripts/e2e-seed.js ensureUnitsFixture); the test leaves it that way.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
@@ -15,36 +14,66 @@ const SKU = "E2E-FIX-CASEDEFAULT";
 const visible = (page: Page, testId: string) => page.locator(`[data-testid="${testId}"]:visible`);
 
 for (const vp of VIEWPORTS) {
-  test.describe(`K11-11 phantom Piece row @ ${vp.name}`, () => {
+  test.describe(`SA-1082 Piece row @ ${vp.name}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
 
-    test("the Piece row is dashes with one Add Piece unit button; the button opens the panel and never shuts it", async ({
+    test("Auto figures, then a first price creates the unit, then Undo takes it back", async ({
       page,
       context,
     }, info) => {
       await setTenantCookie(context, k11BaseUrl());
       const ctx = await requireUnitsV2Flag(page);
       const product = await productBySku(page, ctx, SKU);
-      await page.goto(`/products/${product.id}`);
-      await expect(page.getByTestId("units-v2-grid")).toBeVisible({ timeout: 20_000 });
+      const pieces = async () => {
+        const res = await page.request.get(`${ctx.api}/products/${product.id}/units`, {
+          headers: ctx.headers,
+        });
+        const units: Array<{ id: string; factorToBase: number; price: unknown }> = await res.json();
+        return units.filter((u) => u.factorToBase === 1);
+      };
+      expect(await pieces(), `${SKU} must have no 1-piece unit`).toEqual([]);
+      try {
+        await page.goto(`/products/${product.id}`);
+        await expect(page.getByTestId("units-v2-grid")).toBeVisible({ timeout: 20_000 });
 
-      const row = vp.cards
-        ? page.locator('[data-testid^="units-v2-card-"]:visible', { hasText: "Add Piece unit" })
-        : page.locator('[data-testid^="units-v2-row-"]:visible', { hasText: "Add Piece unit" });
-      await expect(row).toHaveCount(1);
-      await expect(row).not.toContainText("$");
-      await expect(row).not.toContainText(/\b(Auto|Set)\b/);
-      await shot(page, info, "k11-11-phantom-row");
+        const row = visible(page, vp.cards ? "units-v2-card-base" : "units-v2-row-base");
+        await expect(row).toHaveCount(1);
+        await expect(row).toContainText("$");
+        await expect(row).toContainText("Auto");
+        await expect(row).not.toContainText("Add Piece unit");
+        await shot(page, info, "sa-1082-piece-auto");
 
-      const button = row.getByRole("button", { name: "Add Piece unit" });
-      await button.click();
-      await expect(page.getByTestId("units-v2-add-panel")).toBeVisible();
-      await expect(page.getByTestId("units-v2-add-n")).toHaveValue("1");
+        await page.getByTestId("units-v2-btn-edit").click();
+        await visible(page, "units-v2-input-base-1").fill("3.00");
+        await shot(page, info, "sa-1082-piece-typed");
+        const saved = page.waitForResponse(
+          (r) =>
+            r.url().endsWith(`/products/${product.id}/prices`) && r.request().method() === "POST",
+        );
+        await page.getByTestId("units-v2-eb-save").click();
+        expect((await saved).status(), "the first price was accepted").toBeLessThan(300);
+        await expect(row).toContainText("$3.00");
+        await expect(row).toContainText("Set");
+        const created = await pieces();
+        expect(created).toHaveLength(1);
+        expect(Number(created[0].price)).toBe(3);
+        await shot(page, info, "sa-1082-piece-saved");
 
-      // Already open: the button leaves the panel open and puts focus in it.
-      await button.click();
-      await expect(page.getByTestId("units-v2-add-panel")).toBeVisible();
-      await expect(page.getByTestId("units-v2-add-name")).toBeFocused();
+        const undone = page.waitForResponse(
+          (r) => r.url().endsWith(`/products/${product.id}/prices/undo`) && r.status() < 300,
+        );
+        await page.getByRole("button", { name: "Undo", exact: true }).click();
+        await undone;
+        await expect.poll(pieces).toEqual([]);
+        await expect(row).toContainText("Auto");
+        await shot(page, info, "sa-1082-piece-undone");
+      } finally {
+        for (const u of await pieces().catch(() => [])) {
+          await page.request.delete(`${ctx.api}/products/${product.id}/units/${u.id}`, {
+            headers: ctx.headers,
+          });
+        }
+      }
     });
   });
 }

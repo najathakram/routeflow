@@ -35,6 +35,15 @@ const PRICE_WRITE_CODES: Record<string, Pick<PriceWriteError, "code" | "copy">> 
     code: "family",
     copy: "This price is set on its family, so it can't be changed here. Change it on the family.",
   },
+  // SA-1082: a first Piece price creates the unit, so it can meet the unit write's refusals.
+  [API_ERROR_CODES.UNITS_RENAME_IN_PROGRESS]: {
+    code: "other",
+    copy: "Another change is in progress. Your prices are unchanged. Try again in a moment.",
+  },
+  [API_ERROR_CODES.UNIT_SIZE_IN_USE]: {
+    code: "other",
+    copy: "This unit is on an order or invoice at a different size. Your prices are unchanged.",
+  },
   [API_ERROR_CODES.PRICE_UNDO_UNAVAILABLE]: {
     code: "unavailable",
     copy: "That save can no longer be undone.",

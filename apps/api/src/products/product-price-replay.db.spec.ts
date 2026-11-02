@@ -14,6 +14,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
+import { ProductUnitsService } from "./product-units.service";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
@@ -39,6 +40,7 @@ describeDb("units v2 price write replay (SA-845) - real Postgres", () => {
       providers: [
         ProductPriceGridService,
         ProductPriceWriteService,
+        ProductUnitsService,
         { provide: PrismaService, useValue: prisma },
       ],
     }).compile();

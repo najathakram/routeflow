@@ -185,162 +185,93 @@ describe("ProductPricesGrid (S11, read-only)", () => {
   });
 });
 
-describe("K11-11: a unit that does not exist yet shows no price", () => {
-  const phantom = {
+describe("SA-1082: the Piece row with no unit behind it yet", () => {
+  // The API serves the CASE's barcode on this row; a piece must not look like it scans with it.
+  const CASE_CODE = "200000000007";
+  const unbacked = {
     ref: "base",
     label: "Piece",
     factor: 1,
     kind: "base" as const,
-    editable: false,
-    notEditableReason: "Add the Piece unit first.",
-    code: null,
+    editable: true,
+    unbacked: true,
+    code: CASE_CODE,
     cells: cells([1.5, 1.4, 1.3, 1.2, 1.1]),
   };
-  const withPhantom = (over: Partial<typeof phantom> = {}) => {
+  const withRow = (over: Record<string, unknown> = {}) => {
     mockGrid = {
-      data: { ...grid, anchor: "case", rows: [grid.rows[0], { ...phantom, ...over }] },
+      data: { ...grid, anchor: "case", rows: [grid.rows[0], { ...unbacked, ...over }] },
       isLoading: false,
       isError: false,
     };
   };
-  let opener: jest.Mock;
-  beforeEach(() => {
-    opener = jest.fn();
-    const b = document.body.appendChild(document.createElement("button"));
-    b.setAttribute("data-testid", "units-v2-add-open");
-    b.addEventListener("click", opener);
-  });
-  afterEach(() => {
-    document.querySelectorAll('[data-testid="units-v2-add-open"]').forEach((n) => n.remove());
-  });
+  const SURFACES = [T.row("base"), T.card("base")];
 
-  it("an implicit Piece row reads as dashes: no price, no Auto or Set word, in the table and the card", () => {
-    withPhantom();
+  it("W-1: it shows its Auto figures, in the table and the card", () => {
+    withRow();
     render(<ProductPricesGrid product={product} />);
-    for (const id of [T.row("base"), T.card("base")]) {
+    for (const id of SURFACES) {
       const row = within(screen.getByTestId(id));
-      expect(row.queryByText(/\$1\.\d\d/)).toBeNull();
-      expect(row.queryByText(/^(Auto|Set)$/)).toBeNull();
-      // the five price cells (the barcode and Contains dashes are pinned in their own tests below)
-      const priceDashes = [1, 2, 3, 4, 5].map((t) =>
-        within(row.getAllByTestId(T.cell("base", t))[0]).queryByText("—"),
-      );
-      expect(priceDashes.every(Boolean)).toBe(true);
+      expect(row.getByText("$1.50")).toBeTruthy();
+      expect(row.getAllByText("Auto")).toHaveLength(5);
+      expect(row.getByText("Smallest unit")).toBeTruthy();
     }
     const [cell] = screen.getAllByTestId(T.cell("base", 2));
-    expect(cell.getAttribute("aria-label")).toBe("Wholesale Piece price, no unit yet");
+    expect(cell.getAttribute("aria-label")).toBe("Wholesale Piece price, $1.40");
   });
 
-  it("its head carries one 'Add Piece unit' button that asks the Add a unit opener to open", async () => {
-    withPhantom();
-    const user = userEvent.setup();
+  it("W-1: its barcode shows a dash, never the case code", () => {
+    withRow();
     render(<ProductPricesGrid product={product} />);
-    const table = within(screen.getByTestId(T.row("base")));
-    await user.click(table.getByRole("button", { name: "Add Piece unit" }));
-    expect(opener).toHaveBeenCalledTimes(1);
-    expect(
-      within(screen.getByTestId(T.card("base"))).getByRole("button", { name: "Add Piece unit" }),
-    ).toBeTruthy();
-  });
-
-  it("N7: the button is not part of the row header, so the header's name stays the unit name", () => {
-    withPhantom();
-    render(<ProductPricesGrid product={product} />);
-    const row = within(screen.getByTestId(T.row("base")));
-    const head = row.getByRole("rowheader");
-    expect(head.textContent).not.toContain("Add Piece unit");
-    expect(row.queryByRole("rowheader", { name: /Add Piece unit/ })).toBeNull();
-    expect(row.getByRole("rowheader", { name: /^Piece/ })).toBe(head);
-    const add = row.getByRole("button", { name: "Add Piece unit" });
-    expect(add.closest("th")).toBeNull();
-    expect(add.closest("td")).not.toBeNull();
-    expect(add.closest("tr")).toBe(screen.getByTestId(T.row("base")));
-    // the phone card keeps it, in the card
-    expect(
-      within(screen.getByTestId(T.card("base"))).getAllByRole("button", { name: "Add Piece unit" }),
-    ).toHaveLength(1);
-  });
-
-  it("a family-governed row with another reason keeps its prices", () => {
-    withPhantom({ notEditableReason: "Its price is set on the family." });
-    render(<ProductPricesGrid product={product} />);
-    const row = within(screen.getByTestId(T.row("base")));
-    expect(row.getByText("$1.50")).toBeTruthy();
-    expect(row.queryByRole("button", { name: /Add Piece unit/ })).toBeNull();
-  });
-
-  it("a non-base row with the same words is not treated as a missing unit", () => {
-    withPhantom({ kind: "unit" as never });
-    render(<ProductPricesGrid product={product} />);
-    expect(within(screen.getByTestId(T.row("base"))).getByText("$1.50")).toBeTruthy();
-  });
-
-  // The API serves the CASE's barcode on the phantom row; a piece must not look like it scans with it.
-  const CASE_CODE = "200000000007";
-
-  it("its barcode shows a dash, never the case code, in the table and the phone card", () => {
-    withPhantom({ code: CASE_CODE as never });
-    render(<ProductPricesGrid product={product} />);
-    for (const id of [T.row("base"), T.card("base")]) {
+    for (const id of SURFACES) {
       const scope = within(screen.getByTestId(id));
-      expect(scope.getByTestId(T.code("base")).textContent).toMatch(/^(Barcode: )?—$/);
+      expect(scope.getByTestId(T.code("base")).textContent).toBe("—");
       expect(scope.queryByText(CASE_CODE)).toBeNull();
       expect(scope.queryByText("No barcode")).toBeNull();
     }
-    expect(screen.queryByText(CASE_CODE)).toBeNull();
   });
 
-  it("its Contains cell shows a dash, not 'Smallest unit', in the table and the phone card", () => {
-    withPhantom({ code: CASE_CODE as never });
+  it("W-1: compact density: the Unit cell's second line has no case code", () => {
+    withRow();
+    render(<ProductPricesGrid product={product} layout="table" density="compact" />);
+    const row = within(screen.getByTestId(T.row("base")));
+    expect(row.getByTestId(T.code("base")).textContent).toBe("—");
+    expect(row.getByRole("rowheader").textContent).toContain("Smallest unit");
+  });
+
+  it("W-2: units flag off: figures and the sentence, and nothing to click", () => {
+    withRow({
+      editable: false,
+      notEditableReason: "Follows the pack price. Selling by the piece isn't on for this business.",
+    });
+    render(<ProductPricesGrid product={product} />);
+    for (const id of SURFACES) {
+      const row = within(screen.getByTestId(id));
+      expect(row.getByText("$1.50")).toBeTruthy();
+      expect(row.getByTestId(T.notEditable("base")).textContent).toBe(
+        "Follows the pack price. Selling by the piece isn't on for this business.",
+      );
+      expect(row.queryByRole("button")).toBeNull();
+    }
+  });
+
+  it("a backed Piece keeps its own barcode", () => {
+    withRow({ unbacked: undefined, code: "100000000001" });
+    render(<ProductPricesGrid product={product} />);
+    expect(within(screen.getByTestId(T.row("base"))).getByText("100000000001")).toBeTruthy();
+  });
+
+  it("a family-governed row with another reason keeps its prices", () => {
+    withRow({
+      unbacked: undefined,
+      editable: false,
+      notEditableReason: "Its price is set on the family.",
+    });
     render(<ProductPricesGrid product={product} />);
     const row = within(screen.getByTestId(T.row("base")));
-    const [contains] = row.getAllByRole("cell");
-    expect(contains.textContent).toContain("—");
-    expect(contains.textContent).not.toContain("Smallest unit");
-    expect(row.getByRole("button", { name: "Add Piece unit" }).closest("td")).toBe(contains);
-    const card = within(screen.getByTestId(T.card("base")));
-    expect(card.queryByText("Smallest unit")).toBeNull();
-    expect(card.getByTestId(T.code("base")).parentElement?.textContent).toBe("Barcode: —");
-    const containsLine = card.getByTestId(T.code("base")).parentElement?.previousElementSibling;
-    expect(containsLine?.textContent).toBe("—");
-  });
-
-  it("compact density: the Unit cell's second line is a dash with no case code", () => {
-    withPhantom({ code: CASE_CODE as never });
-    render(<ProductPricesGrid product={product} layout="table" density="compact" />);
-    const head = within(screen.getByTestId(T.row("base"))).getByRole("rowheader");
-    expect(head.textContent).not.toContain(CASE_CODE);
-    expect(head.textContent).not.toContain("Smallest unit");
-    expect(head.textContent).not.toContain("No barcode");
-    const code = within(head).getByTestId(T.code("base"));
-    expect(code.textContent).toBe("—");
-    expect(code.parentElement?.textContent).toBe("—");
-  });
-
-  it("every other row keeps its barcode and Contains", () => {
-    withPhantom({ code: CASE_CODE as never });
-    render(<ProductPricesGrid product={product} />);
-    const caseRow = within(screen.getByTestId(T.row("case")));
-    expect(caseRow.getByTestId(T.code("case")).textContent).toBe("012345678905");
-    expect(caseRow.getAllByRole("cell")[0].textContent).toContain("960 Pieces");
-    // a family-governed locked base row (another reason) keeps its code and 'Smallest unit'
-    withPhantom({ code: CASE_CODE as never, notEditableReason: "Its price is set on the family." });
-    const { container } = render(<ProductPricesGrid product={product} />);
-    const locked = within(
-      container.querySelector(`[data-testid="${T.row("base")}"]`) as HTMLElement,
+    expect(row.getByText("$1.50")).toBeTruthy();
+    expect(row.getByTestId(T.notEditable("base")).textContent).toBe(
+      "Its price is set on the family.",
     );
-    expect(locked.getByTestId(T.code("base")).textContent).toBe(CASE_CODE);
-    expect(locked.getAllByRole("cell")[0].textContent).toContain("Smallest unit");
-    const card = within(
-      container.querySelector(`[data-testid="${T.card("base")}"]`) as HTMLElement,
-    );
-    expect(card.getByTestId(T.code("base")).textContent).toBe(CASE_CODE);
-    expect(card.getByText("Smallest unit")).toBeTruthy();
-  });
-
-  it("compact density keeps 'Contains · barcode' on a normal row", () => {
-    render(<ProductPricesGrid product={product} layout="table" density="compact" />);
-    const head = within(screen.getByTestId(T.row("case"))).getByRole("rowheader");
-    expect(head.textContent).toContain("40 Boxes · 012345678905");
   });
 });

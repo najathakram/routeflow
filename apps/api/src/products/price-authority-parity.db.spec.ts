@@ -189,11 +189,10 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     expect(Number((created as any).price)).toBe(7);
   });
 
-  it("R-a3: mode off, every grid row of a variant is editable except the implicit base row", async () => {
+  it("R-a3: mode off, every grid row of a variant is editable", async () => {
     const s = await seed("a3", "variant");
     const g = await readGrid(s);
-    const locked = g.rows.filter((r: any) => !r.editable);
-    expect(locked.every((r: any) => r.ref === "base")).toBe(true);
+    expect(g.rows.filter((r: any) => !r.editable)).toEqual([]);
     expect(unitRowOf(g).editable).toBe(true);
   });
 
@@ -245,7 +244,7 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     ).resolves.toBeDefined();
   });
 
-  it("G-a5: the implicit base row is never editable", async () => {
+  it("G-a5: without the units flag, the implicit base row is not editable (SA-1082)", async () => {
     const s = await seed("g5", "standard");
     await prisma.productUnit.deleteMany({ where: { productId: s.productId } });
     const g = await readGrid(s);

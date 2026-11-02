@@ -28,7 +28,6 @@ function AddUnitForm({
   baseLabel,
   ofUnits,
   pieceMissing: pieceMissingRaw,
-  prefillPiece,
   noPack = false,
   validatePrice,
   onDone,
@@ -38,7 +37,6 @@ function AddUnitForm({
   baseLabel: string;
   ofUnits: AddUnitOf[];
   pieceMissing: boolean;
-  prefillPiece: boolean;
   /** SA-984 D2: the product has no pack size, so a 1-of-base Piece is refused by the server: offer no such unit. */
   noPack?: boolean;
   validatePrice?: (text: string) => string | null;
@@ -50,8 +48,7 @@ function AddUnitForm({
   const uid = React.useId();
   const nameRef = React.useRef<HTMLInputElement>(null);
   const [name, setName] = React.useState("");
-  // F07: opened from the grid's "Add the Piece unit first" pointer, the form starts as that Piece.
-  const [n, setN] = React.useState(pieceMissing && prefillPiece ? "1" : "");
+  const [n, setN] = React.useState("");
   const options: AddUnitOf[] = [{ label: baseLabel, factorToBase: 1 }, ...ofUnits];
   const [ofIdx, setOfIdx] = React.useState(0);
   const [price, setPrice] = React.useState("");
@@ -248,7 +245,6 @@ export function AddUnitPanel({
   dirty = false,
   disabled = false,
   pieceMissing = false,
-  prefillPiece = false,
   noPack = false,
   validatePrice,
   onOpen,
@@ -270,7 +266,6 @@ export function AddUnitPanel({
    */
   pieceMissing?: boolean;
   /** With `pieceMissing`: open the form as that Piece (Contains 1, base name) instead of blank. */
-  prefillPiece?: boolean;
   /** SA-984 D2: no pack size, so no 1-of-base Piece is offered. */
   noPack?: boolean;
   /**
@@ -326,7 +321,6 @@ export function AddUnitPanel({
           baseLabel={baseLabel}
           ofUnits={ofUnits}
           pieceMissing={pieceMissing}
-          prefillPiece={prefillPiece}
           noPack={noPack}
           validatePrice={validatePrice}
           onCancel={close}
