@@ -133,8 +133,11 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
       priceTier2: "22.00",
       ...data,
     });
-  const variantOf = (family: { id: string; tenantId: string }, data: Record<string, unknown>) =>
-    productIn(family.tenantId, `Variant ${randomUUID().slice(0, 4)}`, {
+  const variantOf = (
+    family: { id: string; tenantId: string | null },
+    data: Record<string, unknown>,
+  ) =>
+    productIn(family.tenantId as string, `Variant ${randomUUID().slice(0, 4)}`, {
       kind: "VARIANT",
       parentProductId: family.id,
       ...data,
