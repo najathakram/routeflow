@@ -40,3 +40,20 @@ export interface ReissueCreditNoteResult<TCreditNote = unknown> {
   /** What the void took off invoices: the new note is not applied anywhere. */
   unapplied: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
 }
+
+/**
+ * GET /credit-notes/summary?today=YYYY-MM-DD (B238): the credit-notes page's status counters and money tiles, computed by the
+ * server over EVERY note (never a client fetch-all that a page cap silently truncates). Money is in dollars, cent-rounded.
+ */
+export interface CreditNoteSummary {
+  counts: { total: number; issued: number; applied: number; void: number };
+  /** Σ (amount − amountUsed) over the open notes: not void, balance left, not expired. */
+  openCredit: number;
+  openCount: number;
+  /** Non-void notes created in the 30 days before the viewer's `today`. */
+  issued30Value: number;
+  issued30Count: number;
+  /** The reason with the most credited (non-void) value, "—" when nothing is credited. */
+  topReason: string;
+  topReasonPct: number;
+}
