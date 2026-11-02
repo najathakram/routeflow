@@ -553,4 +553,53 @@ describeDb("SA-1093: a bill's void after a Boxes answer", () => {
       expect(await average(w)).toBe(avg);
     },
   );
+
+  describe("SA-1093 Rule 3: revert to draft", () => {
+    const revert = (w: World, id: string) =>
+      inTenant(w, () => bills.revertToDraft(id, w.userId) as Promise<any>);
+
+    it("R-1: a bill received before the pack is refused 409, and nothing is written", async () => {
+      const { w, bill } = await caseA("r1");
+      const rowsBefore = await prisma.stockMovement.count({ where: { productId: w.productId } });
+
+      const code = await revert(w, bill.id).then(
+        () => "reverted",
+        (e) => e?.response?.code,
+      );
+
+      expect(code).toBe("RECEIVED_BEFORE_PACK");
+      expect(await stock(w)).toBe(240);
+      expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(
+        rowsBefore,
+      );
+      const row = await prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+      expect(row.status).toBe("RECEIVED");
+      expect(row.receivedDate).not.toBeNull();
+      expect(await lots(w)).toHaveLength(1);
+    });
+
+    it.each([
+      ["no pack", null],
+      ["a Pieces answer", "piece"],
+    ] as const)("R-2: %s reverts as it always did", async (_name, reading) => {
+      const w = await seedWorld(`r2${reading ?? "none"}`);
+      const bill = await receivedBill(w, 10, 2);
+      if (reading) await answer(w, 24, reading);
+
+      const out = await revert(w, bill.id);
+
+      expect(out.status).toBe("DRAFT");
+      expect(await stock(w)).toBe(0);
+    });
+
+    it("R-2: a bill received after the answer reverts too", async () => {
+      const w = await seedWorld("r2after");
+      await receivedBill(w, 1, 24);
+      await answer(w, 24);
+      const bill = await receivedBill(w, 10, 2);
+
+      expect((await revert(w, bill.id)).status).toBe("DRAFT");
+      expect(await stock(w)).toBe(24);
+    });
+  });
 });

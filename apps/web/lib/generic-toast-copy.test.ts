@@ -911,3 +911,18 @@ describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice 
     );
   });
 });
+
+describe("SA-1093: a document received before its units per box were set", () => {
+  const refusal = (document: string) => ({
+    response: { status: 409, data: { code: API_ERROR_CODES.RECEIVED_BEFORE_PACK, document } },
+  });
+
+  it("a bill names its void, a purchase order keeps its stock", () => {
+    expect(genericToastCopy(refusal("bill"))).toBe(
+      "This bill was received before its units per box were set. To change it, void it and enter a new bill.",
+    );
+    expect(genericToastCopy(refusal("purchase-order"))).toBe(
+      "This purchase order was received before its units per box were set. Save the edit without changing stock.",
+    );
+  });
+});

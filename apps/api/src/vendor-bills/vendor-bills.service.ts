@@ -28,6 +28,7 @@ import {
   lotShapeWhere,
   packFactor,
   packVoidClosingRows,
+  receivedBeforePackError,
   type BoxIntro,
 } from "../products/pack-intro-undo";
 import {
@@ -1682,6 +1683,16 @@ export class VendorBillsService {
       plan.map((p) => ({ productId: p.item.productId as string, name: p.name, qty: p.qty })),
       action,
     );
+    // SA-1093: one read of each product's Boxes answers. A revert of a receipt older than one is refused before any write.
+    const introsOf = new Map<string, BoxIntro[]>();
+    for (const productId of new Set(plan.map((p) => p.item.productId as string))) {
+      const intros = await boxIntrosOf(tx, productId);
+      introsOf.set(productId, intros);
+      const older = receiptsByProduct
+        .get(productId)
+        ?.rows.some((r) => packFactor(introsAfter(intros, r.createdAt as Date)) > 1);
+      if (older && action === "reverted to draft") throw receivedBeforePackError("bill");
+    }
     const now = new Date();
     const tenantId = this.prisma.getTenantId();
     const reversedReceipts: (LiveBillReceipt & { productId: string; name: string })[] = [];
@@ -1735,7 +1746,7 @@ export class VendorBillsService {
 
       // SA-1093 Rule 2: a receipt older than a Boxes answer comes out in today's pieces. A line with no receipt row is
       // legacy, so older than every answer. All factors 1 writes what a void always wrote, and nothing more.
-      const intros = await boxIntrosOf(tx, productId);
+      const intros = introsOf.get(productId) as BoxIntro[];
       const shortfallFactor = shortfall.gt(0) ? packFactor(intros) : 1;
       const factorOf = (r: LiveBillReceipt) => packFactor(introsAfter(intros, r.createdAt as Date));
       const afterPack = shortfallFactor > 1 || mine.some((r) => factorOf(r) > 1);

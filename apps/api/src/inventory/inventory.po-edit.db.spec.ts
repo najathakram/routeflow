@@ -28,6 +28,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
+import { applyPackIntroduction } from "../products/pack-intro-apply";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
@@ -184,6 +185,45 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     const b = await productOf(fresh);
     expect(a.currentStock.toString()).toBe(b.currentStock.toString()); // 40
     expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+20×6)/40 = 4
+  });
+
+  it("R-3 (SA-1093 Rule 3): a re-apply of a receipt older than a Boxes answer is refused 409, and nothing is written", async () => {
+    const w = await seedWorld("r3", 0, 0);
+    const po = await receivedPo(w, 20, 4);
+    await inTenant(w, () =>
+      prisma.tenantTransaction(async (tx) => {
+        const data: Record<string, unknown> = { unitsPerBox: 24 };
+        await applyPackIntroduction(tx as any, {
+          tenantId: w.tenantId,
+          productId: w.productId,
+          from: null,
+          to: 24,
+          reading: "box",
+          data,
+          actorId: null,
+        });
+        await tx.product.update({ where: { id: w.productId }, data });
+      }),
+    );
+    const rows = await prisma.stockMovement.count({ where: { productId: w.productId } });
+
+    const code = await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
+        },
+        w.userId,
+      ),
+    ).then(
+      () => "re-applied",
+      (e) => e?.response?.code,
+    );
+
+    expect(code).toBe("RECEIVED_BEFORE_PACK");
+    expect(Number((await productOf(w)).currentStock)).toBe(480);
+    expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(rows);
   });
 
   // ── 2. the ledger is append-only: original + compensation + re-post ─────────────────────

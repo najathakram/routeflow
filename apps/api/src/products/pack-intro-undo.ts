@@ -1,5 +1,7 @@
+import { ConflictException } from "@nestjs/common";
 import { MovementType, Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { reverseAverageCost } from "../inventory/costing";
 import type { LockedStock, StockMovementRow } from "../inventory/stock-movements";
 import { scaleLotShape } from "./pack-intro";
@@ -48,6 +50,20 @@ export const introsAfter = (intros: readonly BoxIntro[], rowCreatedAt: Date): Bo
 
 export const packFactor = (intros: readonly BoxIntro[]): number =>
   intros.reduce((f, i) => f * i.to, 1);
+
+/**
+ * SA-1093 Rule 3: 409 before any write. A re-entry would receive the old unit's lines at the old cost, and a stored line is
+ * never stamped with a pack (SA-946). A bill's way out is its void, which never refuses for this.
+ */
+export const receivedBeforePackError = (document: "bill" | "purchase-order") =>
+  new ConflictException({
+    code: API_ERROR_CODES.RECEIVED_BEFORE_PACK,
+    document,
+    message:
+      document === "bill"
+        ? "This bill was received before its units per box were set. To change it, void it and enter a new bill."
+        : "This purchase order was received before its units per box were set. Save the edit without changing stock.",
+  });
 
 /** A lot's shape after these answers: each one's rounding in order, never a single division. */
 export const convertedLotShape = (

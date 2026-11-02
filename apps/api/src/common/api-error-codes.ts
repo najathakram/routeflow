@@ -759,6 +759,12 @@ export const API_ERROR_CODES = {
    */
   PACK_CONVERSION_TOO_LARGE: "PACK_CONVERSION_TOO_LARGE",
   /**
+   * 409 from a vendor bill's revert to draft and a purchase order's re-apply (SA-1093): the document was received before a
+   * Boxes answer, so its lines are in the old unit. `document` says which ("bill", "purchase-order"). A bill's void still works.
+   * Nothing was written.
+   */
+  RECEIVED_BEFORE_PACK: "RECEIVED_BEFORE_PACK",
+  /**
    * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
    */
