@@ -185,3 +185,27 @@ export async function deliveredQtyRecompute(
     };
   });
 }
+
+/**
+ * SA-978a §3 (W-922): the ONE recompute step both stop-completion writers (`completeStop`,
+ * `completeWithPayment`) run right after they write their DeliveryMutation rows. `orderIdByItemId`
+ * maps each line that just got a row to its order; the result is `deliveredQtyRecompute` per order,
+ * flattened. READ-ONLY for the same reason as `deliveredQtyRecompute`: the caller issues the
+ * `orderItem.update` writes. A line left out of `deliveries[]` is not in the map, so it keeps its column.
+ */
+export async function deliveredQtyRecomputeForRows(
+  db: Parameters<typeof deliveredQtyRecompute>[0],
+  orderIdByItemId: ReadonlyMap<string, string>,
+): Promise<Array<{ id: string; deliveredQty: number }>> {
+  const itemIdsByOrder = new Map<string, string[]>();
+  for (const [itemId, orderId] of orderIdByItemId) {
+    const ids = itemIdsByOrder.get(orderId);
+    if (ids) ids.push(itemId);
+    else itemIdsByOrder.set(orderId, [itemId]);
+  }
+  const updates: Array<{ id: string; deliveredQty: number }> = [];
+  for (const [orderId, itemIds] of itemIdsByOrder) {
+    updates.push(...(await deliveredQtyRecompute(db, orderId, itemIds)));
+  }
+  return updates;
+}

@@ -4,9 +4,11 @@ import {
   buildLadderView,
   authorityLevelOfRef,
   canonicalUnitRef,
+  familyCellsFor,
   priceAuthority,
   priceGrid,
   unitCodeOf,
+  type FamilyCell,
   type LadderView,
   type LadderViewUnit,
   type PriceAuthorityLevel,
@@ -119,6 +121,8 @@ export interface PriceModel {
   revision: number;
   priceState: string;
   grid: ProductPriceGridDto;
+  /** SA-1082 A-1: a variant's five cells against its family, Retail first; null when it doesn't follow one. */
+  familyCells: FamilyCell[] | null;
 }
 
 /**
@@ -221,6 +225,7 @@ export class ProductPriceGridService {
         ? await recipeFamilyIdOf(db, tenantId, productId)
         : null;
     const authorityOf = { ...product, recipeFamilyId };
+    const familyCells = await this.familyCellsOf(db, product, tierUnits);
     const grid: ProductPriceGridDto = {
       productId,
       anchor: view.anchor,
@@ -232,6 +237,14 @@ export class ProductPriceGridService {
           (unbacked && !opts.pieceSellable ? PIECE_NOT_SOLD : null);
         return {
           ...row,
+          ...(row.ref === "pack" && familyCells
+            ? {
+                cells: row.cells.map((c) => ({
+                  ...c,
+                  family: familyCells[c.tier - 1] as FamilyCell,
+                })),
+              }
+            : {}),
           code: unitCodeOf(codes, row.ref),
           editable: reason == null,
           ...(reason ? { notEditableReason: reason } : {}),
@@ -243,6 +256,32 @@ export class ProductPriceGridService {
       tierAnchors: { ...view.tierAnchors },
       tierRules: { ...rules },
     };
-    return { product, units, view, rules, revision, priceState, grid };
+    return { product, units, view, rules, revision, priceState, grid, familyCells };
+  }
+
+  /** A variant's cells against its family (recipes keep today's authority). One read, only for a row with a parent. */
+  private async familyCellsOf(
+    db: Db,
+    product: any,
+    tierUnits: readonly { orderUnitRef: string | null }[],
+  ): Promise<FamilyCell[] | null> {
+    if (!product.parentProductId || product.kind === "RECIPE") return null;
+    const family = await db.product.findFirst({
+      where: { id: product.parentProductId },
+      select: {
+        pricePerUnit: true,
+        priceTier2: true,
+        priceTier3: true,
+        priceTier4: true,
+        priceTier5: true,
+        unitsPerBox: true,
+      },
+    });
+    if (!family) return null;
+    const own = (ref: string | null | undefined) => !!ref && ref !== "pack";
+    return familyCellsFor(family, {
+      ...product,
+      ownOrderUnit: own(product.orderUnitRef) || tierUnits.some((t) => own(t.orderUnitRef)),
+    });
   }
 }

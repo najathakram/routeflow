@@ -407,13 +407,30 @@ describe("CustomersService", () => {
     it("should return customer for operators", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
       const result = await service.findOne("cust-1", operatorPayload);
-      expect(result).toEqual(MOCK_CUSTOMER);
+      expect(result).toEqual({ ...MOCK_CUSTOMER, taxIdLast4: null });
+    });
+
+    // SA-1084: staff get the tax ID as its last 4 (a server-side select), a driver gets neither field.
+    it("gives staff taxIdLast4 only, and a driver no identity field at all", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.findFirst.mockResolvedValue({ taxId: "12-3456789" });
+      const staff = await service.findOne("cust-1", operatorPayload as never);
+      expect(staff).toEqual({ ...MOCK_CUSTOMER, taxIdLast4: "6789" });
+      expect(JSON.stringify(staff)).not.toContain("12-3456789");
+      prisma.customer.findFirst.mockClear();
+      const asDriver = await service.findOne("cust-1", {
+        ...operatorPayload,
+        role: "DRIVER" as const,
+      } as never);
+      expect(asDriver).toEqual(MOCK_CUSTOMER);
+      expect(asDriver).not.toHaveProperty("taxIdLast4");
+      expect(prisma.customer.findFirst).not.toHaveBeenCalled();
     });
 
     it("should return customer when the authenticated customer owns the record", async () => {
       prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
       const result = await service.findOne("cust-1", customerPayload);
-      expect(result).toEqual(MOCK_CUSTOMER);
+      expect(result).toEqual({ ...MOCK_CUSTOMER, taxIdLast4: null });
     });
 
     it("should throw ForbiddenException when a different customer tries to access", async () => {

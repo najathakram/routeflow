@@ -2486,13 +2486,15 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </div>
                       </div>
                     )}
-                    {customer.taxId && (
+                    {customer.taxIdLast4 && (
                       <div className="flex items-start gap-3">
                         <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                         <div>
                           <p className="text-xs text-navy/70">Tax ID</p>
                           <div className="mt-0.5 flex items-center gap-2">
-                            <p className="text-sm font-medium text-navy">{customer.taxId}</p>
+                            <p className="text-sm font-medium text-navy">
+                              On file, ending {customer.taxIdLast4}
+                            </p>
                             {customer.isTaxExempt && (
                               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
                                 Tax Exempt

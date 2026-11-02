@@ -261,6 +261,9 @@ function walk(dir: string, found: string[]): void {
     if (/\.(spec|test)\./.test(name) || /\.d\.ts$/.test(name)) continue;
     const rel = relative(REPO_ROOT, full).split(sep).join("/");
     if (rel.startsWith("packages/pricing/src/")) continue;
+    // The ready-made marketing pages: copied static scripts (scroll maths, one fixed sample amount
+    // on the home page). No tenant money, and the copy must stay byte for byte.
+    if (rel.startsWith("apps/web/public/site/")) continue;
     found.push(rel);
   }
 }

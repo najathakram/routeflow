@@ -47,7 +47,7 @@ import {
   type DraftEntry,
 } from "./fold-draft";
 import { canonicalPriceText } from "./price-text";
-import { previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
+import { familyCellsFromGrid, previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
 /** The open plan and what the "also update" panel (K4) reads of the draft's choices on it. */
 export interface OpenPlan {
@@ -144,6 +144,9 @@ export interface PriceDraft {
   /** K12 F05: the Auto prices that follow what Apply staged (with `appliedLead`; 0 when none). */
   appliedFollows: number;
   resetAllToAuto: () => void;
+  /** SA-1082 ruling 6: a variant away from its family's prices can take them back. */
+  canTakeFamilyPrices: boolean;
+  takeFamilyPrices: () => void;
   /** The save body, or null while the grid has not loaded or the draft has a conflict (Save is then unavailable). */
   toRequest: () => SavePricesRequest | null;
   save: () => void;
@@ -256,9 +259,13 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   const served = React.useMemo(() => (grid ? viewFromGrid(grid) : null), [grid]);
   const rules = React.useMemo(() => (grid ? rulesFromGrid(grid) : {}), [grid]);
 
+  const familyCells = React.useMemo(() => (grid ? familyCellsFromGrid(grid) : null), [grid]);
   const fold = React.useMemo(
-    () => (served ? foldDraft(served, rules, entries, openKey, keeps, tierName, customers) : null),
-    [served, rules, entries, openKey, keeps, tierName, customers],
+    () =>
+      served
+        ? foldDraft(served, rules, entries, openKey, keeps, tierName, customers, familyCells)
+        : null,
+    [served, rules, entries, openKey, keeps, tierName, customers, familyCells],
   );
   const view = fold?.view ?? null;
 
@@ -344,7 +351,16 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
   // here, said as the owner's doing. A Keep whose customer has a price of their own now is the customers' doing: left to it.
   const dropKeepsLackingPlan = (next: readonly DraftEntry[], why: string) => {
     if (!served || !customerRows || moves.length === 0) return;
-    const plans = foldDraft(served, rules, next, null, keeps, tierName, customers).plans;
+    const plans = foldDraft(
+      served,
+      rules,
+      next,
+      null,
+      keeps,
+      tierName,
+      customers,
+      familyCells,
+    ).plans;
     const gone = staleKeepMoves(moves, plans, customers).filter(
       (m) =>
         (customers.find((c) => c.customerId === m.customerId)?.set?.[m.ref] ?? null) === m.from,
@@ -369,7 +385,7 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
     setOpenKey(key);
     if (stale.length > 0) setNotice(clearedNotice(stale));
     dropKeepsLackingPlan(next, "you changed that price again");
-    const r = foldDraft(served!, rules, next, key, keeps, tierName, customers);
+    const r = foldDraft(served!, rules, next, key, keeps, tierName, customers, familyCells);
     return r.plans.get(key)!;
   };
 
@@ -687,6 +703,21 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       setEntries([...entries, { kind: "plan", key, plan, replan }]);
       setOpenKey(key);
       openRef.current = { key, plan };
+    },
+    canTakeFamilyPrices:
+      familyCells != null && familyCells[0]?.value != null && familyCells.some((c) => !c.follows),
+    takeFamilyPrices: () => {
+      if (!familyCells) return;
+      beginEditing(surfaceRef.current ?? "inline");
+      setEntries([
+        ...entries.filter((e) => !(e.kind === "cell" && parseKey(e.key).ref === "pack")),
+        ...([1, 2, 3, 4, 5] as const).map((t): DraftEntry => ({
+          kind: "cell",
+          key: cellKey("pack", t),
+          text: "",
+        })),
+      ]);
+      setOpenKey(null);
     },
     resetAllToAuto: () => {
       if (!served) return;

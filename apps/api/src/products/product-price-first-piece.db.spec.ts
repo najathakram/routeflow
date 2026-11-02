@@ -364,7 +364,7 @@ describeDb("SA-1082 first Piece price - real Postgres", () => {
     expect(after.factorToBase).toBe(72);
   });
 
-  it("VP-6b: a variant in mode on stays priced by the family until PR-2: write 409, no row", async () => {
+  it("VP-6b (SA-1082 A-1): a variant in mode on prices its own Piece row: the first price creates the unit", async () => {
     mode = "on";
     const t = await seed("vp6b");
     const family = await prisma.product.create({
@@ -383,11 +383,10 @@ describeDb("SA-1082 first Piece price - real Postgres", () => {
       data: { kind: "VARIANT", parentProductId: family.id } as any,
     });
     const g = await readGrid(t);
-    expect(pieceRow(g).editable).toBe(false);
-    expect(pieceRow(g).notEditableReason).toBe("Priced by the family.");
-    const err = await firstPrice(t, g, 3).catch((e) => e);
-    expect(err.getStatus()).toBe(409);
-    expect(await pieces(t)).toHaveLength(0);
+    expect(pieceRow(g).editable).toBe(true);
+    expect(pieceRow(g).notEditableReason).toBeUndefined();
+    await firstPrice(t, g, 3);
+    expect(await pieces(t)).toHaveLength(1);
   });
 
   it("VP-7: saved order and invoice lines do not move across the first price and its undo", async () => {

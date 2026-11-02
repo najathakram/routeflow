@@ -1,4 +1,4 @@
-import { orderErrorText } from "./order-error-text";
+import { bulkDeleteResultTitle, orderErrorText } from "./order-error-text";
 
 const axiosErr = (
   status: number,
@@ -64,5 +64,23 @@ describe("orderErrorText (B986-7 Opus fold): coded -> fixed copy, uncoded -> the
         "Void the invoice first.",
       );
     }
+  });
+});
+
+describe("row 585: deleting an order that has delivered items", () => {
+  it("a delete refused with ORDER_DELETE_HAS_DELIVERED shows the fixed sentence, not the server text", () => {
+    const text = orderErrorText(
+      axiosErr(409, { code: "ORDER_DELETE_HAS_DELIVERED", message: "server wording" }),
+    );
+    expect(text).toBe(
+      "This order has delivered items, so it cannot be deleted. Record a return for the delivered goods instead.",
+    );
+  });
+
+  it("the bulk-delete toast counts both sides and names no single cause", () => {
+    const title = bulkDeleteResultTitle(2, 1);
+    expect(title).toContain("2 deleted, 1 kept");
+    expect(title).toMatch(/delivered items/);
+    expect(title).toMatch(/recorded payments/);
   });
 });

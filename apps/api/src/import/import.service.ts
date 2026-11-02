@@ -129,6 +129,7 @@ import {
   withImportPackReading,
 } from "./import-pack-reading";
 import { columnEntitlementDenied } from "./import-column-entitlement";
+import { maskedIdentity } from "../customers/customer-identity-fields";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -136,6 +137,11 @@ import { columnEntitlementDenied } from "./import-column-entitlement";
  * into a huge in-memory record array + per-row DB work. Reject past this so a
  * single upload can't exhaust memory / stall the worker.
  */
+// SA-1084: the contacts import compares an uploaded value with the stored one, so its two existing-customer lookups ask for
+// the stored identity values by name; its report shows the last 4 only.
+const IMPORT_IDENTITY_COMPARE = { taxId: false, tobaccoLicenseNo: false } as const;
+const IDENTITY_DIFF_FIELDS = new Set(["taxId", "tobaccoLicenseNo"]);
+
 const MAX_IMPORT_ROWS = 20_000;
 
 /**
@@ -513,7 +519,10 @@ export class ImportService {
 
     const planned: Record<string, { from: unknown; to: unknown }> = {};
     for (const [field, to] of Object.entries({ ...diff, ...compliance })) {
-      planned[field] = { from: existing[field] ?? null, to };
+      // SA-1084: the report says the last 4 of an identity value, never the stored or the typed whole.
+      planned[field] = IDENTITY_DIFF_FIELDS.has(field)
+        ? { from: maskedIdentity(existing[field]), to: maskedIdentity(to) }
+        : { from: existing[field] ?? null, to };
     }
     for (const { field, value } of consentChanges) {
       planned[field] = { from: existing[field] ?? null, to: value };
@@ -736,6 +745,7 @@ export class ImportService {
         ? await this.prisma.forTenant().customer.findFirst({
             where: excludeWalkIn({ zohoContactId, deletedAt: null }),
             include: { addresses: true, contactPersons: true },
+            omit: IMPORT_IDENTITY_COMPARE,
           })
         : null;
       if (!existing && zohoContactId) {
@@ -776,6 +786,7 @@ export class ImportService {
             deletedAt: null,
           }),
           include: { addresses: true, contactPersons: true },
+          omit: IMPORT_IDENTITY_COMPARE,
           take: 2,
         });
         if (byName.length > 1) {

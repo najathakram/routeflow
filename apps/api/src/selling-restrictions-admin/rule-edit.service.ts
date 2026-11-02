@@ -7,6 +7,7 @@ import type {
 } from "@routeflow/types";
 import type { OrderStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import type { TxOrClient } from "../prisma/prisma.service";
 import { ProductLabelsService } from "../product-labels/product-labels.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import {
@@ -71,7 +72,7 @@ const settingsOf = (r: Row): RuleEditSettings => ({
  * transaction client so the detail read and the history are one consistent snapshot.
  */
 export async function ruleRevisions(
-  tx: Prisma.TransactionClient,
+  tx: TxOrClient,
   tenantId: string,
   ruleId: string,
 ): Promise<RuleRevisionDto[]> {
