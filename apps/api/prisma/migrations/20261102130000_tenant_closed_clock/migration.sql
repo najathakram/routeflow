@@ -28,6 +28,7 @@
 --     DROP COLUMN "purgeApprovedAt", DROP COLUMN "purgeApprovedCounts", DROP COLUMN "purgeStartedAt",
 --     DROP COLUMN "purgeNoticeAt", DROP COLUMN "copyRequestOpenAt";
 
+BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- AlterTable
@@ -74,3 +75,5 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "Tenant_closed_clock"
   BEFORE INSERT OR UPDATE ON "Tenant"
   FOR EACH ROW EXECUTE FUNCTION "tenant_closed_clock"();
+
+COMMIT;
