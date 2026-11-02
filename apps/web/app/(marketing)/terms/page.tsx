@@ -3,13 +3,22 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { routes, site } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
+import { addLegalDays, formatLegalDate, isBeforeLegalDay } from "../lib/legal-dates";
 import { Eyebrow } from "../components/marketing";
 
 // Published terms of service (R9 follow-up). Source draft:
 // local-assets/handoff/2026-09-17/legal/terms-of-service-DRAFT.md — this page carries the
-// full text, not the interim shell. `LAST_UPDATED` also feeds the visible "Last updated"
-// line below; bump both together when the terms change.
-const LAST_UPDATED = "September 17, 2026";
+// full text, not the interim shell.
+//
+// Set both dates when this ships, as calendar days (YYYY-MM-DD, read in UTC):
+//   LAST_UPDATED   the day the page is published;
+//   EFFECTIVE_DATE the day the changed terms take effect, 30 days after LAST_UPDATED.
+// The notice box below the dates shows until EFFECTIVE_DATE and then drops off by itself (the page
+// is rebuilt hourly).
+const LAST_UPDATED = "2026-11-02";
+const EFFECTIVE_DATE = addLegalDays(LAST_UPDATED, 30);
+
+export const revalidate = 3600;
 
 const route = routes.find((r) => r.slug === "terms")!;
 
@@ -26,10 +35,18 @@ export default function TermsPage() {
         <Eyebrow>RouteFlow</Eyebrow>
         <h1>Terms of Service</h1>
         <p>
-          <strong>Effective date:</strong> {LAST_UPDATED}
+          <strong>Effective date:</strong> {formatLegalDate(EFFECTIVE_DATE)}
           <br />
-          <strong>Last updated:</strong> {LAST_UPDATED}
+          <strong>Last updated:</strong> {formatLegalDate(LAST_UPDATED)}
         </p>
+        {isBeforeLegalDay(EFFECTIVE_DATE) && (
+          <p className="legal-notice" role="note">
+            <strong>These Terms change on {formatLegalDate(EFFECTIVE_DATE)}.</strong> Until then,
+            the earlier Section 9 applies: if your account has ended and you cannot download your
+            Tenant Data, email <a href={`mailto:${site.email}`}>{site.email}</a> and we will make it
+            available by hand.
+          </p>
+        )}
 
         <p>
           These Terms of Service (&ldquo;Terms&rdquo;) govern access to and use of the RouteFlow
@@ -165,9 +182,12 @@ export default function TermsPage() {
             uploaded documents.
           </li>
           <li>
-            RouteFlow processes Tenant Data <strong>solely to provide the Service</strong>, as
-            described in our <Link href="/privacy">Privacy Policy</Link>, and does not use Tenant
-            Data for any other purpose, including advertising.
+            RouteFlow processes Tenant Data{" "}
+            <strong>
+              solely to provide the Service, which includes keeping it after a subscription ends as
+              described in our <Link href="/privacy">Privacy Policy</Link>
+            </strong>
+            , and does not use Tenant Data for any other purpose, including advertising.
           </li>
           <li>
             The Tenant is responsible for having the necessary rights and legal basis to submit its
@@ -188,10 +208,10 @@ export default function TermsPage() {
         </p>
         <ul>
           <li>
-            <strong>Location</strong> — used to share a driver&rsquo;s location with
-            dispatch/operators while an active delivery route is in progress, including briefly in
-            the background so route progress keeps updating if the app is minimized. Location is not
-            collected outside of an active route.
+            <strong>Location</strong> — used to share the location of a driver, or a staff member
+            running a route, with dispatch/operators while a delivery route is running, including in
+            the background so route progress keeps updating if the app is minimized. The app is
+            built to stop collecting location when the route ends.
           </li>
           <li>
             <strong>Camera</strong> — used to scan product barcodes and to photograph receipts,
@@ -240,7 +260,7 @@ export default function TermsPage() {
           <li>
             Subject to Section 5, you retain all rights to your Tenant Data. You grant RouteFlow a
             limited license to host, process, and display Tenant Data solely to provide the Service
-            to you.
+            to you, as described in Section 5.
           </li>
           <li>
             If you send us feedback or suggestions about the Service, you grant RouteFlow a
@@ -260,10 +280,17 @@ export default function TermsPage() {
             security, legal, or safety risk, or (iii) for nonpayment, as described in Section 3.
           </li>
           <li>
-            A Tenant may terminate its subscription as described in Section 3. Upon termination, we
-            will make Tenant Data available for export for 30 days before it is deleted in
-            accordance with our data retention practices (see{" "}
-            <Link href="/privacy">Privacy Policy</Link>).
+            A Tenant may terminate its subscription as described in Section 3. If you cancel and
+            your subscription ends at the end of the paid period, you can still sign in, read your
+            Tenant Data, and use the download tools in the Service. Those tools do not cover every
+            kind of Tenant Data, and some downloads have limits. If your account is suspended or
+            terminated, or your subscription ends another way, such as through our payment
+            processor, your users may not be able to use the Service or download anything. In any of
+            these cases, you can email <a href={`mailto:${site.email}`}>{site.email}</a> to ask for
+            a copy of your Tenant Data. We prepare it by hand, and we will tell you what we can
+            provide and when, unless the law or a security risk prevents it. Our{" "}
+            <Link href="/privacy#data-retention">Privacy Policy</Link> describes how long we keep
+            Tenant Data.
           </li>
         </ul>
 

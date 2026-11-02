@@ -3,13 +3,20 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { routes, site } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
+import { addLegalDays, formatLegalDate, isBeforeLegalDay } from "../lib/legal-dates";
 import { Eyebrow } from "../components/marketing";
 
 // Published privacy policy (R9 follow-up). Source draft:
 // local-assets/handoff/2026-09-17/legal/privacy-policy-DRAFT.md — this page carries the
-// full text, not the interim shell. `LAST_UPDATED` also feeds the visible "Last updated"
-// line below; bump both together when the policy changes.
-const LAST_UPDATED = "October 31, 2026";
+// full text, not the interim shell.
+//
+// `LAST_UPDATED` is the day the page is published, as a calendar day (YYYY-MM-DD, read in UTC); the
+// effective date is the same day. Set it when this ships. The notice box below the dates shows for
+// 90 days from then and drops off by itself (the page is rebuilt hourly).
+const LAST_UPDATED = "2026-11-02";
+const NOTICE_DAYS = 90;
+
+export const revalidate = 3600;
 
 const route = routes.find((r) => r.slug === "privacy")!;
 
@@ -26,10 +33,17 @@ export default function PrivacyPage() {
         <Eyebrow>RouteFlow</Eyebrow>
         <h1>Privacy Policy</h1>
         <p>
-          <strong>Effective date:</strong> {LAST_UPDATED}
+          <strong>Effective date:</strong> {formatLegalDate(LAST_UPDATED)}
           <br />
-          <strong>Last updated:</strong> {LAST_UPDATED}
+          <strong>Last updated:</strong> {formatLegalDate(LAST_UPDATED)}
         </p>
+        {isBeforeLegalDay(addLegalDays(LAST_UPDATED, NOTICE_DAYS)) && (
+          <p className="legal-notice" role="note">
+            <strong>Updated {formatLegalDate(LAST_UPDATED)}.</strong> We corrected this policy to
+            describe how long we keep data and how driver location is used, so it matches how
+            RouteFlow works today.
+          </p>
+        )}
 
         <p>
           RouteFlow (&ldquo;RouteFlow,&rdquo; &ldquo;we,&rdquo; &ldquo;us,&rdquo; or
@@ -102,9 +116,9 @@ export default function PrivacyPage() {
             or by the buyer through the buyer portal.
           </li>
           <li>
-            <strong>Driver data:</strong> name, contact info, assigned routes/vehicles, and — while
-            an active delivery route is in progress — real-time and route-history{" "}
-            <strong>location data</strong> (see &ldquo;Location data&rdquo; below).
+            <strong>Driver data:</strong> name, contact info, assigned routes/vehicles, and, while a
+            delivery route is running, real-time <strong>location data</strong> and stored location
+            points (see &ldquo;Location data&rdquo; below).
           </li>
           <li>
             <strong>Order, route, and delivery data:</strong> orders, line items, delivery stops,
@@ -151,13 +165,13 @@ export default function PrivacyPage() {
             public website with Umami, which sets no cookies.
           </li>
           <li>
-            <strong>Location data (mobile, drivers only):</strong> while a driver is actively
-            running a delivery route, the RouteFlow mobile app collects device location — including
-            in the background while the route is in progress — so dispatch/operators can see live
-            route progress, sequence stops, and confirm deliveries. Location is not collected
-            outside of an active route, and is not collected from customer/buyer or operator
-            (non-driver) accounts. Drivers can disable location sharing in their device settings,
-            which will prevent live tracking from functioning.
+            <strong>Location data (mobile):</strong> when a delivery route starts, the RouteFlow
+            mobile app starts collecting device location, including in the background while the
+            route is running, so dispatch/operators can see live route progress. The app is built to
+            stop when the route ends. This applies to driver accounts and to staff accounts that
+            start a route in the mobile app. We do not collect location from buyer accounts. Drivers
+            can disable location sharing in their device settings, which will prevent live tracking
+            from working.
           </li>
           <li>
             <strong>Camera &amp; photos (mobile):</strong> the mobile app requests camera access to
@@ -432,30 +446,73 @@ export default function PrivacyPage() {
           not the token itself, so the token cannot be recovered from our database.
         </p>
         <p>
-          Demo booking records are retained for 12 months unless you become a RouteFlow Tenant, in
-          which case ordinary account data retention applies (see &ldquo;Data retention&rdquo;
-          below).
+          We keep demo booking records as described in{" "}
+          <a href="#data-retention">&ldquo;Data retention&rdquo;</a> below. If you become a
+          RouteFlow Tenant, the same section applies to your account data.
         </p>
 
         <h2 id="data-retention">Data retention</h2>
+        <p>
+          This section describes what we do today. We have not set end dates for most of the data we
+          hold, and most of it is not deleted automatically. When that changes, we will update this
+          section.
+        </p>
         <ul>
           <li>
-            We retain Tenant account and operational data (orders, invoices, routes, uploaded
-            documents, etc.) for as long as the Tenant&rsquo;s subscription is active, plus 30 days
-            to allow account recovery, and as needed to satisfy tax, accounting, and legal
-            recordkeeping obligations.
+            <strong>Tenant business records.</strong> We keep Tenant account data and business
+            records, such as orders, invoices, routes, and uploaded documents, while the
+            subscription is active. We also keep them after the subscription ends, and we have not
+            set an end date. We keep them so a Tenant that returns can pick up where it left off, so
+            a Tenant can ask us for a copy, and because a Tenant may need them for tax, accounting,
+            or legal reasons. No automatic process deletes them. A Tenant cannot delete its own
+            account in the Service. If our staff mark an account as deleted, access ends, but the
+            data stays in our database.
           </li>
           <li>
-            Driver location data collected during a delivery route is retained for 90 days and used
-            only for route history and delivery confirmation.
+            <strong>Driver location.</strong> We store the location points the mobile app sends
+            while a delivery route is running. We use them to show the Tenant&rsquo;s staff live
+            route progress. We have not set an end date, and no automatic process deletes them
+            today. Points are also deleted if the Tenant removes that driver from RouteFlow.
           </li>
           <li>
-            We retain marketing-site inquiries and support communications for up to 24 months.
+            <strong>Messages to us.</strong> We keep messages you send us in our business email. We
+            have not set an end date.
           </li>
           <li>
-            We delete or anonymize personal information when it is no longer needed for the purposes
-            described in this policy, or sooner upon a valid deletion request (see{" "}
-            <a href="#your-rights">&ldquo;Your rights and choices&rdquo;</a> below).
+            <strong>Demo bookings.</strong> We keep demo booking records and the matching events on
+            our internal calendar. We have not set an end date, and no automatic process deletes
+            them today.
+          </li>
+          <li>
+            <strong>Buyer accounts.</strong> We do not yet offer a screen to delete a buyer account.
+            To ask us to delete yours, email <a href={`mailto:${site.email}`}>{site.email}</a>. If a
+            buyer account is marked as deleted, you can no longer sign in, but your name, email,
+            phone numbers, and hashed password stay in our database, and we have not set an end
+            date. The business you buy from keeps its own records about you. Ask that business about
+            those records.
+          </li>
+          <li>
+            <strong>Backups.</strong> Our database backups hold copies of this data. Data removed
+            from our live systems can stay in a backup until that backup ages out or is removed.
+          </li>
+          <li>
+            <strong>Legal duties.</strong> We may have to keep some records to meet tax, accounting,
+            or legal duties, even after a request to delete them.
+          </li>
+          <li>
+            <strong>Asking for a copy or for deletion.</strong> A Tenant account holder can email{" "}
+            <a href={`mailto:${site.email}`}>{site.email}</a> to ask for a copy of Tenant Data,
+            including data the Service cannot download, or to ask us to delete Tenant Data. We do
+            this by hand. We will reply within 30 days and tell you what we can do and when. We may
+            not be able to delete records the law requires us to keep, and deleted data can stay in
+            backups as described above.
+          </li>
+          <li>
+            <strong>Other deletion requests.</strong> We handle other requests to delete personal
+            information as described in{" "}
+            <a href="#your-rights">&ldquo;Your rights and choices&rdquo;</a> below. We may not be
+            able to delete data a Tenant controls, data the law requires us to keep, or data in a
+            backup.
           </li>
         </ul>
 
@@ -469,7 +526,8 @@ export default function PrivacyPage() {
           <li>
             <strong>If you are a customer, buyer, or driver of a Tenant:</strong> please contact
             that business directly — they control your data and are best positioned to fulfill your
-            request. We will support them in doing so.
+            request. We will support them in doing so. To ask us to delete your buyer account
+            itself, see <a href="#data-retention">&ldquo;Data retention&rdquo;</a> above.
           </li>
           <li>
             <strong>

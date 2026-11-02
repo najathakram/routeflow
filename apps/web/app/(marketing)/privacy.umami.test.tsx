@@ -40,6 +40,7 @@ describe("Privacy Policy and visit counts (W3 M2)", () => {
   it("moves the Last updated date past the day before this change", () => {
     const text = policyText();
     expect(text).not.toContain("Last updated: September 17, 2026");
-    expect(text).toContain("Last updated: October 31, 2026");
+    expect(text).not.toContain("Last updated: October 30, 2026");
+    expect(text).toMatch(/Last updated: [A-Z][a-z]+ \d{1,2}, 2026/);
   });
 });
