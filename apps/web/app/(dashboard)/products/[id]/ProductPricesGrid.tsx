@@ -125,7 +125,7 @@ function containsLines(row: ProductPriceGridRowDto, sorted: ProductPriceGridRowD
 interface CellView {
   tier: number;
   display: string;
-  word: "Auto" | "Set" | null;
+  word: "Auto" | "Set" | "Family" | null;
   aria: string;
 }
 
@@ -142,7 +142,14 @@ function cellView(
   if (!cell) return { tier, display: "—", word: null, aria: `${name} ${row.label} price, none` };
   const noPrice = row.kind === "pack" && tier === 1 && Number(cell.value) === 0;
   const display = noPrice ? "No price" : formatMoney(cell.value);
-  const word = noPrice ? null : cell.source === "set" ? "Set" : "Auto";
+  // SA-1082 ruling 5: Family while the cell is at the family's price, whichever way it's stored.
+  const word = noPrice
+    ? null
+    : cell.family?.follows
+      ? "Family"
+      : cell.source === "set"
+        ? "Set"
+        : "Auto";
   return { tier, display, word, aria: `${name} ${row.label} price, ${display}` };
 }
 

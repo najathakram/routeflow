@@ -114,6 +114,7 @@ import {
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { familyMoveToast, useFamilyMoveAsk } from "@/components/family/FamilyMoveAsk";
 
 /** The edit form's Flavor / variety input ("assign name" focuses it). */
 const VARIANT_NAME_INPUT_ID = "edit-variant-name";
@@ -224,6 +225,7 @@ export default function ProductDetailPage() {
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const famMove = useFamilyMoveAsk();
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const variantSubmittingRef = React.useRef(false);
@@ -492,7 +494,7 @@ export default function ProductDetailPage() {
     }
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     // No double submit: the Save button is disabled while pending, this covers Enter / a fast second tap.
     if (updateProduct.isPending) return;
     const draft = editDraft as Record<string, string>;
@@ -516,6 +518,10 @@ export default function ProductDetailPage() {
     const unitsPerBoxToSend = draft.unitsPerBox?.trim()
       ? parseInt(draft.unitsPerBox, 10)
       : pendingPackSizeRef.current;
+    const opened = pricesWhenEditStartedRef.current;
+    const pricePatch = pricesInWindow ? {} : detailsPricePatch(product, draft, opened);
+    const priced = isFamily ? await famMove.askFor(id, pricePatch, unitsPerBoxToSend) : pricePatch;
+    if (!priced) return;
     updateProduct.mutate(
       {
         id: id,
@@ -538,9 +544,7 @@ export default function ProductDetailPage() {
         // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
         // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
         // the products list (applyLadderChange, audit 2026-10-14).
-        ...(pricesInWindow
-          ? {}
-          : { ...detailsPricePatch(product, draft, pricesWhenEditStartedRef.current) }),
+        ...priced,
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -574,12 +578,12 @@ export default function ProductDetailPage() {
       {
         // Close edit mode ONLY once the PATCH lands. A 409/500 keeps the form open with the typed draft
         // (startEdit re-seeds the draft, so closing early threw the operator's edits away).
-        onSuccess: (data: { keptLabels?: string[] }) => {
+        onSuccess: (data: { keptLabels?: string[]; movedVariants?: number }) => {
           const kept = keptLabelsNote(data?.keptLabels);
           toast(
             kept
               ? { title: "Product moved", description: kept, variant: "success" }
-              : { title: "Saved", variant: "success" },
+              : { title: "Saved", ...familyMoveToast(priced, data), variant: "success" },
           );
           setEditDraft({});
           setIsEditing(false);
@@ -809,10 +813,10 @@ export default function ProductDetailPage() {
           unitSku: variantForm.unitSku || undefined,
           unit: variantForm.unit || product.unit,
           pricePerUnit: variantForm.price || String(product.pricePerUnit),
-          priceTier2: variantForm.priceTier2 || variantForm.price || String(product.pricePerUnit),
-          priceTier3: variantForm.priceTier3 || variantForm.price || String(product.pricePerUnit),
-          priceTier4: variantForm.priceTier4 || variantForm.price || String(product.pricePerUnit),
-          priceTier5: variantForm.priceTier5 || variantForm.price || String(product.pricePerUnit),
+          priceTier2: variantForm.priceTier2 || variantForm.price || undefined,
+          priceTier3: variantForm.priceTier3 || variantForm.price || undefined,
+          priceTier4: variantForm.priceTier4 || variantForm.price || undefined,
+          priceTier5: variantForm.priceTier5 || variantForm.price || undefined,
           category: product.category || undefined,
         },
         {
@@ -1280,6 +1284,7 @@ export default function ProductDetailPage() {
       )}
       {reactivateFlow.dialog}
       {deleteFlow.dialog}
+      {famMove.dialog}
       <ConfirmDialog
         open={pendingImageDelete !== null}
         onClose={() => {
