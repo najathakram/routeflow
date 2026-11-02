@@ -222,6 +222,29 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
+  it("SA-1091: a racing credit note that takes the ORDER's room between the check and the mint is the same 409, carrying orderBound, the room left and its message, and the claim is compensated", async () => {
+    withReturn(order([invoice("inv-1")]));
+    creditNotesCreate.mockRejectedValue(
+      new BadRequestException({
+        code: "CREDIT_NOTE_OVER_HEADROOM",
+        orderBound: true,
+        remaining: 6.74,
+        message: "only $6.74 is left on this order",
+      }),
+    );
+    const err = await service.processRefund("ret-1").catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "RETURN_REFUND_OVER_LINE_HEADROOM",
+      orderBound: true,
+      remaining: 6.74,
+      message: "only $6.74 is left on this order",
+    });
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ret-1", status: "REFUNDED", creditNoteId: null } }),
+    );
+  });
+
   it("an order with no invoice keeps the unsourced lump-sum credit", async () => {
     withReturn({
       ...order([]),

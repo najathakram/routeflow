@@ -9,12 +9,14 @@
  *   AC-6  a line already taken at the old price (7.04): the other line stops at what is left of each charge (2.70)
  *   AC-10 slices of one line add up: 3 then 4 of a 7-piece line
  *   AC-11 a levy (category tax) rides the helper: whole line, and a slice
+ *   AC-12 a typed price below the default never takes more tax than the default chunk did
  *   AC-13 an invoice discount leaves the NSF fee line out of its denominator
  *   AC-14 a customer exempt now still gets no tax back
  *   AC-15 (see refund-slice-single-source.spec.ts) the inline pricer holds no slice math of its own
  */
 import { NSF_FEE_SYSTEM_KIND, type RefundableInvoice } from "@routeflow/pricing";
 import {
+  applyCreditOverride,
   priceMatchedChunk,
   type CandidateInvoiceLine,
   type TakenAmounts,
@@ -216,6 +218,36 @@ describe("SA-1091 A-1: inline chunks priced as the invoice charged", () => {
     const priced = priceMatchedChunk(candidate(nine74, "l1"), 1, true);
     expect(priced.taxAmount).toBe(0);
     expect(priced.subtotal).toBe(6.5);
+  });
+
+  it("AC-12: a lowered price never takes more tax than the default chunk did (tax is the levy alone, a stale 8.75% rate on the line)", () => {
+    // the invoice charged only a $1.00 levy and no regular tax; the line still carries a rate
+    const inv = invoiceOf([{ id: "x", qty: 1, subtotal: 10, taxRate: 0.0875, levy: 1 }], 1);
+    const def = priceMatchedChunk(candidate(inv, "x"), 1, false);
+    expect([def.subtotal, def.taxAmount, def.categoryTax]).toEqual([10, 0, 1]);
+    const r = applyCreditOverride(
+      def,
+      { unitPrice: 9.5, reason: "damaged", overriddenBy: "u1" },
+      { unitsPerBox: null, taxRate: 0.0875, taxExempt: false },
+    );
+    expect(r.overCap).toBe(false);
+    if (r.overCap) return;
+    expect(r.chunk.subtotal).toBe(9.5);
+    expect(r.chunk.taxAmount).toBe(0); // rate x net would be 0.83, above the default's 0
+    expect(gross(r.chunk)).toBeLessThanOrEqual(gross(def));
+  });
+
+  it("AC-12 (guard): a lowered price on a taxed line takes the tax of the lowered net, below the default's", () => {
+    const def = priceMatchedChunk(candidate(nine74, "l1"), 1, false);
+    const r = applyCreditOverride(
+      def,
+      { unitPrice: 5, reason: "damaged", overriddenBy: "u1" },
+      { unitsPerBox: null, taxRate: 0.0825, taxExempt: false },
+    );
+    expect(r.overCap).toBe(false);
+    if (r.overCap) return;
+    expect([r.chunk.subtotal, r.chunk.taxAmount]).toEqual([5, 0.41]);
+    expect(r.chunk.taxAmount).toBeLessThanOrEqual(def.taxAmount);
   });
 
   it("an invoice that charged no tax prices no tax whatever rate a line kept (m-7)", () => {

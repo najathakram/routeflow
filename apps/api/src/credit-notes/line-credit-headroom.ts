@@ -480,14 +480,16 @@ export async function loadOrderRefundRoom(
   );
 
   const noteRows: Array<{ id: string; amount: unknown }> =
-    (await db.creditNote?.findMany?.({
-      where: {
-        invoiceId: { in: ids },
-        status: { not: "VOID" },
-        ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
-      },
-      select: { id: true, amount: true },
-    })) ?? [];
+    (db.creditNote
+      ? await db.creditNote.findMany({
+          where: {
+            invoiceId: { in: ids },
+            status: { not: "VOID" },
+            ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
+          },
+          select: { id: true, amount: true },
+        })
+      : null) ?? [];
   const notes = roundMoney(
     noteRows.filter((n) => !inlineNoteIds.has(n.id)).reduce((t, n) => t + Number(n.amount ?? 0), 0),
   );

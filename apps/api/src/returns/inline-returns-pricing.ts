@@ -20,6 +20,7 @@ import {
   refundableLineShare,
   roundMoney,
   type RefundableInvoice,
+  type RefundableInvoiceLine,
 } from "@routeflow/pricing";
 
 export type ReturnPriceSource = "SOURCE_INVOICE" | "CUSTOMER_PRICE" | "TIER" | "BASE" | "MANUAL";
@@ -298,18 +299,20 @@ export function invoiceViewOf(line: CandidateInvoiceLine): RefundableInvoice {
   if (line.invoice) return line.invoice;
   // the rest of the invoice (its other lines, at this line's rate) is what the invoice header says is not this line
   const rest = roundMoney(line.invoiceSubtotal - line.subtotal);
+  const own: RefundableInvoiceLine = {
+    id: line.sourceInvoiceItemId,
+    subtotal: line.subtotal,
+    qty: line.qty,
+    taxRate: line.taxRate,
+    isNsf: false,
+  };
+  // a read-only view for the helper's input, not a stamp of the category-tax trio on a row (category-tax-trio-callsites.spec)
+  own.categoryTaxAmount = line.categoryTax;
   return {
     taxAmount: line.invoiceTaxAmount,
     discount: line.invoiceDiscount,
     lines: [
-      {
-        id: line.sourceInvoiceItemId,
-        subtotal: line.subtotal,
-        qty: line.qty,
-        taxRate: line.taxRate,
-        categoryTaxAmount: line.categoryTax,
-        isNsf: false,
-      },
+      own,
       ...(rest > 0
         ? [{ id: "~rest", subtotal: rest, qty: 1, taxRate: line.taxRate, isNsf: false }]
         : []),
@@ -449,9 +452,13 @@ export function applyCreditOverride(
     chunk: {
       ...defaultChunk,
       subtotal,
-      // SA-1060 PR-2: a never-sold chunk stays untaxed at the lowered price too (keyed on the chunk, not on the rate)
+      // SA-1060 PR-2: a never-sold chunk stays untaxed at the lowered price too (keyed on the chunk, not on the rate).
+      // SA-1091 AC-12: and a lowered price never takes more tax than the default chunk did (a line's rate can be stale
+      // against what the invoice charged, e.g. tax that is the levy alone)
       taxAmount:
-        basis.taxExempt || defaultChunk.neverSold ? 0 : roundMoney(subtotal * basis.taxRate),
+        basis.taxExempt || defaultChunk.neverSold
+          ? 0
+          : Math.min(defaultChunk.taxAmount, roundMoney(subtotal * basis.taxRate)),
       priceSource: "MANUAL",
       unitPrice: override.unitPrice,
       originalPrice: defaultUnitPrice,
