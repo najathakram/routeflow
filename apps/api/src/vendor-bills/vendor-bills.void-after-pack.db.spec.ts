@@ -374,20 +374,22 @@ describeDb("SA-1093: a bill's void after a Boxes answer", () => {
 
   it("V-7: x3, the pack cleared, x8 gives factor 24, and the lot is found by the two-step shape", async () => {
     const w = await seedWorld("v7");
-    const bill = await receivedBill(w, 10, 2);
+    const bill = await receivedBill(w, 10, 2.0003);
     await answer(w, 3);
     await prisma.product.update({ where: { id: w.productId }, data: { unitsPerBox: null } });
     await answer(w, 8);
     expect(await stock(w)).toBe(240);
+    // 2.0003 / 3 / 8 rounds to 0.0834 and a single / 24 to 0.0833, so a single division wouldn't find this lot.
+    expect((await lots(w)).map((l) => Number(l.unitCost))).toEqual([0.0834]);
 
     await voidIt(w, bill.id);
 
     expect(await stock(w)).toBe(0);
     expect(await lots(w)).toHaveLength(0);
     expect(await voidRows(w, bill.billNumber)).toEqual([
-      [MovementType.PURCHASE, -10, 2],
+      [MovementType.PURCHASE, -10, 2.0003],
       [MovementType.ADJUSTMENT, -230, null],
-      [MovementType.COST_BASIS, 0, 0.0833],
+      [MovementType.COST_BASIS, 0, 0.0834],
     ]);
   });
 
