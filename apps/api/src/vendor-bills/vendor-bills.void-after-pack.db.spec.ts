@@ -554,6 +554,28 @@ describeDb("SA-1093: a bill's void after a Boxes answer", () => {
     },
   );
 
+  it("Rule 1: an answer with no readable pack size throws, and nothing is written", async () => {
+    const w = await seedWorld("unreadable");
+    const bill = await receivedBill(w, 10, 2);
+    await prisma.auditLog.create({
+      data: {
+        tenantId: w.tenantId,
+        action: "product.pack_introduced",
+        entityType: "Product",
+        entityId: w.productId,
+        meta: { reading: "box", to: "24" },
+      },
+    });
+    const rows = await prisma.stockMovement.count({ where: { productId: w.productId } });
+
+    await expect(voidIt(w, bill.id)).rejects.toThrow("no readable pack size");
+
+    expect(await stock(w)).toBe(10);
+    expect(await prisma.stockMovement.count({ where: { productId: w.productId } })).toBe(rows);
+    const row = await prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    expect(row.status).not.toBe("VOID");
+  });
+
   describe("SA-1093 Rule 3: revert to draft", () => {
     const revert = (w: World, id: string) =>
       inTenant(w, () => bills.revertToDraft(id, w.userId) as Promise<any>);
