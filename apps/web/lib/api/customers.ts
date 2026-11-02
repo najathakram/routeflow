@@ -104,6 +104,14 @@ export function useCustomers(params?: {
   });
 }
 
+/**
+ * The customer's detail, read once and imperatively (SA-1084 A-2): the list row carries no tax ID, so a form opened
+ * from the list reads this first. The only read that carries the last 4 of a stored tax ID.
+ */
+export function fetchCustomer(id: string) {
+  return apiClient.get(`/customers/${id}`).then((r) => r.data);
+}
+
 export function useCustomer(id: string) {
   return useQuery({
     queryKey: ["customers", id],
