@@ -19,6 +19,23 @@ function writeStatementParam(customerId: string | null) {
 }
 
 /**
+ * W-1117: for a screen that lists the figures a page at a time. `?statement=<id>` names a customer whose figure may not be on
+ * the page a reload or a pasted link lands on (the page number is in the URL; sort and page size are not). Nothing then
+ * takes the param, and it used to sit there until that customer's row arrived by a page change or a sort, and the sheet
+ * opened with nobody tapping. Pass the ids of the rows on screen once they are loaded (undefined while loading): a param
+ * no row took is dropped. Child effects run before this one, so a figure that is on the page has already taken it; and
+ * nothing is dropped before the permission is known, because the figures render plain until then and take it after.
+ */
+export function useDropStatementParamNotOnPage(rowIds: readonly string[] | undefined) {
+  const may = useMayOpenStatement();
+  React.useEffect(() => {
+    if (!may || !rowIds) return;
+    const id = new URL(window.location.href).searchParams.get(STATEMENT_PARAM);
+    if (id && !rowIds.includes(id)) writeStatementParam(null);
+  }, [may, rowIds]);
+}
+
+/**
  * SA-1078 U1-U6: the one control on every staff figure that prints an open balance. It opens the one statement sheet for that
  * customer. Without permission, or while the figure itself is unavailable (`unavailable`), it renders the plain figure: no
  * tap, no 403 (U7, U10). Inside a clickable row it stops the click so the row's own action stays on the rest of the row.
