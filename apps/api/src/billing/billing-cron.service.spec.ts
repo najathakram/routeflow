@@ -27,6 +27,8 @@ function make(
     cancellations?: any[];
     cancelAddons?: any[];
     activeTeam?: number;
+    /** ids the seat-cap sweep frees (default f1, f2) */
+    freedIds?: string[];
     /** #2641: the Tenant row as re-read UNDER lockTenantForLedger (default: ACTIVE PRODUCTION). */
     lockedTenant?: { status?: string; class?: string; deletedAt?: Date | null };
     /** #2641: per-tenant overrides of the subscription row re-read under the lock. */
