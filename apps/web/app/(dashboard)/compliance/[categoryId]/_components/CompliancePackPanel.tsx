@@ -7,7 +7,7 @@ import { Download, FileText, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { isLicenceExpired } from "@routeflow/types";
 import { useAuth } from "@/lib/auth-context";
-import { useOnTenantToday, useTenantTimeZone } from "@/lib/tenant-timezone";
+import { useOnTenantToday, useTenantTimeZone, useTenantTimeZoneQuery } from "@/lib/tenant-timezone";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -301,7 +301,36 @@ function useRangeState() {
     setFrom((cur) => cur || `${day.slice(0, 4)}-01-01`);
     setTo((cur) => cur || day);
   });
-  return { from, to, setFrom, setTo };
+  // A disabled query reports isLoading false, so while the range is unset (the zone is loading or failed) the tab
+  // would fall through to its "No ... in this range." text. `wait` names that state so the tab shows it instead.
+  const zoneQ = useTenantTimeZoneQuery();
+  const wait: "loading" | "failed" | null =
+    from && to ? null : zoneQ.isError ? "failed" : zoneQ.zone ? null : "loading";
+  return { from, to, setFrom, setTo, wait, retry: zoneQ.retry };
+}
+
+function RangeWait({ wait, retry }: { wait: "loading" | "failed"; retry: () => void }) {
+  if (wait === "loading")
+    return (
+      <div
+        data-testid="range-loading"
+        className="h-24 animate-pulse rounded-lg bg-surface-raised"
+      />
+    );
+  return (
+    <div
+      role="status"
+      data-testid="range-zone-failed"
+      className="flex items-center justify-between gap-3 rounded-xl border border-surface-border bg-white px-4 py-6 text-sm text-navy/70"
+    >
+      <span>
+        We couldn&apos;t load your business&apos;s time zone, so there is no date range yet.
+      </span>
+      <Button type="button" variant="secondary" size="sm" onClick={retry}>
+        Retry
+      </Button>
+    </div>
+  );
 }
 
 function RangePicker(props: ReturnType<typeof useRangeState>) {
@@ -333,7 +362,9 @@ function PurchasesTab() {
   return (
     <div>
       <RangePicker {...range} />
-      {isLoading ? (
+      {range.wait ? (
+        <RangeWait wait={range.wait} retry={range.retry} />
+      ) : isLoading ? (
         <div className="h-24 animate-pulse rounded-lg bg-surface-raised" />
       ) : purchases.length === 0 ? (
         <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">
@@ -391,7 +422,9 @@ function SalesTab() {
   return (
     <div>
       <RangePicker {...range} />
-      {isLoading ? (
+      {range.wait ? (
+        <RangeWait wait={range.wait} retry={range.retry} />
+      ) : isLoading ? (
         <div className="h-24 animate-pulse rounded-lg bg-surface-raised" />
       ) : sales.length === 0 ? (
         <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">
