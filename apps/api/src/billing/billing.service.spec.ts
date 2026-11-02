@@ -3771,7 +3771,10 @@ describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gat
     async (status) => {
       const { svc, tx, events } = make({ transitionCount: 1, cardFirst: true });
       await (svc as any).onCheckoutCompleted(sessionOf(status));
-      const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+      const written = tx.tenantSubscription.upsert.mock.calls[0][0] as {
+        update: object;
+        create: object;
+      };
       expect(written.update).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: "cus_1" });
       expect(written.update).not.toHaveProperty("planKey");
       expect(written.update).not.toHaveProperty("basePriceSnapshot");
@@ -3835,7 +3838,7 @@ describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gat
     prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL"));
     withBase(stripe, 29_900);
     await (svc as any).onCheckoutCompleted(sessionOf("paid"));
-    const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+    const written = tx.tenantSubscription.upsert.mock.calls[0][0] as { update: object };
     expect(written.update).toMatchObject({ planKey: "SCALE", basePriceSnapshot: 299 });
     expect(rowsOf(tx).map((r: any) => r.action)).toContain("STRIPE_CHECKOUT_APPLIED");
     expect(emitted(events)).toContain(BILLING_EVENTS.TRIAL_CONVERTED);
@@ -4081,7 +4084,9 @@ describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gat
       },
     });
     await (svc as any).onCheckoutCompleted(sessionOf("paid"));
-    expect(tx.tenantSubscription.upsert.mock.calls[0][0].update).toMatchObject({
+    expect(
+      (tx.tenantSubscription.upsert.mock.calls[0][0] as { update: object }).update,
+    ).toMatchObject({
       planKey: normalizePlanKey("BUSINESS"),
     });
   });
@@ -4089,7 +4094,9 @@ describe("SA-774 chunk 2: link-only checkout, activation on settlement (flag-gat
   it("OFF: an unpaid session links the plan exactly as before and writes no LINKED marker", async () => {
     const { svc, tx } = make({ transitionCount: 1, cardFirst: false });
     await (svc as any).onCheckoutCompleted(sessionOf("unpaid"));
-    expect(tx.tenantSubscription.upsert.mock.calls[0][0].update).toMatchObject({
+    expect(
+      (tx.tenantSubscription.upsert.mock.calls[0][0] as { update: object }).update,
+    ).toMatchObject({
       planKey: normalizePlanKey("BUSINESS"),
     });
     expect(rowsOf(tx).map((r: any) => r.action)).not.toContain("STRIPE_CHECKOUT_LINKED");
