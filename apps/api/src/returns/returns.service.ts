@@ -39,6 +39,8 @@ import {
   toHeadroomLine,
   loadLineCredits,
   loadOrderPool,
+  loadOrderRefundRoom,
+  orderRoomRefusal,
   pooledRefundRefusal,
   type HeadroomLine,
   type LineCredit,
@@ -1502,6 +1504,17 @@ export class ReturnsService {
       const code = (err as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
       const pooledRefusal =
         (err as { getResponse?: () => { pooled?: boolean } })?.getResponse?.()?.pooled === true;
+      // SA-1091: the credit note's order-wide bound (a lump note, a recorded refund or an inline return took the room) is the
+      // same refusal, with the room left in its message
+      const orderBound =
+        (err as { getResponse?: () => { orderBound?: boolean } })?.getResponse?.()?.orderBound ===
+        true;
+      if (orderBound) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message: (err as { getResponse: () => { message: string } }).getResponse().message,
+        });
+      }
       if (
         (refundItems &&
           (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
@@ -1609,6 +1622,25 @@ export class ReturnsService {
                 perOrder: new Map([[orderId, refundAmount]]),
               });
             }
+            // SA-1091 (row 631): the order-wide bound, under the locks above. The line basis clips per line and cannot see a lump
+            // credit note, so the order may not give back more than its creditable invoices billed (refused, never clipped).
+            const orderRoom = await loadOrderRefundRoom(
+              tx,
+              { orderId, invoiceId: resolved.invoiceIds[0] },
+              { excludeReturnId: id },
+            );
+            const roomRefusal = orderRoomRefusal(orderRoom, refundAmount);
+            if (roomRefusal)
+              throw new ConflictException({
+                code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+                message: roomRefusal.message,
+                requested: refundAmount,
+                remaining: roomRefusal.left,
+              });
+            // A WRITE, not just a lock: a lump credit note's Serializable transaction took its snapshot before it waited on these
+            // invoices, and only a new row version makes it re-read (40001, then its bounded retry) and see this refund.
+            if (resolved.invoiceIds.length > 0)
+              await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id IN (${Prisma.join(resolved.invoiceIds)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId})`;
           }
 
           // SA-758 CR-2: a recorded refund's refundedAt is the DATABASE clock, read after the close lock

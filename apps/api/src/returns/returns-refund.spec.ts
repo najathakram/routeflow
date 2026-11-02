@@ -73,7 +73,9 @@ function mockExternalRefundSources(
   prisma.invoice.findMany.mockImplementation(async ({ where }: any) => {
     if (where?.id?.in) return invoices.filter((i) => where.id.in.includes(i.id));
     const notIn: string[] = where?.status?.notIn ?? [];
-    return invoices.filter((i) => !notIn.includes(i.status)).map((i) => ({ id: i.id }));
+    return invoices
+      .filter((i) => !notIn.includes(i.status))
+      .map((i) => ({ id: i.id, total: i.total }));
   });
 }
 const PAID = (total: number) => [{ amount: total, status: "PAID", method: "CASH" }];

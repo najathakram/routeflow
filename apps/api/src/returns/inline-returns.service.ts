@@ -57,6 +57,8 @@ import {
   lineTakeRefusal,
   loadLineCredits,
   loadOrderPool,
+  loadOrderRefundRoom,
+  orderRoomRefusal,
   pooledTakeRefusal,
   toHeadroomLine,
   type HeadroomLine,
@@ -825,7 +827,13 @@ export class InlineReturnsService {
    */
   private async assertWithinLineHeadroom(
     tx: any,
-    chunks: Array<{ sourceInvoiceItemId: string | null; pieces: number; subtotal: number }>,
+    chunks: Array<{
+      sourceInvoiceItemId: string | null;
+      pieces: number;
+      subtotal: number;
+      taxAmount?: number;
+      categoryTax?: number;
+    }>,
     opts: { readOnly?: boolean } = {},
   ): Promise<void> {
     const takes = new Map<string, { qty: number; amount: number }>();
@@ -952,6 +960,37 @@ export class InlineReturnsService {
             qtyUnit: refusal.qtyUnit,
           });
       }
+    }
+    // SA-1091 (row 631): the order-wide bound, per SOURCE order. The line and pool reads above are net and per line; a lump credit
+    // note (no lines) or a recorded refund is invisible to them. The gross of what this return takes from an order's invoices, plus
+    // everything that order has already given back, may not pass what it billed (refused, never clipped). Same rows, same locks
+    // (the source invoices were written above), and the same check serves the quote (readOnly) and the capture.
+    const grossBySource = new Map<
+      string,
+      { orderId: string | null; invoiceId: string; gross: number }
+    >();
+    for (const c of chunks) {
+      if (!c.sourceInvoiceItemId) continue;
+      const invoiceId = srcRows.find((r) => r.id === c.sourceInvoiceItemId)?.invoiceId;
+      if (!invoiceId) continue;
+      const orderId = invoiceOrder.get(invoiceId) ?? null;
+      const key = orderId ?? `invoice:${invoiceId}`;
+      const prev = grossBySource.get(key) ?? { orderId, invoiceId, gross: 0 };
+      prev.gross += Number(c.subtotal) + Number(c.taxAmount ?? 0) + Number(c.categoryTax ?? 0);
+      grossBySource.set(key, prev);
+    }
+    for (const [, src] of [...grossBySource].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))) {
+      const roomRefusal = orderRoomRefusal(
+        await loadOrderRefundRoom(tx, { orderId: src.orderId, invoiceId: src.invoiceId }),
+        roundMoney(src.gross),
+      );
+      if (roomRefusal)
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message: roomRefusal.message,
+          requested: roundMoney(src.gross),
+          remaining: roomRefusal.left,
+        });
     }
   }
 

@@ -36,8 +36,9 @@ import {
   loadLineCredits,
   countCreditableInvoices,
   loadOrderPool,
-  loadUnlinkedRefundReturns,
+  loadOrderRefundRoom,
   lockOrderPoolRows,
+  orderRoomRefusal,
   pooledRefundRefusal,
   pinnedTakeRefusal,
   pooledTakeRefusal,
@@ -182,38 +183,22 @@ export class CreditNotesService {
       );
     }
 
-    // SA-1053 (I-192): an order-wide bound. A refund minted before the order was invoiced hangs on no invoice, so the invoice-total
-    // cap above never counts it, and a lump staff note (no line items) has no line check at all. Everything already credited on
-    // the order's creditable invoices, plus those unlinked refunds, plus this note, may not pass what the order was billed.
-    if (invoice.orderId) {
-      const unlinked = await loadUnlinkedRefundReturns(db, invoice.orderId, {
-        excludeCreditNoteId: opts.excludeCreditNoteId,
+    // SA-1091 (row 631): ONE order-wide bound, always (SA-1053's, widened). A lump staff note (no line items) has no line check,
+    // and a recorded refund, an inline return and a refund minted before the order was invoiced hang on no invoice, so the
+    // invoice-total cap above never counts them. Everything the order has already given back, plus this note, may not pass what
+    // its creditable invoices billed (loadOrderRefundRoom, gross). `orderBound`: the refund path maps ONLY this refusal to its 409.
+    const orderRoom = await loadOrderRefundRoom(
+      db,
+      { orderId: invoice.orderId, invoiceId: dto.invoiceId },
+      { excludeCreditNoteId: opts.excludeCreditNoteId },
+    );
+    const orderRefusal = orderRoomRefusal(orderRoom, dto.amount);
+    if (orderRefusal)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+        orderBound: true,
+        message: orderRefusal.message,
       });
-      if (unlinked.amount > 0) {
-        const billed: Array<{ id: string; total: unknown }> = await db.invoice.findMany({
-          where: { orderId: invoice.orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
-          select: { id: true, total: true },
-        });
-        const onInvoices = await db.creditNote.aggregate({
-          where: {
-            invoiceId: { in: billed.map((b) => b.id) },
-            status: { not: "VOID" },
-            ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
-          },
-          _sum: { amount: true },
-        });
-        const orderBilled = roundMoney(billed.reduce((t, b) => t + Number(b.total), 0));
-        if (
-          Number(onInvoices._sum.amount ?? 0) + unlinked.amount + dto.amount >
-          orderBilled + 0.001
-        ) {
-          throw cnBad(
-            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
-            `This credit note would take the order past what it was billed (${orderBilled}). ${roundMoney(unlinked.amount).toFixed(2)} was already refunded as store credit for its returns before the order was invoiced.`,
-          );
-        }
-      }
-    }
 
     // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
     // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).

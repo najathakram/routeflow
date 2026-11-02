@@ -33,10 +33,10 @@ describe("SA-1053: one helper counts the refunds minted before the order was inv
     );
     expect(calls).toHaveLength(3);
     expect(calls.filter((c) => c.startsWith("credit-notes/line-credit-headroom.ts"))).toHaveLength(
-      2,
+      3,
     );
     expect(calls.filter((c) => c.startsWith("credit-notes/credit-notes.service.ts"))).toHaveLength(
-      1,
+      0,
     );
   });
 
