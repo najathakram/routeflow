@@ -689,15 +689,18 @@ function makeTableColumns(
         const tierKey = `priceTier${tier}` as keyof ApiProduct;
         const val = p[tierKey] as string | undefined;
         if (quickEditMode) {
+          // The row click opens the product, so a click here must stop at the cell, as the other edit cells do.
           return (
-            <QuickEditCell
-              productId={p.id}
-              productName={p.name}
-              field={`priceTier${tier}`}
-              value={val ? parseFloat(String(val)).toFixed(2) : ""}
-              quickEditMode={quickEditMode}
-              onSave={(newVal, rec) => onQuickSave(p, `priceTier${tier}`, newVal || "0", rec)}
-            />
+            <div onClick={(e) => e.stopPropagation()}>
+              <QuickEditCell
+                productId={p.id}
+                productName={p.name}
+                field={`priceTier${tier}`}
+                value={val ? parseFloat(String(val)).toFixed(2) : ""}
+                quickEditMode={quickEditMode}
+                onSave={(newVal, rec) => onQuickSave(p, `priceTier${tier}`, newVal || "0", rec)}
+              />
+            </div>
           );
         }
         // Normal view: read-only display

@@ -100,17 +100,20 @@ for (const vp of VIEWPORTS) {
         await expect(page.getByTestId("units-v2-grid")).toBeVisible({ timeout: 20_000 });
         await expect(rowOf()).toContainText("Family");
         await expect(page.getByTestId("units-v2-use-family-prices")).toHaveCount(0);
+        await rowOf().scrollIntoViewIfNeeded();
         await shot(page, info, "sa-1082-move-word-family");
 
         await page.goto(`/products/${off.id}`);
         await expect(page.getByTestId("units-v2-grid")).toBeVisible({ timeout: 20_000 });
         await expect(rowOf()).toContainText("Set");
         await expect(rowOf()).not.toContainText("Family");
+        await rowOf().scrollIntoViewIfNeeded();
         await shot(page, info, "sa-1082-move-word-set");
 
         // Use family prices takes all five, in the draft first.
         await page.getByTestId("units-v2-use-family-prices").click();
         await expect(rowOf()).toContainText("Family");
+        await rowOf().scrollIntoViewIfNeeded();
         await shot(page, info, "sa-1082-move-use-family-draft");
         const saved = page.waitForResponse(
           (r) => r.url().endsWith(`/products/${off.id}/prices`) && r.request().method() === "POST",
@@ -125,7 +128,9 @@ for (const vp of VIEWPORTS) {
           await page.goto(`/products?search=${encodeURIComponent(familyName)}`);
           await page.getByRole("button", { name: "Quick Edit", exact: true }).click();
           const row = page.getByRole("row", { name: new RegExp(familyName) });
+          await page.waitForLoadState("networkidle");
           await row.getByText("22.00").first().click();
+          expect(page.url(), "clicking the cell stays on the list").toContain("/products?");
           const box = row.locator('input[value="22.00"]');
           await box.fill("21");
           await box.press("Enter");
