@@ -49,7 +49,11 @@ export function middleware(request: NextRequest) {
       const dest = url.clone();
       dest.pathname = target;
       dest.search = "";
-      return NextResponse.redirect(dest, 307);
+      // no-store: the cookie decides this redirect, and next.config.mjs gives "/" a public,
+      // stale-while-revalidate Cache-Control that a bare redirect would inherit.
+      const redirect = NextResponse.redirect(dest, 307);
+      redirect.headers.set("Cache-Control", "no-store");
+      return redirect;
     }
   }
 
