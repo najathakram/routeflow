@@ -74,7 +74,7 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { displayProductName } from "@/lib/product-display";
-import { newProductPrefill } from "@/lib/product-prefill";
+import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
@@ -661,6 +661,8 @@ export function CreateOrderModal({
     return productGroups.rows.slice(0, 10);
   }, [productGroups, debouncedProductSearch]);
 
+  // Which door a code came through (the scan box's Enter or wedge, or the camera), read if the code turns out unknown.
+  const unknownDoorRef = React.useRef(new Map<string, PrefillDoor>());
   // Barcode scan handler — kept in a ref so the keydown listener never goes stale. The
   // resolve ladder (archived / hit / network error / unknown code) lives in
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
@@ -679,8 +681,11 @@ export function CreateOrderModal({
     hasLine: (productId) => lineItemsRef.current.some((li) => li.productId === productId),
     sessionKey: () => orderSessionRef.current,
     onUnknownCode: (code) => {
-      setCreateProductInitialName("");
-      setCreateProductInitialSku(code);
+      // The door decides what the window starts with: typed words go to Name, a machine read to SKU
+      // (newProductPrefill). A code that no door named keeps the old rule: SKU.
+      const prefill = newProductPrefill(code, unknownDoorRef.current.get(code) ?? "camera");
+      setCreateProductInitialName(prefill.name);
+      setCreateProductInitialSku(prefill.sku);
       setCreateProductOpen(true);
     },
     toast,
@@ -711,6 +716,7 @@ export function CreateOrderModal({
     if (!code) return;
     setProductSearch("");
     setDebouncedProductSearch("");
+    unknownDoorRef.current.set(code, "scanBox");
     void scanQueue.enqueue(code);
   };
 
@@ -3071,6 +3077,7 @@ export function CreateOrderModal({
                     setProductSearch("");
                     setDebouncedProductSearch("");
                   }
+                  unknownDoorRef.current.set(code, source === "field" ? "scanBox" : "camera");
                   void scanQueue.enqueue(code);
                 }}
                 onError={(message) => toast({ variant: "error", title: message })}
