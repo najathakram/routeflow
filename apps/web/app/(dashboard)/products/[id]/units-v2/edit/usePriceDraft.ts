@@ -47,7 +47,7 @@ import {
   type DraftEntry,
 } from "./fold-draft";
 import { canonicalPriceText } from "./price-text";
-import { ADD_UNIT_FIRST, previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
+import { previewRows, rulesFromGrid, viewFromGrid } from "./view-from-grid";
 
 /** The open plan and what the "also update" panel (K4) reads of the draft's choices on it. */
 export interface OpenPlan {
@@ -588,18 +588,6 @@ export function useCreatePriceDraft(productId: string, hooks: PriceDraftHooks = 
       } else editCell(ref, tier as PriceTier, text);
     },
     changed: (ref, tier) => cellKey(ref, tier) in texts || drafted.has(cellKey(ref, tier)),
-    // The first price on the implicit base row: the server says the unit must exist first (400 PRICE_EDIT_INVALID).
-    addUnitProblem: (ref, tier) => {
-      const key = cellKey(ref, tier);
-      const said =
-        saveError?.code === "invalid" ? saveError.problems.find(ADD_UNIT_FIRST) : undefined;
-      return said &&
-        ref === "base" &&
-        texts[key] !== undefined &&
-        texts[key] === errSeen.current.texts[key]
-        ? said
-        : null;
-    },
     problem: (ref, tier) => problems.find((p) => p.ref === ref && p.tier === tier)?.message ?? null,
     rows: dirty && grid && view ? previewRows(view, rules, grid) : null,
     focus,

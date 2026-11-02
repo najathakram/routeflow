@@ -43,9 +43,6 @@ function editability(row: ProductPriceGridRowDto) {
   return {
     editable: row.editable,
     ...(row.notEditableReason ? { notEditableReason: row.notEditableReason } : {}),
+    ...(row.unbacked ? { unbacked: true } : {}),
   };
 }
-
-/** The grid's reason for the implicit base row: its unit has to be added before it can hold a price. */
-export const ADD_UNIT_FIRST = (reason: string | undefined): boolean =>
-  reason != null && /\badd\b.*\bunit\b.*\bfirst\b/i.test(reason);

@@ -87,6 +87,17 @@ const UNIT_SELECT = {
   perParent: true,
 } as const;
 
+/** Every table whose lines keep a unit by name. A level any of them names is in use. */
+const UNIT_LINE_TABLES = [
+  "OrderItem",
+  "InvoiceItem",
+  "EstimateItem",
+  "RecurringInvoiceItem",
+  "OrderTemplateItem",
+  "PurchaseOrderItem",
+  "VendorBillItem",
+] as const;
+
 const isUniqueViolation = (e: unknown) => (e as { code?: string } | null)?.code === "P2002";
 
 /**
@@ -116,47 +127,58 @@ export class ProductUnitsService {
   }
 
   create(productId: string, dto: CreateProductUnitDto, actorId: string | null = null) {
-    return this.locked(productId, async (tx) => {
-      const pack = await this.loadPack(tx, productId);
-      assertUnitPriceWritable(pack.governed, dto, {
-        mode: await this.priceMode(),
-        level: dto.factorToBase === 1 ? "base" : "other",
-        op: "create",
-      });
-      const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
-      const siblings = await this.siblings(tx, productId);
-      this.assertLevelValid(pack, siblings, { label, factorToBase: dto.factorToBase });
-      this.assertChain(siblings, {
-        id: "__new__",
+    return this.locked(productId, (tx) => this.createInTransaction(tx, productId, dto, actorId));
+  }
+
+  /**
+   * The body of `create`, for a writer already in its own transaction and holding `lockProductPack` (SA-1082: the price
+   * write's first Piece price). Every level rule runs here, so a level has one way in.
+   */
+  async createInTransaction(
+    tx: any,
+    productId: string,
+    dto: CreateProductUnitDto,
+    actorId: string | null = null,
+  ) {
+    const pack = await this.loadPack(tx, productId);
+    assertUnitPriceWritable(pack.governed, dto, {
+      mode: await this.priceMode(),
+      level: dto.factorToBase === 1 ? "base" : "other",
+      op: "create",
+    });
+    const label = this.cleanLabel(dto.label, dto.factorToBase, pack);
+    const siblings = await this.siblings(tx, productId);
+    this.assertLevelValid(pack, siblings, { label, factorToBase: dto.factorToBase });
+    this.assertChain(siblings, {
+      id: "__new__",
+      label,
+      factorToBase: dto.factorToBase,
+      parentUnitId: dto.parentUnitId ?? null,
+      perParent: dto.perParent ?? null,
+    });
+    await this.assertNoLineDisagrees(tx, productId, label, dto.factorToBase);
+    const makeDefault = dto.isDefaultSelling === true;
+    if (makeDefault) await this.clearDefaults(tx, productId);
+    const link = await this.tenantUnitIdFor(tx, productId, label, actorId);
+    const created = await tx.productUnit.create({
+      data: {
+        productId,
         label,
         factorToBase: dto.factorToBase,
         parentUnitId: dto.parentUnitId ?? null,
         perParent: dto.perParent ?? null,
-      });
-      await this.assertNoLineDisagrees(tx, productId, label, dto.factorToBase);
-      const makeDefault = dto.isDefaultSelling === true;
-      if (makeDefault) await this.clearDefaults(tx, productId);
-      const link = await this.tenantUnitIdFor(tx, productId, label, actorId);
-      const created = await tx.productUnit.create({
-        data: {
-          productId,
-          label,
-          factorToBase: dto.factorToBase,
-          parentUnitId: dto.parentUnitId ?? null,
-          perParent: dto.perParent ?? null,
-          price: dto.price ?? null,
-          priceTier2: dto.priceTier2 ?? null,
-          priceTier3: dto.priceTier3 ?? null,
-          priceTier4: dto.priceTier4 ?? null,
-          priceTier5: dto.priceTier5 ?? null,
-          isDefaultSelling: makeDefault,
-          sortOrder: dto.sortOrder ?? 0,
-          tenantUnitId: link.tenantUnitId,
-        },
-        select: UNIT_SELECT,
-      });
-      return withNotListed(created, link);
+        price: dto.price ?? null,
+        priceTier2: dto.priceTier2 ?? null,
+        priceTier3: dto.priceTier3 ?? null,
+        priceTier4: dto.priceTier4 ?? null,
+        priceTier5: dto.priceTier5 ?? null,
+        isDefaultSelling: makeDefault,
+        sortOrder: dto.sortOrder ?? 0,
+        tenantUnitId: link.tenantUnitId,
+      },
+      select: UNIT_SELECT,
     });
+    return withNotListed(created, link);
   }
 
   update(
@@ -247,7 +269,77 @@ export class ProductUnitsService {
     });
   }
 
+  /**
+   * SA-1082: undoing the first price that created a unit takes the unit back, or an undone price would leave a new way to
+   * sell. Only while nothing else came to rest on it: a price, the default or an order unit, a child, a customer's cell
+   * or unit, a barcode, or any document line. Otherwise the row stays. The caller holds `lockProductPack`.
+   */
+  async removeCreatedUnitIfUnused(tx: any, productId: string, unitId: string): Promise<boolean> {
+    const row = await tx.productUnit.findFirst({
+      where: { id: unitId, productId },
+      select: {
+        ...UNIT_SELECT,
+        sku: true,
+        children: { select: { id: true }, take: 1 },
+        barcodes: { select: { id: true }, take: 1 },
+      },
+    });
+    if (!row) return false;
+    const prices = [row.price, row.priceTier2, row.priceTier3, row.priceTier4, row.priceTier5];
+    if (
+      prices.some((v: unknown) => v != null) ||
+      row.isDefaultSelling ||
+      row.sku ||
+      row.children.length > 0 ||
+      row.barcodes.length > 0
+    ) {
+      return false;
+    }
+    const refs = ["base", unitId];
+    const [asOrderUnit, tierUnit, customerUnit, customerCell] = await Promise.all([
+      tx.product.findFirst({
+        where: { id: productId, orderUnitRef: { in: refs } },
+        select: { id: true },
+      }),
+      tx.productTierUnit.findFirst({
+        where: { productId, orderUnitRef: { in: refs } },
+        select: { id: true },
+      }),
+      tx.customerPrice.findFirst({
+        where: {
+          productId,
+          OR: [{ orderUnitRef: { in: refs } }, { invoiceUnitRef: { in: refs } }],
+        },
+        select: { id: true },
+      }),
+      tx.customerUnitPrice.findFirst({
+        where: { productId, unitRef: { in: refs } },
+        select: { id: true },
+      }),
+    ]);
+    if (asOrderUnit || tierUnit || customerUnit || customerCell) return false;
+    if (await this.anyLineCarriesLabel(tx, productId, row.label)) return false;
+    await tx.productUnit.delete({ where: { id: unitId } });
+    return true;
+  }
+
   // ─── helpers ────────────────────────────────────────────────────────────────
+
+  /**
+   * Does any document or template line of this product name the level? By the product id, which is this tenant's own, so
+   * a NULL-tenant line counts too. The label is compared by the shared NFC key in SQL, as in `assertNoLineDisagrees`.
+   */
+  private async anyLineCarriesLabel(db: any, productId: string, label: string): Promise<boolean> {
+    const key = unitNameKey(label);
+    const carries = (table: string) =>
+      Prisma.sql`SELECT 1 FROM ${Prisma.raw(`"${table}"`)} x
+        WHERE x."productId" = ${productId} AND ${sqlKeyOf(Prisma.sql`x."unitLabel"`)} = ${key}`;
+    const queries = UNIT_LINE_TABLES.map(carries);
+    const hit: unknown[] = await db.$queryRaw(
+      Prisma.sql`${Prisma.join(queries, " UNION ALL ")} LIMIT 1`,
+    );
+    return hit.length > 0;
+  }
 
   /** One transaction + the tenant units lock (shared) + a per-product advisory xact lock; unique-index races become a 409. */
   private async locked<T>(productId: string, fn: (tx: any) => Promise<T>): Promise<T> {

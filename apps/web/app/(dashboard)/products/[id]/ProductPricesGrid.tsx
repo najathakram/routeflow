@@ -11,10 +11,8 @@ import { productTierLabel } from "@/lib/tier-one-label";
 import type { UnitsCardProduct } from "./ProductUnitsCard";
 import { UNITS_V2_TESTIDS as T } from "./units-v2-testids";
 import type { GridEditApi } from "./units-v2/edit/edit-types";
-import { useAddUnitIntent, type AddUnitIntent } from "./units-v2/edit/add-unit-intent";
 import { canonicalPriceText } from "./units-v2/edit/price-text";
 import { revealClearOfBar } from "./units-v2/edit/reveal-clear-of-bar";
-import { ADD_UNIT_FIRST } from "./units-v2/edit/view-from-grid";
 
 /**
  * The units v2 prices grid, READ ONLY: one row per unit, one column per price tier, values exactly
@@ -108,7 +106,6 @@ const plural = (label: string, n: number) =>
 
 /** "40 Boxes" and "= 960 Pieces in all", read from the rows' own factors and labels. */
 function containsLines(row: ProductPriceGridRowDto, sorted: ProductPriceGridRowDto[]): string[] {
-  if (isMissingUnit(row)) return [EMPTY_GLYPH];
   if (row.kind === "base") return ["Smallest unit"];
   const base = sorted.find((r) => r.kind === "base");
   const lower = [...sorted].reverse().find((r) => r.factor < row.factor);
@@ -132,17 +129,9 @@ interface CellView {
   aria: string;
 }
 
-/**
- * K11-11: the implicit base row of a product whose smallest unit does not exist yet. The grid still serves it a ladder
- * ("Piece $1.50 Auto"), but nothing backs it, so no price may be shown for it.
- */
-const isMissingUnit = (row: ProductPriceGridRowDto): boolean =>
-  row.kind === "base" && !row.editable && ADD_UNIT_FIRST(row.notEditableReason);
-
-/** The empty-cell glyph: the price cells, and the barcode and Contains of a missing unit (the API serves the case's code on it). */
-const EMPTY_GLYPH = "—";
+/** SA-1082: a piece level no unit backs yet has its Auto prices but no barcode (the API serves the pack's code on it). */
 const barcodeText = (row: ProductPriceGridRowDto): string =>
-  isMissingUnit(row) ? EMPTY_GLYPH : (row.code ?? "No barcode");
+  row.unbacked ? "—" : (row.code ?? "No barcode");
 
 function cellView(
   row: ProductPriceGridRowDto,
@@ -150,13 +139,6 @@ function cellView(
   name: string,
   cell: ProductPriceGridCellDto | undefined,
 ): CellView {
-  if (isMissingUnit(row))
-    return {
-      tier,
-      display: EMPTY_GLYPH,
-      word: null,
-      aria: `${name} ${row.label} price, no unit yet`,
-    };
   if (!cell) return { tier, display: "—", word: null, aria: `${name} ${row.label} price, none` };
   const noPrice = row.kind === "pack" && tier === 1 && Number(cell.value) === 0;
   const display = noPrice ? "No price" : formatMoney(cell.value);
@@ -204,87 +186,12 @@ function CellDisplay({ view, dim, wordId }: { view: CellView; dim?: boolean; wor
   );
 }
 
-/**
- * The "Add unit" control on this page, if there is one: the v2 shell's single "Add a unit" opener (K10d), else the old
- * Units card's name field. Opening the v2 panel puts focus in its name box.
- */
-const addUnitTarget = (): HTMLElement | null =>
-  typeof document === "undefined"
-    ? null
-    : (document.querySelector<HTMLElement>('[data-testid="units-v2-add-open"]') ??
-      document.getElementById("new-unit-name"));
-
-/**
- * Open the Add a unit panel (K11-11): never toggle it shut. A panel that is already open keeps its form and takes
- * focus in its first field; a closed one opens, as the Piece when `asPiece` and the shell shares an intent flag.
- */
-function openAddUnit(intent: AddUnitIntent | null, asPiece: boolean) {
-  const el = addUnitTarget();
-  if (!el) return;
-  if (el.dataset.testid !== "units-v2-add-open") {
-    el.scrollIntoView?.({ block: "center" });
-    el.focus();
-    return;
-  }
-  const opener = el as HTMLButtonElement;
-  if (opener.getAttribute("aria-expanded") === "true") {
-    const panel = document.getElementById("units-v2-add-panel");
-    panel?.scrollIntoView?.({ block: "center" });
-    panel?.querySelector<HTMLElement>("input")?.focus();
-    return;
-  }
-  opener.scrollIntoView?.({ block: "center" });
-  // Waiting on unsaved prices disables it: scrolled to, its hint says why.
-  if (opener.disabled) return;
-  if (intent) intent.current = asPiece;
-  try {
-    opener.click();
-  } finally {
-    if (intent) intent.current = false;
-  }
-}
-
-/** K11-20a N3: false inside the floating window, where the Add unit control is a hidden PAGE control behind the scrim. */
-const AddUnitPointersContext = React.createContext(true);
-
-/**
- * A pointer from a missing unit (or a refused first price) to the Add unit control: nothing when the control does not
- * exist. `button` is the missing unit's row head, a real secondary button; the inline form sits in a refusal message.
- */
-function AddUnitPointer({ unit, button = false }: { unit: string; button?: boolean }) {
-  // Checked after paint: the v2 opener is a sibling of the grid, so it is not in the DOM yet while this renders.
-  const [has, setHas] = React.useState(false);
-  React.useEffect(() => setHas(addUnitTarget() != null), []);
-  const intent = useAddUnitIntent();
-  const allowed = React.useContext(AddUnitPointersContext);
-  if (!has || !allowed) return null;
-  return (
-    <button
-      type="button"
-      data-testid={T.addUnitPointer}
-      className={
-        button
-          ? "mt-1 block h-8 rounded-md border border-line-strong bg-white px-2.5 text-xs font-medium text-navy hover:bg-surface-muted"
-          : "mt-0.5 block underline"
-      }
-      onClick={() => openAddUnit(intent, true)}
-    >
-      {button ? `Add ${unit} unit` : `Add a ${unit} unit`}
-    </button>
-  );
-}
-
-/**
- * A family-governed row is read-only: say why, quietly. `pointer` false leaves the missing unit's Add button out: the
- * table keeps it OUT of the row header (N7: a button inside the `th` makes it part of the header's name) and puts it in
- * the row's next cell instead; the phone card keeps it here.
- */
-function NotEditable({ row, pointer = true }: { row: ProductPriceGridRowDto; pointer?: boolean }) {
+/** A read-only row says why, quietly. */
+function NotEditable({ row }: { row: ProductPriceGridRowDto }) {
   if (row.editable || !row.notEditableReason) return null;
   return (
     <p data-testid={T.notEditable(row.ref)} className="mt-0.5 text-[11px] font-normal text-navy/55">
       {row.notEditableReason}
-      {pointer && isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
     </p>
   );
 }
@@ -301,8 +208,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
       edit.focused();
     }
   });
-  const addUnit = edit.addUnitProblem(t.ref, tier);
-  const problem = edit.problem(t.ref, tier) ?? addUnit;
+  const problem = edit.problem(t.ref, tier);
   const pid = `${T.problem(t.layout, t.ref, tier)}${t.sfx}`;
   // K11-14: an Auto box's "Auto" is not drawn under it, so the input is described by the hidden word instead.
   const describedBy =
@@ -362,9 +268,7 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
             justFocused.current = false;
             setInside(false);
             // A price the user typed settles to its money text; one equal to the saved price is then no change at all.
-            // (Not while the server's "add the unit first" refusal of this very text is showing: its pointer is what
-            // the user is about to click, and rewriting the text would take it away.)
-            if (atFocus.current !== null && text !== atFocus.current && !addUnit) {
+            if (atFocus.current !== null && text !== atFocus.current) {
               const settled = canonicalPriceText(text);
               if (settled !== text) edit.setText(t.ref, tier, settled, t.original);
             }
@@ -391,7 +295,6 @@ function CellInput({ t, tier, view }: { t: EditTarget; tier: number; view: CellV
       {problem && (
         <p id={pid} className="mt-1 max-w-[12rem] text-[11px] text-red-600">
           {problem}
-          {addUnit && <AddUnitPointer unit={t.unit} />}
         </p>
       )}
     </>
@@ -529,7 +432,7 @@ export function PricesTitle({ id, className = "mb-3" }: { id: string; className?
   );
 }
 
-function PricesGridBody({
+export function ProductPricesGrid({
   product,
   edit,
   rowAction,
@@ -658,7 +561,7 @@ function PricesGridBody({
                     {row.label}
                     {compact ? (
                       <div className="mt-0.5 text-xs font-normal text-navy/60">
-                        {containsLines(row, ascending)[0] && !isMissingUnit(row)
+                        {containsLines(row, ascending)[0]
                           ? `${containsLines(row, ascending)[0]} · `
                           : ""}
                         <span data-testid={T.code(row.ref)} className="tabular-nums">
@@ -682,7 +585,7 @@ function PricesGridBody({
                         {containsLines(row, ascending).join(" · ")}
                       </div>
                     )}
-                    <NotEditable row={row} pointer={!showContains} />
+                    <NotEditable row={row} />
                   </th>
                   {rowAction && <td className="px-2 py-3">{rowAction(row, "table")}</td>}
                   {showContains && (
@@ -697,7 +600,6 @@ function PricesGridBody({
                           {l}
                         </div>
                       ))}
-                      {isMissingUnit(row) && <AddUnitPointer unit={row.label} button />}
                     </td>
                   )}
                   {TIERS.map((t, i) => (
@@ -776,19 +678,5 @@ function PricesGridBody({
         </p>
       )}
     </div>
-  );
-}
-
-export function ProductPricesGrid({
-  addUnitPointers = true,
-  ...props
-}: React.ComponentProps<typeof PricesGridBody> & {
-  /** K11-20a: false leaves the missing unit's "Add {unit} unit" pointers out (the floating window has no Add control). */
-  addUnitPointers?: boolean;
-}) {
-  return (
-    <AddUnitPointersContext.Provider value={addUnitPointers}>
-      <PricesGridBody {...props} />
-    </AddUnitPointersContext.Provider>
   );
 }

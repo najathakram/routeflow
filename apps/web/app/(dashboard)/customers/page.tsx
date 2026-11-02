@@ -61,7 +61,10 @@ import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
-import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
+import {
+  OpenBalanceButton,
+  useDropStatementParamNotOnPage,
+} from "@/components/account-statement/OpenBalanceButton";
 import { WALK_IN_PROTECTED_COPY } from "./_components/walk-in-protection";
 
 // A module-level component, never an inline `cell:` closure: flexRender mounts a cell function as a
@@ -305,6 +308,8 @@ export default function CustomersPage() {
   const { data: result, isLoading, isError, refetch } = useCustomers(customersQueryParams);
   const customers: Customer[] = result?.data ?? [];
   const meta = result?.meta;
+  const rowIds = React.useMemo(() => result?.data?.map((c: Customer) => c.id), [result?.data]);
+  useDropStatementParamNotOnPage(rowIds);
   useClampPage(setPage, page, meta?.totalPages);
 
   const { data: assignments } = useCustomerRouteAssignments();

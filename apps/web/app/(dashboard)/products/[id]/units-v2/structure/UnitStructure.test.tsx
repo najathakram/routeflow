@@ -289,32 +289,6 @@ describe("K10d: V15 step 8, gated like the rest of v2", () => {
   });
 });
 
-describe("K10d: the add-unit pointer", () => {
-  it("a refused first Piece price points at the v2 Add a unit opener and opens it", async () => {
-    const pack = { ...grid.rows[0], ref: "pack", label: "Case", factor: 24 };
-    const base = {
-      ref: "base",
-      label: "Piece",
-      factor: 1,
-      kind: "base" as const,
-      editable: false,
-      notEditableReason: "Add the Piece unit first.",
-      code: null,
-      cells: cells([0, 0, 0, 0, 0]),
-    };
-    mockGrid = {
-      data: { ...grid, anchor: "pack", rows: [pack, base] },
-      isLoading: false,
-      isError: false,
-    };
-    const user = userEvent.setup();
-    render();
-    await user.click(within(screen.getByTestId(T.row("base"))).getByTestId(T.addUnitPointer));
-    expect(screen.getByTestId("units-v2-add-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("units-v2-add-name")).toHaveFocus();
-  });
-});
-
 describe("K10d fold: the row header stays clean", () => {
   it("each unit's row-header name is just the unit label, and Remove sits in its own cell", async () => {
     render();
@@ -623,17 +597,17 @@ describe("K10d: a panel opened under the Edit save bar is scrolled clear of it",
   });
 });
 
-describe("K10e F07: a product with no 1-piece unit can get one from the pointer", () => {
+describe("K10e F07, SA-1082: a product with no 1-piece unit can still add it", () => {
   const pack = { ...grid.rows[0], ref: "pack", label: "Case", factor: 24 };
   const missingPiece = {
     ref: "base",
     label: "Piece",
     factor: 1,
     kind: "base" as const,
-    editable: false,
-    notEditableReason: "Add the Piece unit first.",
+    editable: true,
+    unbacked: true,
     code: null,
-    cells: cells([0, 0, 0, 0, 0]),
+    cells: cells([0.5, 0.46, 0.42, 0.38, 0.33]),
   };
   const withoutPiece = () => {
     mockGrid = {
@@ -642,17 +616,16 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
       isError: false,
     };
   };
-  const pointer = () => within(screen.getByTestId(T.row("base"))).getByTestId(T.addUnitPointer);
   const count = () => screen.getByTestId("units-v2-add-n") as HTMLInputElement;
   const name = () => screen.getByTestId("units-v2-add-name") as HTMLInputElement;
 
-  it("the pointer opens Add a unit as the Piece (Contains 1, name Piece) and Add creates {label: Piece, factorToBase: 1}", async () => {
+  it("Contains 1 names it Piece, and Add creates {label: Piece, factorToBase: 1}", async () => {
     withoutPiece();
     (apiClient.post as jest.Mock).mockResolvedValue({ data: { id: "u-piece", label: "Piece" } });
     const user = userEvent.setup();
     render();
-    await user.click(pointer());
-    expect(count()).toHaveValue(1);
+    await user.click(addOpener());
+    await user.type(count(), "1");
     expect(name()).toHaveValue("Piece");
     expect(name()).toHaveAttribute("readonly");
     expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
@@ -664,7 +637,7 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     });
   });
 
-  it("the plain Add a unit opener, with the Piece missing, opens blank (the pointer is what prefills) but still allows Contains 1", async () => {
+  it("W-3: Add a unit, with the Piece missing, opens blank but still allows Contains 1", async () => {
     withoutPiece();
     const user = userEvent.setup();
     render();
@@ -675,17 +648,6 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     await user.type(count(), "1");
     expect(name()).toHaveValue("Piece");
     expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
-  });
-
-  it("a later plain open is blank again after a pointer open was cancelled", async () => {
-    withoutPiece();
-    const user = userEvent.setup();
-    render();
-    await user.click(pointer());
-    expect(count()).toHaveValue(1);
-    await user.click(screen.getByTestId("units-v2-add-cancel"));
-    await user.click(addOpener());
-    expect(count()).toHaveValue(null);
   });
 
   it("when the Piece already exists, Contains 1 is not offered", async () => {
@@ -706,8 +668,7 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
         rows: grid.rows.map((r) => ({
           ...r,
           editable: false,
-          notEditableReason:
-            r.kind === "base" ? "Add the Piece unit first." : "Priced by the family.",
+          notEditableReason: "Priced by the family.",
         })),
       },
       isLoading: false,
@@ -719,12 +680,12 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     expect(count()).toHaveAttribute("min", "2");
   });
 
-  it("the signal is structural: a locked base row beside editable rows is a missing Piece whatever its reason says", async () => {
+  it("W-3: the signal is the row's own: a locked base row with no unit, beside editable rows, is a missing Piece", async () => {
     mockGrid = {
       data: {
         ...grid,
         anchor: "pack",
-        rows: [pack, { ...missingPiece, notEditableReason: "No unit for this level yet." }],
+        rows: [pack, { ...missingPiece, editable: false, notEditableReason: "Any words." }],
       },
       isLoading: false,
       isError: false,
@@ -734,18 +695,5 @@ describe("K10e F07: a product with no 1-piece unit can get one from the pointer"
     await user.click(addOpener());
     await user.type(count(), "1");
     expect(screen.getByTestId("units-v2-add-submit")).toBeEnabled();
-  });
-
-  it("a pointer click that does not open the form (panel already open) leaves no stale prefill for the next plain open", async () => {
-    withoutPiece();
-    const user = userEvent.setup();
-    render();
-    await user.click(addOpener()); // panel open, blank
-    await user.click(pointer()); // K11-11: the pointer never toggles an open panel shut, and onOpen never fires for it
-    expect(screen.getByTestId("units-v2-add-panel")).toBeInTheDocument();
-    await user.click(screen.getByTestId("units-v2-add-cancel"));
-    await user.click(addOpener());
-    expect(count()).toHaveValue(null);
-    expect(name()).toHaveValue("");
   });
 });

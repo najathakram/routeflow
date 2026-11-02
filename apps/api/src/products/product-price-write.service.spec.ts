@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import type { SavePricesRequest } from "@routeflow/types";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { ProductPriceGridService } from "./product-price-grid.service";
+import { PIECE_NOT_SOLD, ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
 
 /**
@@ -162,6 +162,7 @@ function build(
   over: Partial<World> = {},
   tenantId: string | null = TENANT,
   mode: "on" | "off" = "off",
+  unitsFlag = false,
 ) {
   const world = makeWorld(over);
   const tx = makeTx(world);
@@ -171,9 +172,37 @@ function build(
     tenantTransaction: jest.fn(async (fn: (t: any) => Promise<unknown>) => fn(tx)),
   };
   const featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(mode) } as never;
-  const grid = new ProductPriceGridService(prisma as never, featureConfig);
-  const service = new ProductPriceWriteService(prisma as never, grid, featureConfig);
-  return { world, tx, prisma, grid, service };
+  const entitlements = { hasFlag: jest.fn().mockResolvedValue(unitsFlag) } as never;
+  const grid = new ProductPriceGridService(prisma as never, featureConfig, entitlements);
+  // The real create and removal run in product-price-first-piece.db.spec.ts; here they are the module boundary.
+  const units = {
+    createInTransaction: jest.fn(async (_tx: unknown, productId: string, dto: any) => {
+      const row = {
+        id: "minted-piece",
+        productId,
+        label: dto.label,
+        factorToBase: dto.factorToBase,
+        price: null,
+        priceTier2: null,
+        priceTier3: null,
+        priceTier4: null,
+        priceTier5: null,
+        isDefaultSelling: false,
+        sortOrder: 0,
+      };
+      world.writes.push("unit.create");
+      world.units.push(row as never);
+      return row;
+    }),
+    removeCreatedUnitIfUnused: jest.fn(async (): Promise<boolean> => false),
+  };
+  const service = new ProductPriceWriteService(
+    prisma as never,
+    grid,
+    units as never,
+    featureConfig,
+  );
+  return { world, tx, prisma, grid, service, units };
 }
 
 const cellOf = (grid: any, label: string, tier: number) =>
@@ -538,14 +567,17 @@ describe("ProductPriceWriteService.save", () => {
   });
 
   describe("concurrent unit edits", () => {
-    it("takes the product-units advisory lock FIRST, after the lock timeout, then the product row", async () => {
+    it("takes the pack lock FIRST, then the stock timeout, then the product row", async () => {
       const { tx, service, grid } = build();
       await service.save(PRODUCT_ID, await req(grid), null);
       const sqls = tx.$executeRaw.mock.calls.map((c: any[]) => (c[0] as string[]).join("?"));
       const at = (needle: string) => sqls.findIndex((q: string) => q.includes(needle));
-      expect(at("lock_timeout")).toBe(0);
-      expect(at("pg_advisory_xact_lock(hashtext('product-units')")).toBe(1);
-      expect(at('FROM "Product"')).toBeGreaterThan(1);
+      // SA-1045's house order: lockProductPack bounds its own wait, then the stock timeout, then the row.
+      expect(at("lock_timeout = '3s'")).toBe(0);
+      expect(at("pg_advisory_xact_lock_shared")).toBe(1);
+      expect(at("pg_advisory_xact_lock(hashtext('product-units')")).toBe(2);
+      expect(at("lock_timeout TO DEFAULT")).toBe(3);
+      expect(at('FROM "Product"')).toBeGreaterThan(3);
     });
 
     it.each([
@@ -596,13 +628,112 @@ describe("ProductPriceWriteService.save", () => {
     });
   });
 
-  describe("the implicit base row (no Piece unit yet)", () => {
+  describe("SA-1082: the implicit base row, units flag on", () => {
+    const withFlag = () => build({ units: [] }, TENANT, "off", true);
+
+    it("VP-2: a price on it creates the unit through ProductUnitsService, then prices that row", async () => {
+      const ctx = withFlag();
+      const res = await ctx.service.save(
+        PRODUCT_ID,
+        await req(ctx.grid, { patches: [{ ref: "base", tier: 1, to: 1.2 }] }),
+        "actor-1",
+      );
+      expect(ctx.units.createInTransaction).toHaveBeenCalledTimes(1);
+      expect(ctx.units.createInTransaction).toHaveBeenCalledWith(
+        ctx.tx,
+        PRODUCT_ID,
+        { label: "Piece", factorToBase: 1 },
+        "actor-1",
+      );
+      expect(ctx.world.units).toHaveLength(1);
+      expect(Number(ctx.world.units[0].price)).toBe(1.2);
+      expect(ctx.world.audits).toHaveLength(1);
+      expect((ctx.world.audits[0] as any).meta.createdUnitId).toBe("minted-piece");
+      expect(res.grid.rows.find((r) => r.ref === "base")?.unbacked).toBeUndefined();
+    });
+
+    it("a customer price on it creates the unit too", async () => {
+      const ctx = withFlag();
+      await ctx.service.save(
+        PRODUCT_ID,
+        await req(ctx.grid, {
+          customerMoves: [{ customerId: "c1", ref: "base", tier: 1, from: null, to: 1.1 }],
+        }),
+        null,
+      );
+      expect(ctx.units.createInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("VP-9: a blank box on it creates nothing and has nothing to save", async () => {
+      const ctx = withFlag();
+      const err = await rejection(
+        ctx.service.save(
+          PRODUCT_ID,
+          await req(ctx.grid, { patches: [{ ref: "base", tier: 1, to: null }] }),
+          null,
+        ),
+      );
+      expect(err.getResponse().message).toBe("There is nothing to save.");
+      expect(ctx.units.createInTransaction).not.toHaveBeenCalled();
+      expect(ctx.world.writes).toEqual([]);
+    });
+
+    it("a price elsewhere creates nothing", async () => {
+      const ctx = withFlag();
+      await ctx.service.save(
+        PRODUCT_ID,
+        await req(ctx.grid, { patches: [{ ref: "pack", tier: 3, to: 10 }] }),
+        null,
+      );
+      expect(ctx.units.createInTransaction).not.toHaveBeenCalled();
+    });
+
+    it("VP-5: undo removes the unit its save created, and only that save's", async () => {
+      const ctx = withFlag();
+      const saved = await ctx.service.save(
+        PRODUCT_ID,
+        await req(ctx.grid, { patches: [{ ref: "base", tier: 1, to: 1.2 }] }),
+        null,
+      );
+      const g = await ctx.grid.get(PRODUCT_ID);
+      await ctx.service.undo(
+        PRODUCT_ID,
+        { auditId: saved.auditId, expectedRevision: g.revision, expectedPriceState: g.priceState },
+        null,
+      );
+      expect(ctx.units.removeCreatedUnitIfUnused).toHaveBeenCalledWith(
+        ctx.tx,
+        PRODUCT_ID,
+        "minted-piece",
+      );
+
+      const other = build({}, TENANT, "off", true);
+      const plain = await other.service.save(
+        PRODUCT_ID,
+        await req(other.grid, { patches: [{ ref: "pack", tier: 3, to: 10 }] }),
+        null,
+      );
+      const g2 = await other.grid.get(PRODUCT_ID);
+      await other.service.undo(
+        PRODUCT_ID,
+        {
+          auditId: plain.auditId,
+          expectedRevision: g2.revision,
+          expectedPriceState: g2.priceState,
+        },
+        null,
+      );
+      expect(other.units.removeCreatedUnitIfUnused).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("VP-4: the implicit base row, units flag off", () => {
     const refused = async (over: Partial<SavePricesRequest>) => {
       const ctx = build({ units: [] });
       const err = await rejection(ctx.service.save(PRODUCT_ID, await req(ctx.grid, over), null));
       expect(err).toBeInstanceOf(BadRequestException);
       expect(err.getResponse().code).toBe(API_ERROR_CODES.PRICE_EDIT_INVALID);
-      expect(err.getResponse().problems.join(" ")).toContain("Add the Piece unit first");
+      expect(err.getResponse().problems).toEqual([PIECE_NOT_SOLD]);
       expect(ctx.world.writes).toEqual([]);
       expect(ctx.world.units).toHaveLength(0);
       expect(ctx.world.audits).toHaveLength(0);
