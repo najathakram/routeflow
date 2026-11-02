@@ -1,7 +1,7 @@
 // W6 first commit / O2 — the one label for the call button. COPY.md sections 0 and 4: "video call",
 // never "demo". Every link to /book-a-demo on every marketing page, the header, its sheet and the
-// footer reads DEMO_CTA, from the one constant. The home hero button is W0's and still carries the
-// old label until W0 lands; it is the only allowed exception, and it is counted so it can't grow.
+// footer reads DEMO_CTA, from the one constant. The home, product and pricing pages are ready-made
+// HTML under public/site and sit outside this check.
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { render, screen } from "@testing-library/react";
@@ -9,23 +9,17 @@ import userEvent from "@testing-library/user-event";
 import { DEMO_CTA } from "./lib/site";
 import { SiteHeader } from "./components/site-header";
 import { SiteFooter } from "./components/site-footer";
-import Home from "./page";
-import ProductPage from "./product/page";
 import WholesalersPage from "./wholesalers/page";
 import RetailersPage from "./retailers/page";
-import PricingPage from "./pricing/page";
 import CompanyPage from "./company/page";
 import ContactPage from "./contact/page";
 import PrivacyPage from "./privacy/page";
 import TermsPage from "./terms/page";
 
 const PAGES: Array<[string, ComponentType, number]> = [
-  // [route, page, links still on the old label until W0]
-  ["/", Home, 1],
-  ["/product", ProductPage, 0],
+  // [route, page, links still on the old label]
   ["/wholesalers", WholesalersPage, 0],
   ["/retailers", RetailersPage, 0],
-  ["/pricing", PricingPage, 0],
   ["/company", CompanyPage, 0],
   ["/contact", ContactPage, 0],
   ["/privacy", PrivacyPage, 0],

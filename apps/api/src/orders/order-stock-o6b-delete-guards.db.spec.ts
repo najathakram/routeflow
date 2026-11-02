@@ -52,7 +52,7 @@ describeDb("O6b / B284: delete releases stock exactly once, real Postgres", () =
     await expectLedgerConsistent(w.tenantId, [p]);
   }, 120_000);
 
-  it("deleting an OUT_FOR_DELIVERY order of 5 with 2 already delivered returns only the 3 undelivered", async () => {
+  it("row 585: deleting an OUT_FOR_DELIVERY order of 5 with 2 already delivered is refused; stock and rows stay", async () => {
     const p = await w.product("o6b-part", 10);
     const { order, items } = await w.bookOrder({
       status: "OUT_FOR_DELIVERY",
@@ -61,13 +61,14 @@ describeDb("O6b / B284: delete releases stock exactly once, real Postgres", () =
     await w.prisma.orderItem.update({ where: { id: items[0].id }, data: { deliveredQty: 2 } });
     expect(await w.stockOf(p)).toBe(5);
 
-    await w.inTenant(() => w.orders.deleteOrder(order.id, w.jwt));
+    await expect(w.inTenant(() => w.orders.deleteOrder(order.id, w.jwt))).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_DELETE_HAS_DELIVERED" },
+    });
 
-    expect(await w.stockOf(p)).toBe(8);
-    const back = (await w.movements(p)).filter((m) => m.notes === "DELETE");
-    expect(back.map((m) => [m.type, Number(m.quantity), Number(m.stockAfter)])).toEqual([
-      ["SALE", 3, 8],
-    ]);
+    expect(await w.stockOf(p)).toBe(5);
+    expect((await w.movements(p)).filter((m) => m.notes === "DELETE")).toHaveLength(0);
+    expect(await w.prisma.order.count({ where: { id: order.id } })).toBe(1);
     await expectLedgerConsistent(w.tenantId, [p]);
   }, 120_000);
 });

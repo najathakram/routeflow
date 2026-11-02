@@ -493,8 +493,8 @@ describe("update: the under-lock DRAFT re-check decides (lead fold item 2)", () 
   });
 });
 
-describe("house lock order: propagateFamilyPrice (recipe products before variants)", () => {
-  it("writes recipe products BEFORE variants (family -> recipe product -> variants)", async () => {
+describe("house lock order: propagateFamilyPrice (recipe products only, SA-1082 A-1)", () => {
+  it("writes recipe products and never a variant", async () => {
     const calls: string[] = [];
     const tx: any = {
       product: {
@@ -514,7 +514,7 @@ describe("house lock order: propagateFamilyPrice (recipe products before variant
       auditLog: { create: jest.fn() },
     };
     await propagateFamilyPrice(tx, { tenantId: "t", familyId: "fam" });
-    expect(calls).toEqual(["recipes", "variants"]);
+    expect(calls).toEqual(["recipes"]);
   });
 });
 

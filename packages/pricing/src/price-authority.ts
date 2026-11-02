@@ -3,12 +3,14 @@
  * writers, the product editor and the family editor can never disagree.
  *
  * - "own"         the product's own row carries the price; a write is accepted.
- * - "family"      the family product carries it; a write to this product is refused (409).
+ * - "family"      a family-linked recipe: the family carries it, and a write to the recipe is refused (409).
  * - "family-page" a FAMILY product itself; its prices are edited on the family page.
  *
  * `level` is "base" for a write to the product's five price columns (or a unit row whose
  * factorToBase is 1) and "other" for every other unit level — a tenant's Case, pallet or any
  * sub-unit is the tenant's to price.
+ *
+ * SA-1082 A-1: a variant owns its price in both modes. A family save only moves one when a person names it.
  */
 export type PriceAuthorityMode = "on" | "off";
 export type PriceAuthorityLevel = "base" | "other";
@@ -52,7 +54,7 @@ function ownedBelowFamily(
   switch (kind) {
     case "STANDARD":
     case "VARIANT":
-      return product.parentProductId ? "family" : "own";
+      return "own";
     case "RECIPE":
       if (product.parentProductId) return "family";
       return !product.familyPriceOverride && product.recipeFamilyId ? "family" : "own";

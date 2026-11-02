@@ -7,6 +7,8 @@ import { CustomerFormModal } from "./CustomerFormModal";
 // operator really emptied is now an explicit `null` (the API stores null for these nullable columns);
 // a field that was already empty, or that the form never saw a value for, is left out so an edit from a
 // list row that omits a column can never wipe data. A required name still cannot be cleared.
+// SA-1084: the tax ID is write-only here. The form never loads it (only its last 4, `taxIdLast4`): blank keeps the
+// stored value, a typed one replaces it, and "Remove" is the explicit `null`.
 
 const mutate = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
@@ -35,7 +37,7 @@ const full = {
   ...base,
   phone: "5125550100",
   mobile: "5125550200",
-  taxId: "12-3456789",
+  taxIdLast4: "6789",
   creditLimit: 500,
 };
 
@@ -50,11 +52,10 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: /save chan
 beforeEach(() => jest.clearAllMocks());
 
 describe("CustomerFormModal edit — clearing optional fields (REG-B1033)", () => {
-  it("emptied phone, mobile, tax id and credit limit are sent as explicit nulls", async () => {
+  it("emptied phone, mobile and credit limit are sent as explicit nulls; the tax ID stays out", async () => {
     open(full);
     clear(/^Phone/);
     clear(/^Mobile/);
-    clear(/^Tax ID/);
     clear(/^Credit Limit/);
     save();
 
@@ -63,9 +64,42 @@ describe("CustomerFormModal edit — clearing optional fields (REG-B1033)", () =
     expect(mutate.mock.calls[0][0]).toMatchObject({
       phone: null,
       mobile: null,
-      taxId: null,
       creditLimit: null,
     });
+    expect(mutate.mock.calls[0][0].taxId).toBeUndefined();
+  });
+
+  it("SA-1084: the form shows the last 4 only, a blank tax ID keeps it, a typed one replaces it", async () => {
+    const { unmount } = open(full);
+    const field = screen.getByLabelText(/^Tax ID/) as HTMLInputElement;
+    expect(field.value).toBe("");
+    expect(field.placeholder).toMatch(/ending 6789/);
+    expect(document.body.textContent).not.toContain("12-3456789");
+    save();
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0][0].taxId).toBeUndefined();
+    unmount();
+    mutate.mockClear();
+
+    open(full);
+    fireEvent.change(screen.getByLabelText(/^Tax ID/), { target: { value: " 55-5555555 " } });
+    save();
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0][0].taxId).toBe("55-5555555");
+  });
+
+  it("SA-1084: Remove sends an explicit null, and Keep puts it back to unchanged", async () => {
+    open(full);
+    fireEvent.click(screen.getByRole("button", { name: /remove the tax id on file/i }));
+    save();
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0][0].taxId).toBeNull();
+    mutate.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /keep the tax id on file/i }));
+    save();
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0][0].taxId).toBeUndefined();
   });
 
   it("a field left as it was is sent unchanged", async () => {
@@ -76,9 +110,9 @@ describe("CustomerFormModal edit — clearing optional fields (REG-B1033)", () =
     expect(mutate.mock.calls[0][0]).toMatchObject({
       phone: "5125550100",
       mobile: "5125550200",
-      taxId: "12-3456789",
       creditLimit: 500,
     });
+    expect(mutate.mock.calls[0][0].taxId).toBeUndefined();
   });
 
   it("a field that was already empty (or never loaded) is left out, never nulled", async () => {

@@ -20,6 +20,14 @@ export function orderErrorText(err: unknown): string {
   return genericToastCopy(err);
 }
 
+/**
+ * Orders list, bulk delete: the toast when some of the selected orders were kept. The server refuses an order for more
+ * than one reason (recorded payments, delivered items, a cash refund), so the line names the two the user can act on
+ * and does not claim a single cause. Row 585.
+ */
+export const bulkDeleteResultTitle = (deleted: number, kept: number): string =>
+  `${deleted} deleted, ${kept} kept. An order with delivered items needs a return first; one with recorded payments needs them voided first.`;
+
 /** Order detail "mark as sent": fixed copy, with this surface's own sentence for an uncoded 400 / 409 / 422. */
 export const markSentErrorText = (err: unknown): string =>
   genericToastCopy(
