@@ -10,6 +10,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { getTierPrice, type PriceAuthorityMode } from "@routeflow/pricing";
 import { randomUUID } from "crypto";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { AuditService } from "../audit/audit.service";
 import { AddonService } from "../billing/addon.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
@@ -22,6 +23,7 @@ import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { ProductFamiliesService } from "./product-families.service";
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
 import { ProductUnitsService } from "./product-units.service";
@@ -39,6 +41,7 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
   let grid: ProductPriceGridService;
   let writes: ProductPriceWriteService;
   let products: ProductsService;
+  let families: ProductFamiliesService;
   let mode: PriceAuthorityMode = "on";
   let flags = true;
   const tenantIds: string[] = [];
@@ -50,11 +53,13 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     await prisma.$connect();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        ProductFamiliesService,
         ProductPriceGridService,
         ProductPriceWriteService,
         ProductUnitsService,
         ProductsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         { provide: StorageService, useValue: { presignedUrls: jest.fn().mockResolvedValue([]) } },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
@@ -75,6 +80,7 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     grid = module.get(ProductPriceGridService);
     writes = module.get(ProductPriceWriteService);
     products = module.get(ProductsService);
+    families = module.get(ProductFamiliesService);
   });
 
   afterAll(async () => {
@@ -455,6 +461,139 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     await saveFamily(tenantId, family.id, { pricePerUnit: "27.00" });
     expect(await retail(recipe.id)).toBe(27);
     expect(await retail(withUnit.id)).toBe(24);
+  });
+
+  it("VM-13: under a family holding a 12-pack, a new variant, an editor add and an adoption on 6 pieces take 12 / 11", async () => {
+    const tenantId = await tenantOf("vm13");
+    const family = await familyIn(tenantId);
+    const onSix = async (id: string) => [await retail(id), await tier(id, 2)];
+
+    const created = (await inTenant(tenantId, () =>
+      products.create(
+        {
+          name: "New six",
+          variantName: "New six",
+          parentProductId: family.id,
+          unit: "Box",
+          unitsPerBox: 6,
+        } as any,
+        { reparentVia: "editor" } as any,
+      ),
+    )) as { id: string };
+    expect(await onSix(created.id)).toEqual([12, 11]);
+
+    await inTenant(tenantId, () =>
+      families.updateVariants(
+        family.id,
+        { add: [{ name: "Added six", unitsPerBox: 6, pricePerUnit: "99.00" }] },
+        null,
+      ),
+    );
+    const added = await prisma.product.findFirstOrThrow({
+      where: { tenantId, variantName: "Added six" },
+    });
+    expect(await onSix(added.id)).toEqual([12, 11]);
+
+    const loose = await productIn(tenantId, "Loose six", { unitsPerBox: 6, pricePerUnit: "40.00" });
+    await inTenant(tenantId, () =>
+      products.update(
+        loose.id,
+        { parentProductId: family.id } as any,
+        {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        } as any,
+      ),
+    );
+    expect(await onSix(loose.id)).toEqual([12, 11]);
+
+    const resized = await productIn(tenantId, "Loose twelve", { pricePerUnit: "40.00" });
+    await inTenant(tenantId, () =>
+      products.update(
+        resized.id,
+        { parentProductId: family.id, unitsPerBox: 6 } as any,
+        {
+          packPrecondition: "internal",
+          reparentVia: "editor",
+        } as any,
+      ),
+    );
+    expect(await onSix(resized.id)).toEqual([12, 11]);
+  });
+
+  it.each([
+    { on: true, stored: 0 },
+    { on: false, stored: 30 },
+  ])(
+    "VM-14 (flag $on): the family editor's own Retail takes the tiers at the family's value with it; a tier of its own stays",
+    async ({ on, stored }) => {
+      flags = on;
+      const tenantId = await tenantOf(`vm14${on}`);
+      const family = await familyIn(tenantId);
+      const at = await variantOf(family, { priceTier2: "22.00", priceTier3: "19.00" });
+
+      await inTenant(tenantId, () =>
+        families.updateVariants(
+          family.id,
+          { update: [{ id: at.id, pricePerUnit: "30.00" }] },
+          null,
+        ),
+      );
+
+      const saved = await row(at.id);
+      expect(Number(saved.pricePerUnit)).toBe(30);
+      expect(Number(saved.priceTier2)).toBe(stored);
+      expect(await tier(at.id, 2)).toBe(30);
+      expect(Number(saved.priceTier3)).toBe(19);
+    },
+  );
+
+  it("VM-15: a tier's own unit keeps a variant off the list and unmoved even when named; a tier on the pack doesn't", async () => {
+    const tenantId = await tenantOf("vm15");
+    const family = await familyIn(tenantId);
+    const withUnit = await variantOf(family, {});
+    const onPack = await variantOf(family, {});
+    const unit = await prisma.productUnit.create({
+      data: { tenantId, productId: withUnit.id, label: "Case", factorToBase: 72 },
+    });
+    await prisma.productTierUnit.create({
+      data: { tenantId, productId: withUnit.id, tier: 2, orderUnitRef: unit.id },
+    });
+    await prisma.productTierUnit.create({
+      data: { tenantId, productId: onPack.id, tier: 2, orderUnitRef: "pack" },
+    });
+
+    const preview = await asked(tenantId, family.id, { pricePerUnit: 26 });
+    expect(preview.variants.map((v: { id: string }) => v.id)).toEqual([onPack.id]);
+
+    await saveFamily(tenantId, family.id, { pricePerUnit: "26.00" }, [withUnit.id, onPack.id]);
+    expect(await retail(withUnit.id)).toBe(24);
+    expect(await retail(onPack.id)).toBe(26);
+  });
+
+  it("VM-16: at the family's price, an own order unit or a tier's own unit reads as its own in the grid; a pack ref still follows", async () => {
+    const tenantId = await tenantOf("vm16");
+    const family = await familyIn(tenantId);
+    const onPack = await variantOf(family, { orderUnitRef: "pack", priceTier2: "22.00" });
+    const ownOrder = await variantOf(family, { priceTier2: "22.00" });
+    const ownTier = await variantOf(family, { priceTier2: "22.00" });
+    const orderUnit = await prisma.productUnit.create({
+      data: { tenantId, productId: ownOrder.id, label: "Case", factorToBase: 72 },
+    });
+    await prisma.product.update({
+      where: { id: ownOrder.id },
+      data: { orderUnitRef: orderUnit.id },
+    });
+    const tierUnit = await prisma.productUnit.create({
+      data: { tenantId, productId: ownTier.id, label: "Case", factorToBase: 72 },
+    });
+    await prisma.productTierUnit.create({
+      data: { tenantId, productId: ownTier.id, tier: 2, orderUnitRef: tierUnit.id },
+    });
+
+    expect((await packCells(tenantId, onPack.id))[0].family).toEqual({ value: 24, follows: true });
+    expect((await packCells(tenantId, ownOrder.id))[0].family).toBeUndefined();
+    expect((await packCells(tenantId, ownTier.id))[0].family).toBeUndefined();
   });
 
   it("VM-9: saved order and invoice lines don't change when a family save moves a variant", async () => {
