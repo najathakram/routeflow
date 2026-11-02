@@ -7,7 +7,7 @@ import { Download, FileText, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { isLicenceExpired } from "@routeflow/types";
 import { useAuth } from "@/lib/auth-context";
-import { useTenantTimeZone } from "@/lib/tenant-timezone";
+import { useOnTenantToday, useTenantTimeZone } from "@/lib/tenant-timezone";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -294,9 +294,13 @@ function InventoryTab() {
 // ─── Purchases / Sales tabs ───────────────────────────────────────────────────
 
 function useRangeState() {
-  const year = new Date().getUTCFullYear();
-  const [from, setFrom] = React.useState(`${year}-01-01`);
-  const [to, setTo] = React.useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+  // SA-964 §4: the range is the TENANT's year-to-date, seeded when the zone resolves (nothing is queried before).
+  useOnTenantToday((day) => {
+    setFrom((cur) => cur || `${day.slice(0, 4)}-01-01`);
+    setTo((cur) => cur || day);
+  });
   return { from, to, setFrom, setTo };
 }
 
@@ -322,10 +326,10 @@ function RangePicker(props: ReturnType<typeof useRangeState>) {
 
 function PurchasesTab() {
   const range = useRangeState();
-  const { data: purchases = [], isLoading } = useTobaccoPurchases({
-    from: range.from,
-    to: range.to,
-  });
+  const { data: purchases = [], isLoading } = useTobaccoPurchases(
+    { from: range.from, to: range.to },
+    { enabled: !!range.from && !!range.to },
+  );
   return (
     <div>
       <RangePicker {...range} />
@@ -380,7 +384,10 @@ function PurchasesTab() {
 function SalesTab() {
   const range = useRangeState();
   const zone = useTenantTimeZone();
-  const { data: sales = [], isLoading } = useTobaccoSales({ from: range.from, to: range.to });
+  const { data: sales = [], isLoading } = useTobaccoSales(
+    { from: range.from, to: range.to },
+    { enabled: !!range.from && !!range.to },
+  );
   return (
     <div>
       <RangePicker {...range} />
