@@ -61,6 +61,8 @@ function parsePortal(value: string | null | undefined): Portal | null {
 }
 
 /**
+ * (No longer used by the middleware: "/" is home for everyone. public/site/js/auth-nav.js mirrors this rule for the
+ * header link, and site-auth-nav.static.test.ts pins the two together.)
  * Landing page ("/") target. One session → that portal. Both → the portal used
  * last (rf-last-portal), seller dashboard by default. A preference never
  * overrides a missing session. No session → null (render the marketing page).

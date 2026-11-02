@@ -46,6 +46,7 @@ for (const rel of [
   "js/site.js",
   "js/product.js",
   "js/home-up.js",
+  "js/auth-nav.js",
   "js/vendor/gsap.min.js",
   "js/vendor/ScrollTrigger.min.js",
   "js/vendor/SplitText.min.js",
