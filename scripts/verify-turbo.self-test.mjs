@@ -50,6 +50,7 @@ import {
   loadWorkspaces,
   mergeBaseSha,
   repoPinsNeeded,
+  selectFsReadSpecs,
   SCRIPT_SPEC_PATTERN,
   shortName,
   staleWorkspaces,
@@ -61,12 +62,14 @@ import { describeMissing, importClosure, relativeImports } from "./lib/import-cl
 // Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
 // direct-execution guard means importing it does NOT spawn turbo or call process.exit.
 import {
+  FS_READ_DEFAULT_WORKERS,
   argvForCall,
   buildArgv,
   buildTurboFlags,
   chooseRunMode,
   chooseVerifyDefaults,
   excludedLine,
+  pinArgv,
   executePlan,
   finishRun,
   settlesReports,
@@ -76,9 +79,15 @@ import {
   VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
   loadCrossScriptSpecs,
+  planFsReadSpecs,
   planPins,
   planTurboCalls,
 } from "./verify-turbo.mjs";
+import { createRequire } from "node:module";
+
+const { findSameWorkspaceReaders } = createRequire(import.meta.url)(
+  "./lib/cross-workspace-specs.cjs",
+);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaces = loadWorkspaces(ROOT);
@@ -1399,6 +1408,74 @@ if (process.platform !== "win32") {
           [affStale.status, /STALE Prisma client/.test(affStale.err), affStale.calls.length],
           [1, true, 0],
         );
+        // VX29 (#4116 review): the original hole, through the REAL main(). A diff that changes ONLY a page a
+        // source pin reads: --changedSince never reaches that pin, so the by-path call is the only thing that
+        // can see it. A red pin must fail the run and write no token. The mutant `fsRead = null` drops the
+        // call, so the by-path call is asserted present and the exit non-zero, never just a status.
+        put(`${genDir}/${GENERATED_COPY}`, FIX_SCHEMA); // VX27 left the client stale on purpose
+        fgit("checkout", "-q", "-b", "feat/page-base", "refs/remotes/origin/master");
+        put("apps/web/package.json", JSON.stringify({ name: "@routeflow/web" }));
+        put("apps/web/app/x/page.tsx", "export default function Page() {\n  return null;\n}\n");
+        put(
+          "apps/web/app/x/page.test.tsx",
+          [
+            'import { readFileSync } from "node:fs";',
+            'import { join } from "node:path";',
+            'it("pins the page", () => {',
+            '  readFileSync(join(__dirname, "page.tsx"), "utf8");',
+            "});",
+            "",
+          ].join("\n"),
+        );
+        fgit("add", "-A", "-f");
+        fgit("commit", "-q", "-m", "web base");
+        fgit("update-ref", "refs/remotes/origin/master", "HEAD");
+        fgit("checkout", "-q", "-b", "feat/page-only");
+        put("apps/web/app/x/page.tsx", "export default function Page() {\n  return 1;\n}\n");
+        fgit("add", "-A");
+        fgit("commit", "-q", "-m", "page only");
+        const tokenFile29 = join(stubDir, "vx29-token");
+        const stage29 = `${tokenFile29}.turbo`;
+        const fast = (seq) => {
+          rmSync(stage29, { force: true });
+          const r = aff({
+            RF_VERIFY_MODE: "fast",
+            JEST_MAX_WORKERS: "",
+            RF_VERIFY_RESULT_FILE: tokenFile29,
+            RF_VERIFY_NONCE: "nonce-29",
+            RF_VERIFY_TREE_KEY: "tree-29",
+            STUB_EXIT_SEQ: seq,
+          });
+          return { ...r, token: existsSync(stage29) };
+        };
+        const byPathAt = (calls) => calls.findIndex((c) => /--runTestsByPath/.test(c));
+        const greenFast = fast("0");
+        const at29 = byPathAt(greenFast.calls);
+        check(
+          "VX29a main() FAST, page-only diff, green pin: the by-path call runs (capped, naming the pin) and the pass is staged",
+          [
+            greenFast.status,
+            greenFast.calls[at29],
+            greenFast.calls.length - 1 === at29,
+            greenFast.token,
+          ],
+          [
+            0,
+            "jest --passWithNoTests --maxWorkers=4 --runTestsByPath app/x/page.test.tsx",
+            true,
+            true,
+          ],
+        );
+        const redFast = fast(
+          Array.from({ length: greenFast.calls.length }, (_, i) => (i === at29 ? "7" : "0")).join(
+            ",",
+          ),
+        );
+        check(
+          "VX29 main() FAST, page-only diff, RED pin: exit non-zero, the by-path call ran, NO token written",
+          [redFast.status, byPathAt(redFast.calls) === at29 && at29 >= 0, redFast.token],
+          [7, true, false],
+        );
       }
     } finally {
       rmSync(fixDir, { recursive: true, force: true });
@@ -2352,6 +2429,358 @@ check(
       [["test:repo-truth", "--filter=@routeflow/api"]],
     ],
   );
+}
+
+// FS: a spec that reads its OWN workspace's source by fs path (a source pin) is invisible to `jest --changedSince`, which
+// follows imports. A fast push that changed only the file it reads reported green while the pin was red (#4108). The fast
+// plan now adds a `--runTestsByPath` call for every such spec whose read file (or directory) the diff touched.
+{
+  const PAGE = "apps/web/app/(dashboard)/products/page.tsx";
+  const PIN = "app/(dashboard)/products/pin.static.test.ts";
+  const readers = {
+    "apps/web": [
+      { spec: PIN, reads: [PAGE, "apps/web/lib/api/"] },
+      { spec: "app/other/other.test.ts", reads: ["apps/web/app/other/x.tsx"] },
+    ],
+    "apps/mobile": [{ spec: "__tests__/m.test.ts", reads: ["apps/mobile/lib/a.ts"] }],
+    "apps/api": [{ spec: "src/a.spec.ts", reads: ["apps/api/src/x.ts"] }],
+  };
+  const sel = (files) => selectFsReadSpecs({ files, readers });
+  check("FS1 a changed file a spec reads selects that spec and no other", sel([PAGE]).specs, {
+    "apps/web": [PIN],
+  });
+  check(
+    "FS2 a changed file under a directory a spec reads selects it",
+    sel(["apps/web/lib/api/customers.ts"]).specs,
+    { "apps/web": [PIN] },
+  );
+  check("FS3 an unrelated file selects nothing", sel(["apps/web/lib/other.ts"]).specs, {});
+  check(
+    "FS3b a changed spec is not selected here (changedSince already runs it); a docs diff selects nothing",
+    [sel([`apps/web/${PIN}`]).specs, sel(["docs/a.md"]).specs],
+    [{}, {}],
+  );
+  const all = sel(null);
+  check(
+    "FS4 a diff that cannot be computed selects every spec, with a fail-closed line",
+    [all.specs, /fail closed/.test(all.line ?? "")],
+    [
+      {
+        "apps/web": [PIN, "app/other/other.test.ts"],
+        "apps/mobile": ["__tests__/m.test.ts"],
+        "apps/api": ["src/a.spec.ts"],
+      },
+      true,
+    ],
+  );
+  check(
+    "FS5 the line names how many specs run and why",
+    [/1 spec/.test(sel([PAGE]).line ?? ""), sel(["docs/a.md"]).line],
+    [true, null],
+  );
+
+  const wsList = loadWorkspaces(ROOT);
+  const plan = (over = {}) =>
+    planFsReadSpecs({
+      fast: true,
+      files: [PAGE, "apps/mobile/lib/a.ts", "apps/api/src/x.ts"],
+      scope: AFF([WEB, "@routeflow/mobile", API, "@routeflow/pricing"]),
+      excluded: [],
+      readers,
+      workspaces: wsList,
+      ...over,
+    });
+  check(
+    "FS6 FAST selects per workspace, api included (#4108: its tree scanners are not reached by --changedSince)",
+    plan().specs,
+    {
+      "apps/web": [PIN],
+      "apps/mobile": ["__tests__/m.test.ts"],
+      "apps/api": ["src/a.spec.ts"],
+    },
+  );
+  check(
+    "FS6b an api -script or .db spec is never planned by path (its own lanes run it), a unit spec is",
+    planFsReadSpecs({
+      fast: true,
+      files: ["apps/api/src/x.ts"],
+      scope: AFF([API]),
+      excluded: [],
+      readers: {
+        "apps/api": [
+          { spec: "src/a.spec.ts", reads: ["apps/api/src/x.ts"] },
+          { spec: "src/b-script.spec.ts", reads: ["apps/api/src/x.ts"] },
+          { spec: "src/c.db.spec.ts", reads: ["apps/api/src/x.ts"] },
+        ],
+      },
+      workspaces: wsList,
+    }).specs,
+    { "apps/api": ["src/a.spec.ts"] },
+  );
+  check(
+    "FS7 a workspace outside the affected scope, or excluded, is dropped",
+    [
+      plan({ scope: AFF([WEB, "@routeflow/pricing"]) }).specs,
+      plan({ excluded: ["@routeflow/mobile"] }).specs,
+    ],
+    [{ "apps/web": [PIN] }, { "apps/web": [PIN], "apps/api": ["src/a.spec.ts"] }],
+  );
+  check(
+    "FS8 outside FAST nothing is planned (CI, master and FULL_VERIFY are byte-identical to before)",
+    [plan({ fast: false }).specs, plan({ fast: false }).line],
+    [null, null],
+  );
+  check(
+    "FS9 a FULL scope keeps every workspace's selection; null files fails closed",
+    [
+      Object.keys(plan({ scope: { mode: "full", reason: "x" } }).specs),
+      Object.keys(plan({ files: null }).specs),
+    ],
+    [
+      ["apps/web", "apps/mobile", "apps/api"],
+      ["apps/web", "apps/mobile", "apps/api"],
+    ],
+  );
+
+  // FS15 (#4108): a scanner that walks a tree and filters by file KIND reads every file of that kind.
+  const kindReaders = {
+    "apps/api": [
+      { spec: "src/dto.spec.ts", reads: [], kinds: [".dto.ts"] },
+      { spec: "src/ctl.spec.ts", reads: [], kinds: [".controller.ts"] },
+    ],
+  };
+  const kindSel = (files) => selectFsReadSpecs({ files, readers: kindReaders }).specs;
+  check(
+    "FS15 a changed file of a kind a scanner filters by selects it; another kind, another workspace's file and a spec of that name do not",
+    [
+      kindSel(["apps/api/src/p/dto/a.dto.ts"]),
+      kindSel(["apps/api/src/p/p.controller.ts"]),
+      kindSel(["apps/api/src/p/p.service.ts"]),
+      kindSel(["apps/web/lib/a.dto.ts"]),
+      kindSel(["apps/api/src/p/a.dto.spec.ts"]),
+    ],
+    [{ "apps/api": ["src/dto.spec.ts"] }, { "apps/api": ["src/ctl.spec.ts"] }, {}, {}, {}],
+  );
+
+  const base = planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true });
+  const withFs = planTurboCalls({
+    scope: AFF([WEB]),
+    splitJest: false,
+    fast: true,
+    fsRead: { "apps/web": [PIN] },
+  });
+  check(
+    "FS10 FAST appends one by-path jest call per workspace; the existing calls are untouched",
+    [withFs.calls.slice(0, base.calls.length), withFs.calls.slice(base.calls.length)],
+    [
+      base.calls,
+      [
+        {
+          fsRead: true,
+          cwd: "apps/web",
+          argv: ["jest", "--passWithNoTests", "--runTestsByPath", PIN],
+        },
+      ],
+    ],
+  );
+  // FS10b (#4116 review): the by-path call gets a worker cap (jest otherwise starts one worker per core: 19 on a
+  // 19-core PC, as fast as 4 with far more memory), JEST_MAX_WORKERS honoured, and every flag BEFORE the paths.
+  const byPath = { fsRead: true, argv: ["jest", "--passWithNoTests", "--runTestsByPath", PIN] };
+  const at = (argv) => argv.indexOf("--runTestsByPath");
+  check(
+    "FS10b the by-path call is capped: --maxWorkers=4 by default, JEST_MAX_WORKERS honoured, a bad value falls back, the flag sits before the paths",
+    [
+      pinArgv(byPath, undefined),
+      pinArgv(byPath, "2"),
+      pinArgv(byPath, "50%"),
+      pinArgv(byPath, "0"),
+      pinArgv(byPath, "abc"),
+      pinArgv(byPath, "--runInBand"),
+      FS_READ_DEFAULT_WORKERS,
+      at(pinArgv(byPath, "2")) - pinArgv(byPath, "2").indexOf("--maxWorkers=2"),
+    ],
+    [
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=2", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=50%", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      "4",
+      1,
+    ],
+  );
+  const pinCall = { pins: true, argv: ["jest", "--runInBand", "--", PIN] };
+  check(
+    "FS10c the api pin call (already --runInBand) and a call that is not by-path are returned untouched",
+    [pinArgv(pinCall, "2"), pinArgv({ fsRead: true, argv: ["jest", "x"] }, "2")],
+    [pinCall.argv, ["jest", "x"]],
+  );
+  check(
+    "FS11 without fsRead, and in a non-fast plan, the calls are byte-identical to before",
+    [
+      planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true, fsRead: null }).calls,
+      planTurboCalls({ scope: AFF([WEB]), splitJest: false, fsRead: { "apps/web": [PIN] } }).calls,
+    ],
+    [base.calls, planTurboCalls({ scope: AFF([WEB]), splitJest: false }).calls],
+  );
+
+  // The real repo: the detector finds the source pin that went unrun in #4108, and the plan selects it.
+  const real = findSameWorkspaceReaders(ROOT);
+  const tier = (real["apps/web"] ?? []).find((s) =>
+    /tier-ladder-wiring\.static\.test\.ts$/.test(s.spec),
+  );
+  check(
+    "FS12 the detector derives the products source pin: it reads both product pages",
+    tier?.reads,
+    [
+      "apps/web/app/(dashboard)/products/[id]/page.tsx",
+      "apps/web/app/(dashboard)/products/page.tsx",
+    ],
+  );
+  const realPlan = (file) =>
+    planFsReadSpecs({
+      fast: true,
+      files: [file],
+      scope: AFF([WEB, "@routeflow/pricing"]),
+      excluded: [],
+      readers: real,
+      workspaces: wsList,
+    }).specs;
+  check(
+    "FS13 (#4108) an edit to ONLY a product page selects the pin that reads it",
+    [
+      (realPlan("apps/web/app/(dashboard)/products/[id]/page.tsx")["apps/web"] ?? []).includes(
+        tier?.spec,
+      ),
+      (realPlan("apps/web/app/(dashboard)/products/page.tsx")["apps/web"] ?? []).includes(
+        tier?.spec,
+      ),
+    ],
+    [true, true],
+  );
+  const realApi = (file) =>
+    planFsReadSpecs({
+      fast: true,
+      files: [file],
+      scope: AFF([API]),
+      excluded: [],
+      readers: real,
+      workspaces: wsList,
+    }).specs["apps/api"] ?? [];
+  check(
+    "FS17 (#4108) a DTO diff selects the DTO scanner and a controller diff selects the permission scanner, by path",
+    [
+      realApi("apps/api/src/products/dto/update-product.dto.ts").includes(
+        "src/common/money-dto-null.spec.ts",
+      ),
+      realApi("apps/api/src/products/products.controller.ts").includes(
+        "src/auth/permissions/permission-coverage.spec.ts",
+      ),
+      realApi("apps/api/src/audit/audit-actions.constant.ts").length,
+    ],
+    [true, true, 0],
+  );
+
+  // FS14: the detector's shapes, on a throwaway workspace tree (never the real repo).
+  const fx = mkdtempSync(join(tmpdir(), "fs-readers-"));
+  try {
+    const put = (rel, text) => {
+      mkdirSync(dirname(join(fx, rel)), { recursive: true });
+      writeFileSync(join(fx, rel), text);
+    };
+    put("package.json", JSON.stringify({ workspaces: ["apps/*"] }));
+    put("apps/w/package.json", JSON.stringify({ name: "@fx/w" }));
+    put("apps/w/app/x/page.tsx", "export {};\n");
+    put("apps/w/app/x/[id]/page.tsx", "export {};\n");
+    put("apps/w/lib/util.ts", "export {};\n");
+    put("apps/w/lib/other.ts", "export {};\n");
+    put("apps/other/package.json", JSON.stringify({ name: "@fx/other" }));
+    put("apps/other/lib/o.ts", "export {};\n");
+    // join(__dirname, ...), a variable root + a literal file name, a path under the workspace root, a directory read
+    put(
+      "apps/w/app/x/a.test.ts",
+      'const fs = require("fs"); const path = require("path");\n' +
+        'fs.readFileSync(path.join(__dirname, "[id]/page.tsx"), "utf8");\n' +
+        "const dir = __dirname;\n" +
+        'fs.readFileSync(path.join(dir, "page.tsx"), "utf8");\n' +
+        'fs.readFileSync(path.join(process.cwd(), "lib/util.ts"), "utf8");\n',
+    );
+    // reads nothing: an import alias, a literal that is not on disk, and a comment naming a real file
+    put(
+      "apps/w/app/x/b.test.ts",
+      'import { x } from "@/lib/other";\n' +
+        '// fs.readFileSync("lib/other.ts")\n' +
+        'const msg = "see lib/missing.ts";\n' +
+        "export {};\n",
+    );
+    // an fs read but only of another workspace and of itself: nothing in its own workspace
+    put(
+      "apps/w/app/x/c.test.ts",
+      'const fs = require("fs");\nfs.readFileSync(require("path").join(__dirname, "../../../../other/lib/o.ts"));\n' +
+        "fs.readFileSync(__filename);\n",
+    );
+    // a scanner of its own directory
+    put(
+      "apps/w/app/x/d.test.ts",
+      'const fs = require("fs");\nfs.readdirSync(__dirname);\nexport {};\n',
+    );
+    const got = findSameWorkspaceReaders(fx)["apps/w"] ?? [];
+    check(
+      "FS14 the detector reads join(__dirname|cwd, ...), a literal beside a variable dir and a scanned directory; an alias, a missing path and a comment name nothing",
+      got.map((s) => [s.spec, s.reads]),
+      [
+        [
+          "app/x/a.test.ts",
+          ["apps/w/app/x/[id]/page.tsx", "apps/w/app/x/page.tsx", "apps/w/lib/util.ts"],
+        ],
+        ["app/x/d.test.ts", ["apps/w/app/x/"]],
+      ],
+    );
+  } finally {
+    rmSync(fx, { recursive: true, force: true });
+  }
+
+  // FS16: the kinds a tree scanner filters by, on a throwaway tree: an endsWith filter, a regex in an imported helper;
+  // a kind merely named inside a path string, and a spec that does not walk a tree, name none.
+  const fk = mkdtempSync(join(tmpdir(), "fs-kinds-"));
+  try {
+    const put = (rel, text) => {
+      mkdirSync(dirname(join(fk, rel)), { recursive: true });
+      writeFileSync(join(fk, rel), text);
+    };
+    put("package.json", JSON.stringify({ workspaces: ["apps/*"] }));
+    put("apps/w/package.json", JSON.stringify({ name: "@fx/w" }));
+    put(
+      "apps/w/src/a.spec.ts",
+      'const fs = require("fs");\nconst all = fs.readdirSync(__dirname).filter((f) => f.endsWith(".dto.ts"));\n',
+    );
+    put("apps/w/src/b.spec.ts", 'import { handlers } from "./disc";\nhandlers();\nexport {};\n');
+    put(
+      "apps/w/src/disc.ts",
+      'const fs = require("fs");\nexport const handlers = () => fs.readdirSync(".").filter((n) => /\\.controller\\.ts$/.test(n));\n',
+    );
+    put(
+      "apps/w/src/c.spec.ts",
+      'const fs = require("fs");\nfs.readFileSync("src/sales/sales.module.ts", "utf8");\n',
+    );
+    put("apps/w/src/d.spec.ts", 'const x = ".service.ts";\nexport {};\n');
+    put("apps/w/src/sales/sales.module.ts", "export {};\n");
+    const kinds = Object.fromEntries(
+      (findSameWorkspaceReaders(fk)["apps/w"] ?? []).map((s) => [s.spec, s.kinds]),
+    );
+    check(
+      "FS16 the detector reads kinds from an endsWith filter and from an imported helper's regex; a path string and a non-scanner name none",
+      kinds,
+      {
+        "src/a.spec.ts": [".dto.ts"],
+        "src/b.spec.ts": [".controller.ts"],
+        "src/c.spec.ts": [],
+      },
+    );
+  } finally {
+    rmSync(fk, { recursive: true, force: true });
+  }
 }
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
