@@ -687,6 +687,26 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       expect(customers.setCustomerConsent).not.toHaveBeenCalled();
     });
 
+    // SA-1084: the planned-change report of a contacts row shows the last 4 of an identity value, from and to, never the whole.
+    it("the change report shows the last 4 of a Tax ID and a license number, never the stored or typed whole", async () => {
+      prisma.customer.findFirst.mockResolvedValue(
+        matchedCustomer({ taxId: "old-1234567", tobaccoLicenseNo: "TL-OLD-5550" }),
+      );
+      const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
+      const csv =
+        "Customer Name,Customer ID,Tax ID,Tobacco Licence No,Tobacco Licence Expiry\n" +
+        `Acme Supply,ZC-1,new-7654321,TL-NEW-9910,${future}\n`;
+
+      const result = await service.importContacts(Buffer.from(csv), "user-1");
+
+      const changes = (
+        result.rows[0] as { changes: Record<string, { from: unknown; to: unknown }> }
+      ).changes;
+      expect(changes.taxId).toEqual({ from: "4567", to: "4321" });
+      expect(changes.tobaccoLicenseNo).toEqual({ from: "5550", to: "9910" });
+      expect(JSON.stringify(result)).not.toMatch(/old-1234567|new-7654321|TL-OLD-5550|TL-NEW-9910/);
+    });
+
     it("one write path for contacts: the raw contact-details write never carries a commercial field", async () => {
       prisma.customer.findFirst.mockResolvedValue(matchedCustomer());
       const future = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);

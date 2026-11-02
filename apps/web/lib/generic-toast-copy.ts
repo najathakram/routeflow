@@ -102,6 +102,9 @@ const CODE_COPY: Record<string, string> = {
   // Row 590 (SA-978a): an office DELIVERED on an order whose run stop has not completed; nothing was written.
   [API_ERROR_CODES.ORDER_DELIVERED_ON_ROUTE_STOP]: ORDER_DELIVERED_ON_ROUTE_STOP_COPY,
   ORDER_DELIVERY_QUANTITIES_MISSING: "Delivery quantities are missing; set them before cancelling.",
+  // Row 585: a delete of an order with delivered units is refused.
+  ORDER_DELETE_HAS_DELIVERED:
+    "This order has delivered items, so it cannot be deleted. Record a return for the delivered goods instead.",
   ORDER_BILLING_CHANGED:
     "This order's billing changed while you were working on it. Refresh and try again.",
   FULFIL_METHOD_NOT_OFFERED: "This business doesn't offer that way of fulfilling orders.",

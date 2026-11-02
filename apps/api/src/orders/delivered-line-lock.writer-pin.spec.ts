@@ -118,6 +118,10 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "B692: a manual PARTIALLY_DELIVERED writes delivery evidence rows and recomputes deliveredQty only",
   },
+  "routes/routes.service.ts::completeStop": {
+    kind: "not-a-lock-column",
+    reason: "delivery completion: deliveredQty recompute (SA-978a §3)",
+  },
   "routes/routes.service.ts::completeWithPayment": {
     kind: "not-a-lock-column",
     reason: "delivery completion: deliveredQty recompute",

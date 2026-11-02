@@ -24,7 +24,9 @@ export interface Customer {
   salutation?: string;
   firstName?: string;
   lastName?: string;
-  taxId?: string;
+  taxId?: string | null;
+  /** The last 4 characters of the tax ID on file (SA-1084): the server never sends the whole value. */
+  taxIdLast4?: string | null;
   isTaxExempt?: boolean;
   taxExemptDocumentKeys?: string[];
   /** `null` clears the limit (update only); `0` is a real $0 limit; omitted leaves it alone (B1018). */
@@ -100,6 +102,14 @@ export function useCustomers(params?: {
     queryKey: ["customers", params],
     queryFn: () => apiClient.get("/customers", { params }).then((r) => r.data),
   });
+}
+
+/**
+ * The customer's detail, read once and imperatively (SA-1084 A-2): the list row carries no tax ID, so a form opened
+ * from the list reads this first. The only read that carries the last 4 of a stored tax ID.
+ */
+export function fetchCustomer(id: string) {
+  return apiClient.get(`/customers/${id}`).then((r) => r.data);
 }
 
 export function useCustomer(id: string) {

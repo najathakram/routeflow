@@ -107,7 +107,11 @@ import {
   RUN_STOP_INCLUDE,
 } from "./routes.constants";
 import { withDeliveredSoFar } from "./run-delivered-so-far";
-import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
+import {
+  DeletedEvidenceRow,
+  deliveredQtyRecompute,
+  deliveredQtyRecomputeForRows,
+} from "./delivered-so-far";
 import { withPayableInvoicesFlat } from "./run-projections";
 import { checkRouteIdempotencyKey, saveRouteIdempotencyKey } from "./route-idempotency";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
@@ -1292,7 +1296,14 @@ export class RoutesService {
         const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
-            status: { notIn: [OrderStatus.CANCELLED] },
+            // B756: on a LIVE run DELIVERED history is not on the run (getRunPackingList excludes it the same way); a
+            // COMPLETED legacy run is the shape this fallback exists for, and what it delivered stays on it.
+            status: {
+              notIn:
+                run.status === RouteRunStatus.COMPLETED
+                  ? [OrderStatus.CANCELLED]
+                  : [OrderStatus.CANCELLED, OrderStatus.DELIVERED],
+            },
             fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655
           },
           // B305 round 5: this legacy fallback's hand-rolled select missed the main query's money fields;
@@ -2198,12 +2209,14 @@ export class RoutesService {
 
         // 2. Record delivery mutations if provided
         if (dto.deliveries && dto.deliveries.length > 0) {
+          const orderIdByItemId = new Map<string, string>();
           for (const d of dto.deliveries) {
             const item = await tx.orderItem.findFirst({
               where: { id: d.orderItemId },
               select: { orderId: true, productId: true, unitPrice: true },
             });
             if (!item) continue;
+            orderIdByItemId.set(d.orderItemId, item.orderId);
             await tx.deliveryMutation.create({
               data: {
                 orderId: item.orderId,
@@ -2221,6 +2234,14 @@ export class RoutesService {
                 quantityDelivered: d.quantityDelivered,
                 ...(d.note ? { note: d.note } : {}),
               },
+            });
+          }
+          // SA-978a §3 (W-922): book what left. RECOMPUTE from the rows, never increment (B785/SA-133).
+          // Stock and cancel-impact read this column; the invoice reads the rows.
+          for (const u of await deliveredQtyRecomputeForRows(tx, orderIdByItemId)) {
+            await tx.orderItem.update({
+              where: { id: u.id },
+              data: { deliveredQty: u.deliveredQty },
             });
           }
         }
@@ -2457,15 +2478,12 @@ export class RoutesService {
           }
           // B785/SA-133: RECOMPUTE deliveredQty, never increment/overwrite -- other cumulative
           // consumers (order-cancel-impact.ts, order-stock.ts, orders.service.ts) are unaffected.
-          for (const orderId of deliveredOrderIdSet) {
-            const pairs = [...orderIdByItemId].filter((p) => p[1] === orderId);
-            const itemIds = pairs.map((p) => p[0]);
-            for (const u of await deliveredQtyRecompute(tx, orderId, itemIds)) {
-              await tx.orderItem.update({
-                where: { id: u.id },
-                data: { deliveredQty: u.deliveredQty },
-              });
-            }
+          // SA-978a §3 (W-922): the same step runs in completeStop; one helper, a count pin.
+          for (const u of await deliveredQtyRecomputeForRows(tx, orderIdByItemId)) {
+            await tx.orderItem.update({
+              where: { id: u.id },
+              data: { deliveredQty: u.deliveredQty },
+            });
           }
         }
 

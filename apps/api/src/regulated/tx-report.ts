@@ -30,6 +30,7 @@
 
 import { ReportColumn, RegulatedReport, ReportWarning, ReportWarningCode } from "./report-types";
 import { itemTypeLabel } from "./template-registry";
+import { last4 } from "../customers/customer-identity-fields";
 
 /** TX Comptroller unit-of-measure codes, keyed by item type. */
 export const TX_UOM_CODES = {
@@ -438,7 +439,7 @@ export function buildTxReport(input: {
       warnInvoiceOnce(
         "INVALID_TAXPAYER_ID",
         bucket.invoiceId,
-        `${customerName ?? "This customer"}'s taxpayer ID "${taxpayerId}" is not ${TAXPAYER_ID_LEN} digits.`,
+        `${customerName ?? "This customer"}'s taxpayer ID ending ${last4(taxpayerId)} is not ${TAXPAYER_ID_LEN} digits.`,
         customerName,
       );
     }
@@ -458,7 +459,7 @@ export function buildTxReport(input: {
       warnInvoiceOnce(
         "INVALID_RETAILER_LICENSE",
         bucket.invoiceId,
-        `${customerName ?? "This customer"}'s retailer license "${retailerLicense}" is not ${RETAILER_LICENSE_LEN} digits.`,
+        `${customerName ?? "This customer"}'s retailer license ending ${last4(retailerLicense)} is not ${RETAILER_LICENSE_LEN} digits.`,
         customerName,
       );
     }

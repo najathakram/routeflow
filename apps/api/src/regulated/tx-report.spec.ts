@@ -907,3 +907,45 @@ describe("buildTxReport — per-product case/unit bucketing", () => {
     expect(report.rows[1][12]).toBe("Product Two");
   });
 });
+
+// SA-1084 (SI-4, SI-5): the TX filing carries the stored values in full, on purpose; a warning about a malformed
+// value says only its last 4 characters, because warnings reach the screen and the logs.
+describe("buildTxReport identity values (SA-1084)", () => {
+  const build = (c: Partial<TxCustomerInfo>) =>
+    buildTxReport({
+      category: COMPLETE_CATEGORY,
+      ledgerRows: [
+        { invoiceId: "inv-1", invoiceItemId: "line-1", qty: 10, unitBasisQty: 10, netSales: 100 },
+      ],
+      linesById: DEFAULT_LINES_BY_ID,
+      productsById: DEFAULT_PRODUCTS_BY_ID,
+      invoicesById: new Map([["inv-1", invoice()]]),
+      customersById: new Map([["cust-1", customer(c)]]),
+      from: "2026-07-01",
+      to: "2026-07-31",
+    });
+
+  it("SI-4: the CSV and the preview rows still carry the full taxpayer ID and retailer license", () => {
+    const report = build({ taxId: "32012345678", authLicenseNumber: "87654321" });
+    const csv = serializeReportCsv(report);
+    expect(csv).toContain("32012345678");
+    expect(csv).toContain("87654321");
+    expect(report.rows[0][1]).toBe("32012345678");
+    expect(report.warnings).toEqual([]);
+  });
+
+  it("SI-5: a malformed taxpayer ID and retailer license warn with the last 4 only", () => {
+    const report = build({ taxId: "123456789", authLicenseNumber: "1234567" });
+    const text = report.warnings.map((w) => w.message).join("\n");
+    expect(report.warnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(["INVALID_TAXPAYER_ID", "INVALID_RETAILER_LICENSE"]),
+    );
+    expect(text).toContain("ending 6789");
+    expect(text).toContain("ending 4567");
+    expect(text).not.toContain("123456789");
+    expect(text).not.toContain("1234567 ");
+    expect(JSON.stringify(report.warnings)).not.toMatch(/12345678|"1234567"/);
+    // the rows still carry what is stored (the filing is the one place the full value goes)
+    expect(report.rows[0][1]).toBe("123456789");
+  });
+});

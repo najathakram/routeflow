@@ -261,6 +261,9 @@ function walk(dir: string, found: string[]): void {
     if (/\.(spec|test)\./.test(name) || /\.d\.ts$/.test(name)) continue;
     const rel = relative(REPO_ROOT, full).split(sep).join("/");
     if (rel.startsWith("packages/pricing/src/")) continue;
+    // The ready-made marketing pages: copied static scripts (scroll maths, one fixed sample amount
+    // on the home page). No tenant money, and the copy must stay byte for byte.
+    if (rel.startsWith("apps/web/public/site/")) continue;
     found.push(rel);
   }
 }
@@ -722,7 +725,7 @@ const ALLOW: Allow[] = [
     note: "a web money site that PR-2 converts",
   },
   {
-    file: "apps/web/app/(dashboard)/credit-notes/page.tsx",
+    file: "apps/api/src/credit-notes/credit-note-summary.ts",
     form: "F3",
     count: 1,
     why: "percent",

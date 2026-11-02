@@ -32,6 +32,15 @@ const toOptionalMsrp = ({ value }: { value: unknown }) =>
       : value;
 
 export class UpdateProductDto {
+  /**
+   * SA-1082 A-1: the variants the person saving a family's price chose to move. No list means nothing moves. The server
+   * re-checks each one under the family's lock and moves only those still at the family's price.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @IsUUID("all", { each: true })
+  moveVariantIds?: string[];
   @IsOptional() @IsString() name?: string;
   /**
    * Reuse API (one-tx reactivation): with `isActive: true`, the ids of the ACTIVE products blocking the reactivation

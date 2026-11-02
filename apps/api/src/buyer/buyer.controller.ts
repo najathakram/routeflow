@@ -48,6 +48,7 @@ import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { omitStaffOnlyCustomerFields } from "../customers/self-service-fields";
+import { withTaxIdLast4 } from "../customers/customer-identity";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { UpdateBuyerOrderTemplateDto } from "../order-templates/dto/update-buyer-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
@@ -204,8 +205,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get buyer's customer profile at the selected seller" })
-  getProfile(@CurrentBuyerCustomer() ctx: any) {
-    return omitStaffOnlyCustomerFields(ctx.customer);
+  async getProfile(@CurrentBuyerCustomer() ctx: any) {
+    return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, ctx.customer));
   }
 
   @Get("orders")
@@ -1140,8 +1141,8 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get authenticated buyer's own profile" })
-  getMe(@CurrentBuyerCustomer() ctx: any) {
-    return omitStaffOnlyCustomerFields(ctx.customer);
+  async getMe(@CurrentBuyerCustomer() ctx: any) {
+    return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, ctx.customer));
   }
 
   @Patch("me")

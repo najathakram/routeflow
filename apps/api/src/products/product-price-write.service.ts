@@ -8,6 +8,7 @@ import {
   materializePack,
   planCellEdit,
   priceAuthority,
+  resolveFamilyCellEdits,
   priceSource,
   rowOf,
   roundMoney,
@@ -301,7 +302,10 @@ export class ProductPriceWriteService {
     // SA-809: every ref is the level's ref before anything reads it (a client may still send the factor-1 row's id).
     const level = (ref: string) => canonicalUnitRef(m.units, ref);
     const keeps = (dto.keeps ?? []).map((k) => ({ ...k, ref: level(k.ref) }));
-    const patches = dto.patches.map((p) => ({ ...p, ref: level(p.ref) }));
+    const patches = this.withFamilyEdits(
+      m,
+      dto.patches.map((p) => ({ ...p, ref: level(p.ref) })),
+    );
     const customerMoves = dto.customerMoves ?? [];
     if (patches.length === 0 && keeps.length === 0 && customerMoves.length === 0) {
       throw this.invalid(["There is nothing to save."]);
@@ -362,6 +366,29 @@ export class ProductPriceWriteService {
       throw this.invalid(["There is nothing to save."]);
     }
     return out;
+  }
+
+  /**
+   * SA-1082 rulings 6 and 7, on a variant's pack row: a blank box takes the family's number while Retail follows it, and
+   * a Retail typed away from the family's takes the tiers still at its value with it. They run through the same plan and
+   * undo as a typed cell. Anything left blank goes on to the ladder's own rules.
+   */
+  private withFamilyEdits(
+    m: PriceModel,
+    patches: readonly SavePricesRequest["patches"][number][],
+  ): SavePricesRequest["patches"][number][] {
+    const pack = patches.filter((p) => p.ref === "pack");
+    if (!m.familyCells || pack.length === 0) return [...patches];
+    const checked = pack.map((p) => ({ tier: p.tier, typed: validateSetPrice(p.to) }));
+    // A price the ladder would refuse keeps its own sentence: nothing here decides over it.
+    if (checked.some((c) => !c.typed.ok)) return [...patches];
+    const edits = checked.map((c) => ({ tier: c.tier, to: c.typed.ok ? c.typed.value : null }));
+    return [
+      ...patches.filter((p) => p.ref !== "pack"),
+      ...resolveFamilyCellEdits(m.familyCells, edits).map(
+        (e) => ({ ...e, ref: "pack" }) as SavePricesRequest["patches"][number],
+      ),
+    ];
   }
 
   /**
@@ -607,8 +634,8 @@ export class ProductPriceWriteService {
   }
 
   /**
-   * `priceAuthority` (@routeflow/pricing) decides per written cell: a base-level cell of a variant (or a family-linked
-   * recipe) belongs to the family in mode "on"; a FAMILY is edited on its own page; every other unit level is the
+   * `priceAuthority` (@routeflow/pricing) decides per written cell: a base-level cell of a family-linked recipe
+   * belongs to the family in mode "on"; a FAMILY is edited on its own page; a variant's cell and every other level is the
    * tenant's. The mode is read once per request; the recipe's family link only when the answer can depend on it.
    */
   private async assertNotGoverned(

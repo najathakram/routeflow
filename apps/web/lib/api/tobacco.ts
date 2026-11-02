@@ -56,7 +56,8 @@ export interface TobaccoSale {
   customer: {
     id: string;
     businessName: string;
-    tobaccoLicenseNo: string | null;
+    hasTobaccoLicense: boolean;
+    tobaccoLicenseLast4: string | null;
     tobaccoLicenseExpiry: string | null;
   };
   product: { id: string; name: string; sku?: string | null; unit?: string };

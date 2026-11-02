@@ -18,13 +18,15 @@ type RedactableEvent = {
     url?: string;
     query_string?: unknown;
     headers?: Record<string, string>;
+    data?: unknown;
   };
 };
 
 /**
  * `beforeSend` / `beforeSendTransaction` hook: redacts the key from `request.url`, `transaction` and the `path` tag, drops
- * `request.query_string` on by-key paths, and blanks any `Idempotency-Key` request header. Mutates and returns
- * the event; events that touch no by-key route and carry no such header are returned unchanged.
+ * `request.query_string` on by-key paths, blanks any `Idempotency-Key` request header, and drops the request body
+ * (`request.data`). Mutates and returns the event; an event with no by-key route, no such header and no body is
+ * returned unchanged.
  */
 export function redactSentryEvent<T extends RedactableEvent>(event: T): T {
   const req = event.request;
@@ -42,6 +44,9 @@ export function redactSentryEvent<T extends RedactableEvent>(event: T): T {
   const pathTag = event.tags?.path;
   if (typeof pathTag === "string" && HAS_BY_KEY.test(pathTag))
     event.tags!.path = redactKeyPath(pathTag);
+  // SA-1084: the Node SDK keeps an incoming request body (up to 10 KB) on an error event. A body can carry a tax ID,
+  // a license number or a password, and a list of keys grows, so the body goes whole; URL, route and stack stay.
+  if (req) delete req.data;
   if (req?.headers && typeof req.headers === "object") {
     for (const name of Object.keys(req.headers)) {
       if (name.toLowerCase() === "idempotency-key") req.headers[name] = "[Filtered]";

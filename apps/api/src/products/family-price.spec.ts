@@ -237,16 +237,25 @@ describe("propagateFamilyPrice (test 18, real ladder)", () => {
     return { rows, tx: fakeTx(rows, recipes) };
   }
 
-  it("copies all five columns to every variant and every non-override recipe; getTierPrice matches for t=1..5", async () => {
+  it("copies all five columns to every non-override recipe; getTierPrice matches for t=1..5", async () => {
     const { rows, tx } = fixture();
     const result = await propagateFamilyPrice(tx, { tenantId: "t1", familyId: "fam" });
-    expect(result).toEqual({ variants: 2, recipes: 1 });
+    expect(result).toEqual({ recipes: 1 });
     const fam = rows.find((r) => r.id === "fam")!;
-    for (const id of ["v1", "v2", "rec-inherit"]) {
-      const row = rows.find((r) => r.id === id)!;
-      for (const t of [1, 2, 3, 4, 5]) expect(getTierPrice(row, t)).toBe(getTierPrice(fam, t));
-      for (const col of FAMILY_PRICE_COLUMNS) expect(String(row[col])).toBe(String(fam[col]));
-    }
+    const row = rows.find((r) => r.id === "rec-inherit")!;
+    for (const t of [1, 2, 3, 4, 5]) expect(getTierPrice(row, t)).toBe(getTierPrice(fam, t));
+    for (const col of FAMILY_PRICE_COLUMNS) expect(String(row[col])).toBe(String(fam[col]));
+  });
+
+  it("SA-1082 A-1: never writes a variant, whatever it holds", async () => {
+    const { rows, tx } = fixture();
+    const before = rows
+      .filter((r) => r.id === "v1" || r.id === "v2")
+      .map((r) => String(r.pricePerUnit));
+    await propagateFamilyPrice(tx, { tenantId: "t1", familyId: "fam" });
+    expect(
+      rows.filter((r) => r.id === "v1" || r.id === "v2").map((r) => String(r.pricePerUnit)),
+    ).toEqual(before);
   });
 
   it("leaves an override recipe and another tenant's row untouched", async () => {
@@ -260,7 +269,7 @@ describe("propagateFamilyPrice (test 18, real ladder)", () => {
     const { rows, tx } = fixture();
     (rows[0] as any).priceTier4 = null;
     await propagateFamilyPrice(tx, { tenantId: "t1", familyId: "fam" });
-    expect(rows.find((r) => r.id === "v1")!.priceTier4).toBeNull();
+    expect(rows.find((r) => r.id === "rec-inherit")!.priceTier4).toBeNull();
   });
 
   it("writes one audit row naming the counts, and none when nothing changed", async () => {
@@ -271,11 +280,11 @@ describe("propagateFamilyPrice (test 18, real ladder)", () => {
       tenantId: "t1",
       entityType: "product",
       entityId: "fam",
-      meta: { variants: 2, recipes: 1 },
+      meta: { recipes: 1 },
     });
     const empty = fakeTx([{ id: "fam", tenantId: "t1", ...FAMILY_PRICES }]);
     await expect(propagateFamilyPrice(empty, { tenantId: "t1", familyId: "fam" })).resolves.toEqual(
-      { variants: 0, recipes: 0 },
+      { recipes: 0 },
     );
     expect(empty.auditLog.create).not.toHaveBeenCalled();
   });
@@ -293,9 +302,10 @@ describe("propagateFamilyPrice (test 18, real ladder)", () => {
     for (const call of tx.product.updateMany.mock.calls) {
       expect(call[0].where.tenantId).toBe("t1");
     }
-    // House lock order: the recipe products are written first, the variants (parentProductId) last.
-    const last = tx.product.updateMany.mock.calls.at(-1)!;
-    expect(last[0].where.parentProductId).toBe("fam");
+    // SA-1082 A-1: no many-write here ever selects variants.
+    for (const call of tx.product.updateMany.mock.calls) {
+      expect(call[0].where.parentProductId).toBeUndefined();
+    }
   });
 });
 
@@ -403,17 +413,14 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
 
-  // 19
-  it("ON: a variant tier PATCH -> 409 FAMILY_PRICE_AUTHORITY {familyId}, nothing written", async () => {
+  // 19, SA-1082 A-1: a variant's price is its own in both modes
+  it("ON: a variant tier PATCH is its own: written, and no family row is consulted for it", async () => {
     const service = await build("on");
-    const err = await service
-      .update("var1", { priceTier3: "1.00" } as any, {
-        packPrecondition: "internal",
-      })
-      .catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
-    expect(prisma.product.update).not.toHaveBeenCalled();
+    await service.update("var1", { priceTier3: "1.00" } as any, {
+      packPrecondition: "internal",
+    });
+    expect(written("var1")).toMatchObject({ priceTier3: "1.00" });
+    expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
 
   it("ON: a non-price PATCH on a variant is 200 and never consults the family", async () => {
@@ -425,18 +432,10 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     expect(prisma.product.updateMany).not.toHaveBeenCalled();
   });
 
-  it("ON: a variant re-save with equal prices is allowed and writes no price column", async () => {
-    const service = await build("on");
-    await service.update("var1", { priceTier3: "9.004", description: "x" } as any, {
-      packPrecondition: "internal",
-    });
-    const data = written("var1");
-    for (const col of FAMILY_PRICE_COLUMNS) expect(data[col]).toBeUndefined();
-  });
-
   // 18
-  it("ON: a family PATCH propagates in the same tx, after the family row lock, with one bulk emit", async () => {
+  it("ON: a family PATCH propagates to its recipes in the same tx, after the family row lock, with one bulk emit", async () => {
     const service = await build("on");
+    prisma.recipe.findMany.mockResolvedValue([{ productId: "rec1" }]);
     prisma.product.updateMany.mockResolvedValue({ count: 3 });
     prisma.product.update.mockImplementation(async ({ where, data }: any) => {
       rows[where.id] = { ...rows[where.id], ...data };
@@ -450,6 +449,14 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     expect(bulk).toHaveLength(1);
     const lock = (prisma.$queryRaw as jest.Mock).mock.invocationCallOrder;
     expect(lock).toBeDefined();
+  });
+
+  it("ON: a family PATCH that names no variant leaves every variant where it is", async () => {
+    const service = await build("on");
+    await service.update("fam", { priceTier3: "8.50" } as any, {
+      packPrecondition: "internal",
+    });
+    expect(prisma.product.update.mock.calls.map(([a]: any[]) => a.where.id)).toEqual(["fam"]);
   });
 
   it("ON: no bulk emit when the transaction rejects (L-237)", async () => {
@@ -540,17 +547,20 @@ describe("ProductsService family price authority (tests 16, 18-22)", () => {
     const service = await build("on");
     await service.create(createDto() as any, { reparentVia: "editor" } as any);
     const data = prisma.product.create.mock.calls[0][0].data;
+    // the dto's Retail equals the family's, so the tiers it didn't name stay the family's
     for (const col of FAMILY_PRICE_COLUMNS)
-      expect(String(data[col])).toBe(String(FAMILY_PRICES[col]));
+      expect(Number(data[col])).toBe(Number(FAMILY_PRICES[col]));
   });
 
-  it("ON: variant create with an explicit differing tier -> 409 FAMILY_PRICE_AUTHORITY", async () => {
+  it("ON: variant create with a typed tier keeps that tier, the rest stay the family's", async () => {
     const service = await build("on");
-    const err = await service
-      .create(createDto({ priceTier2: "1.00" }) as any, { reparentVia: "editor" } as any)
-      .catch((e) => e);
-    expect(err.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" });
-    expect(prisma.product.create).not.toHaveBeenCalled();
+    await service.create(
+      createDto({ priceTier2: "1.00" }) as any,
+      { reparentVia: "editor" } as any,
+    );
+    const data = prisma.product.create.mock.calls[0][0].data;
+    expect(String(data.priceTier2)).toBe("1.00");
+    expect(String(data.priceTier3)).toBe(String(FAMILY_PRICES.priceTier3));
   });
 
   it("OFF: variant create keeps today's inheritance from the parent", async () => {
