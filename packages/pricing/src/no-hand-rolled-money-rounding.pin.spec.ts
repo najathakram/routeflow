@@ -725,7 +725,7 @@ const ALLOW: Allow[] = [
     note: "a web money site that PR-2 converts",
   },
   {
-    file: "apps/web/app/(dashboard)/credit-notes/page.tsx",
+    file: "apps/api/src/credit-notes/credit-note-summary.ts",
     form: "F3",
     count: 1,
     why: "percent",
