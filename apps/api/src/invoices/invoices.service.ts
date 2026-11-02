@@ -181,6 +181,13 @@ import {
 } from "./stored-tax-state";
 import { buildInvoiceEmailPayload } from "./invoice-email-payload";
 import { sortInvoiceLines } from "./invoice-line-order";
+import {
+  LINE_NAME_PRODUCT_SELECT,
+  ORDER_LINE_PRODUCT_SELECT,
+  displayLineDescription,
+  lineProductName,
+  withFamilyNames,
+} from "./invoice-line-name";
 import { retakeDuplicateTaxRates } from "./duplicate-tax-rates";
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
@@ -629,14 +636,7 @@ export class InvoicesService {
           where: { status: { not: "CANCELLED" } },
           include: {
             components: { orderBy: { position: "asc" } },
-            product: {
-              select: {
-                name: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            },
+            product: { select: ORDER_LINE_PRODUCT_SELECT },
           },
         },
       },
@@ -969,8 +969,8 @@ export class InvoicesService {
       "buildInvoiceItemData",
     );
     return {
-      // Catalog lines use the product name; unlisted lines carry a free-text `name`.
-      description: li.product?.name ?? li.name ?? `Product`,
+      // Catalog lines use the product's display name ("<Family> - <Variant>"); unlisted lines carry a free-text `name`.
+      description: li.product ? lineProductName(li.product) : (li.name ?? `Product`),
       productId: li.productId,
       // Provenance back to the source order line (null for freeform lines).
       orderItemId: li.id ?? null,
@@ -1590,14 +1590,7 @@ export class InvoicesService {
           where: { status: { not: "CANCELLED" } },
           include: {
             components: { orderBy: { position: "asc" } },
-            product: {
-              select: {
-                name: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            },
+            product: { select: ORDER_LINE_PRODUCT_SELECT },
           },
         },
       },
@@ -1814,14 +1807,7 @@ export class InvoicesService {
           where: { status: { not: "CANCELLED" } },
           include: {
             components: { orderBy: { position: "asc" } },
-            product: {
-              select: {
-                name: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            },
+            product: { select: ORDER_LINE_PRODUCT_SELECT },
           },
         },
       },
@@ -1910,14 +1896,7 @@ export class InvoicesService {
           where: { status: { not: "CANCELLED" } },
           include: {
             components: { orderBy: { position: "asc" } },
-            product: {
-              select: {
-                name: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            },
+            product: { select: ORDER_LINE_PRODUCT_SELECT },
           },
         },
       },
@@ -2425,14 +2404,7 @@ export class InvoicesService {
           where: { status: { not: "CANCELLED" } },
           include: {
             components: { orderBy: { position: "asc" } },
-            product: {
-              select: {
-                name: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            },
+            product: { select: ORDER_LINE_PRODUCT_SELECT },
           },
         },
       },
@@ -2655,14 +2627,7 @@ export class InvoicesService {
           where: { status: { not: "CANCELLED" } },
           include: {
             components: { orderBy: { position: "asc" } },
-            product: {
-              select: {
-                name: true,
-                unitsPerBox: true,
-                trackedCategoryId: true,
-                trackedSubcategoryId: true,
-              },
-            },
+            product: { select: ORDER_LINE_PRODUCT_SELECT },
           },
         },
       },
@@ -3015,7 +2980,9 @@ export class InvoicesService {
         items: {
           include: {
             components: { orderBy: { position: "asc" } }, // #2717 M3: frozen sub-lines
-            product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
+            product: {
+              select: { id: true, unit: true, unitsPerBox: true, ...LINE_NAME_PRODUCT_SELECT },
+            },
             // RF-2-lite: surface the regulated category/subcategory NAME so clients can
             // label regulated lines (previously only the trackedCategoryId was returned).
             trackedCategory: {
@@ -3082,7 +3049,9 @@ export class InvoicesService {
         (await this.resolveTenantInvoiceDefaults()).timezone,
       ),
       revisedAt: (await revisedAtByInvoice(this.prisma.forTenant(), [id])).get(id) ?? null,
-      items: sortInvoiceLines(await du.itemsWithDisplayUnits(db, inv, this.entitlements)), // SA-1058; #2717 M3 + SA-827
+      items: withFamilyNames(
+        sortInvoiceLines(await du.itemsWithDisplayUnits(db, inv, this.entitlements)),
+      ), // SA-1058; #2717 M3 + SA-827; the order reads the stored text, the family name composes after it
       payments: withNoLongerFits(inv).payments, // W-769: each row's derived noLongerFits flag
       hideOriginalPrice,
       ...listRowFlags(inv), // row 401 paidAtSale + SA-1026 toCollect
@@ -4078,9 +4047,10 @@ export class InvoicesService {
   }
 
   async duplicate(id: string, actor?: JwtPayload, ack?: iGate.Ack) {
-    const inv = await this.prisma
-      .forTenant()
-      .invoice.findUnique({ where: { id }, include: { items: true } });
+    const inv = await this.prisma.forTenant().invoice.findUnique({
+      where: { id },
+      include: { items: { include: { product: { select: LINE_NAME_PRODUCT_SELECT } } } },
+    });
     if (!inv) throw new NotFoundException("Invoice not found");
     // RF-011: order-linked invoices must not be duplicated — the order is the
     // canonical billing source and a second copy would double-bill the customer.
@@ -4106,7 +4076,7 @@ export class InvoicesService {
     // Duplicate carries each line's already-correct stored subtotal + boxes/pieces
     // split verbatim (recomputing qty*unitPrice would over-charge boxed lines).
     const itemsData = inv.items.map((i) => ({
-      description: i.description,
+      description: displayLineDescription(i.description, i.product), // a copy is a NEW line: a bare variant name is stored composed
       productId: i.productId,
       qty: i.qty,
       unitPrice: i.unitPrice,
