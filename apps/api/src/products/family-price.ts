@@ -386,7 +386,7 @@ export function ownRetailTierBlanks(input: {
   const cells = familyCellsFor(family, variant);
   if (retail === undefined || retail === null || !cells) return {};
   const to = roundMoney(Number(retail));
-  if (to === roundMoney(getTierPrice(variant, 1))) return {};
+  if (to === effectiveLadder(variant)[0]) return {};
   const typed = [2, 3, 4, 5].flatMap((tier) => {
     const col = FAMILY_PRICE_COLUMNS[tier - 1] as FamilyPriceColumn;
     const value = dto[col];
