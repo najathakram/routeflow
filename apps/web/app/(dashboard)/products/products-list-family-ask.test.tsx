@@ -125,7 +125,7 @@ describe("VM-W1: a family's price on the products list", () => {
     mockPreview.mockResolvedValue(TWO);
     mockSave.mockResolvedValue({ id: "f1", movedVariants: 2 });
     await typeTier(user, "23", /Acme Family/);
-    expect(mockPush, "clicking the cell stays on the list").not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
     await user.click(await screen.findByTestId("family-move-confirm"));
     await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
     expect(Number(mockPreview.mock.calls[0][1].priceTier2)).toBe(23);

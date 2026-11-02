@@ -40,7 +40,7 @@ for (const vp of VIEWPORTS) {
       expect(made.ok(), `POST /products/families returned ${made.status()}`).toBe(true);
       const at = await productBySku(page, ctx, skuAt);
       const off = await productBySku(page, ctx, skuOff);
-      const familyId: string = at.parentProductId;
+      const familyId = (at as unknown as { parentProductId: string }).parentProductId;
 
       const patch = async (id: string, data: Record<string, unknown>) => {
         const res = await page.request.patch(`${ctx.api}/products/${id}`, {
