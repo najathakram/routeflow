@@ -10,7 +10,7 @@ describe("OrdersController batch-ship / packing-slips (#3168)", () => {
   it("delegates to the services", async () => {
     const batch = { batchShip: jest.fn(async () => ({ results: [] })) };
     const slips = { generate: jest.fn(async () => ({ url: null, included: [], skipped: [] })) };
-    const c = new OrdersController({} as any, {} as any, batch as any, slips as any);
+    const c = new OrdersController({} as any, {} as any, batch as any, slips as any, {} as any);
     const user = { sub: "u" } as any;
     await c.batchShip({ orders: [{ orderId: "a", carrier: "UPS" }] } as any, user);
     expect(batch.batchShip).toHaveBeenCalledWith(

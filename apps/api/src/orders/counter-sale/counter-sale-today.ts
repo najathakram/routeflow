@@ -33,7 +33,12 @@ import type {
   TodaysSalesSummary,
 } from "@routeflow/types";
 import { ACCRUAL_CREDIT_NOTE_FILTER } from "../../common/invoiced-sales";
-import { checkReferenceOf, counterMethodOf, servedChange } from "./counter-sale-readback";
+import {
+  checkReferenceOf,
+  counterMethodOf,
+  servedCashTendered,
+  servedChange,
+} from "./counter-sale-readback";
 import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
 import { rollupToCollect, toCollectState } from "../../invoices/to-collect";
 import { refundTenderOfColumn } from "../../returns/refund-tender";
@@ -996,7 +1001,7 @@ export function toTodaysSaleRow(
     paymentState,
     // SA-1026: "To collect" from the LIVE invoices' intent + status (one rule, invoices/to-collect.ts); staff only
     toCollect: rollupToCollect(live.map((i) => toCollectState(i))),
-    cashTendered: o.counterCashTendered == null ? null : roundMoney(num(o.counterCashTendered)),
+    cashTendered: servedCashTendered(o.counterCashTendered, payments),
     change: servedChange(o.counterCashTendered, payments, balanceDue),
     // ONE home for the rate (pricing): a STORED line rate, corroborated by the configured rate; never inferred
     taxRatePercent: storedTaxRatePercent(
