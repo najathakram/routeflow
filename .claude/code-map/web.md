@@ -76,3 +76,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-02-y.md](web/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): FamilyMoveAsk, identity form, static site pages, delete copy |
 | [web/landing-2026-11-02-z.md](web/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): customers list edit door, four static site pages, verify fs-read specs |
 | [web/landing-2026-11-02-ac.md](web/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes tiles from the summary, live stock note under each order line |
+| [web/landing-2026-11-02-ad.md](web/landing-2026-11-02-ad.md) | Train ad (4b2516c9f2..9e782a5dfc): product insights page, cleared tier blank in Quick Edit, site wording, refusal copy |
