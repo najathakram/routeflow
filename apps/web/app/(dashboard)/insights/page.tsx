@@ -14,7 +14,7 @@ export default function InsightsPage() {
   const { setTitle } = usePageTitle();
 
   React.useEffect(() => {
-    setTitle("Product insights");
+    setTitle("Insights");
   }, [setTitle]);
 
   return (
