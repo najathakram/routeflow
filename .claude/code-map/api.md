@@ -110,3 +110,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-02-w.md](api/landing-2026-11-02-w.md) | Train w (d3ab3e7eff..96aedaf2c0): Privacy/Terms version constants, Dependabot group bump; no migration |
 | [api/landing-2026-11-02-y.md](api/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): family-move ask, customer identity omit, deliveredQty, delete guard; no migration |
 | [api/landing-2026-11-02-z.md](api/landing-2026-11-02-z.md) | Train z (904cbbec87..93282c147c): inline STORE_CREDIT capture in one transaction, served cash tendered gate; no migration |
+| [api/landing-2026-11-02-ac.md](api/landing-2026-11-02-ac.md) | Train ac (93282c147c..4b2516c9f2): credit-notes summary, live stock read, run detail fallback; no migration |

@@ -911,3 +911,19 @@ describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice 
     );
   });
 });
+
+describe("SA-1091 AC-16: the app-wide toast names the room left on an order-wide over-credit", () => {
+  it.each(["RETURN_REFUND_OVER_LINE_HEADROOM", "CREDIT_NOTE_OVER_HEADROOM"])(
+    "%s with orderBound and remaining shows the amount, never the server text",
+    (code) => {
+      const err = {
+        response: {
+          status: 409,
+          data: { code, orderBound: true, remaining: 6.74, message: "raw" },
+        },
+      };
+      expect(genericToastCopy(err)).toContain("$6.74 is left to give back");
+      expect(genericToastCopy(err)).not.toContain("raw");
+    },
+  );
+});

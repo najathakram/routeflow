@@ -14,13 +14,25 @@ import {
   exportTailWarning,
   filenameFromDisposition,
 } from "@/lib/csv-export-request";
+import { FullInsightsLink } from "./FullInsightsLink";
 
 /**
  * "Download product sales CSV" — GET /analytics/products/:id/insights.csv (the sales lines
  * behind the Demand / Sales cards). Hidden for roles the endpoint refuses and for a plan
  * without flag.analytics (the same gate the endpoint enforces), never a broken button.
+ *
+ * SA-1087: also carries the "Full insights" link to the dedicated page, so the product page file
+ * (at its size cap) gains no lines. The insights page passes `hideFullLink`: no link to itself.
  */
-export function ProductInsightsExport({ productId, sku }: { productId: string; sku: string }) {
+export function ProductInsightsExport({
+  productId,
+  sku,
+  hideFullLink = false,
+}: {
+  productId: string;
+  sku: string;
+  hideFullLink?: boolean;
+}) {
   const { user } = useAuth();
   const { toast } = useToast();
   const analytics = usePlanFlag("flag.analytics");
@@ -98,6 +110,7 @@ export function ProductInsightsExport({ productId, sku }: { productId: string; s
       >
         {busy ? "Exporting…" : "Download product sales CSV"}
       </Button>
+      {!hideFullLink && <FullInsightsLink productId={productId} />}
     </div>
   );
 }

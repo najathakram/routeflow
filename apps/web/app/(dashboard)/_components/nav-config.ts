@@ -147,7 +147,9 @@ export function defaultOpenGroup(nav: NavEntry[], pathname: string): string | nu
 
 /** The sidebar label for the operator route `pathname` sits under (longest matching leaf href), so
  *  a lock card can name the feature the person actually clicked. */
-export function navLabelForPath(pathname: string): string | null {
+export function navLabelForPath(rawPathname: string): string | null {
+  // SA-1087: the product insights pages are part of Analytics, which has the one sidebar entry.
+  const pathname = /^\/insights(\/|$)/.test(rawPathname) ? "/analytics" : rawPathname;
   let best: NavLeaf | null = null;
   const consider = (leaf: NavLeaf) => {
     const hit = pathname === leaf.href || pathname.startsWith(leaf.href + "/");
