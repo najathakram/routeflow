@@ -72,6 +72,7 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { omitStaffOnlyCustomerFields } from "./self-service-fields";
+import { withTaxIdLast4 } from "./customer-identity";
 import { type SelfServiceWriteArgs, writeSelfServiceProfile } from "./self-service-audit";
 import { toCustomerOrder } from "../common/staff-only-fields";
 import { customerUpdateData } from "./customer-update-data";
@@ -338,7 +339,7 @@ export class CustomersService {
       },
     });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return omitStaffOnlyCustomerFields(customer);
+    return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, customer));
   }
 
   async updateMyProfile(user: JwtPayload, dto: UpdateBuyerProfileDto) {
@@ -376,9 +377,13 @@ export class CustomersService {
     ) {
       throw new ForbiddenException();
     }
-    // A customer reading its own record gets the customer-facing shape; staff and drivers keep the full row.
-    if (user.role === UserRole.CUSTOMER) return omitStaffOnlyCustomerFields(customer);
-    return customer;
+    // A customer reading its own record gets the customer-facing shape; staff keep the row, and a driver reads the
+    // row without any identity value (SA-1084). The customer and staff get the tax ID as its last 4 only.
+    if (user.role === UserRole.CUSTOMER) {
+      return omitStaffOnlyCustomerFields(await withTaxIdLast4(this.prisma, customer));
+    }
+    if (user.role === UserRole.DRIVER) return customer;
+    return withTaxIdLast4(this.prisma, customer);
   }
 
   async create(dto: CreateCustomerDto) {
@@ -654,7 +659,13 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     assertWalkInLoginUntouched(existing, dto); // the walk-in customer's sign-in email stays fixed
-    assertSafeCustomerUpdate(dto, existing, options?.compliance); // B956 / B984 / B964
+    // B964's change-only license guard compares with the stored value, so the importer path reads it (SA-1084).
+    const stored = options?.compliance
+      ? await this.prisma
+          .forTenant()
+          .customer.findUnique({ where: { id }, select: { tobaccoLicenseNo: true } })
+      : null;
+    assertSafeCustomerUpdate(dto, { ...existing, ...stored }, options?.compliance); // B956 / B984 / B964
     const updated = await this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),

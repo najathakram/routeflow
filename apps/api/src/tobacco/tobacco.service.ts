@@ -6,6 +6,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import { TobaccoRangeDto } from "./dto/tobacco-range.dto";
 import { UpdateTobaccoSettingsDto } from "./dto/update-tobacco-settings.dto";
+import { last4 } from "../customers/customer-identity-fields";
 
 /** Sales that count for tobacco reporting — mirrors analytics revenue rules. */
 const REAL_INVOICE_STATUSES = { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] as any };
@@ -163,7 +164,17 @@ export class TobaccoService {
       date: i.invoice.issueDate,
       invoiceId: i.invoice.id,
       invoiceNumber: i.invoice.invoiceNumber,
-      customer: i.invoice.customer,
+      // SA-1084: a customer's license number is write-only for staff; the pack shows its last 4.
+      customer: i.invoice.customer
+        ? {
+            id: i.invoice.customer.id,
+            businessName: i.invoice.customer.businessName,
+            tobaccoLicenseExpiry: i.invoice.customer.tobaccoLicenseExpiry,
+            // the badge asks the server: the same truthiness the panel read from the stored value
+            hasTobaccoLicense: Boolean(i.invoice.customer.tobaccoLicenseNo),
+            tobaccoLicenseLast4: last4(i.invoice.customer.tobaccoLicenseNo),
+          }
+        : null,
       product: i.product,
       qty: Number(i.qty),
       unitPrice: Number(i.unitPrice),
