@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, TenantStatus } from "@prisma/client";
 import { isApprovedTestTenantSlug } from "../common/tenant-class.util";
 
 /** SA-1083: days a tenant stays closed, and days since its closing notice, before a purge can be proven. */
@@ -14,8 +14,8 @@ export function isClosedTenantState(t: {
   readOnlyReason: string | null | undefined;
 }): boolean {
   return (
-    t.status === "CANCELLED" ||
-    (t.status === "READ_ONLY" && t.readOnlyReason === CLOSED_READ_ONLY_REASON)
+    t.status === TenantStatus.CANCELLED ||
+    (t.status === TenantStatus.READ_ONLY && t.readOnlyReason === CLOSED_READ_ONLY_REASON)
   );
 }
 
