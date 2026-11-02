@@ -114,7 +114,7 @@ import {
 import { keptLabelsNote } from "@/lib/kept-labels-copy";
 import { isStaffRole } from "@/lib/default-unit-line";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { familyMoveResult, useFamilyMoveAsk } from "@/components/family/FamilyMoveAsk";
+import { familyMoveToast, useFamilyMoveAsk } from "@/components/family/FamilyMoveAsk";
 
 /** The edit form's Flavor / variety input ("assign name" focuses it). */
 const VARIANT_NAME_INPUT_ID = "edit-variant-name";
@@ -226,7 +226,6 @@ export default function ProductDetailPage() {
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const familyMove = useFamilyMoveAsk();
-  const familyAsking = React.useRef(false);
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const variantSubmittingRef = React.useRef(false);
@@ -497,7 +496,7 @@ export default function ProductDetailPage() {
 
   const saveEdit = async () => {
     // No double submit: the Save button is disabled while pending, this covers Enter / a fast second tap.
-    if (updateProduct.isPending || familyAsking.current) return;
+    if (updateProduct.isPending) return;
     const draft = editDraft as Record<string, string>;
     const selectedParent = draft.parentProductId
       ? allProducts.find((p: any) => p.id === draft.parentProductId)
@@ -519,21 +518,10 @@ export default function ProductDetailPage() {
     const unitsPerBoxToSend = draft.unitsPerBox?.trim()
       ? parseInt(draft.unitsPerBox, 10)
       : pendingPackSizeRef.current;
-    const pricePatch = pricesInWindow
-      ? {}
-      : detailsPricePatch(product, draft, pricesWhenEditStartedRef.current);
-    // SA-1082 A-1: a family save that changes a price asks first. Closing the question saves nothing.
-    let moveVariantIds: string[] | undefined;
-    if (isFamily && Object.values(pricePatch).some((v) => v !== undefined)) {
-      familyAsking.current = true;
-      const answer = await familyMove.ask(id, {
-        ...pricePatch,
-        ...(unitsPerBoxToSend ? { unitsPerBox: unitsPerBoxToSend } : {}),
-      });
-      familyAsking.current = false;
-      if (!answer) return;
-      moveVariantIds = answer.moveVariantIds;
-    }
+    const opened = pricesWhenEditStartedRef.current;
+    const pricePatch = pricesInWindow ? {} : detailsPricePatch(product, draft, opened);
+    const priced = await familyMove.askOnSave(isFamily ? id : null, pricePatch, unitsPerBoxToSend);
+    if (!priced) return;
     updateProduct.mutate(
       {
         id: id,
@@ -556,8 +544,7 @@ export default function ProductDetailPage() {
         // Only a price the operator changed is sent: a price save elsewhere on the page moves prices outside this
         // form, so the snapshot it opened with must never be written back. Untouched tiers move with a list change exactly like
         // the products list (applyLadderChange, audit 2026-10-14).
-        ...pricePatch,
-        ...(moveVariantIds ? { moveVariantIds } : {}),
+        ...priced,
         unitsPerBox: unitsPerBoxToSend,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
@@ -593,11 +580,10 @@ export default function ProductDetailPage() {
         // (startEdit re-seeds the draft, so closing early threw the operator's edits away).
         onSuccess: (data: { keptLabels?: string[]; movedVariants?: number }) => {
           const kept = keptLabelsNote(data?.keptLabels);
-          const moved = familyMoveResult(moveVariantIds?.length ?? 0, data?.movedVariants);
           toast(
             kept
               ? { title: "Product moved", description: kept, variant: "success" }
-              : { title: "Saved", ...(moved ? { description: moved } : {}), variant: "success" },
+              : { title: "Saved", ...familyMoveToast(priced, data), variant: "success" },
           );
           setEditDraft({});
           setIsEditing(false);

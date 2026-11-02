@@ -105,6 +105,15 @@ function FamilyMoveQuestion({
   );
 }
 
+/** The toast's description after a save that named variants, or nothing to add. */
+export function familyMoveToast(
+  sent: { moveVariantIds?: string[] },
+  saved: { movedVariants?: number } | undefined,
+): { description?: string } {
+  const description = familyMoveResult(sent.moveVariantIds?.length ?? 0, saved?.movedVariants);
+  return description ? { description } : {};
+}
+
 /**
  * SA-1082 A-1: each family save that changes a price asks first. `ask` reads who's at the family's price and resolves with
  * what the save should carry: no question when nobody is, the ids on Move them, none on Keep their prices, null when
@@ -112,6 +121,12 @@ function FamilyMoveQuestion({
  */
 export function useFamilyMoveAsk(): {
   ask: (familyId: string, prices: FamilyPrices) => Promise<FamilyMoveAnswer>;
+  /** A save's price patch with what it should carry; null stops it. Not a family (null id), or no price in it: no question. */
+  askOnSave: <T extends FamilyPrices>(
+    familyId: string | null,
+    pricePatch: T,
+    unitsPerBox?: number | null,
+  ) => Promise<(T & { moveVariantIds?: string[] }) | null>;
   dialog: React.ReactNode;
 } {
   const { toast } = useToast();
@@ -137,5 +152,19 @@ export function useFamilyMoveAsk(): {
     [toast],
   );
 
-  return { ask, dialog: <FamilyMoveQuestion opener={opener} /> };
+  const asking = React.useRef(false);
+  const askOnSave = async <T extends FamilyPrices>(
+    familyId: string | null,
+    pricePatch: T,
+    unitsPerBox?: number | null,
+  ) => {
+    if (asking.current) return null; // a second tap while the first is still asking
+    if (!familyId || !Object.values(pricePatch).some((v) => v !== undefined)) return pricePatch;
+    asking.current = true;
+    const answer = await ask(familyId, { ...pricePatch, ...(unitsPerBox ? { unitsPerBox } : {}) });
+    asking.current = false;
+    return answer && { ...pricePatch, ...answer };
+  };
+
+  return { ask, askOnSave, dialog: <FamilyMoveQuestion opener={opener} /> };
 }

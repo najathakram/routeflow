@@ -183,7 +183,7 @@ describe("K11-20c: where every legacy-card control lives after the change (secti
     expect(page).toContain("{!isFamily && !pricesInWindow && priceEachRow}");
     expect(page).toContain("Set all to {tierOneLabel(tierLabels)}");
     expect(page).toMatch(
-      /const pricePatch = pricesInWindow\s*\? \{\}\s*: detailsPricePatch\(product, draft, pricesWhenEditStartedRef\.current\)/,
+      /const opened = pricesWhenEditStartedRef\.current;\s*const pricePatch = pricesInWindow \? \{\} : detailsPricePatch\(product, draft, opened\)/,
     );
   });
 
