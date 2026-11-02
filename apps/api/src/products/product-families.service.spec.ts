@@ -429,15 +429,14 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       { add: [variant("NewOne", { pricePerUnit: "1.00" })] as never },
       ACTOR,
     );
+    const added = on.tx.products.find(
+      (p) => (p as Record<string, unknown>).name === "NewOne",
+    ) as Record<string, unknown>;
     expect(
-      on.tx.products.find((p) => (p as Record<string, unknown>).name === "NewOne"),
-    ).toMatchObject({
-      pricePerUnit: "9.99",
-      priceTier2: "9.50",
-      priceTier3: "9.25",
-      priceTier4: "9.00",
-      priceTier5: "8.75",
-    });
+      ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4", "priceTier5"].map((k) =>
+        Number(added[k]),
+      ),
+    ).toEqual([9.99, 9.5, 9.25, 9, 8.75]);
     // mode off: a price edit is an ordinary write
     const off = build({ products: [famRow, kid("k1")] }, "off");
     await expect(

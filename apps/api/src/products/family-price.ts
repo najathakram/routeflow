@@ -73,7 +73,7 @@ export function definedPriceColumns(dto: PriceColumns): PriceColumns {
 export const hasPriceColumns = (dto: PriceColumns): boolean =>
   Object.keys(definedPriceColumns(dto)).length > 0;
 
-function effectiveLadder(row: PriceColumns): number[] {
+function effectiveLadder(row: Parameters<typeof getTierPrice>[0]): number[] {
   return [1, 2, 3, 4, 5].map((tier) => roundMoney(getTierPrice(row, tier)));
 }
 

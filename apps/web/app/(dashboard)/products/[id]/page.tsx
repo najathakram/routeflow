@@ -225,7 +225,7 @@ export default function ProductDetailPage() {
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
-  const familyMove = useFamilyMoveAsk();
+  const famMove = useFamilyMoveAsk();
   const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const variantSubmittingRef = React.useRef(false);
@@ -520,7 +520,7 @@ export default function ProductDetailPage() {
       : pendingPackSizeRef.current;
     const opened = pricesWhenEditStartedRef.current;
     const pricePatch = pricesInWindow ? {} : detailsPricePatch(product, draft, opened);
-    const priced = await familyMove.askOnSave(isFamily ? id : null, pricePatch, unitsPerBoxToSend);
+    const priced = isFamily ? await famMove.askFor(id, pricePatch, unitsPerBoxToSend) : pricePatch;
     if (!priced) return;
     updateProduct.mutate(
       {
@@ -1284,7 +1284,7 @@ export default function ProductDetailPage() {
       )}
       {reactivateFlow.dialog}
       {deleteFlow.dialog}
-      {familyMove.dialog}
+      {famMove.dialog}
       <ConfirmDialog
         open={pendingImageDelete !== null}
         onClose={() => {

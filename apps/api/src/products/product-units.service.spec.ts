@@ -107,12 +107,10 @@ describe("ProductUnitsService price guard (row 749)", () => {
     expect(tx.productUnit.create).toHaveBeenCalled();
   });
 
-  it("mode on: a variant's factor-1 price is refused with a 409 and writes nothing", async () => {
+  it("mode on: a variant's factor-1 price is its own too, and is written (SA-1082 A-1 ruling 8)", async () => {
     const { service, tx } = build({ product: variantProduct, mode: "on" });
-    await expect(
-      service.create("p1", { label: "Each", factorToBase: 1, price: 4 }),
-    ).rejects.toThrow(ConflictException);
-    expect(tx.productUnit.create).not.toHaveBeenCalled();
+    await service.create("p1", { label: "Piece", factorToBase: 1, price: 4 });
+    expect(tx.productUnit.create).toHaveBeenCalled();
   });
 
   it("a recipe is refused only with a family link and no override in mode on", async () => {
