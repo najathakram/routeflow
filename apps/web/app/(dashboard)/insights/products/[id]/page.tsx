@@ -27,7 +27,7 @@ export default function ProductInsightsPage() {
   }, [setTitle, product]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <PageHeader
         title={product ? displayProductName(product) : "Product insights"}
         subtitle={product?.sku ? `SKU ${product.sku}` : undefined}

@@ -248,6 +248,23 @@ describe("PlanGateBoundary (B449)", () => {
       expect(screen.getByText("Supplier bills isn't on the Lite plan.")).toBeInTheDocument();
     });
 
+    it("SA-1087 IN-3: a product insights page shows the lock /analytics shows, naming Analytics", () => {
+      render(
+        <PlanGateBoundary
+          planGateKey="flag.analytics"
+          pathname="/insights/products/p1"
+          subscription={subscription}
+          subscriptionResolved
+          subscriptionErrored={false}
+        >
+          <GatedPage onMount={jest.fn()} />
+        </PlanGateBoundary>,
+      );
+      expect(mockSetTitle).toHaveBeenCalledWith("Analytics");
+      expect(screen.getByText("Analytics isn't on the Lite plan.")).toBeInTheDocument();
+      expect(screen.queryByTestId("gated-page-content")).not.toBeInTheDocument();
+    });
+
     it("marks the pathname locked while rendering the lock, and releases it on unmount", () => {
       const { unmount } = render(
         <PlanGateBoundary
