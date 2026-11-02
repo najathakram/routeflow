@@ -1078,7 +1078,7 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
         orderId: "order-1",
         subtotal: 50,
         discount: 0,
-        taxAmount: 2.5,
+        taxAmount: 4.5, // 2.50 regular tax + the 2.00 excise: an invoice's tax includes its category tax
         items: [
           {
             id: "invitem-1",

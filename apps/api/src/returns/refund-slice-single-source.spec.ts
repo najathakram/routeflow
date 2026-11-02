@@ -6,8 +6,7 @@
  *
  * This spec fails, naming the file, when the code (comments ignored) of any file under `returns/` or `credit-notes/`
  * contains slice math (`... billedSubtotal) / billed`, or `creditedThrough(`) outside the allowlist below. The allowlist
- * only shrinks: the inline returns pricer until it migrates onto the helper (a follow-up row), and
- * `planProductRefund`'s qty-fill bound, whose `price` is a refusal bound and no longer a money source.
+ * only shrinks (the inline returns pricer left it in SA-1091 A-1): `planProductRefund`'s qty-fill bound, whose `price` is a refusal bound and no longer a money source.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -17,8 +16,6 @@ const ROOTS = ["returns", "credit-notes"].map((d) => path.join(SRC, d));
 
 /** Why each allowlisted file may still hold slice math. Never add a file: move it onto the helper. */
 const ALLOWLIST: Readonly<Record<string, string>> = {
-  "returns/inline-returns-pricing.ts":
-    "inline pricer: migrates to the helper in a follow-up row (SA-840 G3/G8)",
   "credit-notes/line-credit-headroom.ts":
     "planProductRefund's refusal bound: not a money source since SA-840",
 };

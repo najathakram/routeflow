@@ -47,7 +47,9 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
     prisma.invoice.findMany.mockImplementation(async ({ where }: any) => {
       if (where?.id?.in) return invoices.filter((i) => where.id.in.includes(i.id));
       const notIn: string[] = where?.status?.notIn ?? [];
-      return invoices.filter((i) => !notIn.includes(i.status)).map((i) => ({ id: i.id }));
+      return invoices
+        .filter((i) => !notIn.includes(i.status))
+        .map((i) => ({ id: i.id, total: i.total }));
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
     prisma.return.findFirst.mockResolvedValue({ id: "ret-1", status: "RECEIVED" });
@@ -372,7 +374,7 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         "SELECT pg_advisory_xact_lock_shared(hashtext('counter-close'), hashtext(?))",
       );
       expect(raw[1].values).toEqual(["test-tenant:main"]);
-      expect(raw).toHaveLength(5);
+      expect(raw).toHaveLength(6); // + the claim's invoice write (SA-1091)
       expect(raw[2].text).toMatch(/FROM "Return" WHERE id/);
     });
 
@@ -455,6 +457,9 @@ describe("ReturnsService.processRefund EXTERNAL_REFUND: paid-in-full, locked, te
         expect.stringMatching(/FROM "Return" WHERE id = \? AND .* FOR UPDATE/),
         expect.stringMatching(/FROM "Order" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
         expect.stringMatching(/FROM "Invoice" WHERE id IN \(.*\).*ORDER BY id FOR UPDATE/),
+        // SA-1091: the claim then WRITES the locked invoices (a new row version), so a lump credit note that queued behind the
+        // same lock re-reads under its Serializable retry and sees this refund
+        expect.stringMatching(/^UPDATE "Invoice" SET "updatedAt" = now\(\) WHERE id IN/),
       ]);
     });
   });

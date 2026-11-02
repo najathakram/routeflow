@@ -400,6 +400,148 @@ export async function loadUnlinkedRefundReturns(
 }
 
 /**
+ * SA-1091 piece 1 (row 631): THE order-wide bound. Every value-giver (a credit note, a recorded refund, an inline refund, an
+ * inline store credit) reads this one figure under the locks it already holds, so an order never gives back more than its
+ * creditable invoices billed, whichever way the money goes. The line and pool checks above stay as they are (net, per line);
+ * they cannot see a lump credit note (no lines), and this bound can. It is all GROSS, because `Invoice.total` is.
+ *
+ * Billed = Σ `total` of the order's creditable invoices (the one invoice, when it has no order). Given back = the non-VOID notes
+ * on those invoices, SA-1053's refund notes that hang on no invoice, the recorded standard refunds (EXTERNAL_REFUND, no note)
+ * and the inline returns sourced from those invoices at their gross, whatever their resolution, unless CANCELLED or REJECTED.
+ * An inline return's own standalone note is never counted a second time. A note with no invoice is customer goodwill, tied to no
+ * goods: it counts nothing. Nothing is stored; the room is read live. `null`: no creditable invoice, so no bound.
+ */
+export interface OrderRefundRoom {
+  billed: number;
+  given: { notes: number; unlinked: number; recorded: number; inline: number };
+  /** billed minus everything given back, in cents; negative on an order that is already over */
+  room: number;
+}
+
+export async function loadOrderRefundRoom(
+  db: any,
+  anchor: { orderId?: string | null; invoiceId?: string | null },
+  opts: { excludeCreditNoteId?: string; excludeReturnId?: string } = {},
+): Promise<OrderRefundRoom | null> {
+  const orderId = anchor.orderId ?? null;
+  const where = orderId
+    ? { orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } }
+    : anchor.invoiceId
+      ? { id: anchor.invoiceId, status: { notIn: CREDIT_SOURCE_EXCLUDED } }
+      : null;
+  if (!where) return null;
+  const invoices: Array<{ id: string; total: unknown }> =
+    (await db.invoice?.findMany?.({ where, select: { id: true, total: true } })) ?? [];
+  // a row read without its total is no bill (every real Invoice has one): no figure, no bound
+  if (invoices.length === 0 || invoices.some((i) => i.total == null)) return null;
+  const ids = invoices.map((i) => i.id);
+  const billed = roundMoney(invoices.reduce((t, i) => t + Number(i.total ?? 0), 0));
+
+  // the inline returns sourced from these invoices' lines, at their gross (net + tax + category tax of each item)
+  const lines: Array<{ id: string }> =
+    (await db.invoiceItem?.findMany?.({
+      where: { invoiceId: { in: ids } },
+      select: { id: true },
+    })) ?? [];
+  const inlineItems: Array<{
+    subtotal: unknown;
+    taxAmount: unknown;
+    categoryTax: unknown;
+    return?: { creditNoteId?: string | null } | null;
+  }> =
+    lines.length === 0
+      ? []
+      : ((await db.returnItem?.findMany?.({
+          where: {
+            sourceInvoiceItemId: { in: lines.map((l) => l.id) },
+            return: {
+              kind: "INLINE",
+              status: { notIn: ["CANCELLED", "REJECTED"] },
+              ...(opts.excludeReturnId ? { id: { not: opts.excludeReturnId } } : {}),
+            },
+          },
+          select: {
+            subtotal: true,
+            taxAmount: true,
+            categoryTax: true,
+            return: { select: { creditNoteId: true } },
+          },
+        })) ?? []);
+  const inline = roundMoney(
+    inlineItems.reduce(
+      (t, it) =>
+        t + Number(it.subtotal ?? 0) + Number(it.taxAmount ?? 0) + Number(it.categoryTax ?? 0),
+      0,
+    ),
+  );
+  // an inline return's note is counted by the return above: should it ever sit on an invoice, never twice
+  const inlineNoteIds = new Set(
+    inlineItems.map((it) => it.return?.creditNoteId).filter((id): id is string => !!id),
+  );
+
+  const noteRows: Array<{ id: string; amount: unknown }> =
+    (db.creditNote
+      ? await db.creditNote.findMany({
+          where: {
+            invoiceId: { in: ids },
+            status: { not: "VOID" },
+            ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
+          },
+          select: { id: true, amount: true },
+        })
+      : null) ?? [];
+  const notes = roundMoney(
+    noteRows.filter((n) => !inlineNoteIds.has(n.id)).reduce((t, n) => t + Number(n.amount ?? 0), 0),
+  );
+
+  let unlinked = 0;
+  let recorded = 0;
+  if (orderId) {
+    unlinked = (
+      await loadUnlinkedRefundReturns(db, orderId, {
+        excludeCreditNoteId: opts.excludeCreditNoteId,
+      })
+    ).amount;
+    const external: Array<{ refundAmount: unknown }> =
+      (await db.return?.findMany?.({
+        where: {
+          orderId,
+          kind: { not: "INLINE" },
+          refundMethod: "EXTERNAL_REFUND",
+          creditNoteId: null,
+          status: "REFUNDED",
+          ...(opts.excludeReturnId ? { id: { not: opts.excludeReturnId } } : {}),
+        },
+        select: { refundAmount: true },
+      })) ?? [];
+    recorded = roundMoney(external.reduce((t, r) => t + Number(r.refundAmount ?? 0), 0));
+  }
+  return {
+    billed,
+    given: { notes, unlinked, recorded, inline },
+    room: roundMoney(billed - notes - unlinked - recorded - inline),
+  };
+}
+
+/** The refusal for a take past the room (null: it fits). `left` is what the order can still give back, never below 0. */
+export function orderRoomRefusal(
+  room: OrderRefundRoom | null,
+  take: number,
+): { left: number; message: string } | null {
+  if (!room || roundMoney(take) <= room.room + 0.001) return null;
+  const left = Math.max(0, room.room);
+  return {
+    left,
+    message:
+      `This would give back more than the order was billed (${roundMoney(room.billed).toFixed(2)}). ` +
+      `${roundMoney(left).toFixed(2)} is left to refund or credit. Void an earlier credit note or cancel a return to free room.` +
+      (room.given.unlinked > 0
+        ? ` ${roundMoney(room.given.unlinked).toFixed(2)} was already refunded as store credit for its returns before the order was invoiced.`
+        : ""),
+  };
+}
+
+/**
  * The credited amount + qty per invoice line (see the header). `lines` are the invoice's items; `db` is the caller's client
  * (a `tx` inside create(), `forTenant()` for the pre-checks). `excludeCreditNoteId` leaves one note out (the reissue dry run).
  */
