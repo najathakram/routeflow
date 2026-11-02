@@ -139,6 +139,11 @@ for (const vp of VIEWPORTS) {
     test("W-1: a click on the list's MSRP cell stays on the list", async ({ page }) => {
       test.skip(vp.cards, "Quick Edit is a table mode; the phone list has no MSRP cell");
       const ctx = await requireUnitsV2Flag(page);
+      const on = await page.request.get(`${ctx.api}/tenants/me/addons`, { headers: ctx.headers });
+      expect(
+        ((await on.json()) as any)?.addons,
+        "the MSRP column needs the msrp add-on on this tenant; this row never skips",
+      ).toContain("msrp");
       const sku = `QAPI${Date.now().toString(36).toUpperCase()}M${vp.name}`;
       const id = await createHeldProduct(page, ctx, sku.slice(4));
       try {
