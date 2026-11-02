@@ -2,10 +2,7 @@
 
 import Link from "next/link";
 import { BarChart3 } from "lucide-react";
-import { useAuth } from "@/lib/auth-context";
-import { usePlanFlag } from "@/lib/api/plan-flags";
 import { useDeniedGroups } from "@/lib/api/my-permissions";
-import { planFlagVisible } from "@/lib/plan-gated-nav";
 
 /**
  * #2119 / SA-1087: this page keeps its own demand/sales cards; "Full insights" links to the
@@ -13,16 +10,13 @@ import { planFlagVisible } from "@/lib/plan-gated-nav";
  * SalesHistoryCard below it, to hold page.tsx under the size ratchet.
  *
  * Shown only to what the endpoint serves (`/analytics/products/:id/insights`: an operator or
- * admin, the REPORTS group, `flag.analytics`), never a link that ends in a refusal. A pending or
- * failed permission read shows the link; the server is the authority.
+ * admin, the REPORTS group, `flag.analytics`), never a link that ends in a refusal. Its one
+ * parent, `ProductInsightsExport`, has already checked the role and the plan flag, so the link
+ * reads only what the parent does not: the REPORTS group. A pending or failed permission read
+ * shows the link; the server is the authority.
  */
 export function FullInsightsLink({ productId }: { productId: string }) {
-  const { user } = useAuth();
-  const analytics = usePlanFlag("flag.analytics");
-  const denied = useDeniedGroups();
-
-  const roleOk = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
-  if (!roleOk || !planFlagVisible(analytics) || denied.includes("REPORTS")) return null;
+  if (useDeniedGroups().includes("REPORTS")) return null;
 
   return (
     <Link
