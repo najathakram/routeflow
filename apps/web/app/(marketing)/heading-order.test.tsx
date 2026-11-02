@@ -3,11 +3,8 @@
 // when it has one, else its tag, which is how a screen reader and axe's heading-order read it.
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import Home from "./page";
-import ProductPage from "./product/page";
 import WholesalersPage from "./wholesalers/page";
 import RetailersPage from "./retailers/page";
-import PricingPage from "./pricing/page";
 import CompanyPage from "./company/page";
 import ContactPage from "./contact/page";
 import PrivacyPage from "./privacy/page";
@@ -15,11 +12,8 @@ import TermsPage from "./terms/page";
 import BookADemoPage from "./book-a-demo/page";
 
 const PAGES: Array<[string, ComponentType]> = [
-  ["/", Home],
-  ["/product", ProductPage],
   ["/wholesalers", WholesalersPage],
   ["/retailers", RetailersPage],
-  ["/pricing", PricingPage],
   ["/company", CompanyPage],
   ["/contact", ContactPage],
   ["/privacy", PrivacyPage],

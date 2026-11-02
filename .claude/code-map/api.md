@@ -107,3 +107,5 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-01-t.md](api/landing-2026-11-01-t.md) | Train t (5f26068001..1d20b7f38d): list and CSV Open balance (openBalancesByCustomer), GET /buyer/account-statement/pdf; no migration |
 | [api/landing-2026-11-01-u.md](api/landing-2026-11-01-u.md) | Train u (1d20b7f38d..7b4cc4b972): invoice line reads Family - Variant (invoice-line-name.ts); no migration |
 | [api/landing-2026-11-01-v.md](api/landing-2026-11-01-v.md) | Train v (7b4cc4b972..d3ab3e7eff): Piece row first price creates the unit (SA-1082 PR-1); no migration |
+| [api/landing-2026-11-02-w.md](api/landing-2026-11-02-w.md) | Train w (d3ab3e7eff..96aedaf2c0): Privacy/Terms version constants, Dependabot group bump; no migration |
+| [api/landing-2026-11-02-y.md](api/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): family-move ask, customer identity omit, deliveredQty, delete guard; no migration |

@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
-import { WRITE_METHODS, callBlocks, opaqueProductWrites } from "./tripwire-scan";
+import { WRITE_METHODS, callBlocks, dataArgKind, opaqueProductWrites } from "./tripwire-scan";
 
 /**
  * #2717 M2 test 23 (SA-574 Q2, SA-E95, L-223): the family owns its variants' prices only if EVERY
@@ -38,11 +38,14 @@ const EXEMPT: Record<string, string> = {
     "Test-only seeding fixture of the D3 units-fold DB specs (orders/testing, imported only by *.db.spec.ts): seedFoldTenant creates throwaway standalone Product rows (pricePerUnit and the tier columns) in `qa-ufold-*` tenants, never a governed variant or recipe row and never a live tenant.",
   "products/product-families.service.ts":
     "WS8 families: createFamily mints brand-new rows and, by plan, ignores the mixed_packs mode (the variant price is the " +
-    "caller's unless copyFamilyPrice is set); updateVariants refuses a price EDIT 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on, " +
+    "caller's unless copyFamilyPrice is set); a price EDIT in updateVariants is the variant's own (SA-1082 A-1) while mixed_packs is on, " +
     "and an added variant takes all five family columns read under the family row lock (familyPricesForNewVariant).",
   "products/product-price-write.service.ts":
-    "Units v2 price write: assertNotGoverned refuses a variant (409 FAMILY_PRICE_AUTHORITY), a FAMILY and a RECIPE row " +
-    "before any write, so it only ever writes the five columns of a standalone product.",
+    "Units v2 price write: assertNotGoverned refuses a FAMILY and a family-linked RECIPE row before any write, so it writes " +
+    "the five columns of a standalone product or of a variant, whose price is its own (SA-1082 A-1).",
+  "products/family-price.ts":
+    "moveFamilyVariants is the one writer of a variant's prices from its family: named by the person saving, re-checked " +
+    "under the locks (SA-1082 A-1). propagateFamilyPrice writes recipes only; family-price-writer-tripwire VM-11 pins both.",
   "import/import.service.ts":
     "Zoho import creates a brand-new STANDALONE product (no parentProductId): nothing to inherit.",
   "import/variant-resolution.service.ts":
@@ -234,7 +237,7 @@ export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }
     count: 3,
     reason:
       "WS8 families: variantData/variantPatch build the row from the request's own named fields only (name, codes, " +
-      "unitsPerBox, price, cost); price edits are refused while mixed_packs is on (see updateVariants).",
+      "unitsPerBox, price, cost); a price edit is the variant's own (SA-1082 A-1).",
   },
   "products/product-code-release.ts": {
     count: 2,
@@ -243,16 +246,16 @@ export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }
       "twins only (sku, barcode, unitSku); no price, tier or family column is ever named.",
   },
   "products/family-price.ts": {
-    count: 2,
+    count: 1,
     reason:
       "propagateFamilyPrice IS the authority writer: it copies the family's own five columns " +
-      "(pickPriceColumns) onto its variants and its non-override recipe products.",
+      "(pickPriceColumns) onto its non-override recipe products. Never its variants (SA-1082 A-1).",
   },
   "products/products.service.ts": {
     count: 2,
     reason:
-      "update() writes `data` after applyFamilyPriceBeforeUpdate rewrote it (a governed row's price " +
-      "columns replaced by the family's or stripped); the ROUTED table above pins that call.",
+      "update() writes `data` after applyFamilyPriceBeforeUpdate rewrote it (a governed recipe's price " +
+      "columns stripped, an adopted product's replaced); the ROUTED table above pins that call.",
   },
 };
 
@@ -337,5 +340,62 @@ describe("family price writer tripwire: variable and spread data (SA-584 fold)",
       ),
     ).toHaveLength(1);
     expect(opaqueCountViolations(new Map(), allow)).toHaveLength(1);
+  });
+});
+
+/**
+ * SA-1082 A-1, VM-11: a variant moves from its family in one place only. A many-write that selects a family's variants may
+ * change a flag or a status, never a price; family-price.ts writes a variant's price only inside moveFamilyVariants.
+ */
+const PRICE_KEYS = /\b(pricePerUnit|priceTier[2-5])\b/;
+
+/** The `.product.updateMany` blocks that select by parent and either name a price or hide what they write. */
+export function familyManyWritePriceOffenders(text: string): string[] {
+  return callBlocks(text, "product", ["updateMany"]).filter((block) => {
+    if (!/\bparentProductId\b/.test(block)) return false;
+    const kind = dataArgKind(block);
+    return kind === "opaque" || kind === "spread" || PRICE_KEYS.test(block);
+  });
+}
+
+describe("VM-11: a variant's price moves from its family in one function", () => {
+  const sourceOf = (name: string): string => readFileSync(join(SRC_ROOT, name), "utf8");
+
+  it("no many-write that selects a family's variants writes a price, or data this scan can't read", () => {
+    const offenders = listFiles(SRC_ROOT, /\.ts$/).filter(
+      (file) => familyManyWritePriceOffenders(readFileSync(file, "utf8")).length > 0,
+    );
+    expect(offenders.map((file) => rel(SRC_ROOT, file))).toEqual([]);
+  });
+
+  it("the scan is not vacuous: a copy onto the variants is red, a flag write isn't", () => {
+    expect(
+      familyManyWritePriceOffenders(
+        "await tx.product.updateMany({ where: { tenantId, parentProductId: familyId }, data });",
+      ),
+    ).toHaveLength(1);
+    expect(
+      familyManyWritePriceOffenders(
+        "await tx.product.updateMany({ where: { parentProductId: id }, data: { pricePerUnit: 1 } });",
+      ),
+    ).toHaveLength(1);
+    expect(
+      familyManyWritePriceOffenders(
+        "await tx.product.updateMany({ where: { parentProductId: id }, data: { isActive: false } });",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("propagateFamilyPrice never selects variants, and moveFamilyVariants is family-price.ts's only single-row price write", () => {
+    const text = sourceOf("products/family-price.ts");
+    const start = text.indexOf("export async function propagateFamilyPrice");
+    const end = text.indexOf("const sameLadder", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(text.slice(start, end)).not.toContain("parentProductId");
+
+    const updates = callBlocks(text, "product", ["update"]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toContain("move.columns.pricePerUnit");
   });
 });

@@ -275,3 +275,42 @@ describe("SA-1082: the Piece row with no unit behind it yet", () => {
     );
   });
 });
+
+describe("VM-W3 (SA-1082 ruling 5): the word on a variant's cell", () => {
+  it("Family while it's at the family's price, Set when it holds its own, Auto when blank under its own Retail", () => {
+    const of = (value: number, source: "auto" | "set", tier: 1 | 2 | 3, follows: boolean) => ({
+      tier,
+      value,
+      source,
+      family: { value: 24, follows },
+    });
+    mockGrid = {
+      isLoading: false,
+      isError: false,
+      data: {
+        ...grid,
+        rows: [
+          {
+            ...grid.rows[0]!,
+            cells: [
+              of(24, "set", 1, true),
+              of(30, "set", 2, false),
+              of(24, "auto", 3, false),
+              { tier: 4, value: 24, source: "auto", family: { value: 24, follows: true } },
+              { tier: 5, value: 24, source: "auto", family: { value: null, follows: false } },
+            ],
+          },
+        ],
+      },
+    };
+    render(<ProductPricesGrid product={{ id: "p1", unit: "Case", unitsPerBox: 12 } as never} />);
+    const row = screen.getAllByTestId(T.row(grid.rows[0]!.ref))[0]!;
+    expect(row.textContent?.match(/Family|Set|Auto/g)).toEqual([
+      "Family",
+      "Set",
+      "Auto",
+      "Family",
+      "Auto",
+    ]);
+  });
+});

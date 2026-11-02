@@ -72,3 +72,5 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-01-s.md](web/landing-2026-11-01-s.md) | Train s (93cfe75d9a..5f26068001): Open balance statement sheet, Print and Email buttons, never-sold returns, merge-return-change |
 | [web/landing-2026-11-01-t.md](web/landing-2026-11-01-t.md) | Train t (5f26068001..1d20b7f38d): customers list Open balance cell, BuyerOpenBalanceButton, StatementSheetFrame, StatementPrintControl |
 | [web/landing-2026-11-01-v.md](web/landing-2026-11-01-v.md) | Train v (7b4cc4b972..d3ab3e7eff): Piece row price input, order-editor Create new product, ?statement drop |
+| [web/landing-2026-11-02-w.md](web/landing-2026-11-02-w.md) | Train w (d3ab3e7eff..96aedaf2c0): Privacy and Terms pages, legal-dates helpers, Dependabot group bump |
+| [web/landing-2026-11-02-y.md](web/landing-2026-11-02-y.md) | Train y (96aedaf2c0..904cbbec87): FamilyMoveAsk, identity form, static site pages, delete copy |

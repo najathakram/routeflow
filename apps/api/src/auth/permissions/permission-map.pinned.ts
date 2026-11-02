@@ -640,6 +640,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "ProductsController.getOpenOrders": "CATALOG",
   "ProductsController.importFromZoho": "ADMIN",
   "ProductsController.listCategories": "BASE",
+  "ProductsController.previewFamilyMove": "CATALOG",
   "ProductsController.remove": "CATALOG",
   "ProductsController.update": "CATALOG",
   "ProductsController.uploadImages": "CATALOG",

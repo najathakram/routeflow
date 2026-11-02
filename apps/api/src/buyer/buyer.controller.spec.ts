@@ -234,10 +234,21 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     });
   });
 
-  // RF-217: GET /buyer/me returns 200 — it is a direct passthrough of ctx.customer
-  it("getMe: returns customer profile directly from context (no extra DB call)", () => {
-    const result = controller.getMe(MOCK_CTX as any);
-    expect(result).toEqual(MOCK_CTX.customer);
+  // RF-217: GET /buyer/me returns 200 with the customer from context. SA-1084: plus taxIdLast4, built from one
+  // server-side select; the stored value itself never leaves the server.
+  it("getMe: returns the customer from context with taxIdLast4 only", async () => {
+    prisma.customer.findFirst.mockResolvedValue({ taxId: "12-3456789" });
+    const result = await controller.getMe(MOCK_CTX as any);
+    expect(result).toEqual({ ...MOCK_CTX.customer, taxIdLast4: "6789" });
+    expect(JSON.stringify(result)).not.toContain("12-3456789");
+  });
+
+  // SA-1084: GET /buyer/profile is the buyer's own page's sibling of /buyer/me: the same last 4, never the value.
+  it("getProfile: returns the customer from context with taxIdLast4 only", async () => {
+    prisma.customer.findFirst.mockResolvedValue({ taxId: "12-3456789" });
+    const result = await controller.getProfile(MOCK_CTX as any);
+    expect(result).toEqual({ ...MOCK_CTX.customer, taxIdLast4: "6789" });
+    expect(JSON.stringify(result)).not.toContain("12-3456789");
   });
 
   // W6b: buyer license endpoints resolve customerId from context, not the client.

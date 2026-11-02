@@ -12,19 +12,24 @@ import { pathToFileURL } from "url";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
 
-function loadRedirects(): Array<{ source: string; destination: string; permanent: boolean }> {
+function loadConfig<T>(call: "redirects" | "rewrites"): T {
   const configUrl = pathToFileURL(path.join(WEB_ROOT, "next.config.mjs")).href;
   const script =
     `const m = await import(${JSON.stringify(configUrl)});` +
-    `process.stdout.write(JSON.stringify(await m.default.redirects()));`;
+    `process.stdout.write(JSON.stringify(await m.default.${call}()));`;
   return JSON.parse(
     execFileSync(process.execPath, ["--input-type=module", "-e", script], {
       cwd: WEB_ROOT,
       encoding: "utf8",
       timeout: 15_000,
     }),
-  );
+  ) as T;
 }
+
+const loadRedirects = () =>
+  loadConfig<Array<{ source: string; destination: string; permanent: boolean }>>("redirects");
+const loadRewrites = () =>
+  loadConfig<{ beforeFiles: Array<{ source: string; destination: string }> }>("rewrites");
 
 const GUESSED: Array<[string, string]> = [
   ["/about", "/company"],
@@ -53,11 +58,20 @@ describe("guessed addresses redirect from next.config (W6 C7)", () => {
     }
   });
 
-  it("every destination page exists", () => {
+  it("every destination page exists, as a page or as a ready-made file the rewrites serve", () => {
+    const served = new Map(loadRewrites().beforeFiles.map((r) => [r.source, r.destination]));
     for (const [, destination] of GUESSED) {
       const route = destination.replace(/#.*$/, "");
       const file = route === "/" ? "page.tsx" : path.join(route.slice(1), "page.tsx");
-      expect(fs.existsSync(path.join(WEB_ROOT, "app", "(marketing)", file))).toBe(true);
+      const asPage = fs.existsSync(path.join(WEB_ROOT, "app", "(marketing)", file));
+      // A ready-made page: the rewrite names its route (app/site-page/[page]), which reads
+      // public/site/<page>.html.
+      const name = served.get(route)?.replace("/site-page/", "");
+      const asHtml =
+        name !== undefined &&
+        fs.existsSync(path.join(WEB_ROOT, "app", "site-page", "[page]", "route.ts")) &&
+        fs.existsSync(path.join(WEB_ROOT, "public", "site", name + ".html"));
+      expect(asPage || asHtml).toBe(true);
     }
   });
 });

@@ -104,6 +104,62 @@ describe("I-79: product detail variant create sends one request per attempt", ()
   });
 });
 
+/** SA-1082 A-4: the form opens filled with the family's prices. A box the person clears is sent as nothing. */
+describe("SA-1082 A-4: the Add variant form's tier prices", () => {
+  const TIERS = ["priceTier2", "priceTier3", "priceTier4", "priceTier5"];
+  const LABELS = ["T2", "T3", "T4", "T5"];
+  const sent = () => createMutate.mock.calls[0][0] as Record<string, unknown>;
+  const typeIn = (label: string, value: string) =>
+    fireEvent.change(
+      screen.getByText(label).parentElement!.querySelector("input") as HTMLInputElement,
+      { target: { value } },
+    );
+  const clearTiers = () => LABELS.forEach((label) => typeIn(label, ""));
+
+  afterEach(() => {
+    delete current.priceTier2;
+  });
+
+  it("VM-13: every box cleared sends the family's Retail and no tier", () => {
+    mount();
+    openAddVariant("Berry");
+    typeIn("T1 (List)", "");
+    clearTiers();
+    fireEvent.click(createVariant());
+    expect(sent().pricePerUnit).toBe("1.00");
+    expect(TIERS.map((t) => sent()[t])).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it("VM-13: a tier typed under a cleared Retail is sent, and the cleared ones are not", () => {
+    mount();
+    openAddVariant("Berry");
+    typeIn("T1 (List)", "");
+    clearTiers();
+    typeIn("T3", "0.75");
+    fireEvent.click(createVariant());
+    expect(TIERS.map((t) => sent()[t])).toEqual([undefined, "0.75", undefined, undefined]);
+  });
+
+  it("VM-14: a typed Retail with cleared tiers still fills them, so it never takes the family's tier", () => {
+    mount();
+    openAddVariant("Berry");
+    typeIn("T1 (List)", "30");
+    clearTiers();
+    fireEvent.click(createVariant());
+    expect(sent().pricePerUnit).toBe("30");
+    expect(TIERS.map((t) => sent()[t])).toEqual(["30", "30", "30", "30"]);
+  });
+
+  it("GUARD: the form as it opens sends the family's prices it shows", () => {
+    current.priceTier2 = "0.90";
+    mount();
+    openAddVariant("Berry");
+    fireEvent.click(createVariant());
+    expect(sent().pricePerUnit).toBe("1");
+    expect(sent().priceTier2).toBe("0.9");
+  });
+});
+
 // K14 FE1: the page waits for the units v2 flag; these tests are flag-off, so it is known.
 jest.mock("@/lib/api/units-v2", () => ({
   ...jest.requireActual("@/lib/api/units-v2"),

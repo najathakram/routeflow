@@ -8,9 +8,9 @@ import { join, relative, sep } from "path";
  */
 const SRC = join(__dirname, "..");
 const EXPECTED: Record<string, number> = {
-  "products/family-price.ts": 4,
+  // SA-1082 A-1: a variant's price is its own, so the variant refusals went (4 to 2, and the family editor's 1 to 0).
+  "products/family-price.ts": 2,
   "products/product-units-price-guard.ts": 1,
-  "products/product-families.service.ts": 1,
   "products/product-price-write.service.ts": 1,
 };
 
