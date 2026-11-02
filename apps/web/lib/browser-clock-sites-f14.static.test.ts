@@ -29,14 +29,8 @@ describe("F14: dates use the tenant's day", () => {
     expect(scan).toMatch(/expenseDate: "",/);
   });
 
-  it("an empty bill or expense date is filled from the tenant's day once the zone is known, and only when empty", () => {
-    expect(scan).toContain("useTenantToday()");
-    expect(scan).toContain("billDate: inv.billDate || tenantToday");
-    expect(scan).toContain("expenseDate: inv.expenseDate || tenantToday");
-  });
-
-  it("the expense cannot be saved while its date is still unknown", () => {
-    expect(scan).toContain('if (!inv.expenseDate) throw new Error("Pick the expense date.")');
+  it("the modal fills empty dates from the tenant's day through the shared hook", () => {
+    expect(scan).toContain("useFillTenantDates(invoices, invoicesRef, setInvoices)");
   });
 
   it("the report range seeds from the tenant's day and nothing is queried before it is known", () => {

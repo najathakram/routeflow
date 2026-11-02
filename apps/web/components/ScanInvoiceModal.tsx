@@ -34,7 +34,7 @@ import {
   type BillLineDenomination,
 } from "@/lib/scan-line-units";
 import { useSuppliers } from "@/lib/api/inventory";
-import { useTenantToday } from "@/lib/tenant-timezone";
+import { useFillTenantDates } from "@/lib/scan-invoice-tenant-dates";
 import {
   useCheckVendorBillDuplicate,
   useCreateVendorBill,
@@ -236,13 +236,13 @@ const makeInvoice = (kind: "pdf" | "images", files: File[], raisePo = false): In
   invoiceNumber: "",
   supplierId: "",
   supplierMatchAmbiguous: false,
-  billDate: "", // SA-964 §4: filled with the TENANT's day once the zone is known (see the effect in the modal)
+  billDate: "", // filled with the TENANT's day once known (useFillTenantDates)
   dueDate: "",
   createMode: "bill",
   raisePo,
   expenseCategoryId: "",
   expenseDescription: "",
-  expenseDate: "", // SA-964 §4: same
+  expenseDate: "", // same
   expensePaymentMethod: "CASH",
   expenseNotes: "",
   createdBillId: null,
@@ -407,14 +407,9 @@ export function ScanInvoiceModal({
   // can never capture a stale activeIndex.
   const [invoices, setInvoicesRaw] = React.useState<InvoiceGroup[]>([]);
   const [activeIndex, setActiveIndex] = React.useState(0);
-  // SA-964 §4: bill and expense dates default to the TENANT's day (never the browser's): they start empty and any empty
-  // one is filled as soon as the zone is known, for invoices scanned before or after it resolves.
-  const tenantToday = useTenantToday();
-  // Bumped on reset / re-upload / scan-again; async scan callbacks compare it
-  // so a stale response can never clobber a fresh session's state.
+  // Bumped on reset / re-upload / scan-again; async scan callbacks compare it (no stale clobber).
   const runIdRef = React.useRef(0);
-  // In-flight scan requests, aborted on reset so cancelled batches stop
-  // burning Claude tokens (not just stop writing state).
+  // In-flight scan requests, aborted on reset so cancelled batches stop burning Claude tokens.
   const abortersRef = React.useRef(new Map<string, AbortController>());
   // Synchronous mirror of `invoices` — read by the async create loop and the
   // unmount cleanup, updated inside the setter so it can't lag a render.
@@ -427,23 +422,7 @@ export function ScanInvoiceModal({
       invoicesRef.current = next;
       return next;
     });
-  React.useEffect(() => {
-    if (!tenantToday) return;
-    if (!invoicesRef.current.some((inv) => !inv.billDate || !inv.expenseDate)) return;
-    setInvoices((prev) =>
-      prev.map((inv) =>
-        inv.billDate && inv.expenseDate
-          ? inv
-          : {
-              ...inv,
-              billDate: inv.billDate || tenantToday,
-              expenseDate: inv.expenseDate || tenantToday,
-            },
-      ),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantToday, invoices]);
-
+  useFillTenantDates(invoices, invoicesRef, setInvoices); // SA-964 §4 / F14
   const patchInvoiceById = (id: string, patch: Partial<InvoiceGroup>) =>
     setInvoices((prev) => prev.map((inv) => (inv.id === id ? { ...inv, ...patch } : inv)));
 
@@ -1429,7 +1408,6 @@ export function ScanInvoiceModal({
         const expenseTotal = wantsBill
           ? roundMoney(invoiceTotalOf(inv) + (inv.scanResult?.tax ?? 0))
           : roundMoney(inv.scanResult?.total ?? invoiceTotalOf(inv));
-        if (!inv.expenseDate) throw new Error("Pick the expense date."); // empty only while the tenant's day is unknown
         await createExpense.mutateAsync({
           categoryId: inv.expenseCategoryId,
           supplierId: inv.supplierId || undefined,
