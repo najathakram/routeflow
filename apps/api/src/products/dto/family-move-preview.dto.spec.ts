@@ -13,7 +13,7 @@ const read = async (body: Record<string, unknown>) => {
 
 describe("FamilyMovePreviewDto (SA-1082 A-1, A-4)", () => {
   it.each(PRICES)("%s: blank is absent, as it is on the save it previews", async (price) => {
-    // Null is what the list's quick edit sends for a cleared cell.
+    // Null is what a list Undo holds for a price its row didn't carry (products/page.tsx: `?? null`).
     for (const blank of [undefined, null, "", "  "]) {
       const { dto, errors } = await read({ [price]: blank });
       expect(errors).toEqual([]);

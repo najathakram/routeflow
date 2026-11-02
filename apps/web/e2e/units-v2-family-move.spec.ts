@@ -180,5 +180,104 @@ for (const vp of VIEWPORTS) {
         }
       }
     });
+
+    test("VM-15: a null price reads as unchanged, at the endpoint and in an Undo", async ({
+      page,
+      context,
+    }) => {
+      test.skip(vp.cards, "the list's table only fits the wide layout");
+      test.setTimeout(120_000);
+      await setTenantCookie(context, k11BaseUrl());
+      const ctx = await requireUnitsV2Flag(page);
+      const stamp = `${vp.name}-${Date.now()}`;
+      const familyName = `E2E Null Family ${stamp}`;
+      const sku = `E2E-NULL-${stamp}`;
+      const made = await page.request.post(`${ctx.api}/products/families`, {
+        headers: ctx.headers,
+        data: {
+          family: { name: familyName, pricePerUnit: "24.00" },
+          variants: [{ name: "At the family price", sku, pricePerUnit: "24.00" }],
+        },
+      });
+      expect(made.ok(), `POST /products/families returned ${made.status()}`).toBe(true);
+      const at = await productBySku(page, ctx, sku);
+      const familyId = (at as unknown as { parentProductId: string }).parentProductId;
+      const read = async (id: string) => {
+        const res = await page.request.get(`${ctx.api}/products/${id}`, { headers: ctx.headers });
+        const p = (await res.json()) as { priceTier2: unknown; priceTier3: unknown };
+        return { tier2: Number(p.priceTier2), tier3: Number(p.priceTier3) };
+      };
+      const previewSent = () =>
+        page.waitForResponse(
+          (r) => r.url().endsWith("/family-moves/preview") && r.request().method() === "POST",
+        );
+      const row = page.getByRole("row", { name: new RegExp(familyName) });
+      const openList = async () => {
+        await page.goto(`/products?search=${encodeURIComponent(familyName)}`);
+        await page.getByRole("button", { name: "Quick Edit", exact: true }).click();
+        await page.waitForLoadState("networkidle");
+      };
+      const editTier2 = async (to: string) => {
+        await row.getByText("22.00").first().click();
+        await row.locator('input[value="22.00"]').fill(to);
+        await page.keyboard.press("Enter");
+      };
+
+      try {
+        for (const id of [familyId, at.id]) {
+          const res = await page.request.patch(`${ctx.api}/products/${id}`, {
+            headers: ctx.headers,
+            data: { priceTier2: "22.00" },
+          });
+          expect(res.status(), "seed Tier 2").toBeLessThan(300);
+        }
+
+        // The endpoint itself, over HTTP through the running API's pipe.
+        const direct = await page.request.post(
+          `${ctx.api}/products/${familyId}/family-moves/preview`,
+          { headers: ctx.headers, data: { priceTier3: null } },
+        );
+        expect(direct.status(), "a null tier is not refused").toBe(201);
+        expect(((await direct.json()) as { count: number }).count).toBe(0);
+        expect(await read(familyId), "the read wrote nothing").toEqual({ tier2: 22, tier3: 0 });
+
+        // An Undo holding a null (page.tsx: productAsRecord[k] ?? null). A stored tier is never null, so the list's row
+        // is served without Tier 3 to reach that branch; the API it talks to is the real one.
+        await page.route(
+          (url) => url.pathname.endsWith("/api/v1/products"),
+          async (route) => {
+            const res = await route.fetch();
+            const body = await res.json();
+            for (const p of (body.data ?? body.items ?? body) as Record<string, unknown>[]) {
+              delete p.priceTier3;
+            }
+            await route.fulfill({ response: res, json: body });
+          },
+        );
+        await openList();
+        await editTier2("21");
+        await page.getByTestId("family-move-confirm").click();
+        await expect.poll(async () => (await read(at.id)).tier2).toBe(21);
+        expect((await read(familyId)).tier3, "Tier 3 followed").toBe(21);
+
+        const undoRead = previewSent();
+        await page.getByTitle("Undo last change").click();
+        const sent = await undoRead;
+        expect(sent.request().postDataJSON().priceTier3, "the Undo sends the null").toBeNull();
+        expect(sent.status(), "and it is not refused").toBe(201);
+        await page.getByTestId("family-move-confirm").click();
+        await expect
+          .poll(async () => (await read(familyId)).tier2, "Undo took Tier 2 back")
+          .toBe(22);
+        expect((await read(at.id)).tier2, "Undo took the variant back").toBe(22);
+        expect((await read(familyId)).tier3, "the null left Tier 3 as it was").toBe(21);
+      } finally {
+        for (const id of [at.id, familyId]) {
+          await page.request
+            .delete(`${ctx.api}/products/${id}`, { headers: ctx.headers })
+            .catch(() => undefined);
+        }
+      }
+    });
   });
 }
