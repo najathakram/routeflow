@@ -66,6 +66,72 @@ describe("savedPiecesByProduct", () => {
   });
 });
 
+describe("named-unit lines (read 2 hold 1)", () => {
+  // A stored unit line: qty is the COUNT of the unit; unitsPerBox is that unit's factor.
+  const caseLine = (over: Partial<EditStockItem> = {}) =>
+    item({
+      unitLabel: "Case",
+      originalUnitLabel: "Case",
+      unitsPerBox: 12,
+      originalUnitsPerBox: 12,
+      qty: 5,
+      originalQty: 3,
+      ...over,
+    });
+
+  it("a saved line of 3 Cases holds 36 pieces, and the line passes its factor", () => {
+    expect(savedPiecesByProduct([caseLine()]).get("p1")).toBe(36);
+    expect(stockLineOfEditItem(caseLine())).toMatchObject({ unitLabel: "Case", unitFactor: 12 });
+  });
+
+  it("a saved unit line with no known factor poisons its product (no honest count)", () => {
+    const saved = savedPiecesByProduct([
+      caseLine({ originalUnitsPerBox: null, unitsPerBox: null }),
+    ]);
+    expect(Number.isNaN(saved.get("p1"))).toBe(true);
+  });
+
+  it("saved 3 Cases raised to 5 with 5 pieces on hand is over by 24 pieces", async () => {
+    mockGet.mockResolvedValue({
+      data: { allowOversell: true, items: [{ productId: "p1", availablePieces: 5 }] },
+    });
+    renderWithProviders(<Probe items={[caseLine()]} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("line-stock").getAttribute("data-level")).toBe("low"),
+    );
+    expect(screen.getByTestId("line-stock").textContent).toMatch(/5 pieces/);
+  });
+});
+
+describe("a draft holds no stock (read 2 hold 2)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGet.mockResolvedValue({
+      data: { allowOversell: false, items: [{ productId: "p1", availablePieces: 1 }] },
+    });
+  });
+
+  function DraftProbe({ status }: { status?: string }) {
+    const views = useEditLineStock([item({ qty: 6, originalQty: 6 })], status);
+    return <LineStockNote stock={views.get("l1")} />;
+  }
+
+  it("a draft's saved 6, unchanged, with 1 on hand is over: publishing takes all 6", async () => {
+    renderWithProviders(<DraftProbe status="DRAFT" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("line-stock").getAttribute("data-level")).toBe("low"),
+    );
+    expect(screen.getByTestId("line-stock-message")).toBeInTheDocument();
+  });
+
+  it("the same line on a confirmed order is unchanged and asks for nothing", async () => {
+    renderWithProviders(<DraftProbe status="CONFIRMED" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("line-stock").getAttribute("data-level")).toBe("ok"),
+    );
+  });
+});
+
 describe("stockLineOfEditItem", () => {
   it("passes a box-split line as pieces and a named-unit line as its own unit", () => {
     expect(stockLineOfEditItem(item({ boxSplit: true, unitsPerBox: 12 }))).toMatchObject({

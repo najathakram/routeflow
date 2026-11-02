@@ -120,11 +120,46 @@ describe("lineStockViews", () => {
     expect(v.get("a")).toEqual({ state: "loading" });
   });
 
-  it("a named-unit line counts that unit as the save does (qty as is), and says its own word", () => {
-    const line = plain("a", 3, { unitLabel: "Case" });
+  // Read 2 hold 1: the screens hold a named-unit line's qty as a COUNT of that unit; the save stores count x factor.
+  it("a named-unit line is its count x the unit's factor, like the save (3 Cases of 12 = 36 pieces)", () => {
+    const line = plain("a", 3, { unitLabel: "Case", unitFactor: 12 });
+    const view = ready(run([line], avail(20)), "a");
+    expect(view.requestedPieces).toBe(36);
+    expect(view.level).toBe("low");
+    expect(view.message).toMatch(/backorder/i);
+  });
+
+  it("says what is left in the line's unit words: 20 pieces is 1 case and 8 pieces", () => {
+    const line = plain("a", 3, { unitLabel: "Case", unitFactor: 12 });
+    expect(ready(run([line], avail(20)), "a").label).toBe("1 case and 8 pieces left");
+    expect(ready(run([line], avail(24)), "a").label).toBe("2 cases left");
+    expect(ready(run([line], avail(8)), "a").label).toBe("8 pieces left");
+    expect(ready(run([line], avail(36)), "a").message).toBeNull();
+  });
+
+  it("a factor-1 unit counts as it did, and reads in its own word", () => {
+    const line = plain("a", 3, { unitLabel: "Each", unitFactor: 1 });
     const view = ready(run([line], avail(2)), "a");
     expect(view.requestedPieces).toBe(3);
-    expect(view.label).toBe("2 cases left");
+    expect(view.label).toBe("2 eaches left");
+  });
+
+  it("a named-unit line with no known factor shows nothing, and so does its product's other line", () => {
+    const named = plain("a", 3, { unitLabel: "Case" });
+    expect(run([named], avail(20)).size).toBe(0);
+    expect(run([named, plain("b", 1)], avail(20)).size).toBe(0);
+  });
+
+  it("two lines of one product add in pieces: 1 Case of 12 and 9 pieces against 20 is over", () => {
+    const v = run([plain("a", 1, { unitLabel: "Case", unitFactor: 12 }), plain("b", 9)], avail(20));
+    expect(ready(v, "a").requestedPieces).toBe(21);
+    expect(ready(v, "a").level).toBe("low");
+  });
+
+  it("the boundary: asking for exactly what is on hand is fine (the save refuses only below)", () => {
+    const view = ready(run([plain("a", 10)], avail(10)), "a");
+    expect(view.level).toBe("ok");
+    expect(view.message).toBeNull();
   });
 
   it("a box-unaware boxed line (no split) is boxes x the pack, like the save", () => {

@@ -71,7 +71,8 @@ export function useLineStockViews(args: {
 
 /**
  * New Order's lines as the save will read them: a boxed line always sends `boxes`/`pieces` (the modal's
- * payload does the same), so its `qty` is already pieces; a plain or named-unit line sends `qty` as is.
+ * payload does the same), so its `qty` is already pieces; a plain line sends `qty` as is, and a named-unit line's
+ * `qty` is a count whose factor rides on the line (`unitFactor`, set by `applyLineUnit`).
  */
 export function stockLineOfNewOrderLine(li: LineItemRowItem): StockLine {
   const boxed = Boolean(li.unitsPerBox);
@@ -84,6 +85,7 @@ export function stockLineOfNewOrderLine(li: LineItemRowItem): StockLine {
     pieces: boxed ? (li.pieces ?? 0) : null,
     unitsPerBox: li.unitsPerBox,
     unitLabel: li.unitLabel,
+    unitFactor: li.unitFactor,
     unit: li.unit,
     packLabel: li.packLabel,
     baseLabel: li.baseLabel,

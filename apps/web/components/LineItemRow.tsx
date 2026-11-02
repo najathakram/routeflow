@@ -65,6 +65,8 @@ export interface LineItemRowItem {
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack). `qty` then counts that
    *  unit and `unitPrice` is per unit — no boxes/pieces. Sent as `unitLabel`. */
   unitLabel?: string;
+  /** UI-only: pieces in one `unitLabel` unit (the picked option's factor); read by the live stock note, never submitted. */
+  unitFactor?: number;
   /** UI-only: the pack fields a unit switch overwrote, so choosing the pack restores them. */
   packBase?: PackBase;
 }

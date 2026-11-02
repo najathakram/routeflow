@@ -42,6 +42,8 @@ export function stockLineOfEditItem(it: EditStockItem): StockLine {
     pieces: it.boxSplit ? 0 : null,
     unitsPerBox: it.unitsPerBox,
     unitLabel: it.unitLabel,
+    // A stored unit line keeps its unit's factor in `unitsPerBox` (its `qty` is the count).
+    unitFactor: it.unitLabel ? it.unitsPerBox : undefined,
     unit: it.unit,
   };
 }
@@ -57,6 +59,7 @@ export function savedPiecesByProduct(items: EditStockItem[]): Map<string, number
       pieces: it.originalBoxSplit ? 0 : null,
       unitsPerBox: it.originalUnitsPerBox ?? it.unitsPerBox,
       unitLabel: it.originalUnitLabel,
+      unitFactor: it.originalUnitLabel ? (it.originalUnitsPerBox ?? it.unitsPerBox) : undefined,
     });
     saved.set(
       it.originalProductId,
@@ -66,12 +69,20 @@ export function savedPiecesByProduct(items: EditStockItem[]): Map<string, number
   return saved;
 }
 
-/** One read for every live line of the edit builder, keyed by the line's id. */
-export function useEditLineStock(items: EditStockItem[]) {
+/**
+ * One read for every live line of the edit builder, keyed by the line's id. A DRAFT holds no stock
+ * (`settleStockForEdit` returns early for it) and publishing takes the whole order, so on a draft every line
+ * counts whole and nothing is subtracted as "already taken".
+ */
+export function useEditLineStock(items: EditStockItem[], orderStatus?: string) {
   const lines = React.useMemo(
     () => items.filter((it) => !it.cancelled && eligible(it)).map(stockLineOfEditItem),
     [items],
   );
-  const saved = React.useMemo(() => savedPiecesByProduct(items), [items]);
+  const holdsStock = orderStatus !== "DRAFT";
+  const saved = React.useMemo(
+    () => (holdsStock ? savedPiecesByProduct(items) : undefined),
+    [items, holdsStock],
+  );
   return useLineStockViews({ lines, mode: "edit", savedPiecesByProduct: saved });
 }

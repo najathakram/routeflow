@@ -30,8 +30,13 @@ export interface StockLine {
   boxes?: number | null;
   pieces?: number | null;
   unitsPerBox?: number | null;
-  /** A named selling unit ("Case"); empty = the pack. */
+  /** A named selling unit ("Case"); empty = the pack. `qty` is then a COUNT of that unit. */
   unitLabel?: string | null;
+  /**
+   * Pieces in one of that named unit. The save stores `count x factor`, so a named-unit line with no known
+   * factor has no honest piece count and shows nothing.
+   */
+  unitFactor?: number | null;
   /** The product's pack word, for a plain line's "left" count. */
   unit?: string;
   packLabel?: string | null;
@@ -64,10 +69,22 @@ export const LINE_STOCK_WORDS = {
   overRefused: (head: string) => `${head}. Lower the quantity or this order won't save.`,
 } as const;
 
-/** One line in pieces, the way the save counts it (the line's own pack first, the product's pack as the fallback). */
+const isNamedUnit = (line: Pick<StockLine, "unitLabel">) => (line.unitLabel ?? "").trim() !== "";
+
+/**
+ * One line in pieces, the way the save counts it (the line's own pack first, the product's pack as the fallback).
+ * A named-unit line holds a COUNT, so it is count x the unit's factor (the save's `qty = count x factor`);
+ * with no known factor the answer is NaN, which poisons its product's total so nothing is shown for it.
+ */
 export function stockPiecesOf(
-  line: Pick<StockLine, "qty" | "boxes" | "pieces" | "unitsPerBox" | "unitLabel">,
+  line: Pick<StockLine, "qty" | "boxes" | "pieces" | "unitsPerBox" | "unitLabel" | "unitFactor">,
 ) {
+  let qty = line.qty;
+  if (isNamedUnit(line)) {
+    const factor = Number(line.unitFactor);
+    if (!Number.isFinite(factor) || factor <= 0) return Number.NaN;
+    qty = line.qty * factor;
+  }
   return toPieces(
     {
       boxes: line.boxes,
@@ -75,7 +92,7 @@ export function stockPiecesOf(
       unitsPerBox: line.unitsPerBox,
       unitLabel: line.unitLabel,
     },
-    line.qty,
+    qty,
     line.unitsPerBox,
   );
 }
@@ -83,12 +100,24 @@ export function stockPiecesOf(
 /** What is on hand, in the line's own unit words ("1 box and 8 pieces left"). */
 export function stockLeftLabel(line: StockLine, onHand: number): string {
   const label = (line.unitLabel ?? "").trim();
-  if (label) return `${onHand} ${plural(label.toLowerCase(), onHand)} left`;
-  const pack = Number(line.unitsPerBox ?? 0);
   const words = unitWords({
     packLabel: line.packLabel ?? line.unit,
     baseUnitLabel: line.baseLabel,
   });
+  if (label) {
+    // `onHand` is in pieces: "20 pieces" of a Case of 12 is "1 case and 8 pieces", the line's own words.
+    const factor = Number(line.unitFactor ?? 0);
+    const word = label.toLowerCase();
+    if (!(factor > 1)) return `${onHand} ${plural(word, onHand)} left`;
+    const whole = Math.floor(onHand / factor);
+    const loose = Math.round((onHand - whole * factor) * 1000) / 1000;
+    if (whole > 0 && loose > 0) {
+      return `${whole} ${plural(word, whole)} and ${loose} ${words.baseFor(loose)} left`;
+    }
+    if (whole > 0) return `${whole} ${plural(word, whole)} left`;
+    return `${loose} ${words.baseFor(loose)} left`;
+  }
+  const pack = Number(line.unitsPerBox ?? 0);
   if (pack > 1) {
     const split = normalizeBoxesPieces({ qty: Math.floor(onHand), unitsPerBox: pack });
     const boxes = split.boxes ?? 0;
@@ -133,9 +162,10 @@ export function lineStockViews(args: {
     if (available === undefined || !Number.isFinite(available)) continue;
     const onHand = Math.max(0, available);
     const total = totals.get(line.productId) ?? 0;
-    const requested = args.savedPiecesByProduct
-      ? Math.max(0, total - (args.savedPiecesByProduct.get(line.productId) ?? 0))
-      : total;
+    const saved = args.savedPiecesByProduct?.get(line.productId) ?? 0;
+    // A line with no honest piece count (a named unit of unknown size), here or on the saved order: show nothing.
+    if (!Number.isFinite(total) || !Number.isFinite(saved)) continue;
+    const requested = args.savedPiecesByProduct ? Math.max(0, total - saved) : total;
     const over = requested > onHand;
     const label = stockLeftLabel(line, onHand);
     const level = onHand <= 0 ? "out" : over ? "low" : "ok";

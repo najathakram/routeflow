@@ -716,6 +716,7 @@ export function EditableLineItems({
   customer,
   orderId,
   lockedLineIds,
+  orderStatus,
   focusFirstQty = false,
 }: {
   /** F08: edit opened from the keyboard - focus the first quantity instead of the scan bar. */
@@ -751,6 +752,8 @@ export function EditableLineItems({
   orderId?: string;
   /** B1234: delivered lines of a PARTIALLY_DELIVERED order; no editing control is rendered for them. */
   lockedLineIds?: ReadonlySet<string>;
+  /** SA-1086: a DRAFT holds no stock, so the live stock note counts its saved lines whole. */
+  orderStatus?: string;
 }) {
   const isLocked = (id: string) => lockedLineIds?.has(id) === true;
   const { toast } = useToast();
@@ -760,7 +763,7 @@ export function EditableLineItems({
   // Live cost/margin floor for the edit builder (pos-cost-roles-spec §1).
   const { data: marginConfig } = useMarginConfig();
   // SA-1086: live stock note per line, keyed by line id (a note only; the server decides at save).
-  const lineStock = useEditLineStock(items);
+  const lineStock = useEditLineStock(items, orderStatus);
   React.useEffect(() => {
     if (!scrollToId) return;
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
