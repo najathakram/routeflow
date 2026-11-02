@@ -30,6 +30,7 @@ describe("stockLineOfSaleLine", () => {
     const s = stockLineOfSaleLine(l);
     expect(s).toMatchObject({ key: "t1", productId: "p1", qty: 20, boxes: 1, pieces: 8 });
     expect(s.unitsPerBox).toBe(12);
+    expect(s.unit).toBeUndefined(); // a boxed line is worded by its pack label, like the row
     const sent = toSaleItem(l);
     expect(s.qty).toBe(sent.qty);
     expect(s.boxes).toBe(sent.boxes);
@@ -51,8 +52,8 @@ describe("stockLineOfSaleLine", () => {
     expect(stockLineOfSaleLine(l)).toMatchObject({ qty: 24, boxes: 2, pieces: 0 });
   });
 
-  it("M4: 2 boxes of a 12-pack with 20 on hand is over (24 > 20), told as 1 box and 8 pieces", () => {
-    const v = view(line({ unitsPerBox: 12, boxes: 2, pieces: 0, qty: 24 }), 20);
+  it("M4: 2 boxes of a 12-pack with 20 on hand is over (24 > 20), told as 1 box and 8 pieces, never the product's `case`", () => {
+    const v = view(line({ unitsPerBox: 12, boxes: 2, pieces: 0, qty: 24, unit: "case" }), 20);
     expect(v).toMatchObject({ state: "ready", level: "low", label: "1 box and 8 pieces left" });
   });
 

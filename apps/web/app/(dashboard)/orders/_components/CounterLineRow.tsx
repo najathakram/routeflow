@@ -333,7 +333,12 @@ export function CounterLineRow({
           </button>
         </span>
       </div>
-      <LineStockNote stock={stock} />
+      {stock ? (
+        // Belongs to the item above it, not to the controls below: pull it up under the price line.
+        <div className="-mt-1.5">
+          <LineStockNote stock={stock} />
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <LineStepper line={l} locked={locked} onStep={onStep} />
         <LineQtyEditor line={l} locked={locked} onQty={onQty} onEnter={onQtyEnter} />

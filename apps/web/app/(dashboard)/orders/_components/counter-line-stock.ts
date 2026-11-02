@@ -19,7 +19,9 @@ export function stockLineOfSaleLine(l: SaleLine): StockLine {
     boxes: boxed ? sent.boxes : null,
     pieces: boxed ? sent.pieces : null,
     unitsPerBox: l.unitsPerBox,
-    unit: l.unit,
+    // The row words a boxed line by its pack label alone (Box / pcs by default), never the product's `unit`: the note must
+    // use the same words as the stepper beside it. A plain line prints its own unit (row 298), and so does its note.
+    unit: boxed ? undefined : l.unit,
     packLabel: l.packLabel,
     baseLabel: l.baseLabel,
   };

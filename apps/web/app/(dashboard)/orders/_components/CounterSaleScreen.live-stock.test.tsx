@@ -103,14 +103,14 @@ const completeSale = async () => {
 };
 
 describe("CounterSaleScreen live stock (LS-9)", () => {
-  it("S1: a case of a 12-pack with 20 pieces on hand reads '1 case and 8 pieces left', the same words as New Order", async () => {
+  it("S1: a case of a 12-pack with 20 pieces on hand reads '1 box and 8 pieces left', the same words as New Order", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
     await waitFor(() =>
       expect(screen.getByTestId("line-stock")).toHaveAttribute("data-state", "ready"),
     );
     const note = screen.getByTestId("line-stock");
-    expect(note).toHaveTextContent("1 case and 8 pieces left");
+    expect(note).toHaveTextContent("1 box and 8 pieces left");
     expect(note).toHaveAttribute("data-level", "ok");
   });
 
