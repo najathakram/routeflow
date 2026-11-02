@@ -88,6 +88,9 @@ function make(
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       count: jest.fn().mockResolvedValue(data.activeTeam ?? 5),
     },
+    // F03 slice 2 (SA-1096): freeing seats burns the freed accounts' live reset/verify links in the same tx.
+    passwordResetToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    userEmailVerificationToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx. SA-786: the downgrade
     // transaction reads the held rows (its `where` carries no `isComp`, the sweep's billable read does).
     tenantAddon: {

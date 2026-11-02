@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import type { PrismaService } from "../prisma/prisma.service";
 
 /**
  * F03 slice 2 (SA-1096): the ONE place an account change burns the account's live one-time links.
@@ -11,10 +12,10 @@ import type { Prisma } from "@prisma/client";
  * Not called on a refused link click: a signup admin who is legitimately INACTIVE while waiting to verify must
  * keep their verification token.
  */
-type LinkTokenDb = Pick<
-  Prisma.TransactionClient,
-  "passwordResetToken" | "userEmailVerificationToken"
->;
+type LinkTokenModels = "passwordResetToken" | "userEmailVerificationToken";
+/** A transaction client or the service itself (the extended client is not the plain TransactionClient type). */
+type LinkTokenDb =
+  Pick<Prisma.TransactionClient, LinkTokenModels> | Pick<PrismaService, LinkTokenModels>;
 type BuyerLinkTokenDb = Pick<
   Prisma.TransactionClient,
   "buyerPasswordResetToken" | "buyerEmailVerificationToken"
@@ -24,6 +25,16 @@ export async function revokeUserLinkTokens(db: LinkTokenDb, userId: string): Pro
   const data = { usedAt: new Date() };
   await db.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data });
   await db.userEmailVerificationToken.updateMany({ where: { userId, usedAt: null }, data });
+}
+
+/** The bulk form, for a writer that changes many accounts at once (a seat-cap deactivation). */
+export async function revokeLinkTokensWhere(
+  db: LinkTokenDb,
+  user: Prisma.UserWhereInput,
+): Promise<void> {
+  const data = { usedAt: new Date() };
+  await db.passwordResetToken.updateMany({ where: { usedAt: null, user }, data });
+  await db.userEmailVerificationToken.updateMany({ where: { usedAt: null, user }, data });
 }
 
 export async function revokeBuyerLinkTokens(

@@ -26,6 +26,7 @@ import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
 import { issueSetPasswordLink } from "./set-password-token";
 import { hasActiveBuyerLink } from "./also-buyer";
+import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 
 @Injectable()
 export class UsersService {
@@ -251,10 +252,15 @@ export class UsersService {
       user.role === UserRole.TENANT_ADMIN &&
       user.status === UserStatus.ACTIVE
     )) {
-      return this.prisma.forTenant().user.update({
-        where: { id: userId },
-        data: { status: dto.status },
-        select,
+      // F03 slice 2 (SA-1096): a deactivated account's live reset/verify links die in the same transaction.
+      return this.prisma.tenantTransaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id: userId },
+          data: { status: dto.status },
+          select,
+        });
+        if (deactivating) await revokeUserLinkTokens(tx, userId);
+        return updated;
       });
     }
     // Deactivating an active admin: read the tenant's active admins FOR UPDATE inside the same transaction as the
@@ -272,7 +278,13 @@ export class UsersService {
             "This is the workspace's only active admin. Make someone else an admin before deactivating this account.",
         });
       }
-      return tx.user.update({ where: { id: userId }, data: { status: dto.status }, select });
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { status: dto.status },
+        select,
+      });
+      await revokeUserLinkTokens(tx, userId);
+      return updated;
     });
   }
 
@@ -377,16 +389,15 @@ export class UsersService {
       // any outstanding token unconditionally on an email change, then — only if the
       // user has never set their own password — mint and send a fresh one to the
       // corrected address so they aren't left with no way in at all.
-      await this.prisma.passwordResetToken.updateMany({
-        where: { userId, usedAt: null },
-        data: { usedAt: new Date() },
-      });
+      await revokeUserLinkTokens(this.prisma, userId);
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
       if (updated.forcePasswordChange && updated.email) {
         await this.sendSetPasswordInvite(userId, updated.email, updated.username);
       }
     }
     if (roleChanged) {
+      // F03 slice 2 (SA-1096): a link minted for the old role does not carry over to the new one.
+      if (!emailChanged) await revokeUserLinkTokens(this.prisma, userId);
       await this.notifyRoleChanged(
         userId,
         updated.email,
@@ -518,18 +529,23 @@ export class UsersService {
     if (user.role !== UserRole.OPERATOR) {
       throw new BadRequestException("Admin rights can only be assigned to operators.");
     }
-    return this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data: { isAdmin: !user.isAdmin },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        status: true,
-        isAdmin: true,
-        canActAsDriver: true,
-      },
+    // F03 slice 2 (SA-1096): a privilege change burns the account's live links in the same transaction.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { isAdmin: !user.isAdmin },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          status: true,
+          isAdmin: true,
+          canActAsDriver: true,
+        },
+      });
+      await revokeUserLinkTokens(tx, userId);
+      return updated;
     });
   }
 

@@ -33,6 +33,8 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
         update: jest.fn(),
       },
       user: { update: jest.fn() },
+      passwordResetToken: { updateMany: jest.fn() },
+      userEmailVerificationToken: { updateMany: jest.fn() },
       customerLink: { findFirst: jest.fn(async () => null) },
       order: { count: jest.fn(async () => 0), updateMany: jest.fn() },
       invoice: {
@@ -47,7 +49,7 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
       forTenant: () => scoped,
       scoped,
       getTenantId: () => "t1",
-      tenantTransaction: jest.fn(),
+      tenantTransaction: jest.fn(async (cb: any) => cb(scoped)),
     };
     const mod = await Test.createTestingModule({
       providers: [

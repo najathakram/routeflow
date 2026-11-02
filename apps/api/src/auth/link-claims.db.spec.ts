@@ -12,6 +12,7 @@ import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { AuthService } from "./auth.service";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
+import { BuyerService } from "../buyer/buyer.service";
 import { revokeBuyerLinkTokens, revokeUserLinkTokens } from "./link-token-revocation";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -25,6 +26,8 @@ describeDb("F03 slice 2: atomic link claims (real Postgres)", () => {
   let prisma: PrismaClient;
   let auth: AuthService;
   let buyerAuth: BuyerAuthService;
+  let buyers: BuyerService;
+  const inviteTenantIds: string[] = [];
   let tenantId: string;
   const run = randomUUID().slice(0, 8);
   const userIds: string[] = [];
@@ -53,6 +56,7 @@ describeDb("F03 slice 2: atomic link claims (real Postgres)", () => {
       claimsFor: jest.fn().mockResolvedValue(null),
     } as any);
     buyerAuth = new BuyerAuthService(prisma as any, jwt, config, email, {} as any);
+    buyers = new BuyerService(prisma as any, email, config, {} as any);
     const slug = assertTestTenant(`qa-f03s2-${run}`, "link-claims.db.spec.ts");
     tenantId = (
       await prisma.tenant.create({ data: { slug, name: slug, status: TenantStatus.ACTIVE } })
@@ -60,6 +64,10 @@ describeDb("F03 slice 2: atomic link claims (real Postgres)", () => {
   });
 
   afterAll(async () => {
+    await prisma.customerLink.deleteMany({ where: { tenantId: { in: inviteTenantIds } } });
+    await prisma.customer.deleteMany({ where: { tenantId: { in: inviteTenantIds } } });
+    await prisma.user.deleteMany({ where: { tenantId: { in: inviteTenantIds } } });
+    await prisma.tenant.deleteMany({ where: { id: { in: inviteTenantIds } } });
     await prisma.buyerAccount.deleteMany({ where: { id: { in: buyerIds } } });
     await prisma.user.deleteMany({ where: { tenantId } });
     await prisma.tenant.deleteMany({ where: { id: tenantId } });
@@ -291,6 +299,70 @@ describeDb("F03 slice 2: atomic link claims (real Postgres)", () => {
       const raw = await makeBuyerReset(b.id);
       await prisma.$transaction((tx) => revokeBuyerLinkTokens(tx, b.id));
       await expect(buyerAuth.resetPassword(raw, "NewPass1!")).rejects.toThrow(/already been used/);
+    });
+  });
+
+  describe("buyer invite accept (C4)", () => {
+    async function makeInvite(tenantStatus: TenantStatus = TenantStatus.ACTIVE) {
+      const tag = randomUUID().slice(0, 8);
+      const slug = assertTestTenant(`qa-f03s2-inv-${tag}-${run}`, "link-claims.db.spec.ts");
+      const tenant = await prisma.tenant.create({
+        data: { slug, name: slug, status: tenantStatus },
+      });
+      inviteTenantIds.push(tenant.id);
+      const login = await prisma.user.create({
+        data: {
+          tenantId: tenant.id,
+          email: `c-${tag}-${run}@example.test`,
+          username: `c_${tag}_${run}`,
+          role: "CUSTOMER",
+          status: "ACTIVE",
+        },
+      });
+      const customer = await prisma.customer.create({
+        data: {
+          tenantId: tenant.id,
+          userId: login.id,
+          businessName: "Acme Test",
+          contactName: "A",
+        },
+      });
+      const inviteToken = `inv-${tag}-${run}-${randomUUID()}`;
+      const link = await prisma.customerLink.create({
+        data: {
+          tenantId: tenant.id,
+          customerId: customer.id,
+          status: "INVITED",
+          inviteToken,
+          inviteExpiresAt: new Date(Date.now() + 3600_000),
+          inviteMethod: "EMAIL",
+        },
+      });
+      return { inviteToken, link };
+    }
+
+    it("M2: two buyers accepting one invite at once give exactly one winner, and the link names the winner", async () => {
+      const { inviteToken, link } = await makeInvite();
+      const [b1, b2] = [await makeBuyer(), await makeBuyer()];
+      const results = await Promise.allSettled([
+        buyers.acceptInvite(inviteToken, b1.id),
+        buyers.acceptInvite(inviteToken, b2.id),
+      ]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const after = await prisma.customerLink.findUniqueOrThrow({ where: { id: link.id } });
+      expect(after.status).toBe("ACTIVE");
+      expect(after.inviteToken).toBeNull();
+      const winner = results.findIndex((r) => r.status === "fulfilled") === 0 ? b1 : b2;
+      expect(after.buyerAccountId).toBe(winner.id);
+    });
+
+    it("M8: a suspended seller refuses the accept and the invite token stays on the row", async () => {
+      const { inviteToken, link } = await makeInvite(TenantStatus.SUSPENDED);
+      const b = await makeBuyer();
+      await expect(buyers.acceptInvite(inviteToken, b.id)).rejects.toThrow();
+      const after = await prisma.customerLink.findUniqueOrThrow({ where: { id: link.id } });
+      expect(after.inviteToken).toBe(inviteToken);
+      expect(after.status).toBe("INVITED");
     });
   });
 });

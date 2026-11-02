@@ -112,4 +112,38 @@ describe("UsersService.changeStatus: no lockout (SA M2)", () => {
       service.changeStatus("a9", { status: "ACTIVE" } as any, UserRole.TENANT_ADMIN, "a1"),
     ).resolves.toBeTruthy();
   });
+  // F03 slice 2 (SA-1096): deactivating burns the account's live reset/verify links in the same transaction.
+  describe("link revocation", () => {
+    const revoked = () =>
+      (prisma.passwordResetToken.updateMany as jest.Mock).mock.calls.map((c) => c[0].where);
+
+    it.each(["INACTIVE", "SUSPENDED"])(
+      "deactivating an operator (%s) burns their live links, an admin too",
+      async (status) => {
+        prisma.user.findUnique.mockResolvedValue(operator("o1"));
+        await service.changeStatus("o1", { status } as any, UserRole.TENANT_ADMIN, "a1");
+        expect(revoked()).toEqual([{ userId: "o1", usedAt: null }]);
+        expect(prisma.userEmailVerificationToken.updateMany).toHaveBeenCalledTimes(1);
+
+        (prisma.passwordResetToken.updateMany as jest.Mock).mockClear();
+        prisma.user.findUnique.mockResolvedValue(admin("a2"));
+        activeAdmins = [{ id: "a2" }, { id: "a3" }];
+        await service.changeStatus("a2", { status } as any, UserRole.TENANT_ADMIN, "a3");
+        expect(revoked()).toEqual([{ userId: "a2", usedAt: null }]);
+      },
+    );
+
+    it("re-activating burns nothing, and a refused deactivation burns nothing", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...operator("o1"), status: "INACTIVE" });
+      await service.changeStatus("o1", { status: "ACTIVE" } as any, UserRole.TENANT_ADMIN, "a1");
+      expect(revoked()).toEqual([]);
+
+      prisma.user.findUnique.mockResolvedValue(admin("last"));
+      activeAdmins = [{ id: "last" }];
+      await codeOf(
+        service.changeStatus("last", { status: "INACTIVE" } as any, UserRole.TENANT_ADMIN, "a1"),
+      );
+      expect(revoked()).toEqual([]);
+    });
+  });
 });
