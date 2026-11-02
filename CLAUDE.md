@@ -88,7 +88,7 @@ Vitest, Biome, Supabase, Vercel, a second HTTP client, a root-level test runner 
 ### Deploy flow: public -> push/CI -> merge -> private (owner-authorized 2026-07-31)
 
 1. Schema change: fresh backup, then `prod-migrate.mjs` first.
-2. Start `scripts/visibility-watchdog.mjs` detached FIRST (45 min), then `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`.
+2. Start `scripts/visibility-watchdog.mjs` detached FIRST (45 min), then `node tools/ci-runner/check-no-runner.mjs && gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`.
 3. Push, CI green, squash-merge to master (Railway auto-deploys); open the docs-only bookkeeping PR in the same window.
 4. Wait until every service status on the merge commit (api, web, mobile, root) is `SUCCESS` (never flip on `BUILDING`), then flip private in a `finally` and confirm `PRIVATE`.
 5. Watch deploy, then `npm run post-deploy-check` (E2E self-fires; do not dispatch).
@@ -97,7 +97,7 @@ Never `railway up` an unmerged branch. "Snapshot code -> repository not found": 
 
 ## Heavy files policy
 
-No images, videos, or office binaries in git (exception: `apps/mobile/assets/` icons; `apps/web/public/brand/`, `public/marketing/`, `fonts/` build assets, total <= 476 KB). Machine-local home `local-assets/` (gitignored); generated docs/screenshots never into `docs/`. Never commit `.claude/settings.local.json`.
+No images, videos, or office binaries in git (exception: `apps/mobile/assets/` icons; `apps/web/public/brand/`, `public/marketing/`, `fonts/` build assets, total <= 476 KB; `apps/web/public/site/` ready-made site pages with their scripts, one font and PNG marks, hard stop 5 MB, never videos). Machine-local home `local-assets/` (gitignored); generated docs/screenshots never into `docs/`. Never commit `.claude/settings.local.json`.
 
 ## Token budget & session startup
 
