@@ -1463,7 +1463,10 @@ export class ReturnsService {
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
         {
           ledgerReversedByReturn: true,
-          ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
+          // SA-1091 piece 2 (row 333a): the link is written INSIDE the mint's transaction, on every refund (not only a pooled one), so a
+          // crash between the commit and a later update can never leave a live note with no link. create() locks this Return first.
+          returnId: id,
+          ...(pooledRefund ? { pooledRefund } : {}),
           // SA-840: the rows carry NET; the regular tax and the per-line levy slices make the note total the gross refund
           ...refundTaxOpts(refundItems, refundSplit),
         },
@@ -1530,8 +1533,6 @@ export class ReturnsService {
       }
       throw err;
     }
-    await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
-
     return withUnbilled({ ...updated, creditNoteId: cn.id });
   }
 

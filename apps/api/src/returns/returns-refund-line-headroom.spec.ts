@@ -83,7 +83,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         items: [{ invoiceItemId: "line-a", amount: 100, qty: 1 }],
       }),
       // receive() already reversed the returned regulated goods: the itemised refund must not reverse them again
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -125,7 +125,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         amount: 50,
         items: [{ invoiceItemId: "line-a", amount: 50, qty: 1 }],
       }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -292,7 +292,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
           { invoiceItemId: "line-f", amount: 0, qty: 1 },
         ],
       }),
-      { ledgerReversedByReturn: true },
+      { ledgerReversedByReturn: true, returnId: "ret-1" },
     );
   });
 
@@ -355,6 +355,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         }),
         {
           ledgerReversedByReturn: true,
+          returnId: "ret-1",
           refundTax: 7.33,
           refundCategoryTax: [{ invoiceItemId: "line-a", categoryTax: 5.5 }],
         },
@@ -373,7 +374,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
           amount: 81,
           items: [{ invoiceItemId: "line-d", amount: 75, qty: 1 }],
         }),
-        { ledgerReversedByReturn: true, refundTax: 6, refundCategoryTax: [] },
+        { ledgerReversedByReturn: true, returnId: "ret-1", refundTax: 6, refundCategoryTax: [] },
       );
       expect(
         (service as any).priceReturn([{ productId: "pa", qty: 1 }], ord, new Map(), new Map())
@@ -410,7 +411,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     const claimData = () => prisma.return.updateMany.mock.calls[0][0].data;
 
     it("REG-B704 R1: a full return mints 64.00 (50 net / 4 tax / 10 levy) and freezes the split on the Return", async () => {
-      // wrong today: amount 50, items [{ line-a, 50, 10 }], opts { ledgerReversedByReturn: true }, no split columns
+      // wrong today: amount 50, items [{ line-a, 50, 10 }], opts { ledgerReversedByReturn: true, returnId: "ret-1" }, no split columns
       withReturn(order([taxedInvoice()]), [{ productId: "pa", qty: 10 }]);
       await service.processRefund("ret-1");
       expect(creditNotesCreate).toHaveBeenCalledWith(
@@ -420,6 +421,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         }),
         {
           ledgerReversedByReturn: true,
+          returnId: "ret-1",
           refundTax: 4,
           refundCategoryTax: [{ invoiceItemId: "line-a", categoryTax: 10 }],
         },
