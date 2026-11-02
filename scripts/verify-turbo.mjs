@@ -472,19 +472,26 @@ export function planPins({ fast, files, excluded = [], specs, crossScript }) {
  * FAST only: the source-pin specs (a spec that reads its own workspace's files by path) whose read file the diff
  * changed, per workspace dir: `{ specs: { "apps/web": [...] }, line }`. Outside FAST nothing is planned
  * (`specs: null`, CI, master and FULL_VERIFY=1 are byte-identical to before). A workspace outside the affected scope or
- * named by VERIFY_EXCLUDE is dropped; `@routeflow/api` is never included: its specs run through a custom runner and its
- * scanners read `src/` whole, so its readers stay with the repo-truth lane and the repo pins. `files` null fails closed.
+ * named by VERIFY_EXCLUDE is dropped. The api is included (#4108): its tree scanners filter by file kind (`.dto.ts`,
+ * `.controller.ts`) and import none of the files they read, so `--changedSince` never reached them; a changed file of
+ * the kind selects them (`kinds`, derived). `files` null fails closed.
  */
-const FS_READ_LANE_EXCLUDED = new Set([API_NAME]);
+// The api's `-script` specs (serial script lane, `selectScriptSpecs`) and `.db.spec.ts` specs (the DB lane) are not
+// runnable by path under its unit config, so they are never planned here.
+const NOT_BY_PATH = /(?:-script|\.db)\.spec\.ts$/;
 export function planFsReadSpecs({ fast, files, scope, excluded = [], readers, workspaces }) {
   if (!fast) return { specs: null, line: null };
   const nameOf = new Map(workspaces.map((w) => [w.dir, w.name]));
   const inScope = (dir) => {
     const name = nameOf.get(dir);
-    if (!name || FS_READ_LANE_EXCLUDED.has(name) || excluded.includes(name)) return false;
+    if (!name || excluded.includes(name)) return false;
     return scope.mode === "full" || scope.workspaces.includes(name);
   };
-  const eligible = Object.fromEntries(Object.entries(readers).filter(([dir]) => inScope(dir)));
+  const eligible = Object.fromEntries(
+    Object.entries(readers)
+      .filter(([dir]) => inScope(dir))
+      .map(([dir, list]) => [dir, list.filter((r) => !NOT_BY_PATH.test(r.spec))]),
+  );
   return selectFsReadSpecs({ files, readers: eligible });
 }
 

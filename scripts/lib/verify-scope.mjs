@@ -516,10 +516,15 @@ export function selectFsReadSpecs({ files, readers }) {
   const failClosed = files === null;
   const changed = (files ?? []).map((f) => f.replaceAll("\\", "/"));
   for (const [dir, list] of Object.entries(readers)) {
-    for (const { spec, reads } of list) {
+    for (const { spec, reads, kinds = [] } of list) {
+      // A scanner that walks a tree and filters by file kind reads every file of that kind (`.dto.ts`, `.controller.ts`):
+      // a changed file of the kind inside this workspace selects it.
+      const byKind = (f) =>
+        f.startsWith(`${dir}/`) && !f.endsWith(".spec.ts") && kinds.some((k) => f.endsWith(k));
       const hit =
         failClosed ||
-        reads.some((r) => changed.some((f) => (r.endsWith("/") ? f.startsWith(r) : f === r)));
+        reads.some((r) => changed.some((f) => (r.endsWith("/") ? f.startsWith(r) : f === r))) ||
+        changed.some(byKind);
       if (!hit) continue;
       (specs[dir] = specs[dir] || []).push(spec);
       count++;

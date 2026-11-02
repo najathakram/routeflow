@@ -321,8 +321,33 @@ function sameWorkspaceReads(src, { root, ws, specDir, self }) {
   return [...found].sort();
 }
 
+const TREE_WALK = /\b(readdirSync|readdir|globSync|glob)\b/;
+// How a tree scanner FILTERS by file kind: `name.endsWith(".dto.ts")` or a regex ending `\.controller\.ts$`. A kind
+// merely named inside a path string ("sales-agents/sales-agents.controller.ts") is not a filter and selects nothing.
+const KIND_FILTERS = [
+  /\bendsWith\(\s*["'`][^"'`\n]*?\.([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.(?:ts|tsx)["'`]\s*\)/g,
+  /\\\.([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\\\.(?:ts|tsx)\$\//g,
+];
+const NOT_A_KIND = new Set(["spec", "test", "d", "e2e", "db", "script", "stories", "config"]);
+
 /**
- * { "apps/web": [{ spec: "app/x/y.test.tsx", reads: ["apps/web/app/x/page.tsx", "apps/web/lib/"] }], ... } — the specs
+ * The file kinds (".dto.ts", ".controller.ts", ...) a scanner of a source tree names, as ".kind.ts" suffixes. A spec
+ * that walks the tree and filters by kind (`endsWith(".dto.ts")`, `/\.controller\.ts$/`) reads EVERY file of that kind,
+ * which `sameWorkspaceReads` (named paths) cannot see: the api's `money-dto-null` and `permission-coverage` specs
+ * (#4108). An over-match only runs a spec that did not need to run; a miss is the gap this closes.
+ */
+function treeKindsOf(src) {
+  const kinds = new Set();
+  for (const re of KIND_FILTERS) {
+    for (const m of src.matchAll(re)) {
+      if (!NOT_A_KIND.has(m[1])) kinds.add(`.${m[1]}.ts`);
+    }
+  }
+  return kinds;
+}
+
+/**
+ * { "apps/web": [{ spec: "app/x/y.test.tsx", reads: ["apps/web/app/x/page.tsx", "apps/web/lib/"], kinds: [".dto.ts"] }], ... } — the specs
  * that read a file or directory of their OWN workspace (a source pin: `fs.readFileSync(join(__dirname, "page.tsx"))`).
  * `jest --changedSince` follows imports, not fs reads, so such a spec never runs when only the file it reads changed
  * (#4108: a source pin went red at one sha while the fast push reported green). Derived like the cross-workspace
@@ -340,7 +365,8 @@ function findSameWorkspaceReaders(root) {
       const src = sourceOf(file, cache);
       const specReads = FS_READ.test(src);
       const reads = new Set();
-      const collect = (text, from) => {
+      const kinds = new Set();
+      const collect = (text, from, walks) => {
         for (const r of sameWorkspaceReads(text, {
           root,
           ws,
@@ -348,15 +374,21 @@ function findSameWorkspaceReaders(root) {
           self: file,
         }))
           reads.add(r);
+        if (walks) for (const k of treeKindsOf(text)) kinds.add(k);
       };
-      if (specReads) collect(src, file);
+      if (specReads) collect(src, file, TREE_WALK.test(src));
       for (const helper of helperFiles(file, cache)) {
         const hsrc = sourceOf(helper, cache);
-        if (specReads || FS_READ.test(hsrc)) collect(hsrc, helper);
+        if (specReads || FS_READ.test(hsrc))
+          collect(hsrc, helper, TREE_WALK.test(hsrc) || TREE_WALK.test(src));
       }
-      if (!reads.size) continue;
+      if (!reads.size && !kinds.size) continue;
       const spec = path.relative(path.join(root, ws), file).split(path.sep).join("/");
-      (result[ws] = result[ws] || []).push({ spec, reads: [...reads].sort() });
+      (result[ws] = result[ws] || []).push({
+        spec,
+        reads: [...reads].sort(),
+        kinds: [...kinds].sort(),
+      });
     }
     if (result[ws]) result[ws].sort((a, b) => a.spec.localeCompare(b.spec));
   }

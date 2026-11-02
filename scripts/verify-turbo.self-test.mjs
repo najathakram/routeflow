@@ -2421,9 +2421,31 @@ check(
       ...over,
     });
   check(
-    "FS6 FAST selects per workspace; api never joins (its own lanes read src/ whole)",
+    "FS6 FAST selects per workspace, api included (#4108: its tree scanners are not reached by --changedSince)",
     plan().specs,
-    { "apps/web": [PIN], "apps/mobile": ["__tests__/m.test.ts"] },
+    {
+      "apps/web": [PIN],
+      "apps/mobile": ["__tests__/m.test.ts"],
+      "apps/api": ["src/a.spec.ts"],
+    },
+  );
+  check(
+    "FS6b an api -script or .db spec is never planned by path (its own lanes run it), a unit spec is",
+    planFsReadSpecs({
+      fast: true,
+      files: ["apps/api/src/x.ts"],
+      scope: AFF([API]),
+      excluded: [],
+      readers: {
+        "apps/api": [
+          { spec: "src/a.spec.ts", reads: ["apps/api/src/x.ts"] },
+          { spec: "src/b-script.spec.ts", reads: ["apps/api/src/x.ts"] },
+          { spec: "src/c.db.spec.ts", reads: ["apps/api/src/x.ts"] },
+        ],
+      },
+      workspaces: wsList,
+    }).specs,
+    { "apps/api": ["src/a.spec.ts"] },
   );
   check(
     "FS7 a workspace outside the affected scope, or excluded, is dropped",
@@ -2431,7 +2453,7 @@ check(
       plan({ scope: AFF([WEB, "@routeflow/pricing"]) }).specs,
       plan({ excluded: ["@routeflow/mobile"] }).specs,
     ],
-    [{ "apps/web": [PIN] }, { "apps/web": [PIN] }],
+    [{ "apps/web": [PIN] }, { "apps/web": [PIN], "apps/api": ["src/a.spec.ts"] }],
   );
   check(
     "FS8 outside FAST nothing is planned (CI, master and FULL_VERIFY are byte-identical to before)",
@@ -2445,9 +2467,29 @@ check(
       Object.keys(plan({ files: null }).specs),
     ],
     [
-      ["apps/web", "apps/mobile"],
-      ["apps/web", "apps/mobile"],
+      ["apps/web", "apps/mobile", "apps/api"],
+      ["apps/web", "apps/mobile", "apps/api"],
     ],
+  );
+
+  // FS15 (#4108): a scanner that walks a tree and filters by file KIND reads every file of that kind.
+  const kindReaders = {
+    "apps/api": [
+      { spec: "src/dto.spec.ts", reads: [], kinds: [".dto.ts"] },
+      { spec: "src/ctl.spec.ts", reads: [], kinds: [".controller.ts"] },
+    ],
+  };
+  const kindSel = (files) => selectFsReadSpecs({ files, readers: kindReaders }).specs;
+  check(
+    "FS15 a changed file of a kind a scanner filters by selects it; another kind, another workspace's file and a spec of that name do not",
+    [
+      kindSel(["apps/api/src/p/dto/a.dto.ts"]),
+      kindSel(["apps/api/src/p/p.controller.ts"]),
+      kindSel(["apps/api/src/p/p.service.ts"]),
+      kindSel(["apps/web/lib/a.dto.ts"]),
+      kindSel(["apps/api/src/p/a.dto.spec.ts"]),
+    ],
+    [{ "apps/api": ["src/dto.spec.ts"] }, { "apps/api": ["src/ctl.spec.ts"] }, {}, {}, {}],
   );
 
   const base = planTurboCalls({ scope: AFF([WEB]), splitJest: false, fast: true });
@@ -2514,6 +2556,28 @@ check(
     ],
     [true, true],
   );
+  const realApi = (file) =>
+    planFsReadSpecs({
+      fast: true,
+      files: [file],
+      scope: AFF([API]),
+      excluded: [],
+      readers: real,
+      workspaces: wsList,
+    }).specs["apps/api"] ?? [];
+  check(
+    "FS17 (#4108) a DTO diff selects the DTO scanner and a controller diff selects the permission scanner, by path",
+    [
+      realApi("apps/api/src/products/dto/update-product.dto.ts").includes(
+        "src/common/money-dto-null.spec.ts",
+      ),
+      realApi("apps/api/src/products/products.controller.ts").includes(
+        "src/auth/permissions/permission-coverage.spec.ts",
+      ),
+      realApi("apps/api/src/audit/audit-actions.constant.ts").length,
+    ],
+    [true, true, 0],
+  );
 
   // FS14: the detector's shapes, on a throwaway workspace tree (never the real repo).
   const fx = mkdtempSync(join(tmpdir(), "fs-readers-"));
@@ -2572,6 +2636,47 @@ check(
     );
   } finally {
     rmSync(fx, { recursive: true, force: true });
+  }
+
+  // FS16: the kinds a tree scanner filters by, on a throwaway tree: an endsWith filter, a regex in an imported helper;
+  // a kind merely named inside a path string, and a spec that does not walk a tree, name none.
+  const fk = mkdtempSync(join(tmpdir(), "fs-kinds-"));
+  try {
+    const put = (rel, text) => {
+      mkdirSync(dirname(join(fk, rel)), { recursive: true });
+      writeFileSync(join(fk, rel), text);
+    };
+    put("package.json", JSON.stringify({ workspaces: ["apps/*"] }));
+    put("apps/w/package.json", JSON.stringify({ name: "@fx/w" }));
+    put(
+      "apps/w/src/a.spec.ts",
+      'const fs = require("fs");\nconst all = fs.readdirSync(__dirname).filter((f) => f.endsWith(".dto.ts"));\n',
+    );
+    put("apps/w/src/b.spec.ts", 'import { handlers } from "./disc";\nhandlers();\nexport {};\n');
+    put(
+      "apps/w/src/disc.ts",
+      'const fs = require("fs");\nexport const handlers = () => fs.readdirSync(".").filter((n) => /\\.controller\\.ts$/.test(n));\n',
+    );
+    put(
+      "apps/w/src/c.spec.ts",
+      'const fs = require("fs");\nfs.readFileSync("src/sales/sales.module.ts", "utf8");\n',
+    );
+    put("apps/w/src/d.spec.ts", 'const x = ".service.ts";\nexport {};\n');
+    put("apps/w/src/sales/sales.module.ts", "export {};\n");
+    const kinds = Object.fromEntries(
+      (findSameWorkspaceReaders(fk)["apps/w"] ?? []).map((s) => [s.spec, s.kinds]),
+    );
+    check(
+      "FS16 the detector reads kinds from an endsWith filter and from an imported helper's regex; a path string and a non-scanner name none",
+      kinds,
+      {
+        "src/a.spec.ts": [".dto.ts"],
+        "src/b.spec.ts": [".controller.ts"],
+        "src/c.spec.ts": [],
+      },
+    );
+  } finally {
+    rmSync(fk, { recursive: true, force: true });
   }
 }
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
