@@ -335,6 +335,25 @@ export function argvForCall(call, { turboFlags, jestMaxWorkers, changedSince }) 
   );
 }
 
+/** Workers for the by-path source-read call when nothing sets `JEST_MAX_WORKERS`: measured as fast as 19 on a 19-core PC (a handful of specs) with far less memory (#4116 review). */
+export const FS_READ_DEFAULT_WORKERS = "4";
+
+/**
+ * The argv one pin or fs-read call runs with (pure). The api pin call already carries `--runInBand` (it is serialized),
+ * so it goes through unchanged. The fs-read call carries NO worker flag from the planner, and jest then starts one
+ * worker per core; here it gets `--maxWorkers=<cap>` (`JEST_MAX_WORKERS` when set and a count or a percentage, else
+ * `FS_READ_DEFAULT_WORKERS`), inserted BEFORE `--runTestsByPath` so that it is read as a flag and never as a path.
+ */
+export function pinArgv(call, jestMaxWorkers) {
+  if (!call.fsRead) return call.argv;
+  const at = call.argv.indexOf("--runTestsByPath");
+  if (at < 0) return call.argv;
+  const cap = /^[1-9]\d*%?$/.test(String(jestMaxWorkers ?? ""))
+    ? String(jestMaxWorkers)
+    : FS_READ_DEFAULT_WORKERS;
+  return [...call.argv.slice(0, at), `--maxWorkers=${cap}`, ...call.argv.slice(at)];
+}
+
 /**
  * Pure: may this run be FAST? `requested` = the explicit switch (RF_VERIFY_MODE=fast, already checked
  * against CI/FULL_VERIFY by `isFastMode`) AND the branch policy; `mergeBase` = the sha the related-only
@@ -560,11 +579,11 @@ export async function main() {
     return r.status ?? 1;
   }
 
-  /** The repo-pin call: plain jest from apps/api, the same way the repo runs its specs by hand. */
+  /** The repo-pin and by-path source-read calls: plain jest from the call's own workspace. */
   async function pinJest(c) {
-    // No --maxWorkers here: the argv is already serialized (--runInBand), and a flag appended after
-    // the "--" separator would be read as a path pattern.
-    const r = await spawnAsync("npx", c.argv, {
+    // The pin call is serialized by its own --runInBand; the by-path call gets a worker cap (pinArgv), put before the
+    // paths: a flag appended after the "--" separator would be read as a path pattern.
+    const r = await spawnAsync("npx", pinArgv(c, JEST_MAX_WORKERS), {
       cwd: join(ROOT, c.cwd),
       stdio: "inherit",
       shell: process.platform === "win32",

@@ -62,12 +62,14 @@ import { describeMissing, importClosure, relativeImports } from "./lib/import-cl
 // Pure builders only — never `main`, which is side-effecting. Safe to import: verify-turbo.mjs's
 // direct-execution guard means importing it does NOT spawn turbo or call process.exit.
 import {
+  FS_READ_DEFAULT_WORKERS,
   argvForCall,
   buildArgv,
   buildTurboFlags,
   chooseRunMode,
   chooseVerifyDefaults,
   excludedLine,
+  pinArgv,
   executePlan,
   finishRun,
   settlesReports,
@@ -1406,6 +1408,74 @@ if (process.platform !== "win32") {
           [affStale.status, /STALE Prisma client/.test(affStale.err), affStale.calls.length],
           [1, true, 0],
         );
+        // VX29 (#4116 review): the original hole, through the REAL main(). A diff that changes ONLY a page a
+        // source pin reads: --changedSince never reaches that pin, so the by-path call is the only thing that
+        // can see it. A red pin must fail the run and write no token. The mutant `fsRead = null` drops the
+        // call, so the by-path call is asserted present and the exit non-zero, never just a status.
+        put(`${genDir}/${GENERATED_COPY}`, FIX_SCHEMA); // VX27 left the client stale on purpose
+        fgit("checkout", "-q", "-b", "feat/page-base", "refs/remotes/origin/master");
+        put("apps/web/package.json", JSON.stringify({ name: "@routeflow/web" }));
+        put("apps/web/app/x/page.tsx", "export default function Page() {\n  return null;\n}\n");
+        put(
+          "apps/web/app/x/page.test.tsx",
+          [
+            'import { readFileSync } from "node:fs";',
+            'import { join } from "node:path";',
+            'it("pins the page", () => {',
+            '  readFileSync(join(__dirname, "page.tsx"), "utf8");',
+            "});",
+            "",
+          ].join("\n"),
+        );
+        fgit("add", "-A", "-f");
+        fgit("commit", "-q", "-m", "web base");
+        fgit("update-ref", "refs/remotes/origin/master", "HEAD");
+        fgit("checkout", "-q", "-b", "feat/page-only");
+        put("apps/web/app/x/page.tsx", "export default function Page() {\n  return 1;\n}\n");
+        fgit("add", "-A");
+        fgit("commit", "-q", "-m", "page only");
+        const tokenFile29 = join(stubDir, "vx29-token");
+        const stage29 = `${tokenFile29}.turbo`;
+        const fast = (seq) => {
+          rmSync(stage29, { force: true });
+          const r = aff({
+            RF_VERIFY_MODE: "fast",
+            JEST_MAX_WORKERS: "",
+            RF_VERIFY_RESULT_FILE: tokenFile29,
+            RF_VERIFY_NONCE: "nonce-29",
+            RF_VERIFY_TREE_KEY: "tree-29",
+            STUB_EXIT_SEQ: seq,
+          });
+          return { ...r, token: existsSync(stage29) };
+        };
+        const byPathAt = (calls) => calls.findIndex((c) => /--runTestsByPath/.test(c));
+        const greenFast = fast("0");
+        const at29 = byPathAt(greenFast.calls);
+        check(
+          "VX29a main() FAST, page-only diff, green pin: the by-path call runs (capped, naming the pin) and the pass is staged",
+          [
+            greenFast.status,
+            greenFast.calls[at29],
+            greenFast.calls.length - 1 === at29,
+            greenFast.token,
+          ],
+          [
+            0,
+            "jest --passWithNoTests --maxWorkers=4 --runTestsByPath app/x/page.test.tsx",
+            true,
+            true,
+          ],
+        );
+        const redFast = fast(
+          Array.from({ length: greenFast.calls.length }, (_, i) => (i === at29 ? "7" : "0")).join(
+            ",",
+          ),
+        );
+        check(
+          "VX29 main() FAST, page-only diff, RED pin: exit non-zero, the by-path call ran, NO token written",
+          [redFast.status, byPathAt(redFast.calls) === at29 && at29 >= 0, redFast.token],
+          [7, true, false],
+        );
       }
     } finally {
       rmSync(fixDir, { recursive: true, force: true });
@@ -2512,6 +2582,39 @@ check(
         },
       ],
     ],
+  );
+  // FS10b (#4116 review): the by-path call gets a worker cap (jest otherwise starts one worker per core: 19 on a
+  // 19-core PC, as fast as 4 with far more memory), JEST_MAX_WORKERS honoured, and every flag BEFORE the paths.
+  const byPath = { fsRead: true, argv: ["jest", "--passWithNoTests", "--runTestsByPath", PIN] };
+  const at = (argv) => argv.indexOf("--runTestsByPath");
+  check(
+    "FS10b the by-path call is capped: --maxWorkers=4 by default, JEST_MAX_WORKERS honoured, a bad value falls back, the flag sits before the paths",
+    [
+      pinArgv(byPath, undefined),
+      pinArgv(byPath, "2"),
+      pinArgv(byPath, "50%"),
+      pinArgv(byPath, "0"),
+      pinArgv(byPath, "abc"),
+      pinArgv(byPath, "--runInBand"),
+      FS_READ_DEFAULT_WORKERS,
+      at(pinArgv(byPath, "2")) - pinArgv(byPath, "2").indexOf("--maxWorkers=2"),
+    ],
+    [
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=2", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=50%", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      ["jest", "--passWithNoTests", "--maxWorkers=4", "--runTestsByPath", PIN],
+      "4",
+      1,
+    ],
+  );
+  const pinCall = { pins: true, argv: ["jest", "--runInBand", "--", PIN] };
+  check(
+    "FS10c the api pin call (already --runInBand) and a call that is not by-path are returned untouched",
+    [pinArgv(pinCall, "2"), pinArgv({ fsRead: true, argv: ["jest", "x"] }, "2")],
+    [pinCall.argv, ["jest", "x"]],
   );
   check(
     "FS11 without fsRead, and in a non-fast plan, the calls are byte-identical to before",
