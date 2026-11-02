@@ -13,7 +13,11 @@ import {
   sumConfirmed,
 } from "@routeflow/pricing";
 import type { ReceiptLine, ReceiptModel } from "@routeflow/types";
-import { checkReferenceOf, servedChange } from "../orders/counter-sale/counter-sale-readback";
+import {
+  checkReferenceOf,
+  servedCashTendered,
+  servedChange,
+} from "../orders/counter-sale/counter-sale-readback";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import {
   counterReturnSplit,
@@ -311,11 +315,10 @@ export function buildReceiptModel(
       branding.configuredTaxPercent,
     ),
   });
-  // Tendered is what was handed over; Change is the SERVER's figure, from the one gate the POST / by-key response and the
-  // Today's row use (`servedChange`: a CASH-first sale with nothing left to pay), never recomputed here. The payments arrive
-  // in the order they were taken (the service orders them), because the first stored tender decides.
-  const tendered =
-    order.counterCashTendered == null ? null : roundMoney(num(order.counterCashTendered));
+  // Tendered is what was handed over, and Change the SERVER's figure: both come from the gates the POST / by-key response and the
+  // Today's row use (`servedCashTendered`: a CASH-first sale; `servedChange`: that, with nothing left to pay), never recomputed
+  // here. The payments arrive in the order they were taken (the service orders them), because the first stored tender decides.
+  const tendered = servedCashTendered(order.counterCashTendered, livePayments);
   // cut by code points (never through a surrogate pair) at the ONE footer cap the settings route enforces
   const footer = Array.from(clean(branding.footer)).slice(0, RECEIPT_FOOTER_MAX_CHARS).join("");
   const walkIn = !order.customer || !!order.customer.isWalkIn;
