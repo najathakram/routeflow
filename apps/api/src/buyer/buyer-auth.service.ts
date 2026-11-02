@@ -12,6 +12,7 @@ import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { revokeBuyerLinkTokens } from "../auth/link-token-revocation";
 import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { AppConfig } from "../config/configuration";
@@ -431,16 +432,20 @@ export class BuyerAuthService {
     // in SA-418: a soft-deleted row previously kept its @unique googleId, so a
     // re-sign-up after deletion hit P2002 — clearing both here fixes Apple's half and
     // Google's pre-existing half in the same write) so the stable sub can sign up again.
-    await this.prisma.buyerAccount.update({
-      where: { id: buyerAccountId },
-      data: {
-        status: "DELETED",
-        deletedAt: new Date(),
-        appleId: null,
-        googleId: null,
-        // revoked above; never keep a dead credential on a deleted row
-        appleRefreshTokenEnc: null,
-      },
+    // F03 slice 2 (SA-1096): the row's live reset and verification links die in the same transaction.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.buyerAccount.update({
+        where: { id: buyerAccountId },
+        data: {
+          status: "DELETED",
+          deletedAt: new Date(),
+          appleId: null,
+          googleId: null,
+          // revoked above; never keep a dead credential on a deleted row
+          appleRefreshTokenEnc: null,
+        },
+      });
+      await revokeBuyerLinkTokens(tx, buyerAccountId);
     });
 
     // Disconnect all active/pending links

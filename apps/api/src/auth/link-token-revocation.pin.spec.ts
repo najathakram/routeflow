@@ -1,23 +1,39 @@
 /**
- * F03 slice 2 (SA-1096), writer-inventory pin: every writer that makes a staff user non-active, deletes it softly,
- * or changes its role or email must burn the account's live one-time links (`link-token-revocation.ts`) in the same
- * method, or sit in EXEMPT with a reason. A new writer that forgets is a red spec here, not a live link on a
- * deactivated account found later.
+ * F03 slice 2 (SA-1096), writer-inventory pin: every writer that makes a staff user or a buyer account non-active,
+ * deletes it softly, or changes its role or email must burn the account's live one-time links
+ * (`link-token-revocation.ts`) in the same method, or sit in EXEMPT with a reason. A new writer that forgets is a red
+ * spec here, not a live link on a deactivated account found later.
  *
- * A hard `user.delete` needs nothing: PasswordResetToken and UserEmailVerificationToken cascade on the user FK.
+ * The pin fails closed: a write whose `data` it cannot read (`data: patch`, a ternary, a call result) is a red row
+ * until it is rewritten as an object literal or named in EXEMPT, and `upsert` counts as a write. The DB spec
+ * `link-revocation-writers.db.spec.ts` drives each writer on a real database; this file only keeps the list honest.
+ *
+ * A hard `user.delete` needs nothing: the token tables cascade on the account FK.
  */
 import * as fs from "fs";
 import * as path from "path";
 
 const SRC = path.join(__dirname, "..");
-const WATCHED_KEYS = ["status", "deletedAt", "role", "email", "isAdmin"];
-const REVOKE = /\b(revokeUserLinkTokens|revokeLinkTokensWhere)\(/;
+
+type Model = "user" | "buyerAccount";
+
+const WATCHED_KEYS: Record<Model, string[]> = {
+  user: ["status", "deletedAt", "role", "email", "isAdmin"],
+  buyerAccount: ["status", "deletedAt", "email"],
+};
+const REVOKE: Record<Model, RegExp> = {
+  user: /\brevokeUserLinkTokens\(/,
+  buyerAccount: /\brevokeBuyerLinkTokens\(/,
+};
 
 export interface Writer {
   file: string;
+  model: Model;
   method: string;
   keys: string[];
   revokes: boolean;
+  /** the write's `data` is not an object literal this pin can read */
+  unreadable: boolean;
 }
 
 /** Source with comments blanked (same length, so offsets and line numbers hold). */
@@ -38,34 +54,39 @@ function braceBlock(src: string, open: number): string {
 }
 
 /** Watched columns written by an object-literal text: `key:` or a shorthand `{ key }`/`, key,`. */
-function watchedIn(block: string): string[] {
-  return WATCHED_KEYS.filter((k) =>
+function watchedIn(model: Model, block: string): string[] {
+  return WATCHED_KEYS[model].filter((k) =>
     new RegExp(String.raw`(?:\b${k}\s*:|[{,]\s*${k}\s*[,}])`).test(block),
   );
 }
 
-export function findUserWriters(file: string, raw: string): Writer[] {
+export function findWriters(file: string, raw: string, model: Model): Writer[] {
   const src = stripComments(raw);
   const out: Writer[] = [];
-  const re = /\buser\.(update|updateMany)\(/g;
+  const re = new RegExp(String.raw`\b${model}\.(update|updateMany|upsert)\(`, "g");
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
-    // The call's own argument object, then its `data` entry: `data: { ... }` read in place, a shorthand
-    // `data,` read at its `const data = { ... }` declaration just above.
     const argOpen = src.indexOf("{", m.index);
     if (argOpen < 0) continue;
     const args = braceBlock(src, argOpen);
-    const inline = /\bdata\s*:\s*\{/.exec(args);
-    const shorthand = /[{,]\s*data\s*[,}]/.test(args);
-    if (!inline && !shorthand) continue;
-    let watched: string[];
-    if (inline) watched = watchedIn(braceBlock(args, inline.index + inline[0].length - 1));
-    else {
+    // `data: { ... }` read in place; an upsert's `update: { ... }` the same; a shorthand `data,` read at its
+    // `const data = { ... }` declaration just above. Anything else is unreadable.
+    const entry = m[1] === "upsert" ? "update" : "data";
+    const inline = new RegExp(String.raw`\b${entry}\s*:\s*\{`).exec(args);
+    const shorthand = new RegExp(String.raw`[{,]\s*${entry}\s*[,}]`).test(args);
+    const hasEntry = new RegExp(String.raw`\b${entry}\s*[:,}]`).test(args) || shorthand;
+    let watched: string[] = [];
+    let unreadable = false;
+    if (inline) watched = watchedIn(model, braceBlock(args, inline.index + inline[0].length - 1));
+    else if (shorthand) {
       const from = Math.max(0, m.index - 1500);
-      const decl = /const data\s*=\s*\{/.exec(src.slice(from, m.index));
-      watched = decl ? watchedIn(braceBlock(src, from + decl.index + decl[0].length - 1)) : [];
-    }
-    if (!watched.length) continue;
+      const decl = /const data(?:\s*:\s*[^=]+)?\s*=\s*\{/.exec(src.slice(from, m.index));
+      if (decl) watched = watchedIn(model, braceBlock(src, from + decl.index + decl[0].length - 1));
+      else unreadable = true;
+    } else if (hasEntry)
+      unreadable = true; // `data: patch`, a ternary, a call result
+    else continue; // no data entry at all: not a write this pin can classify
+    if (!watched.length && !unreadable) continue;
     // the enclosing class method: nearest preceding 2-space-indented method header to the next one
     const before = src.slice(0, m.index);
     const headers = [
@@ -78,13 +99,18 @@ export function findUserWriters(file: string, raw: string): Writer[] {
     const end = nextHeader ? m.index + nextHeader.index : src.length;
     out.push({
       file,
+      model,
       method: last ? last[1]! : "(module)",
       keys: watched,
-      revokes: REVOKE.test(src.slice(start, end)),
+      revokes: REVOKE[model].test(src.slice(start, end)),
+      unreadable,
     });
   }
   return out;
 }
+
+/** Back-compat name used by the detector rows below. */
+export const findUserWriters = (file: string, raw: string) => findWriters(file, raw, "user");
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -102,6 +128,14 @@ const EXEMPT: Record<string, Record<string, string>> = {
   "auth/auth.service.ts": {
     verifyEmailAndLogin:
       "this IS the verify: it activates the signup admin the link was minted for, then signs them in",
+    recordFailedLogin:
+      "writes only the failed-attempt counter and lock time (a ternary the pin cannot read); no status, role or email",
+  },
+  "buyer/buyer-auth.service.ts": {
+    recordFailedLogin:
+      "writes only the failed-attempt counter and lock time (a ternary the pin cannot read); no status or email",
+    updateProfile:
+      "`data: dto` is the self-service profile (name, phone, mobile): UpdateBuyerProfileDto cannot carry status or email",
   },
   "customers/customers.service.ts": {
     restoreCustomer:
@@ -146,32 +180,103 @@ describe("writer inventory: an account change burns the account's live links (SA
     ]);
   });
 
-  const all = walk(SRC).flatMap((f) =>
-    findUserWriters(path.relative(SRC, f).replace(/\\/g, "/"), fs.readFileSync(f, "utf8")),
-  );
+  it("detector self-test: a data entry it cannot read is reported, not skipped", () => {
+    const sample = [
+      "class S {",
+      "  async e(id: string, patch: object) {",
+      "    await tx.user.update({ where: { id }, data: patch });",
+      "  }",
+      "  async f(id: string, on: boolean) {",
+      "    await tx.user.update({ where: { id }, data: on ? { status: 'A' } : { status: 'B' } });",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(findUserWriters("sample.ts", sample).map((w) => [w.method, w.unreadable])).toEqual([
+      ["e", true],
+      ["f", true], // a ternary is not read: fail closed
+    ]);
+  });
 
-  it("not vacuous: finds the known status, role/email and soft-delete writers", () => {
-    const names = all.map((w) => `${w.file}:${w.method}`);
+  it("detector self-test: an upsert's update branch counts, a buyer revoke does not satisfy a user writer", () => {
+    const sample = [
+      "class S {",
+      "  async g(id: string) {",
+      "    await tx.user.upsert({ where: { id }, create: { id }, update: { status: 'INACTIVE' } });",
+      "    await revokeBuyerLinkTokens(tx, id);",
+      "  }",
+      "  async h(id: string) {",
+      "    await tx.buyerAccount.update({ where: { id }, data: { status: 'SUSPENDED' } });",
+      "    await revokeBuyerLinkTokens(tx, id);",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(findUserWriters("sample.ts", sample).map((w) => [w.method, w.revokes])).toEqual([
+      ["g", false],
+    ]);
+    expect(
+      findWriters("sample.ts", sample, "buyerAccount").map((w) => [w.method, w.revokes]),
+    ).toEqual([["h", true]]);
+  });
+
+  it("detector self-test: a typed-annotation `const data: any = { status }` is read", () => {
+    const sample = [
+      "class S {",
+      "  async i(id: string, status: string) {",
+      "    const data: any = { status };",
+      "    await this.prisma.buyerAccount.update({ where: { id }, data });",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(
+      findWriters("sample.ts", sample, "buyerAccount").map((w) => [w.method, w.keys, w.unreadable]),
+    ).toEqual([["i", ["status"], false]]);
+  });
+
+  const files = walk(SRC).map((f) => ({
+    rel: path.relative(SRC, f).replace(/\\/g, "/"),
+    raw: fs.readFileSync(f, "utf8"),
+  }));
+  const all = files.flatMap((f) => [
+    ...findWriters(f.rel, f.raw, "user"),
+    ...findWriters(f.rel, f.raw, "buyerAccount"),
+  ]);
+  const id = (w: Writer) => `${w.file}:${w.method}`;
+
+  it("not vacuous: finds the known staff and buyer writers", () => {
+    const names = all.map((w) => `${w.model}:${id(w)}`);
     expect(names).toEqual(
       expect.arrayContaining([
-        "users/users.service.ts:changeStatus",
-        "users/users.service.ts:updateUser",
-        "customers/customers.service.ts:deleteCustomer",
+        "user:users/users.service.ts:changeStatus",
+        "user:users/users.service.ts:updateUser",
+        "user:users/users.service.ts:toggleAdmin",
+        "user:customers/customers.service.ts:changeStatus",
+        "buyerAccount:buyer/buyer-admin.service.ts:setBuyerStatus",
+        "buyerAccount:buyer/buyer-admin.service.ts:updateBuyer",
+        "buyerAccount:buyer/buyer-auth.service.ts:deleteAccount",
+        "buyerAccount:buyer/buyer-merge.service.ts:executeMerge",
       ]),
     );
   });
 
   it("every watched writer revokes in the same method, or is exempt with a reason", () => {
     const bare = all
-      .filter((w) => !w.revokes && !EXEMPT[w.file]?.[w.method])
+      .filter((w) => !w.unreadable && !w.revokes && !EXEMPT[w.file]?.[w.method])
       .map(
-        (w) => `${w.file}: ${w.method} writes ${w.keys.join(", ")} without revoking link tokens`,
+        (w) =>
+          `${w.file}: ${w.method} writes ${w.keys.join(", ")} on ${w.model} without revoking link tokens`,
       );
     expect(bare).toEqual([]);
   });
 
+  it("no writer hides its data from the pin (a non-literal `data` is exempt with a reason or rewritten)", () => {
+    const hidden = all
+      .filter((w) => w.unreadable && !w.revokes && !EXEMPT[w.file]?.[w.method])
+      .map((w) => `${w.file}: ${w.method} writes ${w.model} with a data entry the pin cannot read`);
+    expect(hidden).toEqual([]);
+  });
+
   it("every EXEMPT entry names a writer that still exists", () => {
-    const names = new Set(all.map((w) => `${w.file}:${w.method}`));
+    const names = new Set(all.map(id));
     for (const [file, methods] of Object.entries(EXEMPT)) {
       for (const m of Object.keys(methods)) expect(names).toContain(`${file}:${m}`);
     }

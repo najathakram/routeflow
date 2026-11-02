@@ -85,12 +85,16 @@ function make(
       }),
     },
     user: {
+      // the ids the sweep frees (read under the lock, burned right after the write)
+      findMany: jest
+        .fn()
+        .mockResolvedValue((data.freedIds ?? ["f1", "f2"]).map((id: string) => ({ id }))),
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
       count: jest.fn().mockResolvedValue(data.activeTeam ?? 5),
     },
     // F03 slice 2 (SA-1096): freeing seats burns the freed accounts' live reset/verify links in the same tx.
-    passwordResetToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-    userEmailVerificationToken: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    // Raw SQL, because a typed token updateMany would not survive the tenant proxy's tenantId rewrite.
+    $executeRaw: jest.fn().mockResolvedValue(0),
     // #2641: the cancellation sweep reads and deactivates add-ons on its locked tx. SA-786: the downgrade
     // transaction reads the held rows (its `where` carries no `isComp`, the sweep's billable read does).
     tenantAddon: {
@@ -722,6 +726,9 @@ describe("BillingCronService", () => {
       status: "ACTIVE",
       id: { notIn: ["u1"] },
     });
+    // ...and burn exactly those accounts' live links in the same transaction (two statements: reset + verify).
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    for (const call of tx.$executeRaw.mock.calls) expect(call.slice(1)).toEqual([["f1", "f2"]]);
     expect(emitted(events)).toEqual(
       expect.arrayContaining([BILLING_EVENTS.SEAT_FREED, BILLING_EVENTS.PLAN_CHANGED]),
     );
@@ -1215,6 +1222,7 @@ describe("BillingCronService", () => {
     });
     await svc.applyScheduledDowngrades();
     expect(tx.user.updateMany).not.toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("applyScheduledDowngrades only selects ACTIVE, non-deleted tenants (round 3, finding 8)", async () => {

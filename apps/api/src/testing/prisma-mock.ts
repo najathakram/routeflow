@@ -34,6 +34,9 @@ type MockModelMethod = (typeof MODEL_METHODS)[number];
  */
 export type MockPrisma = jest.Mocked<PrismaService> & {
   [K in Uncapitalize<Prisma.ModelName>]: Record<MockModelMethod, jest.Mock>;
+} & {
+  /** the raw statements any mocked transaction runs (F03 link burns are raw SQL) */
+  txExecuteRaw: jest.Mock;
 };
 
 /**
@@ -46,6 +49,7 @@ export type MockPrisma = jest.Mocked<PrismaService> & {
  */
 export function createMockPrisma(): MockPrisma {
   const modelMethods = MODEL_METHODS;
+  const txExecuteRaw = jest.fn().mockResolvedValue(0);
 
   // Sensible defaults so services don't crash when a mock isn't explicitly set up
   const defaultReturnValues: Record<string, unknown> = {
@@ -377,17 +381,19 @@ export function createMockPrisma(): MockPrisma {
     tenantTransaction: jest.fn((fn: any) =>
       fn({
         ...models,
-        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRaw: txExecuteRaw,
         $queryRaw: jest.fn().mockResolvedValue([]),
       }),
     ),
     $transaction: jest.fn((fn: any) =>
       fn({
         ...models,
-        $executeRaw: jest.fn().mockResolvedValue(0),
+        $executeRaw: txExecuteRaw,
         $queryRaw: jest.fn().mockResolvedValue([]),
       }),
     ),
+    // the raw statements either transaction runs (F03 link burns are raw SQL); one shared mock so a spec can read them
+    txExecuteRaw,
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $queryRaw: jest.fn().mockResolvedValue([]),

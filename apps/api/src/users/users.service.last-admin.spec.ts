@@ -29,13 +29,15 @@ describe("UsersService.changeStatus: no lockout (SA M2)", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let activeAdmins: { id: string }[];
   let queryRaw: jest.Mock;
+  let executeRaw: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     activeAdmins = [];
     queryRaw = jest.fn(async () => activeAdmins);
+    executeRaw = jest.fn().mockResolvedValue(0);
     (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) =>
-      fn({ ...prisma.forTenant(), $queryRaw: queryRaw, $executeRaw: jest.fn() }),
+      fn({ ...prisma.forTenant(), $queryRaw: queryRaw, $executeRaw: executeRaw }),
     );
     prisma.user.update.mockImplementation(async ({ where, data }: any) => ({
       id: where.id,
@@ -114,22 +116,24 @@ describe("UsersService.changeStatus: no lockout (SA M2)", () => {
   });
   // F03 slice 2 (SA-1096): deactivating burns the account's live reset/verify links in the same transaction.
   describe("link revocation", () => {
-    const revoked = () =>
-      (prisma.passwordResetToken.updateMany as jest.Mock).mock.calls.map((c) => c[0].where);
+    // the id lists the transaction burned, per table: raw tagged SQL, so (strings, ids)
+    const burned = (table: string) =>
+      executeRaw.mock.calls.filter((c) => String(c[0]).includes(table)).map((c) => c[1]);
+    const revoked = () => burned("PasswordResetToken");
 
     it.each(["INACTIVE", "SUSPENDED"])(
       "deactivating an operator (%s) burns their live links, an admin too",
       async (status) => {
         prisma.user.findUnique.mockResolvedValue(operator("o1"));
         await service.changeStatus("o1", { status } as any, UserRole.TENANT_ADMIN, "a1");
-        expect(revoked()).toEqual([{ userId: "o1", usedAt: null }]);
-        expect(prisma.userEmailVerificationToken.updateMany).toHaveBeenCalledTimes(1);
+        expect(revoked()).toEqual([["o1"]]);
+        expect(burned("UserEmailVerificationToken")).toEqual([["o1"]]);
 
-        (prisma.passwordResetToken.updateMany as jest.Mock).mockClear();
+        executeRaw.mockClear();
         prisma.user.findUnique.mockResolvedValue(admin("a2"));
         activeAdmins = [{ id: "a2" }, { id: "a3" }];
         await service.changeStatus("a2", { status } as any, UserRole.TENANT_ADMIN, "a3");
-        expect(revoked()).toEqual([{ userId: "a2", usedAt: null }]);
+        expect(revoked()).toEqual([["a2"]]);
       },
     );
 

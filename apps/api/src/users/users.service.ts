@@ -365,19 +365,25 @@ export class UsersService {
       ...(emailChanged ? { email: normalizedEmail } : {}),
       ...(usernameEdit ? { username: normalizedUsername } : {}),
     };
-    const updated = await this.prisma.forTenant().user.update({
-      where: { id: userId },
-      data,
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        status: true,
-        isAdmin: true,
-        canActAsDriver: true,
-        forcePasswordChange: true,
-      },
+    // F03 slice 2 (SA-1096): the write and the burn of the account's live links are ONE transaction, so a crash
+    // between them can never leave a link that outlives the identity or role it was minted for.
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id: userId },
+        data,
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          status: true,
+          isAdmin: true,
+          canActAsDriver: true,
+          forcePasswordChange: true,
+        },
+      });
+      if (emailChanged || roleChanged) await revokeUserLinkTokens(tx, userId);
+      return row;
     });
 
     // Best-effort account notices (NOTIFY-SPEC N2) — never let a delivery failure
@@ -385,19 +391,16 @@ export class UsersService {
     if (emailChanged) {
       // N2 review fix (#811 merge-session finding): a set-password invite link sent to
       // a mistyped address must not keep working after the admin corrects the email —
-      // otherwise the wrong recipient can still set a password and log in. Invalidate
-      // any outstanding token unconditionally on an email change, then — only if the
-      // user has never set their own password — mint and send a fresh one to the
-      // corrected address so they aren't left with no way in at all.
-      await revokeUserLinkTokens(this.prisma, userId);
+      // otherwise the wrong recipient can still set a password and log in. The burn above covers
+      // any outstanding token; then — only if the user has never set their own password — mint and
+      // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
       if (updated.forcePasswordChange && updated.email) {
         await this.sendSetPasswordInvite(userId, updated.email, updated.username);
       }
     }
     if (roleChanged) {
-      // F03 slice 2 (SA-1096): a link minted for the old role does not carry over to the new one.
-      if (!emailChanged) await revokeUserLinkTokens(this.prisma, userId);
+      // A link minted for the old role does not carry over to the new one (burned above).
       await this.notifyRoleChanged(
         userId,
         updated.email,
@@ -406,6 +409,10 @@ export class UsersService {
         updated.role,
         changedByUsername ?? "an administrator",
       );
+      // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
+      if (!emailChanged && updated.forcePasswordChange && updated.email) {
+        await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+      }
     }
 
     return updated;
@@ -530,8 +537,8 @@ export class UsersService {
       throw new BadRequestException("Admin rights can only be assigned to operators.");
     }
     // F03 slice 2 (SA-1096): a privilege change burns the account's live links in the same transaction.
-    return this.prisma.tenantTransaction(async (tx) => {
-      const updated = await tx.user.update({
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
+      const row = await tx.user.update({
         where: { id: userId },
         data: { isAdmin: !user.isAdmin },
         select: {
@@ -545,8 +552,13 @@ export class UsersService {
         },
       });
       await revokeUserLinkTokens(tx, userId);
-      return updated;
+      return row;
     });
+    // Same rule as an email or role change: a person who has never set a password is not left with a dead first mail.
+    if (user.forcePasswordChange && updated.email) {
+      await this.sendSetPasswordInvite(userId, updated.email, updated.username);
+    }
+    return updated;
   }
 
   async toggleDriverPermit(userId: string, callerRole: UserRole) {

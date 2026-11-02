@@ -33,8 +33,7 @@ describe("the walk-in customer is protected (WALK_IN_PROTECTED)", () => {
         update: jest.fn(),
       },
       user: { update: jest.fn() },
-      passwordResetToken: { updateMany: jest.fn() },
-      userEmailVerificationToken: { updateMany: jest.fn() },
+      $executeRaw: jest.fn().mockResolvedValue(0), // F03 link burns are raw SQL
       customerLink: { findFirst: jest.fn(async () => null) },
       order: { count: jest.fn(async () => 0), updateMany: jest.fn() },
       invoice: {
