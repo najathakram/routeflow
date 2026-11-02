@@ -929,6 +929,15 @@
   color: var(--g-link);
 }
 
+/* A dated notice at the top of a legal page (changes that take effect later, or a recent update). */
+.glass-page .legal-page .legal-notice {
+  padding: 14px 18px;
+  border: 1px solid var(--g-glass-border);
+  border-left: 4px solid var(--g-link);
+  border-radius: var(--g-r-md);
+  background: #ffffff8c;
+}
+
 /* ── ProblemSection / DifferenceSection / BuyingConfidence
    (components/conversion-sections.tsx) ─────────────────────────────────── */
 
