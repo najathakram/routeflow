@@ -8,10 +8,9 @@
  * `qa-2717-<run>-<n>` slug approved by `assertTestTenant`; `afterAll` deletes exactly the tenants
  * this run created.
  *
- * REVERT-RED (test 24): remove the family row lock from `loadLockedFamilyPrices`/`lockFamilyRow`
- * and the variant create reads the family's PRE-edit tiers in its own tx while the edit's
- * propagation cannot see the uncommitted variant, so the variant ends stale in at least one of the
- * rounds. The spies prove both writers went through the family-price entry points each round.
+ * SA-1082 A-1: a family edit no longer copies onto its variants, so a new variant takes whichever committed ladder the
+ * family's row lock gives it, before or after the edit, never a mix. The spies prove both writers went through the
+ * family-price entry points each round. family-price-move.db.spec.ts proves the move itself.
  */
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
@@ -126,7 +125,7 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
     });
   }
 
-  it("RACE (6 rounds): a family price edit and a variant create in parallel -> the variant ends with the post-edit tiers", async () => {
+  it("RACE (6 rounds): a family price edit and a variant create in parallel -> the variant ends on one committed ladder", async () => {
     const tenantId = await seedTenant("race");
     const beforeSpy = jest.spyOn(familyPrice, "applyFamilyPriceBeforeUpdate");
     const createSpy = jest.spyOn(familyPrice, "familyPricesForNewVariant");
@@ -164,7 +163,8 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
         });
         expect(variants).toHaveLength(1);
         // Compare as numbers: a Decimal prints "5.5" where toFixed(2) prints "5.50".
-        expect(Number(variants[0].priceTier3)).toBe(Number(newTier3));
+        expect([9, Number(newTier3)]).toContain(Number(variants[0].priceTier3));
+        expect(Number(variants[0].priceTier2)).toBe(9.5);
       }
       expect(beforeSpy).toHaveBeenCalledTimes(6);
       expect(createSpy).toHaveBeenCalledTimes(6);
@@ -174,7 +174,7 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
     }
   });
 
-  it("tenant scope: a corrupt tenant-B row whose parentProductId is A's family is untouched by A's propagation", async () => {
+  it("tenant scope: a corrupt tenant-B row whose parentProductId is A's family is untouched by A's family save", async () => {
     const tenantA = await seedTenant("scope-a");
     const tenantB = await seedTenant("scope-b");
     const family = await seedFamily(tenantA, "scope");
@@ -208,7 +208,8 @@ describeDb("#2717 M2 family price write-through — real Postgres", () => {
     expect(after.pricePerUnit.toString()).toBe("3");
     expect(after.priceTier3.toString()).toBe("0");
     const mine = await prisma.product.findUniqueOrThrow({ where: { id: ownVariant.id } });
-    expect(mine.priceTier3.toString()).toBe("7.25");
-    expect(mine.pricePerUnit.toString()).toBe("10");
+    // SA-1082 A-1: nothing named, so nothing moved.
+    expect(mine.priceTier3.toString()).toBe("0");
+    expect(mine.pricePerUnit.toString()).toBe("1");
   });
 });

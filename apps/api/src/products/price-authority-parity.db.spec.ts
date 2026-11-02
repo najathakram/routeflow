@@ -209,10 +209,23 @@ describeDb("SA-1041 price authority parity - real Postgres", () => {
     await expect(saveGrid(s, "base", 13)).resolves.toBeDefined();
   });
 
-  it("G-a1: mode on, a variant's base price is refused", async () => {
+  it("G-a1 (SA-1082 A-1): mode on, a variant's pack price is its own", async () => {
     const s = await seed("g1", "variant");
     mode = "on";
-    await expect(saveGrid(s, "base", 13)).rejects.toBeInstanceOf(ConflictException);
+    const g = await readGrid(s);
+    await inTenant(s.tenantId, () =>
+      writes.save(
+        s.productId,
+        {
+          expectedRevision: g.revision,
+          expectedPriceState: g.priceState,
+          patches: [{ ref: "pack", tier: 1, to: 13 }],
+        },
+        null,
+      ),
+    );
+    const row = await prisma.product.findUniqueOrThrow({ where: { id: s.productId } });
+    expect(Number(row.pricePerUnit)).toBe(13);
   });
 
   it("G-a2: a FAMILY on the grid keeps the family-page text in both modes", async () => {

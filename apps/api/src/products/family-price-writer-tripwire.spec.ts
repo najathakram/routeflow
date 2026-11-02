@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join, relative } from "path";
-import { WRITE_METHODS, callBlocks, opaqueProductWrites } from "./tripwire-scan";
+import { WRITE_METHODS, callBlocks, dataArgKind, opaqueProductWrites } from "./tripwire-scan";
 
 /**
  * #2717 M2 test 23 (SA-574 Q2, SA-E95, L-223): the family owns its variants' prices only if EVERY
@@ -340,5 +340,62 @@ describe("family price writer tripwire: variable and spread data (SA-584 fold)",
       ),
     ).toHaveLength(1);
     expect(opaqueCountViolations(new Map(), allow)).toHaveLength(1);
+  });
+});
+
+/**
+ * SA-1082 A-1, VM-11: a variant moves from its family in one place only. A many-write that selects a family's variants may
+ * change a flag or a status, never a price; family-price.ts writes a variant's price only inside moveFamilyVariants.
+ */
+const PRICE_KEYS = /\b(pricePerUnit|priceTier[2-5])\b/;
+
+/** The `.product.updateMany` blocks that select by parent and either name a price or hide what they write. */
+export function familyManyWritePriceOffenders(text: string): string[] {
+  return callBlocks(text, "product", ["updateMany"]).filter((block) => {
+    if (!/\bparentProductId\b/.test(block)) return false;
+    const kind = dataArgKind(block);
+    return kind === "opaque" || kind === "spread" || PRICE_KEYS.test(block);
+  });
+}
+
+describe("VM-11: a variant's price moves from its family in one function", () => {
+  const sourceOf = (name: string): string => readFileSync(join(SRC_ROOT, name), "utf8");
+
+  it("no many-write that selects a family's variants writes a price, or data this scan can't read", () => {
+    const offenders = listFiles(SRC_ROOT, /\.ts$/).filter(
+      (file) => familyManyWritePriceOffenders(readFileSync(file, "utf8")).length > 0,
+    );
+    expect(offenders.map((file) => rel(SRC_ROOT, file))).toEqual([]);
+  });
+
+  it("the scan is not vacuous: a copy onto the variants is red, a flag write isn't", () => {
+    expect(
+      familyManyWritePriceOffenders(
+        "await tx.product.updateMany({ where: { tenantId, parentProductId: familyId }, data });",
+      ),
+    ).toHaveLength(1);
+    expect(
+      familyManyWritePriceOffenders(
+        "await tx.product.updateMany({ where: { parentProductId: id }, data: { pricePerUnit: 1 } });",
+      ),
+    ).toHaveLength(1);
+    expect(
+      familyManyWritePriceOffenders(
+        "await tx.product.updateMany({ where: { parentProductId: id }, data: { isActive: false } });",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("propagateFamilyPrice never selects variants, and moveFamilyVariants is family-price.ts's only single-row price write", () => {
+    const text = sourceOf("products/family-price.ts");
+    const start = text.indexOf("export async function propagateFamilyPrice");
+    const end = text.indexOf("const sameLadder", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(text.slice(start, end)).not.toContain("parentProductId");
+
+    const updates = callBlocks(text, "product", ["update"]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toContain("move.columns.pricePerUnit");
   });
 });

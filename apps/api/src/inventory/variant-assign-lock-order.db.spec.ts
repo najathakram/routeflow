@@ -10,7 +10,7 @@
  *      reports it BLOCKED by the editor (the blocked-wait helper), so the interleaving is real, then
  *      asserts the lock edges: exactly one blocked backend, waiting on F's tuple lock (pg_locks),
  *      while V can still be locked NOWAIT by a third connection (the service holds no V lock);
- *   3. only then does the editor propagate to V (what `propagateFamilyPrice` does next) and commit.
+ *   3. only then does the editor write V (what `moveFamilyVariants` does next, SA-1082 A-1) and commit.
  * Before the fix the service had already written V (holding its row lock) and blocked later on the
  * family (new W -> `familyPricesForNewVariant`): step 3 closes V -> F against F -> V and Postgres
  * aborts one side with 40P01. Fixed: the service blocks on the family while holding nothing, the
@@ -247,7 +247,7 @@ describeDb("SA-584 B1 — assignToVariants takes the family row first (no 40P01)
         }
       }
       try {
-        // 3. release: propagateFamilyPrice's next lock + write, the variant row V, then COMMIT
+        // 3. release: moveFamilyVariants' next lock + write, the variant row V, then COMMIT
         await writer.query(
           'UPDATE "Product" SET "priceTier2" = 8.75 WHERE "parentProductId" = $1',
           [family.id],
