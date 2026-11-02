@@ -29,7 +29,8 @@ export function EditScanBar({
   onFocus: () => void;
   onEnter: () => void;
   onEscape: () => void;
-  onScan: (code: string) => void;
+  /** `source` is "field" when a wedge scanner typed the code into the field; absent for the camera. */
+  onScan: (code: string, source?: "field") => void;
   onError: (message: string) => void;
 }) {
   return (
