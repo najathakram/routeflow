@@ -16,6 +16,7 @@ import {
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   UNCONFIRMED_COPY,
   noResponse,
+  orderBoundCopy,
 } from "./credit-note-error-copy";
 import { activationEndedCopy, activationOverlapsPaidCopy } from "./activation-error-copy";
 import { creditLimitSentence } from "./credit-limit-copy";
@@ -504,6 +505,14 @@ export function codedToastCopy(err: unknown): string | null {
   // CQ-06: the license refusal says what is wrong (expired / none on file) and where to fix it (shared with mobile).
   if (code === API_ERROR_CODES.REGULATED_AUTH_REQUIRED)
     return regulatedAuthCopy(data.blockedCategories);
+  // SA-1091: an order-wide over-credit names the room left (structured `remaining`); no marker, the fixed copy below.
+  if (
+    code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM ||
+    code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM
+  ) {
+    const bound = orderBoundCopy(data);
+    if (bound) return bound;
+  }
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

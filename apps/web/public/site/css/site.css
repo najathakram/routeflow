@@ -35,6 +35,8 @@ ul,ol{padding:0;list-style:none}
 .nav-links{display:flex;gap:6px;margin-right:auto}
 .nav-links a{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:999px;text-decoration:none;font-size:16px;color:var(--ink-2);transition:color .2s,background .2s}
 .nav-links a:hover{color:var(--ink);background:var(--tint)}
+/* Six links: just above the menu breakpoint, tighten the pills so none wraps. */
+@media (min-width:1081px) and (max-width:1139.98px){.nav-links{gap:2px}.nav-links a{padding:0 9px;font-size:15px}}
 .nav-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .nav-signin{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;font-size:16px;text-decoration:none;color:var(--ink-2)}
 .nav-price{display:none;align-items:center;min-height:44px;padding:0 10px;font-size:16px;font-weight:600;text-decoration:none;color:var(--ink)}

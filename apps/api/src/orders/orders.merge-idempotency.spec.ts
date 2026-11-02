@@ -262,7 +262,8 @@ async function buildOrdersService(
   return module.get<OrdersService>(OrdersService);
 }
 
-const buildController = (svc: any) => new OrdersController(svc, {} as any, {} as any, {} as any);
+const buildController = (svc: any) =>
+  new OrdersController(svc, {} as any, {} as any, {} as any, {} as any);
 
 const activeOrderFixture = {
   id: "ord-active",

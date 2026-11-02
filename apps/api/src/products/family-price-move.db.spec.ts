@@ -16,6 +16,7 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { buildGlobalValidationPipe } from "../common/global-validation-pipe";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { PrismaService } from "../prisma/prisma.service";
@@ -23,6 +24,7 @@ import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
+import { FamilyMovePreviewDto } from "./dto/family-move-preview.dto";
 import { ProductFamiliesService } from "./product-families.service";
 import { ProductPriceGridService } from "./product-price-grid.service";
 import { ProductPriceWriteService } from "./product-price-write.service";
@@ -193,6 +195,29 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
   };
   const packCells = async (tenantId: string, id: string): Promise<any[]> =>
     (await readGrid(tenantId, id)).rows.find((r: any) => r.ref === "pack")!.cells;
+
+  it("VM-15: through main.ts's pipe, an Undo's null prices read as unchanged: nothing refused, nobody asked about", async () => {
+    const tenantId = await tenantOf("nulltier");
+    const family = await familyIn(tenantId);
+    await variantOf(family, { priceTier2: "22.00" });
+    const body = await buildGlobalValidationPipe().transform(
+      { priceTier3: null, priceTier4: null, priceTier5: null, pricePerUnit: null },
+      { type: "body", metatype: FamilyMovePreviewDto },
+    );
+    expect(Object.values(body).filter((v) => v !== undefined)).toEqual([]);
+
+    const preview = await asked(tenantId, family.id, body);
+
+    expect(preview.count).toBe(0);
+    expect(preview.retailTo).toBe(24);
+    expect(Number((await row(family.id)).priceTier3)).toBe(0);
+    await expect(
+      buildGlobalValidationPipe().transform(
+        { priceTier3: "abc" },
+        { type: "body", metatype: FamilyMovePreviewDto },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 
   it.each(["on", "off"] as const)(
     "VM-2 (mode %s): the list names the variant at the family's price; only it moves, counted once",

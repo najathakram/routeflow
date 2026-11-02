@@ -1,6 +1,6 @@
 {
-  "mappedSha": "96aedaf2c04e3af4c64082412dbf4f3034ce539a",
-  "generatedAt": "2026-11-02T13:49:21.676Z",
+  "mappedSha": "4b2516c9f29c44c1891da701138c6d247f3d0677",
+  "generatedAt": "2026-11-02T21:43:02.117Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-02 train w (merge 96aedaf2c0): api/web landing notes, TOC rows; see CHANGELOG.md."
+  "notes": "2026-11-02 train ac (merge 4b2516c9f2): api/web landing notes, TOC rows; see CHANGELOG.md."
 }

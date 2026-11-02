@@ -57,6 +57,8 @@ import {
   lineTakeRefusal,
   loadLineCredits,
   loadOrderPool,
+  loadOrderRefundRoom,
+  orderRoomRefusal,
   pooledTakeRefusal,
   toHeadroomLine,
   type HeadroomLine,
@@ -75,6 +77,7 @@ import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
 import {
+  assertInlineSourcesOpen,
   EXTERNAL_REFUND_METHOD,
   INLINE_REFUND_AUDIT_ACTION,
   INLINE_STORE_CREDIT_AUDIT_ACTION,
@@ -95,7 +98,9 @@ import {
   tillRegisterOfSale,
   tillRegisterStampedUnderLock,
 } from "./counter-close-lock";
-import { refundBusy } from "./standard-refund-claim";
+import { isTransactionExpired, refundBusy } from "./standard-refund-claim";
+import { isLockUnavailableError } from "../common/db-locks";
+import { txConflictState } from "../common/tx-retry";
 import { assertCounterWindowOpen } from "./counter-close-window";
 import {
   refundTenderColumn,
@@ -106,6 +111,9 @@ import {
 import { selectEditRevertedInvoices } from "../invoices/order-edit-revert-set";
 import { uniqueViolationOn } from "../common/prisma-unique";
 import { ledgerDocumentTargets, lockLedgerDocumentRows } from "../regulated/ledger-locks";
+
+/** SA-1090 A-1: the standalone capture transaction's budget; the same 15 s the order paths give the same work (orders.service.ts). */
+export const INLINE_CAPTURE_TX_TIMEOUT_MS = 15_000;
 
 /** design.md §8 — the ONE gate every money-writing method here re-checks itself,
  * regardless of the registry's rollout state (the `AddonGuard` on the controller courtesy-
@@ -785,7 +793,15 @@ export class InlineReturnsService {
     tx: any,
     dto: CaptureInlineReturnDto,
     user: JwtPayload,
-    opts: { creditNoteNumber?: string; orderRouteRunId?: string | null } = {},
+    opts: {
+      creditNoteNumber?: string;
+      orderRouteRunId?: string | null;
+      /**
+       * Cap the system-owned intent at the carrying order's remaining balance (default: true, the order create/edit path).
+       * The standalone capture() passes false: its intent has always been the whole credit, as issueCredit() writes it.
+       */
+      capIntentToOrderBalance?: boolean;
+    } = {},
   ): Promise<{ replayed: boolean; ret: any; overCap: boolean; minted: any }> {
     const captured = await this.captureInTx(tx, dto, user, {
       orderRouteRunId: opts.orderRouteRunId,
@@ -799,7 +815,7 @@ export class InlineReturnsService {
     );
     const minted = await this.issueCreditInTx(tx, ret, amount, this.prisma.getTenantId(), {
       creditNoteNumber: opts.creditNoteNumber,
-      capIntentToOrderBalance: true,
+      capIntentToOrderBalance: opts.capIntentToOrderBalance ?? true,
     });
     return { ...captured, minted };
   }
@@ -812,7 +828,13 @@ export class InlineReturnsService {
    */
   private async assertWithinLineHeadroom(
     tx: any,
-    chunks: Array<{ sourceInvoiceItemId: string | null; pieces: number; subtotal: number }>,
+    chunks: Array<{
+      sourceInvoiceItemId: string | null;
+      pieces: number;
+      subtotal: number;
+      taxAmount?: number;
+      categoryTax?: number;
+    }>,
     opts: { readOnly?: boolean } = {},
   ): Promise<void> {
     const takes = new Map<string, { qty: number; amount: number }>();
@@ -940,6 +962,38 @@ export class InlineReturnsService {
           });
       }
     }
+    // SA-1091 (row 631): the order-wide bound, per SOURCE order. The line and pool reads above are net and per line; a lump credit
+    // note (no lines) or a recorded refund is invisible to them. The gross of what this return takes from an order's invoices, plus
+    // everything that order has already given back, may not pass what it billed (refused, never clipped). Same rows, same locks
+    // (the source invoices were written above), and the same check serves the quote (readOnly) and the capture.
+    const grossBySource = new Map<
+      string,
+      { orderId: string | null; invoiceId: string; gross: number }
+    >();
+    for (const c of chunks) {
+      if (!c.sourceInvoiceItemId) continue;
+      const invoiceId = srcRows.find((r) => r.id === c.sourceInvoiceItemId)?.invoiceId;
+      if (!invoiceId) continue;
+      const orderId = invoiceOrder.get(invoiceId) ?? null;
+      const key = orderId ?? `invoice:${invoiceId}`;
+      const prev = grossBySource.get(key) ?? { orderId, invoiceId, gross: 0 };
+      prev.gross += Number(c.subtotal) + Number(c.taxAmount ?? 0) + Number(c.categoryTax ?? 0);
+      grossBySource.set(key, prev);
+    }
+    for (const [, src] of [...grossBySource].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))) {
+      const roomRefusal = orderRoomRefusal(
+        await loadOrderRefundRoom(tx, { orderId: src.orderId, invoiceId: src.invoiceId }),
+        roundMoney(src.gross),
+      );
+      if (roomRefusal)
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message: roomRefusal.message,
+          orderBound: true,
+          requested: roundMoney(src.gross),
+          remaining: roomRefusal.left,
+        });
+    }
   }
 
   /**
@@ -1008,7 +1062,8 @@ export class InlineReturnsService {
     const tenantId = this.prisma.getTenantId();
     await this.assertGranted(tenantId);
 
-    let result: { replayed: boolean; ret: any; overCap: boolean };
+    // `minted` is set only by a fresh, unheld STORE_CREDIT capture: its credit note was minted in the capture's own transaction
+    let result: { replayed: boolean; ret: any; overCap: boolean; minted?: any };
 
     // m-2/m-3: an unlocked pre-read resolves an already-captured returnKey without opening a
     // transaction — a retried submission (offline replay, double-tap) burns nothing. Routed
@@ -1037,14 +1092,28 @@ export class InlineReturnsService {
       };
     } else {
       try {
-        result = await this.prisma.tenantTransaction(async (tx: any) => {
-          // §5: the SAME customer-scoped lock returns.service.ts's create() takes — inline and
-          // standard return creation for one customer serialize against each other here. The
-          // order create/edit paths (#2094) take this same lock themselves, as their FIRST
-          // statement, and then call `captureInTx`.
-          await this.lockCustomerInTx(tx, dto.customerId);
-          return this.captureInTx(tx, dto, user, { forRefund: resolution === "REFUND" });
-        });
+        result = await this.prisma.tenantTransaction(
+          async (tx: any) => {
+            // §5: the SAME customer-scoped lock returns.service.ts's create() takes — inline and
+            // standard return creation for one customer serialize against each other here. The
+            // order create/edit paths (#2094) take this same lock themselves, as their FIRST
+            // statement, and then call `captureInTx`.
+            await this.lockCustomerInTx(tx, dto.customerId);
+            // SA-1090 (1): a STORE_CREDIT capture mints its credit in THIS transaction (the order-create path's composition),
+            // so a failed mint rolls the whole capture back: no return, no restock, no credit left half done, and a same-key
+            // retry starts clean. A held capture and a replay mint nothing (`minted: null`); a REFUND capture only stores its
+            // intent. The standalone intent stays the whole credit (`capIntentToOrderBalance: false`, as issueCredit wrote it).
+            if (resolution === "REFUND") {
+              return {
+                ...(await this.captureInTx(tx, dto, user, { forRefund: true })),
+                minted: null,
+              };
+            }
+            return this.captureAndIssueInTx(tx, dto, user, { capIntentToOrderBalance: false });
+          },
+          // SA-1090 A-1: the mint and the settle now run inside, so the order paths' budget (orders.service.ts), not Prisma's 5 s.
+          { timeout: INLINE_CAPTURE_TX_TIMEOUT_MS },
+        );
       } catch (err: any) {
         if (this.isReturnKeyConflict(err) && dto.returnKey) {
           const raced = await this.prisma.forTenant().return.findFirst({
@@ -1064,23 +1133,37 @@ export class InlineReturnsService {
               message: "A different return already used this capture key",
             });
           }
+        } else if (
+          isTransactionExpired(err) ||
+          isLockUnavailableError(err) ||
+          txConflictState(err)
+        ) {
+          // SA-1090 A-1: the budget ran out (P2028), a lock wait gave up (55P03) or a write conflict / deadlock (P2034,
+          // 40001, 40P01): the transaction wrote nothing, so the caller retries with the same key. A deadlock is possible
+          // by design: an order create locks Products and then the RETURN number, capture takes the number and then
+          // Products (an existing pair); holding the number through the mint widens that window.
+          throw refundBusy();
         } else {
           throw err;
         }
       }
     }
 
-    // HIGH-2: a RECEIVED row with neither a credit note nor a hold is "stuck" — either just
-    // captured (the normal, expected case) or left behind by a PRIOR issueCredit that failed
-    // after this same capture committed. Either way, (re-)issue idempotently before returning.
+    // The credit was minted in the capture's own transaction: tell the dashboard now that it has committed (once, never from
+    // inside the transaction), and answer with the issued row (the snapshot above predates the link).
+    if (result.minted) this.emitCreditNoteCreated(tenantId, result.minted);
+
+    // HIGH-2: a RECEIVED row with neither a credit note nor a hold is "stuck" — a REPLAY of a capture whose credit was never
+    // minted (it committed before capture and mint shared a transaction). (Re-)issue idempotently before returning.
     if (
       resolution === "STORE_CREDIT" &&
-      result.ret.status === "RECEIVED" &&
-      !result.ret.creditNoteId &&
-      !result.ret.refundMethod &&
-      !result.ret.holdReason
+      (result.minted ||
+        (result.ret.status === "RECEIVED" &&
+          !result.ret.creditNoteId &&
+          !result.ret.refundMethod &&
+          !result.ret.holdReason))
     ) {
-      await this.issueCredit(result.ret.id);
+      if (!result.minted) await this.issueCredit(result.ret.id);
       const reissued = await this.prisma
         .forTenant()
         .return.findUnique({ where: { id: result.ret.id }, include: { items: true } });
@@ -1249,6 +1332,15 @@ export class InlineReturnsService {
         return;
       // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
       await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-1091 piece 3: a stuck row is re-issued only while the invoices its goods were sold on are still billed (409 before the mint).
+      await assertInlineSourcesOpen(
+        tx,
+        tenantId,
+        await tx.returnItem.findMany({
+          where: { returnId },
+          select: { sourceInvoiceItemId: true },
+        }),
+      );
 
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
@@ -1343,6 +1435,9 @@ export class InlineReturnsService {
         fresh.orderId,
         ...fresh.items.map((i: any) => i.sourceOrderId).filter(Boolean),
       ]);
+      // SA-1091 piece 3: a source invoice voided or written off since the capture refuses the approval (409), before any
+      // restock, ledger reversal or mint below. Locks the source invoices (Return -> Order -> Invoice).
+      await assertInlineSourcesOpen(tx, tenantId, fresh.items);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {
