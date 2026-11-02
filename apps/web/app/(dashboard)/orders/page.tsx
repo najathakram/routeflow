@@ -58,6 +58,7 @@ import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly, newOrderEntry, newOrderIntent } from "@/lib/counter-sale";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { bulkDeleteResultTitle } from "@/lib/order-error-text";
 import { ReadOnlyHint, useReadOnlyGate, WriteButton } from "@/lib/read-only-gate";
 import { NewOrderButton } from "./_components/NewOrderButton";
 
@@ -554,7 +555,7 @@ export default function OrdersPage() {
       const result = await bulkDelete.mutateAsync(Array.from(selected));
       if (result.errors.length > 0) {
         toast({
-          title: `${result.deleted} deleted, ${result.errors.length} failed (orders whose invoice has recorded payments must be voided first)`,
+          title: bulkDeleteResultTitle(result.deleted, result.errors.length),
           variant: "error",
         });
       } else {
