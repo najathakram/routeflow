@@ -15,6 +15,7 @@ export * from "./build-line";
 export * from "./po-line";
 export * from "./legacy-line-pieces";
 export * from "./regulated-unit-basis";
+export * from "./stock-pieces";
 export * from "./legacy-box-axis";
 export * from "./inferred-flat-rate";
 export * from "./tax-precision";

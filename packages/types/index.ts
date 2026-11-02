@@ -284,3 +284,4 @@ export {
   licenceExpiryCutoff,
 } from "./licence-validity";
 export * from "./api/ready-for-pickup";
+export * from "./api/stock-availability";
