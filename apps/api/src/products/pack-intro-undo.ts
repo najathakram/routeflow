@@ -65,6 +65,39 @@ export const receivedBeforePackError = (document: "bill" | "purchase-order") =>
         : "This purchase order was received before its units per box were set. Save the edit without changing stock.",
   });
 
+/**
+ * SA-1093 Rule 4: the factor a return's cancel multiplies an inline item's quantity by, from the return's own restock row.
+ * A return's rows are written in one transaction, so one row answers for the product. A restocked item with no row is
+ * legacy, so older than every answer.
+ */
+export async function inlineRestockFactors(
+  tx: IntroTx & {
+    stockMovement: {
+      findMany(args: Prisma.StockMovementFindManyArgs): Promise<unknown[]>;
+    };
+  },
+  reference: string,
+  productIds: readonly string[],
+): Promise<Map<string, number>> {
+  const ids = [...new Set(productIds)];
+  const rows = (await tx.stockMovement.findMany({
+    where: {
+      reference,
+      type: MovementType.RETURN,
+      productId: { in: ids },
+      quantity: { gt: 0 },
+    },
+    select: { productId: true, createdAt: true },
+  })) as { productId: string; createdAt: Date }[];
+  const factors = new Map<string, number>();
+  for (const productId of ids) {
+    const intros = await boxIntrosOf(tx, productId);
+    const row = rows.find((r) => r.productId === productId);
+    factors.set(productId, packFactor(row ? introsAfter(intros, row.createdAt) : intros));
+  }
+  return factors;
+}
+
 /** A lot's shape after these answers: each one's rounding in order, never a single division. */
 export const convertedLotShape = (
   qty: Prisma.Decimal.Value,

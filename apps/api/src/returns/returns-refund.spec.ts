@@ -1383,6 +1383,8 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
         // B562 PR-2: update() returns the written row — the reversing movement reads its counter.
         product: { update: jest.fn().mockResolvedValue({ currentStock: 8, averageCost: 3 }) },
         // B665: cancel undoes exactly the RET-<id> movements receive() booked (in pieces)
+        // SA-1093 Rule 4: no Boxes answer on this product, so every factor is 1.
+        auditLog: { findMany: jest.fn().mockResolvedValue([]) },
         stockMovement: {
           findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 2 }]),
           deleteMany: jest.fn(),
