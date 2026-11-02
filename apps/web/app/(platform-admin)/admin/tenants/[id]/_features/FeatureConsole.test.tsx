@@ -13,6 +13,7 @@ import {
 } from "./__fixtures__/effective.fixtures";
 import { diffsFixture } from "./__fixtures__/diffs.fixtures";
 import { BADGE_COLORS } from "./badge";
+import { MIXED_LABEL } from "./mode-utils";
 import type { EffectiveFeature, FeatureRegistryRow } from "./types";
 import { previewFixture } from "./__fixtures__/preview.fixtures";
 import { fulfilmentModeLabel } from "./setup-copy";
@@ -183,7 +184,7 @@ describe("FeatureConsole — data-driven readouts (test 1, BO-12)", () => {
     // Toggle "show internal" reveals the 6th row with its own readout.
     fireEvent.click(screen.getByLabelText("Show internal"));
     const devRow = document.querySelector('[data-feature-key="developer_mode"]') as HTMLElement;
-    expect(within(devRow).getByTestId("readout")).toHaveTextContent("Set for this business");
+    expect(within(devRow).getByTestId("readout")).toHaveTextContent("Free until Dec 31, 2026");
   });
 });
 
@@ -991,7 +992,7 @@ describe("BO-12: one state readout per console row", () => {
     effRow("is_ga"),
     effRow("is_deprecated", { serving: true, source: "PRESET" }),
     effRow("is_sunset"),
-    effRow("plain_on", { serving: true, resolver: true, source: "PRESET" }),
+    effRow("plain_on", { serving: true, resolver: true, source: "NONE" }),
     effRow("grant_but_off", { serving: false, resolver: true, source: "OVERRIDE_GRANT" }),
   ];
 
@@ -1054,7 +1055,10 @@ describe("BO-12: one state readout per console row", () => {
     const { rowOf } = await renderAll();
     for (const r of REGISTRY) {
       const chips = Array.from(rowOf(r.key).querySelectorAll('[class~="text-[10px]"]')).filter(
-        (el) => !el.closest("[id^='why-panel-']") && !el.closest("[role='radiogroup']"),
+        (el) =>
+          !el.closest("[id^='why-panel-']") &&
+          !el.closest("[role='radiogroup']") &&
+          el.textContent !== MIXED_LABEL, // the mixed-mode label is the mode readout, not a status chip
       );
       expect({ key: r.key, atMostOne: chips.length <= 1 }).toEqual({
         key: r.key,
@@ -1107,16 +1111,18 @@ describe("BO-12: one state readout per console row", () => {
   it("a dark row that is on for a real reason keeps that reason (the first rule that applies wins)", async () => {
     const { rowOf } = await renderAll();
     // route_optimization: dark, serving, source PRESET. developer_mode: dark, serving, GRANT.
-    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(/^In plan$/);
+    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(
+      /^In plan$/,
+    );
     expect(within(rowOf("developer_mode")).getByTestId("readout")).toHaveTextContent(
-      /^Set for this business$/,
+      /^Free until Dec 31, 2026$/,
     );
   });
 
   it("the four source chips use the badge colours and are a 10 px chip", async () => {
     const { rowOf } = await renderAll();
     const cases: Array<[string, string, string]> = [
-      ["developer_mode", "Set for this business", BADGE_COLORS.added],
+      ["developer_mode", "Free until Dec 31, 2026", BADGE_COLORS.added],
       ["tobacco_dealer", "Off for this business", BADGE_COLORS.removed],
       ["recurring_routes", "Add-on", BADGE_COLORS.purchased],
       ["msrp", "On, kept from an earlier plan", BADGE_COLORS.grandfathered],
@@ -1127,6 +1133,18 @@ describe("BO-12: one state readout per console row", () => {
       expect(readout).toHaveClass("text-[10px]");
       for (const cls of colours.split(" ")) expect(readout).toHaveClass(cls);
     }
+  });
+
+  it("the Add-on chip links to the tenant's billing tab and copies no price; no other chip is a link", async () => {
+    const { rowOf } = await renderAll();
+    const addon = within(rowOf("recurring_routes")).getByTestId("readout");
+    const link = addon.closest("a");
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toMatch(/[?]tab=billing$/);
+    expect(addon.textContent).toBe("Add-on");
+    expect(addon.textContent).not.toContain("$");
+    for (const key of ["developer_mode", "tobacco_dealer", "msrp"])
+      expect(within(rowOf(key)).getByTestId("readout").closest("a")).toBeNull();
   });
 
   it("a plain On or Off stays 12 px text (emerald or slate), never a chip", async () => {

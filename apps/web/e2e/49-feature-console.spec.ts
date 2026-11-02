@@ -437,7 +437,7 @@ for (const vp of VIEWPORTS) {
       await expect(readout("tobacco_dealer")).toContainText("Off for this business");
       await expect(readout("msrp")).toContainText("On, kept from an earlier plan");
       await expect(readout("recurring_routes")).toContainText("Add-on");
-      // a plain inherited row has no source chip: exactly one readout, which is its mode or On/Off
+      // an in-plan row shows exactly one readout (its mode, else the In plan chip)
       await expect(readout("route_optimization")).toHaveCount(1);
       await expect(readout("boxes_pieces_mode")).toContainText("Off");
 
