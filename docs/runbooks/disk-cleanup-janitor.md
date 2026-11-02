@@ -91,7 +91,8 @@ shortfall never triggers the more aggressive later steps.
 1. **`node_modules`** in worktrees whose branch is **merged** (below), that have no uncommitted
    changes and whose HEAD has not moved in the last 24 hours — the checkout itself is kept
    (reinstall with `npm ci` when you're back on that branch).
-2. **Whole worktrees** that meet step 1's conditions AND have no unpushed commits — first every
+2. **Whole worktrees** that meet step 1's conditions AND have no unpushed commits (a tip already in
+   `origin/master` has none, even after its origin branch is deleted) — first every
    symlink/junction inside is unlinked (B817), then `git worktree remove --force`, then a fallback recursive delete if Windows left files behind
    (file locks are common), then `git worktree prune`.
 3. **Orphan directories** under `.claude/worktrees/` that `git worktree list` no longer

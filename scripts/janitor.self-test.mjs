@@ -1369,6 +1369,25 @@ t(
     t("no upstream and no origin branch of that name is unpushed (unknown is unsafe)", () => {
       assert.equal(hasUnpushedCommits(dir, "local-only"), true);
     });
+    // A train merges the branch and deletes its origin ref: the tip is safe on origin/master.
+    g("checkout", "-q", "master");
+    g("checkout", "-q", "-b", "landed");
+    commit("d");
+    g("push", "-q", "origin", "landed:master");
+    t("a tip in origin/master has nothing unpushed, with no origin branch of its own", () => {
+      assert.equal(hasUnpushedCommits(dir, "landed"), false);
+    });
+    t("a branch outside origin/master with no origin branch stays unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "local-only"), true);
+    });
+    commit("e");
+    t("one commit past origin/master is unpushed", () => {
+      assert.equal(hasUnpushedCommits(dir, "landed"), true);
+    });
+    g("checkout", "-q", "--detach");
+    t("a detached tree still has no branch to prove (unknown is unsafe)", () => {
+      assert.equal(hasUnpushedCommits(dir, null), true);
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(origin, { recursive: true, force: true });

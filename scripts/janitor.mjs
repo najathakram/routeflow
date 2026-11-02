@@ -1224,6 +1224,9 @@ function isDirty(worktreePath) {
 
 export function hasUnpushedCommits(worktreePath, branch) {
   if (!branch) return true; // detached — treat as unknown/unsafe
+  // Every commit is on origin/master, so nothing can be lost, even after a train deleted the branch's
+  // own origin ref. Squash-landed tips are not ancestors and fall through to the checks below.
+  if (isAncestorOrSelf(worktreePath, branch, "origin/master")) return false;
   // A branch pushed with a bare `git push origin <branch>` records no upstream: compare it with the
   // same-named origin branch instead. Neither one is unknown, treated as unsafe.
   const sameName = `refs/remotes/origin/${branch}`;
