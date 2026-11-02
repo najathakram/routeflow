@@ -65,7 +65,9 @@ describe("ReturnsService.processRefund: the locked claim with a basis recomputed
       const invs = inClaimTx ? after : before; // inside the claim tx the locked rows are the `after` rows
       if (where?.id?.in) return invs.filter((i) => where.id.in.includes(i.id));
       const notIn: string[] = where?.status?.notIn ?? [];
-      return invs.filter((i) => !notIn.includes(i.status)).map((i) => ({ id: i.id }));
+      return invs
+        .filter((i) => !notIn.includes(i.status))
+        .map((i) => ({ id: i.id, total: i.total }));
     });
     prisma.return.updateMany.mockResolvedValue({ count: 1 });
     prisma.return.update.mockResolvedValue({});

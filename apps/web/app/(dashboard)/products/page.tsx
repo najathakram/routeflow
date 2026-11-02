@@ -703,9 +703,15 @@ function makeTableColumns(
                 productId={p.id}
                 productName={p.name}
                 field={`priceTier${tier}`}
-                value={val ? parseFloat(String(val)).toFixed(2) : ""}
+                value={parseFloat(String(val)) > 0 ? parseFloat(String(val)).toFixed(2) : ""}
                 quickEditMode={quickEditMode}
-                onSave={(newVal, rec) => onQuickSave(p, `priceTier${tier}`, newVal || "0", rec)}
+                // SA-1092: "0" is how a clear is saved, and how Undo takes a blank cell back ("" reads as unchanged).
+                onSave={(newVal, rec) =>
+                  onQuickSave(p, `priceTier${tier}`, newVal || "0", {
+                    ...rec,
+                    oldValue: rec.oldValue || "0",
+                  })
+                }
               />
             </div>
           );

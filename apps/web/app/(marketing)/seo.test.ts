@@ -103,7 +103,7 @@ describe("marketing SEO — R-MKT T9", () => {
     }
   });
 
-  it("sitemap.ts lists exactly the 10 public URLs, privacy/terms and the demo page included (R-MKT T9, W8 S3)", () => {
+  it("sitemap.ts lists exactly the 14 public URLs, privacy/terms, the demo page and the four deep pages included (R-MKT T9, W8 S3)", () => {
     const entries = sitemap();
     const urls = entries
       .map((entry) => entry.url)
@@ -120,6 +120,10 @@ describe("marketing SEO — R-MKT T9", () => {
       "https://www.routeflow.info/privacy",
       "https://www.routeflow.info/terms",
       "https://www.routeflow.info/book-a-demo",
+      "https://www.routeflow.info/getting-started",
+      "https://www.routeflow.info/does-and-doesnt",
+      "https://www.routeflow.info/data-in-and-out",
+      "https://www.routeflow.info/security",
     ].sort();
 
     expect(urls).toEqual(expected);

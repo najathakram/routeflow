@@ -270,6 +270,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
 const UNIT_FIELDS = [
   "pendingTaps",
   "unitLabel",
+  "unitFactor",
   "derivedBase",
   "unit",
   "unitsPerBox",

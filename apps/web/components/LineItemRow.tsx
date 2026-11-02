@@ -18,6 +18,8 @@ import { formatMoney } from "@/lib/format";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
+import { LineStockNote } from "@/components/LineStockNote";
+import type { LineStockView } from "@/lib/line-stock";
 import type { PriceSummaryResponse } from "@routeflow/types";
 
 /**
@@ -63,6 +65,8 @@ export interface LineItemRowItem {
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack). `qty` then counts that
    *  unit and `unitPrice` is per unit — no boxes/pieces. Sent as `unitLabel`. */
   unitLabel?: string;
+  /** UI-only: pieces in one `unitLabel` unit (the picked option's factor); read by the live stock note, never submitted. */
+  unitFactor?: number;
   /** UI-only: the pack fields a unit switch overwrote, so choosing the pack restores them. */
   packBase?: PackBase;
 }
@@ -127,6 +131,8 @@ export interface LineItemRowProps {
   /** #2696 (b): a typed qty for a plain (non-case) line. When given, the qty between − / + is a
    *  tap-to-type input; when omitted (other callers), it stays the read-only count it was. */
   onSetQty?: (value: number) => void;
+  /** SA-1086: live stock for this line (`lineStockViews`); omitted = nothing shown. Rendered in the info column. */
+  stock?: LineStockView;
   /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
   unitSlot?: React.ReactNode;
   /**
@@ -207,6 +213,7 @@ export function LineItemRow({
   onUpdateUnlistedPrice,
   onRemove,
   unitSlot,
+  stock,
   pendingUnit,
   onTapPrice,
   onSetQty,
@@ -387,6 +394,7 @@ export function LineItemRow({
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
+          {stock && <LineStockNote stock={stock} />}
           {/* #2865 F2: the pending-unit status lives IN the info column (full width at every breakpoint). As a row child it
               became a fourth flex item at sm+ and was crushed between the qty controls and the total. */}
           {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}

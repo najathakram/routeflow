@@ -1433,6 +1433,7 @@ export default function OrderDetailPage() {
                   pricingReady={pricingReady}
                   customer={{ id: order.customerId, name: order.customer?.businessName }}
                   orderId={order.id}
+                  orderStatus={order.status}
                   lockedLineIds={deliveredLockedLineIds(order.status, order.lineItems)}
                 />
 
