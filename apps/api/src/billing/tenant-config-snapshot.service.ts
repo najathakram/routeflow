@@ -1,6 +1,7 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 import { carrierInTransitCount } from "../orders/carrier-in-transit-guard";
 import { featureDefByKey } from "./feature-registry";
 import { planRank } from "./plan-catalog.constants";
@@ -234,7 +235,7 @@ export class TenantConfigSnapshotService {
   /**
    * Admin surface (A2 step c): the tenant's snapshots, newest first. Read-only — no side effects.
    */
-  async list(tx: Prisma.TransactionClient, tenantId: string): Promise<SnapshotListItem[]> {
+  async list(tx: TxOrClient, tenantId: string): Promise<SnapshotListItem[]> {
     const rows = await tx.tenantFeatureConfigSnapshot.findMany({
       where: { tenantId },
       orderBy: { takenAt: "desc" },
@@ -263,7 +264,7 @@ export class TenantConfigSnapshotService {
    * snapshot for this tenant.
    */
   async previewRestore(
-    tx: Prisma.TransactionClient,
+    tx: TxOrClient,
     tenantId: string,
     snapshotId: string,
     now: Date = new Date(),
@@ -315,7 +316,7 @@ export class TenantConfigSnapshotService {
    * count is a read, like the Settings writer's.
    */
   private async planGuarded(
-    tx: Prisma.TransactionClient,
+    tx: TxOrClient,
     tenantId: string,
     payload: SnapshotPayload,
     current: { configs: readonly ConfigRow[]; overrides: readonly OverrideRow[] },

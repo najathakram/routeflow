@@ -1,5 +1,6 @@
 import { TenantStatus } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import type * as runtime from "@prisma/client/runtime/client";
 import { toCents } from "@routeflow/pricing";
 import { LEGACY_ADDON_KEY_TO_SKU } from "./plan-catalog.constants";
 
@@ -40,7 +41,13 @@ export function addonRowMatches(row: { addonKey: string; sku?: string | null }, 
   return row.addonKey === sku || row.sku === sku || legacyKeysFor(sku).includes(row.addonKey);
 }
 
-type AddonReader = { tenantAddon: Pick<Prisma.TenantAddonDelegate, "findFirst"> };
+// Any ClientOptions: the app client (SA-1084 omit) and a plain transaction client both read a tenant add-on row.
+type AddonReader = {
+  tenantAddon: Pick<
+    Prisma.TenantAddonDelegate<runtime.Types.Extensions.DefaultArgs, any>,
+    "findFirst"
+  >;
+};
 
 /**
  * The tenant's row for `sku` — an active row first, then the oldest — or null. A tenant that
