@@ -416,6 +416,86 @@ describeDb("B467 — InlineReturnsService.capture() concurrency, real Postgres",
     expect(await rowJson(first.id)).toBe(firstRow); // the first capture is untouched
   }, 30_000);
 
+  // ─── SA-1090 (1): a STORE_CREDIT capture and its credit are ONE transaction ───────────────────────────────
+  // RED on master: capture() committed the return (restock, ledger reversal) in one transaction and minted in a second, so a
+  // mint that threw left the return committed, the goods back in stock and no credit.
+  describe("SA-1090 (1): capture + mint in one transaction", () => {
+    const stockOf = async (productId: string) =>
+      Number((await raw.product.findUniqueOrThrow({ where: { id: productId } })).currentStock ?? 0);
+    const opOf = (sub: string): JwtPayload => ({
+      sub,
+      username: "operator",
+      role: "OPERATOR" as any,
+      status: "ACTIVE" as any,
+      forcePasswordChange: false,
+      tenantId,
+      tenantSlug: slug,
+    });
+
+    it("IR-1/IR-2: the mint throws -> no return and no credit (stock is unit-proved: this product is never-sold, so it books no movement); the same-key retry commits one return and one credit", async () => {
+      const f = await seedOrder("ir1", 500);
+      const key = `sa1090-ir1-${run}`;
+      const stockBefore = await stockOf(f.productId);
+      const real = svc.creditNotes.mintStandaloneInTx.bind(svc.creditNotes);
+      let armed = true;
+      svc.creditNotes.mintStandaloneInTx = async (...a: any[]) => {
+        if (armed) {
+          armed = false;
+          throw new Error("mint exploded");
+        }
+        return real(...a);
+      };
+      const capture = () =>
+        tenantCtx.run(tenantId, () =>
+          svc.capture(
+            {
+              customerId: f.customerId,
+              orderId: f.orderId,
+              items: [{ productId: f.productId, qty: 3 }],
+              returnKey: key,
+            },
+            opOf(f.driverId),
+          ),
+        );
+      try {
+        await expect(capture()).rejects.toThrow("mint exploded");
+        expect(await raw.return.count({ where: { orderId: f.orderId } })).toBe(0);
+        expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(0);
+        expect(await stockOf(f.productId)).toBe(stockBefore);
+
+        const retry = await capture();
+        expect(retry.status).toBe("REFUNDED");
+        expect(await raw.return.count({ where: { orderId: f.orderId } })).toBe(1);
+        expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(1);
+      } finally {
+        svc.creditNotes.mintStandaloneInTx = real;
+      }
+    }, 60_000);
+
+    it("IR-3: two captures race on one key -> one return, one credit", async () => {
+      const f = await seedOrder("ir3", 500);
+      const key = `sa1090-ir3-${run}`;
+      const capture = () =>
+        tenantCtx.run(tenantId, () =>
+          svc.capture(
+            {
+              customerId: f.customerId,
+              orderId: f.orderId,
+              items: [{ productId: f.productId, qty: 2 }],
+              returnKey: key,
+            },
+            opOf(f.driverId),
+          ),
+        );
+
+      const [a, b] = await Promise.all([capture(), capture()]);
+
+      expect(a.id).toBe(b.id);
+      expect(await raw.return.count({ where: { orderId: f.orderId } })).toBe(1);
+      expect(await raw.creditNote.count({ where: { customerId: f.customerId } })).toBe(1);
+    }, 60_000);
+  });
+
   // ─── SA-1060 PR-2: what a no-sale credit means ──────────────────────────────────
   // A product this customer was never sold, ever, is credited with no sales tax and is NOT added to stock: `restock` is forced
   // false on the chunk, whatever the reason or the DTO says. A product sold to them before (outside the 90-day window) keeps
