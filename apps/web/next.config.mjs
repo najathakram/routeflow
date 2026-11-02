@@ -77,7 +77,8 @@ const nextConfig = {
     ];
   },
 
-  // The home, pricing, product and landing pages are ready-made HTML under public/site (page,
+  // The home, pricing, product, landing and four deep pages (getting-started, does-and-doesnt,
+  // data-in-and-out, security) are ready-made HTML under public/site (page,
   // styles, scripts, font and marks together). A beforeFiles rewrite serves each at its own
   // address after the middleware has run, so the signed-in redirect on "/" still comes first. The
   // route behind it (app/site-page) is the file plus the Umami tags when the build has a site ID.
@@ -88,6 +89,10 @@ const nextConfig = {
         { source: "/pricing", destination: "/site-page/pricing" },
         { source: "/product", destination: "/site-page/product" },
         { source: "/landing", destination: "/site-page/landing" },
+        { source: "/getting-started", destination: "/site-page/getting-started" },
+        { source: "/does-and-doesnt", destination: "/site-page/does-and-doesnt" },
+        { source: "/data-in-and-out", destination: "/site-page/data-in-and-out" },
+        { source: "/security", destination: "/site-page/security" },
       ],
     };
   },
@@ -159,7 +164,7 @@ const nextConfig = {
       },
       {
         source:
-          "/:path(product|wholesalers|retailers|pricing|landing|company|contact|privacy|terms|sign-in|book-a-demo)",
+          "/:path(product|wholesalers|retailers|pricing|landing|company|contact|privacy|terms|sign-in|book-a-demo|getting-started|does-and-doesnt|data-in-and-out|security)",
         headers: [
           {
             key: "Cache-Control",
@@ -171,11 +176,13 @@ const nextConfig = {
       // the page at a second address, so search engines are told to leave them out; the pages
       // carry their own canonical link.
       {
-        source: "/site/:page(home|pricing|product|landing).html",
+        source:
+          "/site/:page(home|pricing|product|landing|getting-started|does-and-doesnt|data-in-and-out|security).html",
         headers: [{ key: "X-Robots-Tag", value: "noindex" }],
       },
       {
-        source: "/site-page/:page(home|pricing|product|landing)",
+        source:
+          "/site-page/:page(home|pricing|product|landing|getting-started|does-and-doesnt|data-in-and-out|security)",
         headers: [{ key: "X-Robots-Tag", value: "noindex" }],
       },
     ];
