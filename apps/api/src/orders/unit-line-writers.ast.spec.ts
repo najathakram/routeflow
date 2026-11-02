@@ -152,6 +152,10 @@ const INVENTORY: Record<string, Row> = {
     why: "OrderTemplateItem has no unit column; creates pack lines",
     trioVia: ["categoryTaxSnapshotOf"],
   },
+  "routes/routes.service.ts::RoutesService.completeStop": {
+    kind: "FIELD_ONLY",
+    why: "deliveredQty verbatim",
+  },
   "routes/routes.service.ts::RoutesService.completeWithPayment": {
     kind: "FIELD_ONLY",
     why: "deliveredQty verbatim",
@@ -1063,6 +1067,9 @@ const REVISIONS: Record<string, RevisionRow> = {
   // B692: a manual PARTIALLY_DELIVERED records per-line delivery evidence (deliveredQty recompute), not the sale.
   "orders/order-pd-quantities.ts::writeOfficeDeliveries": statusOnly(
     "delivery evidence (deliveredQty), not the sale",
+  ),
+  "routes/routes.service.ts::RoutesService.completeStop": statusOnly(
+    "delivery (deliveredQty), not the sale",
   ),
   "routes/routes.service.ts::RoutesService.completeWithPayment": statusOnly(
     "delivery (deliveredQty), not the sale",
