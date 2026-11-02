@@ -97,7 +97,6 @@ export class DriverLocationRetentionService {
         out.due += due;
         if (mode !== "enforce") continue;
         for (const { driverId } of drivers) {
-          if (budget <= 0) break;
           const deleted = await this.deleteDriverPoints(
             tenant.id,
             driverId,
