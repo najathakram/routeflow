@@ -47,6 +47,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { quickPackEdit } from "@/lib/quick-edit-pack";
+import { usePackReadingSave } from "@/components/PackReadingAsk";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import {
   PortalBulkButtons,
@@ -786,6 +787,7 @@ export default function ProductsPage() {
   const hasMsrpAddon = useHasAddon(MSRP_ADDON);
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const packSave = usePackReadingSave(updateProduct);
   const bulkDelete = useBulkDeleteProducts();
 
   // Section names must resolve for deactivated sections too (a product can still
@@ -819,8 +821,12 @@ export default function ProductsPage() {
           toast({ title: pack.message, variant: "error" });
           return false;
         }
-        await updateProduct.mutateAsync({ id: product.id, ...pack.save });
+        // SA-946: closed: nothing saved, the cell stays open. Answered: Undo can't take a conversion back, so no record.
+        const stock = Number(product.currentStock ?? 0);
+        const saved = await packSave.mutateAsync({ id: product.id, ...pack.save }, stock);
+        if (!saved) return false;
         toast({ title: `${field} updated`, variant: "success" });
+        if (saved.answered) return;
         setUndoStack((prev) => [
           ...prev.slice(-19),
           { ...record, oldValue: pack.undo, newValue: pack.redo },
@@ -1784,6 +1790,7 @@ export default function ProductsPage() {
           </button>
         </div>
       )}
+      {packSave.dialog}
     </div>
   );
 }

@@ -14,7 +14,7 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
     expect(list).toMatch(
       /if \(field === "unitsPerBox"\) \{\s*const pack = quickPackEdit\(product, newVal\);/,
     );
-    expect(list).toMatch(/updateProduct\.mutateAsync\(\{ id: product\.id, \.\.\.pack\.save \}\)/);
+    expect(list).toMatch(/packSave\.mutateAsync\(\{ id: product\.id, \.\.\.pack\.save \}, stock\)/);
     expect(list).toMatch(/oldValue: pack\.undo,\s*newValue: pack\.redo/);
   });
 
@@ -25,7 +25,7 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
     expect(block.indexOf("toast({ title: pack.message")).toBeGreaterThan(invalid);
     expect(block.indexOf("return false;")).toBeGreaterThan(invalid);
     // order: guard < toast < return false < the one mutateAsync of this branch
-    expect(block.indexOf("return false;")).toBeLessThan(block.indexOf("updateProduct.mutateAsync"));
+    expect(block.indexOf("return false;")).toBeLessThan(block.indexOf("packSave.mutateAsync"));
     expect(list).toMatch(/field="unitsPerBox"\s*type="number"\s*min=\{1\}\s*step=\{1\}/);
   });
 });

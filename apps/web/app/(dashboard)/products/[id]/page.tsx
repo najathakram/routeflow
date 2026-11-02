@@ -54,6 +54,7 @@ import { productTierLabel, tierOneLabel } from "@/lib/tier-one-label";
 import { unitsLabel } from "@/lib/stock-label";
 import { stockCountLabel } from "../_components/product-status";
 import { PiecesPerBoxValue } from "./PiecesPerBoxValue";
+import { usePackReadingSave } from "@/components/PackReadingAsk";
 import { MoneyFigure } from "./MoneyFigure";
 import { FamilyPriceSection } from "./FamilyPriceSection";
 import { FamilySalesCards } from "./FamilySalesCards";
@@ -241,6 +242,7 @@ export default function ProductDetailPage() {
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
   /** K12 O1: the pack size typed into the prompt and not yet confirmed there (null when none). */
   const pendingPackSizeRef = React.useRef<number | null>(null);
+  const packSave = usePackReadingSave(updateProduct);
   // The price strings the Details form was SEEDED with: a price is sent only when the draft differs (a dirty field).
   const pricesWhenEditStartedRef = React.useRef<Record<PriceDraftKey, string> | undefined>(
     undefined,
@@ -516,7 +518,7 @@ export default function ProductDetailPage() {
     const unitsPerBoxToSend = draft.unitsPerBox?.trim()
       ? parseInt(draft.unitsPerBox, 10)
       : pendingPackSizeRef.current;
-    updateProduct.mutate(
+    packSave.mutate(
       {
         id: id,
         name: bareName,
@@ -596,6 +598,7 @@ export default function ProductDetailPage() {
             variant: "error",
           }),
       },
+      Number(product.currentStock ?? 0),
     );
   };
 
@@ -1711,15 +1714,11 @@ export default function ProductDetailPage() {
                         unitSku={(editDraft.unitSku as string) ?? product.unitSku}
                         unitPrice={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
                         unitsPerBox={editDraft.unitsPerBox as string}
-                        // Existing product: warn that a pack size re-denominates
-                        // the stored on-hand and cost rather than converting them.
                         currentStock={Number(product.currentStock ?? 0)}
                         onAccept={(value) =>
                           setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
                         }
-                        onPendingChange={(value) => {
-                          pendingPackSizeRef.current = value;
-                        }}
+                        onPendingChange={(value) => void (pendingPackSizeRef.current = value)}
                       />
                     );
                   })()}
@@ -2884,6 +2883,7 @@ export default function ProductDetailPage() {
           )}
         </div>
       </Modal>
+      {packSave.dialog}
     </PriceWindowHost>
   );
 }
