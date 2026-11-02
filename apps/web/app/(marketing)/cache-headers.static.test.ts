@@ -39,7 +39,7 @@ function loadHeaders(): HeaderRule[] {
 // would leak one visitor's response to the next behind the same CDN edge.
 const CACHEABLE_SOURCES = [
   "/",
-  "/:path(product|wholesalers|retailers|pricing|company|contact|privacy|terms|sign-in|book-a-demo)",
+  "/:path(product|wholesalers|retailers|pricing|landing|company|contact|privacy|terms|sign-in|book-a-demo)",
 ];
 const NEVER_CACHEABLE_SOURCES = [
   "/buyer",
