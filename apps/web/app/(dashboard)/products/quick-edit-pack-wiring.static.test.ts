@@ -34,4 +34,13 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
       /<div onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*<QuickEditCell\s*productId=\{p\.id\}\s*productName=\{p\.name\}\s*field="unitsPerBox"/,
     );
   });
+
+  it("W-1 (SA-1093): no Quick Edit cell sits outside a stop, so a click never opens the product", () => {
+    const cells = list.split("<QuickEditCell").slice(0, -1);
+    expect(cells.length).toBeGreaterThanOrEqual(5);
+    const open = cells.filter(
+      (before) => !/onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*$/.test(before),
+    );
+    expect(open).toEqual([]);
+  });
 });

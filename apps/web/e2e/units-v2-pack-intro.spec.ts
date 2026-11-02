@@ -136,6 +136,27 @@ for (const vp of VIEWPORTS) {
       }
     });
 
+    test("W-1: a click on the list's MSRP cell stays on the list", async ({ page }) => {
+      test.skip(vp.cards, "Quick Edit is a table mode; the phone list has no MSRP cell");
+      const ctx = await requireUnitsV2Flag(page);
+      const sku = `QAPI${Date.now().toString(36).toUpperCase()}M${vp.name}`;
+      const id = await createHeldProduct(page, ctx, sku.slice(4));
+      try {
+        await page.goto(`/products?search=${encodeURIComponent(sku)}`);
+        await page.getByRole("button", { name: "Quick Edit", exact: true }).click();
+        await page.waitForLoadState("networkidle");
+        await page
+          .getByRole("row", { name: new RegExp(sku) })
+          .getByTitle("Add msrp")
+          .click();
+
+        await expect(page.locator("input[type=number]:focus")).toBeVisible();
+        await expect(page).toHaveURL(/\/products\?search=/);
+      } finally {
+        await retire(page, ctx, id);
+      }
+    });
+
     test("the list's quick edit asks the same question", async ({ page }) => {
       test.skip(vp.cards, "Quick Edit is a table mode; the phone list has no pack cell");
       const ctx = await requireUnitsV2Flag(page);

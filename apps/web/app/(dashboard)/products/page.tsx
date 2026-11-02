@@ -395,15 +395,17 @@ function makeTableColumns(
       const p = row.original;
       if (quickEditMode) {
         return (
-          <QuickEditCell
-            productId={p.id}
-            productName={p.name}
-            field="msrp"
-            type="number"
-            value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
-            quickEditMode={quickEditMode}
-            onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
-          />
+          <div onClick={(e) => e.stopPropagation()}>
+            <QuickEditCell
+              productId={p.id}
+              productName={p.name}
+              field="msrp"
+              type="number"
+              value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
+              quickEditMode={quickEditMode}
+              onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
+            />
+          </div>
         );
       }
       return (
