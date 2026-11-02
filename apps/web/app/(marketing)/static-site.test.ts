@@ -234,6 +234,16 @@ describe("ready-made pages: files and links", () => {
     }
   });
 
+  it("L6b: the Enterprise button on home and pricing opens an email to the contact address", () => {
+    for (const file of ["home.html", "pricing.html"]) {
+      const buttons = [...html(file).matchAll(/<a [^>]*data-track="enterprise_click"[^>]*>/g)];
+      expect(buttons.length).toBeGreaterThan(0);
+      for (const [tag] of buttons) {
+        expect(tag).toContain(`href="mailto:${site.email}"`);
+      }
+    }
+  });
+
   it("L7: nothing under public/site loads from, or names, another host", () => {
     // w3.org and schema.org are XML and JSON-LD namespace names, not addresses anything fetches.
     // The vendored animation scripts are skipped: their licence comments name their own site.

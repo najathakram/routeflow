@@ -72,6 +72,12 @@ function port(html, route, indexable) {
     /https:\/\/www\.routeflow\.info\/(signup|login|buyer\/login|terms|privacy)\b/g,
     "/$1",
   );
+  // The Enterprise button opens an email to the contact address (the source jumps to a line on
+  // the same page).
+  h = h.replace(
+    /href="#contact"( data-track="enterprise_click")/g,
+    'href="mailto:hello@routeflow.info"$1',
+  );
   // page-to-page links
   h = h.replace(
     /href="(?:\.\.\/)?pricing\/index\.html(#[^"]*)?"/g,

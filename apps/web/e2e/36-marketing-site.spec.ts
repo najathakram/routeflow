@@ -1205,10 +1205,10 @@ test.describe("T18 — W8 / S6: small hero-art labels clear WCAG AA", () => {
 
 test.describe("T19 — ready-made pages are served, linked and clean", () => {
   const PAGES: Array<[string, RegExp, boolean]> = [
-    ["/", /Wholesale software built for how you sell/, true],
+    ["/", /Software for businesses that sell to stores/, true],
     ["/pricing", /Pricing \| RouteFlow/, true],
     ["/product", /Product \| RouteFlow/, true],
-    ["/landing", /software for wholesalers and distributors/, false],
+    ["/landing", /Software for wholesalers and distributors/, false],
   ];
 
   for (const [route, title, indexable] of PAGES) {

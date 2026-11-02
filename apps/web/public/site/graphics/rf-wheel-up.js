@@ -40,7 +40,7 @@
   /* Nothing has been shown yet when the wheel opens, so it stops only on what a first-time wholesaler asks first: what did they
      order, what do I have, who owes me. Every other piece comes off and gets its name in the air; its detail is in the use cases. */
   const STORY = ["orders", "inventory", "payments"].map((k) => ALL.find((d) => d.k === k));
-  const EYE_O = "Your daily work", EYE_I = "What sets you apart";
+  const EYE_O = "Your daily work", EYE_I = "How you sell";
   const HINT = "Scroll to look inside";
   const HERO = [
     { t: "Look inside.", s: "Buy, sell, get paid. Then buy again." },
