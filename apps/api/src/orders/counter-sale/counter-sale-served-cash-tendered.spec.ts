@@ -10,7 +10,8 @@ import { buildCounterSaleResponse, servedCashTendered } from "./counter-sale-rea
 const cash = { id: "p1", amount: "20.00", method: "CASH", status: "PAID" };
 const card = { id: "p2", amount: "20.00", method: "CREDIT_CARD", status: "PAID" };
 
-const inv = (payments: unknown[]) => ({
+type Pay = { id: string; amount: string; method: string; status: string };
+const inv = (payments: Pay[]) => ({
   id: "inv-1",
   invoiceNumber: "INV-1",
   total: "20.00",
@@ -19,7 +20,7 @@ const inv = (payments: unknown[]) => ({
   items: [] as Array<{ taxRate: string }>,
   payments,
 });
-const build = (tendered: unknown, payments: unknown[]) =>
+const build = (tendered: unknown, payments: Pay[]) =>
   buildCounterSaleResponse({
     order: { id: "o1", orderNumber: "ORD-1", counterCashTendered: tendered },
     invoices: [inv(payments)],
