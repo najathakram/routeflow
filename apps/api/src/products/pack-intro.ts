@@ -64,7 +64,7 @@ export function isPackIntroduction(
   return Number.isInteger(n) && (n as number) > 1 && (stored == null || stored <= 1);
 }
 
-/** Stock, a cost, or an open lot is held: the cases that need an answer to "what was the price for". */
+/** Stock, a cost, or an open lot is held: the cases that need an answer to "boxes or pieces" (SA-961 R1). */
 export function holdsStockOrCost(p: PackIntroProduct): boolean {
   const nonZero = (v: Num) => num(v) != null && num(v) !== 0;
   return (
@@ -119,12 +119,19 @@ export function packIntroChanges(
   return out;
 }
 
-/** 409: the save introduces a pack on a product that holds stock or cost and does not say what the price was for. */
+/** 409: the save introduces a pack on a product that holds stock or cost and does not say what the stock number meant. */
 export function packReadingRequiredError(): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.PACK_READING_REQUIRED,
-    message:
-      "This product holds stock or cost. Say whether its price is for a box of N or for one piece.",
+    message: "This product holds stock or cost. Say whether its stock number is boxes or pieces.",
+  });
+}
+
+/** 409: the box answer doesn't fit a column. Never clamped. */
+export function packConversionTooLargeError(): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.PACK_CONVERSION_TOO_LARGE,
+    message: "That many pieces won't fit. Choose Pieces, or use a smaller pack size.",
   });
 }
 

@@ -14,6 +14,10 @@ export const IMPORT_PACK_READING: PackReading = "piece";
 export const PACK_COST_ABOVE_PIECE_WARNING =
   "Cost is above the price per piece (price divided by units per box), so it looks like a cost per box. Correct it in the product editor or with the next purchase.";
 
+/** SA-961 R1: the one count the dry run adds, at the top of the warnings so it reads before a long list. */
+export const packCostAbovePieceCount = (n: number) =>
+  `${n} ${n === 1 ? "product has a cost" : "products have a cost"} above the price per piece.`;
+
 /** `changes` plus the import's pack reading whenever the row writes a pack size; otherwise `changes` as is. */
 export function withImportPackReading<T extends { unitsPerBox?: unknown }>(
   changes: T,

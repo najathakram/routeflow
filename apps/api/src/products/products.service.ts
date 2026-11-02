@@ -69,6 +69,8 @@ import {
   unguardedPackChanges,
   type PackPrecondition,
 } from "./pack-precondition";
+import { isPackIntroduction } from "./pack-intro";
+import { applyPackIntroduction } from "./pack-intro-apply";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
 import {
@@ -1391,6 +1393,7 @@ export class ProductsService {
     // Set when an old client's pack echo was stripped from the write; a PATCH left with nothing else to write
     // then writes no row at all (no UPDATE, no event) and answers with the stored row.
     let packEchoStripped = false;
+    let packBefore: number | null | undefined;
     let wroteRow = true;
     let propagatedRows = 0;
     let doorDeactivated: string[] = [];
@@ -1427,6 +1430,7 @@ export class ProductsService {
           select: { unit: true, unitsPerBox: true, trackedCategoryId: true },
         });
         if (!locked) throw new NotFoundException("Product not found");
+        packBefore = locked.unitsPerBox;
         await assertPackUnchanged(tx, tenantId, locked, dto);
         if (options.packPrecondition === "client") {
           const fields = unguardedPackChanges(locked, dto);
@@ -1640,6 +1644,18 @@ export class ProductsService {
       if (packEchoStripped && Object.values(data).every((v) => v === undefined)) {
         wroteRow = false;
         return tx.product.findUnique({ where: { id } });
+      }
+      // SA-946: judged on the pack read under its lock, and only when the pack is still in this write.
+      if (isPackIntroduction(packBefore, data.unitsPerBox)) {
+        await applyPackIntroduction(tx, {
+          tenantId: tenantId as string,
+          productId: id,
+          from: packBefore,
+          to: data.unitsPerBox,
+          reading: dto.packReading,
+          data,
+          actorId: options?.actorId,
+        });
       }
       // The category text this write REPLACES, read inside the tx (the label sync below compares name keys against it,
       // never the pre-transaction read). A plain read: the UPDATE right after takes the row lock (house lock order).

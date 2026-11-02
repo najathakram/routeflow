@@ -38,7 +38,7 @@ import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
-import { IMPORT_PACK_READING } from "./import-pack-reading";
+import { IMPORT_PACK_READING, packCostAbovePieceCount } from "./import-pack-reading";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
   let service: ImportService;
@@ -776,8 +776,38 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
       const result = await service.importProducts(Buffer.from(csv), "user-1");
 
-      expect(result.warnings.filter((w) => w.includes("price per piece"))).toHaveLength(1);
+      expect(result.warnings.filter((w) => w.includes("price per piece"))).toHaveLength(2);
+      expect(result.warnings).toContain(packCostAbovePieceCount(1));
       expect(productsService.update).toHaveBeenCalledTimes(2);
+    });
+
+    it("SA-961 R1: the dry run gives the cost count and writes nothing; no such product, no count", async () => {
+      const row = (sku: string, averageCost: number) => ({
+        id: `p-${sku}`,
+        name: sku,
+        sku,
+        unitsPerBox: null,
+        pricePerUnit: 24,
+        averageCost,
+      });
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        row(args?.where?.sku, args?.where?.sku === "BOX-COST" ? 20 : 0.5),
+      );
+
+      const both = await service.importProducts(
+        Buffer.from("Item Name,SKU,Units Per Box\nA,BOX-COST,24\nB,PIECE-COST,24\n"),
+        "user-1",
+        { dryRun: true },
+      );
+      expect(both.warnings).toContain(packCostAbovePieceCount(1));
+      expect(productsService.update).not.toHaveBeenCalled();
+
+      const sane = await service.importProducts(
+        Buffer.from("Item Name,SKU,Units Per Box\nB,PIECE-COST,24\n"),
+        "user-1",
+        { dryRun: true },
+      );
+      expect(sane.warnings.filter((w) => w.includes("price per piece"))).toHaveLength(0);
     });
 
     it.each([

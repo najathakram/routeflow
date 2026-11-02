@@ -38,6 +38,8 @@ export const AUDIT_ACTIONS = {
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, skipped, revisionBefore, revisionAfter, actor, request: {skip}, priceStateAfter (SA-845 replay)}. */
   PRODUCT_PRICES_UNDONE: "product.prices-undone",
+  /** SA-946 / W-867: a product's first pack; meta {from, to, reading, stockBefore, stockAfter, costBefore, costAfter}. */
+  PRODUCT_PACK_INTRODUCED: "product.pack_introduced",
   /**
    * Row 510: a staff member sold a restricted product with a reason. ONE row per newly stamped line, written in the
    * write's own tx (selling-restrictions/restriction-override-audit.ts); entityType OrderItem | InvoiceItem, entityId the
