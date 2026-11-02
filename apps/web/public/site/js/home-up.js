@@ -485,19 +485,13 @@
       if (!c.desk) { revealOnce($$(".pl tbody tr", s), BELOW, 12, 0.08); return; }
       var cards = shown($$(".pcard", s));
       if (!cards.length) return;
-      /* Each card rises in order, then its number counts up and its bar fills. Once, on the clock. */
+      /* Each card rises in order, then its bar fills. The customer count never counts up: a contract number reads right at every moment. Once, on the clock. */
       g.set(cards, { opacity: 0, y: 44 });
       var tl = g.timeline({ scrollTrigger: { trigger: $(".pgrid", s), start: "top 88%", once: true, refreshPriority: BELOW } });
       cards.forEach(function (card, i) {
-        var at = i * 0.13, bar = $(".pm-bar i", card), n = $(".pm-n b[data-plan]", card);
+        var at = i * 0.13, bar = $(".pm-bar i", card);
         tl.to(card, { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }, at);
         tl.fromTo(bar, { scaleX: 0 }, { scaleX: 1, duration: 1.05, ease: "power2.inOut" }, at + 0.3);
-        if (n) {
-          keep(n);
-          var to = parseInt(n.textContent, 10), o = { v: 0 }, w = (function (e, q) { return function () { e.textContent = Math.round(q.v); }; })(n, o);
-          w();
-          tl.to(o, { v: to, duration: 1.05, ease: "power2.inOut", onUpdate: w }, at + 0.3);
-        }
       });
     });
   }
