@@ -79,14 +79,15 @@ const nextConfig = {
 
   // The home, pricing, product and landing pages are ready-made HTML under public/site (page,
   // styles, scripts, font and marks together). A beforeFiles rewrite serves each at its own
-  // address after the middleware has run, so the signed-in redirect on "/" still comes first.
+  // address after the middleware has run, so the signed-in redirect on "/" still comes first. The
+  // route behind it (app/site-page) is the file plus the Umami tags when the build has a site ID.
   async rewrites() {
     return {
       beforeFiles: [
-        { source: "/", destination: "/site/home.html" },
-        { source: "/pricing", destination: "/site/pricing.html" },
-        { source: "/product", destination: "/site/product.html" },
-        { source: "/landing", destination: "/site/landing.html" },
+        { source: "/", destination: "/site-page/home" },
+        { source: "/pricing", destination: "/site-page/pricing" },
+        { source: "/product", destination: "/site-page/product" },
+        { source: "/landing", destination: "/site-page/landing" },
       ],
     };
   },
@@ -166,11 +167,15 @@ const nextConfig = {
           },
         ],
       },
-      // The files behind those pages. Asked for by their own name they would repeat the page
-      // at a second address, so search engines are told to leave them out; the pages carry
-      // their own canonical link.
+      // The files and the route behind those pages. Asked for by their own name they would repeat
+      // the page at a second address, so search engines are told to leave them out; the pages
+      // carry their own canonical link.
       {
         source: "/site/:page(home|pricing|product|landing).html",
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
+      },
+      {
+        source: "/site-page/:page(home|pricing|product|landing)",
         headers: [{ key: "X-Robots-Tag", value: "noindex" }],
       },
     ];

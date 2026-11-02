@@ -58,14 +58,19 @@ describe("guessed addresses redirect from next.config (W6 C7)", () => {
     }
   });
 
-  it("every destination page exists, as a page or as a ready-made HTML file the rewrites serve", () => {
+  it("every destination page exists, as a page or as a ready-made file the rewrites serve", () => {
     const served = new Map(loadRewrites().beforeFiles.map((r) => [r.source, r.destination]));
     for (const [, destination] of GUESSED) {
       const route = destination.replace(/#.*$/, "");
       const file = route === "/" ? "page.tsx" : path.join(route.slice(1), "page.tsx");
       const asPage = fs.existsSync(path.join(WEB_ROOT, "app", "(marketing)", file));
-      const html = served.get(route);
-      const asHtml = html !== undefined && fs.existsSync(path.join(WEB_ROOT, "public", html));
+      // A ready-made page: the rewrite names its route (app/site-page/[page]), which reads
+      // public/site/<page>.html.
+      const name = served.get(route)?.replace("/site-page/", "");
+      const asHtml =
+        name !== undefined &&
+        fs.existsSync(path.join(WEB_ROOT, "app", "site-page", "[page]", "route.ts")) &&
+        fs.existsSync(path.join(WEB_ROOT, "public", "site", name + ".html"));
       expect(asPage || asHtml).toBe(true);
     }
   });

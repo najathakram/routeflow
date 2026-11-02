@@ -1275,6 +1275,22 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     expect(failures).toEqual([]);
   });
 
+  test("T19 — visit counts: the four pages carry Umami exactly when the React pages do, never twice", async ({
+    request,
+  }) => {
+    // The same build variable decides both. With a site ID every page has Umami's script once and
+    // the pageview script after it; without one, neither. (/wholesalers is a React page.)
+    const reactPage = await (await request.get("/wholesalers")).text();
+    const counted = reactPage.includes(UMAMI_TRACKER_URL);
+    for (const [route] of PAGES) {
+      const body = await (await request.get(route)).text();
+      const tags = body.split(UMAMI_TRACKER_URL).length - 1;
+      expect(tags, `${route} Umami script tags`).toBe(counted ? 1 : 0);
+      expect(body.includes('src="/site/analytics.js"'), `${route} pageview script`).toBe(counted);
+      expect(body.includes('data-auto-track="false"'), `${route} no auto-track`).toBe(counted);
+    }
+  });
+
   test("T19 — the contact address reads right on the home page", async ({ page }) => {
     await page.goto("/");
     const mails = page.locator('a[href^="mailto:"]');

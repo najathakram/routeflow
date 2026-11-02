@@ -72,10 +72,11 @@ describe("ready-made pages: served by rewrites", () => {
     "rewrites",
   ).beforeFiles;
 
-  it("R1: exactly these four addresses are rewritten, each to its file under public/site", () => {
+  it("R1: exactly these four addresses are rewritten, each to site-page and its file under public/site", () => {
     expect(rewrites.map((r) => [r.source, r.destination])).toEqual(
-      PAGES.map((p) => [p.route, `/site/${p.file}`]),
+      PAGES.map((p) => [p.route, `/site-page/${p.file.replace(/\.html$/, "")}`]),
     );
+    expect(fs.existsSync(path.join(APP_ROOT, "site-page", "[page]", "route.ts"))).toBe(true);
   });
 
   it.each(PAGES)("R2: $route's file exists and is a whole document", ({ file }) => {
@@ -95,8 +96,13 @@ describe("ready-made pages: served by rewrites", () => {
 
   it("R4: the files are named in a header that keeps them out of search when asked for directly", () => {
     const rules = loadConfig<Array<{ source: string; headers: Array<{ key: string }> }>>("headers");
-    const rule = rules.find((r) => r.headers.some((h) => h.key === "X-Robots-Tag"));
-    expect(rule?.source).toBe("/site/:page(home|pricing|product|landing).html");
+    const sources = rules
+      .filter((r) => r.headers.some((h) => h.key === "X-Robots-Tag"))
+      .map((r) => r.source);
+    expect(sources).toEqual([
+      "/site/:page(home|pricing|product|landing).html",
+      "/site-page/:page(home|pricing|product|landing)",
+    ]);
   });
 });
 
