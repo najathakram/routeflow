@@ -98,6 +98,44 @@ describeDb("row 585: deleteOrder refuses an order with delivered units, real Pos
     expect(await w.prisma.order.count({ where: { id: clean.order.id } })).toBe(0);
   }, 120_000);
 
+  // RD-1 (SA-1089): the shape `completeStop` used to leave: rows written, the column still 0.
+  it("RD-1: a delivery row of 6 of 10 beside a deliveredQty of 0 refuses the delete; order, line, evidence and stock stay", async () => {
+    const p = await w.product("r585-rd1", 10);
+    const { order, items } = await w.bookOrder({
+      status: "DELIVERED",
+      lines: [{ productId: p, qty: 10 }],
+    });
+    await w.prisma.deliveryMutation.create({
+      data: {
+        tenantId: w.tenantId,
+        orderId: order.id,
+        orderItemId: items[0].id,
+        productId: p,
+        type: "DELIVERED",
+        quantityDelivered: 6,
+      } as any,
+    });
+    expect(
+      Number(
+        (await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[0].id } })).deliveredQty,
+      ),
+    ).toBe(0);
+    const stockBefore = await w.stockOf(p);
+    const movementsBefore = (await w.movements(p)).length;
+
+    await expect(w.inTenant(() => w.orders.deleteOrder(order.id, w.jwt))).rejects.toMatchObject({
+      status: 409,
+      response: { code: "ORDER_DELETE_HAS_DELIVERED" },
+    });
+
+    expect(await w.prisma.order.count({ where: { id: order.id } })).toBe(1);
+    expect(await w.prisma.orderItem.count({ where: { orderId: order.id } })).toBe(1);
+    expect(await w.prisma.deliveryMutation.count({ where: { orderId: order.id } })).toBe(1);
+    expect(await w.stockOf(p)).toBe(stockBefore);
+    expect((await w.movements(p)).length).toBe(movementsBefore);
+    await expectLedgerConsistent(w.tenantId, [p]);
+  }, 120_000);
+
   it("control: an order with deliveredQty 0 everywhere still deletes and returns its stock", async () => {
     const p = await w.product("r585-control", 10);
     const { order } = await w.bookOrder({

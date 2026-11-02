@@ -3,6 +3,7 @@ import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { deliveredBasisByLine } from "../invoices/delivered-basis-by-line";
 import { assertNoCashRefundOnOrder } from "../invoices/invoice-cash-refund-guard";
 import type { InvoicesService } from "../invoices/invoices.service";
 import {
@@ -171,6 +172,22 @@ export async function cancelOrderInTx(
 }
 
 /**
+ * Row 585 (SA-1089): does ANY line of the order (a cancelled one included) hold a delivered unit, by the column OR
+ * by its delivery rows? `completeStop` once left the column at 0 beside real rows, so the column alone calls such an
+ * order "nothing delivered" and the delete would destroy its evidence. Rows are read through `deliveredBasisByLine`
+ * (the invoice's reader: a REFUSED row counts 0), and only when no column already answered. Call under the Order lock.
+ */
+export async function orderHasDeliveredUnits(tx: any, orderId: string): Promise<boolean> {
+  const everyLine: Array<{ id: string; deliveredQty: unknown }> = await tx.orderItem.findMany({
+    where: { orderId },
+    select: { id: true, deliveredQty: true },
+  });
+  if (everyLine.some((l) => Number(l.deliveredQty ?? 0) > 0.001)) return true;
+  const { byLineId } = await deliveredBasisByLine(tx, orderId);
+  return everyLine.some((l) => (byLineId.get(l.id) ?? 0) > 0.001);
+}
+
+/**
  * B284: the lock half of a hard DELETE's stock release. Locks the Order row FIRST (the cancel tx's lock
  * order: Order, then everything else; never take it after an Invoice row), reads the status UNDER the lock
  * and, for an order that holds stock, the lines still booked. Returns them for the caller to hand to
@@ -184,12 +201,8 @@ export async function lockDeleteLines(tx: any, id: string) {
   // $queryRaw, not $executeRaw: deleteOrder's lock-order pins count its $executeRaw row locks (the Invoice NOWAIT one).
   await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
   const status = await lockedOrderStatus(tx, id);
-  // Row 585 (SA-814): ANY delivered unit (a cancelled line included) refuses the delete, under the lock.
-  const everyLine: Array<{ deliveredQty: unknown }> = await tx.orderItem.findMany({
-    where: { orderId: id },
-    select: { deliveredQty: true },
-  });
-  if (everyLine.some((l) => Number(l.deliveredQty ?? 0) > 0.001))
+  // Row 585 (SA-814, SA-1089): ANY delivered unit (a cancelled line included) refuses the delete, under the lock.
+  if (await orderHasDeliveredUnits(tx, id))
     throw new ConflictException({
       code: API_ERROR_CODES.ORDER_DELETE_HAS_DELIVERED,
       message:
