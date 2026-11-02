@@ -1818,7 +1818,7 @@ describe("InlineReturnsService", () => {
         const prev = current;
         current = mine;
         try {
-          const out = await orig(fn, opts);
+          const out = await orig(fn, opts as any);
           committed.push(...mine);
           return out;
         } finally {
