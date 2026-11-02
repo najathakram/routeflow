@@ -5,6 +5,8 @@ import { CommandPalette } from "./CommandPalette";
 /** W-927: typing a product name or SKU lists matching products beside customers, orders and invoices. */
 const mockPush = jest.fn();
 const get = jest.fn();
+// SA-1087: the palette's Product insights entry reads the shared access rule; pinned in CommandPalette.insights.test.tsx.
+jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: (...a: unknown[]) => get(...a) } }));

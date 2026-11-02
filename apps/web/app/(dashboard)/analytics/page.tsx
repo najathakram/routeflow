@@ -30,6 +30,7 @@ import { apiClient } from "@/lib/api-client";
 import { useFleetAccess } from "@/lib/api/addons";
 import { formatMoney } from "@/lib/format";
 import { AnalyticsCsvButton as Csv } from "./_components/AnalyticsCsvButton";
+import { FindInsightsLink } from "@/components/insights/FindInsightsLink";
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -1267,7 +1268,7 @@ export default function AnalyticsPage() {
       />
 
       {/* Date preset shortcuts */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {DATE_PRESETS.map((preset) => {
           const { from, to } = preset.range();
           const isActive = appliedFrom === from && appliedTo === to;
@@ -1286,6 +1287,7 @@ export default function AnalyticsPage() {
             </button>
           );
         })}
+        <FindInsightsLink className="ml-auto" />
       </div>
 
       {/* Tabs */}
