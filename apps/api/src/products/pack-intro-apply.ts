@@ -1,6 +1,12 @@
 import { AdjustmentReason, MovementType, Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { advisoryXactLock } from "../common/db-locks";
 import { lockProductsForStock } from "../common/product-locks";
+import {
+  productInOpenCount,
+  STOCK_COUNT_PRODUCT_LOCK_FAMILY,
+} from "../inventory/stock-count-commit";
+import { findOpenCountConflicts } from "../inventory/stock-count-seed";
 import { applyStockMovements, type StockMovementRow } from "../inventory/stock-movements";
 import {
   holdsStockOrCost,
@@ -32,6 +38,12 @@ export async function applyPackIntroduction(
   },
 ): Promise<void> {
   const { tenantId, productId, from, to, data } = input;
+  if (input.reading === "box") {
+    // SA-1093 Rule 5: a count's lines are in the old unit. The count's own lock, before the stock lock, as a seed takes it.
+    await advisoryXactLock(tx, STOCK_COUNT_PRODUCT_LOCK_FAMILY, `${tenantId}:${productId}`);
+    const taken = await findOpenCountConflicts(tx, [productId]);
+    if (taken.length > 0) throw productInOpenCount(taken);
+  }
   await lockProductsForStock(tx, tenantId, [productId]);
   const stored = await tx.product.findUniqueOrThrow({
     where: { id: productId },
