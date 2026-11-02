@@ -236,6 +236,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "CreditNotesController.create": "FINANCE",
   "CreditNotesController.findAll": "UNGUARDED",
   "CreditNotesController.findOne": "UNGUARDED",
+  "CreditNotesController.getSummary": "UNGUARDED",
   "CreditNotesController.reissue": "FINANCE",
   "CreditNotesController.setAutoApplyExclusion": "FINANCE",
   "CreditNotesController.unapply": "FINANCE",
