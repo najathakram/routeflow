@@ -77,6 +77,7 @@ import type { CaptureInlineReturnDto, InlineReturnLinesDto } from "./dto/capture
 import type { ApproveInlineReturnDto } from "./dto/approve-inline-return.dto";
 import type { RefundInlineReturnDto } from "./dto/refund-inline-return.dto";
 import {
+  assertInlineSourcesOpen,
   EXTERNAL_REFUND_METHOD,
   INLINE_REFUND_AUDIT_ACTION,
   INLINE_STORE_CREDIT_AUDIT_ACTION,
@@ -1330,6 +1331,15 @@ export class InlineReturnsService {
         return;
       // SA-706c (house order Return → Order): the Order BEFORE the intent insert below takes KEY SHARE on it.
       await lockOrderRow(tx, tenantId, fresh.orderId);
+      // SA-1091 piece 3: a stuck row is re-issued only while the invoices its goods were sold on are still billed (409 before the mint).
+      await assertInlineSourcesOpen(
+        tx,
+        tenantId,
+        await tx.returnItem.findMany({
+          where: { returnId },
+          select: { sourceInvoiceItemId: true },
+        }),
+      );
 
       const amount = roundMoney(
         Number(fresh.creditSubtotal ?? 0) +
@@ -1424,6 +1434,9 @@ export class InlineReturnsService {
         fresh.orderId,
         ...fresh.items.map((i: any) => i.sourceOrderId).filter(Boolean),
       ]);
+      // SA-1091 piece 3: a source invoice voided or written off since the capture refuses the approval (409), before any
+      // restock, ledger reversal or mint below. Locks the source invoices (Return -> Order -> Invoice).
+      await assertInlineSourcesOpen(tx, tenantId, fresh.items);
       const heldAmount = roundMoney(Number(fresh.heldAmount ?? 0));
       const amount = dto?.amount != null ? roundMoney(dto.amount) : heldAmount;
       if (amount > heldAmount + 0.001) {

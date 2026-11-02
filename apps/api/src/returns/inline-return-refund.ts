@@ -312,3 +312,38 @@ export async function lockRefundInvoices(
   if (invoices.length === 0) return;
   await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id IN (${Prisma.join(invoices)}) AND (${tenantId}::text IS NULL OR "tenantId" = ${tenantId}) ORDER BY id FOR UPDATE`;
 }
+
+/**
+ * SA-1091 piece 3: a return captured earlier (a held one at approve, a stuck store-credit row at its replayed re-issue) is
+ * credited only while the invoices its goods were sold on are still billed. A source that was VOIDED or WRITTEN OFF since has
+ * nothing owed for those goods and no pool in the refundable remainder, so nothing checked it and the credit went out for a sale
+ * that no longer counts. Refuses with 409 RETURN_NOTHING_BILLED naming the (first, by id) dead invoice; "cancel the return" is the
+ * way out. Run it under the Return and Order locks the caller already holds, BEFORE any restock, ledger reversal or mint; it
+ * locks the source invoices itself (the next in the house order Return -> Order -> Invoice), so a void cannot land in between.
+ * Per source: any item on a dead invoice refuses the return. An item with no source line (an unreferenced return) or whose line
+ * is gone is not asked about here.
+ */
+export async function assertInlineSourcesOpen(
+  tx: any,
+  tenantId: string | null,
+  items: ReadonlyArray<{ sourceInvoiceItemId?: string | null }>,
+): Promise<void> {
+  const { invoiceIds } = await resolveRefundInvoiceIds(tx, {
+    kind: "LINES",
+    sourceInvoiceItemIds: items.map((i) => i.sourceInvoiceItemId),
+  });
+  if (invoiceIds.length === 0) return;
+  await lockRefundInvoices(tx, tenantId, invoiceIds);
+  const dead: { id: string } | null = await tx.invoice.findFirst({
+    where: { id: { in: invoiceIds }, status: { in: [...CREDIT_SOURCE_EXCLUDED] } },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  if (!dead) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
+    message:
+      "The invoice these goods were sold on was voided or written off after the return was captured, so there is nothing to credit for them. Cancel the return.",
+    invoiceId: dead.id,
+  });
+}
