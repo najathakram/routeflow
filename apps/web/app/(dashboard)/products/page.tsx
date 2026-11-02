@@ -661,18 +661,21 @@ function makeTableColumns(
       cell: ({ row }) => {
         const p = row.original;
         if (quickEditMode) {
+          // The row click opens the product, and that would take the first-pack question away with this page.
           return (
-            <QuickEditCell
-              productId={p.id}
-              productName={p.name}
-              field="unitsPerBox"
-              type="number"
-              min={1}
-              step={1}
-              value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
-              quickEditMode={quickEditMode}
-              onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
-            />
+            <div onClick={(e) => e.stopPropagation()}>
+              <QuickEditCell
+                productId={p.id}
+                productName={p.name}
+                field="unitsPerBox"
+                type="number"
+                min={1}
+                step={1}
+                value={p.unitsPerBox != null ? String(p.unitsPerBox) : ""}
+                quickEditMode={quickEditMode}
+                onSave={(val, rec) => onQuickSave(p, "unitsPerBox", val, rec)}
+              />
+            </div>
           );
         }
         return <span className="text-navy/70">{p.unitsPerBox ?? "—"}</span>;

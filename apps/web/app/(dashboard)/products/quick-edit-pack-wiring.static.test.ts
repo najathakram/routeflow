@@ -28,4 +28,10 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
     expect(block.indexOf("return false;")).toBeLessThan(block.indexOf("packSave.mutateAsync"));
     expect(list).toMatch(/field="unitsPerBox"\s*type="number"\s*min=\{1\}\s*step=\{1\}/);
   });
+
+  it("a click on the pack cell stops at the cell: the row click would open the product, and the first-pack question lives on this page", () => {
+    expect(list).toMatch(
+      /<div onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*<QuickEditCell\s*productId=\{p\.id\}\s*productName=\{p\.name\}\s*field="unitsPerBox"/,
+    );
+  });
 });
