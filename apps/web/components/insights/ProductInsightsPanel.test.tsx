@@ -202,6 +202,20 @@ describe("ProductInsightsPanel (#2119)", () => {
     ).toBeInTheDocument();
   });
 
+  it("price facts: a range when sales differ, one price when min and max are the same", () => {
+    const base = payload();
+    mockInsights.mockReturnValue(ok(base));
+    const { unmount } = renderPanel();
+    expect(screen.getByText(/Range \$1\.80–\$2\.25 per piece\./)).toBeInTheDocument();
+    unmount();
+    mockInsights.mockReturnValue(
+      ok({ ...base, price: { ...base.price, minPerPiece: 2.49, maxPerPiece: 2.49 } }),
+    );
+    renderPanel();
+    expect(screen.getByText(/Every sale was \$2\.49 per piece\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Range/)).not.toBeInTheDocument();
+  });
+
   it("buyers: sort by a header, and a row filters the lines", () => {
     mockInsights.mockReturnValue(ok(payload()));
     renderPanel();

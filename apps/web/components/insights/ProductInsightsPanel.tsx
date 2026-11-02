@@ -34,9 +34,9 @@ import {
 /**
  * #2119 (plan §B / 2105-b) — one product's sales insights on `/insights/products/[id]`, from
  * #2179's accrual-net API: KPI tiles, a trend with qty / net revenue / price views, the buyers
- * table (sortable; a row filters the lines and links to that customer's insights), the paged
- * sold lines with their badges, and CSV. Formatting only — every figure is computed
- * server-side; pieces are the canonical quantity and the current pack only labels them.
+ * table (sortable; a row filters the lines below it), the paged sold lines with their badges,
+ * and the product page's CSV control. Formatting only — every figure is computed server-side;
+ * pieces are the canonical quantity and the current pack only labels them.
  */
 
 type Metric = "qty" | "revenue" | "price";
@@ -50,10 +50,6 @@ const METRICS: { value: Metric; label: string; aria: string }[] = [
 const COLORS = { bar: "#3b82f6", credit: "#f59e0b", line: "#1B3A5C", price: "#10b981" };
 
 type SortKey = "name" | "qtyPieces" | "lineNet" | "orders" | "avgPerPiece" | "lastDate";
-
-function tickInterval(count: number): number {
-  return count <= 12 ? 0 : Math.ceil(count / 10) - 1;
-}
 
 function Segmented<T extends string | number>({
   options,
@@ -156,7 +152,8 @@ function TrendChart({ data, metric }: { data: ProductInsightsResponse; metric: M
         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
         <XAxis
           dataKey="axis"
-          interval={tickInterval(rows.length)}
+          interval="preserveStartEnd"
+          minTickGap={16}
           tick={{ fontSize: 10, fill: "#1B3A5C99" }}
           tickLine={false}
           axisLine={false}
@@ -620,7 +617,9 @@ export function ProductInsightsPanel({ productId }: { productId: string }) {
               {formatMoney(data.price.last.unitPrice)}
               {data.price.last.unitLabel ? ` per ${data.price.last.unitLabel}` : ""}.
               {data.price.minPerPiece != null && data.price.maxPerPiece != null
-                ? ` Range ${formatMoney(data.price.minPerPiece)}–${formatMoney(data.price.maxPerPiece)} per piece.`
+                ? formatMoney(data.price.minPerPiece) === formatMoney(data.price.maxPerPiece)
+                  ? ` Every sale was ${formatMoney(data.price.minPerPiece)} per piece.`
+                  : ` Range ${formatMoney(data.price.minPerPiece)}–${formatMoney(data.price.maxPerPiece)} per piece.`
                 : ""}
             </p>
           )}
