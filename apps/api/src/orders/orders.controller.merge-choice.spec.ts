@@ -19,6 +19,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { OrdersController } from "./orders.controller";
 import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
+import { StockAvailabilityService } from "./stock-availability.service";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -87,6 +88,7 @@ describe("OrdersController — merge choice vs orderDate", () => {
         { provide: ChangeRequestsService, useValue: {} },
         { provide: OrderBatchShipService, useValue: {} },
         { provide: PackingSlipService, useValue: {} },
+        { provide: StockAvailabilityService, useValue: {} },
       ],
     }).compile();
 

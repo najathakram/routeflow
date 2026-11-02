@@ -510,6 +510,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "OrdersController.forceConsolidate": "ORDERS",
   "OrdersController.getActiveOrderForCustomer": "BASE",
   "OrdersController.getCustomerPriceHistory": "BASE",
+  "OrdersController.getStockAvailability": "ORDERS",
   "OrdersController.getTracking": "UNGUARDED",
   "OrdersController.listChangeRequests": "ORDERS",
   "OrdersController.packingSlips": "ORDERS|DISPATCH",

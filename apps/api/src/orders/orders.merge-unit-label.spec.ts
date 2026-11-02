@@ -103,7 +103,8 @@ const operatorPayload = {
   forcePasswordChange: false,
 };
 
-const buildController = (svc: any) => new OrdersController(svc, {} as any, {} as any, {} as any);
+const buildController = (svc: any) =>
+  new OrdersController(svc, {} as any, {} as any, {} as any, {} as any);
 
 const activeOrderFixture = {
   id: "ord-active",
