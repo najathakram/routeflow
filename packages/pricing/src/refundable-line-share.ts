@@ -62,6 +62,13 @@ export interface RefundableLineShareInput {
   /** qty returned on THIS line's own axis (the caller converts pieces through `piecesPerQtyOf`) */
   returnedQty: number;
   prior: RefundPrior;
+  /**
+   * SA-1091 A-1: what is already taken from the WHOLE invoice's charge pools (net, regular tax, category tax), across every
+   * line, plus whatever the caller has priced for this request so far. When given, each component also stops at what is left
+   * of its pool, so a credit stored at an older, rounder price (never repriced) cannot push the invoice's total over what it
+   * charged. Absent = the per-line caps only (the standard refund path, whose prior credits are the helper's own).
+   */
+  invoicePrior?: Pick<RefundPrior, "net" | "tax" | "categoryTax">;
 }
 
 const ZERO: RefundBreakdown = { net: 0, tax: 0, categoryTax: 0, total: 0 };
@@ -139,6 +146,23 @@ function chargesOf(invoice: RefundableInvoice): {
   };
 }
 
+/**
+ * SA-1091 A-1: what is left of each of the invoice's charge pools (Σ of the per-line charges above == net after the discount,
+ * the regular tax, the category tax) once `taken` is out. No `taken` = no cap (Infinity). Never negative.
+ */
+function poolRoomOf(
+  charges: readonly LineCharge[],
+  taken: Pick<RefundPrior, "net" | "tax" | "categoryTax"> | undefined,
+): LineCharge {
+  if (!taken) return { net: Infinity, tax: Infinity, categoryTax: Infinity };
+  const room = (k: keyof LineCharge) =>
+    Math.max(
+      0,
+      roundMoney(roundMoney(charges.reduce((t, c) => t + c[k], 0)) - (Number(taken[k]) || 0)),
+    );
+  return { net: room("net"), tax: room("tax"), categoryTax: room("categoryTax") };
+}
+
 /** One component of a slice: telescoped over the prior credited qty, capped at what the component has left. */
 function sliceOf(
   component: number,
@@ -174,9 +198,13 @@ export function refundableLineShare(input: RefundableLineShareInput): Refundable
 
   // 4. Cap: each component is clamped to its own room (never a clip of the qty)
   const c = charges[at];
-  const net = sliceOf(c.net, priorQty, qty, lineQty, prior.net);
-  const tax = sliceOf(c.tax, priorQty, qty, lineQty, prior.tax);
-  const categoryTax = sliceOf(c.categoryTax, priorQty, qty, lineQty, prior.categoryTax);
+  const left = poolRoomOf(charges, input.invoicePrior);
+  const net = Math.min(sliceOf(c.net, priorQty, qty, lineQty, prior.net), left.net);
+  const tax = Math.min(sliceOf(c.tax, priorQty, qty, lineQty, prior.tax), left.tax);
+  const categoryTax = Math.min(
+    sliceOf(c.categoryTax, priorQty, qty, lineQty, prior.categoryTax),
+    left.categoryTax,
+  );
   return { net, tax, categoryTax, total: roundMoney(net + tax + categoryTax) };
 }
 

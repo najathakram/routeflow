@@ -145,7 +145,7 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
     const db = fakeDb();
     await service.validateAndBuildCnItems(db, onY(100), {});
     const byInvoice = db.creditNote.findMany.mock.calls.filter(
-      (c: any[]) => c[0].where.invoiceId !== undefined,
+      (c: any[]) => typeof c[0].where.invoiceId === "string", // the per-invoice legacy term; SA-1091's room reads {in: ids}
     );
     expect(byInvoice).toEqual([]);
   });

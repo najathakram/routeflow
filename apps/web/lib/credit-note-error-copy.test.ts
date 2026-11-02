@@ -154,3 +154,45 @@ describe("SA-740r2: the refund refusals have fixed copy that names the exits", (
     }
   });
 });
+
+describe("SA-1091 AC-16: an order-wide over-credit says how much is left", () => {
+  const bound = (code: string, remaining: unknown) =>
+    apiError({ code, orderBound: true, remaining, message: "server text must never show 4.74" });
+
+  it("a refund refusal names the room left, in the screen's money format, and what frees room", () => {
+    const out = refundErrorMessage(bound("RETURN_REFUND_OVER_LINE_HEADROOM", 4.74), "otherwise");
+    expect(out).toBe(
+      "That is more than this order was billed. $4.74 is left to give back. To free up room, void a credit note or cancel a return.",
+    );
+    expect(out).not.toContain("server text");
+  });
+
+  it("a credit-note refusal does the same on the note screens", () => {
+    expect(creditNoteErrorCopy(bound("CREDIT_NOTE_OVER_HEADROOM", 2.03), "generic")).toContain(
+      "$2.03 is left to give back",
+    );
+  });
+
+  it("with nothing left it says none is left and never shows $0.00 as an amount", () => {
+    for (const remaining of [0, 0.001]) {
+      const out = refundErrorMessage(bound("RETURN_REFUND_OVER_LINE_HEADROOM", remaining));
+      expect(out).toContain("none is left");
+      expect(out).not.toContain("$0.00");
+    }
+  });
+
+  it("without the marker, or with no finite amount, the fixed copy stays", () => {
+    expect(
+      refundErrorMessage(apiError({ code: "RETURN_REFUND_OVER_LINE_HEADROOM", remaining: 4.74 })),
+    ).toBe(RETURN_REFUND_OVER_LINE_HEADROOM_COPY);
+    expect(refundErrorMessage(bound("RETURN_REFUND_OVER_LINE_HEADROOM", "4.74"))).toBe(
+      RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+    );
+    expect(refundErrorMessage(bound("RETURN_REFUND_OVER_LINE_HEADROOM", Infinity))).toBe(
+      RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+    );
+    expect(creditNoteErrorCopy(apiError({ code: "CREDIT_NOTE_OVER_HEADROOM" }), "generic")).toBe(
+      CREDIT_NOTE_ERROR_COPY.CREDIT_NOTE_OVER_HEADROOM,
+    );
+  });
+});

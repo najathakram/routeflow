@@ -29,6 +29,7 @@ export const OPERATOR_PATH_PREFIXES = [
   "/vendor-bills",
   "/returns",
   "/analytics",
+  "/insights",
   "/bookkeeping",
   "/drivers",
 ] as const;
