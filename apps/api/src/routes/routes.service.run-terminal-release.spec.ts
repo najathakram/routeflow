@@ -685,6 +685,46 @@ describe("RoutesService — F11 run-terminal release (REG-B129 / REG-B211)", () 
 
       expect(result.stops[0].orders.map((o: any) => o.id)).toEqual(["open-1"]);
     });
+
+    // T7d: the same filter must not reach a FINISHED legacy run (COMPLETED, every stop COMPLETED, no order ever linked):
+    // that is the shape the fallback exists for, and the delivered order is what the run delivered.
+    it("T7d — REG-B756: a COMPLETED legacy run keeps the customer's DELIVERED orders; only CANCELLED stays out", async () => {
+      const table = [
+        { id: "open-1", customerId: "c2", status: "CONFIRMED", lineItems: [] as any[] },
+        { id: "done-1", customerId: "c2", status: "DELIVERED", lineItems: [] as any[] },
+        { id: "gone-1", customerId: "c2", status: "CANCELLED", lineItems: [] as any[] },
+      ];
+      prisma.order.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (o) =>
+            where.customerId.in.includes(o.customerId) &&
+            !(where.status?.notIn ?? []).includes(o.status),
+        ),
+      );
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...RUN_FIXTURE,
+        status: "COMPLETED",
+        route: { id: "route-1", kind: "SCHEDULED" },
+        stops: [
+          {
+            id: "s2",
+            stopNumber: 1,
+            customerId: "c2",
+            status: "COMPLETED",
+            orders: [] as any[],
+            customer: { id: "c2" },
+            customerAddress: null as any,
+            routeStop: null as any,
+            deliveryMutations: [] as any[],
+          },
+        ],
+      });
+      prisma.customerAddress.findMany.mockResolvedValue([]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(result.stops[0].orders.map((o: any) => o.id)).toEqual(["open-1", "done-1"]);
+    });
   });
 
   // ─── R6 / REG-B211 — the COMPLETED half, at all three entry points ───────

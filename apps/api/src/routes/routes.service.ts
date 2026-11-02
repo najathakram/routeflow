@@ -1292,8 +1292,14 @@ export class RoutesService {
         const orders = await this.prisma.forTenant().order.findMany({
           where: {
             customerId: { in: customerIds },
-            // B756: DELIVERED history is not on the run (getRunPackingList excludes it the same way).
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            // B756: on a LIVE run DELIVERED history is not on the run (getRunPackingList excludes it the same way); a
+            // COMPLETED legacy run is the shape this fallback exists for, and what it delivered stays on it.
+            status: {
+              notIn:
+                run.status === RouteRunStatus.COMPLETED
+                  ? [OrderStatus.CANCELLED]
+                  : [OrderStatus.CANCELLED, OrderStatus.DELIVERED],
+            },
             fulfillPath: DISPATCH_PATH_WHERE.route, // SA-655
           },
           // B305 round 5: this legacy fallback's hand-rolled select missed the main query's money fields;
