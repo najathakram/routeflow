@@ -1,6 +1,7 @@
 /**
  * SA-1093 Rule 4, rows C-1..3: a return's cancel after a Boxes answer takes out the restock in today's pieces. The factor
  * comes from the return's own movement, so a return made after the answer cancels at its own quantity.
+ * SA-1093 A-1, rows C-4: a standard return received after the answer restocks in today's pieces.
  *
  * Throwaway `qa-retpack-<run>-<n>` tenants (approved by `assertTestTenant`). Runs only under jest.db.config.js.
  */
@@ -17,6 +18,7 @@ import { NumberingService } from "../import/numbering.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { applyPackIntroduction } from "../products/pack-intro-apply";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -84,6 +86,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
     const swallow = () => undefined; // a failed cleanup must never mask a test's result
     for (const tenantId of tenantIds) {
       const where = { where: { tenantId } };
+      await prisma.returnParkedRestock.deleteMany(where).catch(swallow);
       await prisma.returnItem.deleteMany(where).catch(swallow);
       await prisma.return.deleteMany(where).catch(swallow);
       await prisma.orderCreditNote.deleteMany(where).catch(swallow);
@@ -347,4 +350,187 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
 
     expect(await cancelRow(w)).toBe(-3);
   }, 60_000);
+
+  describe("C-4 (SA-1093 A-1): a standard return of 3 received after the answer", () => {
+    const SPLIT = { boxes: 0, pieces: 10 };
+    const LABEL = { unitLabel: "Case", unitsPerBox: 1 };
+
+    const sold = (w: World, shape: Record<string, unknown>) =>
+      prisma.orderItem.updateMany({ where: { orderId: w.orderId }, data: shape as any });
+    const stocked = (w: World, data: Record<string, unknown>) =>
+      prisma.product.update({ where: { id: w.productId }, data: data as any });
+    const newLine = async (w: World, shape: Record<string, unknown>) => {
+      const product = await prisma.product.findUniqueOrThrow({ where: { id: w.productId } });
+      await prisma.orderItem.create({
+        data: {
+          tenantId: w.tenantId,
+          orderId: w.orderId,
+          productId: w.productId,
+          name: product.name,
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          ...shape,
+        } as any,
+      });
+    };
+    const parks = (w: World) =>
+      prisma.returnParkedRestock.findMany({ where: { productId: w.productId } });
+    const restockRow = async (w: World) => {
+      const rows = await prisma.stockMovement.findMany({
+        where: { productId: w.productId, type: "RETURN", quantity: { gt: 0 } },
+      });
+      expect(rows).toHaveLength(1);
+      return [Number(rows[0].quantity), Number(rows[0].unitCost)];
+    };
+    /** Stock 5 goes to 120 at x24, on a line sold before the answer. */
+    const beforeBoxes = async (label: string, shape: Record<string, unknown>) => {
+      const w = await seed(label);
+      await sold(w, shape);
+      await stocked(w, { currentStock: 5, averageCost: 2.4 });
+      await boxes(w, 24);
+      expect(await stock(w)).toBe(120);
+      return w;
+    };
+
+    it("C-4a: a box-split line sold before goes 120 to 192, at the converted average", async () => {
+      const w = await beforeBoxes("c4a", SPLIT);
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(192);
+      expect(await restockRow(w)).toEqual([72, 0.1]);
+      expect(await parks(w)).toHaveLength(0);
+    }, 60_000);
+
+    it("C-4b: a labelled line with a snapshot of 1, sold before, goes 120 to 192", async () => {
+      const w = await beforeBoxes("c4b", LABEL);
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(192);
+      expect(await parks(w)).toHaveLength(0);
+    }, 60_000);
+
+    it("C-4c: two answers multiply: 30 goes to 48", async () => {
+      const w = await seed("c4c");
+      await sold(w, SPLIT);
+      await stocked(w, { currentStock: 5 });
+      await boxes(w, 2);
+      await boxes(w, 3);
+      expect(await stock(w)).toBe(30);
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(48);
+    }, 60_000);
+
+    it("C-4d: one line before and one after on the same order park, and stock doesn't move", async () => {
+      const w = await beforeBoxes("c4d", SPLIT);
+      await newLine(w, SPLIT);
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(120);
+      const parked = await parks(w);
+      expect(parked).toHaveLength(1);
+      expect(parked[0].reason).toBe("the product is on order lines with different packs");
+    }, 60_000);
+
+    it("C-4e: a line sold after the answer adds its own 3", async () => {
+      const w = await seed("c4e");
+      await prisma.orderItem.deleteMany({ where: { orderId: w.orderId } });
+      await stocked(w, { currentStock: 5 });
+      await boxes(w, 24);
+      await newLine(w, SPLIT);
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(123);
+      expect(await parks(w)).toHaveLength(0);
+    }, 60_000);
+
+    it("C-4f: a Pieces answer adds 3", async () => {
+      const w = await seed("c4f");
+      await sold(w, SPLIT);
+      await stocked(w, { currentStock: 120 });
+      await inTenant(w, () =>
+        prisma.tenantTransaction(async (tx) => {
+          const data: Record<string, unknown> = { unitsPerBox: 24 };
+          await applyPackIntroduction(tx as any, {
+            tenantId: w.tenantId,
+            productId: w.productId,
+            from: null,
+            to: 24,
+            reading: "piece",
+            data,
+            actorId: null,
+          });
+          await tx.product.update({ where: { id: w.productId }, data });
+        }),
+      );
+      expect(await stock(w)).toBe(120);
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(123);
+    }, 60_000);
+
+    it("C-4g: its cancel goes back to 120, because the row is dated after the answer", async () => {
+      const w = await beforeBoxes("c4g", SPLIT);
+      const ret = await standardReturn(w, 3);
+      const [restocked] = await restockRow(w);
+
+      await inTenant(w, () => returns.cancel(ret.id, staff(w)));
+
+      expect(await cancelRow(w)).toBe(-restocked);
+      expect(await stock(w)).toBe(120);
+    }, 60_000);
+
+    it("C-4h: sales facts still read the return's 3", async () => {
+      const w = await beforeBoxes("c4h", SPLIT);
+      const ret = await standardReturn(w, 3);
+      const refundedAt = new Date();
+      await prisma.return.update({
+        where: { id: ret.id },
+        data: { refundMethod: "EXTERNAL_REFUND", refundedAt } as any,
+      });
+
+      const events = await inTenant(w, () =>
+        new SalesFactsService(prisma).productCreditEvents(w.tenantId, w.productId, {
+          gte: new Date(refundedAt.getTime() - 60_000),
+          lt: new Date(refundedAt.getTime() + 60_000),
+        }),
+      );
+
+      expect(events.returned.map((r: { qty: number | null }) => r.qty)).toEqual([3]);
+    }, 60_000);
+
+    it("guard: a plain line sold before still parks", async () => {
+      const w = await beforeBoxes("c4plain", {});
+
+      await standardReturn(w, 3);
+
+      expect(await stock(w)).toBe(120);
+      expect(await parks(w)).toHaveLength(1);
+    }, 60_000);
+
+    it("guard: a line's own pack multiplies with the answer: 1 box of 3 at x8 is 24", async () => {
+      const w = await seed("c4basis");
+      await sold(w, { qty: 2, unitsPerBox: 3 });
+      const line = await prisma.orderItem.findFirstOrThrow({ where: { orderId: w.orderId } });
+      await prisma.invoiceItem.updateMany({
+        where: { tenantId: w.tenantId, productId: w.productId },
+        data: { orderItemId: line.id, qty: 6, boxes: 2, pieces: 0, unitsPerBox: 3 } as any,
+      });
+      await stocked(w, { currentStock: 5 });
+      await boxes(w, 8);
+      expect(await stock(w)).toBe(40);
+
+      await standardReturn(w, 1);
+
+      expect(await parks(w)).toHaveLength(0);
+      expect(await stock(w)).toBe(64);
+    }, 60_000);
+  });
 });

@@ -801,7 +801,13 @@ export class ReturnsService {
       } else {
         // PR-1c: shared with InlineReturnsService.capture() — see returns-restock.util.ts.
         // B665: a STANDARD return is typed in the line's own unit; stock is in pieces.
-        await restockReturnItems(tx, ret, userId, standardRestockResolver(tx, ret.orderId));
+        // SA-1093 A-1: and a line sold before a Boxes answer restocks in today's pieces.
+        await restockReturnItems(
+          tx,
+          ret,
+          userId,
+          standardRestockResolver(tx, ret.orderId, { inTodaysPieces: true }),
+        );
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
       // idempotent per return). Independent of `restock` — a returned regulated

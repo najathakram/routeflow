@@ -1,4 +1,5 @@
 import { resolvePackFactors } from "../common/line-pack-factors";
+import { boxIntrosOf, introsAfter, packFactor } from "../products/pack-intro-undo";
 import type { RestockPieces, RestockableReturnItem } from "./returns-restock.util";
 
 /**
@@ -66,6 +67,8 @@ export function productPackBasis(
   return { factor: [...factors][0] };
 }
 
+const DIFFERENT_PACKS = "the product is on order lines with different packs";
+
 /**
  * B665: the resolver a STANDARD return's `receive()` hands to `restockReturnItems`. A STANDARD return stores
  * the qty the operator typed in the order line's OWN unit (every creator is capped by the raw line qty), which
@@ -78,8 +81,15 @@ export function productPackBasis(
  * product: they must agree on one factor. A product sitting on lines with different packs (say one box-aware
  * and one box-unaware) is `unknown`, as is any line whose pack cannot be established: it parks, it is never
  * guessed. A product with no ambiguous line restocks exactly as before (factor 1).
+ *
+ * SA-1093 A-1: `inTodaysPieces` is the receive() path's. A line's old units each became N at a Boxes answer, so what
+ * it restocks is multiplied by the answers since the line. Lines that disagree park. Sales facts read without it.
  */
-export function standardRestockResolver(tx: any, orderId: string) {
+export function standardRestockResolver(
+  tx: any,
+  orderId: string,
+  { inTodaysPieces = false }: { inTodaysPieces?: boolean } = {},
+) {
   let loaded: Promise<{
     lines: any[];
     packs: Awaited<ReturnType<typeof resolvePackFactors>>;
@@ -91,6 +101,7 @@ export function standardRestockResolver(tx: any, orderId: string) {
         select: {
           id: true,
           productId: true,
+          createdAt: true,
           qty: true,
           boxes: true,
           pieces: true,
@@ -124,7 +135,17 @@ export function standardRestockResolver(tx: any, orderId: string) {
     }
     if ("unknown" in basis) return { unknown: true, reason: basis.reason };
     if ("mixed" in basis) {
-      return { unknown: true, reason: "the product is on order lines with different packs" };
+      return { unknown: true, reason: DIFFERENT_PACKS };
+    }
+    if (inTodaysPieces) {
+      const intros = await boxIntrosOf(tx, item.productId);
+      const answers = new Set(
+        lines
+          .filter((l) => l.productId === item.productId)
+          .map((l) => packFactor(introsAfter(intros, l.createdAt))),
+      );
+      if (answers.size > 1) return { unknown: true, reason: DIFFERENT_PACKS };
+      return { pieces: qty * basis.factor * [...answers][0] };
     }
     // A split line or a pack-less product is genuinely factor 1 (see productPackBasis).
     return { pieces: qty * basis.factor };
