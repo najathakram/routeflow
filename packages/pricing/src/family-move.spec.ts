@@ -30,6 +30,26 @@ describe("familyMoveOf (SA-1082 A-1, VM-1, VM-3)", () => {
     });
   });
 
+  it("VM-3b (A-2): a family with no pack moves the number as it is, never scaled", () => {
+    for (const noPack of [null, 0, 1]) {
+      const before = row(24, 0, noPack as number);
+      const after = row(26, 0, noPack as number);
+      const twelve = row(24, 0, 12);
+      expect(familyCellsFor(before, twelve)?.[0]).toEqual({ value: 24, follows: true });
+      expect(familyMoveOf(before, after, twelve)).toMatchObject({
+        columns: { pricePerUnit: 26 },
+        from: 24,
+        to: 26,
+      });
+    }
+  });
+
+  it("a variant with no pack has no pieces to scale by: the family's number as it is", () => {
+    const blank = row(24, 0, null as unknown as number);
+    expect(familyCellsFor(row(24), blank)?.[0]).toEqual({ value: 24, follows: true });
+    expect(familyMoveOf(row(24), row(26), blank)?.columns).toEqual({ pricePerUnit: 26 });
+  });
+
   it("moves a tier only when Retail and that tier both match", () => {
     const before = row(24, 22);
     const after = row(26, 23);

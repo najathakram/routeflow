@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import {
   familyCellsFor,
   familyMoveOf,
+  familyPriceOnPack,
   getTierPrice,
   resolveFamilyCellEdits,
   roundMoney,
@@ -176,20 +177,16 @@ export async function loadLockedFamilyPrices(
   return pickPriceColumns(family as PriceColumns);
 }
 
-/** The family's five columns as a variant on `pieces` holds them (SA-1082 ruling 1): scaled once, a blank tier stays blank. */
+/** The family's five columns as a variant on `pieces` holds them (SA-1082 A-2's scale, once); a blank tier stays blank. */
 function familyColumnsFor(
   family: Record<FamilyPriceColumn, PriceValue>,
   familyPack: unknown,
   pieces: unknown,
 ): Record<FamilyPriceColumn, Prisma.Decimal> {
-  const from = Math.max(1, Math.trunc(Number(familyPack)) || 1);
-  const to = Math.max(1, Math.trunc(Number(pieces)) || from);
-  // The columns are non-null Decimals in the schema, so the raw read is safe to write back as-is.
-  if (from === to) return family as Record<FamilyPriceColumn, Prisma.Decimal>;
   const out = {} as Record<FamilyPriceColumn, unknown>;
   for (const col of FAMILY_PRICE_COLUMNS) {
     const value = Number(family[col]) || 0;
-    out[col] = value > 0 ? roundMoney((value * to) / from) : family[col];
+    out[col] = value > 0 ? familyPriceOnPack(value, familyPack, pieces) : family[col];
   }
   return out as Record<FamilyPriceColumn, Prisma.Decimal>;
 }

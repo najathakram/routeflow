@@ -4,7 +4,7 @@ import { getTierPrice, TIER_FIELDS, type TierField } from "./tier-pricing";
 /**
  * SA-1082 A-1: who a family price save asks about, and what a variant's blank box means. Each variant stores its own five
  * numbers and every billing reader keeps reading them; "at the family's price" is a comparison made at the moment of a
- * save, through `getTierPrice`'s effective values, scaled by pieces when the packs differ and rounded once. Nothing here
+ * save, through `getTierPrice`'s effective values, scaled from a family that holds a pack and rounded once. Nothing here
  * writes, and nothing moves unless a person named the variant.
  */
 export interface FamilyLadderRow {
@@ -22,15 +22,30 @@ export interface VariantLadderRow extends FamilyLadderRow {
   packAuto?: unknown;
 }
 
-const packOf = (row: FamilyLadderRow): number =>
-  Math.max(1, Math.trunc(Number(row.unitsPerBox)) || 1);
 const stored = (row: FamilyLadderRow, tier: number): number =>
   Number(row[TIER_FIELDS[tier - 1] as keyof FamilyLadderRow]) || 0;
 const usable = (family: FamilyLadderRow): boolean => stored(family, 1) > 0;
 
-/** Tier `tier`'s effective family price on a pack of `pieces`. */
-function familyValue(family: FamilyLadderRow, tier: number, pieces: number): number {
-  return roundMoney((getTierPrice(family, tier) * pieces) / packOf(family));
+const packOf = (units: unknown): number => Math.trunc(Number(units)) || 0;
+
+/**
+ * A family's price on a variant's pack, rounded once: the one place that scales (SA-1082 A-2). Only a family row holding a
+ * pack above 1 has a per-piece rate. Families made in the editor or by import hold none, and a variant with no pack has
+ * no pieces to scale by, so those take the number as it is.
+ */
+export function familyPriceOnPack(
+  value: number,
+  familyPack: unknown,
+  variantPack: unknown,
+): number {
+  const from = packOf(familyPack);
+  const to = packOf(variantPack);
+  return roundMoney(from > 1 && to > 0 ? (value * to) / from : value);
+}
+
+/** Tier `tier`'s effective family price on the variant's pack. */
+function familyValue(family: FamilyLadderRow, tier: number, variant: FamilyLadderRow): number {
+  return familyPriceOnPack(getTierPrice(family, tier), family.unitsPerBox, variant.unitsPerBox);
 }
 
 export interface FamilyCell {
@@ -46,18 +61,18 @@ export function familyCellsFor(
   variant: VariantLadderRow,
 ): FamilyCell[] | null {
   if (variant.ownOrderUnit) return null;
-  const pieces = packOf(variant);
   const canFollow = usable(family);
   const retailFollows =
-    canFollow && roundMoney(getTierPrice(variant, 1)) === familyValue(family, 1, pieces);
+    canFollow && roundMoney(getTierPrice(variant, 1)) === familyValue(family, 1, variant);
   return [1, 2, 3, 4, 5].map((tier) => ({
     value:
       !canFollow || (tier > 1 && stored(family, tier) <= 0)
         ? null
-        : familyValue(family, tier, pieces),
+        : familyValue(family, tier, variant),
     follows:
       retailFollows &&
-      (tier === 1 || roundMoney(getTierPrice(variant, tier)) === familyValue(family, tier, pieces)),
+      (tier === 1 ||
+        roundMoney(getTierPrice(variant, tier)) === familyValue(family, tier, variant)),
   }));
 }
 
@@ -83,8 +98,7 @@ export function familyMoveOf(
 ): FamilyMove | null {
   const cells = familyCellsFor(before, variant);
   if (!cells?.[0]?.follows || !usable(after)) return null;
-  const pieces = packOf(variant);
-  const toRetail = familyValue(after, 1, pieces);
+  const toRetail = familyValue(after, 1, variant);
   const columns: FamilyMove["columns"] = {};
   let packAuto = Math.trunc(Number(variant.packAuto)) || 0;
   [1, 2, 3, 4, 5].forEach((tier) => {
@@ -96,7 +110,7 @@ export function familyMoveOf(
     } else if (stored(after, tier) <= 0) {
       if (!blankNow) columns[field] = null;
     } else {
-      const to = familyValue(after, tier, pieces);
+      const to = familyValue(after, tier, variant);
       // A blank tier already bills the new Retail, so it stays blank rather than turning into a typed copy.
       if (blankNow ? to !== toRetail : to !== roundMoney(stored(variant, tier))) {
         columns[field] = to;
