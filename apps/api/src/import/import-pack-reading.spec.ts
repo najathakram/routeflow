@@ -10,7 +10,7 @@ describe("import pack reading (SA-946 MUST 3, SA-961 R1)", () => {
       unitsPerBox: 12,
       packReading: "piece",
     });
-    const noPack = { standardCost: 2 };
+    const noPack: { unitsPerBox?: number; standardCost: number } = { standardCost: 2 };
     expect(withImportPackReading(noPack)).toBe(noPack);
   });
 });
