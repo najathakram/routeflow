@@ -33,7 +33,7 @@
     { k: "boxpiece", t: "Box or piece", s: "Sell a full box or one piece.", a: "sun", c: "#355695", w: "#183366" },
     { k: "price", t: "Each buyer’s price", s: "Give one store its own price.", a: "mint", c: "#4d5da4", w: "#2e3a74" },
     { k: "store", t: "Store ordering", s: "Stores see their own prices and order online.", a: "coral", c: "#244f7c", w: "#062c51" },
-    { k: "counter", t: "Counter sales", s: "Tick it when you set up your account, no fee. Scan, record the payment, print a receipt.", a: "sun", c: "#6261af", w: "#403e7e" },
+    { k: "counter", t: "Counter sales", s: "Select it when you set up your account. No fee. Scan, record the payment, print a receipt.", a: "sun", c: "#6261af", w: "#403e7e" },
     { k: "returns", t: "Returns", s: "Take goods back. Give store credit. Give cash back if the invoice is paid.", a: "coral", c: "#2d4470", w: "#102246" },
   ];
   const ALL = OUTER.concat(INNER), NO = OUTER.length, N = ALL.length, STEP_O = 360 / NO;
@@ -120,11 +120,11 @@
       poly([iso(x + m, y + s, tp), iso(x + m + n, y + s, tp), iso(x + m + n, y + s, z + h * 0.62), iso(x + m, y + s, z + h * 0.62)], "#2b4c88"), a);
   };
   /* One soft neutral contact shadow under each form, drawn once into the object's own picture. */
-  const DEFS = '<svg class="rfw-defs" width="0" height="0" aria-hidden="true"><defs><radialGradient id="rfwsd"><stop offset=".34" stop-color="#101828" stop-opacity=".34"/><stop offset=".72" stop-color="#101828" stop-opacity=".14"/><stop offset="1" stop-color="#101828" stop-opacity="0"/></radialGradient></defs></svg>';
+  const DEFS = '<svg class="rfw-defs" width="0" height="0" aria-hidden="true"><defs><radialGradient id="rfwsd"><stop offset=".34" stop-color="#0f1b2d" stop-opacity=".34"/><stop offset=".72" stop-color="#0f1b2d" stop-opacity=".14"/><stop offset="1" stop-color="#0f1b2d" stop-opacity="0"/></radialGradient></defs></svg>';
   const FORMS = [
     shadow(-44, -56, 88, 112) + slab(-42, -54, 0, 84, 108, 5, 5, "#fff", "#cfdaec") + face.top(-42, -54, 5, Rc(10, 12, 40, 7, 3.5, "#2b4c88") + Rc(10, 30, 64, 5, 2.5, "#dfe6f2") + Rc(10, 42, 64, 5, 2.5, "#dfe6f2") + Rc(10, 54, 64, 5, 2.5, "#dfe6f2") + Rc(44, 78, 30, 12, 6, "#e56a5d")),
     shadow(-56, -30, 112, 58, 0.8) + carton(-52, -26, 0, 50) + carton(2, -26, 0, 50) + carton(-26, -26, 42, 50),
-    shadow(-62, -32, 124, 64) + slab(-60, -30, 0, 120, 60, 5, 5, "#e8f6f0", "#b7dccb") + face.top(-60, -30, 5, Rc(10, 10, 46, 6, 3, "#0e9e72") + Rc(10, 24, 72, 4, 2, "#a7d6c3") + Rc(10, 36, 52, 4, 2, "#a7d6c3") + Ci(100, 30, 11, "#14c98f") + Ln("M95 30l3.6 3.6l6.4 -7", "#fff", 2.4)),
+    shadow(-62, -32, 124, 64) + slab(-60, -30, 0, 120, 60, 5, 5, "#ecfdf5", "#a7f3d0") + face.top(-60, -30, 5, Rc(10, 10, 46, 6, 3, "#059669") + Rc(10, 24, 72, 4, 2, "#a7f3d0") + Rc(10, 36, 52, 4, 2, "#a7f3d0") + Ci(100, 30, 11, "#14c98f") + Ln("M95 30l3.6 3.6l6.4 -7", "#fff", 2.4)),
   ];
   const tokenSVG = `<svg viewBox="-90 -115 180 160" aria-hidden="true">${FORMS.map((f) => `<g class="rfw-f">${f}</g>`).join("")}</svg>`;
   const li = (d, o) => `<li${o ? ' class="o"' : ""}>${d.t}<span>${d.s}${d.n ? ` ${d.n}.` : ""}</span></li>`;
@@ -174,8 +174,8 @@
   const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   const css = (c, al) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${al == null ? 1 : +al.toFixed(3)})`;
-  const WHITE = [255, 255, 255], INK = [29, 29, 31], NVY = hex("#10264d"), HUBW = hex("#091633");
-  const NEU = [WHITE, hex("#fafafc")], WNEU = hex("#dcdde3"), MUTE = hex("#e2e4ea"), MUTEW = hex("#c6c9d2");
+  const WHITE = [255, 255, 255], INK = [15, 27, 45], NVY = hex("#10264d"), HUBW = hex("#0a1a38");
+  const NEU = [WHITE, hex("#fafafc")], WNEU = hex("#d6dee8"), MUTE = hex("#e2e8f0"), MUTEW = hex("#d6dee8");
   const THO = 40, THI = 34, THH = 58, DEPTH = 2000, FS = 46, FSI = 62, LF = 48, RT = 418, TOKW = 150, TILT = 68, YC = -260, HUB_R = 0.62, AIR = 90, DRIFT = 0.05, PITCH = 0.5, REST = 0.05;
   /* How the wheel comes apart. Every piece leaves straight out from the centre (EX, in wheel units), the layers part in
      height (POSE), and the camera angle never changes once it is apart. */
@@ -306,7 +306,7 @@
     const sprite = (fn) => {
       const c = document.createElement("canvas"), x = c.getContext("2d"), G = x.createRadialGradient(128, 128, 0, 128, 128, 128);
       c.width = c.height = 256;
-      for (let j = 0; j <= 24; j++) G.addColorStop(j / 24, `rgba(16,24,40,${fn(j / 24).toFixed(3)})`);
+      for (let j = 0; j <= 24; j++) G.addColorStop(j / 24, `rgba(15,27,45,${fn(j / 24).toFixed(3)})`);
       x.fillStyle = G; x.fillRect(0, 0, 256, 256);
       return c;
     };
@@ -406,7 +406,7 @@
         const edge = hc ? 0.55 : 0.08 * (1 - p.c);
         if (edge > 0.01) { ctx.lineWidth = dpr; ctx.strokeStyle = css(INK, edge); ctx.stroke(); }
         if (p.c > 0.02 && st > 0.05 && m < 0.5) { ctx.beginPath(); ctx.moveTo(tx[0], ty[0]); for (let j = 1; j < w.rim; j++) ctx.lineTo(tx[j], ty[j]); ctx.lineJoin = "miter"; ctx.lineWidth = 1.25 * dpr; ctx.strokeStyle = css(WHITE, 0.42 * p.c * (1 - m)); ctx.stroke(); }
-        if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = "#0071e3"; ctx.stroke(); }
+        if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = "#2b4c88"; ctx.stroke(); }
         /* Words stay upright and readable; only the plate tilts. The piece the object stands on lets it have the spot. */
         const vis = (outer ? 1 - S.obj * p.w : 1) * (1 - m * 0.55);
         if (vis > 0.03) {

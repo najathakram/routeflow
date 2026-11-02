@@ -1,24 +1,50 @@
-/* RouteFlow colour and scene box. This file is the one source of colour for the site and the art.
+/* RouteFlow colour and scene box. This file is the one source of colour, type sizes, corners and shadows for the site and the art.
    White first. One strong signature navy. Sun, coral and mint are the lively accents, each with a job:
-   sun = money and warmth, coral = people and alerts, mint = done and paid. */
+   sun = money and warmth, coral = people and alerts, mint = done and paid.
+   Text colours come from the product's design system (packages/ui/src/tokens/ledger.ts). tools/build-landing.cjs inlines the marked block. */
+/*tokens:start*/
 :root{
+  --rf-ink:#0f1b2d;--rf-ink-2:#33425b;--rf-ink-3:#5c6b82;--rf-white:#ffffff;--rf-tint:#f5f5f7;--rf-line:#e5e5ea;
   --rf-brand-900:#0a1a38;--rf-brand-700:#10264d;--rf-brand-500:#2b4c88;--rf-brand-300:#a9bad8;--rf-brand-100:#e9eef7;
-  --rf-sun:#ffc933;--rf-sun-soft:#fff3cf;
-  --rf-coral:#ff5e4d;--rf-coral-soft:#ffe6e2;
-  --rf-mint:#14c98f;--rf-mint-soft:#d8f7ec;
-  --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;
-  --rf-ink:#0f1733;--rf-white:#ffffff;
-  --rf-skin-a:#f7cdac;--rf-skin-b:#dc9f72;--rf-skin-c:#99643f;
-  --rf-hair:#2a2c3f;
-  /* Scene roles. A slot on a colour band changes these and the art follows. */
+  --rf-link:var(--rf-brand-500);--rf-link-on-navy:var(--rf-brand-300);--rf-on-navy:var(--rf-brand-100);
+  --rf-sun:#ffc933;--rf-sun-soft:#fff3cf;--rf-coral:#ff5e4d;--rf-coral-soft:#ffe6e2;--rf-mint:#14c98f;--rf-mint-soft:#d8f7ec;--rf-ok:#15803d;
+  --rf-font:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  /* One type scale. Tracking tightens and leading closes as type grows. */
+  --rf-h1:clamp(44px,5vw,72px);--rf-h1-tr:-.04em;
+  --rf-h2:clamp(34px,4.4vw,60px);--rf-h2-lh:1.06;--rf-h2-tr:-.034em;
+  --rf-h3:clamp(28px,3vw,44px);--rf-h4:clamp(22px,2vw,28px);
+  --rf-lede:clamp(19px,1.5vw,22px);--rf-lede-lh:1.45;
+  /* One set of corners and one neutral shadow colour. */
+  --rf-r-stage:32px;--rf-r-card:24px;--rf-r-inner:18px;--rf-r-tile:12px;
+  --rf-sh-card:0 0 0 1px rgba(15,27,45,.04),0 1px 2px rgba(15,27,45,.05),0 12px 32px -10px rgba(15,27,45,.16);
+  --rf-sh-sample:0 0 0 1px rgba(15,27,45,.05),0 10px 26px rgba(15,27,45,.08);
+  --rf-sh-win:0 0 0 1px rgba(15,27,45,.06),0 2px 6px rgba(15,27,45,.05),0 28px 60px -24px rgba(15,27,45,.28);
+}
+@media (max-width:899.98px){:root{--rf-h1:clamp(40px,12vw,60px);--rf-h1-tr:-.034em;--rf-h2:clamp(32px,9vw,46px);--rf-h2-lh:1.08;--rf-h2-tr:-.03em;--rf-h3:clamp(28px,8vw,40px);--rf-lede:19px;--rf-lede-lh:1.4;--rf-r-stage:24px;--rf-r-card:20px}}
+@media (prefers-contrast:more){:root{--rf-ink-2:var(--rf-ink);--rf-ink-3:var(--rf-ink);--rf-line:#79859b;--rf-on-navy:#fff;--rf-link-on-navy:#fff}}
+/*tokens:end*/
+/* Art only: cartons, people, and the roles the scenes use. A slot on a colour band changes the roles and the art follows. */
+:root{
+  --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;--rf-box-top:#fcd9aa;--rf-box-front:#f3ba76;--rf-box-side:#dd9b57;
+  --rf-skin-a:#f7cdac;--rf-skin-b:#dc9f72;--rf-skin-c:#99643f;--rf-hair:#2a2c3f;
   --rf-text:var(--rf-ink);--rf-road:var(--rf-brand-300);
   --rf-disc-a:var(--rf-brand-100);--rf-disc-b:var(--rf-sun-soft);--rf-disc-c:var(--rf-mint-soft);
   --rf-pill-bg:var(--rf-brand-700);--rf-pill-fg:var(--rf-white);
   --rf-cargo:var(--rf-brand-500);--rf-cargo-mark:var(--rf-white);
-  --rf-font:"Geist","Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
 }
+/* Pictures of the product only: the app's own colours, so a screen on this site looks like the screen in the app.
+   Same file as above: packages/ui/src/tokens/ledger.ts. Operator teal, buyer emerald, and the phone app's greys and brand (tokens.ts). */
+:root{
+  --app:var(--rf-font);--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --app-ink:#0f1b2d;--app-ink-2:#33425b;--app-ink-3:#5c6b82;--app-ink-4:#8b97ac;
+  --app-canvas:#f7f9fc;--app-sunken:#edf1f6;--app-line:#e2e8f0;--app-line-2:#d6dee8;
+  --app-rail:#0f1b2d;--app-on:#7fd1cd;--app-p:#0e8480;--app-deep:#0b6e6b;--app-soft:#e8f2f1;
+  --buy-rail:#064e3b;--buy-on:#6ee7b7;--buy-p:#047857;--buy-deep:#065f46;--buy-soft:#ecfdf5;--buy-200:#a7f3d0;
+  --ios-5:#e5e5ea;--ios-6:#f2f2f7;
+}
+@media (prefers-contrast:more){:root{--app-ink-2:var(--app-ink);--app-ink-3:var(--app-ink);--app-line:#79859b;--app-line-2:#79859b}}
 .rf-on-blue{--rf-text:#fff;--rf-road:rgba(255,255,255,.42);--rf-disc-a:rgba(255,255,255,.13);--rf-disc-b:rgba(255,255,255,.13);--rf-disc-c:rgba(255,255,255,.13);--rf-pill-bg:#fff;--rf-pill-fg:var(--rf-ink);--rf-cargo:#fff;--rf-cargo-mark:var(--rf-brand-700)}
-.rf-on-sun{--rf-road:rgba(15,23,51,.28);--rf-disc-a:#fff;--rf-disc-b:#fff;--rf-disc-c:#fff}
+.rf-on-sun{--rf-road:rgba(15,27,45,.28);--rf-disc-a:#fff;--rf-disc-b:#fff;--rf-disc-c:#fff}
 .rf-scene{display:block;position:relative;width:100%;font-family:var(--rf-font)}
 .rf-scene>svg,.rf-scene>img{display:block;width:100%;height:auto}
 .rf-scene svg{overflow:visible;-webkit-tap-highlight-color:transparent}
