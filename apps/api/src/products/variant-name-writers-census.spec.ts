@@ -83,7 +83,7 @@ const ALLOWED: Record<string, string> = {
   "import/product-family-import.service.ts":
     "SA-823 PR-2: plans the import's Family rows read-only; the label comes from bareVariantLabel (the one normaliser) and is handed to assignToParent / create, so it writes no product row of its own",
   "products/family-price.ts":
-    "propagates PRICE columns to a family's variants (where: parentProductId); writes no name",
+    "propagates PRICE columns to recipes and moves named variants' PRICE columns; writes no name",
 };
 
 describe("B1 variant-name writer census", () => {
@@ -187,8 +187,8 @@ const BLOCKS: Record<string, BlockPin> = {
     why: "the stock split's new variant is built from bareVariantLabel; the stock / cost writes moved to inventory/stock-movements.ts (SA-927, its own entry)",
   },
   "src/products/family-price.ts": {
-    blocks: { "propagateFamilyPrice:updateMany": 2 },
-    why: "propagates the five PRICE columns to a family's variants (data is a built price patch); writes no name",
+    blocks: { "propagateFamilyPrice:updateMany": 1 },
+    why: "propagates the five PRICE columns to recipes; moves a named variant's PRICE columns (SA-1082 A-1); writes no name",
   },
   "src/products/product-code-release.ts": {
     blocks: { "releaseLive:update": 1, "restoreProductCodes:update": 1 },

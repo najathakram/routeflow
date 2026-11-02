@@ -470,6 +470,25 @@ export interface ProductPriceGridCellDto {
   tier: 1 | 2 | 3 | 4 | 5;
   source: "set" | "auto";
   value: number;
+  /**
+   * SA-1082 A-1: only on a variant's pack row. `value` is what a blank box takes from the family (null: nothing to take, so
+   * it reads Auto). `follows` says the cell is at the family's price now, so it reads Family.
+   */
+  family?: { value: number | null; follows: boolean };
+}
+/** SA-1082 A-1: POST products/:id/family-moves/preview. The variants a family save would ask about. */
+export interface FamilyMovePreviewVariantDto {
+  id: string;
+  name: string;
+  from: number;
+  to: number;
+}
+export interface FamilyMovePreviewDto {
+  count: number;
+  variants: FamilyMovePreviewVariantDto[];
+  /** The family's Retail before and after the save. */
+  retailFrom: number;
+  retailTo: number;
 }
 export interface ProductPriceGridRowDto {
   ref: string;

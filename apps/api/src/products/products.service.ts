@@ -55,7 +55,12 @@ import { normalizeScanCode } from "@routeflow/scanning";
 import { findScanMatches } from "./scan-match";
 import { buildProductListWhere, needsLowStockIds } from "./product-list-where";
 import { lowStockProductIds } from "./low-stock-ids";
-import type { ProductIdsForFilterResponse } from "@routeflow/types";
+import type {
+  FamilyMovePreviewDto as FamilyMovePreviewResponse,
+  ProductIdsForFilterResponse,
+} from "@routeflow/types";
+import { roundMoney } from "@routeflow/pricing";
+import type { FamilyMovePreviewDto } from "./dto/family-move-preview.dto";
 import { RULE_TARGETS_MAX_PER_REQUEST as PRODUCT_IDS_CAP } from "../selling-restrictions-admin/dto/rule-targets.dto";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { lockProductPack } from "../units/tenant-units-lock";
@@ -117,6 +122,11 @@ import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
   applyFamilyPriceBeforeUpdate,
   familyPricesForNewVariant,
+  loadLockedFamilyLadder,
+  loadVariantLadders,
+  moveFamilyVariants,
+  ownRetailTierBlanks,
+  plannedFamilyMoves,
   hasPriceColumns,
   lockFamilyRow,
   propagateFamilyPrice,
@@ -1041,6 +1051,8 @@ export class ProductsService {
               tenantId,
               familyId: dto.parentProductId,
               dto,
+              unitsPerBox: resolvedUnitsPerBox,
+              flagged: unitsV2,
             })
           : {
               pricePerUnit: dto.pricePerUnit,
@@ -1291,6 +1303,8 @@ export class ProductsService {
     }
     // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
     delete data.deactivateHolderIds;
+    // Nor is the family save's answer: read from `dto` inside the tx (SA-1082 A-1).
+    delete data.moveVariantIds;
     // Not a column either: B1213's family-deactivation confirmation, read from `dto` inside the tx.
     delete data.confirmCascade;
     // Nor the SA-797 pack precondition: compared inside the tx, never written.
@@ -1392,6 +1406,14 @@ export class ProductsService {
     let packEchoStripped = false;
     let wroteRow = true;
     let propagatedRows = 0;
+    let movedVariants: number | null = null;
+    // SA-1082 A-1: the two writes that store a blank tier read this BEFORE the transaction.
+    const moveVariantIds = dto.moveVariantIds ?? [];
+    const ownRetailWrite = dto.pricePerUnit !== undefined && !!existing.parentProductId;
+    const blankTiersFlagged =
+      moveVariantIds.length > 0 || ownRetailWrite
+        ? await this.unitsPricesV2.isOn(this.entitlements, tenantId)
+        : false;
     let doorDeactivated: string[] = [];
     let cascaded: string[] = [];
     let keptLabels: string[] | null = null;
@@ -1614,12 +1636,43 @@ export class ProductsService {
       }
       // Promoting a variant to standalone (parentProductId: null) must not leave a VARIANT with no parent.
       if (dto.parentProductId === null && existing.kind === "VARIANT") data.kind = "STANDARD";
+      // SA-1082 A-1: the family's values before this write, under its lock: what a named variant is re-checked against.
+      const familyBefore =
+        moveVariantIds.length > 0 ? await loadLockedFamilyLadder(tx, tenantId, id) : null;
       // Family price authority: may refuse (409), rewrite `data`'s price columns, or ask for a
-      // propagation to this row's children after the write. Off = nothing runs.
+      // propagation to this row's recipes after the write. Off = nothing runs.
       const family =
         familyMode === "on"
           ? await applyFamilyPriceBeforeUpdate(tx, { tenantId, id, existing, dto, data })
           : { propagate: false };
+      // SA-1082 ruling 7: a variant's own Retail takes the tiers still at the family's value with it.
+      if (
+        ownRetailWrite &&
+        (dto.parentProductId ?? existing.parentProductId) === existing.parentProductId
+      ) {
+        const parent = await tx.product.findFirst({
+          where: { id: existing.parentProductId, tenantId },
+          select: {
+            pricePerUnit: true,
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
+            unitsPerBox: true,
+          },
+        });
+        const [self] = await loadVariantLadders(tx, {
+          tenantId,
+          familyId: existing.parentProductId as string,
+          ids: [id],
+        });
+        if (parent && self) {
+          Object.assign(
+            data,
+            ownRetailTierBlanks({ family: parent, variant: self, dto, flagged: blankTiersFlagged }),
+          );
+        }
+      }
       // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
       // its row lock; the UPDATE below must never be the first thing to lock the row.
       if (deactivating) {
@@ -1729,7 +1782,20 @@ export class ProductsService {
       }
       if (family.propagate) {
         const moved = await propagateFamilyPrice(tx, { tenantId, familyId: id });
-        propagatedRows = moved.variants + moved.recipes;
+        propagatedRows = moved.recipes;
+      }
+      if (familyBefore) {
+        const { moved } = await moveFamilyVariants(tx, {
+          tenantId,
+          familyId: id,
+          before: familyBefore,
+          after: row,
+          variantIds: moveVariantIds,
+          flagged: blankTiersFlagged,
+          actorId: options?.actorId,
+        });
+        movedVariants = moved;
+        propagatedRows += moved;
       }
       return row;
     });
@@ -1754,7 +1820,48 @@ export class ProductsService {
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
     // A reparent reports the labels it kept (names; [] = nothing was lost); any other write returns the row as before.
-    return keptLabels ? { ...updated, keptLabels } : updated;
+    return {
+      ...updated,
+      ...(keptLabels ? { keptLabels } : {}),
+      ...(movedVariants == null ? {} : { movedVariants }),
+    };
+  }
+
+  /**
+   * SA-1082 A-1: POST /products/:id/family-moves/preview. The variants at the family's price that this save would move.
+   * Writes nothing and promises nothing: the save re-checks each one under the family's lock.
+   */
+  async previewFamilyMove(
+    id: string,
+    dto: FamilyMovePreviewDto,
+  ): Promise<FamilyMovePreviewResponse> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    const before = await this.findOne(id);
+    const after = {
+      pricePerUnit: dto.pricePerUnit ?? before.pricePerUnit,
+      priceTier2: dto.priceTier2 ?? before.priceTier2,
+      priceTier3: dto.priceTier3 ?? before.priceTier3,
+      priceTier4: dto.priceTier4 ?? before.priceTier4,
+      priceTier5: dto.priceTier5 ?? before.priceTier5,
+      unitsPerBox: dto.unitsPerBox ?? before.unitsPerBox,
+    };
+    const variants = await loadVariantLadders(this.prisma.forTenant() as any, {
+      tenantId,
+      familyId: id,
+    });
+    const planned = plannedFamilyMoves(before, after, variants);
+    return {
+      count: planned.length,
+      variants: planned.map(({ variant, move }) => ({
+        id: variant.id,
+        name: variant.variantName ?? variant.name,
+        from: move.from,
+        to: move.to,
+      })),
+      retailFrom: roundMoney(Number(before.pricePerUnit)),
+      retailTo: roundMoney(Number(after.pricePerUnit)),
+    };
   }
 
   /**

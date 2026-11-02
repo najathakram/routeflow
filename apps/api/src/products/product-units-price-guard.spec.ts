@@ -35,16 +35,16 @@ describe("assertUnitPriceWritable (priceAuthority decides, SA-1041)", () => {
     expect(() => assertUnitPriceWritable(plain, { price: 5 }, off("base"))).not.toThrow();
   });
 
-  it.each([
-    ["variant", variant],
-    ["recipe with a family link", recipeLinked],
-  ])("mode on: refuses a %s base-level price with the coded 409", (_n, p) => {
-    for (const body of [{ price: 5 }, { priceTier3: 2 }]) {
-      const e = refusal(() => assertUnitPriceWritable(p, body, on("base")));
-      expect(e).toBeInstanceOf(ConflictException);
-      expect(e.getResponse()).toMatchObject({ code: API_ERROR_CODES.FAMILY_PRICE_AUTHORITY });
-    }
-  });
+  it.each([["recipe with a family link", recipeLinked]])(
+    "mode on: refuses a %s base-level price with the coded 409",
+    (_n, p) => {
+      for (const body of [{ price: 5 }, { priceTier3: 2 }]) {
+        const e = refusal(() => assertUnitPriceWritable(p, body, on("base")));
+        expect(e).toBeInstanceOf(ConflictException);
+        expect(e.getResponse()).toMatchObject({ code: API_ERROR_CODES.FAMILY_PRICE_AUTHORITY });
+      }
+    },
+  );
 
   it.each([
     ["variant", variant],
@@ -81,12 +81,12 @@ describe("assertUnitPriceWritable (priceAuthority decides, SA-1041)", () => {
 
   it("create ignores a null price (legacy add form); update refuses clearing one", () => {
     expect(() =>
-      assertUnitPriceWritable(variant, { label: "Case", price: null }, on("base", "create")),
+      assertUnitPriceWritable(recipeLinked, { label: "Case", price: null }, on("base", "create")),
     ).not.toThrow();
-    expect(() => assertUnitPriceWritable(variant, { price: 5 }, on("base", "create"))).toThrow(
+    expect(() => assertUnitPriceWritable(recipeLinked, { price: 5 }, on("base", "create"))).toThrow(
       ConflictException,
     );
-    expect(() => assertUnitPriceWritable(variant, { price: null }, on("base"))).toThrow(
+    expect(() => assertUnitPriceWritable(recipeLinked, { price: null }, on("base"))).toThrow(
       ConflictException,
     );
   });
@@ -96,9 +96,9 @@ describe("assertUnitPriceWritable (priceAuthority decides, SA-1041)", () => {
     expect(e.getResponse()).toMatchObject({ code: "FAMILY_PRICE_AUTHORITY", familyId: "f1" });
   });
 
-  it("names the family for a variant", () => {
-    const e = refusal(() => assertUnitPriceWritable(variant, { price: 1 }, on("base")));
-    expect(e.getResponse()).toMatchObject({ familyId: "f1" });
+  it("SA-1082 A-1: a variant's base price is its own, mode on", () => {
+    expect(() => assertUnitPriceWritable(variant, { price: 1 }, on("base"))).not.toThrow();
+    expect(() => assertUnitPriceWritable(variant, { priceTier3: 2 }, on("base"))).not.toThrow();
   });
 
   it.each([variant, family, recipeLinked])("still allows a structure-only write", (p) => {

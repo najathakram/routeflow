@@ -34,6 +34,8 @@ export const AUDIT_ACTIONS = {
   VENDOR_BILL_LEDGER_EXCESS: "vendor-bill.ledger-excess",
   /** B288 (SA-814 R5-3): a cash payment moved off a vendor bill into a supplier credit dated at the payment; meta {billNumber, paymentId, supplierCreditId, amount, paidAt, method, statusBefore, statusAfter}. */
   VENDOR_BILL_PAYMENT_MOVED_TO_CREDIT: "vendor-bill.payment-moved-to-credit",
+  /** SA-1082 A-1: a family save moved the variants the person named; meta {asked, moved, variantIds, retailBefore, retailAfter}. */
+  PRODUCT_FAMILY_VARIANTS_MOVED: "product.family-variants-moved",
   /** Units v2 (SA-799 b): one price Save; meta {request, undo, revisionBefore, revisionAfter, actor, priceStateBefore, priceStateAfter (SA-845 replay)}. Undoable once. */
   PRODUCT_PRICES_SAVED: "product.prices-saved",
   /** Units v2 (SA-799 b): the Undo of a PRODUCT_PRICES_SAVED row; meta {undoes, skipped, revisionBefore, revisionAfter, actor, request: {skip}, priceStateAfter (SA-845 replay)}. */

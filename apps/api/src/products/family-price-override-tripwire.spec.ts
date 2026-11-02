@@ -59,10 +59,10 @@ export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
       "twins only (sku, barcode, unitSku); no price, tier or family column is ever named.",
   },
   "src/products/family-price.ts": {
-    count: 2,
+    count: 1,
     reason:
-      "propagateFamilyPrice copies pickPriceColumns (five price columns only) onto variants and " +
-      "non-override recipe products; it reads the flag in its where, never writes it.",
+      "propagateFamilyPrice copies pickPriceColumns (five price columns only) onto non-override " +
+      "recipe products; it reads the flag in its where, never writes it.",
   },
   "src/products/products.service.ts": {
     count: 2,

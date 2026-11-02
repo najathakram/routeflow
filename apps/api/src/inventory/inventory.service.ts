@@ -658,7 +658,12 @@ export class InventoryService {
     const tenantId = this.prisma.getTenantId();
     const priceColumns =
       familyMode === "on" && tenantId
-        ? await familyPricesForNewVariant(tx, { tenantId, familyId: parent.id, dto: {} })
+        ? await familyPricesForNewVariant(tx, {
+            tenantId,
+            familyId: parent.id,
+            dto: {},
+            unitsPerBox: parent.unitsPerBox,
+          })
         : {
             pricePerUnit: parent.pricePerUnit,
             priceTier2: parent.priceTier2,

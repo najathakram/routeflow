@@ -412,7 +412,7 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
     });
   });
 
-  it("M2 price authority: with mixed_packs ON a price EDIT is 409 FAMILY_PRICE_AUTHORITY and an added variant takes the FAMILY's price", async () => {
+  it("SA-1082 A-1: with mixed_packs ON a price EDIT is the variant's own and an added variant takes the FAMILY's price", async () => {
     const famRow = {
       ...fam(),
       pricePerUnit: "9.99",
@@ -422,11 +422,8 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       priceTier5: "8.75",
     };
     const on = build({ products: [famRow, kid("k1")] }, "on");
-    await expect(
-      on.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "1" }] }, ACTOR),
-    ).rejects.toMatchObject({
-      response: { code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" },
-    });
+    await on.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "1" }] }, ACTOR);
+    expect(on.tx.products.find((p) => p.id === "k1")).toMatchObject({ pricePerUnit: "1.00" });
     await on.service.updateVariants(
       "fam",
       { add: [variant("NewOne", { pricePerUnit: "1.00" })] as never },

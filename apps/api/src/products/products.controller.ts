@@ -34,6 +34,7 @@ import { streamCsv } from "./products-export.stream";
 import { ExportProductsDto } from "./dto/export-products.dto";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
+import { FamilyMovePreviewDto } from "./dto/family-move-preview.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
@@ -201,6 +202,13 @@ export class ProductsController {
       actorName: user.username ?? null,
       impersonatedBy: user.impersonatedBy ?? null,
     });
+  }
+
+  /** SA-1082 A-1: who a family price save would ask about. A read: it writes nothing. */
+  @Post(":id/family-moves/preview")
+  @Roles(UserRole.OPERATOR)
+  previewFamilyMove(@Param("id") id: string, @Body() dto: FamilyMovePreviewDto) {
+    return this.productsService.previewFamilyMove(id, dto);
   }
 
   @Delete(":id")

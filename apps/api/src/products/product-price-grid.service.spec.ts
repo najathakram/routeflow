@@ -293,7 +293,7 @@ describe("ProductPriceGridService (units v2)", () => {
         ["Piece", true, undefined],
       ]);
     }
-    // mode on: a variant's base level is the family's, its other levels are its own
+    // mode on: a variant's prices are its own at every level (SA-1082 A-1)
     const unitRows = [
       unitRow({ id: "u-piece", label: "Piece", factorToBase: 1, price: "1.00" }),
       unitRow({ id: "u-case", label: "Case", factorToBase: 12, price: "10.00" }),
@@ -302,16 +302,9 @@ describe("ProductPriceGridService (units v2)", () => {
       mode: "on",
     }).service.get(PRODUCT_ID);
     const byLabel = Object.fromEntries(dto.rows.map((r) => [r.label, r]));
-    expect(byLabel.Piece).toMatchObject({
-      editable: false,
-      notEditableReason: "Priced by the family.",
-    });
+    expect(byLabel.Piece.editable).toBe(true);
     expect(byLabel.Case.editable).toBe(true);
-    // the product's own five-column row is the base level too
-    expect(byLabel.Box).toMatchObject({
-      editable: false,
-      notEditableReason: "Priced by the family.",
-    });
+    expect(byLabel.Box.editable).toBe(true);
     // a FAMILY is never editable here, in either mode
     for (const mode of ["on", "off"] as const) {
       expect((await reasons({ kind: "FAMILY" }, mode))[0]).toEqual(["Box", false, FAMILY_REASON]);

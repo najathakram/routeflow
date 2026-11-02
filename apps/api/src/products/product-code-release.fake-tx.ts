@@ -156,6 +156,7 @@ export function makeTx(seed: { products: ProductRow[]; barcodes?: BarcodeRow[] }
         return Promise.resolve({});
       }),
     },
+    productTierUnit: { findMany: jest.fn(async () => []) },
     auditLog: {
       create: jest.fn((args: { data: Record<string, unknown> }) => {
         calls.push("auditLog.create");
