@@ -43,10 +43,19 @@ const H1_BY_ROUTE: Record<string, string> = {
 
 const PUBLIC_ROUTES = Object.keys(H1_BY_ROUTE);
 
-// The home, pricing, product and landing pages are ready-made HTML (public/site), served by
+// The home, pricing, product, landing and four deep pages are ready-made HTML (public/site), served by
 // rewrites: their own header and footer, not the marketing chrome the rest of this spec reads.
 // T19 covers them. Every other check that used "/" for the old chrome uses /wholesalers.
-const READY_MADE_ROUTES = ["/", "/pricing", "/product", "/landing"];
+const READY_MADE_ROUTES = [
+  "/",
+  "/pricing",
+  "/product",
+  "/landing",
+  "/getting-started",
+  "/does-and-doesnt",
+  "/data-in-and-out",
+  "/security",
+];
 
 // site-header.tsx nav array. W6 (Q5): Contact joined the desktop nav, before Company. The T1 viewport
 // is Desktop Chrome's 1280 px, wide enough for all six (the 901-1100 px case is T2b).
@@ -1197,7 +1206,7 @@ test.describe("T18 — W8 / S6: small hero-art labels clear WCAG AA", () => {
   }
 });
 
-// ─── T19 — the ready-made home, pricing, product and landing pages (public/site) ──────────────
+// ─── T19 — the ready-made pages (public/site): home, pricing, product, landing and the four deep pages ──────────────
 //
 // Served by rewrites in next.config.mjs. They bring their own header, footer, styles, scripts and
 // font, so the checks above that read the marketing chrome do not apply; these read the pages
@@ -1209,6 +1218,10 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     ["/pricing", /Pricing \| RouteFlow/, true],
     ["/product", /Product \| RouteFlow/, true],
     ["/landing", /Software for wholesalers and distributors/, false],
+    ["/getting-started", /Getting started \| RouteFlow/, true],
+    ["/does-and-doesnt", /What it does and doesn’t do \| RouteFlow/, true],
+    ["/data-in-and-out", /Data in and out \| RouteFlow/, true],
+    ["/security", /Security and your data \| RouteFlow/, true],
   ];
 
   for (const [route, title, indexable] of PAGES) {
@@ -1255,7 +1268,7 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     expect(direct.headers()["x-robots-tag"]).toBe("noindex");
   });
 
-  test("T19 — every internal link on the four pages answers", async ({ page, request }) => {
+  test("T19 — every internal link on the ready-made pages answers", async ({ page, request }) => {
     const found = new Set<string>();
     for (const [route] of PAGES) {
       await page.goto(route);
@@ -1275,7 +1288,7 @@ test.describe("T19 — ready-made pages are served, linked and clean", () => {
     expect(failures).toEqual([]);
   });
 
-  test("T19 — visit counts: the four pages carry Umami exactly when the React pages do, never twice", async ({
+  test("T19 — visit counts: the ready-made pages carry Umami exactly when the React pages do, never twice", async ({
     request,
   }) => {
     // The same build variable decides both. With a site ID every page has Umami's script once and

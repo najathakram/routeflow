@@ -43,6 +43,7 @@ import { OrdersController } from "./orders.controller";
 import { OrdersService } from "./orders.service";
 import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
+import { StockAvailabilityService } from "./stock-availability.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -175,6 +176,7 @@ describeDb(
         { provide: ChangeRequestsService, useValue: {} },
         { provide: OrderBatchShipService, useValue: {} },
         { provide: PackingSlipService, useValue: {} },
+        { provide: StockAvailabilityService, useValue: {} },
         OrdersController,
       ]);
       svc = module.get(OrdersService);

@@ -97,7 +97,7 @@ Never `railway up` an unmerged branch. "Snapshot code -> repository not found": 
 
 ## Heavy files policy
 
-No images, videos, or office binaries in git (exception: `apps/mobile/assets/` icons; `apps/web/public/brand/`, `public/marketing/`, `fonts/` build assets, total <= 476 KB; `apps/web/public/site/` ready-made site pages with their scripts, one font and PNG marks, hard stop 5 MB, never videos; 22 files, 554,546 B on 2026-11-02). Machine-local home `local-assets/` (gitignored); generated docs/screenshots never into `docs/`. Never commit `.claude/settings.local.json`.
+No images, videos, or office binaries in git (exception: `apps/mobile/assets/` icons; `apps/web/public/brand/`, `public/marketing/`, `fonts/` build assets, total <= 476 KB; `apps/web/public/site/` ready-made site pages with their scripts, one font and PNG marks, hard stop 5 MB, never videos; 28 files, 625,315 B on 2026-11-02). Machine-local home `local-assets/` (gitignored); generated docs/screenshots never into `docs/`. Never commit `.claude/settings.local.json`.
 
 ## Token budget & session startup
 

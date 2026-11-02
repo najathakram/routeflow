@@ -1,3 +1,4 @@
+import { computeCreditNoteSummary } from "./credit-note-summary";
 import {
   BadRequestException,
   ConflictException,
@@ -831,6 +832,11 @@ export class CreditNotesService {
       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
     return this.findAll(customerId, status, search, dateFrom, dateTo, page, limit);
+  }
+
+  /** B238: the page's counters and tiles over every note (see credit-note-summary.ts). */
+  getSummary(viewerToday: string, user: JwtPayload) {
+    return computeCreditNoteSummary({ prisma: this.prisma }, viewerToday, user);
   }
 
   async findOne(id: string) {
