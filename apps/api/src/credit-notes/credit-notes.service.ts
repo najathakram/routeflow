@@ -198,6 +198,7 @@ export class CreditNotesService {
         code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
         orderBound: true,
         message: orderRefusal.message,
+        remaining: orderRefusal.left,
       });
 
     // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit

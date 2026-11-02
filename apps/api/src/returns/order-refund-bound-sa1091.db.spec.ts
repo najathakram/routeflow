@@ -322,11 +322,20 @@ describeDb("SA-1091 piece 1: one order-wide bound for every value-giver — real
     expect(r.ok).toBe(false);
     expect(status(r.error)).toBe(409);
     expect(codeOf(r.error)).toBe(API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM);
+    // SA-1091 A-1: every order-bound refusal carries the marker and the room left, for the web copy
+    expect(r.error.getResponse()).toMatchObject({
+      orderBound: true,
+      remaining: expect.any(Number),
+    });
   };
   const refusedNote = (r: { ok: boolean; error?: any }) => {
     expect(r.ok).toBe(false);
     expect(status(r.error)).toBe(400);
     expect(codeOf(r.error)).toBe(API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM);
+    // The invoice-total cap runs before the order bound and is its own refusal (no room figure); the order-wide one carries both.
+    const body = r.error.getResponse();
+    if (body.orderBound === undefined) expect(body.message).toMatch(/would exceed invoice total/);
+    else expect(body).toMatchObject({ orderBound: true, remaining: expect.any(Number) });
   };
 
   it("RR-1: a $20 lump note, then a recorded cash refund of the whole sale — 409, nothing recorded", async () => {

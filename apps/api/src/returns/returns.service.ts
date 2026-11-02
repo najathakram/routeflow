@@ -1509,13 +1509,17 @@ export class ReturnsService {
         (err as { getResponse?: () => { pooled?: boolean } })?.getResponse?.()?.pooled === true;
       // SA-1091: the credit note's order-wide bound (a lump note, a recorded refund or an inline return took the room) is the
       // same refusal, with the room left in its message
-      const orderBound =
-        (err as { getResponse?: () => { orderBound?: boolean } })?.getResponse?.()?.orderBound ===
-        true;
-      if (orderBound) {
+      const bound = (
+        err as {
+          getResponse?: () => { orderBound?: boolean; message?: string; remaining?: number };
+        }
+      )?.getResponse?.();
+      if (bound?.orderBound === true) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
-          message: (err as { getResponse: () => { message: string } }).getResponse().message,
+          message: bound.message,
+          orderBound: true,
+          remaining: bound.remaining,
         });
       }
       if (
@@ -1635,6 +1639,7 @@ export class ReturnsService {
               throw new ConflictException({
                 code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
                 message: roomRefusal.message,
+                orderBound: true,
                 requested: refundAmount,
                 remaining: roomRefusal.left,
               });

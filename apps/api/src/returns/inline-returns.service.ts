@@ -989,6 +989,7 @@ export class InlineReturnsService {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
           message: roomRefusal.message,
+          orderBound: true,
           requested: roundMoney(src.gross),
           remaining: roomRefusal.left,
         });
