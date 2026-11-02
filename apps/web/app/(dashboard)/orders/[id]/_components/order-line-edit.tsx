@@ -793,6 +793,9 @@ export function EditableLineItems({
     includeVariants: true,
   });
   const products: any[] = sellableFlat<any>((productsData as any)?.data ?? []);
+  // The list waits for an answer: a failed search has no data, and "No products found." would offer to create an item
+  // that may exist (the substitute picker and the counter wait the same way).
+  const addListReady = products.length > 0 || (productsData !== undefined && !addFetching);
 
   // Auto-focus the scan input when the component mounts (edit mode opened) so a
   // wedge scanner's keystrokes land in it straight away. B62 (REG-B62): the
@@ -1432,7 +1435,7 @@ export function EditableLineItems({
           onError={(message) => toast({ variant: "error", title: message })}
         />
         {/* r5 N09: below sm the results open ABOVE the field; below it the pinned Save bar hid all but one row. */}
-        {addOpen && addSearch.trim() && (products.length > 0 || !addFetching) && (
+        {addOpen && addSearch.trim() && addListReady && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg max-sm:bottom-full max-sm:top-auto max-sm:mb-1 max-sm:mt-0">
             <ul className="max-h-52 overflow-y-auto py-1">
               {products.length === 0 && (
@@ -1458,7 +1461,8 @@ export function EditableLineItems({
                 <button
                   type="button"
                   disabled={!pricingReady}
-                  onMouseDown={() => openCreateProduct(addSearch, "typed")}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => openCreateProduct(addSearch, "typed")}
                   className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-brand-500 hover:bg-surface-raised disabled:opacity-50"
                 >
                   <Plus className="h-3.5 w-3.5 shrink-0" />

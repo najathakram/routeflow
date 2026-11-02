@@ -24,9 +24,15 @@ jest.mock("@/lib/api/margin", () => ({
 }));
 
 let mockListed: any[] = [];
+// the search read's three states: answered (data), still asking (isFetching) and failed (no data, not fetching)
+let mockSearch: "answered" | "fetching" | "failed" = "answered";
 jest.mock("@/lib/api/products", () => ({
   ...jest.requireActual("@/lib/api/products"),
-  useProducts: () => ({ data: { data: mockListed } }),
+  useProducts: () => ({
+    data: mockSearch === "failed" ? undefined : { data: mockListed },
+    isFetching: mockSearch === "fetching",
+    isError: mockSearch === "failed",
+  }),
 }));
 const resolveProductByCode = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
@@ -108,6 +114,7 @@ const createRow = () => screen.getByRole("button", { name: /^Create new product/
 
 beforeEach(() => {
   mockListed = [];
+  mockSearch = "answered";
   windowProps = null;
   resolveProductByCode.mockReset();
   resolveProductByCode.mockResolvedValue({ notFound: true });
@@ -166,6 +173,40 @@ describe("typed text that matches nothing", () => {
     await user.click(screen.getByRole("button", { name: "Close new product" }));
     expect(onAdd).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "New product" })).toBeNull();
+  });
+});
+
+describe("typed text while the search has not answered", () => {
+  it("E9: a failed search says nothing and offers no Create (the item may exist; a network error is not 'not listed')", async () => {
+    mockSearch = "failed";
+    renderEditor();
+    await userEvent.setup().type(searchBox(), "Oat Latte");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByText("No products found.")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Create new product/ })).toBeNull();
+  });
+
+  it("E9b: while the search is still asking, the list is not shown yet", async () => {
+    mockSearch = "fetching";
+    renderEditor();
+    await userEvent.setup().type(searchBox(), "Oat Latte");
+    expect(screen.queryByText("No products found.")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Create new product/ })).toBeNull();
+  });
+});
+
+describe("the Create row from the keyboard", () => {
+  it("E10: focus on the row and Enter opens the window with the words in Name", async () => {
+    renderEditor();
+    const user = userEvent.setup();
+    await user.type(searchBox(), "Oat Latte");
+    const row = await screen.findByRole("button", { name: /^Create new product/ });
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("window-name")).toHaveTextContent("Oat Latte");
+    expect(screen.getByTestId("window-sku")).toBeEmptyDOMElement();
   });
 });
 
