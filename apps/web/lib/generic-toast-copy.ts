@@ -356,6 +356,13 @@ function receivedBeforePackCopy(data: Record<string, unknown>): string {
     : "This bill was received before its units per box were set. To change it, void it and enter a new bill.";
 }
 
+/** SA-1093: an open order holds a line in its own unit, so the product can't move to boxes yet. */
+function packOpenLinesCopy(data: Record<string, unknown>): string {
+  const order =
+    typeof data.orderNumber === "string" ? `Order ${data.orderNumber}` : "An open order";
+  return `${order} has a line in its own unit. Finish or cancel the order first, or choose pieces.`;
+}
+
 /** A payment's allocations add up to more than the payment: the two amounts come from structured body fields. */
 function allocationsCopy(data: Record<string, unknown>): string {
   const allocated = usd(data.allocatedTotal);
@@ -493,6 +500,7 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
   if (code === API_ERROR_CODES.RECEIVED_BEFORE_PACK) return receivedBeforePackCopy(data);
+  if (code === API_ERROR_CODES.PACK_OPEN_LINES) return packOpenLinesCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
   // Row 563: a backdated stock write into a filed period (tobacco report / regulated filing). Fixed copy, the period from

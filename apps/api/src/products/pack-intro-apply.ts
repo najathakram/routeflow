@@ -1,5 +1,7 @@
+import { ConflictException } from "@nestjs/common";
 import { AdjustmentReason, MovementType, Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { advisoryXactLock } from "../common/db-locks";
 import { lockProductsForStock } from "../common/product-locks";
 import {
@@ -7,6 +9,8 @@ import {
   STOCK_COUNT_PRODUCT_LOCK_FAMILY,
 } from "../inventory/stock-count-commit";
 import { findOpenCountConflicts } from "../inventory/stock-count-seed";
+import { needsLivePack, STOCK_LINE_UNIT_SELECT } from "../orders/order-stock";
+import { CANCEL_CREDITS_FROM } from "../orders/order-status-transitions";
 import { applyStockMovements, type StockMovementRow } from "../inventory/stock-movements";
 import {
   holdsStockOrCost,
@@ -17,6 +21,53 @@ import {
 } from "./pack-intro";
 
 const TYPED_WINS = ["reorderPoint", "reorderQty", "standardCost"] as const;
+
+/**
+ * SA-1093 Rule 6: a line with its own unit or box split never reads the live pack, so a cancel after the answer would credit
+ * the old unit into converted stock, and a stored line is never rewritten. Read under the stock lock, so a sale that holds it
+ * has committed. From Order, because a child row's tenant may be null.
+ */
+async function refuseOpenOwnUnitLines(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  productId: string,
+): Promise<void> {
+  const orders = await tx.order.findMany({
+    where: {
+      tenantId,
+      status: { in: CANCEL_CREDITS_FROM },
+      lineItems: {
+        some: {
+          productId,
+          status: { not: "CANCELLED" },
+          OR: [
+            { unitLabel: { not: null } },
+            { boxes: { not: null } },
+            { pieces: { not: null } },
+            { unitsPerBox: { not: null } },
+          ],
+        },
+      },
+    },
+    select: {
+      id: true,
+      orderNumber: true,
+      lineItems: {
+        where: { productId, status: { not: "CANCELLED" } },
+        select: STOCK_LINE_UNIT_SELECT,
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  const held = orders.find((o) => o.lineItems.some((li) => !needsLivePack(li)));
+  if (!held) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.PACK_OPEN_LINES,
+    orderId: held.id,
+    orderNumber: held.orderNumber,
+    message: `Order ${held.orderNumber ?? ""} has a line in its own unit. Finish or cancel the order first, or choose pieces.`,
+  });
+}
 
 /**
  * SA-946 MUST 2: a product's first pack, in `update()`'s transaction. Takes the stock lock, so the caller has already
@@ -45,6 +96,7 @@ export async function applyPackIntroduction(
     if (taken.length > 0) throw productInOpenCount(taken);
   }
   await lockProductsForStock(tx, tenantId, [productId]);
+  if (input.reading === "box") await refuseOpenOwnUnitLines(tx, tenantId, productId);
   const stored = await tx.product.findUniqueOrThrow({
     where: { id: productId },
     select: {

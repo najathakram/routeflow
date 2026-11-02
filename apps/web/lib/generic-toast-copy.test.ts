@@ -926,3 +926,18 @@ describe("SA-1093: a document received before its units per box were set", () =>
     );
   });
 });
+
+describe("SA-1093: an open line in its own unit", () => {
+  const refusal = (orderNumber?: string) => ({
+    response: { status: 409, data: { code: API_ERROR_CODES.PACK_OPEN_LINES, orderNumber } },
+  });
+
+  it("names the order, and has a sentence without one", () => {
+    expect(genericToastCopy(refusal("ORD-7"))).toBe(
+      "Order ORD-7 has a line in its own unit. Finish or cancel the order first, or choose pieces.",
+    );
+    expect(genericToastCopy(refusal())).toBe(
+      "An open order has a line in its own unit. Finish or cancel the order first, or choose pieces.",
+    );
+  });
+});

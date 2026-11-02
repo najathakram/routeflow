@@ -60,6 +60,98 @@ describeDb("SA-946 verdict 3: open lines after a pack is introduced", () => {
     ]);
   });
 
+  describe("SA-1093 Rule 6: PI-O3, an open line with its own unit or box split", () => {
+    const answer = (productId: string, reading: "box" | "piece" = "box") =>
+      introduce(productId, 24, reading).then(
+        () => ({ code: "saved", orderNumber: undefined }),
+        (e) => ({ code: e?.response?.code, orderNumber: e?.response?.orderNumber }),
+      );
+    const OWN: [string, Record<string, unknown>][] = [
+      ["its own unit", { unitLabel: "Each" }],
+      ["a box split", { boxes: 0, pieces: 3 }],
+      ["a pack of its own", { unitsPerBox: 12 }],
+    ];
+
+    it.each(OWN)(
+      "PI-O3: %s refuses Boxes, naming the order, and nothing is written",
+      async (_, own) => {
+        const p = await w.product(`pi-o3-${Object.keys(own)[0]}`, 50);
+        const { order, items } = await w.bookOrder({
+          status: "CONFIRMED",
+          lines: [{ productId: p, qty: 3 }],
+        });
+        await w.prisma.orderItem.update({ where: { id: items[0].id }, data: own });
+        const rows = (await w.movements(p)).length;
+
+        const out = await answer(p);
+
+        expect(out.code).toBe("PACK_OPEN_LINES");
+        expect(out.orderNumber).toBe(order.orderNumber);
+        expect(await w.stockOf(p)).toBe(47);
+        expect((await w.movements(p)).length).toBe(rows);
+      },
+    );
+
+    it.each(OWN)("PI-O3: %s, Pieces saves", async (_, own) => {
+      const p = await w.product(`pi-o3p-${Object.keys(own)[0]}`, 50);
+      const { items } = await w.bookOrder({
+        status: "CONFIRMED",
+        lines: [{ productId: p, qty: 3 }],
+      });
+      await w.prisma.orderItem.update({ where: { id: items[0].id }, data: own });
+
+      expect((await answer(p, "piece")).code).toBe("saved");
+      expect(await w.stockOf(p)).toBe(47);
+    });
+
+    it.each(["PENDING", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"])(
+      "PI-O3: every status a cancel credits from refuses: %s",
+      async (status) => {
+        const p = await w.product(`pi-o3s-${status}`, 50);
+        const { items } = await w.bookOrder({ status, lines: [{ productId: p, qty: 3 }] } as any);
+        await w.prisma.orderItem.update({
+          where: { id: items[0].id },
+          data: { unitLabel: "Each" },
+        });
+
+        expect((await answer(p)).code).toBe("PACK_OPEN_LINES");
+      },
+    );
+
+    it.each(["DRAFT", "DELIVERED", "CANCELLED"])(
+      "PI-O3: an order %s holds nothing a cancel would credit",
+      async (status) => {
+        const p = await w.product(`pi-o3n-${status}`, 50);
+        const { items } = await w.bookOrder({ status, lines: [{ productId: p, qty: 3 }] } as any);
+        await w.prisma.orderItem.update({
+          where: { id: items[0].id },
+          data: { unitLabel: "Each" },
+        });
+
+        expect((await answer(p)).code).toBe("saved");
+      },
+    );
+
+    it("PI-O3: a cancelled line, a blank label and a plain line all save", async () => {
+      const p = await w.product("pi-o3-lines", 50);
+      const { items } = await w.bookOrder({
+        status: "CONFIRMED",
+        lines: [
+          { productId: p, qty: 1 },
+          { productId: p, qty: 1 },
+          { productId: p, qty: 1 },
+        ],
+      });
+      await w.prisma.orderItem.update({
+        where: { id: items[0].id },
+        data: { unitLabel: "Each", status: "CANCELLED" },
+      });
+      await w.prisma.orderItem.update({ where: { id: items[1].id }, data: { unitLabel: "  " } });
+
+      expect((await answer(p)).code).toBe("saved");
+    });
+  });
+
   describe("SA-1093 Rule 5: an open count", () => {
     const refusal = (productId: string, reading: "box" | "piece" = "box") =>
       introduce(productId, 24, reading).then(

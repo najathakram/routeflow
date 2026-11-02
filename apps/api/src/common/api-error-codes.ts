@@ -765,6 +765,12 @@ export const API_ERROR_CODES = {
    */
   RECEIVED_BEFORE_PACK: "RECEIVED_BEFORE_PACK",
   /**
+   * 409 from PATCH /products/:id (SA-1093): the "box" answer while an open order holds a line with its own unit or box split,
+   * which a cancel would credit in the old unit. `orderId` and `orderNumber` name one order. The "piece" answer still saves.
+   * Nothing was written.
+   */
+  PACK_OPEN_LINES: "PACK_OPEN_LINES",
+  /**
    * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.
    */
