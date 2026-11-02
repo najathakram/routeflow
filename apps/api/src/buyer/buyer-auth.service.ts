@@ -152,16 +152,26 @@ export class BuyerAuthService {
       );
     }
 
-    await this.prisma.$transaction([
-      this.prisma.buyerEmailVerificationToken.update({
-        where: { tokenHash },
+    // F03 slice 2 (SA-1096): same rule as the reset claim. Account first, then the token's own predicate, and a
+    // non-active account is refused after the claim commits with the answer of a spent link.
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const [account] = await tx.$queryRaw<{ status: string; deletedAt: Date | null }[]>`
+        SELECT "status", "deletedAt" FROM "BuyerAccount" WHERE id = ${record.buyerAccountId} FOR UPDATE`;
+      const claim = await tx.buyerEmailVerificationToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.buyerAccount.update({
+      });
+      if (claim.count !== 1) return "refused" as const;
+      if (!account || account.deletedAt || account.status !== "ACTIVE") return "refused" as const;
+      await tx.buyerAccount.update({
         where: { id: record.buyerAccountId },
         data: { emailVerified: true },
-      }),
-    ]);
+      });
+      return "done" as const;
+    });
+    if (outcome === "refused") {
+      throw new BadRequestException("Verification link is invalid or has already been used.");
+    }
 
     this.logger.log(`BuyerAccount ${record.buyerAccountId} verified their email`);
     return {
@@ -625,20 +635,27 @@ export class BuyerAuthService {
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
-    // Mark token used and update password in a transaction
-    await this.prisma.$transaction([
-      this.prisma.buyerPasswordResetToken.update({
-        where: { tokenHash },
+    // F03 slice 2 (SA-1096): account row locked first, then the token claimed with its own predicate (two clicks
+    // cannot both win); a non-active or deleted account is refused AFTER the claim commits, so the link is spent.
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const [account] = await tx.$queryRaw<{ status: string; deletedAt: Date | null }[]>`
+        SELECT "status", "deletedAt" FROM "BuyerAccount" WHERE id = ${record.buyerAccountId} FOR UPDATE`;
+      const claim = await tx.buyerPasswordResetToken.updateMany({
+        where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.buyerAccount.update({
+      });
+      if (claim.count !== 1) return "refused" as const;
+      if (!account || account.deletedAt || account.status !== "ACTIVE") return "refused" as const;
+      await tx.buyerAccount.update({
         where: { id: record.buyerAccountId },
         data: { passwordHash, passwordSet: true },
-      }),
-      this.prisma.buyerRefreshToken.deleteMany({
-        where: { buyerAccountId: record.buyerAccountId },
-      }),
-    ]);
+      });
+      await tx.buyerRefreshToken.deleteMany({ where: { buyerAccountId: record.buyerAccountId } });
+      return "done" as const;
+    });
+    if (outcome === "refused") {
+      throw new BadRequestException("Reset link is invalid or has already been used.");
+    }
 
     return { message: "Password reset successfully. Please log in with your new password." };
   }
