@@ -55,10 +55,11 @@ describe("operator permission groups migration shape", () => {
     );
   });
 
-  it("the SQL enum lists the shared mirror's values, in order", () => {
+  it("the SQL enum lists the shared mirror's first nine values, in order (later groups arrive by ADD VALUE)", () => {
     const create = statements()[2];
     const listed = [...create.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]);
-    expect(listed).toEqual([...OPERATOR_PERMISSION_GROUP_VALUES]);
+    // SA-1050 added BAD_DEBT in 20261028100000_invoice_write_off_events_and_bad_debt_group; this file is the original nine
+    expect(listed).toEqual(OPERATOR_PERMISSION_GROUP_VALUES.slice(0, 9));
   });
 
   it("the Prisma schema declares the same enum and columns, in the tenancy file", () => {

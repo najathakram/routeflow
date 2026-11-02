@@ -205,6 +205,7 @@ const MODEL_DOMAIN = {
   Payment: "finance",
   Invoice: "finance",
   InvoiceItem: "finance",
+  InvoiceWriteOffEvent: "finance",
   InvoiceItemComponent: "finance",
   InvoicePayment: "finance",
   PaymentCounter: "finance",

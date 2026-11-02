@@ -159,6 +159,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["COMPOSITION_MODE_VALUES", "CompositionMode"],
   // Per-operator feature groups: a brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
   ["OPERATOR_PERMISSION_GROUP_VALUES", "OperatorPermissionGroup"],
+  // SA-1050 PR-0: the write-off ledger's kind (WRITE_OFF | REINSTATE); the invoice history reads it on the web.
+  ["INVOICE_WRITE_OFF_KIND_VALUES", "InvoiceWriteOffKind"],
   // Sitting 4 (SA-772 folders 1 and 3): two brand-new Prisma enums.
   ["TAX_RATE_SOURCE_VALUES", "TaxRateSource"],
   ["INVOICE_ORDER_BILLING_ROLE_VALUES", "InvoiceOrderBillingRole"],
@@ -306,7 +308,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // `CUSTOMER_LINK_STATUS_VALUES` + their `ENUM_TABLE` rows above. No enum was added there, so it did not move the count.
 // Triage for CounterDrawerEventKind (W-819, migration 20261024120000_counter_drawer_event): mirrored as
 // `COUNTER_DRAWER_EVENT_KIND_VALUES` + its `ENUM_TABLE` row (the till reads `kind` in the event body) (120 → 121).
-const PINNED_PRISMA_ENUM_COUNT = 121;
+// Triage for InvoiceWriteOffKind (SA-1050 PR-0, migration 20261028100000_invoice_write_off_events_and_bad_debt_group): a
+// brand-new Prisma enum, mirrored as `INVOICE_WRITE_OFF_KIND_VALUES` + its `ENUM_TABLE` row above (121 → 122). The same
+// folder adds BAD_DEBT to the existing OperatorPermissionGroup (a value, not an enum, so no count change from it).
+const PINNED_PRISMA_ENUM_COUNT = 122;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
