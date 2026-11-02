@@ -124,6 +124,13 @@ describe("ProductInsightsExport", () => {
     expect(screen.queryByTestId("product-insights-export-button")).toBeNull();
   });
 
+  it("SA-1087: fails open when the plan read failed: the export and the Full insights link both show", () => {
+    mockFlag = { enabled: false, resolved: false, failed: true };
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.getByTestId("product-insights-export-button")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Full insights" })).toBeInTheDocument();
+  });
+
   it("J10: is hidden when the product has never sold, and while sales are loading", () => {
     mockSales = { data: { summary: { count: 0 } }, isLoading: false };
     const { unmount } = render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
