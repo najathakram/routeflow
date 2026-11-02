@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 import { DELIVERY_EVIDENCE_TYPES } from "./delivery-evidence";
 
 /**
@@ -70,7 +71,7 @@ export function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): 
 }
 
 export async function deliveredBasisByLine(
-  db: Prisma.TransactionClient,
+  db: TxOrClient,
   orderId: string,
 ): Promise<DeliveredBasis> {
   const mutations = await db.deliveryMutation.findMany({

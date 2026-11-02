@@ -13,6 +13,9 @@ import { escapeHtml } from "../common/html-escape";
 import { calendarFieldStamp } from "../common/calendar-date";
 import { isLicenceExpired, licenceZone } from "./licence-validity";
 
+/** SA-1084: this service shows a license number to staff and to the buyer who owns it, so every read and write here asks for it by name. */
+const LICENSE_VISIBLE = { licenseNumber: false } as const;
+
 export interface BuyerAuthorizationRow {
   trackedCategoryId: string;
   categoryName: string;
@@ -60,6 +63,7 @@ export class AuthorizationsService {
   async findForCustomer(customerId: string) {
     return this.prisma.forTenant().customerAuthorization.findMany({
       where: { customerId },
+      omit: LICENSE_VISIBLE,
       include: { trackedCategory: { select: { id: true, name: true, requiresLicense: true } } },
       orderBy: [{ createdAt: "desc" }],
     });
@@ -83,6 +87,7 @@ export class AuthorizationsService {
 
     const auths = await this.prisma.forTenant().customerAuthorization.findMany({
       where: { customerId, trackedCategoryId: { in: categories.map((c) => c.id) } },
+      omit: LICENSE_VISIBLE,
     });
     const byId = new Map(auths.map((a) => [a.trackedCategoryId, a]));
 
@@ -202,6 +207,7 @@ export class AuthorizationsService {
       where: {
         customerId_trackedCategoryId: { customerId, trackedCategoryId: dto.trackedCategoryId },
       },
+      omit: LICENSE_VISIBLE,
     });
     // A buyer must not knock a currently-valid license back into review.
     this.assertNotLiveVerified(existing, now, zone);
@@ -226,11 +232,14 @@ export class AuthorizationsService {
     let auth;
     try {
       auth = existing
-        ? await this.prisma
-            .forTenant()
-            .customerAuthorization.update({ where: { id: existing.id }, data: submitted })
+        ? await this.prisma.forTenant().customerAuthorization.update({
+            where: { id: existing.id },
+            data: submitted,
+            omit: LICENSE_VISIBLE,
+          })
         : await (this.prisma.forTenant().customerAuthorization.create as any)({
             data: { customerId, trackedCategoryId: dto.trackedCategoryId, ...submitted },
+            omit: LICENSE_VISIBLE,
           });
     } catch (err: any) {
       // Same composite-unique race guard as create().
@@ -239,15 +248,18 @@ export class AuthorizationsService {
         where: {
           customerId_trackedCategoryId: { customerId, trackedCategoryId: dto.trackedCategoryId },
         },
+        omit: LICENSE_VISIBLE,
       });
       if (!raced) throw err;
       // The row we raced may be a VERIFIED license a concurrent operator create()
       // just wrote — re-apply the guard so we never demote it (and lose its
       // verifier snapshot) via the catch path.
       this.assertNotLiveVerified(raced, now, zone);
-      auth = await this.prisma
-        .forTenant()
-        .customerAuthorization.update({ where: { id: raced.id }, data: submitted });
+      auth = await this.prisma.forTenant().customerAuthorization.update({
+        where: { id: raced.id },
+        data: submitted,
+        omit: LICENSE_VISIBLE,
+      });
     }
 
     await this.audit.log({
@@ -291,16 +303,20 @@ export class AuthorizationsService {
       where: {
         customerId_trackedCategoryId: { customerId, trackedCategoryId: dto.trackedCategoryId },
       },
+      omit: LICENSE_VISIBLE,
     });
     assertSafeLicense({ licenseNumber: dto.licenseNumber }, existing); // B964: staff-typed, change-only, before any write
     let auth;
     try {
       auth = existing
-        ? await this.prisma
-            .forTenant()
-            .customerAuthorization.update({ where: { id: existing.id }, data: verifiedSnapshot })
+        ? await this.prisma.forTenant().customerAuthorization.update({
+            where: { id: existing.id },
+            data: verifiedSnapshot,
+            omit: LICENSE_VISIBLE,
+          })
         : await (this.prisma.forTenant().customerAuthorization.create as any)({
             data: { customerId, trackedCategoryId: dto.trackedCategoryId, ...verifiedSnapshot },
+            omit: LICENSE_VISIBLE,
           });
     } catch (err: any) {
       // Concurrent add of the same (customer, category) races the composite unique;
@@ -310,11 +326,14 @@ export class AuthorizationsService {
         where: {
           customerId_trackedCategoryId: { customerId, trackedCategoryId: dto.trackedCategoryId },
         },
+        omit: LICENSE_VISIBLE,
       });
       if (!raced) throw err;
-      auth = await this.prisma
-        .forTenant()
-        .customerAuthorization.update({ where: { id: raced.id }, data: verifiedSnapshot });
+      auth = await this.prisma.forTenant().customerAuthorization.update({
+        where: { id: raced.id },
+        data: verifiedSnapshot,
+        omit: LICENSE_VISIBLE,
+      });
     }
     await this.log(user, auth.id, "created", { customerId, source: "WHOLESALER_ADDED" });
     return auth;
@@ -326,6 +345,7 @@ export class AuthorizationsService {
       throw new BadRequestException("Only pending authorizations can be approved");
     const updated = await this.prisma.forTenant().customerAuthorization.update({
       where: { id: authId },
+      omit: LICENSE_VISIBLE,
       data: {
         status: "VERIFIED",
         verifiedById: user.sub,
@@ -345,6 +365,7 @@ export class AuthorizationsService {
       throw new BadRequestException("Only pending authorizations can be rejected");
     const updated = await this.prisma.forTenant().customerAuthorization.update({
       where: { id: authId },
+      omit: LICENSE_VISIBLE,
       data: { status: "REJECTED" },
     });
     await this.log(user, authId, "rejected", { customerId, reason: dto.reason ?? null });
@@ -361,6 +382,7 @@ export class AuthorizationsService {
       throw new BadRequestException("Only verified or expired authorizations can be renewed");
     const updated = await this.prisma.forTenant().customerAuthorization.update({
       where: { id: authId },
+      omit: LICENSE_VISIBLE,
       data: {
         status: "VERIFIED",
         ...(dto.licenseNumber !== undefined ? { licenseNumber: dto.licenseNumber } : {}),
@@ -463,7 +485,7 @@ export class AuthorizationsService {
   private async getOwned(customerId: string, authId: string) {
     const auth = await this.prisma
       .forTenant()
-      .customerAuthorization.findUnique({ where: { id: authId } });
+      .customerAuthorization.findUnique({ where: { id: authId }, omit: LICENSE_VISIBLE });
     if (!auth || auth.customerId !== customerId)
       throw new NotFoundException("Authorization not found");
     return auth;

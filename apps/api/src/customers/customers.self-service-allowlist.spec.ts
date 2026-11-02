@@ -414,12 +414,13 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     it("(n) the buyer-portal profile handlers omit notes", async () => {
       const controller = Object.create(BuyerController.prototype) as any;
       controller.customersService = service;
+      controller.prisma = prisma; // SA-1084: both reads add taxIdLast4 from a server-side select
       prisma.customer.findFirst.mockResolvedValue(row());
       prisma.customer.findUnique.mockResolvedValue(row());
       prisma.customer.update.mockResolvedValue(row());
       const ctx = { customerId: "cust-1", userId: "user-1", customer: row() };
-      expect(controller.getProfile(ctx)).not.toHaveProperty("notes");
-      expect(controller.getMe(ctx)).not.toHaveProperty("notes");
+      expect(await controller.getProfile(ctx)).not.toHaveProperty("notes");
+      expect(await controller.getMe(ctx)).not.toHaveProperty("notes");
       expect(
         await controller.updateMe(ctx, { sub: "buyer-1" }, { contactName: "Jo" } as never),
       ).not.toHaveProperty("notes");

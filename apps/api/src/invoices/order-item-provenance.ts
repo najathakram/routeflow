@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { TxOrClient } from "../prisma/prisma.service";
 
 /**
  * SA-093a ruling (2+3), round 6: an invoice item's `orderItemId`, when the client sends one,
@@ -18,7 +19,7 @@ import { Prisma } from "@prisma/client";
  * — the order line's own stored product is what matters, never a client-asserted one).
  */
 export async function assertOrderItemIdsBelongToOrder(
-  db: Prisma.TransactionClient,
+  db: TxOrClient,
   orderId: string | null,
   items: Array<{ orderItemId?: string; productId?: string | null }>,
 ): Promise<void> {

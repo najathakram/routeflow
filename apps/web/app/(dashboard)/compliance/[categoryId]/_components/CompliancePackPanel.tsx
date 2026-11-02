@@ -411,7 +411,7 @@ function SalesTab() {
                 const licenseExpired =
                   s.customer?.tobaccoLicenseExpiry != null &&
                   isLicenceExpired(s.customer.tobaccoLicenseExpiry, new Date(), zone);
-                const noLicense = !s.customer?.tobaccoLicenseNo;
+                const noLicense = !s.customer?.hasTobaccoLicense;
                 return (
                   <tr key={s.id} className="transition-colors hover:bg-surface-raised/50">
                     <td className="px-4 py-3 text-navy/70">{fmtCalendarDate(s.date)}</td>
@@ -437,7 +437,11 @@ function SalesTab() {
                           {noLicense ? "No license" : "Expired"}
                         </span>
                       ) : (
-                        <span className="text-navy/70">{s.customer.tobaccoLicenseNo}</span>
+                        <span className="text-navy/70">
+                          {s.customer.tobaccoLicenseLast4
+                            ? `ending ${s.customer.tobaccoLicenseLast4}`
+                            : "On file"}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-navy">{s.product?.name}</td>

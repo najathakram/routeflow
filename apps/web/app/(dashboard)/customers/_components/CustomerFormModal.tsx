@@ -120,7 +120,10 @@ export interface CustomerFormModalProps {
     salutation?: string;
     firstName?: string;
     lastName?: string;
+    /** Never sent by the server (SA-1084): the form is write-only for the tax ID. */
     taxId?: string;
+    /** The last 4 characters of the tax ID on file; `null` or absent when none is. */
+    taxIdLast4?: string | null;
     isTaxExempt?: boolean;
     creditLimit?: number | string | null;
     currency?: string;
@@ -187,7 +190,8 @@ function buildDefaultValues(
     currency: initialData.currency ?? "USD",
     // `!= null`, not truthiness: a stored $0 limit is a real limit and must show as 0 (B1018).
     creditLimit: initialData.creditLimit != null ? String(initialData.creditLimit) : "",
-    taxId: initialData.taxId ?? "",
+    // The stored tax ID is never loaded (SA-1084): the box starts blank and a blank box keeps what is on file.
+    taxId: "",
     isTaxExempt: initialData.isTaxExempt ?? false,
     notes: initialData.notes ?? "",
     street: initialData.addresses?.[0]?.line1 ?? initialData.addresses?.[0]?.street ?? "",
@@ -233,6 +237,9 @@ export function CustomerFormModal({
   // SA-1071 C2: a sale's door keeps all but name, phone and email behind "More details". It starts open when the sale needs an
   // address, and opens by itself when a field inside fails.
   const [moreOpen, setMoreOpen] = React.useState(addressRequired);
+  // Remove clears the tax ID on file; a blank box alone keeps it (SA-1084).
+  const [removeTaxId, setRemoveTaxId] = React.useState(false);
+  const taxIdOnFile = initialData?.taxIdLast4 ?? null;
   const formRef = React.useRef<HTMLFormElement>(null);
   const [streetError, setStreetError] = React.useState("");
   const [cityError, setCityError] = React.useState("");
@@ -448,7 +455,8 @@ export function CustomerFormModal({
           salutation: clearableField(data.salutation, initialData.salutation),
           firstName: clearableField(data.firstName, initialData.firstName),
           lastName: clearableField(data.lastName, initialData.lastName),
-          taxId: clearableField(data.taxId, initialData.taxId),
+          // Write-only: a blank box leaves the value alone, a typed one replaces it, Remove clears it.
+          taxId: removeTaxId ? null : data.taxId?.trim() || undefined,
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: creditLimitForSubmit(
             data.creditLimit,
@@ -753,11 +761,28 @@ export function CustomerFormModal({
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Tax ID (optional)"
-                placeholder={isBusiness ? "XX-XXXXXXX" : "SSN / ITIN"}
-                register={register("taxId")}
-              />
+              <div>
+                <Input
+                  label="Tax ID (optional)"
+                  placeholder={
+                    taxIdOnFile && !removeTaxId
+                      ? `On file, ending ${taxIdOnFile}. Type to replace.`
+                      : isBusiness
+                        ? "XX-XXXXXXX"
+                        : "SSN / ITIN"
+                  }
+                  register={register("taxId")}
+                />
+                {taxIdOnFile && (
+                  <button
+                    type="button"
+                    className="mt-1 text-xs font-medium text-brand-600 hover:underline"
+                    onClick={() => setRemoveTaxId((v) => !v)}
+                  >
+                    {removeTaxId ? "Keep the tax ID on file" : "Remove the tax ID on file"}
+                  </button>
+                )}
+              </div>
               <div className="flex items-end pb-2">
                 <label className="flex items-center gap-2 text-sm text-navy cursor-pointer">
                   <input
