@@ -12,6 +12,7 @@ import { Client } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { buildOrderStockWorld, type OrderStockWorld } from "../inventory/testing/order-stock-world";
 import { expectLedgerConsistent } from "../inventory/testing/ledger-consistency";
+import { waitUntilBlocked } from "../common/testing/blocked-wait";
 
 describeDb("row 585: deleteOrder refuses an order with delivered units, real Postgres", () => {
   let w: OrderStockWorld;
@@ -22,24 +23,6 @@ describeDb("row 585: deleteOrder refuses an order with delivered units, real Pos
   afterAll(async () => {
     await w?.cleanup();
   }, 120_000);
-
-  async function blocked(): Promise<Array<{ pid: number; blockers: number[] }>> {
-    const { rows } = await w.pool.query(
-      `SELECT pid, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
-        WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`,
-    );
-    return rows.map((r: any) => ({ pid: Number(r.pid), blockers: r.blockers.map(Number) }));
-  }
-  async function waitForBlocked(n: number) {
-    const deadline = Date.now() + 3000;
-    let seen: Awaited<ReturnType<typeof blocked>> = [];
-    while (Date.now() < deadline) {
-      seen = await blocked();
-      if (seen.length === n) return seen;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    throw new Error(`race entry not reached: wanted ${n} blocked, saw ${JSON.stringify(seen)}`);
-  }
 
   it.each(["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED", "CONFIRMED"])(
     "a %s order with 2 of 5 delivered: 409 ORDER_DELETE_HAS_DELIVERED, order, line, evidence and stock untouched",
@@ -178,7 +161,8 @@ describeDb("row 585: deleteOrder refuses an order with delivered units, real Pos
           (v: unknown) => ({ ok: true as const, v }),
           (e: unknown) => ({ ok: false as const, e }),
         );
-      const seen = await waitForBlocked(1);
+      const seen = await waitUntilBlocked(w.pool, { timeoutMs: 3000 });
+      expect(seen).toHaveLength(1);
       expect(seen[0].blockers).toEqual([holderPid]);
 
       await release("COMMIT");
