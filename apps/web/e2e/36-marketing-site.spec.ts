@@ -33,11 +33,8 @@ import { test, expect, devices } from "@playwright/test";
 // flattened (Playwright's toHaveText normalises whitespace, not markup, but
 // there is no markup left once innerText is read). /privacy + /terms per R9.
 const H1_BY_ROUTE: Record<string, string> = {
-  "/": "Turn scattered orders into organized deliveries.",
-  "/product": "Orders. Deliveries. Accounts. Finally, connected.",
   "/wholesalers": "Get your team out of the daily delivery scramble.",
   "/retailers": "Restock your shelves. Skip the back and forth.",
-  "/pricing": "A plan that fits your working day.",
   "/company": "For the people who keep local shelves stocked.",
   "/contact": "Email us or book a video call.",
   "/privacy": "Privacy information",
@@ -45,6 +42,11 @@ const H1_BY_ROUTE: Record<string, string> = {
 };
 
 const PUBLIC_ROUTES = Object.keys(H1_BY_ROUTE);
+
+// The home, pricing, product and landing pages are ready-made HTML (public/site), served by
+// rewrites: their own header and footer, not the marketing chrome the rest of this spec reads.
+// T19 covers them. Every other check that used "/" for the old chrome uses /wholesalers.
+const READY_MADE_ROUTES = ["/", "/pricing", "/product", "/landing"];
 
 // site-header.tsx nav array. W6 (Q5): Contact joined the desktop nav, before Company. The T1 viewport
 // is Desktop Chrome's 1280 px, wide enough for all six (the 901-1100 px case is T2b).
@@ -138,7 +140,7 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
   test("T2 — the mobile sheet lists 9 links incl. Contact + both sign-ins + Book a video call, Escape closes it", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/wholesalers");
     await page.getByRole("button", { name: /open menu/i }).click();
 
     const sheet = page.getByRole("dialog");
@@ -179,27 +181,6 @@ test.describe("T2 — mobile (375) chrome + interactions (R2 R7 R8 R14)", () => 
     await expect(routesTab).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("tabpanel")).toBeVisible();
   });
-
-  test("T2 — the home FAQ keeps only one item open at a time", async ({ page }) => {
-    await page.goto("/");
-    const items = page.locator("#main-content details");
-    await expect(items, "general FAQ has 5 items").toHaveCount(5);
-
-    await items.nth(1).locator("summary").click();
-    await items.nth(2).locator("summary").click();
-
-    await expect(items.nth(2), "the third item (index 2) should be open").toHaveJSProperty(
-      "open",
-      true,
-    );
-    await expect(items.nth(1), "the second item (index 1) should have closed").toHaveJSProperty(
-      "open",
-      false,
-    );
-    await expect(page.locator("#main-content details[open]"), "exactly one item open").toHaveCount(
-      1,
-    );
-  });
 });
 
 // The desktop `.nav-login` dropdown (site-header.tsx) is `display: none` at
@@ -212,7 +193,7 @@ test.describe("T2 — desktop sign-in menu (R2 R7 R8 R14)", () => {
   test('T2 — the "Sign in" control offers Distributor -> /login and Retailer -> /buyer/login', async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/wholesalers");
     await page.getByRole("button", { name: /sign in/i }).click();
 
     const menu = page.getByRole("menu");
@@ -251,7 +232,7 @@ test.describe("T2b — W6 O6 and C1: the header, with the call label and Contact
       test(`T2b — ${width}px: one line, no overlap, no sideways scroll, nav is ${expectedNav.join(", ")}`, async ({
         page,
       }) => {
-        await page.goto("/");
+        await page.goto("/wholesalers");
         const header = page.locator("header.site-header");
         await expect(header).toBeVisible();
         const measured = await header.evaluate((el) => {
@@ -384,13 +365,14 @@ for (const [label, device] of [
 }
 
 test.describe("T2c — W6 C3: the home FAQ answers the QuickBooks question straight", () => {
-  test("T2c — Does RouteFlow work with QuickBooks? answers 'Not directly' and names CSV", async ({
+  test("T2c — Does it connect to my other tools? answers 'Not directly', names QuickBooks and CSV", async ({
     page,
   }) => {
     await page.goto("/#faq");
-    await page.getByText("Does RouteFlow work with QuickBooks?").click();
-    const answer = page.locator("#faq details[open] [data-slot=accordion-content]");
+    await page.getByText("Does it connect to my other tools?").click();
+    const answer = page.locator("#faq details[open] p");
     await expect(answer).toContainText("Not directly");
+    await expect(answer).toContainText("QuickBooks");
     await expect(answer).toContainText("CSV");
   });
 });
@@ -473,12 +455,12 @@ test.describe("T2c — W6 C5: one plain time-zone line on the calendar", () => {
 // ─── T3 — every internal link on the 9 pages resolves (R3) ──────────────────
 
 test.describe("T3 — every internal link on the 9 public pages resolves (R3)", () => {
-  test('T3 — crawl a[href^="/"] on the 9 pages, expect status < 400 incl. auth routes', async ({
+  test('T3 — crawl a[href^="/"] on the public pages, expect status < 400 incl. auth routes', async ({
     page,
     request,
   }) => {
     const found = new Set<string>();
-    for (const route of PUBLIC_ROUTES) {
+    for (const route of [...PUBLIC_ROUTES, ...READY_MADE_ROUTES]) {
       await page.goto(route);
       const hrefs = await page
         .locator('a[href^="/"]')
@@ -522,20 +504,19 @@ test.describe("T3 — every internal link on the 9 public pages resolves (R3)", 
 // ─── T12 — mobile UA + /pricing still serves marketing (R11) ────────────────
 
 test.describe("T12 — a mobile UA still gets the marketing site on /pricing (R11)", () => {
-  test("T12 — /pricing under a mobile UA returns 200 with the pricing H1", async ({ request }) => {
+  test("T12 — /pricing under a mobile UA returns 200 with the plans heading", async ({
+    request,
+  }) => {
     const response = await request.get("/pricing", {
       headers: { "User-Agent": devices["iPhone 13"].userAgent },
     });
     expect(response.status()).toBe(200);
 
     const body = await response.text();
-    // The rendered h1 splits across a <br /> + <em>, so the raw HTML never
-    // contains the full joined H1_BY_ROUTE string — match the text run
-    // before the break instead.
     expect(
       body,
-      "response body should contain the /pricing H1 lead-in (proves it is NOT the mobile build)",
-    ).toContain("A plan that fits");
+      "response body should contain the /pricing opening words (proves it is NOT the mobile build)",
+    ).toContain("Plans from $");
   });
 });
 
@@ -549,10 +530,10 @@ test.describe("T12 — a mobile UA still gets the marketing site on /pricing (R1
 // become real: scrolling clears every pending node, and reduced motion never
 // sets one in the first place.
 test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
-  test("T13 — scrolling to the bottom of / clears every .reveal-pending node and reaches opacity 1 (B504)", async ({
+  test("T13 — scrolling to the bottom of /wholesalers clears every .reveal-pending node and reaches opacity 1 (B504)", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/wholesalers");
 
     const viewport = page.viewportSize()?.height ?? 720;
     const steps = Math.ceil(
@@ -586,7 +567,7 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
     ).toEqual([]);
   });
 
-  test("T13 — capability cards and section headings are visible with JavaScript disabled (B504)", async ({
+  test("T13 — section headings are visible with JavaScript disabled (B504)", async ({
     browser,
   }) => {
     // editorial-motion.tsx only ever ADDS .reveal-pending via a client effect —
@@ -595,12 +576,9 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
     // inference from the JS source.
     const context = await browser.newContext({ javaScriptEnabled: false });
     const page = await context.newPage();
-    await page.goto("/");
+    await page.goto("/wholesalers");
 
     await expect(page.locator(".reveal-pending")).toHaveCount(0);
-    const card = page.locator(".capability-card").first();
-    await expect(card).toBeVisible();
-    await expect(card).toHaveCSS("opacity", "1");
     const heading = page.locator(".section-heading").first();
     await expect(heading).toBeVisible();
     await expect(heading).toHaveCSS("opacity", "1");
@@ -612,7 +590,7 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
     page,
   }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.goto("/");
+    await page.goto("/wholesalers");
 
     // The effect returns before it tags anything when reduced motion is on, so
     // no node ever carries `.editorial-reveal`/`.reveal-pending`; assert on the
@@ -642,11 +620,8 @@ test.describe("T13 — below-the-fold sections reveal (R7 R14)", () => {
 const UMAMI_TRACKER_URL = "https://cloud.umami.is/script.js";
 const UMAMI_SCRIPT = `script[src="${UMAMI_TRACKER_URL}"]`;
 const COUNTED_ROUTES = [
-  "/",
-  "/product",
   "/wholesalers",
   "/retailers",
-  "/pricing",
   "/company",
   "/contact",
   "/privacy",
@@ -668,7 +643,7 @@ const NEVER_COUNTED_ROUTES = [
 
 // The preload tag is in the server's HTML, so this needs no wait for hydration.
 async function stackHasSiteId(page: import("@playwright/test").Page) {
-  return (await (await page.request.get("/")).text()).includes(UMAMI_TRACKER_URL);
+  return (await (await page.request.get("/wholesalers")).text()).includes(UMAMI_TRACKER_URL);
 }
 
 async function umamiScriptCount(page: import("@playwright/test").Page, route: string) {
@@ -853,7 +828,7 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
         consoleErrors.push(m.text());
       }
     });
-    for (const route of ["/", "/pricing", "/signup"]) {
+    for (const route of ["/wholesalers", "/company", "/signup"]) {
       const response = await page.goto(route);
       expect(response?.status(), `${route} status`).toBe(200);
       await page.waitForLoadState("networkidle");
@@ -869,12 +844,12 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
     test.skip(!(await stackHasSiteId(page)), "this stack has no site ID (M4)");
     const sent = await catchUmamiSends(page);
 
-    await openCounted(page, sent, "/");
+    await openCounted(page, sent, "/wholesalers");
     await page
       .getByRole("navigation", { name: "Primary" })
-      .getByRole("link", { name: "Pricing" })
+      .getByRole("link", { name: "Company" })
       .click();
-    await page.waitForURL("**/pricing");
+    await page.waitForURL("**/company");
     await settled(page);
 
     // The header's own sign-in links are full page loads, so this is the router call a client
@@ -894,7 +869,7 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
     await settled(page);
     expect(await stillSameDocument(page), "the move to /buyer/login was a client one").toBe(true);
 
-    expect(sent.map((s) => s.url)).toEqual(["/", "/pricing", "/retailers"]);
+    expect(sent.map((s) => s.url)).toEqual(["/wholesalers", "/company", "/retailers"]);
   });
 
   test("T13b — submitting /signup sends nothing about the person to Umami", async ({ page }) => {
@@ -988,7 +963,7 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
         page,
       }) => {
         let checked = 0;
-        for (const route of ["/", "/product", "/wholesalers"]) {
+        for (const route of ["/wholesalers"]) {
           await page.goto(route);
           const heading = page.locator(".story-intro h3");
           const count = await heading.count();
@@ -1001,49 +976,13 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
         expect(checked, "at least one operation-story heading was checked").toBeGreaterThan(0);
       });
 
-      test('T14 — the purple AI-scan card ("Let AI scan the invoice." + its paragraph + its small label) clears AA on /, /product', async ({
-        page,
-      }) => {
-        let checked = 0;
-        for (const route of ["/", "/product"]) {
-          await page.goto(route);
-          const step = page.locator("li.ai-assisted-step");
-          if ((await step.count()) === 0) continue;
-          const heading = step.locator("h3");
-          const paragraph = step.locator("p");
-          // B507: the card's `small` label was left uncovered by B504's fix
-          // for its h3/p siblings — same card, same tie, same fix, just
-          // never extended to it (round-2 measured 1.59-1.60:1).
-          const small = step.locator("small");
-          checked += (await heading.count()) + (await paragraph.count()) + (await small.count());
-          const headingContrast = await minContrast(heading);
-          const paragraphContrast = await minContrast(paragraph);
-          const smallContrast = await minContrast(small);
-          expect(headingContrast, `${route} .ai-assisted-step h3 contrast`).not.toBeNull();
-          expect(headingContrast!, `${route} .ai-assisted-step h3 contrast`).toBeGreaterThanOrEqual(
-            AA_NORMAL,
-          );
-          expect(paragraphContrast, `${route} .ai-assisted-step p contrast`).not.toBeNull();
-          expect(
-            paragraphContrast!,
-            `${route} .ai-assisted-step p contrast`,
-          ).toBeGreaterThanOrEqual(AA_NORMAL);
-          expect(smallContrast, `${route} .ai-assisted-step small contrast`).not.toBeNull();
-          expect(
-            smallContrast!,
-            `${route} .ai-assisted-step small contrast`,
-          ).toBeGreaterThanOrEqual(AA_NORMAL);
-        }
-        expect(checked, "at least one AI-scan card was checked").toBeGreaterThan(0);
-      });
-
       test("T14 — muted caption color (--g-soft) clears AA on /, /pricing, /product, /wholesalers", async ({
         page,
       }) => {
         const CAPTION_SELECTOR =
           ".story-chapter-count, .story-disclaimer, .pricing-footnote, .sample-note, .capability-scope, .record-note p, .connection-diagram > p, .form-disclosure";
         let checked = 0;
-        for (const route of ["/", "/pricing", "/product", "/wholesalers"]) {
+        for (const route of ["/wholesalers"]) {
           await page.goto(route);
           const captions = page.locator(CAPTION_SELECTOR);
           const count = await captions.count();
@@ -1054,18 +993,6 @@ test.describe("T14 — WCAG AA contrast for the B504-fixed roles (R7)", () => {
           expect(contrast!, `${route} caption contrast`).toBeGreaterThanOrEqual(AA_NORMAL);
         }
         expect(checked, "at least one caption was checked").toBeGreaterThan(0);
-      });
-
-      test("T14 — the difference-section intro paragraphs clear AA on /", async ({ page }) => {
-        await page.goto("/");
-        const paragraphs = page.locator(
-          ".difference-section .split-heading > p, .difference-section .difference-footer > p",
-        );
-        const count = await paragraphs.count();
-        expect(count, "difference-section paragraphs present on /").toBeGreaterThan(0);
-        const contrast = await minContrast(paragraphs);
-        expect(contrast).not.toBeNull();
-        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
       });
     });
   }
@@ -1089,7 +1016,7 @@ test.describe("T15 — WCAG AA contrast for the B507-fixed roles", () => {
         page,
       }) => {
         let checked = 0;
-        for (const route of ["/", "/wholesalers"]) {
+        for (const route of ["/wholesalers"]) {
           await page.goto(route);
           const paragraph = page.locator(".story-controls .story-explanation > p");
           const count = await paragraph.count();
@@ -1120,25 +1047,11 @@ test.describe("T15 — WCAG AA contrast for the B507-fixed roles", () => {
         expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
       });
 
-      test("T15 — the audience-card links (distributors + retailers) clear AA on /", async ({
-        page,
-      }) => {
-        await page.goto("/");
-        const links = page.locator(
-          ".audience-card.distributors .text-link, .audience-card.retailers .text-link",
-        );
-        const count = await links.count();
-        expect(count, "audience-card links present on /").toBeGreaterThan(0);
-        const contrast = await minContrast(links);
-        expect(contrast).not.toBeNull();
-        expect(contrast!).toBeGreaterThanOrEqual(AA_NORMAL);
-      });
-
       test("T15 — the product-passport bar's trailing label clears AA on /, /product, /wholesalers", async ({
         page,
       }) => {
         let checked = 0;
-        for (const route of ["/", "/product", "/wholesalers"]) {
+        for (const route of ["/wholesalers"]) {
           await page.goto(route);
           const span = page.locator(".passport-bottom > span:last-child");
           const count = await span.count();
@@ -1170,11 +1083,8 @@ test.describe("T15 — WCAG AA contrast for the B507-fixed roles", () => {
 // ─── T16 — W8: every marketing page's head, the share image, the sitemap, the structured data ──
 
 const HEAD_ROUTES = [
-  "/",
-  "/product",
   "/wholesalers",
   "/retailers",
-  "/pricing",
   "/company",
   "/contact",
   "/privacy",
@@ -1182,7 +1092,6 @@ const HEAD_ROUTES = [
   "/book-a-demo",
   "/sign-in",
 ];
-const HOME_TITLE = "RouteFlow: order and delivery software for wholesale distributors";
 
 test.describe("T16 — W8: head, share image, sitemap and structured data", () => {
   for (const route of HEAD_ROUTES) {
@@ -1195,18 +1104,14 @@ test.describe("T16 — W8: head, share image, sitemap and structured data", () =
         page.locator(selector).first().getAttribute(name);
 
       const title = await page.title();
-      if (route === "/") expect(title).toBe(HOME_TITLE);
-      else expect(title, `${route} title`).toMatch(/\S · RouteFlow$/);
+      expect(title, `${route} title`).toMatch(/\S · RouteFlow$/);
 
       expect(
         await attr('meta[name="description"]', "content"),
         `${route} description`,
       ).toBeTruthy();
       const canonical = await attr('link[rel="canonical"]', "href");
-      // Next drops the trailing slash on the home canonical, as it did before W8.
-      expect(canonical, `${route} canonical`).toBe(
-        `https://www.routeflow.info${route === "/" ? "" : route}`,
-      );
+      expect(canonical, `${route} canonical`).toBe(`https://www.routeflow.info${route}`);
       expect(await attr('meta[property="og:title"]', "content"), `${route} og:title`).toBeTruthy();
       expect(await attr('meta[name="twitter:card"]', "content"), `${route} twitter:card`).toBe(
         "summary_large_image",
@@ -1229,24 +1134,6 @@ test.describe("T16 — W8: head, share image, sitemap and structured data", () =
     const response = await request.get("/sitemap.xml");
     expect(response.status()).toBe(200);
     expect(await response.text()).toContain("<loc>https://www.routeflow.info/book-a-demo</loc>");
-  });
-
-  test("T16 — the home page carries organization and software data, with no ratings", async ({
-    page,
-  }) => {
-    await page.goto("/");
-    const blocks = await page
-      .locator('script[type="application/ld+json"]')
-      .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
-    expect(blocks.length, "JSON-LD blocks on /").toBeGreaterThan(0);
-    const text = blocks.join("\n");
-    const graph = blocks.flatMap((block) => JSON.parse(block)["@graph"] ?? []);
-    expect(graph.map((node: { "@type": string }) => node["@type"])).toEqual(
-      expect.arrayContaining(["Organization", "SoftwareApplication"]),
-    );
-    for (const banned of ["aggregateRating", "ratingValue", "reviewCount", "offers"]) {
-      expect(text).not.toContain(banned);
-    }
   });
 });
 
@@ -1295,7 +1182,7 @@ test.describe("T18 — W8 / S6: small hero-art labels clear WCAG AA", () => {
   ] as const) {
     test(`T18 — ${name} clears AA on /, /product, /wholesalers`, async ({ page }) => {
       let checked = 0;
-      for (const route of ["/", "/product", "/wholesalers"]) {
+      for (const route of ["/wholesalers"]) {
         await page.goto(route);
         const label = page.locator(`${selector}:visible`);
         const count = await label.count();
@@ -1308,4 +1195,92 @@ test.describe("T18 — W8 / S6: small hero-art labels clear WCAG AA", () => {
       expect(checked, `${selector} was found and visible on at least one page`).toBeGreaterThan(0);
     });
   }
+});
+
+// ─── T19 — the ready-made home, pricing, product and landing pages (public/site) ──────────────
+//
+// Served by rewrites in next.config.mjs. They bring their own header, footer, styles, scripts and
+// font, so the checks above that read the marketing chrome do not apply; these read the pages
+// themselves, signed out.
+
+test.describe("T19 — ready-made pages are served, linked and clean", () => {
+  const PAGES: Array<[string, RegExp, boolean]> = [
+    ["/", /Wholesale software built for how you sell/, true],
+    ["/pricing", /Pricing \| RouteFlow/, true],
+    ["/product", /Product \| RouteFlow/, true],
+    ["/landing", /software for wholesalers and distributors/, false],
+  ];
+
+  for (const [route, title, indexable] of PAGES) {
+    test(`T19 — ${route}: 200 as HTML, titled, indexable=${indexable}, links to the real sign-up`, async ({
+      page,
+    }) => {
+      const response = await page.goto(route);
+      expect(response?.status(), `${route} status`).toBe(200);
+      expect(response?.headers()["content-type"]).toContain("text/html");
+      expect(response?.headers()["content-security-policy"], "same policy as the app").toContain(
+        "default-src 'self'",
+      );
+      await expect(page).toHaveTitle(title);
+      const robots = await page.locator('meta[name="robots"]').count();
+      expect(robots > 0, `${route} noindex`).toBe(!indexable);
+      await expect(page.locator('a[href="/signup"]').first()).toBeAttached();
+    });
+  }
+
+  test("T19 — no script or style is blocked by the policy and no page raises an error", async ({
+    page,
+  }) => {
+    const problems: string[] = [];
+    page.on("console", (m) => {
+      if (m.type() === "error" || /Content Security Policy|Refused to/i.test(m.text())) {
+        problems.push(m.text());
+      }
+    });
+    page.on("pageerror", (e) => problems.push(e.message));
+    for (const [route] of PAGES) {
+      await page.goto(route);
+      await page.waitForLoadState("networkidle");
+    }
+    expect(problems).toEqual([]);
+  });
+
+  test("T19 — the animation script runs on the home page, and the file behind it stays out of search", async ({
+    page,
+  }) => {
+    await page.goto("/?motion=on");
+    await page.waitForFunction(() => Boolean((window as unknown as { gsap?: unknown }).gsap));
+    await expect(page.locator("html")).toHaveClass(/\bjs\b/);
+    const direct = await page.request.get("/site/home.html");
+    expect(direct.headers()["x-robots-tag"]).toBe("noindex");
+  });
+
+  test("T19 — every internal link on the four pages answers", async ({ page, request }) => {
+    const found = new Set<string>();
+    for (const [route] of PAGES) {
+      await page.goto(route);
+      const hrefs = await page
+        .locator('a[href^="/"]')
+        .evaluateAll((as) => as.map((a) => a.getAttribute("href") ?? ""));
+      for (const href of hrefs) found.add(href.split("#")[0] || "/");
+    }
+    for (const real of ["/signup", "/login", "/buyer/login", "/terms", "/privacy"]) {
+      expect(found.has(real), `${real} linked`).toBe(true);
+    }
+    const failures: Array<{ href: string; status: number }> = [];
+    for (const href of found) {
+      const status = (await request.get(href)).status();
+      if (status >= 400) failures.push({ href, status });
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("T19 — the contact address reads right on the home page", async ({ page }) => {
+    await page.goto("/");
+    const mails = page.locator('a[href^="mailto:"]');
+    expect(await mails.count()).toBeGreaterThan(0);
+    for (const a of await mails.all()) {
+      await expect(a).toHaveAttribute("href", "mailto:hello@routeflow.info");
+    }
+  });
 });

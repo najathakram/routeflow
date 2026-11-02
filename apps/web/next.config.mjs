@@ -77,6 +77,20 @@ const nextConfig = {
     ];
   },
 
+  // The home, pricing, product and landing pages are ready-made HTML under public/site (page,
+  // styles, scripts, font and marks together). A beforeFiles rewrite serves each at its own
+  // address after the middleware has run, so the signed-in redirect on "/" still comes first.
+  async rewrites() {
+    return {
+      beforeFiles: [
+        { source: "/", destination: "/site/home.html" },
+        { source: "/pricing", destination: "/site/pricing.html" },
+        { source: "/product", destination: "/site/product.html" },
+        { source: "/landing", destination: "/site/landing.html" },
+      ],
+    };
+  },
+
   // Security headers applied to all routes
   async headers() {
     // F11-001: real Content-Security-Policy replacing the legacy X-XSS-Protection stub.
@@ -144,13 +158,20 @@ const nextConfig = {
       },
       {
         source:
-          "/:path(product|wholesalers|retailers|pricing|company|contact|privacy|terms|sign-in|book-a-demo)",
+          "/:path(product|wholesalers|retailers|pricing|landing|company|contact|privacy|terms|sign-in|book-a-demo)",
         headers: [
           {
             key: "Cache-Control",
             value: "public, max-age=60, s-maxage=3600, stale-while-revalidate=86400",
           },
         ],
+      },
+      // The files behind those pages. Asked for by their own name they would repeat the page
+      // at a second address, so search engines are told to leave them out; the pages carry
+      // their own canonical link.
+      {
+        source: "/site/:page(home|pricing|product|landing).html",
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
       },
     ];
   },
