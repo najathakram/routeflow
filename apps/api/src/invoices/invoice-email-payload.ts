@@ -3,6 +3,7 @@ import { formatDate } from "../messaging/messaging.helpers";
 import { computeDepositFields } from "./deposit-fields";
 import { confirmedBalance } from "./invoice-balance-classify";
 import { sortInvoiceLines } from "./invoice-line-order";
+import { withFamilyNames } from "./invoice-line-name";
 import { invoiceItemQtyFields } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, splitConfirmed } from "./payment-predicates";
 import type { InvoiceEmailAttachment } from "./invoice-attachment";
@@ -70,7 +71,7 @@ export function buildInvoiceEmailPayload(
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: sortInvoiceLines(inv.items).map((it: any) => ({
+    items: withFamilyNames(sortInvoiceLines(inv.items as any[])).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),
@@ -123,7 +124,7 @@ export function buildReminderEmailPayload(inv: any, x: EmailPayloadParts) {
     advanceApplied,
     creditNoteNumbers,
     balanceDue,
-    items: sortInvoiceLines(inv.items).map((it: any) => ({
+    items: withFamilyNames(sortInvoiceLines(inv.items as any[])).map((it: any) => ({
       description: it.description,
       qty: Number(it.qty),
       unitPrice: Number(it.unitPrice),

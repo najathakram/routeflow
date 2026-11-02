@@ -1,4 +1,5 @@
 import { BadRequestException, Logger } from "@nestjs/common";
+import { ORDER_LINE_PRODUCT_SELECT } from "./invoice-line-name";
 import { InvoiceStatus } from "@prisma/client";
 import { draftBillsLessThanOrder } from "./invoice-partition";
 import { isNsfLine } from "./nsf-line";
@@ -103,14 +104,7 @@ export async function planPartialPriceFollow(
         where: { status: { not: "CANCELLED" } },
         include: {
           components: { orderBy: { position: "asc" } },
-          product: {
-            select: {
-              name: true,
-              unitsPerBox: true,
-              trackedCategoryId: true,
-              trackedSubcategoryId: true,
-            },
-          },
+          product: { select: ORDER_LINE_PRODUCT_SELECT },
         },
       },
     },

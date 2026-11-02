@@ -26,6 +26,11 @@ import { defaultSaleFulfilmentKind } from "../orders/default-sale-fulfilment";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import * as iGate from "../invoices/invoice-restriction-gate";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import {
+  LINE_NAME_PRODUCT_SELECT,
+  displayLineDescription,
+  withFamilyNames,
+} from "../invoices/invoice-line-name";
 import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { loadManualLineContext, zeroExemptCategoryTax } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
@@ -176,6 +181,7 @@ export class EstimatesService {
       productIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
             where: { id: { in: productIds } },
+            include: { parent: { select: { name: true } } }, // the family's name: a variant line reads "<Family> - <Variant>"
           })
         : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -251,7 +257,7 @@ export class EstimatesService {
       });
       subtotal += sub;
       return {
-        description: i.description ?? product?.name ?? "",
+        description: displayLineDescription(i.description ?? product?.name ?? "", product),
         productId: i.productId ?? null,
         qty,
         unitPrice,
@@ -369,11 +375,11 @@ export class EstimatesService {
       where: { id },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
-        items: { include: { product: { select: { id: true, name: true } } } },
+        items: { include: { product: { select: { id: true, ...LINE_NAME_PRODUCT_SELECT } } } },
       },
     });
     if (!est) throw new NotFoundException("Estimate not found");
-    return est;
+    return { ...est, items: withFamilyNames(est.items) }; // a quote line still holding the bare variant name reads "<Family> - <Variant>"
   }
 
   async send(id: string) {

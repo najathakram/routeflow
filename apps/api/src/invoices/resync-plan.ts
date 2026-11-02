@@ -1,4 +1,5 @@
 import { InvoiceStatus } from "@prisma/client";
+import { ORDER_LINE_PRODUCT_SELECT } from "./invoice-line-name";
 import { isNsfLine, type NsfLineFacts } from "./nsf-line";
 
 /**
@@ -136,14 +137,7 @@ export async function loadResyncInputs(
         where: { status: { not: "CANCELLED" } },
         include: {
           components: { orderBy: { position: "asc" } },
-          product: {
-            select: {
-              name: true,
-              unitsPerBox: true,
-              trackedCategoryId: true,
-              trackedSubcategoryId: true,
-            },
-          },
+          product: { select: ORDER_LINE_PRODUCT_SELECT },
         },
       },
     },

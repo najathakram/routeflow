@@ -8,6 +8,7 @@ import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { ResolvedLineUnits } from "../products/line-units";
 import { isUnitAware } from "../orders/unit-line-build";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { displayLineDescription } from "./invoice-line-name";
 import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
   categoryTaxSnapshotOf,
@@ -231,5 +232,12 @@ export function buildManualInvoiceLines(
       tenantId: tenantId, // nested creates bypass forTenant() extension
     };
   });
-  return { itemsData, subtotal };
+  // A line naming a family variant is stored "<Family> - <Variant>" (a typed-over description is kept as typed).
+  return {
+    itemsData: itemsData.map((l, i) => ({
+      ...l,
+      description: displayLineDescription(l.description, productMap.get(items[i].productId ?? "")),
+    })),
+    subtotal,
+  };
 }
