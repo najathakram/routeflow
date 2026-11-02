@@ -463,8 +463,56 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     expect(await retail(withUnit.id)).toBe(24);
   });
 
-  it("VM-13: under a family holding a 12-pack, a new variant, an editor add and an adoption on 6 pieces take 12 / 11", async () => {
-    const tenantId = await tenantOf("vm13");
+  /** What the page's Add variant form sends (SA-1082 A-4). */
+  const addVariantForm = (tenantId: string, familyId: string, prices: Record<string, string>) =>
+    inTenant(tenantId, () =>
+      products.create(
+        {
+          name: "From the form",
+          variantName: "From the form",
+          parentProductId: familyId,
+          unit: "Box",
+          ...prices,
+        } as any,
+        { reparentVia: "editor" } as any,
+      ),
+    ) as Promise<{ id: string }>;
+
+  it.each(["on", "off"] as const)(
+    "VM-13 (mode %s, A-4): a blank Add variant form sends the family's Retail and no tier: tier 2 stores 22 and reads Family",
+    async (m) => {
+      mode = m;
+      const tenantId = await tenantOf(`vm13${m}`);
+      const family = await familyIn(tenantId);
+      const created = await addVariantForm(tenantId, family.id, { pricePerUnit: "24.00" });
+      expect(Number((await row(created.id)).priceTier2)).toBe(22);
+      expect((await packCells(tenantId, created.id))[1].family).toEqual({
+        value: 22,
+        follows: true,
+      });
+    },
+  );
+
+  it.each(["on", "off"] as const)(
+    "VM-14 (mode %s, A-4): Retail typed 30 with blank tiers bills 30 on tier 2, never the family's 22",
+    async (m) => {
+      mode = m;
+      const tenantId = await tenantOf(`vm14${m}`);
+      const family = await familyIn(tenantId);
+      const created = await addVariantForm(tenantId, family.id, {
+        pricePerUnit: "30",
+        priceTier2: "30",
+        priceTier3: "30",
+        priceTier4: "30",
+        priceTier5: "30",
+      });
+      expect(await retail(created.id)).toBe(30);
+      expect(await tier(created.id, 2)).toBe(30);
+    },
+  );
+
+  it("VM-15: under a family holding a 12-pack, a new variant, an editor add and an adoption on 6 pieces take 12 / 11", async () => {
+    const tenantId = await tenantOf("vm15");
     const family = await familyIn(tenantId);
     const onSix = async (id: string) => [await retail(id), await tier(id, 2)];
 
@@ -485,7 +533,7 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     await inTenant(tenantId, () =>
       families.updateVariants(
         family.id,
-        { add: [{ name: "Added six", unitsPerBox: 6, pricePerUnit: "99.00" }] },
+        { add: [{ name: "Added six", unitsPerBox: 6, pricePerUnit: "12.00" }] },
         null,
       ),
     );
@@ -525,10 +573,10 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     { on: true, stored: 0 },
     { on: false, stored: 30 },
   ])(
-    "VM-14 (flag $on): the family editor's own Retail takes the tiers at the family's value with it; a tier of its own stays",
+    "VM-16 (flag $on): the family editor's own Retail takes the tiers at the family's value with it; a tier of its own stays",
     async ({ on, stored }) => {
       flags = on;
-      const tenantId = await tenantOf(`vm14${on}`);
+      const tenantId = await tenantOf(`vm16${on}`);
       const family = await familyIn(tenantId);
       const at = await variantOf(family, { priceTier2: "22.00", priceTier3: "19.00" });
 
@@ -548,8 +596,8 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     },
   );
 
-  it("VM-15: a tier's own unit keeps a variant off the list and unmoved even when named; a tier on the pack doesn't", async () => {
-    const tenantId = await tenantOf("vm15");
+  it("VM-17: a tier's own unit keeps a variant off the list and unmoved even when named; a tier on the pack doesn't", async () => {
+    const tenantId = await tenantOf("vm17");
     const family = await familyIn(tenantId);
     const withUnit = await variantOf(family, {});
     const onPack = await variantOf(family, {});
@@ -571,8 +619,8 @@ describeDb("SA-1082 A-1: a family save asks, and moves only what it names", () =
     expect(await retail(onPack.id)).toBe(26);
   });
 
-  it("VM-16: at the family's price, an own order unit or a tier's own unit reads as its own in the grid; a pack ref still follows", async () => {
-    const tenantId = await tenantOf("vm16");
+  it("VM-18: at the family's price, an own order unit or a tier's own unit reads as its own in the grid; a pack ref still follows", async () => {
+    const tenantId = await tenantOf("vm18");
     const family = await familyIn(tenantId);
     const onPack = await variantOf(family, { orderUnitRef: "pack", priceTier2: "22.00" });
     const ownOrder = await variantOf(family, { priceTier2: "22.00" });
