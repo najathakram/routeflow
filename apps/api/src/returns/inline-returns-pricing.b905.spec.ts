@@ -80,7 +80,7 @@ describe("B905: priceMatchedChunk telescopes over the pieces already credited", 
   });
 
   it("the category (excise) tax telescopes too", () => {
-    const l = line({ categoryTax: 1 });
+    const l = line({ categoryTax: 1, invoiceTaxAmount: 1 }); // the invoice's tax includes its 1.00 levy
     expect(sum(sliced(l, [1, 1, 1], "categoryTax"))).toBe(1);
   });
 
@@ -95,9 +95,12 @@ describe("B905: priceMatchedChunk telescopes over the pieces already credited", 
     expect(sum(sliced(l, [12, 12, 12], "subtotal"))).toBe(10);
   });
 
-  it("a prior past the line never pushes a slice negative or past the line", () => {
-    const out = priceMatchedChunk(line({ priorPieces: 3 }), 1, false);
-    expect(out.subtotal).toBe(0);
+  it("a prior past the line is refused (409), never priced at $0 and never past the line (SA-1091 A-1)", () => {
+    expect(() => priceMatchedChunk(line({ priorPieces: 3 }), 1, false)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" }),
+      }),
+    );
   });
 });
 

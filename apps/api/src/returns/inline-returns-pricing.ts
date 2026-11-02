@@ -9,15 +9,18 @@
  * does arithmetic, so the 8 §3.5 literal oracles can pin it without a database.
  *
  * Money discipline: every returned subtotal/tax figure is rounded via {@link roundMoney}
- * from `@routeflow/pricing`; the line-subtotal proration itself goes through
- * {@link creditedThrough} (B894/SA-576: a credit is a LINEAR slice of the billed line, additive
- * across slices) — never re-derived here.
+ * from `@routeflow/pricing`; a matched chunk's price is `refundableLineShare`'s (SA-840 / SA-1091 A-1: what the
+ * invoice charged, additive across slices and across the lines of an invoice) — never re-derived here.
  */
+import { ConflictException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   computeLineSubtotal,
   normalizeBoxesPieces,
-  creditedThrough,
+  refundableLineShare,
   roundMoney,
+  type RefundableInvoice,
+  type RefundableInvoiceLine,
 } from "@routeflow/pricing";
 
 export type ReturnPriceSource = "SOURCE_INVOICE" | "CUSTOMER_PRICE" | "TIER" | "BASE" | "MANUAL";
@@ -58,6 +61,21 @@ export interface CandidateInvoiceLine {
    * line). The chunk is priced as credit(prior + now) - credit(prior), so the slices of a line sum to its billed amount
    * exactly. Absent / 0 = a first slice. STANDARD returns carry no line link, so they never count here. */
   priorPieces?: number;
+  /** SA-1091 A-1: the WHOLE invoice as stored (every line in row order, the NSF fee line flagged), so a slice is priced as what
+   * the invoice CHARGED (`refundableLineShare`), never re-derived from this one line. The quote reads and sets it. */
+  invoice?: RefundableInvoice;
+  /** SA-1091 A-1: the net / tax / levy earlier live INLINE returns already took on THIS line (the amounts that go with `priorPieces`). */
+  priorAmounts?: TakenAmounts;
+  /** SA-1091 A-1: the same, summed over EVERY line of the invoice and this request so far. ONE object shared by the invoice's lines,
+   * so a slice also stops at what is left of each charge across the invoice (returns stored at an older price are not repriced). */
+  invoiceTaken?: TakenAmounts;
+}
+
+/** Net (after the discount share), regular tax and category tax already taken from an invoice line or an invoice. */
+export interface TakenAmounts {
+  net: number;
+  tax: number;
+  categoryTax: number;
 }
 
 /** A caller-resolved "how much of (sourceOrderId, productId) is still uncredited" map —
@@ -272,7 +290,42 @@ export function allocateReturnedPieces(
 
 // ─── §3.2 per-chunk pricing ─────────────────────────────────────────────────────
 
-/** Case 1 — matched: priced off the SOURCE_INVOICE line's own stored rate. */
+/**
+ * SA-1091 A-1: the invoice a candidate line is priced against. The quote sets `invoice` (the whole invoice as stored, every
+ * line in row order); a line read ALONE (a spec fixture) is a one-line invoice built from its own stored columns, so the helper
+ * still does the pricing and there is no second formula.
+ */
+export function invoiceViewOf(line: CandidateInvoiceLine): RefundableInvoice {
+  if (line.invoice) return line.invoice;
+  // the rest of the invoice (its other lines, at this line's rate) is what the invoice header says is not this line
+  const rest = roundMoney(line.invoiceSubtotal - line.subtotal);
+  const own: RefundableInvoiceLine = {
+    id: line.sourceInvoiceItemId,
+    subtotal: line.subtotal,
+    qty: line.qty,
+    taxRate: line.taxRate,
+    isNsf: false,
+  };
+  // a read-only view for the helper's input, not a stamp of the category-tax trio on a row (category-tax-trio-callsites.spec)
+  own.categoryTaxAmount = line.categoryTax;
+  return {
+    taxAmount: line.invoiceTaxAmount,
+    discount: line.invoiceDiscount,
+    lines: [
+      own,
+      ...(rest > 0
+        ? [{ id: "~rest", subtotal: rest, qty: 1, taxRate: line.taxRate, isNsf: false }]
+        : []),
+    ],
+  };
+}
+
+/**
+ * Case 1 — matched: priced as what the invoice CHARGED for the slice (SA-840 / SA-1091 A-1): `refundableLineShare` gives the
+ * net (after the line's discount share), the regular-tax share and the category-tax (levy) share, so the lines of a whole sale
+ * add up to the invoice exactly, in any order, and slices of one line add up to the line. Pack and pieces conversion stays
+ * here (`inLineAxis`). The helper's refusal is refused (409), never priced at 0.
+ */
 export function priceMatchedChunk(
   line: CandidateInvoiceLine,
   chunkPieces: number,
@@ -282,47 +335,26 @@ export function priceMatchedChunk(
   const upb = Number(line.unitsPerBox ?? 0);
   const inLineAxis = (pieces: number) => (boxSplit ? pieces : upb > 1 ? pieces / upb : pieces);
   const priorPieces = Math.max(0, Number(line.priorPieces ?? 0));
-  const chunkInLineAxis = inLineAxis(chunkPieces);
-  // B894 (SA-576): a credit prices a SLICE of the already-billed line from scratch, so it is LINEAR
-  // (additive: the slices of one line credit at most its stored subtotal). The invoice's floored
-  // free-unit telescope (prorateLineSubtotal) is non-monotone and over-credits per slice.
-  // B905: and TELESCOPED over the pieces the line already had credited: every figure below is the cumulative credit through
-  // (prior + now) minus the cumulative credit through (prior), each cumulative rounded once, so the slices sum to the whole.
-  const through = (pieces: number) => creditedThrough(line.subtotal, inLineAxis(pieces), line.qty);
-  const prorated = roundMoney(through(priorPieces + chunkPieces) - through(priorPieces));
-
-  // Discount share: the SAME fraction of the line's stored subtotal that the credited slice
-  // represents, applied to this line's own share of the invoice's total discount.
-  const lineDiscountShare =
-    line.invoiceSubtotal > 0
-      ? roundMoney((line.invoiceDiscount * line.subtotal) / line.invoiceSubtotal)
-      : 0;
-  const netThrough = (pieces: number) => {
-    const gross = through(pieces);
-    const share = line.subtotal > 0 ? gross / line.subtotal : 0;
-    return roundMoney(gross - roundMoney(lineDiscountShare * share));
-  };
-  const subtotal = roundMoney(netThrough(priorPieces + chunkPieces) - netThrough(priorPieces));
-  // m-7: no tax when the invoice itself charged none, or the customer is exempt — the
-  // LINE's snapshot taxRate is otherwise used verbatim, never the tenant's current rate.
+  const prior = line.priorAmounts ?? { net: 0, tax: 0, categoryTax: 0 };
+  const share = refundableLineShare({
+    invoice: invoiceViewOf(line),
+    lineId: line.sourceInvoiceItemId,
+    returnedQty: inLineAxis(chunkPieces),
+    prior: { qty: inLineAxis(priorPieces), ...prior },
+    invoicePrior: line.invoiceTaken ?? prior,
+  });
+  if (share.refusal) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+      message: "That return is more than the invoice line holds.",
+    });
+  }
+  // m-7: no tax when the invoice itself charged none, or the customer is exempt — the invoice's stored tax is the only tax
+  // that was charged (an exempt invoice stores 0), and an exempt customer today still gets no tax back.
   const taxExempt = line.invoiceTaxAmount === 0 || customerIsTaxExempt;
-  const taxAmount = taxExempt
-    ? 0
-    : roundMoney(
-        roundMoney(through(priorPieces + chunkPieces) * line.taxRate) -
-          roundMoney(through(priorPieces) * line.taxRate),
-      );
-
-  // Category (excise) tax: pro-rated from the line's own snapshot, capped at what was
-  // actually booked to the regulated ledger for this line — never invented. A line with
-  // no categoryTax snapshot (non-regulated product) or no known ledger cap credits $0.
-  const categoryTaxThrough = (pieces: number) =>
-    line.categoryTax != null && line.qty > 0
-      ? roundMoney((line.categoryTax * Math.min(inLineAxis(pieces), line.qty)) / line.qty)
-      : 0;
-  const categoryTaxShare = roundMoney(
-    categoryTaxThrough(priorPieces + chunkPieces) - categoryTaxThrough(priorPieces),
-  );
+  // No levy snapshot (a non-regulated product) credits $0: the helper reads the stored levy column, this keeps the caller's
+  // own "no known snapshot" reading.
+  const categoryTax = line.categoryTax != null ? share.categoryTax : 0;
 
   return {
     sourceOrderId: line.sourceOrderId,
@@ -330,13 +362,26 @@ export function priceMatchedChunk(
     sourceOrderItemId: line.sourceOrderItemId,
     productId: line.productId,
     pieces: chunkPieces,
-    subtotal,
-    taxAmount,
-    categoryTax: categoryTaxShare,
+    subtotal: share.net,
+    taxAmount: taxExempt ? 0 : share.tax,
+    categoryTax,
     priceSource: "SOURCE_INVOICE",
-    unitPrice: chunkPieces > 0 ? roundMoney(subtotal / chunkPieces) : null,
+    unitPrice: chunkPieces > 0 ? roundMoney(share.net / chunkPieces) : null,
     neverSold: false,
   };
+}
+
+/** SA-1091 A-1: records a priced chunk against its invoice's shared `invoiceTaken`, so the next line priced in the same request
+ * stops at what is left. A line with no shared object (a spec fixture) has nothing to record. */
+export function noteChunkTaken(
+  line: CandidateInvoiceLine,
+  chunk: Pick<PricedChunk, "subtotal" | "taxAmount" | "categoryTax">,
+): void {
+  const taken = line.invoiceTaken;
+  if (!taken) return;
+  taken.net = roundMoney(taken.net + chunk.subtotal);
+  taken.tax = roundMoney(taken.tax + chunk.taxAmount);
+  taken.categoryTax = roundMoney(taken.categoryTax + chunk.categoryTax);
 }
 
 /** Cases 2/3 — unreferenced: no matched invoice line for this piece, priced off the
@@ -407,9 +452,13 @@ export function applyCreditOverride(
     chunk: {
       ...defaultChunk,
       subtotal,
-      // SA-1060 PR-2: a never-sold chunk stays untaxed at the lowered price too (keyed on the chunk, not on the rate)
+      // SA-1060 PR-2: a never-sold chunk stays untaxed at the lowered price too (keyed on the chunk, not on the rate).
+      // SA-1091 AC-12: and a lowered price never takes more tax than the default chunk did (a line's rate can be stale
+      // against what the invoice charged, e.g. tax that is the levy alone)
       taxAmount:
-        basis.taxExempt || defaultChunk.neverSold ? 0 : roundMoney(subtotal * basis.taxRate),
+        basis.taxExempt || defaultChunk.neverSold
+          ? 0
+          : Math.min(defaultChunk.taxAmount, roundMoney(subtotal * basis.taxRate)),
       priceSource: "MANUAL",
       unitPrice: override.unitPrice,
       originalPrice: defaultUnitPrice,

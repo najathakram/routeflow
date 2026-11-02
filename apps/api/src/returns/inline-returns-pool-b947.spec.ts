@@ -182,6 +182,9 @@ describe("InlineReturnsService.assertWithinLineHeadroom: B947 the order pool (th
   it("a single creditable invoice never reads the pool (the per-invoice check is all there is)", async () => {
     const { run, tx } = setup({ lumpOfA: true, invoices: [X] });
     await expect(run()).resolves.toBeUndefined();
-    expect(tx.invoice.findMany.mock.calls.every((c: any[]) => c[0].where?.id)).toBe(true); // only the id -> order read, no pool
+    // no pool: every invoice read is the id -> order read, or SA-1091's order-wide room (which selects the billed `total`)
+    expect(
+      tx.invoice.findMany.mock.calls.every((c: any[]) => c[0].where?.id || c[0].select?.total),
+    ).toBe(true);
   });
 });
