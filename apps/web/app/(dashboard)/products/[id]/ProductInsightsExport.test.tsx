@@ -16,6 +16,12 @@ jest.mock("@/lib/auth-context", () => ({
 let mockFlag = { enabled: true, resolved: true, failed: false };
 jest.mock("@/lib/api/plan-flags", () => ({ usePlanFlag: () => mockFlag }));
 
+// SA-1087: the export also renders "Full insights" (FullInsightsLink), which asks which groups the
+// signed-in operator may use. This file stubs that answer; the link's own gating is pinned in
+// FullInsightsLink.test.tsx.
+let mockDenied: string[] = [];
+jest.mock("@/lib/api/my-permissions", () => ({ useDeniedGroups: () => mockDenied }));
+
 const get = jest.fn();
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: (...a: unknown[]) => get(...a) } }));
 
@@ -36,11 +42,24 @@ const click = () => fireEvent.click(screen.getByTestId("product-insights-export-
 beforeEach(() => {
   jest.clearAllMocks();
   mockRole = "OPERATOR";
+  mockDenied = [];
   mockFlag = { enabled: true, resolved: true, failed: false };
   mockSales = { data: { summary: { count: 4 } }, isLoading: false };
 });
 
 describe("ProductInsightsExport", () => {
+  it("SA-1087: carries the Full insights link, unless the insights page asks it not to", () => {
+    const { unmount } = render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
+    expect(screen.getByRole("link", { name: "Full insights" })).toHaveAttribute(
+      "href",
+      "/insights/products/p1",
+    );
+    unmount();
+    render(<ProductInsightsExport productId="p1" sku="SKU-1" hideFullLink />);
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByTestId("product-insights-export-button")).toBeInTheDocument();
+  });
+
   it.each(["DRIVER", "CUSTOMER"])("is hidden for %s", (role) => {
     mockRole = role;
     render(<ProductInsightsExport productId="p1" sku="SKU-1" />);
