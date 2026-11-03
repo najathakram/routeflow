@@ -34,7 +34,7 @@ export function LineStockNote({ stock }: { stock: LineStockView | undefined }) {
     >
       <span className="font-medium">{stock.label}</span>
       {stock.message && (
-        <p role="status" data-testid="line-stock-message" className="mt-0.5">
+        <p role="status" data-testid="line-stock-message" className="mt-0.5 text-pretty">
           {stock.message}
         </p>
       )}

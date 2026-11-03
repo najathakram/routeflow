@@ -42,6 +42,12 @@ import { resolveSaleCost, saleMovementRow } from "./sale-movement";
 import { applyStockMovements, type LockedStock, type StockMovementRow } from "./stock-movements";
 import { poReversalNote, poReversalOf } from "./bill-revert";
 import { poGoodsUsedConflict, productsUsedSinceReceipt } from "./po-use-since-receipt";
+import {
+  boxIntrosOf,
+  introsAfter,
+  packFactor,
+  receivedBeforePackError,
+} from "../products/pack-intro-undo";
 import { documentStockDate, stockWriteDate, type DocumentStockDate } from "./stock-write-date";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -2036,6 +2042,15 @@ export class InventoryService {
         poReversalOf(m) == null &&
         !reversedIds.has(m.id),
     );
+
+    // SA-1093 Rule 3: a receipt older than a Boxes answer can't be re-entered. One read per product.
+    for (const productId of new Set(live.map((m) => m.productId))) {
+      const intros = await boxIntrosOf(tx, productId);
+      const older = live.some(
+        (m) => m.productId === productId && packFactor(introsAfter(intros, m.createdAt)) > 1,
+      );
+      if (older) throw receivedBeforePackError("purchase-order");
+    }
 
     // Row 645: the lot figure above no longer moves on a sale (#3487) — the ledger does.
     const usedProducts = await productsUsedSinceReceipt(tx, live);

@@ -85,6 +85,43 @@ describe("lineStockViews", () => {
     expect(view.message).toMatch(/backorder/i);
   });
 
+  // SA-1086 A-1: a till sale hands the goods over now, so nothing goes on backorder. Only the second
+  // sentence differs from New Order; the head and the numbers are the same.
+  it("LS-9a: delivered now (the counter), 2 boxes against 20 on hand: the till's sentence, never 'backorder'", () => {
+    const view = ready(run([boxed("a", 2)], avail(20), { deliversNow: true }), "a");
+    expect(view.message).toBe(
+      "Only 1 box and 8 pieces left. You can still sell it. Stock will go below zero.",
+    );
+    expect(view.message).not.toMatch(/backorder/i);
+  });
+
+  it("LS-9b: delivered now, stock at -3: 'None left', red, 0 left, the till's sentence", () => {
+    const view = ready(run([plain("a", 1)], avail(-3), { deliversNow: true }), "a");
+    expect(view).toMatchObject({ level: "out", label: "0 pieces left" });
+    expect(view.message).toBe("None left. You can still sell it. Stock will go below zero.");
+  });
+
+  it("LS-9c: the same draft reads the same head and numbers on New Order and on the counter", () => {
+    const order = ready(run([boxed("a", 2)], avail(20)), "a");
+    const till = ready(run([boxed("a", 2)], avail(20), { deliversNow: true }), "a");
+    expect(till.label).toBe(order.label);
+    expect(till.level).toBe(order.level);
+    expect(till.requestedPieces).toBe(order.requestedPieces);
+    expect(till.message?.split(". ")[0]).toBe(order.message?.split(". ")[0]);
+  });
+
+  it("LS-9d: New Order and edit (deliversNow left off) keep the backorder words, explicit false too", () => {
+    for (const rest of [{}, { deliversNow: false }]) {
+      const view = ready(run([boxed("a", 2)], avail(20), rest), "a");
+      expect(view.message).toBe("Only 1 box and 8 pieces left. The extra goes on backorder.");
+    }
+  });
+
+  it("LS-9e: delivered now with oversell off keeps the refusal words, the save still refuses", () => {
+    const view = ready(run([plain("a", 20)], avail(5, false), { deliversNow: true }), "a");
+    expect(view.message).toMatch(/won't save/);
+  });
+
   it("an order within stock shows the count and no message", () => {
     const view = ready(run([plain("a", 3)], avail(5)), "a");
     expect(view).toMatchObject({ level: "ok", message: null, label: "5 pieces left" });
@@ -141,7 +178,7 @@ describe("lineStockViews", () => {
     const line = plain("a", 3, { unitLabel: "Each", unitFactor: 1 });
     const view = ready(run([line], avail(2)), "a");
     expect(view.requestedPieces).toBe(3);
-    expect(view.label).toBe("2 eaches left");
+    expect(view.label).toBe("2 each left");
   });
 
   it("a named-unit line with no known factor shows nothing, and so does its product's other line", () => {

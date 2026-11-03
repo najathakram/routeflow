@@ -1,6 +1,6 @@
 {
-  "mappedSha": "9dfd480c3080d3640eb4b16a6451ff7307019685",
-  "generatedAt": "2026-11-03T06:30:33.660Z",
+  "mappedSha": "f9f1a592ed",
+  "generatedAt": "2026-11-03T17:31:44.835Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-03 train aj (merge 9dfd480c30): api/web landing notes, TOC rows; see CHANGELOG.md."
+  "notes": "2026-11-03 train an (master f9f1a592ed): api/web landing notes, TOC rows; see CHANGELOG.md."
 }

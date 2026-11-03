@@ -422,6 +422,8 @@ export const API_ERROR_CODES = {
   INVALID_LINE_SPLIT: "INVALID_LINE_SPLIT",
   INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
   LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
+  /** SA-1097: an order edit that would re-price a stored split line whose own pack can't be read (409). */
+  STORED_LINE_PACK_UNREADABLE: "STORED_LINE_PACK_UNREADABLE",
   LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
   /**
    * W-871 (SA-948): a replace (staff replace-all, a driver's full-list save) on a post-delivery order is refused
@@ -968,6 +970,29 @@ export const API_ERROR_CODES = {
   PRICE_EDIT_INVALID: "PRICE_EDIT_INVALID",
   /** 409 from POST /products/:productId/prices/undo: that audit row is not a price save of this product, or it was already undone. */
   PRICE_UNDO_UNAVAILABLE: "PRICE_UNDO_UNAVAILABLE",
+  /**
+   * 409 from PATCH /products/:id (SA-946, SA-961 R1): the save introduces a pack size (blank or 1 to N > 1) on a product
+   * that holds stock or cost, and the request did not say what the stock number meant. Send `packReading`: "box" (240 is
+   * 240 boxes; stock, reorder levels and cost become pieces) or "piece" (nothing converts). Nothing was written.
+   */
+  PACK_READING_REQUIRED: "PACK_READING_REQUIRED",
+  /**
+   * 409 from PATCH /products/:id (SA-946): the "box" answer would take stock or a reorder level past what its column
+   * holds. Never clamped; nothing was written. The "piece" answer, or a smaller pack, still saves.
+   */
+  PACK_CONVERSION_TOO_LARGE: "PACK_CONVERSION_TOO_LARGE",
+  /**
+   * 409 from a vendor bill's revert to draft and a purchase order's re-apply (SA-1093): the document was received before a
+   * Boxes answer, so its lines are in the old unit. `document` says which ("bill", "purchase-order"). A bill's void still works.
+   * Nothing was written.
+   */
+  RECEIVED_BEFORE_PACK: "RECEIVED_BEFORE_PACK",
+  /**
+   * 409 from PATCH /products/:id (SA-1093): the "box" answer while an open order holds a line with its own unit or box split,
+   * which a cancel would credit in the old unit. `orderId` and `orderNumber` name one order. The "piece" answer still saves.
+   * Nothing was written.
+   */
+  PACK_OPEN_LINES: "PACK_OPEN_LINES",
   /**
    * 400 from POST /platform-admin/tenants/:id/business-capabilities (and its /preview) when no capability is ticked
    * (BO-04): at least one of Delivery, Shipping or Counter is needed. Fixed body; nothing was written.

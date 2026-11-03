@@ -102,6 +102,21 @@ describe("named-unit lines (read 2 hold 1)", () => {
     expect(savedPiecesByProduct([switched]).get("p1")).toBe(1);
   });
 
+  it("saved 3 Cases x12, switched to Case x24, holds 36 pieces (the factor is the saved one, not the new 24)", () => {
+    const switched = caseLine({ unitsPerBox: 24, originalUnitsPerBox: 12, qty: 3, originalQty: 3 });
+    expect(savedPiecesByProduct([switched]).get("p1")).toBe(36);
+  });
+
+  it("saved 3 Cases with no stored pack, switched to Case x24, has no honest count (never the new 24)", () => {
+    const switched = caseLine({
+      unitsPerBox: 24,
+      originalUnitsPerBox: null,
+      qty: 3,
+      originalQty: 3,
+    });
+    expect(Number.isNaN(savedPiecesByProduct([switched]).get("p1"))).toBe(true);
+  });
+
   it("saved 1 Piece, Case x12 picked, 5 on hand reads as over", async () => {
     mockGet.mockResolvedValue({
       data: { allowOversell: true, items: [{ productId: "p1", availablePieces: 5 }] },

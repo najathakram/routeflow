@@ -38,6 +38,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { MovementType, Prisma, UserRole } from "@prisma/client";
+import { lockProductsForStock } from "../common/product-locks";
 import { applyStockMovements } from "../inventory/stock-movements";
 import { roundMoney, scaleFrozenSplit } from "@routeflow/pricing";
 import { PrismaService } from "../prisma/prisma.service";
@@ -68,6 +69,7 @@ import { IdempotencyService } from "../common/idempotency.service";
 import { AddonService } from "../billing/addon.service";
 import { NO_RESTOCK_REASONS } from "./returns.service";
 import { restockReturnItems } from "./returns-restock.util";
+import { inlineRestockFactors } from "../products/pack-intro-undo";
 import { sumInlineReturnCredit } from "./inline-return-credit.util";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { creditOverrideAuditItems } from "./inline-returns-pricing";
@@ -2006,6 +2008,11 @@ export class InlineReturnsService {
         // across two returns whose ids happen to share their first 8 characters).
         // SA-927: through the one writer (lock, tenant-scoped counter read, stockAfter, one insert).
         const restocked = (fresh.items as any[]).filter((item) => item.restock);
+        // SA-1093 Rule 4: the restock counted in its own day's units, and stock has been converted since a later Boxes answer.
+        // G5: read inside the stock lock, so an answer still open has committed first. The writer below re-locks (a no-op).
+        const restockedIds = restocked.map((item) => item.productId as string);
+        await lockProductsForStock(tx, this.prisma.getTenantId(), restockedIds);
+        const factors = await inlineRestockFactors(tx, `RET-${fresh.id.slice(0, 8)}`, restockedIds);
         await applyStockMovements(
           tx,
           this.prisma.getTenantId() as string,
@@ -2013,13 +2020,13 @@ export class InlineReturnsService {
             restocked.map((item) => ({
               productId: item.productId as string,
               type: MovementType.RETURN,
-              quantity: new Prisma.Decimal(item.qty).neg(),
+              quantity: new Prisma.Decimal(item.qty).mul(factors.get(item.productId) ?? 1).neg(),
               unitCost: locked.get(item.productId)?.averageCost ?? null,
               average: "keep" as const,
               performedById: user.sub,
               reference: `RET-CANCEL-${fresh.id.slice(0, 8)}`,
             })),
-          { productIds: restocked.map((item) => item.productId as string) },
+          { productIds: restockedIds },
         );
         // SA-839 (B705): counter-entries for this return's rows (claimed CANCELLED above); a VOID or
         // deleted source invoice is netted to 0 again.
