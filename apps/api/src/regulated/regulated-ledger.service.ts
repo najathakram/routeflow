@@ -386,8 +386,9 @@ export function priceCorrectionTarget(
  * InvoicesService#resyncInvoiceLedger) re-sync them to the rebuilt qty by
  * reversing the prior SALE rows and writing fresh ones. RF-1: the manual `create`
  * path now writes SALE rows too (orderId null) and the DRAFT `update` path re-syncs
- * them. STILL NOT wired (deferred): `createPartialFromOrder` — a regulated PARTIAL
- * invoice writes no ledger rows until a later delivered-basis reconcile rewrites it.
+ * them. SA-962 row 721: `createPartialFromOrder` settles INVOICE_BILLED in its own
+ * transaction (via InvoicesService#resyncInvoiceLedger), so a regulated PARTIAL
+ * invoice books its billed qty at creation; no invoice writer is left unwired.
  */
 @Injectable()
 export class RegulatedLedgerService {
