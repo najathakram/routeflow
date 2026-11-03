@@ -129,7 +129,7 @@ describe("B463: the tax of unreferenced and excise-only return chunks", () => {
 
   it("(2) excise-only netting: no sales tax on the invoice, the line's excise share is credited and nothing else is taxed", async () => {
     await setup();
-    sold({ taxAmount: 0, lineTaxRate: 0.0875, categoryTax: 5 });
+    sold({ taxAmount: 5, lineTaxRate: 0.0875, categoryTax: 5 }); // the invoice's tax is the 5.00 levy and nothing else
     const q = await quote(1);
     expect(q.chunks).toHaveLength(1);
     expect(q.chunks[0]).toMatchObject({ subtotal: 10, taxAmount: 0, categoryTax: 2.5 });

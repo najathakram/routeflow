@@ -9,6 +9,7 @@
 import { Test } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { RoutesService } from "./routes.service";
+import { stopCompletionRequestHash } from "./stop-completion-key";
 import { RouteRealtime } from "./route-realtime";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -207,13 +208,23 @@ describe("RoutesService → RouteRealtime wiring (#2095)", () => {
     });
 
     it("an idempotent replay announces nothing a second time", async () => {
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
-        { response: JSON.stringify({ id: "stop-1", status: "COMPLETED" }) },
-      ]);
+      (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) =>
+        fn({
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([
+            {
+              response: JSON.stringify({
+                requestHash: stopCompletionRequestHash({}),
+                response: { id: "stop-1", status: "COMPLETED" },
+              }),
+            },
+          ]),
+        }),
+      );
 
       await service.completeStop("run-1", "stop-1", { idempotencyKey: "key-1" }, operator);
 
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1); // the key lookup's read only
       expect(stopCompleted).not.toHaveBeenCalled();
     });
   });

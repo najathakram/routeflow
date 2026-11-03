@@ -4,17 +4,8 @@ import { createHash } from "crypto";
 /**
  * Shared replay guard over the global `IdempotencyKey` table (platform.prisma).
  *
- * COPIED from the three private RF-019 helpers on `RoutesService`
- * (makeKeyHash / checkIdempotencyKey / saveIdempotencyKey) — same
- * sha256(`${scope}:${key}`) hashing, same 24h read window, same ON CONFLICT
- * upsert, same FAIL-OPEN catches. This is NOT a lift-and-delete: RoutesService
- * still owns its own three private copies and still uses them for production
- * driver traffic (route dispatch/completion). There are now TWO
- * implementations to reason about, not one. Any change to the hashing, the
- * window, the upsert, or the fail-open behaviour here must be mirrored by
- * hand in `RoutesService`'s copies (RF-019) — RouteFlow's server-side scope
- * fence (RULINGS R7) keeps `RoutesService` out of this diff, so consolidating
- * the two is left for a future pass, not done here.
+ * The one implementation: stop completions moved here from their private RF-019 helpers (SA-953 S2,
+ * routes/stop-completion-key.ts).
  *
  * FAIL-OPEN IS DELIBERATE, not an oversight: a replay guard must never 500 a
  * legitimate request. A DB error inside `check` returns null (so the request
@@ -33,9 +24,6 @@ import { createHash } from "crypto";
  * `check`/`save` take `tenantId` as a REQUIRED positional argument and build the final scope
  * internally (`${tenantId ?? "none"}:${scopeSuffix}`), so a caller cannot construct a scope that
  * omits it — the type system enforces the half of "SCOPING WARNING" that used to be a comment.
- * `keyHash` itself is unchanged (a pure hash of whatever scope string it is given) so
- * RoutesService's own three private RF-019 copies — which build their OWN scope strings by hand
- * and are explicitly OUT of this fix (see below) — are untouched.
  *
  * TRANSACTIONAL + SAVEPOINT-GUARDED (F5 round 2 / N1, independent review round 2, PR-2):
  * `check`/`save` now REQUIRE a transaction client (`tx`) and run entirely on ITS connection,
@@ -75,10 +63,6 @@ import { createHash } from "crypto";
  * for the harm IT protects against (two concurrent identical-key attempts racing past each
  * other) — proceeding unlocked after a failed acquire would silently defeat the entire point of
  * F5. A mobile client's retry (same nonce) is always safe to just try again.
- *
- * RoutesService's existing scopes are left exactly as they are — retrofitting a tenantId into
- * them would silently invalidate in-flight driver keys, and RULINGS R7 keeps RoutesService out
- * of this diff.
  */
 @Injectable()
 export class IdempotencyService {

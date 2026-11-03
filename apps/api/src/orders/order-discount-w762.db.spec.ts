@@ -485,7 +485,7 @@ describeDb(
     it("S (SA-923): a staff create beside a discounted open order is created separately, and NOT opted out of future merges", async () => {
       const open = await createOrder(4, 3);
       const before = await orderRow(open);
-      const controller = new OrdersController(orders, {} as any, {} as any, {} as any);
+      const controller = new OrdersController(orders, {} as any, {} as any, {} as any, {} as any);
       const created: any = await inTenant(() =>
         controller.create(
           { customerId, items: [{ productId, qty: 2 }], mergeChoice: "merge" } as any,

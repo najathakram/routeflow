@@ -11,6 +11,7 @@ import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import { OrderBatchShipService } from "./order-batch-ship";
 import { PackingSlipService } from "./packing-slip.service";
+import { StockAvailabilityService } from "./stock-availability.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { leakyOrder } from "../common/testing/customer-leak-fixtures";
 
@@ -38,6 +39,7 @@ async function boot() {
       { provide: ChangeRequestsService, useValue: {} },
       { provide: OrderBatchShipService, useValue: {} },
       { provide: PackingSlipService, useValue: {} },
+      { provide: StockAvailabilityService, useValue: {} },
     ],
   }).compile();
   return { controller: moduleRef.get(OrdersController), ordersService };

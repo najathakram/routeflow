@@ -33,12 +33,19 @@ import { FeatureConfigService } from "../billing/feature-config.service";
 import { quoteExcludedInvoiceIds } from "../invoices/order-edit-revert-set";
 import { currentTaxRate } from "../common/tax-rate";
 import { finiteStoredLevy } from "../common/money-invariants.util";
-import { getTierPrice, isWholeCents, packFromOwnSplit, roundMoney } from "@routeflow/pricing";
+import {
+  getTierPrice,
+  isWholeCents,
+  packFromOwnSplit,
+  refundableInvoiceOf,
+  roundMoney,
+} from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   allocateReturnedPieces,
   applyCreditOverride,
+  noteChunkTaken,
   priceMatchedChunk,
   priceUnreferencedChunk,
   resolveReturnPackFactor,
@@ -49,6 +56,7 @@ import {
   type PricedChunk,
   type QuoteBreakdown,
   type RemainingSupply,
+  type TakenAmounts,
 } from "./inline-returns-pricing";
 import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -612,7 +620,10 @@ export class InlineReturnsQuoteService {
         // or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.
         const flag = (c: PricedChunk): PricedChunk =>
           !chunk.line && hasPriorReturns ? { ...c, alreadyReturned: true } : c;
-        if (!override) return flag(priced);
+        if (!override) {
+          if (chunk.line) noteChunkTaken(chunk.line, priced);
+          return flag(priced);
+        }
         // #2695 (SA-557): lower-only, against THIS chunk's default, at the basis that priced it —
         // a matched chunk's pack and InvoiceItem.taxRate snapshot (m-7: exempt when the invoice
         // charged no tax), an unreferenced chunk's product pack and quote rate.
@@ -642,6 +653,7 @@ export class InlineReturnsQuoteService {
               `credit is $${roundMoney(result.defaultUnitPrice).toFixed(2)} per unit.`,
           });
         }
+        if (chunk.line) noteChunkTaken(chunk.line, result.chunk);
         return flag(result.chunk);
       });
 
@@ -793,10 +805,14 @@ export class InlineReturnsQuoteService {
         subtotal: true,
         discount: true,
         taxAmount: true,
+        // SA-1091 A-1: EVERY line of the invoice (the helper prices a slice against the whole invoice's charges), in row order
+        // like the standard path; the requested products are picked out in code below. Still one read.
         items: {
-          where: { productId: { in: productIds } },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           select: {
             id: true,
+            systemKind: true,
+            description: true,
             orderItemId: true,
             productId: true,
             qty: true,
@@ -814,10 +830,15 @@ export class InlineReturnsQuoteService {
     });
 
     const lines: CandidateInvoiceLine[] = [];
+    // every item id of every invoice read -> that invoice's shared `invoiceTaken` (see attachPriorCredits)
+    const takenByItem = new Map<string, TakenAmounts>();
     for (const inv of invoices) {
       if (!inv.orderId) continue;
+      const view = refundableInvoiceOf(inv);
+      const invoiceTaken: TakenAmounts = { net: 0, tax: 0, categoryTax: 0 };
+      for (const item of inv.items) takenByItem.set(item.id, invoiceTaken);
       for (const item of inv.items) {
-        if (!item.productId) continue;
+        if (!item.productId || !productIds.includes(item.productId)) continue;
         const qty = Number(item.qty);
         // §3.1/Opus fix-round: piecesQty is the TRUE piece count, computed once here — a
         // box-split line's qty is already pieces; a selling-unit line's qty is boxes, so it
@@ -861,10 +882,13 @@ export class InlineReturnsQuoteService {
           invoiceSubtotal: Number(inv.subtotal),
           invoiceDiscount: Number(inv.discount),
           invoiceTaxAmount: Number(inv.taxAmount),
+          invoice: view,
+          invoiceTaken,
         });
       }
     }
-    if (o.withPriorCredits && lines.length > 0) await this.attachPriorCredits(db, lines);
+    if (o.withPriorCredits && lines.length > 0)
+      await this.attachPriorCredits(db, lines, takenByItem);
     return lines;
   }
 
@@ -873,20 +897,57 @@ export class InlineReturnsQuoteService {
    * `ReturnItem.sourceInvoiceItemId`; `ReturnItem.qty` of an inline row is in pieces). ONE read however many lines. A STANDARD
    * return carries no line link, so it cannot be attributed to a line and does not count here (the first-slice price stands).
    */
-  private async attachPriorCredits(db: any, lines: CandidateInvoiceLine[]): Promise<void> {
-    const rows: Array<{ sourceInvoiceItemId: string | null; qty: unknown }> =
+  private async attachPriorCredits(
+    db: any,
+    lines: CandidateInvoiceLine[],
+    takenByItem: ReadonlyMap<string, TakenAmounts>,
+  ): Promise<void> {
+    // SA-1091 A-1: the rows of EVERY line of the invoices read (not only the requested products'), with the net / tax / levy
+    // they took, so a slice also stops at what is left of each charge across the invoice (old rows are never repriced).
+    const rows: Array<{
+      sourceInvoiceItemId: string | null;
+      qty: unknown;
+      subtotal: unknown;
+      taxAmount: unknown;
+      categoryTax: unknown;
+    }> =
       (await db.returnItem.findMany({
         where: {
-          sourceInvoiceItemId: { in: lines.map((l) => l.sourceInvoiceItemId) },
+          sourceInvoiceItemId: { in: [...takenByItem.keys()] },
           return: { kind: "INLINE", status: { notIn: DEAD_RETURN_STATUSES } },
         },
-        select: { sourceInvoiceItemId: true, qty: true },
+        select: {
+          sourceInvoiceItemId: true,
+          qty: true,
+          subtotal: true,
+          taxAmount: true,
+          categoryTax: true,
+        },
       })) ?? [];
     const byLine = new Map<string, number>();
+    const amountsByLine = new Map<string, TakenAmounts>();
     for (const r of rows) {
       if (!r.sourceInvoiceItemId) continue;
       byLine.set(r.sourceInvoiceItemId, (byLine.get(r.sourceInvoiceItemId) ?? 0) + Number(r.qty));
+      const own = amountsByLine.get(r.sourceInvoiceItemId) ?? { net: 0, tax: 0, categoryTax: 0 };
+      own.net = roundMoney(own.net + Number(r.subtotal ?? 0));
+      own.tax = roundMoney(own.tax + Number(r.taxAmount ?? 0));
+      own.categoryTax = roundMoney(own.categoryTax + Number(r.categoryTax ?? 0));
+      amountsByLine.set(r.sourceInvoiceItemId, own);
+      const inv = takenByItem.get(r.sourceInvoiceItemId);
+      if (inv) {
+        inv.net = roundMoney(inv.net + Number(r.subtotal ?? 0));
+        inv.tax = roundMoney(inv.tax + Number(r.taxAmount ?? 0));
+        inv.categoryTax = roundMoney(inv.categoryTax + Number(r.categoryTax ?? 0));
+      }
     }
-    for (const l of lines) l.priorPieces = byLine.get(l.sourceInvoiceItemId) ?? 0;
+    for (const l of lines) {
+      l.priorPieces = byLine.get(l.sourceInvoiceItemId) ?? 0;
+      l.priorAmounts = amountsByLine.get(l.sourceInvoiceItemId) ?? {
+        net: 0,
+        tax: 0,
+        categoryTax: 0,
+      };
+    }
   }
 }
