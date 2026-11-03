@@ -41,6 +41,7 @@ for (const rel of [
   "css/home-up.css",
   "css/home-color.css",
   "css/color-deep.css",
+  "css/mobile.css",
   "css/product.css",
   "css/does.css",
   "css/start.css",

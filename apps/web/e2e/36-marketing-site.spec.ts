@@ -1377,7 +1377,7 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
 // ─── T21 — the motion does not depend on the visitor's motion setting ───────
 // Owner ruling 2026-11-03: the wheel comes apart on scroll for everyone. The OS "reduce motion" setting, the
 // footer switch and ?motion=on are gone; a computer with animations off used to get a still dial and a page
-// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a window under 500 px tall keep the still.
+// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a browser that cannot run the wheel keep the still (T22 covers short windows).
 test.describe("T21 — the motion does not depend on the visitor's motion setting", () => {
   const VIEWS = [
     { name: "1440", width: 1440, height: 900 },
@@ -1683,4 +1683,308 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     const forced = await (await request.get("/?motion=on")).text();
     expect(forced).toBe(plain);
   });
+});
+
+// ─── T22 — the wheel runs on a short screen, a phone held sideways included ──
+// Owner, iPhone in desktop mode turned to landscape: no wheel graphics. The wheel used to give way to the still under
+// 500 px tall. It now runs on every height; below 900 px, short and wider than tall, it takes the wide layout (the words
+// beside the wheel). A turn of the phone builds it again for the new shape and puts the visitor at the same place.
+test.describe("T22 — the wheel runs on a short screen", () => {
+  const SIZES = [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 932, h: 430 },
+    { w: 1024, h: 500 },
+    { w: 1100, h: 450 },
+  ];
+
+  const state = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const el = document.querySelector(".rfw") as
+        (HTMLElement & { _rfw?: { trig?: { progress: number } } }) | null;
+      const r = el ? el.getBoundingClientRect() : null;
+      const copy = document.querySelector(".hx-copy") as HTMLElement | null;
+      const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement | null;
+      const c = cv ? cv.getBoundingClientRect() : null;
+      return {
+        live: !!document.querySelector(".rfw-live"),
+        still: !!document.querySelector(".rfw--static"),
+        canvas: !!cv,
+        progress: el?._rfw?.trig?.progress ?? null,
+        top: r ? r.top + window.scrollY : 0,
+        height: r ? r.height : 0,
+        copyRight: copy ? copy.getBoundingClientRect().right : null,
+        canvasLeft: c ? c.left : null,
+        docW: document.documentElement.scrollWidth,
+        winW: window.innerWidth,
+      };
+    });
+
+  const load = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const s of SIZES) {
+    test(`T22 — ${s.w}x${s.h}: a live wheel with the words beside it, no sideways scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const a = await state(page);
+      expect(a.live, "live wheel").toBe(true);
+      expect(a.still, "not the still").toBe(false);
+      expect(a.canvas, "a canvas").toBe(true);
+      expect(a.copyRight, "words sit left of the wheel").toBeLessThanOrEqual(
+        (a.canvasLeft ?? 0) + s.w * 0.62,
+      );
+      // real scroll: the story plays and the page never grows sideways
+      const before = a.progress ?? 0;
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, 160);
+        await page.waitForTimeout(250);
+      }
+      await page.waitForTimeout(1500);
+      const b = await state(page);
+      expect(b.progress ?? 0, "scroll plays the story").toBeGreaterThan(before + 0.02);
+      expect(b.docW, "no sideways scroll").toBeLessThanOrEqual(b.winW);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T22 — pieces move when scrolled: the canvas changes between two places in the story", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, 844, 390);
+    const grab = async (f: number) => {
+      const { top, height } = await state(page);
+      await page.evaluate(
+        ([t, h, f2]) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - 390));
+        },
+        [top, height, f],
+      );
+      await page.waitForTimeout(1800);
+      return page.evaluate(() => {
+        const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement;
+        const g = cv.getContext("2d")!;
+        const d = g.getImageData(0, 0, cv.width, cv.height).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 97) sum = (sum * 31 + d[i]) % 1000003;
+        return sum;
+      });
+    };
+    const rest = await grab(0.02);
+    const apart = await grab(0.3);
+    expect(apart, "the pieces have moved").not.toBe(rest);
+    await context.close();
+  });
+
+  test("T22 — turning the phone builds the wheel again and keeps the place", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await load(browser, 390, 844);
+    const { top, height } = await state(page);
+    await page.evaluate(
+      ([t, h]) => {
+        document.documentElement.style.scrollBehavior = "auto";
+        window.scrollTo(0, (t as number) + 0.5 * ((h as number) - 844));
+      },
+      [top, height],
+    );
+    await page.waitForTimeout(2200);
+    const p1 = (await state(page)).progress ?? 0;
+    expect(p1).toBeGreaterThan(0.2);
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForTimeout(3000);
+    const land = await state(page);
+    expect(land.live && land.canvas, "live wheel after the turn").toBe(true);
+    expect(Math.abs((land.progress ?? 0) - p1), "same place in the story").toBeLessThan(0.04);
+    expect(land.docW).toBeLessThanOrEqual(land.winW);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(3000);
+    const back = await state(page);
+    expect(back.live && back.canvas).toBe(true);
+    expect(Math.abs((back.progress ?? 0) - p1)).toBeLessThan(0.04);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  // What the sample screens and the headline do: a laptop window 500 px or taller keeps the page as it was
+  // (screens shown, headline full size); a phone held sideways and a wide window under 500 px give them up.
+  const cardsAndHeadline = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const card = document.querySelector(".rfw-card");
+      const h1 = document.querySelector(".hx-up h1");
+      return {
+        cards: card ? getComputedStyle(card).display : "none",
+        h1: h1 ? parseFloat(getComputedStyle(h1).fontSize) : 0,
+      };
+    });
+
+  for (const s of [
+    { w: 1280, h: 577 },
+    { w: 1366, h: 590 },
+    { w: 1024, h: 560 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: a laptop window keeps its sample screens and its headline`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const r = await cardsAndHeadline(page);
+      expect(r.cards, "the sample screens are shown").not.toBe("none");
+      expect(r.h1, "the headline is not shrunk for height").toBeGreaterThanOrEqual(50);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  for (const s of [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 1100, h: 450 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: the sample screens give way and the headline fits the height`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const r = await cardsAndHeadline(page);
+      expect(r.cards).toBe("none");
+      expect(r.h1).toBeLessThanOrEqual(48);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  // A phone held sideways, big or small, uses the phone's rule: no name under 11 px (the piece shows its icon only),
+  // and no name runs past the edge of the stage: a name that will not fit at 11 px is left out.
+  for (const s of [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 915, h: 412 },
+    { w: 932, h: 430 },
+    { w: 640, h: 360 },
+    { w: 568, h: 320 },
+  ]) {
+    test(`T22 — ${s.w}x${s.h}: no wheel name under 11 px, none past the stage edge`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        viewport: { width: s.w, height: s.h },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.addInitScript(() => {
+        type Draw = { px: number; l: number; r: number; cw: number; ts: number };
+        const w = window as unknown as { __draws: Draw[] };
+        w.__draws = [];
+        const f = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (...a: Parameters<typeof f>) {
+          const t = this.getTransform();
+          const wd = this.measureText(String(a[0])).width * t.a;
+          const al = this.textAlign;
+          const l =
+            al === "left" || al === "start"
+              ? t.e
+              : al === "right" || al === "end"
+                ? t.e - wd
+                : t.e - wd / 2;
+          w.__draws.push({
+            px: (t.a * 31) / (window.devicePixelRatio || 1),
+            l,
+            r: l + wd,
+            cw: this.canvas.width,
+            ts: performance.now(),
+          });
+          return f.apply(this, a);
+        };
+      });
+      await page.goto("/", { waitUntil: "load" });
+      await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+      await page.waitForTimeout(2500);
+      const { top, height } = await state(page);
+      type D = { px: number; l: number; r: number; cw: number; ts: number };
+      const settledFrames: D[] = [];
+      let drawn = 0;
+      for (const f of [0.1, 0.2, 0.3, 0.4]) {
+        await page.evaluate(() => ((window as unknown as { __draws: D[] }).__draws = []));
+        await page.evaluate(
+          ([t, h, f2, vh]) => {
+            document.documentElement.style.scrollBehavior = "auto";
+            window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - (vh as number)));
+          },
+          [top, height, f, s.h],
+        );
+        await page.waitForTimeout(1800);
+        const all = await page.evaluate(() => (window as unknown as { __draws: D[] }).__draws);
+        // every draw counts for the size; only the last frame (the settled one) counts for the edge
+        const last = all.length ? all[all.length - 1].ts : 0;
+        settledFrames.push(...all.filter((d) => d.ts > last - 40));
+        // a hold where nothing moves draws nothing new
+        drawn += all.length;
+        if (all.length)
+          expect(Math.min(...all.map((d) => d.px)), "smallest name").toBeGreaterThanOrEqual(10.95);
+      }
+      expect(drawn, "names were drawn").toBeGreaterThan(0);
+      for (const d of settledFrames) {
+        expect(d.l, "name stays inside the stage (left)").toBeGreaterThanOrEqual(-1);
+        expect(d.r, "name stays inside the stage (right)").toBeLessThanOrEqual(d.cw + 1);
+      }
+      await context.close();
+    });
+  }
+});
+
+// ─── T23 — on a phone, headings rise into place and are never hidden ─────────
+// The rise is movement only (a scroll timeline, behind @supports). With real scroll, every heading on screen (outside the wheel, which
+// has its own beats) is fully opaque and visible once the page has settled at each step.
+test.describe("T23 — the phone's rising headings", () => {
+  for (const route of ["/", "/pricing", "/product"]) {
+    test(`T23 — ${route} at 390: headings on screen are opaque, and settle in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.goto(route, { waitUntil: "load" });
+      await page.waitForTimeout(2000);
+      const bad: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        await page.mouse.wheel(0, 640);
+        await page.waitForTimeout(1300);
+        const seen = await page.evaluate(() =>
+          [...document.querySelectorAll("h2")]
+            .filter((h) => {
+              if (h.closest(".rfw")) return false;
+              const r = h.getBoundingClientRect();
+              return r.top > 70 && r.bottom < innerHeight && r.height > 0;
+            })
+            .map((h) => {
+              const c = getComputedStyle(h);
+              return { t: (h.textContent || "").slice(0, 30), o: c.opacity, v: c.visibility };
+            }),
+        );
+        for (const s of seen)
+          if (s.o !== "1" || s.v !== "visible") bad.push(`${s.t}: ${s.o}/${s.v}`);
+      }
+      await context.close();
+      expect(bad, "headings hidden on screen").toEqual([]);
+    });
+  }
 });
