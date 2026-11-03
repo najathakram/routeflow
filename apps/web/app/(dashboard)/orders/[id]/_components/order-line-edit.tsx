@@ -335,7 +335,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const count = isUnitLine ? (unitCount ?? 0) : Math.round(Number(li.qty));
   // SA-1097 A-2: a stored split line with no snapshot reads the pack it was SOLD in (the server's answer), never today's.
   const own = lineOwnPack(li);
-  const linePack = lineDisplayPack(li);
+  const ownLinePack = lineDisplayPack(li);
   const noPack = own.kind === "none"; // sold with no pack: a plain line, no split sent
   return {
     id: li.id,
@@ -366,8 +366,8 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     overrideReason: li.overrideReason ?? undefined,
     unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
     // Prefer the line's sale-time box-size snapshot over the live product.
-    unitsPerBox: linePack,
-    originalUnitsPerBox: linePack,
+    unitsPerBox: ownLinePack,
+    originalUnitsPerBox: ownLinePack,
     category: li.product?.category ?? null,
     boxSplit: isUnitLine || noPack ? false : li.boxes != null || li.pieces != null,
     originalBoxSplit: isUnitLine || noPack ? false : li.boxes != null || li.pieces != null,
@@ -385,10 +385,12 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     originalPackUnit: li.product?.unit ?? undefined,
     // Row 620: a legacy boxed line's own sale-time size wins over the live product (a repack after the sale must not
     // re-denominate a Piece pick). A unit line's snapshot is the picked unit's factor, so it keeps the live pack.
-    packUnitsPerBox: isUnitLine ? (li.product?.unitsPerBox ?? undefined) : (linePack ?? undefined),
+    packUnitsPerBox: isUnitLine
+      ? (li.product?.unitsPerBox ?? undefined)
+      : (ownLinePack ?? undefined),
     originalPackUnitsPerBox: isUnitLine
       ? (li.product?.unitsPerBox ?? undefined)
-      : (linePack ?? undefined),
+      : (ownLinePack ?? undefined),
     unitLabel: li.unitLabel ?? undefined,
     priceType: li.priceType,
   };
