@@ -3,7 +3,7 @@
  * pack after the sale, is edited through the REAL OrdersService.updateOrderItems. The edit's box-size fallback reads the LIVE
  * product (orders.service.ts, "unitsPerBox = product?.unitsPerBox"), so a price-only edit re-derives the line's boxes/pieces
  * from the new pack and re-prices the line. Real: OrdersService (Object.create harness), InvoicesService, ReturnsService,
- * RegulatedLedgerService, PrismaService. Rows A2-1, A2-1b, A2-2 and A2-3 are RED on master (A2-0 and A2-4 are guards). Every case prints a MEASURE line (line, header, invoice, stock ledger) so the values
+ * RegulatedLedgerService, PrismaService. Rows A2-1, A2-1b, A2-2, A2-3, A2-5, A2-6, A2-7 and A2-9 are RED on master (A2-0, A2-8, A2-10, A2-11a/b and A2-12 are guards). Every case prints a MEASURE line (line, header, invoice, stock ledger) so the values
  * can be quoted; the asserts pin the CORRECT value, so each row is RED on master where the bug is real.
  *
  * SAFETY: throwaway `qa-a2pack-<run>-<n>` tenants approved by assertTestTenant, deleted in afterAll.
@@ -192,7 +192,23 @@ describeDb(
      * (null = it had none); the line is box-split (boxes=10, pieces=0) with NO unitsPerBox snapshot, 10 boxes at $10.00
      * (subtotal 100.00). Stock is 90 (the sale's 10 are already out). The product THEN gains `livePack`.
      */
-    async function seed(label: string, soldUpb: number | null, livePack: number) {
+    interface SeedShape {
+      /** the stored split (default boxes 10, pieces 0, qty 10 x the pack at sale) */
+      boxes?: number;
+      pieces?: number;
+      qty?: number;
+      subtotal?: number;
+      /** the line's own unitsPerBox snapshot (default none) */
+      snapshot?: number;
+      status?: string;
+      invoiced?: boolean;
+    }
+    async function seed(
+      label: string,
+      soldUpb: number | null,
+      livePack: number,
+      shape: SeedShape = {},
+    ) {
       seq += 1;
       const slug = assertTestTenant(
         `qa-a2pack-${RUN}-${seq}-${label}`,
@@ -225,16 +241,17 @@ describeDb(
           ...(soldUpb ? { unitsPerBox: soldUpb } : {}),
         } as any,
       });
-      const soldQty = soldUpb ? 10 * soldUpb : 10; // a box-split line stores total pieces in qty
+      const soldQty = shape.qty ?? (soldUpb ? 10 * soldUpb : 10); // a box-split line stores total pieces in qty
+      const lineSubtotal = shape.subtotal ?? 100;
       const order = await prisma.order.create({
         data: {
           tenantId,
           customerId: customer.id,
-          status: "DELIVERED",
+          status: shape.status ?? "DELIVERED",
           orderNumber: `ORD-A2-${RUN}-${seq}`,
-          subtotal: 100,
+          subtotal: lineSubtotal,
           tax: 0,
-          total: 100,
+          total: lineSubtotal,
         } as any,
       });
       const line = await prisma.orderItem.create({
@@ -243,45 +260,51 @@ describeDb(
           orderId: order.id,
           productId: product.id,
           qty: soldQty,
-          boxes: 10,
-          pieces: 0,
-          deliveredQty: soldQty,
-          invoicedQty: soldQty,
+          boxes: shape.boxes ?? 10,
+          pieces: shape.pieces ?? 0,
+          ...(shape.snapshot ? { unitsPerBox: shape.snapshot } : {}),
+          deliveredQty: shape.invoiced === false ? 0 : soldQty,
+          invoicedQty: shape.invoiced === false ? 0 : soldQty,
           unitPrice: 10,
-          subtotal: 100,
+          subtotal: lineSubtotal,
         } as any,
       });
-      const invoice = await prisma.invoice.create({
-        data: {
-          tenantId,
-          customerId: customer.id,
-          orderId: order.id,
-          invoiceNumber: `INV-A2-${RUN}-${seq}`,
-          status: "SENT",
-          subtotal: 100,
-          taxAmount: 0,
-          total: 100,
-        },
-      });
-      await prisma.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId: invoice.id,
-          orderItemId: line.id,
-          productId: product.id,
-          description: `Acme cola ${label}`,
-          qty: soldQty,
-          unitPrice: 10,
-          subtotal: 100,
-        } as any,
-      });
+      const invoice =
+        shape.invoiced === false
+          ? null
+          : await prisma.invoice.create({
+              data: {
+                tenantId,
+                customerId: customer.id,
+                orderId: order.id,
+                invoiceNumber: `INV-A2-${RUN}-${seq}`,
+                status: "SENT",
+                subtotal: lineSubtotal,
+                taxAmount: 0,
+                total: lineSubtotal,
+              },
+            });
+      if (invoice) {
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId: invoice.id,
+            orderItemId: line.id,
+            productId: product.id,
+            description: `Acme cola ${label}`,
+            qty: soldQty,
+            unitPrice: 10,
+            subtotal: lineSubtotal,
+          } as any,
+        });
+      }
       // the pack is gained AFTER the sale, by hand (no Boxes answer, no stock conversion): the SA's "any route"
       await prisma.product.update({ where: { id: product.id }, data: { unitsPerBox: livePack } });
       return {
         tenantId,
         orderId: order.id,
         lineId: line.id,
-        invoiceId: invoice.id,
+        invoiceId: invoice?.id ?? null,
         productId: product.id,
         operatorId: operator.id,
         slug,
@@ -331,6 +354,7 @@ describeDb(
           unitsPerBox: (line as any).unitsPerBox ?? null,
           unitPrice: Number(line.unitPrice),
           subtotal: Number(line.subtotal),
+          overrideReason: (line as any).overrideReason ?? null,
         },
         order: {
           subtotal: Number(order.subtotal),
@@ -371,6 +395,8 @@ describeDb(
       expect(after.line.subtotal).toBe(120);
       expect(after.order.total).toBe(120);
       expect(after.invoices[0]!.total).toBe(120);
+      expect(after.line.unitsPerBox).toBeNull(); // no pack at sale: the split clears, the line prices as qty x price
+      expect(after.line.boxes).toBeNull();
     }, 120_000);
 
     it("A2-1b: an ECHO of the stored values (qty 10, unitPrice 10) changes nothing: the line stays 100.00", async () => {
@@ -394,7 +420,9 @@ describeDb(
       expect(after.line.subtotal).toBe(120);
       expect(after.line.qty).toBe(120);
       expect(after.invoices[0]!.total).toBe(120);
+      expect(after.line.unitsPerBox).toBe(12); // the pack it was sold in is stamped, so it can't drift again
     }, 120_000);
+
     it("A2-5: the 12-pack line with boxes 10 / pieces 0 echoed in the payload stays qty 120, 120.00, stock unmoved", async () => {
       const s = await seed("boxesecho", 12, 24);
       const before = await state(s);
@@ -420,7 +448,112 @@ describeDb(
       expect(after.invoices[0]!.total).toBe(90);
     }, 120_000);
 
-    it("A2-4 (guard at master): after the qty edit keeps its id and date and stamps snapshot 24, a STANDARD return of 3 restocks 3 (the 72 needs #4130's A-1 factor and a recorded Boxes answer)", async () => {
+    it("A2-6: the 12-pack line, qty 120 -> 100, is 8 boxes + 4 pieces of a 12-pack at the stored price (83.33), not of the live 24", async () => {
+      const s = await seed("qty12", 12, 24);
+      const before = await state(s);
+      await edit(s, { qty: 100 });
+      const after = await state(s);
+      measure("A2-6 before", before);
+      measure("A2-6 after", after);
+      expect(after.line).toMatchObject({
+        qty: 100,
+        boxes: 8,
+        pieces: 4,
+        unitsPerBox: 12,
+        unitPrice: 10,
+        subtotal: 83.33,
+      });
+      expect(after.invoices[0]!.total).toBe(83.33);
+    }, 120_000);
+
+    it("A2-7: A2-2 on an OPEN order (no invoice yet) reads the same pack: 12, 10 boxes, 120.00", async () => {
+      const s = await seed("open12", 12, 24, { status: "CONFIRMED", invoiced: false });
+      const before = await state(s);
+      await edit(s, { qty: 120, unitPrice: 12 });
+      const after = await state(s);
+      measure("A2-7 before", before);
+      measure("A2-7 after", after);
+      expect(after.line).toMatchObject({ qty: 120, boxes: 10, unitsPerBox: 12, subtotal: 120 });
+      expect(after.order.total).toBe(120);
+    }, 120_000);
+
+    it("A2-8 (guard): 0 boxes + 6 pieces with no snapshot, subtotal 2.50 fits only the live 24-pack - the live pack is used and an echo changes no money", async () => {
+      const s = await seed("zero-live", null, 24, {
+        boxes: 0,
+        pieces: 6,
+        qty: 6,
+        subtotal: 2.5,
+      });
+      const before = await state(s);
+      await edit(s, { qty: 6, unitPrice: 10 });
+      const after = await state(s);
+      measure("A2-8 before", before);
+      measure("A2-8 after", after);
+      expect(after.line.subtotal).toBe(2.5);
+      expect(after.line.qty).toBe(6);
+      expect(after.invoices[0]!.total).toBe(2.5);
+    }, 120_000);
+
+    it("A2-9: 0 boxes + 6 pieces with no snapshot, subtotal 7.00 fits neither pack - the edit is refused with the code and nothing is written", async () => {
+      const s = await seed("zero-neither", null, 24, {
+        boxes: 0,
+        pieces: 6,
+        qty: 6,
+        subtotal: 7,
+      });
+      const before = await state(s);
+      let thrown: any = null;
+      try {
+        await edit(s, { qty: 6, unitPrice: 10 });
+      } catch (e) {
+        thrown = e;
+      }
+      const after = await state(s);
+      measure("A2-9 before", before);
+      measure("A2-9 after", after);
+      measure("A2-9 thrown", thrown ? (thrown.getResponse?.() ?? String(thrown)) : null);
+      expect(thrown?.getResponse?.()).toMatchObject({ code: "STORED_LINE_PACK_UNREADABLE" });
+      expect(after).toEqual(before);
+    }, 120_000);
+
+    it("A2-10 (guard): a reason-only edit on A2-9's line still writes the reason and nothing else", async () => {
+      const s = await seed("zero-reason", null, 24, {
+        boxes: 0,
+        pieces: 6,
+        qty: 6,
+        subtotal: 7,
+      });
+      const before = await state(s);
+      await edit(s, { overrideReason: "customer asked" });
+      const after = await state(s);
+      measure("A2-10 after", after.line);
+      expect(after.line).toEqual({ ...before.line, overrideReason: "customer asked" });
+      expect(after.invoices).toEqual(before.invoices);
+    }, 120_000);
+
+    it("A2-11a (guard): a line WITH its snapshot (12) reads it, not the live 24 - unchanged from master", async () => {
+      const s = await seed("snap12", 12, 24, { snapshot: 12 });
+      const before = await state(s);
+      await edit(s, { qty: 120, unitPrice: 12 });
+      const after = await state(s);
+      measure("A2-11a before", before);
+      measure("A2-11a after", after);
+      expect(after.line).toMatchObject({ qty: 120, boxes: 10, unitsPerBox: 12, subtotal: 120 });
+      expect(after.invoices[0]!.total).toBe(120);
+    }, 120_000);
+
+    it("A2-11b (guard): a line whose own pack equals the live pack (24) re-prices exactly as before", async () => {
+      const s = await seed("same24", 24, 24);
+      const before = await state(s);
+      await edit(s, { qty: 240, unitPrice: 12 });
+      const after = await state(s);
+      measure("A2-11b before", before);
+      measure("A2-11b after", after);
+      expect(after.line).toMatchObject({ qty: 240, boxes: 10, unitsPerBox: 24, subtotal: 120 });
+      expect(after.invoices[0]!.total).toBe(120);
+    }, 120_000);
+
+    it("A2-12 (guard): after the qty edit 10 -> 9, a STANDARD return of 3 restocks 3 (measured on master: 3) - anything but 3 or a park goes back to the SA", async () => {
       const s = await seed("ret", null, 24);
       await edit(s, { qty: 9 });
       const mid = await state(s);
@@ -441,10 +574,10 @@ describeDb(
       });
       await tenantCtx.run(s.tenantId, () => returns.receive(ret.id, s.operatorId));
       const after = await state(s);
-      measure("A2-4 line after the qty edit", mid.line);
-      measure("A2-4 stock before return", mid.stock);
-      measure("A2-4 stock after return", after.stock);
-      measure("A2-4 ledger after return", after.ledger);
+      measure("A2-12 line after the qty edit", mid.line);
+      measure("A2-12 stock before return", mid.stock);
+      measure("A2-12 stock after return", after.stock);
+      measure("A2-12 ledger after return", after.ledger);
       expect(after.stock - mid.stock).toBe(3);
     }, 120_000);
   },
