@@ -1990,10 +1990,10 @@ test.describe("T23 — the phone's rising headings", () => {
 });
 
 // ─── T25 — the founder's note: one heading that wraps cleanly, and Read the rest never moves the page ───
-// Owner: the note opens "We built this with a wholesaler, for wholesalers." on the home page (#founder) and the company page (#story).
+// Owner: the note opens "We built this with the people who use it every day." on the home page (#founder) and the company page (#story).
 // On a phone the home page shows a short version with a Read the rest button; the tap opens the full note in place.
 test.describe("T25 — the founder's note", () => {
-  const HEADING = "We built this with a wholesaler, for wholesalers.";
+  const HEADING = "We built this with the people who use it every day.";
   const VIEWS = [
     { name: "1440", w: 1440, h: 900, touch: false },
     { name: "768", w: 768, h: 1024, touch: true },
@@ -2077,7 +2077,7 @@ test.describe("T25 — the founder's note", () => {
         }));
         expect(Math.abs(after.y - y0), "the tap does not move the page").toBeLessThanOrEqual(1);
         expect(after.expanded).toBe("true");
-        expect(after.paras, "the full note shows all eight paragraphs").toBe(8);
+        expect(after.paras, "the full note shows all nine paragraphs").toBe(9);
       } else {
         // desktop shows the whole note with no button
         const paras = await page.evaluate(
@@ -2086,7 +2086,7 @@ test.describe("T25 — the founder's note", () => {
               (p) => (p as HTMLElement).offsetHeight > 0,
             ).length,
         );
-        expect(paras).toBe(8);
+        expect(paras).toBe(9);
       }
       expect(errors).toEqual([]);
       await context.close();
@@ -2118,7 +2118,7 @@ test.describe("T25 — the founder's note", () => {
       expect(c.text).toBe(HEADING);
       expect(c.lines).toBeLessThanOrEqual(3);
       expect(c.docW).toBeLessThanOrEqual(c.winW);
-      expect(c.paras).toBe(8);
+      expect(c.paras).toBe(9);
       await context.close();
     });
   }

@@ -21,20 +21,20 @@ const paragraphs = (html: string, from: string, to: string) => {
 };
 
 describe("Company page", () => {
-  it("tells the founder's story in the same eight paragraphs as the home page", () => {
+  it("tells the founder's story in the same nine paragraphs as the home page", () => {
     const onHome = paragraphs(home, 'id="fd-note"', "</div>");
     const onCompany = paragraphs(company, 'class="co-body"', 'class="co-sig"');
-    expect(onHome).toHaveLength(8);
+    expect(onHome).toHaveLength(9);
     expect(onCompany).toEqual(onHome);
   });
 
   it("has the same heading on both pages, a plain sentence and not a quote", () => {
-    const h = "We built this with a wholesaler, for wholesalers.";
+    const h = "We built this with the people who use it every day.";
     expect(home).toContain(`<h2 id="fd-h" class="fd-q">${h}</h2>`);
     expect(company).toContain(`<h2 id="story-h" class="co-q">${h}</h2>`);
     expect(home).not.toContain("fd-qm");
     expect(home).not.toContain("None of them fit");
-    expect(home).not.toContain("It started when");
+    expect(home).not.toContain("for wholesalers.</h2>");
     expect(company).not.toContain("None of them fit");
   });
 
@@ -46,19 +46,17 @@ describe("Company page", () => {
     expect(fs.existsSync(path.join(SITE, "does-and-doesnt.html"))).toBe(true);
     expect(note).toContain("14 days, with no card");
     expect(note).toContain("We reply within one business day.");
-    // the review's wording: "honest", and the plan names (Starter, Growth, Scale) the pricing page shows
     expect(note).toContain("I want to be honest with you.");
-    expect(note).not.toContain("I’ll be straight with you.");
-    // the owner's brief: no degrees, what RouteFlow does, and the owner's own offer to customize
-    for (const gone of ["PhD", "University of Texas", "graduated"])
-      expect(note).not.toContain(gone);
+    expect(note).toContain(
+      'We show the <a href="/pricing">prices</a> for Starter, Growth, and Scale before you start.',
+    );
+    for (const plan of ["Starter", "Growth", "Scale"])
+      expect(read("pricing.html")).toContain(`<h2>${plan}</h2>`);
+    // what RouteFlow does: each is on the product page or in the pricing package
     expect(note).toContain("RouteFlow runs your selling, from order to payment.");
     expect(note).toContain("Stores can order for themselves, each at its own price.");
     expect(note).toContain("It also covers buying, simple stock, and delivery routes.");
     expect(note).toContain("When a line has 2 boxes and 3 pieces, the bill adds up right.");
-    expect(note).toContain(
-      "We can customize it for your business, and we’ll tell you what that takes and what it costs.",
-    );
     // that line is the boxed-line proration the pricing package pins (2 boxes + 3 pieces of an 11-pack at 220 = 500)
     expect(
       fs.readFileSync(
@@ -66,20 +64,26 @@ describe("Company page", () => {
         "utf8",
       ),
     ).toContain("prorates loose pieces below a full box");
-    expect(note).toContain(
-      'so we show the <a href="/pricing">prices</a> for Starter, Growth, and Scale before you start.',
-    );
-    for (const plan of ["Starter", "Growth", "Scale"])
-      expect(read("pricing.html")).toContain(`<h2>${plan}</h2>`);
+    // the owner's own words and offer (no code backs these; the PR body names them as the owner's): no degrees, customizing at no cost,
+    // working every feature with the people who use it, the market review, living the day with them
+    for (const gone of ["PhD", "University of Texas", "graduated", "straight with you"])
+      expect(note).not.toContain(gone);
+    for (const owner of [
+      "We’ll customize it for your business at no cost, and we’ll tell you up front what we can do and when.",
+      "We worked on every feature with the people who use it every day, until it was the quickest way we could find to do the job.",
+      "We also looked at most of the products on the market: what they do, why they’re hard to use, and what they leave out. RouteFlow is built to fill that gap.",
+      "Many software teams have to imagine a wholesaler’s day. We live it with the people who use RouteFlow, so we know what you need.",
+    ])
+      expect(note).toContain(owner);
     // the short version on a phone opens on the same first sentence and the same ask for help
     const short = paragraphs(home, 'class="fd-short"', "</div>");
     expect(short).toHaveLength(3);
     expect(short[0]).toBe(paragraphs(home, 'id="fd-note"', "</div>")[0]);
     expect(short[1]).toBe(
-      "My co-founder’s father is a wholesaler. He tried several apps and services, and none of them fit the way he works. So he asked us for help, and we built RouteFlow with him.",
+      "We built RouteFlow with wholesalers who use it every day, starting with my co-founder’s father. Many software teams have to imagine a wholesaler’s day. We live it with them.",
     );
     expect(short[2]).toBe(
-      "It takes you from order to payment. If you need something it doesn’t do, tell us. We can customize it for your business.",
+      "It takes you from order to payment. If we don’t have something you need, tell us. We’ll customize it for your business at no cost.",
     );
   });
 
