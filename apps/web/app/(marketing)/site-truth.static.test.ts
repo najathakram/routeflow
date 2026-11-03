@@ -60,4 +60,31 @@ describe("public site sentences the code backs", () => {
       expect(page(name)).not.toMatch(/Give back as/);
     }
   });
+
+  // apps/mobile/app/_layout.tsx: a pure DRIVER on a tenant without the staff-only developer_mode add-on lands on the
+  // "Desktop Only" screen, so a new account's driver has no phone app. The web StopSheet (routes/my-runs) starts or skips a
+  // stop; its "Delivered / Refused / Collect payment" button is disabled. Photo and signature exist only in the native app.
+  it("drivers: the pages say what a new account's driver can do on the web, not the phone app", () => {
+    for (const name of [
+      "home",
+      "pricing",
+      "product",
+      "getting-started",
+      "security",
+      "does-and-doesnt",
+    ]) {
+      const html = page(name);
+      expect(html).not.toMatch(/phone app/i);
+      expect(html).not.toMatch(/driver app/i);
+      expect(html).not.toMatch(/with no signal/i);
+      expect(html).not.toMatch(/the driver (can take|takes) a (photo|signature)/i);
+      expect(html).not.toMatch(/Complete stop/);
+    }
+    expect(page("product")).toContain("drivers can’t finish a stop");
+    expect(page("product")).toContain("Staff mark the order delivered.");
+    expect(page("home")).toContain(
+      "Drivers see the stops on the web and can start or skip a stop.",
+    );
+    expect(page("getting-started")).toContain("Drivers sign in on the web and see their route.");
+  });
 });
