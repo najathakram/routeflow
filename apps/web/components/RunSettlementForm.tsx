@@ -71,6 +71,10 @@ export function RunSettlementForm({
   const [saving, setSaving] = React.useState(false);
   // Set once this form's settlement is on record, so a retry after a failed finish sends only the finish.
   const settledRef = React.useRef(false);
+  // The submit latch is a ref set before the first await, never the `saving` state: two taps in one
+  // tick both read a stale `saving` and would send two settlements. Released in `finally` so a failed
+  // attempt can retry (lesson on money-writing submits).
+  const inFlight = React.useRef(false);
 
   const loaded = run.collectedPayments != null;
   const expected = expectedPhysicalCash(run.collectedPayments) ?? 0;
@@ -85,7 +89,7 @@ export function RunSettlementForm({
   const needsSettle = mode !== "driver" || (!settledRef.current && run.settlementNote == null);
 
   async function submit() {
-    if (!loaded || saving) return;
+    if (!loaded || inFlight.current) return;
     if (needsSettle) {
       if (countedNum == null) {
         setError("Enter the cash and checks you counted.");
@@ -97,6 +101,7 @@ export function RunSettlementForm({
       }
     }
     setError(null);
+    inFlight.current = true;
     setSaving(true);
     try {
       if (needsSettle) {
@@ -136,6 +141,7 @@ export function RunSettlementForm({
       // A stop reopened meanwhile, or another driver's run: refresh and let the screen show the truth.
       void queryClient.invalidateQueries({ queryKey: ["route-runs"] });
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }

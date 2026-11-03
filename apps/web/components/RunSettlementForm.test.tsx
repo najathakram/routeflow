@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RunSettlementForm } from "./RunSettlementForm";
@@ -144,6 +144,22 @@ describe("RunSettlementForm", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(settle).toHaveBeenCalledTimes(1);
     expect(setStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("two clicks in one tick send one settlement (the latch is a ref, not state)", async () => {
+    let release!: () => void;
+    settle.mockReturnValueOnce(new Promise<void>((r) => (release = r)));
+    renderForm({ mode: "office" });
+    await userEvent.type(counted(), "70");
+    const button = screen.getByRole("button", { name: /^settle run$/i });
+    // Both clicks land before React re-renders, so only a ref latch can see the first one.
+    act(() => {
+      button.click();
+      button.click();
+    });
+    expect(settle).toHaveBeenCalledTimes(1);
+    release();
+    await waitFor(() => expect(settle).toHaveBeenCalledTimes(1));
   });
 
   it("a run already settled before this screen opened finishes without settling again", async () => {
