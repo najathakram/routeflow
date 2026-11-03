@@ -48,7 +48,6 @@ import {
   isSpecialPrice,
   normalizeBoxesPieces,
   regulatedUnitBasis,
-  resolveStoredLinePack,
   roundMoney,
   withinStaffOverrideTolerance,
   type CategoryTaxType,
@@ -76,7 +75,7 @@ import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-crea
 import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
 import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
-import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
+import { loadLiveUnitsPerBoxByProduct, storedLinePackForEdit } from "./live-pack-map";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -3746,28 +3745,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
                 let soldWithNoPack = false;
                 if (li.productId && wasBoxSplit && !(Number(unitsPerBox ?? 0) > 1)) {
-                  const livePack = (
-                    await loadLiveUnitsPerBoxByProduct(tx as any, [li.productId])
-                  ).get(li.productId);
-                  const stored = resolveStoredLinePack({
-                    qty: Number(li.qty),
-                    boxes: li.boxes,
-                    pieces: li.pieces,
-                    unitsPerBox,
-                    unitPrice: Number(li.unitPrice),
-                    subtotal: Number(li.subtotal),
-                    freeUnits: Number((li as any).promoFreeUnits ?? 0),
-                    livePack,
-                  });
-                  if (!stored.ok) {
-                    throw new ConflictException({
-                      code: API_ERROR_CODES.STORED_LINE_PACK_UNREADABLE,
-                      message:
-                        "This line's pack size can't be read from the sale, so its total was not changed. Use a return or a credit note to correct the amount.",
-                    });
-                  }
-                  unitsPerBox = stored.pack;
-                  soldWithNoPack = stored.pack === null;
+                  const stored = await storedLinePackForEdit(tx as any, li);
+                  unitsPerBox = stored.pack || null;
+                  soldWithNoPack = stored.soldWithNoPack;
                 } else if (unitsPerBox == null && li.productId && editHasSplit) {
                   const livePack = (
                     await loadLiveUnitsPerBoxByProduct(tx as any, [li.productId])
@@ -4691,17 +4671,19 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!(newQty > 0)) {
               throw new BadRequestException("newQty must be > 0 — use REMOVE_ITEM instead");
             }
+            // SA-1097: a stored split line is resized at the pack it was sold in (its snapshot, split or stored
+            // money), never today's product pack; one it can't read is refused, nothing written.
             let upb = Number(src.unitsPerBox ?? 0);
-            if (upb === 0 && li.productId && src.boxes != null) {
-              const p = await tx.product.findFirst({
-                where: { id: li.productId },
-                select: { unitsPerBox: true },
-              });
-              upb = Number(p?.unitsPerBox ?? 0);
+            let soldWithNoPack = false;
+            if (!(upb > 1) && li.productId && src.boxes != null) {
+              const stored = await storedLinePackForEdit(tx as any, src);
+              upb = stored.pack;
+              soldWithNoPack = stored.soldWithNoPack;
             }
             const wasBoxSplit = src.boxes != null;
-            const split =
-              wasBoxSplit && upb > 1
+            const split = soldWithNoPack
+              ? { qty: Math.trunc(newQty), boxes: Math.trunc(newQty), pieces: 0 } // sold with no pack: keeps its stored shape
+              : wasBoxSplit && upb > 1
                 ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: upb })
                 : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
             const unitPrice = Number(src.unitPrice);
