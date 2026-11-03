@@ -268,9 +268,9 @@
 
   function live(g, ST, el, inst, phone, opts, mctx, site) {
     /* The phone rules for names and icons (11 px or icon only, a small icon floor) hold for a phone held either way; the layout is the wide one when it is held sideways. */
-    const small = phone || !!(mctx && mctx.conditions && mctx.conditions.land);
+    const low = !!(mctx && mctx.conditions && mctx.conditions.low), small = phone || low || !!(mctx && mctx.conditions && mctx.conditions.land);
     /* Short screens, where the names and the burst need the extra care below: a phone either way, or a wide window under 500 px tall. Every other window draws as it did. */
-    const brief = small || !!(mctx && mctx.conditions && mctx.conditions.low);
+    const brief = small;
     const { headerTop, pageTop, settled, slices } = site;
     const ends = () => el.getBoundingClientRect().bottom + root.scrollY, held0 = ends();
     headerTop();
@@ -475,7 +475,8 @@
             } else {
               const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 12) * dpr) / 31);
               proj(ux * r, uy * r, zT);
-              let ckf = ck, out = false;
+              let ckf = ck, out = false, drop = false;
+              const ls = phone && side ? w.lines : [w.d.t], floor11 = (11 * dpr) / 31;
               if (!side) {
                 /* the two back names sit side by side and share one size (the longest fits in 30% of the stage); the front one fits its piece */
                 let x0 = 1e9, x1 = -1e9;
@@ -483,16 +484,18 @@
                 const lim = uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82, tw = uy < 0 ? Math.max(...list.map((v) => wid(v.d.t))) : wid(w.d.t);
                 ckf = Math.max(((small ? 11 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
                 /* On a small wheel the two back names would sit on top of each other: each then reads outward from its own piece, as far as the stage lets it. */
-                if (brief && uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { out = true; ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw))); }
+                if (brief && uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { const fitO = ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw); out = true; drop = small && fitO < floor11; ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, fitO)); }
               } else if (brief) {
                 /* A name beside the wheel never runs off the stage: it shrinks, a little, to stay on it. */
-                ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - gap - 8 * dpr) / Math.max(1, wid(w.d.t))));
+                const room = (ux > 0 ? cv.width - px : px) - gap - 8 * dpr;
+                /* A name that will not fit between its piece and the edge of the stage at 11 px is left out and the piece shows its icon alone, as the plates do. */
+                drop = small && room / Math.max(1, ...ls.map(wid)) < floor11;
+                ckf = Math.max(((small ? 11 : 9) * dpr) / 31, Math.min(ckf, room / Math.max(1, wid(w.d.t))));
               }
               ctx.textAlign = side || out ? (ux > 0 ? "left" : "right") : "center";
               ctx.fillStyle = css(INK);
               ctx.setTransform(ckf, 0, 0, ckf * nq, px + (side ? (ux > 0 ? gap : -gap) : 0), py + (side ? 5 * dpr : -gap));
-              const ls = phone && side ? w.lines : [w.d.t];
-              for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, (j - (ls.length - 1) / 2) * 34);
+              if (!drop) for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, (j - (ls.length - 1) / 2) * 34);
               ctx.textAlign = "center"; ctx.fillStyle = css(mix(INK, w.ink, p.c));
             }
           }

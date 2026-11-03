@@ -1868,25 +1868,47 @@ test.describe("T22 — the wheel runs on a short screen", () => {
     });
   }
 
-  // A phone held sideways uses the phone's rule: no name under 11 px (the piece shows its icon only).
+  // A phone held sideways, big or small, uses the phone's rule: no name under 11 px (the piece shows its icon only),
+  // and no name runs past the edge of the stage: a name that will not fit at 11 px is left out.
   for (const s of [
     { w: 667, h: 375 },
     { w: 844, h: 390 },
+    { w: 915, h: 412 },
+    { w: 932, h: 430 },
+    { w: 640, h: 360 },
+    { w: 568, h: 320 },
   ]) {
-    test(`T22 — ${s.w}x${s.h}: no wheel name is drawn under 11 px`, async ({ browser }) => {
-      test.setTimeout(120_000);
+    test(`T22 — ${s.w}x${s.h}: no wheel name under 11 px, none past the stage edge`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
       const context = await browser.newContext({
         viewport: { width: s.w, height: s.h },
         hasTouch: true,
       });
       const page = await context.newPage();
       await page.addInitScript(() => {
-        const w = window as unknown as { __px: number[] };
-        w.__px = [];
+        type Draw = { px: number; l: number; r: number; cw: number; ts: number };
+        const w = window as unknown as { __draws: Draw[] };
+        w.__draws = [];
         const f = CanvasRenderingContext2D.prototype.fillText;
         CanvasRenderingContext2D.prototype.fillText = function (...a: Parameters<typeof f>) {
           const t = this.getTransform();
-          w.__px.push((t.a * 31) / (window.devicePixelRatio || 1));
+          const wd = this.measureText(String(a[0])).width * t.a;
+          const al = this.textAlign;
+          const l =
+            al === "left" || al === "start"
+              ? t.e
+              : al === "right" || al === "end"
+                ? t.e - wd
+                : t.e - wd / 2;
+          w.__draws.push({
+            px: (t.a * 31) / (window.devicePixelRatio || 1),
+            l,
+            r: l + wd,
+            cw: this.canvas.width,
+            ts: performance.now(),
+          });
           return f.apply(this, a);
         };
       });
@@ -1894,7 +1916,11 @@ test.describe("T22 — the wheel runs on a short screen", () => {
       await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
       await page.waitForTimeout(2500);
       const { top, height } = await state(page);
+      type D = { px: number; l: number; r: number; cw: number; ts: number };
+      const settledFrames: D[] = [];
+      let drawn = 0;
       for (const f of [0.1, 0.2, 0.3, 0.4]) {
+        await page.evaluate(() => ((window as unknown as { __draws: D[] }).__draws = []));
         await page.evaluate(
           ([t, h, f2, vh]) => {
             document.documentElement.style.scrollBehavior = "auto";
@@ -1903,10 +1929,20 @@ test.describe("T22 — the wheel runs on a short screen", () => {
           [top, height, f, s.h],
         );
         await page.waitForTimeout(1800);
+        const all = await page.evaluate(() => (window as unknown as { __draws: D[] }).__draws);
+        // every draw counts for the size; only the last frame (the settled one) counts for the edge
+        const last = all.length ? all[all.length - 1].ts : 0;
+        settledFrames.push(...all.filter((d) => d.ts > last - 40));
+        // a hold where nothing moves draws nothing new
+        drawn += all.length;
+        if (all.length)
+          expect(Math.min(...all.map((d) => d.px)), "smallest name").toBeGreaterThanOrEqual(10.95);
       }
-      const px = await page.evaluate(() => (window as unknown as { __px: number[] }).__px);
-      expect(px.length, "names were drawn").toBeGreaterThan(0);
-      expect(Math.min(...px), "smallest name").toBeGreaterThanOrEqual(10.95);
+      expect(drawn, "names were drawn").toBeGreaterThan(0);
+      for (const d of settledFrames) {
+        expect(d.l, "name stays inside the stage (left)").toBeGreaterThanOrEqual(-1);
+        expect(d.r, "name stays inside the stage (right)").toBeLessThanOrEqual(d.cw + 1);
+      }
       await context.close();
     });
   }

@@ -151,18 +151,24 @@ describe("the first screen on a phone is not grey", () => {
     expect(wheel).toContain("((small ? 11 : 10.5) * dpr) / 31");
     expect(wheel).toContain("shy = small && fitN < floor");
     // a phone held sideways is small too; its icon floor is the phone's
+    // a sideways phone of any size: narrow and short (land), or any window under 500 px tall (low, which a 932 px phone is)
     expect(wheel).toContain(
-      "const small = phone || !!(mctx && mctx.conditions && mctx.conditions.land);",
+      "small = phone || low || !!(mctx && mctx.conditions && mctx.conditions.land);",
     );
     expect(wheel).toContain("(small ? 0.62 : 0.8) * dpr");
     expect(wheel).toContain("if (!shy)");
     expect(wheel).toContain("vis * (outer ? 1 - p.n * shown * (1 - flat) : 1)");
   });
 
+  it("a side name that will not fit at 11 px is left out, the icon stays", () => {
+    expect(wheel).toContain("drop = small && room / Math.max(1, ...ls.map(wid)) < floor11;");
+    expect(wheel).toContain("if (!drop) for (let j = 0; j < ls.length; j++) ctx.fillText(");
+  });
+
   it("on a short screen the names wait until the pieces settle", () => {
     expect(wheel).toContain("brief && tile.clientHeight < 520 ? 2.7 : 1.7");
     // only short screens: a window 500 px or taller draws exactly as before
-    expect(wheel).toContain("const brief = small ||");
+    expect(wheel).toContain("const brief = small;");
     expect(wheel).toContain("at + late");
   });
 
