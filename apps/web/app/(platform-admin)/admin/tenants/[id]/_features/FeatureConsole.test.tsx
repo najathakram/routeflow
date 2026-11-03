@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import * as React from "react";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import { ADDON_ROW_KEY_BY_REGISTRY_KEY, FeatureConsole } from "./FeatureConsole";
@@ -1133,6 +1135,21 @@ describe("BO-12: one state readout per console row", () => {
       expect(readout).toHaveClass("text-[10px]");
       for (const cls of colours.split(" ")) expect(readout).toHaveClass(cls);
     }
+  });
+
+  it("the Details panel names the same end date as the chip (one date text, in UTC)", async () => {
+    const { rowOf, open, panelOf } = await renderAll();
+    const chip = within(rowOf("developer_mode")).getByTestId("readout").textContent ?? "";
+    const date = /^Free until (.+)$/.exec(chip)?.[1];
+    expect(date).toBeTruthy();
+    open("developer_mode");
+    expect(panelOf("developer_mode")).toHaveTextContent(`Expires ${date}.`);
+  });
+
+  it("the Details sentences take their end date from the chip's own helper, never the admin's locale", () => {
+    const src = readFileSync(join(__dirname, "FeatureConsole.tsx"), "utf8");
+    expect(src).toContain("endDateText(");
+    expect(src).not.toContain("toLocaleDateString(");
   });
 
   it("the Add-on chip links to the tenant's billing tab and copies no price; no other chip is a link", async () => {

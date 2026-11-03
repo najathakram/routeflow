@@ -12,7 +12,7 @@ import {
   previewTenantFeatures,
   writeTenantFeatureConfig,
 } from "@/lib/platform-admin/features";
-import { BADGE_COLORS, deriveReadout, type StateReadout } from "./badge";
+import { BADGE_COLORS, deriveReadout, endDateText, type StateReadout } from "./badge";
 import {
   blockedReason,
   explainModeSentence,
@@ -707,17 +707,23 @@ function ModeSelector({
 
 // ─── Explain panel ─────────────────────────────────────────────────────────────
 
+/** " Expires <date>." in the chip's own date text (UTC), so the panel and the chip never show different days. */
+function expiresSentence(expiresAt: string | null | undefined): string {
+  const until = endDateText(expiresAt);
+  return until ? ` Expires ${until}.` : "";
+}
+
 function explainSentence(feature: EffectiveFeature): string {
   const { source, detail, billing } = feature;
   switch (source) {
     case "OVERRIDE_DENY":
-      return `This is off because an admin override removed it${detail.reason ? ` — "${detail.reason}"` : ""}.${
-        detail.expiresAt ? ` Expires ${new Date(detail.expiresAt).toLocaleDateString()}.` : ""
-      }`;
+      return `This is off because an admin override removed it${detail.reason ? ` — "${detail.reason}"` : ""}.${expiresSentence(
+        detail.expiresAt,
+      )}`;
     case "OVERRIDE_GRANT":
       return `This is on because an admin override added it (${detail.kind ?? "override"})${
         detail.reason ? ` — "${detail.reason}"` : ""
-      }.${detail.expiresAt ? ` Expires ${new Date(detail.expiresAt).toLocaleDateString()}.` : ""}`;
+      }.${expiresSentence(detail.expiresAt)}`;
     case "ADDON_SKU":
       return `This is on because the tenant purchased it (${detail.sku ?? "add-on"})${
         billing.charged ? " — billed." : "."

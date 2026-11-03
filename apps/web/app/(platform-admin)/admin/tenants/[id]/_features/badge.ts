@@ -62,7 +62,7 @@ export interface StateReadout {
 }
 
 /** "Nov 30, 2026" in UTC, so the date never shifts with the admin's time zone; null if unparseable. */
-function endDateText(iso: string | null | undefined): string | null {
+export function endDateText(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return null;
