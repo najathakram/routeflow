@@ -86,6 +86,40 @@ describe("text stays readable on every tint (AA, 4.5:1)", () => {
   });
 });
 
+describe("the wheel wears its colours at rest", () => {
+  const js = read("graphics/rf-wheel-up.js");
+  const colours = [...js.matchAll(/{ k: "[a-z]+", t: "[^"]+"[^}]*?c: "(#[0-9a-f]{6})"/g)].map(
+    (m) => m[1],
+  );
+  const tint = (c: string, k: number) =>
+    "#" +
+    [1, 3, 5]
+      .map((i) =>
+        Math.round(255 - (255 - parseInt(c.slice(i, i + 2), 16)) * k)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("");
+
+  it("reads the fifteen piece colours and a rest tint", () => {
+    expect(colours).toHaveLength(15);
+    expect(js).toMatch(/const REST_TINT = 0.4;/);
+    expect(js).toContain("Math.max(p.c, outer ? REST_TINT : REST_TINT + 0.1)");
+  });
+
+  it("the navy label and icon stay AA on every piece at rest (outer 0.4, core 0.5)", () => {
+    colours.forEach((c, i) => {
+      expect(ratio("#0f1b2d", tint(c, i < 10 ? 0.4 : 0.5))).toBeGreaterThanOrEqual(4.5);
+    });
+  });
+
+  it("the still dial (reduced motion, no script) paints the same tint", () => {
+    expect(js).toContain(
+      'style="fill:${pastel(d.c, inner ? 0.5 : 0.4)};stroke:${pastel(d.c, inner ? 0.5 : 0.4)}"',
+    );
+  });
+});
+
 describe("life: motion is for people who have not asked for less", () => {
   it.each(["css/home-color.css", "css/color-deep.css"])(
     "%s: every transition and animation is inside the no-preference query",
@@ -109,6 +143,12 @@ describe("life: motion is for people who have not asked for less", () => {
 
 describe("the colour is decoration, not a new claim", () => {
   const home = read("home.html");
+
+  it("the use-case kicker is the same pill as the others: a tint, a dot, no bar", () => {
+    const css = read("css/home-color.css");
+    expect(css).not.toContain(".kick::after");
+    expect(css).toMatch(/#use-cases .kick{--k-bg:#[0-9a-f]{6};--k-ink:#[0-9a-f]{6};--k-dot:/);
+  });
 
   it("all fourteen use-case cards carry their piece colour", () => {
     const cards =
