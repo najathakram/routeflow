@@ -8,9 +8,10 @@ const line = (over: Record<string, unknown> = {}) => ({
   quantityDelivered: 10,
   ...over,
 });
+const second = line({ orderItemId: "b", quantityDelivered: 4 });
 const dto = (over: Record<string, unknown> = {}) =>
   ({
-    deliveries: [line(), line({ orderItemId: "b", quantityDelivered: 4 })],
+    deliveries: [line(), second],
     payment: { amount: 120, method: "CASH" },
     ...over,
   }) as never;
@@ -19,10 +20,11 @@ describe("stopCompletionRequestHash (SA-953 S1)", () => {
   const base = stopCompletionRequestHash(dto());
 
   it.each([
-    ["a changed quantity", { deliveries: [line({ quantityDelivered: 7 })] }],
-    ["a changed type", { deliveries: [line({ type: "REFUSED" }), line({ orderItemId: "b" })] }],
-    ["a quantity moved to another line", { deliveries: [line(), line({ orderItemId: "c" })] }],
-    ["a changed product", { deliveries: [line({ productId: "p2" }), line({ orderItemId: "b" })] }],
+    ["a changed quantity", { deliveries: [line({ quantityDelivered: 7 }), second] }],
+    ["a changed type", { deliveries: [line({ type: "PARTIAL" }), second] }],
+    ["a changed line", { deliveries: [line({ orderItemId: "c" }), second] }],
+    ["a changed product", { deliveries: [line({ productId: "p2" }), second] }],
+    ["a dropped line", { deliveries: [line()] }],
     ["a changed amount", { payment: { amount: 120.01, method: "CASH" } }],
     ["a changed method", { payment: { amount: 120, method: "CHECK" } }],
     ["a changed invoice", { payment: { amount: 120, method: "CASH", invoiceId: "i" } }],
@@ -32,12 +34,8 @@ describe("stopCompletionRequestHash (SA-953 S1)", () => {
   });
 
   it.each([
-    [
-      "the lines in another order",
-      { deliveries: [line({ orderItemId: "b", quantityDelivered: 4 }), line()] },
-    ],
+    ["the lines in another order", { deliveries: [second, line()] }],
     ["the method in another case", { payment: { amount: 120, method: "cash" } }],
-    ["the same cents written differently", { payment: { amount: 120.0, method: "CASH" } }],
     ["a driver note", { driverNote: "left at the side door" }],
     ["a signature", { signatureUrl: "data:image/png;base64,AAAA" }],
     ["photos", { podPhotoUrls: ["data:image/png;base64,AAAA"] }],
@@ -49,9 +47,7 @@ describe("stopCompletionRequestHash (SA-953 S1)", () => {
   });
 
   it("a line's note is the same request", () => {
-    const noted = dto({
-      deliveries: [line({ note: "dented" }), line({ orderItemId: "b", quantityDelivered: 4 })],
-    });
+    const noted = dto({ deliveries: [line({ note: "dented" }), second] });
     expect(stopCompletionRequestHash(noted)).toBe(base);
   });
 

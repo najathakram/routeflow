@@ -1,4 +1,5 @@
 import { ConflictException } from "@nestjs/common";
+import type { RouteRunStop } from "@prisma/client";
 import { createHash } from "crypto";
 import { toCents } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -28,6 +29,14 @@ export interface StopCompletionKey {
   scope: string;
   requestHash: string;
 }
+
+/** B870: each path's response, so a replay and a fresh call share one shape. */
+export type CompletedStop = RouteRunStop;
+export type CompletedStopWithPayment = CompletedStop & {
+  paymentIds: string[];
+  excess?: number;
+  advancePaymentId?: string | null;
+};
 
 /** What the key row stores: the request's hash and the response it produced. */
 interface StoredStopCompletion {
@@ -65,10 +74,10 @@ export function stopKeyFor(
 }
 
 /** The committed attempt's response, null when this key has none, or SA-824's 409 for a changed request. */
-export async function replayStopKey(
+export async function replayStopKey<R>(
   prisma: { tenantTransaction: <T>(fn: (tx: any) => Promise<T>) => Promise<T> },
   stopKey: StopCompletionKey | null,
-): Promise<unknown> {
+): Promise<R | null> {
   if (!stopKey) return null;
   const { key, tenantId, scope, requestHash } = stopKey;
   const stored = await prisma.tenantTransaction((tx) =>
@@ -83,7 +92,7 @@ export async function replayStopKey(
         "This stop was already completed with a different payment or quantity. This request wrote nothing.",
     });
   }
-  return stored.response;
+  return stored.response as R;
 }
 
 /** Last in the completion's transaction: the stop as committed, plus what the path adds to its response. */

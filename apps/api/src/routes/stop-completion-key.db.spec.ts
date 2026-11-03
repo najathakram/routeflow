@@ -239,7 +239,12 @@ describeDb("SA-1098 PR-1 stop completion key — real Postgres", () => {
     const p2 = await prisma.product.create({
       data: { name: `SA-1098 P2 ${label}`, unit: "each", pricePerUnit: 5, tenantId },
     });
-    const stops = [];
+    const stops: {
+      stopId: string;
+      orderId: string;
+      line1: { id: string };
+      line2: { id: string };
+    }[] = [];
     for (let n = 1; n <= stopCount; n++) {
       /* eslint-disable no-await-in-loop */
       const user = await prisma.user.create({
@@ -415,7 +420,7 @@ describeDb("SA-1098 PR-1 stop completion key — real Postgres", () => {
       const s = await seedRun(`i3-${path}`, 2);
       const st = s.stops[0];
       const key = `k-${st.stopId}`;
-      await complete(s, st, path, { ...withMoney(st), idempotencyKey: key });
+      await complete(s, st, path, { ...withMoney(st, 8, 120), idempotencyKey: key });
       const before = await footprint(s, st);
       mockStorage.upload.mockClear();
 
@@ -458,10 +463,13 @@ describeDb("SA-1098 PR-1 stop completion key — real Postgres", () => {
       const key = `k-${st.stopId}`;
       const dto = { ...withMoney(st), idempotencyKey: key };
       const realSave = IdempotencyService.prototype.save;
+      let stopSeenBySave: string | undefined;
       const save = jest
         .spyOn(IdempotencyService.prototype, "save")
         .mockImplementation(async function (this: IdempotencyService, ...args) {
           await realSave.apply(this, args);
+          const tx = args[4];
+          stopSeenBySave = (await tx.routeRunStop.findUnique({ where: { id: st.stopId } }))?.status;
           throw new Error("the commit never happens");
         });
 
@@ -470,6 +478,7 @@ describeDb("SA-1098 PR-1 stop completion key — real Postgres", () => {
       } finally {
         save.mockRestore();
       }
+      expect(stopSeenBySave).toBe("COMPLETED");
       expect(await keyRows(s, st, path, key)).toBe(0);
       const after = await footprint(s, st);
       expect([after.stop, after.mutations, after.payments]).toEqual(["IN_PROGRESS", 0, 0]);
