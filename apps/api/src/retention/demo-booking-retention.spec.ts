@@ -39,7 +39,7 @@ describe("SA-1083: DemoBookingRetentionService", () => {
     const { job, count } = make({ mode: "report" });
     const out = await job.run(NOW);
     expect(out.cutoff).toEqual(CUTOFF);
-    expect(count.mock.calls[0][0].where.startsAt).toEqual({ lt: CUTOFF });
+    expect((count.mock.calls as any[][])[0]![0].where.startsAt).toEqual({ lt: CUTOFF });
   });
 
   it("report-only never selects, never calls the calendar, never deletes", async () => {

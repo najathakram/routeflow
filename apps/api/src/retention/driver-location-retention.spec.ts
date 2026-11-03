@@ -176,7 +176,7 @@ describe("SA-1083: DriverLocationRetentionService", () => {
     const { job, deleteMany, count } = make({ tenants: [], noTenantRows: 3 });
     const out = await job.run(NOW);
     expect(out.noTenantRows).toBe(3);
-    expect(count.mock.calls[0][0].where.tenantId).toBeNull();
+    expect((count.mock.calls as any[][])[0]![0].where.tenantId).toBeNull();
     expect(deleteMany).not.toHaveBeenCalled();
   });
 
