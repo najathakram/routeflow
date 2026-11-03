@@ -67,6 +67,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
   let tenantCtx: TenantContextService;
   let routesService: RoutesService;
   let invoicesService: InvoicesService;
+  let settleLedger: jest.Mock;
   const createdTenantIds: string[] = [];
 
   const mockGateway = {
@@ -172,6 +173,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
 
     routesService = module.get(RoutesService);
     invoicesService = module.get(InvoicesService);
+    settleLedger = module.get(RegulatedLedgerService).settleRegulatedLedger as jest.Mock;
   });
 
   afterAll(async () => {
@@ -470,6 +472,385 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
     const stop = await prisma.routeRunStop.findUnique({ where: { id: st.stopId } });
     expect(run?.status).toBe("IN_PROGRESS");
     expect(stop?.status).toBe("PENDING");
+  });
+
+  /**
+   * SA-1098 A-3 (D-34..D-44): a line refused (or short), undone, then delivered must bill. The rebuild forgets a line delivered at 0
+   * (it leaves the draft), so the next completion has to put an unbilled live line back on a draft before it rebuilds.
+   */
+  describe("A-3 refused, Undo, delivered bills", () => {
+    const undo = (s: Seed, st: Stop) =>
+      tenantCtx.run(s.tenantId, () => routesService.reopenStop(s.runId, st.stopId, operator));
+    const shapeOf = async (orderId: string) => {
+      const invoices = await prisma.invoice.findMany({
+        where: { orderId, status: { not: "VOID" } },
+        orderBy: { createdAt: "asc" },
+        select: { total: true, items: { select: { orderItemId: true, qty: true } } },
+      });
+      return {
+        totals: invoices.map((i) => Number(i.total)),
+        items: invoices.map((i) => i.items.length),
+      };
+    };
+    const full = (st: Stop) => web(st, 10, 4);
+    const refusedAll = (st: Stop) => web(st, 0, 0);
+    const needsReviewRows = (s: { tenantId: string }, orderId: string) =>
+      prisma.auditLog.count({
+        where: {
+          tenantId: s.tenantId,
+          action: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+          entityId: orderId,
+        },
+      });
+
+    it("D-34: both lines refused, Undo, Delivered in full: 2 items, $120", async () => {
+      const s = await seedRun("d34", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, refusedAll(st), "k-d34a");
+      await undo(s, st);
+      await driverComplete(s, st, full(st), "k-d34b");
+      expect(await shapeOf(st.orderId)).toEqual({ totals: [120], items: [2] });
+    });
+
+    it("D-35: both lines refused, Undo, short at 7: $90", async () => {
+      const s = await seedRun("d35", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, refusedAll(st), "k-d35a");
+      await undo(s, st);
+      await driverComplete(s, st, web(st, 7), "k-d35b");
+      expect((await shapeOf(st.orderId)).totals).toEqual([90]);
+    });
+
+    it.each([
+      ["line 1 refused", 0, 4],
+      ["line 2 refused", 10, 0],
+    ])("D-36: %s, the other in full, Undo, Delivered in full: $120", async (_n, q1, q2) => {
+      const s = await seedRun(`d36-${q1}`, 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, web(st, q1, q2), "k-d36a");
+      await undo(s, st);
+      await driverComplete(s, st, full(st), "k-d36b");
+      expect((await shapeOf(st.orderId)).totals).toEqual([120]);
+    });
+
+    it.each([
+      ["short, Undo, full", (st: Stop) => web(st, 7), full, 120],
+      ["full, Undo, short", full, (st: Stop) => web(st, 7), 90],
+      ["refused, Undo, refused", refusedAll, refusedAll, 0],
+    ])("D-37 (guard): %s", async (name, first, second, expected) => {
+      const s = await seedRun(`d37-${name.slice(0, 5)}`, 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, first(st), "k-d37a");
+      await undo(s, st);
+      await driverComplete(s, st, second(st), "k-d37b");
+      expect((await shapeOf(st.orderId)).totals).toEqual([expected]);
+    });
+
+    it("D-39 (guard): a line refused, Undo, refused again stays off its draft (placed, then dropped by the zero filter); the other bills", async () => {
+      const s = await seedRun("d39", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, web(st, 0, 4), "k-d39a");
+      await undo(s, st);
+      await driverComplete(s, st, web(st, 0, 4), "k-d39b");
+      expect(await shapeOf(st.orderId)).toEqual({ totals: [20], items: [1] });
+    });
+
+    /** Two non-draft/draft arrangements the partition check refuses: nothing is placed, nothing is billed twice. */
+    describe("D-38 (guard): the partition check bails", () => {
+      const extraInvoice = async (s: Seed, st: Stop, status: "SENT" | "DRAFT", lineId: string) => {
+        const order = await prisma.order.findUniqueOrThrow({ where: { id: st.orderId } });
+        const inv = await prisma.invoice.create({
+          data: {
+            tenantId: s.tenantId,
+            customerId: order.customerId,
+            orderId: st.orderId,
+            invoiceNumber: `INV-A3-${RUN_SUFFIX}-${status}-${lineId.slice(0, 6)}`,
+            status,
+            subtotal: 100,
+            taxAmount: 0,
+            total: 100,
+          },
+        });
+        await prisma.invoiceItem.create({
+          data: {
+            tenantId: s.tenantId,
+            invoiceId: inv.id,
+            orderItemId: lineId,
+            description: "line 1",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+          },
+        });
+      };
+      it.each(["SENT", "DRAFT"] as const)(
+        "a line 1 billed by a second %s invoice: the mirror is left as it was",
+        async (status) => {
+          const s = await seedRun(`d38-${status}`, 2);
+          const st = s.stops[0];
+          await extraInvoice(s, st, status, st.line1.id);
+          const before = await shapeOf(st.orderId);
+          await driverComplete(s, st, web(st, 7), `k-d38-${status}`);
+          const after = await shapeOf(st.orderId);
+          expect(after.items).toEqual(before.items);
+          expect(after.totals).toEqual(before.totals);
+        },
+      );
+    });
+
+    /**
+     * A split order: `cats` are SEPARATE_INVOICE categories; each line has a category index (null = standard) and a quantity at
+     * $10; `drafts` lists which line indexes each draft (base, -R1, ...) holds, in creation order.
+     */
+    async function seedSplit(
+      label: string,
+      cats: string[],
+      lines: Array<{ cat: number | null; qty: number }>,
+      drafts: number[][],
+    ) {
+      const slug = freshTenantSlug(label);
+      const tenant = await prisma.tenant.create({ data: { slug, name: `SA-1098 ${slug}` } });
+      createdTenantIds.push(tenant.id);
+      const tenantId = tenant.id;
+      const route = await prisma.route.create({ data: { name: `SA-1098 ${label}`, tenantId } });
+      const run = await prisma.routeRun.create({
+        data: {
+          routeId: route.id,
+          status: "IN_PROGRESS",
+          scheduledDate: new Date(),
+          startedAt: new Date(),
+          tenantId,
+        },
+      });
+      const user = await prisma.user.create({
+        data: {
+          email: `${tenantId}-${label}@example.invalid`,
+          username: `${tenantId}-${label}`,
+          role: "CUSTOMER",
+          tenantId,
+        },
+      });
+      const customer = await prisma.customer.create({
+        data: { userId: user.id, businessName: `SA-1098 ${label}`, contactName: label, tenantId },
+      });
+      const mkStop = async (n: number) => {
+        const rs = await prisma.routeStop.create({
+          data: { routeId: route.id, customerId: customer.id, stopNumber: n, tenantId },
+        });
+        return prisma.routeRunStop.create({
+          data: {
+            routeRunId: run.id,
+            routeStopId: rs.id,
+            customerId: customer.id,
+            stopNumber: n,
+            status: "IN_PROGRESS",
+            tenantId,
+          },
+        });
+      };
+      const runStop = await mkStop(1);
+      await mkStop(2); // keeps the run open
+      const categories = [];
+      for (const [i, name] of cats.entries()) {
+        // eslint-disable-next-line no-await-in-loop
+        categories.push(
+          await prisma.trackedCategory.create({
+            data: { tenantId, name: `${name}-${i}`, invoiceTreatment: "SEPARATE_INVOICE" },
+          }),
+        );
+      }
+      const subtotal = lines.reduce((sum, l) => sum + l.qty * 10, 0);
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "OUT_FOR_DELIVERY",
+          orderNumber: `SA1098-${RUN_SUFFIX}-${label}`,
+          routeRunId: run.id,
+          routeRunStopId: runStop.id,
+          subtotal,
+          tax: 0,
+          total: subtotal,
+          tenantId,
+        },
+      });
+      const made: Array<{ id: string; productId: string; catId: string | null }> = [];
+      for (const [i, l] of lines.entries()) {
+        const catId = l.cat === null ? null : categories[l.cat].id;
+        // eslint-disable-next-line no-await-in-loop
+        const product = await prisma.product.create({
+          data: {
+            name: `SA-1098 ${label} p${i}`,
+            unit: "each",
+            pricePerUnit: 10,
+            tenantId,
+            ...(catId ? { trackedCategoryId: catId } : {}),
+          },
+        });
+        // eslint-disable-next-line no-await-in-loop
+        const li = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: product.id,
+            qty: l.qty,
+            unitPrice: 10,
+            subtotal: l.qty * 10,
+            tenantId,
+            ...(catId ? { trackedCategoryId: catId } : {}),
+          },
+        });
+        made.push({ id: li.id, productId: product.id, catId });
+      }
+      const groupId = randomUUID();
+      const invoiceIds: string[] = [];
+      for (const [d, idxs] of drafts.entries()) {
+        const sub = idxs.reduce((sum, i) => sum + lines[i].qty * 10, 0);
+        // eslint-disable-next-line no-await-in-loop
+        const inv = await prisma.invoice.create({
+          data: {
+            tenantId,
+            customerId: customer.id,
+            orderId: order.id,
+            invoiceGroupId: groupId,
+            invoiceNumber: `INV-A3-${RUN_SUFFIX}-${label}${d === 0 ? "" : `-R${d}`}`,
+            status: "DRAFT",
+            subtotal: sub,
+            taxAmount: 0,
+            total: sub,
+          },
+        });
+        invoiceIds.push(inv.id);
+        for (const i of idxs) {
+          // eslint-disable-next-line no-await-in-loop
+          await prisma.invoiceItem.create({
+            data: {
+              tenantId,
+              invoiceId: inv.id,
+              orderItemId: made[i].id,
+              productId: made[i].productId,
+              description: `p${i}`,
+              qty: lines[i].qty,
+              unitPrice: 10,
+              subtotal: lines[i].qty * 10,
+              ...(made[i].catId ? { trackedCategoryId: made[i].catId } : {}),
+            },
+          });
+        }
+      }
+      return { tenantId, runId: run.id, stopId: runStop.id, orderId: order.id, made, invoiceIds };
+    }
+    type Split = Awaited<ReturnType<typeof seedSplit>>;
+    const splitDto = (sp: Split, qtys: number[], ordered: number[]) => ({
+      deliveries: sp.made.map((l, i) => ({
+        orderItemId: l.id,
+        type: qtys[i] <= 0 ? "REFUSED" : qtys[i] === ordered[i] ? "DELIVERED" : "PARTIAL",
+        quantityDelivered: qtys[i],
+      })),
+    });
+    const splitGo = (sp: Split, dto: unknown, key: string) =>
+      tenantCtx.run(sp.tenantId, () =>
+        routesService.completeWithPayment(
+          sp.runId,
+          sp.stopId,
+          { ...(dto as object), idempotencyKey: key } as never,
+          operator,
+        ),
+      );
+    const splitUndo = (sp: Split) =>
+      tenantCtx.run(sp.tenantId, () => routesService.reopenStop(sp.runId, sp.stopId, operator));
+    /** Per draft, in creation order: the order-line indexes it bills and its total. */
+    const splitState = async (sp: Split) => {
+      const invoices = await prisma.invoice.findMany({
+        where: { orderId: sp.orderId, status: { not: "VOID" } },
+        orderBy: { createdAt: "asc" },
+        select: { total: true, items: { select: { orderItemId: true } } },
+      });
+      return invoices.map((i) => ({
+        total: Number(i.total),
+        lines: i.items
+          .map((it) => sp.made.findIndex((m) => m.id === it.orderItemId))
+          .sort((a, b) => a - b),
+      }));
+    };
+
+    it("D-40: a split order, base and -R1, everything refused, Undo, Delivered: each line on its own draft, none folded", async () => {
+      const sp = await seedSplit(
+        "d40",
+        ["R"],
+        [
+          { cat: null, qty: 1 },
+          { cat: 0, qty: 3 },
+        ],
+        [[0], [1]],
+      );
+      await splitGo(sp, splitDto(sp, [0, 0], [1, 3]), "k-d40a");
+      await splitUndo(sp);
+      await splitGo(sp, splitDto(sp, [1, 3], [1, 3]), "k-d40b");
+      expect(await splitState(sp)).toEqual([
+        { total: 10, lines: [0] },
+        { total: 30, lines: [1] },
+      ]);
+    });
+
+    it("D-41 (guard): lines whose groups don't match the drafts are left off, with a needs-review row; the stop completes", async () => {
+      // three groups (standard, R, S) but two drafts: the S line is on no draft and cannot be placed
+      const sp = await seedSplit(
+        "d41",
+        ["R", "S"],
+        [
+          { cat: null, qty: 1 },
+          { cat: 0, qty: 3 },
+          { cat: 1, qty: 2 },
+        ],
+        [[0], [1]],
+      );
+      await splitGo(sp, splitDto(sp, [1, 3, 2], [1, 3, 2]), "k-d41");
+      expect(await splitState(sp)).toEqual([
+        { total: 10, lines: [0] },
+        { total: 30, lines: [1] },
+      ]);
+      expect((await prisma.routeRunStop.findUnique({ where: { id: sp.stopId } }))?.status).toBe(
+        "COMPLETED",
+      );
+      expect(await needsReviewRows(sp, sp.orderId)).toBe(1);
+    });
+
+    it("D-42 (record): a lone office partial on line 1, everything delivered: the total is what was delivered, no double", async () => {
+      const s = await seedRun("d42", 2);
+      const st = s.stops[0];
+      await prisma.invoiceItem.deleteMany({
+        where: { orderItemId: st.line2.id },
+      });
+      await prisma.invoice.updateMany({
+        where: { orderId: st.orderId },
+        data: { subtotal: 100, total: 100 },
+      });
+      await driverComplete(s, st, full(st), "k-d42");
+      const shape = await shapeOf(st.orderId);
+      // eslint-disable-next-line no-console
+      console.info("D-42 observed:", JSON.stringify(shape));
+      expect(shape).toEqual({ totals: [120], items: [2] });
+    });
+
+    it("D-43 (guard): a regulated line refused, Undo, Delivered: the ledger is settled once, at the delivered quantity", async () => {
+      const sp = await seedSplit("d43", ["R"], [{ cat: 0, qty: 3 }], [[0]]);
+      await splitGo(sp, splitDto(sp, [0], [3]), "k-d43a");
+      await splitUndo(sp);
+      settleLedger.mockClear();
+      await splitGo(sp, splitDto(sp, [3], [3]), "k-d43b");
+      const calls = settleLedger.mock.calls.map((c) => c[1] as { lines: Array<{ qty: number }> });
+      expect(calls.at(-1)?.lines.map((l) => l.qty)).toEqual([3]);
+    });
+
+    it("D-44 (record): between Undo and the next completion the draft keeps the last numbers", async () => {
+      const s = await seedRun("d44", 2);
+      const st = s.stops[0];
+      await driverComplete(s, st, web(st, 7), "k-d44a");
+      await undo(s, st);
+      const shape = await shapeOf(st.orderId);
+      // eslint-disable-next-line no-console
+      console.info("D-44 observed:", JSON.stringify(shape));
+      expect(shape.totals).toEqual([90]);
+    });
   });
 
   /** SA-1098 A-2: a kept key after a reopen. Both completion paths share `replayStopKey`, so every row runs on both. */
