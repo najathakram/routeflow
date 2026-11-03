@@ -45,10 +45,27 @@ describe("Company page", () => {
     expect(fs.existsSync(path.join(SITE, "does-and-doesnt.html"))).toBe(true);
     expect(note).toContain("14 days, with no card");
     expect(note).toContain("We reply within one business day.");
+    // the review's wording: "honest", and the plan names (Starter, Growth, Scale) the pricing page shows
+    expect(note).toContain("I want to be honest with you.");
+    expect(note).not.toContain("I’ll be straight with you.");
+    expect(note).toContain(
+      'so we show the <a href="/pricing">prices</a> for Starter, Growth, and Scale before you start.',
+    );
+    for (const plan of ["Starter", "Growth", "Scale"])
+      expect(read("pricing.html")).toContain(`<h2>${plan}</h2>`);
     // the short version on a phone opens on the same first sentence and the same ask for help
     const short = paragraphs(home, 'class="fd-short"', "</div>");
     expect(short).toHaveLength(3);
     expect(short[0]).toBe(paragraphs(home, 'id="fd-note"', "</div>")[0]);
+    expect(short[1]).toBe(
+      "My co-founder’s father is a wholesaler. He tried several apps and services, and none of them fit the way he works. So he asked us for help.",
+    );
+  });
+
+  it("the founder grid gives its spare height to the last row, so the heading sits under the kicker", () => {
+    expect(read("css/home-up.css")).toMatch(
+      /#founder .fd-in{[^}]*grid-template-rows:auto auto 1fr[;}]/,
+    );
   });
 
   it("signs it as the co-founder, as the home page does", () => {

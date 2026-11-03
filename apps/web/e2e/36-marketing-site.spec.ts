@@ -2000,6 +2000,31 @@ test.describe("T25 — the founder's note", () => {
     { name: "390", w: 390, h: 844, touch: true },
   ];
 
+  // review-b: at two-column widths the spare height of the tall note used to open a gap between the kicker and the heading
+  for (const w of [1440, 1280, 1100, 1024, 768, 390]) {
+    test(`T25 — ${w}: the heading sits right under the kicker (no gap from spare height)`, async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({ viewport: { width: w, height: 900 } });
+      const page = await context.newPage();
+      await page.goto("/#founder", { waitUntil: "load" });
+      await page.waitForSelector("#founder", { state: "attached", timeout: 60_000 });
+      await page.waitForTimeout(3000);
+      await page.evaluate(() =>
+        document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
+      );
+      await page.waitForTimeout(1500);
+      const gap = await page.evaluate(
+        () =>
+          document.querySelector(".fd-q")!.getBoundingClientRect().top -
+          document.querySelector("#founder .kick")!.getBoundingClientRect().bottom,
+      );
+      expect(gap, "kicker to heading").toBeGreaterThanOrEqual(8);
+      expect(gap, "kicker to heading").toBeLessThanOrEqual(24);
+      await context.close();
+    });
+  }
+
   for (const v of VIEWS) {
     test(`T25 — ${v.name}: home #founder heading wraps in 3 lines or fewer, Read the rest opens in place`, async ({
       browser,
