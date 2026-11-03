@@ -1,6 +1,6 @@
 {
-  "mappedSha": "1f6f32a34120d6b0d48d9b18c6436d80556e72f9",
-  "generatedAt": "2026-11-03T09:00:07.999Z",
+  "mappedSha": "06813470de64464309d5c5662e3eb84f712a7dd1",
+  "generatedAt": "2026-11-03T13:43:18.466Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1146,
-  "notes": "2026-11-03 trains ak and al (master 1f6f32a341): api/web landing notes, TOC rows; see CHANGELOG.md."
+  "notes": "2026-11-03 trains ak, al and am (master 06813470de): api/web landing notes, TOC rows; see CHANGELOG.md."
 }

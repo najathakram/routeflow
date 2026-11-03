@@ -116,3 +116,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-03-aj.md](api/landing-2026-11-03-aj.md) | Train aj (d6d5c56cb1..9dfd480c30): Stripe payment-state read within the 4-level expand limit + class pin (B1270); no migration |
 | [api/landing-2026-11-03-ak.md](api/landing-2026-11-03-ak.md) | Train ak (9dfd480c30..d833210811): effective-features answer carries override kind, reason, end date (F13, SA-963 A-1); no migration |
 | [api/landing-2026-11-03-al.md](api/landing-2026-11-03-al.md) | Train al (d833210811..1f6f32a341): stop completion idempotent by key + request hash (SA-1098 PR-1; B1034, B870); no migration |
+| [api/landing-2026-11-03-an.md](api/landing-2026-11-03-an.md) | Train am (1f6f32a341..06813470de): stored box-split line edits read the pack it was sold in (SA-1097); "each" plural; no migration |
