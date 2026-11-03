@@ -1225,7 +1225,7 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
         [window, "scrollBy"],
         [Element.prototype, "scrollIntoView"],
         [Element.prototype, "scrollTo"],
-      ] as Array<[Record<string, (...a: unknown[]) => unknown>, string]>) {
+      ] as unknown as Array<[Record<string, (...a: unknown[]) => unknown>, string]>) {
         const orig = o[n]!;
         o[n] = function (this: unknown, ...a: unknown[]) {
           calls.push(`${n}:${smooth()}`);
