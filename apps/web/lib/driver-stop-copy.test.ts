@@ -3,10 +3,15 @@ import {
   STOP_GENERIC_COPY,
   STOP_KEY_CONFLICT_COPY,
   STOP_MOVED_COPY,
+  STOP_NOT_ACCEPTED_COPY,
+  RUN_CANNOT_FINISH_COPY,
   STOP_REGULATED_COPY,
   STOP_REOPENED_COPY,
   stopErrorCopy,
+  runActionErrorCopy,
+  leftToDeliverText,
 } from "./driver-stop-copy";
+import { readOnlyRefusalCopy } from "./read-only-refusal";
 import { releaseStopKey, stopKey } from "./stop-completion-key";
 
 const err = (status?: number, code?: string, message?: string) => ({
@@ -17,9 +22,16 @@ const err = (status?: number, code?: string, message?: string) => ({
 describe("stopErrorCopy", () => {
   it.each([
     [
-      "a 400 fit refusal shows the server's words",
+      "a 400 fit refusal reads as the fixed line and refreshes, never the server's words",
       err(400, undefined, "Only 7 left."),
-      "Only 7 left.",
+      STOP_NOT_ACCEPTED_COPY,
+      true,
+      false,
+    ],
+    [
+      "a READ_ONLY 403 reads as the read-only line, not the stop-changed line",
+      err(403, "READ_ONLY", "raw"),
+      readOnlyRefusalCopy(),
       false,
       false,
     ],
@@ -81,8 +93,47 @@ describe("stopErrorCopy", () => {
     ],
     ["no response (offline) offers another try", err(undefined), STOP_GENERIC_COPY, false, true],
     ["a 500 offers another try", err(500), STOP_GENERIC_COPY, false, true],
-  ])("%s", (_l, e, message, refresh, retry) => {
-    expect(stopErrorCopy(e)).toEqual({ message, refresh, retry });
+  ])("%s", (_l, e, text, refresh, retry) => {
+    expect(stopErrorCopy(e)).toEqual({ text, refresh, retry });
+  });
+});
+
+describe("runActionErrorCopy", () => {
+  it("READ_ONLY reads as the read-only line", () => {
+    expect(runActionErrorCopy(err(403, "READ_ONLY", "raw"))).toBe(readOnlyRefusalCopy());
+  });
+  it("a 400 never shows the server's words", () => {
+    expect(runActionErrorCopy(err(400, undefined, "Cannot complete run: 2 stop(s)"))).toBe(
+      RUN_CANNOT_FINISH_COPY,
+    );
+  });
+  it("anything else reads as the generic line", () => {
+    expect(runActionErrorCopy(err(500))).toBe(STOP_GENERIC_COPY);
+    expect(runActionErrorCopy(err(undefined))).toBe(STOP_GENERIC_COPY);
+  });
+});
+
+describe("leftToDeliverText (review-b F2: every line names its unit)", () => {
+  it("a Case line reads in cases and pieces, not raw pieces", () => {
+    expect(leftToDeliverText({ orderedQty: 53, unitLabel: "Case", unitsPerBox: 24 }, "ea")).toBe(
+      "2 Cases + 5 pcs",
+    );
+    expect(leftToDeliverText({ orderedQty: 48, unitLabel: "Case", unitsPerBox: 24 })).toBe(
+      "2 Cases",
+    );
+  });
+  it("a plain line reads its product unit, or pcs when it has none", () => {
+    expect(leftToDeliverText({ orderedQty: 12, unitLabel: null, unitsPerBox: null }, "lb")).toBe(
+      "12 lb",
+    );
+    expect(leftToDeliverText({ orderedQty: 12, unitLabel: null, unitsPerBox: null }, null)).toBe(
+      "12 pcs",
+    );
+  });
+  it("a factor-1 unit line counts pieces like a plain line", () => {
+    expect(leftToDeliverText({ orderedQty: 6, unitLabel: "Piece", unitsPerBox: 1 }, "ea")).toBe(
+      "6 ea",
+    );
   });
 });
 

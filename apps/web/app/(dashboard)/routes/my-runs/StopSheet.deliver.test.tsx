@@ -1,9 +1,18 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
+import { MutationCache, QueryClient } from "@tanstack/react-query";
+import { handleMutationError } from "@/lib/mutation-error-toast";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils/render";
 import { StopSheet } from "./StopSheet";
 import type { RouteRunStop, RunStopLine } from "@/lib/api/routes";
-import { STOP_REOPENED_COPY } from "@/lib/driver-stop-copy";
+import { readOnlyRefusalCopy } from "@/lib/read-only-refusal";
+import {
+  STOP_GENERIC_COPY,
+  STOP_MOVED_COPY,
+  STOP_NOT_ACCEPTED_COPY,
+  STOP_REOPENED_COPY,
+  STOP_UNDO_REFUSED_COPY,
+} from "@/lib/driver-stop-copy";
 
 const post = jest.fn();
 const patch = jest.fn().mockResolvedValue({ data: {} });
@@ -388,7 +397,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
 
     await user.click(screen.getByRole("button", { name: "Delivered" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Only 7 left to deliver.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(STOP_NOT_ACCEPTED_COPY);
     expect(window.sessionStorage.getItem("rf-stop-key:stop-1")).toBeNull();
   });
 
@@ -440,7 +449,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("D-13b: Undo refused for confirmed money shows the server's words", async () => {
+  it("D-13b: Undo refused for confirmed money reads as the fixed office line, not the server's words", async () => {
     post.mockRejectedValueOnce({
       response: {
         status: 400,
@@ -454,7 +463,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
 
     await user.click(screen.getByRole("button", { name: "Undo" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("confirmed payment");
+    expect(await screen.findByRole("alert")).toHaveTextContent(STOP_UNDO_REFUSED_COPY);
   });
 
   it("D-11: a 403 (another driver's run, or the run is not in progress) says the stop changed", async () => {
@@ -483,12 +492,13 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
   });
 
   it("offline: Delivered and Refused are disabled and nothing is queued", async () => {
-    jest.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    const onLine = jest.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
     renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
     expect(screen.getByRole("button", { name: "Delivered" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Refused" })).toBeDisabled();
     expect(screen.getByText(/You are offline/)).toBeInTheDocument();
     expect(post).not.toHaveBeenCalled();
+    onLine.mockRestore(); // a spy outlives clearAllMocks; later rows need the sheet online
   });
 
   it("order lines not served: Delivered stays disabled (no completion is built from nothing)", () => {
@@ -501,5 +511,142 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     );
     expect(screen.getByRole("button", { name: "Delivered" })).toBeDisabled();
     expect(within(screen.getByRole("dialog")).getByText(/still loading/)).toBeInTheDocument();
+  });
+
+  // ---- review-b findings on #4173 ----
+
+  it("F2: every line names its unit: a Case line reads in cases, a plain line in its product unit or pcs", () => {
+    const stop = STOP({
+      orders: [
+        {
+          id: "o1",
+          orderNumber: "SO-1001",
+          status: "OUT_FOR_DELIVERY",
+          lineItems: [
+            line("l1", "Soda", 53, { unitLabel: "Case", unitsPerBox: 24, boxes: 2, pieces: 5 }),
+            { ...line("l2", "Flour", 12), product: { id: "p-l2", name: "Flour", unit: "lb" } },
+            line("l3", "Straws", 9),
+          ],
+        },
+      ],
+    });
+    renderWithProviders(<StopSheet stop={stop} runId="run-1" onClose={jest.fn()} />);
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Left to deliver: 2 Cases + 5 pcs")).toBeInTheDocument();
+    expect(dialog.getByText("Left to deliver: 12 lb")).toBeInTheDocument();
+    expect(dialog.getByText("Left to deliver: 9 pcs")).toBeInTheDocument();
+  });
+
+  it("F3: one primary button per sheet state: Delivered on an open stop, none once it is done", () => {
+    const primaries = () =>
+      screen
+        .getAllByRole("button")
+        .filter((b) => b.className.includes("bg-accent-strong"))
+        .map((b) => b.textContent);
+    const { unmount } = renderWithProviders(
+      <StopSheet stop={STOP({ status: "PENDING" })} runId="run-1" onClose={jest.fn()} />,
+    );
+    expect(primaries()).toEqual(["Delivered"]);
+    unmount();
+    renderWithProviders(
+      <StopSheet stop={STOP({ status: "COMPLETED" })} runId="run-1" onClose={jest.fn()} />,
+    );
+    expect(primaries()).toEqual([]);
+  });
+
+  it("F6: a refused Skip says so in fixed words, not nothing and not the server's", async () => {
+    patch.mockRejectedValueOnce({ response: { status: 500, data: { message: "raw boom" } } });
+    const user = userEvent.setup();
+    renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(STOP_GENERIC_COPY);
+    expect(alert).not.toHaveTextContent("raw boom");
+  });
+
+  it("F6: a refused Start stop says so in fixed words", async () => {
+    patch.mockRejectedValueOnce({ response: { status: 409, data: { message: "raw race" } } });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <StopSheet stop={STOP({ status: "PENDING" })} runId="run-1" onClose={jest.fn()} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Start stop" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(STOP_MOVED_COPY);
+  });
+
+  it("F6: Delivered is disabled with words when every line is typed to 0", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <StopSheet
+        stop={STOP({
+          orders: [
+            {
+              id: "o1",
+              orderNumber: "SO-1001",
+              status: "OUT_FOR_DELIVERY",
+              lineItems: [line("l1", "Napkins", 10)],
+            },
+          ],
+        })}
+        runId="run-1"
+        onClose={jest.fn()}
+      />,
+    );
+    const qty = screen.getByRole("spinbutton", { name: "Delivered Napkins" });
+    await user.clear(qty);
+
+    expect(screen.getByRole("button", { name: "Delivered" })).toBeDisabled();
+    expect(
+      screen.getByText("Enter a quantity above 0 to record a delivery, or tap Refused."),
+    ).toBeInTheDocument();
+  });
+
+  it("B986/READ_ONLY: a READ_ONLY refusal reads as the read-only line, not the stop-changed line, and keeps what was typed", async () => {
+    post.mockRejectedValueOnce({
+      response: { status: 403, data: { code: "READ_ONLY", message: "raw read only" } },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<StopSheet stop={STOP()} runId="run-1" onClose={jest.fn()} />);
+    const qty = screen.getByRole("spinbutton", { name: "Delivered Napkins" });
+    await user.clear(qty);
+    await user.type(qty, "7");
+
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(readOnlyRefusalCopy());
+    expect(alert).not.toHaveTextContent(STOP_MOVED_COPY);
+    expect(screen.getByRole("spinbutton", { name: "Delivered Napkins" })).toHaveValue(7);
+  });
+
+  it("F8 (found in the real browser pass): a refused completion shows ONE message, in the sheet, never a second app-wide toast", async () => {
+    // The app-wide handler, wired the way app/providers.tsx wires it, with a toast spy.
+    const toast = jest.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      mutationCache: new MutationCache({
+        onError: (error, _v, _c, mutation) =>
+          handleMutationError(error, mutation, toast, { push: jest.fn() }),
+      }),
+    });
+    post.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    patch.mockRejectedValueOnce({ response: { status: 500, data: {} } });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <StopSheet stop={STOP({ status: "PENDING" })} runId="run-1" onClose={jest.fn()} />,
+      {
+        queryClient,
+      },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delivered" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(STOP_GENERIC_COPY);
+    await user.click(screen.getByRole("button", { name: "Start stop" }));
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    expect(toast).not.toHaveBeenCalled();
   });
 });

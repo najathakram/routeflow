@@ -2,6 +2,7 @@ import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { RECURRING_ROUTES_ADDON } from "@routeflow/types";
+import { STOP_GENERIC_COPY } from "@/lib/driver-stop-copy";
 import MyRunsPage, { finishRouteBlocker, finishedRunView } from "./page";
 import type { RouteRun, RouteRunStop } from "@/lib/api/routes";
 
@@ -124,7 +125,7 @@ describe("MyRunsPage: Start route / Finish route (SA-1098 PR-2)", () => {
     );
   });
 
-  it("a refusal on Finish route shows the server's words and changes nothing else", async () => {
+  it("a refusal on Finish route shows fixed words, never the server's, and changes nothing else", async () => {
     serve(run({ status: "IN_PROGRESS", stops: [stop("s1", "SKIPPED")] }));
     patch.mockRejectedValueOnce({
       response: { status: 409, data: { message: "Settle the cash first." } },
@@ -134,7 +135,23 @@ describe("MyRunsPage: Start route / Finish route (SA-1098 PR-2)", () => {
 
     await user.click(await screen.findByRole("button", { name: "Finish route" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Settle the cash first.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(STOP_GENERIC_COPY);
+  });
+
+  it("F5: Finish route tells the driver what happens to skipped stops, and says nothing of them when none were skipped", async () => {
+    const user = userEvent.setup();
+    serve(run({ status: "IN_PROGRESS", stops: [stop("s1", "SKIPPED"), stop("s2", "COMPLETED")] }));
+    const { unmount } = renderWithProviders(<MyRunsPage />);
+    await user.click(await screen.findByRole("button", { name: "Finish route" }));
+    expect(window.confirm).toHaveBeenLastCalledWith(
+      "Finish this route? Orders at skipped stops come off the route.",
+    );
+    unmount();
+
+    serve(run({ status: "IN_PROGRESS", stops: [stop("s1", "COMPLETED")] }));
+    renderWithProviders(<MyRunsPage />);
+    await user.click(await screen.findByRole("button", { name: "Finish route" }));
+    expect(window.confirm).toHaveBeenLastCalledWith("Finish this route?");
   });
 
   it("D-15 pin: the web app no longer carries the driver-app link", () => {

@@ -25,6 +25,7 @@ import {
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { useTenantAddons } from "@/lib/api/tobacco";
 import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
+import { runActionErrorCopy } from "@/lib/driver-stop-copy";
 import { StopSheet } from "./StopSheet";
 
 type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
@@ -244,30 +245,29 @@ export function finishedRunView(run: RouteRun, stopId: string): RouteRun {
   };
 }
 
-function runActionError(err: unknown): string {
-  const data = (err as { response?: { data?: { message?: unknown } } } | null)?.response?.data;
-  return typeof data?.message === "string" && data.message
-    ? data.message
-    : "That did not go through. Check your connection and try again.";
-}
-
 /** Start route on a scheduled run; Finish route once no stop is left (also a run that has no stops). */
 function RunLifecycle({ run, stops }: { run: RouteRun; stops: RouteRunStop[] }) {
-  const setStatus = useUpdateRouteRunStatus();
+  const setStatus = useUpdateRouteRunStatus({ localErrorToast: true });
   const [error, setError] = React.useState<string | null>(null);
   const blocker = finishRouteBlocker(run, stops);
   const canStart = run.status === "SCHEDULED";
   if (!canStart && blocker === null) return null;
 
   const go = (status: "IN_PROGRESS" | "COMPLETED") => {
+    // The server releases the orders of skipped stops off the route when the run ends, so that is what the driver is told.
+    const skipped = stops.some((s) => s.status === "SKIPPED");
     if (
       status === "COMPLETED" &&
-      !window.confirm("Finish this route? Stops left open stay undelivered.")
+      !window.confirm(
+        skipped
+          ? "Finish this route? Orders at skipped stops come off the route."
+          : "Finish this route?",
+      )
     ) {
       return;
     }
     setError(null);
-    setStatus.mutate({ id: run.id, status }, { onError: (e) => setError(runActionError(e)) });
+    setStatus.mutate({ id: run.id, status }, { onError: (e) => setError(runActionErrorCopy(e)) });
   };
 
   return (

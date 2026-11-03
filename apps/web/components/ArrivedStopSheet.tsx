@@ -108,7 +108,7 @@ export function ArrivedStopSheet({
         </>
       ) : (
         <p className="text-sm text-navy/70">
-          Record this stop from your route. Open Today's route to mark it delivered or refused.
+          Record this stop from your route. Open Today&apos;s route to mark it delivered or refused.
         </p>
       )}
     </Modal>

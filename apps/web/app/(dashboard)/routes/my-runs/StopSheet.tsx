@@ -22,7 +22,12 @@ import {
   type RouteRunStop,
   type RunStopOrder,
 } from "@/lib/api/routes";
-import { stopErrorCopy, type StopErrorCopy } from "@/lib/driver-stop-copy";
+import {
+  leftToDeliverText,
+  stopErrorCopy,
+  stopUndoErrorCopy,
+  type StopErrorCopy,
+} from "@/lib/driver-stop-copy";
 import { releaseStopKey } from "@/lib/stop-completion-key";
 
 /** Apple Maps on iOS/iPadOS, Google Maps everywhere else — mirrors the native
@@ -53,6 +58,9 @@ function orderStatusBadge(status: string) {
   return <Badge status="SCHEDULED" />;
 }
 
+/** Footer actions are 48px tall: a driver taps them one-handed, in a truck, and the design-system default (34px) is a desktop height. */
+const TAP = "h-12";
+
 function useOnline(): boolean {
   const [online, setOnline] = React.useState(
     typeof navigator === "undefined" ? true : navigator.onLine !== false,
@@ -74,6 +82,7 @@ interface PlanOrder {
   order: RunStopOrder;
   lines: ShortPickLine[];
   names: Record<string, string>;
+  units: Record<string, string | null>;
 }
 
 function LineQty({
@@ -100,6 +109,7 @@ function LineQty({
         <Button
           variant="secondary"
           size="sm"
+          className="h-11 w-11"
           aria-label={`Fewer ${name}`}
           disabled={disabled || value <= 0}
           onClick={() => onChange(caseStepperDecrement(value, ordered, upb))}
@@ -115,6 +125,7 @@ function LineQty({
         <Button
           variant="secondary"
           size="sm"
+          className="h-11 w-11"
           aria-label={`More ${name}`}
           disabled={disabled || value >= ordered}
           onClick={() => onChange(caseStepperIncrement(value, ordered, upb))}
@@ -230,8 +241,12 @@ export function StopSheet({
     () =>
       orders.map((order) => {
         const names: Record<string, string> = {};
-        for (const li of order.lineItems ?? []) names[li.id] = li.product?.name ?? "Item";
-        return { order, lines: fallbackShortPickLines(order), names };
+        const units: Record<string, string | null> = {};
+        for (const li of order.lineItems ?? []) {
+          names[li.id] = li.product?.name ?? "Item";
+          units[li.id] = li.product?.unit ?? null;
+        }
+        return { order, lines: fallbackShortPickLines(order), names, units };
       }),
     [orders],
   );
@@ -254,6 +269,11 @@ export function StopSheet({
   const fail = (err: unknown) => {
     inFlight.current = false;
     setError(stopErrorCopy(err));
+  };
+
+  const failUndo = (err: unknown) => {
+    inFlight.current = false;
+    setError(stopUndoErrorCopy(err));
   };
 
   const send = (mode: "deliver" | "refuse") => {
@@ -298,21 +318,29 @@ export function StopSheet({
 
   const handleStart = () => {
     if (!stop || !runId) return;
-    updateStatus.mutate({ runId, stopId: stop.id, status: "IN_PROGRESS" }, { onSuccess: onClose });
+    setError(null);
+    updateStatus.mutate(
+      { runId, stopId: stop.id, status: "IN_PROGRESS" },
+      { onSuccess: onClose, onError: fail },
+    );
   };
 
   const handleSkip = () => {
     if (!stop || !runId) return;
     if (!window.confirm(`Skip the stop at ${stop.customer?.businessName ?? "this address"}?`))
       return;
-    updateStatus.mutate({ runId, stopId: stop.id, status: "SKIPPED" }, { onSuccess: onClose });
+    setError(null);
+    updateStatus.mutate(
+      { runId, stopId: stop.id, status: "SKIPPED" },
+      { onSuccess: onClose, onError: fail },
+    );
   };
 
   const handleUndo = () => {
     if (!stop || !runId) return;
     if (!window.confirm("Undo this stop? It goes back on the route.")) return;
     setError(null);
-    reopen.mutate({ runId, stopId: stop.id }, { onSuccess: onClose, onError: fail });
+    reopen.mutate({ runId, stopId: stop.id }, { onSuccess: onClose, onError: failUndo });
   };
 
   const done = stop?.status === "COMPLETED" || stop?.status === "SKIPPED";
@@ -333,6 +361,7 @@ export function StopSheet({
           {open && runOpen && !refusing && (
             <div className="grid grid-cols-2 gap-2">
               <Button
+                className={TAP}
                 variant="primary"
                 onClick={() => send("deliver")}
                 loading={complete.isPending}
@@ -340,17 +369,28 @@ export function StopSheet({
               >
                 Delivered
               </Button>
-              <Button variant="secondary" onClick={() => setRefusing(true)} disabled={!canRecord}>
+              <Button
+                className={TAP}
+                variant="secondary"
+                onClick={() => setRefusing(true)}
+                disabled={!canRecord}
+              >
                 Refused
               </Button>
             </div>
           )}
           {open && runOpen && refusing && (
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" onClick={() => setRefusing(false)} disabled={busy}>
+              <Button
+                className={TAP}
+                variant="secondary"
+                onClick={() => setRefusing(false)}
+                disabled={busy}
+              >
                 Back
               </Button>
               <Button
+                className={TAP}
                 variant="danger"
                 onClick={() => send("refuse")}
                 loading={complete.isPending}
@@ -362,6 +402,7 @@ export function StopSheet({
           )}
           {done && (
             <Button
+              className={TAP}
               variant="secondary"
               onClick={handleUndo}
               loading={reopen.isPending}
@@ -372,19 +413,26 @@ export function StopSheet({
           )}
           <div className="grid grid-cols-2 gap-2">
             <Button
+              className={TAP}
               variant="secondary"
               disabled={!mapsUrl}
               onClick={() => mapsUrl && window.open(mapsUrl, "_blank", "noopener,noreferrer")}
             >
               Navigate
             </Button>
-            <Button variant="secondary" href={phone ? `tel:${phone}` : undefined} disabled={!phone}>
+            <Button
+              className={TAP}
+              variant="secondary"
+              href={phone ? `tel:${phone}` : undefined}
+              disabled={!phone}
+            >
               Call
             </Button>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Button
-              variant="primary"
+              className={TAP}
+              variant="secondary"
               onClick={handleStart}
               loading={updateStatus.isPending && updateStatus.variables?.status === "IN_PROGRESS"}
               disabled={stop?.status !== "PENDING" || busy}
@@ -392,7 +440,8 @@ export function StopSheet({
               Start stop
             </Button>
             <Button
-              variant="danger"
+              className={TAP}
+              variant="danger-outline"
               onClick={handleSkip}
               loading={updateStatus.isPending && updateStatus.variables?.status === "SKIPPED"}
               disabled={done || busy}
@@ -405,7 +454,7 @@ export function StopSheet({
     >
       {orders.length > 0 ? (
         <ul className="divide-y divide-surface-border">
-          {plans.map(({ order, lines, names }) => (
+          {plans.map(({ order, lines, names, units }) => (
             <li key={order.id} className="py-2.5">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-navy">{order.orderNumber}</span>
@@ -417,7 +466,9 @@ export function StopSheet({
                     <li key={li.orderItemId} className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm text-navy">{names[li.orderItemId]}</p>
-                        <p className="text-xs text-navy/60">Left to deliver: {li.orderedQty}</p>
+                        <p className="text-xs text-navy/60">
+                          Left to deliver: {leftToDeliverText(li, units[li.orderItemId])}
+                        </p>
                       </div>
                       <LineQty
                         line={li}
@@ -456,9 +507,17 @@ export function StopSheet({
       {open && runOpen && orders.length > 0 && !linesLoaded && (
         <p className="mt-3 text-sm text-navy/70">The order lines are still loading.</p>
       )}
+      {canRecord && !refusing && awaiting.length > 0 && (
+        <p className="mt-3 text-sm text-navy/70">Enter a quantity for every line.</p>
+      )}
+      {canRecord && !refusing && awaiting.length === 0 && deliveredTotal <= 0 && (
+        <p className="mt-3 text-sm text-navy/70">
+          Enter a quantity above 0 to record a delivery, or tap Refused.
+        </p>
+      )}
       {error && (
         <p role="alert" className="mt-3 text-sm text-danger">
-          {error.message}
+          {error.text}
         </p>
       )}
     </Modal>

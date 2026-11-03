@@ -391,6 +391,8 @@ export function useUpdateStopStatus() {
     Error,
     { runId: string; stopId: string; status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string }
   >({
+    // The driver's sheet shows this refusal itself, in fixed words next to the buttons: no second toast on top.
+    meta: { localErrorToast: true },
     mutationFn: ({ runId, stopId, status, driverNote }) =>
       apiClient
         .patch(`/route-runs/${runId}/stops/${stopId}`, { status, driverNote })
@@ -415,6 +417,8 @@ export function useCompleteStop() {
     Error,
     { runId: string; stopId: string; deliveries: StopDeliveryEntry[]; driverNote?: string }
   >({
+    // The driver's sheet shows this refusal itself, in fixed words next to the buttons: no second toast on top.
+    meta: { localErrorToast: true },
     mutationFn: async ({ runId, stopId, deliveries, driverNote }) => {
       const key = stopKey(stopId);
       const body = {
@@ -452,6 +456,8 @@ export function useCompleteStop() {
 export function useReopenStop() {
   const qc = useQueryClient();
   return useMutation<unknown, Error, { runId: string; stopId: string }>({
+    // The driver's sheet shows this refusal itself, in fixed words next to the buttons: no second toast on top.
+    meta: { localErrorToast: true },
     mutationFn: ({ runId, stopId }) =>
       apiClient.post(`/route-runs/${runId}/stops/${stopId}/reopen`).then((r) => r.data),
     onSuccess: (_d, { stopId }) => {
@@ -518,9 +524,11 @@ export function useCreateRouteRun() {
   });
 }
 
-export function useUpdateRouteRunStatus() {
+/** `localErrorToast`: the caller shows the refusal itself (the driver's Today's route does), so the app-wide toast stays off. */
+export function useUpdateRouteRunStatus(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<RouteRun, Error, { id: string; status: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, status }) =>
       apiClient.patch(`/route-runs/${id}/status`, { status }).then((r) => r.data),
     onSuccess: (_, { id }) => {
