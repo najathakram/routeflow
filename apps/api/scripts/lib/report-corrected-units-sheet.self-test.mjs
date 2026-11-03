@@ -49,7 +49,7 @@ const line = (key, rows, o = {}) => ({
   ...o,
 });
 const contextsOf = (entries) => ({
-  lines: new Map(entries.map((e) => [e.lineKey, e])),
+  lines: new Map(entries.map((e) => [`${e.trackedCategoryId}|${e.lineKey}`, e])),
   candidatesByOrderItem: new Map([["oi1", [SOURCE]]]),
   returnItemsByPair: new Map(),
   attributionByPair: new Map(),
@@ -299,6 +299,124 @@ export async function selfTest() {
     )
     .catch(() => (aborted = true));
   assert.equal(aborted, true, "aborts when the transaction is not read-only");
+
+  // HOLD 1 (review-a and review-b on #4140): a line whose return-driven reversal the classifier refused to prove
+  // (no unique ReturnItem) has NO corrected figure. The classifier would add the SALE in pieces (60) to a reversal
+  // still in boxes (-2) and print 58; a read-only sheet parks nothing, so it lists the line unguessed instead.
+  const returnDriven = (extra = {}) =>
+    row({
+      id: "v1",
+      entryType: "REVERSAL",
+      qty: -2,
+      unitBasisQty: -2,
+      netSales: -40,
+      categoryTax: -4,
+      returnId: "ret1",
+      ...extra,
+    });
+  const unproven = lib.assembleSheet({
+    contexts: contextsOf([line("l1", [row({ id: "s1" }), returnDriven()])]),
+    refs,
+    filings: [
+      filing({ rows: [{ trackedCategoryId: CAT, periodBucket: "2026-07", unitBasisQty: 3 }] }),
+    ],
+    periodSums: sums(3),
+  });
+  assert.equal(unproven.lineRows.length, 1);
+  assert.equal(
+    unproven.lineRows[0].correctedUnitBasis,
+    null,
+    "no figure for an unproven return reversal",
+  );
+  assert.equal(unproven.lineRows[0].delta, null);
+  assert.match(unproven.lineRows[0].reason, /could not be proven/);
+  assert.doesNotMatch(
+    unproven.lineRows[0].reason,
+    /parked for architect/,
+    "this sheet parks nothing",
+  );
+  assert.equal(unproven.periods[0].uncorrectedLines, 1, "counted as uncorrected in the footer");
+  assert.equal(unproven.periods[0].lineDeltaSum, 0);
+  assert.equal(
+    unproven.periods[0].correctedTotal,
+    3,
+    "the footer total does not take a guessed figure",
+  );
+  assert.match(lib.footerLines(unproven).join(" | "), /excludes 1/);
+  // control: the same reversal as a credit note IS provable and keeps its figure (36 = 3 boxes x 12)
+  const viaCreditNote = lib.assembleSheet({
+    contexts: contextsOf([
+      line("l1", [row({ id: "s1" }), returnDriven({ returnId: null, creditNoteId: "cn1" })]),
+    ]),
+    refs,
+    filings: [
+      filing({ rows: [{ trackedCategoryId: CAT, periodBucket: "2026-07", unitBasisQty: 3 }] }),
+    ],
+    periodSums: sums(3),
+  });
+  assert.equal(viaCreditNote.lineRows[0].correctedUnitBasis, 36);
+
+  // HOLD 2 (review-a): one line key in two categories is two lines, each classified on its own rows
+  const inCat = (cat, rows) => line("l1", rows, { trackedCategoryId: cat });
+  const split = lib.assembleSheet({
+    contexts: contextsOf([
+      inCat("catA", [
+        row({ id: "a1" }),
+        row({ id: "a2", entryType: "REVERSAL", qty: -5, unitBasisQty: -5 }),
+      ]),
+      inCat("catB", [row({ id: "b1" })]),
+    ]),
+    refs,
+    filings: [],
+    periodSums: [],
+  });
+  const byCat = (c) => split.lineRows.filter((r) => r.categoryId === c);
+  assert.deepEqual(
+    byCat("catA").map((r) => r.correctedUnitBasis),
+    [0],
+  );
+  assert.deepEqual(
+    byCat("catB").map((r) => r.correctedUnitBasis),
+    [60],
+  );
+  assert.deepEqual(split.periods.map((p) => [p.categoryId, p.lineDeltaSum]).sort(), [
+    ["catA", 0],
+    ["catB", 55],
+  ]);
+
+  // review-a note 3: a key holding only REVERSAL rows is listed, never dropped
+  const orphan = lib.assembleSheet({
+    contexts: contextsOf([
+      line("l1", [row({ id: "r1", entryType: "REVERSAL", qty: -2, unitBasisQty: -2 })]),
+    ]),
+    refs,
+    filings: [],
+    periodSums: [],
+  });
+  assert.equal(orphan.lineRows.length, 1, "a reversal-only line is listed");
+  assert.equal(orphan.lineRows[0].correctedUnitBasis, null);
+  assert.match(orphan.lineRows[0].reason, /no sale row/i);
+
+  // review-a hold 3, the window and the filing's category: a July filing is not compared with August, and another
+  // category's filing is not this category's
+  const aug = lib.assembleSheet({
+    contexts: contextsOf([line("l1", [row({ id: "s9", periodBucket: "2026-08" })])]),
+    refs,
+    filings: [filing({})],
+    periodSums: [{ trackedCategoryId: CAT, periodBucket: "2026-08", unit_basis_sum: 5 }],
+  });
+  assert.equal(aug.periods[0].status, "NOT FILED", "the July window ends before 2026-08-01");
+  const otherCat = lib.assembleSheet({
+    contexts: contextsOf([boxLine()]),
+    refs,
+    filings: [filing({ trackedCategoryId: "catB" })],
+    periodSums: sums(5),
+  });
+  assert.equal(
+    otherCat.periods[0].status,
+    "NOT FILED",
+    "another category's filing is not compared",
+  );
   return "self-test ok";
 }
 

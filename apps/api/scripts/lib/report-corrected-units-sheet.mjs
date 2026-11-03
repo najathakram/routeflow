@@ -215,6 +215,11 @@ export function pickFiling(filings) {
 const NEW_SHAPE_REASON =
   "the line carries correction or counter-entry rows (written after the classifier's base); not classified, never guessed";
 
+const NO_SALE_REASON =
+  "the line has reversal rows but no sale row (no base to correct against); not classified, never guessed";
+const UNPROVEN_REASON = (why) =>
+  `a return-driven reversal on this line could not be proven (${why}); the classifier would correct the sale in pieces beside a reversal still in boxes, so no corrected figure is printed. Nothing is parked or changed by this sheet`;
+
 /** One line entry (from buildLineContexts) -> its classification and per-row deltas. */
 export function classifyEntry(entry, contexts) {
   const withCorrectionRows = entry.rows.some((r) => r.correctsEntryId != null);
@@ -225,6 +230,16 @@ export function classifyEntry(entry, contexts) {
       packFactor: null,
       corrections: [],
       newShape: true,
+      packSource: "",
+    };
+  }
+  if (!entry.rows.some((r) => r.entryType === "SALE")) {
+    return {
+      category: "unknown-basis",
+      reason: NO_SALE_REASON,
+      packFactor: null,
+      corrections: [],
+      newShape: false,
       packSource: "",
     };
   }
@@ -241,6 +256,20 @@ export function classifyEntry(entry, contexts) {
   const sourceLine = rows.length ? rowEvidence(entry, entry.rows[0], contexts).sourceLine : null;
   const priors = entry.rows.flatMap((r) => contexts.priorByCorrectedRow.get(r.id) ?? []);
   const res = computeLineCorrection(rows, entry.line, sourceLine, entry.productPackNow, priors);
+  // HOLD 1 (#4140 reviews): the classifier corrects the SALE and leaves a reversal it cannot trust uncorrected,
+  // because the apply path then parked a row to hold the filing. A read-only sheet has no such row, so the line
+  // is listed unguessed and counted as uncorrected instead of printing a figure that mixes pieces and boxes.
+  if ((res.parkedReversals?.length ?? 0) > 0) {
+    const why = res.parkedReversals?.[0]?.reason ?? res.reason;
+    return {
+      category: "unproven-return",
+      reason: UNPROVEN_REASON(String(why).replace(/^B681: /, "")),
+      packFactor: null,
+      corrections: [],
+      newShape: false,
+      packSource: "",
+    };
+  }
   const snap = Number(entry.line?.unitsPerBox);
   const packSource =
     res.packFactor == null
@@ -422,7 +451,7 @@ export async function readSheet(client, tenantId) {
   await assertRequiredColumns(client);
   const flat = (await client.query(BOX_UNAWARE_ROWS_SQL, [tenantId])).rows;
   const contexts = await buildLineContexts(client, flat);
-  const keys = [...contexts.lines.keys()];
+  const keys = [...new Set([...contexts.lines.values()].map((e) => e.lineKey))];
   const refRows = keys.length ? (await client.query(LINE_REFS_SQL, [tenantId, keys])).rows : [];
   const refs = new Map(
     refRows.map((r) => [

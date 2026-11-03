@@ -59,9 +59,66 @@ t(
         createdAt: "2026-01-01",
       },
     ]);
-    const entry = lines.get("li1");
+    const entry = lines.get("cat1|li1");
     assert.equal(entry.productPackNow, undefined);
     assert.equal("productPackNow" in entry, true, "the key must exist and be exactly undefined");
+  },
+);
+
+// one line key under two categories is two lines (the ledger's own key includes the category), never one line
+// carrying the first row's category
+t(
+  "groupByLineKey: the same line key in two categories is two entries, each with its own rows",
+  () => {
+    const base = {
+      line_key: "li9",
+      tenantId: "t1",
+      orderItemId: "oi9",
+      product_id: "p1",
+      product_found: true,
+      product_pack_now: 12,
+      line_boxes: null,
+      line_pieces: null,
+      line_unit_label: null,
+      line_units_per_box: null,
+      which_line: "orderItem",
+      line_qty: "10",
+      in_generated_filing: false,
+      entryType: "SALE",
+      qty: "10",
+      unitBasisQty: "10",
+      netSales: "1",
+      categoryTax: "0",
+      soldAt: "2026-01-01",
+      periodBucket: "2026-01",
+      correctsEntryId: null,
+      returnId: null,
+      creditNoteId: null,
+      createdAt: "2026-01-01",
+    };
+    const lines = groupByLineKey([
+      { ...base, id: "a1", trackedCategoryId: "catA" },
+      {
+        ...base,
+        id: "a2",
+        trackedCategoryId: "catA",
+        entryType: "REVERSAL",
+        qty: "-10",
+        unitBasisQty: "-10",
+      },
+      { ...base, id: "b1", trackedCategoryId: "catB" },
+    ]);
+    assert.equal(lines.size, 2);
+    assert.deepEqual(
+      lines.get("catA|li9").rows.map((r) => r.id),
+      ["a1", "a2"],
+    );
+    assert.deepEqual(
+      lines.get("catB|li9").rows.map((r) => r.id),
+      ["b1"],
+    );
+    assert.equal(lines.get("catB|li9").trackedCategoryId, "catB");
+    assert.equal(lines.get("catB|li9").lineKey, "li9");
   },
 );
 
@@ -96,7 +153,7 @@ t("groupByLineKey: product_found=true, unitsPerBox null -> productPackNow is exp
       createdAt: "2026-01-01",
     },
   ]);
-  assert.equal(lines.get("li2").productPackNow, null);
+  assert.equal(lines.get("cat1|li2").productPackNow, null);
 });
 
 t("groupByLineKey: product_found=true with a pack -> productPackNow is the Number", () => {
@@ -130,7 +187,7 @@ t("groupByLineKey: product_found=true with a pack -> productPackNow is the Numbe
       createdAt: "2026-01-01",
     },
   ]);
-  assert.equal(lines.get("li3").productPackNow, 24);
+  assert.equal(lines.get("cat1|li3").productPackNow, 24);
 });
 
 // --- pickSourceLine: 0 or >1 live InvoiceItem candidates -> no source, never guessed -----------

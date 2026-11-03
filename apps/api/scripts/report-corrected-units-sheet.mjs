@@ -8,7 +8,8 @@
  *
  * Two steps (the live-target guard): run once to see the host it resolves to, then name that host.
  *
- *   railway run --service postgres node apps/api/scripts/report-corrected-units-sheet.mjs --tenant <slug>
+ *   railway run --service postgres node apps/api/scripts/report-corrected-units-sheet.mjs --tenant <slug> \
+ *     --live-tenant-override
  *   railway run --service postgres node apps/api/scripts/report-corrected-units-sheet.mjs --tenant <slug> \
  *     --target-host=<the host it printed> --live-tenant-override [--out local-assets/handoff/qd-sheet.csv]
  *

@@ -24,6 +24,7 @@ const WRITE_VERBS: Array<[string, RegExp]> = [
   ["SQL TRUNCATE / DROP / ALTER / GRANT / REVOKE", /\b(TRUNCATE|DROP|ALTER|GRANT|REVOKE)\b/i],
   ["SQL CREATE", /\bCREATE\s+(TABLE|INDEX|TEMP|TEMPORARY|VIEW|FUNCTION|SCHEMA|EXTENSION)\b/i],
   ["SQL COMMIT", /\bCOMMIT\b/i],
+  ["SQL COPY / MERGE / LOCK TABLE", /\b(COPY\s+[\w"(]|MERGE\s+INTO|LOCK\s+TABLE)/i],
   ["SQL FOR UPDATE / FOR SHARE (row locks)", /\bFOR\s+(NO\s+KEY\s+)?(UPDATE|SHARE)\b/i],
   ["Prisma write call", /\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/],
   ["forTenant", /\bforTenant\b/],
@@ -45,6 +46,10 @@ describe("report-corrected-units-sheet source scan (QD-3)", () => {
     expect(WRITE_VERBS.some(([, re]) => re.test(stripComments("// never UPDATE anything")))).toBe(
       false,
     );
+    // COPY / MERGE / LOCK are write-shaped too (the READ ONLY transaction is what truly stops them)
+    for (const sql of ['COPY "Tenant" FROM STDIN', "MERGE INTO t USING s", 'LOCK TABLE "Tenant"']) {
+      expect(WRITE_VERBS.some(([, re]) => re.test(sql))).toBe(true);
+    }
   });
 
   it("every read goes through the READ ONLY wrapper that ends in ROLLBACK", () => {

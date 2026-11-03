@@ -127,12 +127,15 @@ export async function assertRequiredColumns(client) {
   }
 }
 
-/** Groups the flat SQL rows above into { lineKey -> { tenantId, rows: [...], orderItemId } }. */
+/** Groups the flat SQL rows above into { "<category>|<lineKey>" -> { tenantId, rows: [...], orderItemId } }. The
+ *  category is part of the key, as it is in the ledger writer's own key: a line re-synced after a category move is
+ *  two lines, never one line wearing the first row's category. */
 export function groupByLineKey(flatRows) {
   const lines = new Map();
   for (const r of flatRows) {
-    if (!lines.has(r.line_key)) {
-      lines.set(r.line_key, {
+    const groupKey = `${r.trackedCategoryId}|${r.line_key}`;
+    if (!lines.has(groupKey)) {
+      lines.set(groupKey, {
         lineKey: r.line_key,
         tenantId: r.tenantId,
         trackedCategoryId: r.trackedCategoryId,
@@ -159,7 +162,7 @@ export function groupByLineKey(flatRows) {
         rows: [],
       });
     }
-    const entry = lines.get(r.line_key);
+    const entry = lines.get(groupKey);
     entry.inGeneratedFiling = entry.inGeneratedFiling || r.in_generated_filing;
     entry.rows.push({
       id: r.id,

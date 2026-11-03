@@ -364,6 +364,98 @@ describeDb("SA-1088 corrected-units sheet, real Postgres", () => {
     expect(await fingerprint()).toEqual(before);
   });
 
+  it("QD-9: another tenant's ledger rows and filings never reach this tenant's sheet, even on this tenant's category id", async () => {
+    // A second tenant holds a box-axis line, a LOCKED filing and a period sum that all NAME this tenant's category id
+    // (the category column is the only thing a filter on the category would catch). Every read is keyed on the tenant.
+    const slug2 = assertTestTenant(
+      `qa-qdsheet-x-${run}`,
+      "report-corrected-units-sheet.db.spec.ts",
+    );
+    const t2 = (await raw.tenant.create({ data: { slug: slug2, name: `QD other ${slug2}` } })).id;
+    try {
+      const u2 = await raw.user.create({
+        data: {
+          email: `qdx-${run}@example.test`,
+          username: `qdx-${run}`,
+          role: "CUSTOMER",
+          tenantId: t2,
+        },
+      });
+      const c2 = await raw.customer.create({
+        data: { userId: u2.id, businessName: "Other Retail", contactName: "Tester", tenantId: t2 },
+      });
+      const o2 = await raw.order.create({
+        data: {
+          customerId: c2.id,
+          status: "PENDING",
+          subtotal: "1.00",
+          total: "1.00",
+          orderNumber: `ORD-QDX-${run}`,
+          tenantId: t2,
+        },
+      });
+      const oi2 = await raw.orderItem.create({
+        data: {
+          orderId: o2.id,
+          tenantId: t2,
+          name: "Unlisted",
+          qty: 7,
+          unitPrice: "1.00",
+          subtotal: "7.00",
+          status: "PENDING",
+          priceType: "STANDARD",
+        } as never,
+      });
+      await raw.regulatedSalesLedger.create({
+        data: {
+          tenantId: t2,
+          trackedCategoryId: categoryId,
+          orderItemId: oi2.id,
+          entryType: "SALE",
+          qty: 7,
+          unitBasisQty: 7,
+          netSales: "70.00",
+          categoryTax: "0",
+          soldAt: new Date("2026-07-11T12:00:00Z"),
+          periodBucket: "2026-07",
+          createdAt: BEFORE_CUTOFF,
+        } as never,
+      });
+      await raw.regulatedFiling.create({
+        data: {
+          tenantId: t2,
+          trackedCategoryId: categoryId,
+          reportTemplate: "GENERIC",
+          periodKey: "2026-07",
+          periodStart: new Date("2026-07-01T00:00:00Z"),
+          periodEnd: new Date("2026-08-01T00:00:00Z"),
+          status: "LOCKED",
+          lockedAt: new Date("2026-09-01T00:00:00Z"),
+          generatedAt: new Date("2026-08-30T00:00:00Z"),
+          rows: filingRows(999),
+        } as never,
+      });
+      const res = cli();
+      // unchanged from QD-7: this tenant's three lines, its own LOCKED filing (109), its own sums
+      expect(res.status).toBe(0);
+      expect(
+        res.csv.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("period")),
+      ).toHaveLength(3);
+      expect(res.csv).not.toContain(`ORD-QDX-${run}`);
+      expect(res.out).toMatch(/filed (snapshot, LOCKED): 109 |/);
+      expect(res.out).not.toMatch(/999/);
+      expect(res.out).toMatch(/2026-07: RECONCILED/);
+    } finally {
+      await raw.regulatedSalesLedger.deleteMany({ where: { tenantId: t2 } });
+      await raw.regulatedFiling.deleteMany({ where: { tenantId: t2 } });
+      await raw.orderItem.deleteMany({ where: { tenantId: t2 } });
+      await raw.order.deleteMany({ where: { tenantId: t2 } });
+      await raw.customer.deleteMany({ where: { tenantId: t2 } });
+      await raw.user.deleteMany({ where: { tenantId: t2 } });
+      await raw.tenant.deleteMany({ where: { id: t2 } });
+    }
+  });
+
   it("QD-2: --apply is refused with exit 2 and the tables are untouched", async () => {
     const before = await fingerprint();
     const res = cli(["--apply"]);
