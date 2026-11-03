@@ -52,7 +52,7 @@ function BuyerVerifyEmailInner() {
             This verification link is invalid or incomplete. Sign in to your portal to request a new
             one.
           </p>
-          <Link href="/buyer/login" className="text-sm font-medium text-[#0B6E6B] hover:underline">
+          <Link href="/buyer/login" className="text-sm font-medium text-brand-600 hover:underline">
             Go to sign in
           </Link>
         </div>
@@ -65,7 +65,7 @@ function BuyerVerifyEmailInner() {
           </p>
           <Link
             href="/buyer/portal"
-            className="mt-1 text-sm font-medium text-[#0B6E6B] hover:underline"
+            className="mt-1 text-sm font-medium text-brand-600 hover:underline"
           >
             Go to your portal
           </Link>

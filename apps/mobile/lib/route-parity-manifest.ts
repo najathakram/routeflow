@@ -165,7 +165,6 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "buyer/invite/[token]": { missing: "W>M, needs a routeflow:// deep link" },
   "buyer/verify-email": { webOnly: "email-link flow stays on web" },
   "buyer/verify-merge": { webOnly: "email-link flow stays on web" },
-  buyer: { mobile: ["(customer)/sellers"] },
   "buyer/portal": { mobile: ["(customer)/sellers", "(customer)/sellers/connect"] },
   "buyer/portal/settings": { mobile: ["(customer)/profile", "(customer)/(tabs)/more"] },
   "buyer/portal/[seller]": { mobile: ["(customer)/(tabs)/home"] },
@@ -190,14 +189,8 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "buyer/portal/[seller]/account": { mobile: ["(customer)/profile"] },
 
   // ─── Marketing site — web-only (plan §1.4) ───
-  "(marketing)/book-a-demo": { webOnly: "marketing site" },
-  "(marketing)/company": { webOnly: "marketing site" },
-  "(marketing)/contact": { webOnly: "marketing site" },
   "(marketing)/privacy": { webOnly: "marketing site" },
-  "(marketing)/retailers": { webOnly: "marketing site" },
-  "(marketing)/sign-in": { webOnly: "marketing site" },
   "(marketing)/terms": { webOnly: "marketing site" },
-  "(marketing)/wholesalers": { webOnly: "marketing site" },
 
   // ─── Platform admin — web-only (plan §1.4) ───
   "(platform-admin)/admin/audit-logs": { webOnly: "platform admin" },

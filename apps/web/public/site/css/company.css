@@ -1,0 +1,24 @@
+/* Company and Contact. Sits on product.css (same tokens, same page frame); only the story block is new. */
+.co-top .pd-top-in,.co-top>.w{display:block;max-width:880px}
+.co-top .pd-lede{max-width:30em}
+.co-story{padding:clamp(40px,6vw,88px) 0;border-top:1px solid var(--line)}
+.co-story>.w{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(28px,5vw,72px);align-items:start}
+.co-q{font-size:clamp(30px,3.6vw,46px);line-height:1.1;font-weight:650;letter-spacing:-.02em;text-wrap:balance}
+.co-body{max-width:34em}
+.co-body p{font-size:18px;line-height:1.55;color:var(--ink-2);text-wrap:pretty}
+.co-body p+p{margin-top:1em}
+.co-body a{color:var(--b700);text-decoration:underline;text-underline-offset:3px}
+.co-body .co-sig{display:flex;align-items:center;gap:14px;margin-top:clamp(24px,3vw,36px);color:var(--ink)}
+.co-mono{display:grid;place-items:center;flex:none;width:48px;height:48px;border-radius:50%;background:var(--b50);color:var(--b700);font-size:16px;font-weight:650;letter-spacing:.02em}
+.co-sig b{display:block;font-weight:600;color:var(--ink)}
+.co-sig span span{display:block;font-size:16px;color:var(--ink-3)}
+.co-ask{padding:clamp(40px,6vw,88px) 0 clamp(72px,9vw,128px);border-top:1px solid var(--line);text-align:center}
+.co-ask .sub{margin:12px auto 0;max-width:30em}
+.co-ask .pd-cta{justify-content:center}
+.co-where{padding:clamp(24px,4vw,56px) 0 clamp(72px,9vw,128px)}
+.co-where .pd-cs{margin-inline:auto;max-width:1040px}
+@media (max-width:899.98px){
+  .co-story>.w{grid-template-columns:minmax(0,1fr)}
+  .co-where .pd-cs--three{grid-template-columns:minmax(0,1fr)}
+}
+.pd-cs h3{font-size:18px;font-weight:650;letter-spacing:0;margin:0}

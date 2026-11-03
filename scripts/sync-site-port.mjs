@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Re-sync the ready-made marketing pages (home, pricing, product, landing and the four deep pages:
-// getting-started, does-and-doesnt, data-in-and-out, security) from the design source
+// Re-sync the ready-made marketing pages (home, pricing, product, landing, the four deep pages:
+// getting-started, does-and-doesnt, data-in-and-out, security, and company and contact) from the design source
 // into apps/web/public/site, applying the port edits: real auth routes, /site/ asset paths,
 // canonical + share tags, no HTML comments, noindex only on /landing.
 //
@@ -42,6 +42,7 @@ for (const rel of [
   "css/product.css",
   "css/does.css",
   "css/start.css",
+  "css/company.css",
   "js/prices.js",
   "js/site.js",
   "js/product.js",
@@ -69,10 +70,19 @@ const pages = [
   ["does-and-doesnt/index.html", "does-and-doesnt.html", "/does-and-doesnt", true],
   ["data-in-and-out/index.html", "data-in-and-out.html", "/data-in-and-out", true],
   ["security/index.html", "security.html", "/security", true],
+  ["company/index.html", "company.html", "/company", true],
+  ["contact/index.html", "contact.html", "/contact", true],
 ];
 
 // The four deep pages (source folder name = served route).
-const DEEP_SLUGS = ["getting-started", "does-and-doesnt", "data-in-and-out", "security"];
+const DEEP_SLUGS = [
+  "getting-started",
+  "does-and-doesnt",
+  "data-in-and-out",
+  "security",
+  "company",
+  "contact",
+];
 
 function port(html, route, indexable) {
   let h = html;

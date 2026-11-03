@@ -1,30 +1,18 @@
 import Link from "next/link";
-import { Brand } from "@/components/brand";
+import { SiteFrame } from "@/components/site-frame/SiteFrame";
 
-// Restyled per ux-spec.md §3 (spec.md R1, R4): eyebrow, H1, body, one CTA.
-// Not under the `(marketing)` route group, so the mark/wordmark and the
-// `.rf-marketing` scope are applied directly here rather than inherited from
-// `app/(marketing)/layout.tsx`.
+// The 404 page wears the site frame (components/site-frame): same header and footer as every page.
 export default function NotFound() {
   return (
-    <div className="rf-marketing">
-      <main id="main-content" className="not-found wrap">
-        <Brand size={40} className="not-found-brand" />
-        <p className="eyebrow">
-          <span />
-          404 · Page not found
-        </p>
-        <h1>
-          Let’s get you <br />
-          <em>back on track.</em>
-        </h1>
-        <p>
-          The page you’re looking for isn’t here. Explore the platform or return to the homepage.
-        </p>
-        <Link href="/" className="button">
-          Back to RouteFlow <span aria-hidden="true">→</span>
+    <SiteFrame>
+      <div className="rf-notfound">
+        <p className="kick">404</p>
+        <h1>We can’t find that page.</h1>
+        <p>It may have moved, or the address may have a typo. Go back to the home page.</p>
+        <Link href="/" className="btn btn-primary btn-lg">
+          Back to RouteFlow
         </Link>
-      </main>
-    </div>
+      </div>
+    </SiteFrame>
   );
 }
