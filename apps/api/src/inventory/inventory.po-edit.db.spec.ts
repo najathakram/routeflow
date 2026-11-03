@@ -32,7 +32,11 @@ import { applyPackIntroduction } from "../products/pack-intro-apply";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
-import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import {
+  describeDb,
+  requireLocalDatabaseUrl,
+  waitForBlockedSession,
+} from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -187,7 +191,7 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
     expect(a.averageCost!.toString()).toBe(b.averageCost!.toString()); // (20×2+20×6)/40 = 4
   });
 
-  const answerBoxes = (w: World) =>
+  const answerBoxes = (w: World, whileOpen?: () => Promise<void>) =>
     inTenant(w, () =>
       prisma.tenantTransaction(async (tx) => {
         const data: Record<string, unknown> = { unitsPerBox: 24 };
@@ -201,8 +205,37 @@ describeDb("PO edit + re-apply — real Postgres (LANE-U step 6)", () => {
           actorId: null,
         });
         await tx.product.update({ where: { id: w.productId }, data });
+        await whileOpen?.();
       }),
     );
+
+  it("R-3 (SA-1093 G5): a re-apply that arrives while the answer is open waits for it, and is refused 409", async () => {
+    const w = await seedWorld("r3open", 0, 0);
+    const po = await receivedPo(w, 20, 4);
+    const reapply = () =>
+      inTenant(w, () =>
+        service.updatePurchaseOrder(
+          po.id,
+          {
+            reapplyInventory: true,
+            items: [{ id: po.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
+          },
+          w.userId,
+        ),
+      ).then(
+        () => "re-applied",
+        (e) => e?.response?.code,
+      );
+
+    let reapplying: Promise<unknown> | undefined;
+    await answerBoxes(w, async () => {
+      reapplying = reapply();
+      await waitForBlockedSession(prisma);
+    });
+
+    expect(await reapplying).toBe("RECEIVED_BEFORE_PACK");
+    expect(Number((await productOf(w)).currentStock)).toBe(480);
+  });
 
   it("R-3 (SA-1093 Rule 3): a receipt taken after a Boxes answer and dated before it re-applies", async () => {
     const w = await seedWorld("r3after", 20, 4);

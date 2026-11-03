@@ -25,6 +25,7 @@ export const VALID_RETURN_REASONS = [
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { MovementType, Prisma } from "@prisma/client";
+import { lockProductsForStock } from "../common/product-locks";
 import { applyStockMovements } from "../inventory/stock-movements";
 import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1843,8 +1844,11 @@ export class ReturnsService {
           select: { productId: true, quantity: true, createdAt: true },
         });
         // SA-1093 Rule 4: each row counted in its own day's units, and stock has been converted since a later Boxes answer.
+        // G5: read inside the stock lock, so an answer still open has committed first. The writer below re-locks (a no-op).
+        const movedIds = [...new Set(moved.map((m) => m.productId as string))];
+        await lockProductsForStock(tx, this.prisma.getTenantId(), movedIds);
         const introsOf = new Map<string, BoxIntro[]>();
-        for (const productId of new Set(moved.map((m) => m.productId as string))) {
+        for (const productId of movedIds) {
           introsOf.set(productId, await boxIntrosOf(tx, productId));
         }
         const undo = new Map<string, number>();

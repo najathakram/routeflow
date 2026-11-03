@@ -11,7 +11,11 @@ import { AuditService } from "../audit/audit.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EncryptionService } from "../common/encryption.service";
 import { IdempotencyService } from "../common/idempotency.service";
-import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import {
+  describeDb,
+  requireLocalDatabaseUrl,
+  waitForBlockedSession,
+} from "../common/testing/db-spec";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
@@ -312,6 +316,37 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
     expect(await stock(w)).toBe(0);
   }, 60_000);
 
+  describe("C-5 (SA-1093 G5): a cancel that arrives while the answer is open waits for it", () => {
+    const answerWhile = async (w: World, cancel: () => Promise<unknown>) => {
+      let cancelling: Promise<unknown> | undefined;
+      await boxes(w, 24, async () => {
+        cancelling = cancel();
+        await waitForBlockedSession(prisma);
+      });
+      await cancelling;
+    };
+
+    it("C-5a: a standard return of 3 takes out 72, back to 0", async () => {
+      const w = await seed("c5a");
+      const ret = await standardReturn(w, 3);
+
+      await answerWhile(w, () => inTenant(w, () => returns.cancel(ret.id, staff(w))));
+
+      expect(await cancelRow(w)).toBe(-72);
+      expect(await stock(w)).toBe(0);
+    }, 60_000);
+
+    it("C-5b: an inline return of 3 takes out 72, back to 0", async () => {
+      const w = await seed("c5b");
+      const ret = await inlineReturn(w, 3);
+
+      await answerWhile(w, () => inTenant(w, () => inline.cancel(ret.id, staff(w))));
+
+      expect(await cancelRow(w)).toBe(-72);
+      expect(await stock(w)).toBe(0);
+    }, 60_000);
+  });
+
   it("C-3: a return made after Boxes cancels at its own quantity", async () => {
     const inlineWorld = await seed("c3inline");
     await boxes(inlineWorld, 24);
@@ -507,19 +542,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
       expect(events.returned.map((r: { qty: number | null }) => r.qty)).toEqual([3]);
     }, 60_000);
 
-    /** Some session in this database is waiting on a lock. A return's create blocks behind the answer too, so run it first. */
-    const blockedOnALock = async () => {
-      for (let tries = 0; tries < 80; tries += 1) {
-        const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>`
-          SELECT count(*)::int AS waiting FROM pg_stat_activity
-          WHERE datname = current_database() AND wait_event_type = 'Lock'
-        `;
-        if (waiting > 0) return;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      throw new Error("receive never reached the stock lock, so this row proved nothing");
-    };
-
+    // A return's create blocks behind the answer too, so these rows run it first.
     it("C-4i: a receive that arrives while the answer is open waits for it: 120 goes to 192", async () => {
       const w = await seed("c4i");
       await sold(w, SPLIT);
@@ -541,7 +564,7 @@ describeDb("SA-1093 Rule 4: a return's cancel after a Boxes answer", () => {
       let receiving: Promise<unknown> | undefined;
       await boxes(w, 24, async () => {
         receiving = inTenant(w, () => returns.receive(ret.id, w.userId, { restock: true }));
-        await blockedOnALock();
+        await waitForBlockedSession(prisma);
       });
       await receiving;
 

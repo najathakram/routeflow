@@ -7,7 +7,11 @@
 import { MovementType } from "@prisma/client";
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
-import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import {
+  describeDb,
+  requireLocalDatabaseUrl,
+  waitForBlockedSession,
+} from "../common/testing/db-spec";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { ProductAliasService } from "../import/product-alias.service";
 import { foldLedger } from "../inventory/fold-ledger";
@@ -201,6 +205,7 @@ describeDb("SA-1093: a bill's void after a Boxes answer", () => {
     to: number,
     reading: "box" | "piece" = "box",
     from: number | null = null,
+    whileOpen?: () => Promise<void>,
   ) =>
     inTenant(w, () =>
       prisma.tenantTransaction(async (tx) => {
@@ -215,6 +220,7 @@ describeDb("SA-1093: a bill's void after a Boxes answer", () => {
           actorId: null,
         });
         await tx.product.update({ where: { id: w.productId }, data });
+        await whileOpen?.();
       }),
     );
   const sell = (w: World, qty: number) =>
@@ -319,6 +325,25 @@ describeDb("SA-1093: a bill's void after a Boxes answer", () => {
     const left = await lots(w);
     expect(left.map((l) => [Number(l.qty), Number(l.remainingQty), Number(l.unitCost)])).toEqual([
       [120, 120, 0.0417],
+    ]);
+  });
+
+  it("V-1 (SA-1093 G5): a void that arrives while the answer is open waits for it: 240 to 0", async () => {
+    const w = await seedWorld("v1open");
+    const bill = await receivedBill(w, 10, 2);
+
+    let voiding: Promise<unknown> | undefined;
+    await answer(w, 24, "box", null, async () => {
+      voiding = voidIt(w, bill.id);
+      await waitForBlockedSession(prisma);
+    });
+    await voiding;
+
+    expect(await stock(w)).toBe(0);
+    expect(await voidRows(w, bill.billNumber)).toEqual([
+      [MovementType.PURCHASE, -10, 2],
+      [MovementType.ADJUSTMENT, -230, null],
+      [MovementType.COST_BASIS, 0, 0.0833],
     ]);
   });
 

@@ -1461,8 +1461,9 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
       expect(ledger.settleRegulatedLedger).toHaveBeenCalledTimes(1);
       // The fresh read alone is still a TOCTOU: pin the FOR UPDATE row lock, and pin that
       // it ran BEFORE the fresh read, so deleting it turns this test red.
-      // the return-row FOR UPDATE, then the stock helper's product locks (two statements) after the fresh read
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
+      // the return-row FOR UPDATE, then after the fresh read the product locks (two statements) before the Boxes answers
+      // are read (SA-1093 G5), and the same two again in the stock helper, which is a no-op in this transaction
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(5);
       expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
         txReturnFindUnique.mock.invocationCallOrder[0],
       );

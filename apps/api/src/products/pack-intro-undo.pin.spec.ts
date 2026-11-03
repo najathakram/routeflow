@@ -61,6 +61,87 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
+/**
+ * SA-1093 G5: the answers are read inside the stock lock. A read before it misses an answer still open and books the old
+ * number with no error. Every read has a decision. A new one goes RED, and each decision's lock order is checked here.
+ */
+const READS_ANSWERS = /\b(boxIntrosOf|inlineRestockFactors)\(/;
+
+const before = (file: string, lock: string, read: string, within: number) => {
+  const text = fs.readFileSync(path.join(SRC, file), "utf8");
+  const reads = [...text.matchAll(new RegExp(read.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))];
+  expect(reads.length).toBeGreaterThan(0);
+  for (const r of reads) {
+    expect(text.slice(Math.max(0, r.index - within), r.index)).toContain(lock);
+  }
+};
+
+const ANSWER_READS: Record<string, () => void> = {
+  "returns/returns.service.ts | introsOf.set(productId, await boxIntrosOf(tx, productId));": () =>
+    before(
+      "returns/returns.service.ts",
+      "lockProductsForStock(",
+      "boxIntrosOf(tx, productId)",
+      300,
+    ),
+  "returns/inline-returns.service.ts | const factors = await inlineRestockFactors(tx, `RET-${fresh.id.slice(0, 8)}`, restockedIds);":
+    () =>
+      before(
+        "returns/inline-returns.service.ts",
+        "lockProductsForStock(",
+        "await inlineRestockFactors(",
+        200,
+      ),
+  // Reached only through inlineRestockFactors, whose one caller is the row above.
+  "products/pack-intro-undo.ts | const intros = await boxIntrosOf(tx, productId);": () =>
+    expect(fs.readFileSync(path.join(SRC, "products/pack-intro-undo.ts"), "utf8")).toContain(
+      "export async function inlineRestockFactors",
+    ),
+  // restockReturnItems locks before it calls a resolver, and the resolver's reads are lazy.
+  "returns/returns-restock-pieces.ts | const intros = await boxIntrosOf(tx, item.productId);": () =>
+    before("returns/returns-restock.util.ts", "lockProductsForStock(", "resolvePieces(item)", 300),
+  // Both callers of appendBillReversals lock the bill's products first.
+  "vendor-bills/vendor-bills.service.ts | const intros = await boxIntrosOf(tx, productId);": () =>
+    before(
+      "vendor-bills/vendor-bills.service.ts",
+      "lockProducts(",
+      "this.appendBillReversals(",
+      400,
+    ),
+  // The one caller of reversePoReceipts locks the PO's products first.
+  "inventory/inventory.service.ts | const intros = await boxIntrosOf(tx, productId);": () =>
+    before("inventory/inventory.service.ts", "lockProducts(", "this.reversePoReceipts(", 300),
+};
+
+describe("reads of the Boxes answers (SA-1093 G5)", () => {
+  const found = sourceFiles(SRC)
+    .flatMap((abs) =>
+      fs
+        .readFileSync(abs, "utf8")
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => READS_ANSWERS.test(l) && !l.startsWith("export async function"))
+        .map((l) => `${path.relative(SRC, abs).replace(/\\/g, "/")} | ${l}`),
+    )
+    .sort();
+
+  it("every read has a decision, and every decision still has its read", () => {
+    expect(found).toEqual(Object.keys(ANSWER_READS).sort());
+  });
+
+  it.each(Object.keys(ANSWER_READS))("the lock comes first: %s", (key) => {
+    ANSWER_READS[key]();
+  });
+
+  it("only receive() reads the answers through a resolver", () => {
+    const passing = sourceFiles(SRC).filter((abs) =>
+      fs.readFileSync(abs, "utf8").includes("inTodaysPieces: true"),
+    );
+    expect(passing.map((abs) => path.basename(abs))).toEqual(["returns.service.ts"]);
+    before("returns/returns.service.ts", "restockReturnItems(", "inTodaysPieces: true", 200);
+  });
+});
+
 describe("rows that negate a quantity (L-305, SA-1093 P-1)", () => {
   const found = sourceFiles(SRC)
     .flatMap((abs) =>
