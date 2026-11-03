@@ -1174,6 +1174,36 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
     });
   }
 
+  // Keyboard: the landing script takes the #hash off the address until load, so the browser makes no
+  // jump of its own and sets no starting point for Tab; the next Tab then went to the skip link at the
+  // top of the page. The script sets that starting point itself, so Tab goes on from the section.
+  for (const hash of ["use-cases", "founder", "faq"]) {
+    test(`T20 — Tab after landing on /#${hash} goes on from the section, not to the top`, async ({
+      browser,
+    }) => {
+      test.setTimeout(150_000);
+      const context = await browser.newContext({
+        ...desktopChrome,
+        viewport: { width: 1440, height: 900 },
+      });
+      const page = await context.newPage();
+      await slowPhone(context, page);
+      await page.goto(`/#${hash}`, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForTimeout(3000);
+      const landed = await page.evaluate(() => Math.round(scrollY));
+      expect(landed).toBeGreaterThan(5000);
+      await page.keyboard.press("Tab");
+      await page.waitForTimeout(700);
+      const after = await page.evaluate(() => ({
+        y: Math.round(scrollY),
+        inHeader: !!document.activeElement?.closest("header, .skip, .site-header"),
+      }));
+      expect(after.inHeader, "focus went to the header or skip link").toBe(false);
+      expect(after.y, "page jumped back up").toBeGreaterThan(landed - 900);
+      await context.close();
+    });
+  }
+
   test("T20 — phone: scrolling to the founder section before the scripts run throws nothing", async ({
     browser,
   }) => {

@@ -75,6 +75,36 @@ describe("home anchor landing script", () => {
       expect(scrollTo).toHaveBeenLastCalledWith(0, 9000);
     });
 
+    // With the #hash off the address the browser makes no jump of its own, so it also sets no starting
+    // point for Tab: the next Tab went to the top of the page (skip link) instead of on from the section.
+    // The script sets it itself, once, without leaving focus or a tabindex behind.
+    it("sets the Tab starting point at the target once, leaving no focus and no tabindex", () => {
+      const focus = jest.spyOn(target, "focus");
+      const blur = jest.spyOn(target, "blur");
+      run("#use-cases");
+      top = 9000;
+      jest.advanceTimersByTime(600);
+      expect(focus).toHaveBeenCalledTimes(1);
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(blur).toHaveBeenCalledTimes(1);
+      expect(target.hasAttribute("tabindex")).toBe(false);
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("keeps a tabindex the target already has", () => {
+      target.setAttribute("tabindex", "0");
+      run("#use-cases");
+      expect(target.getAttribute("tabindex")).toBe("0");
+    });
+
+    it("sets no starting point for an unknown id, a reload or a missing hash", () => {
+      const focus = jest.spyOn(target, "focus");
+      run("#nothing-here");
+      run("#use-cases", "reload");
+      run("");
+      expect(focus).not.toHaveBeenCalled();
+    });
+
     it("stops as soon as the person touches, scrolls or presses a key", () => {
       for (const type of ["touchstart", "wheel", "keydown", "pointerdown"]) {
         scrollTo.mockClear();
