@@ -138,12 +138,30 @@ describe("the first screen on a phone is not grey", () => {
 
   it("three thin brand rings sit in the hero's right margin, no repeat, behind the text", () => {
     expect(css).toContain("background-repeat:no-repeat");
-    expect(css).toContain("background-size:150px 150px,auto,auto");
+    expect(css).toContain("background-size:76px 76px,auto,auto");
     for (const hex of ["%234caed9", "%236261af", "%23ffc933"]) expect(css).toContain(hex);
   });
 
   it("the trial sentence breaks between its two sentences, or is balanced", () => {
     expect(css).toContain(".hx-note,.pd-note,.cta-band p,h1,h2,h3");
     expect(read("home.html")).toContain('<span class="nb">No card needed.</span>');
+  });
+
+  it("a phone never draws a wheel name under 11 px; the icon stays when the name is left out", () => {
+    expect(wheel).toContain("((phone ? 11 : 10.5) * dpr) / 31");
+    expect(wheel).toContain("shy = phone && fitN < floor");
+    expect(wheel).toContain("if (!shy)");
+    expect(wheel).toContain("vis * (outer ? 1 - p.n * shown * (1 - flat) : 1)");
+  });
+
+  it("on a short screen the names wait until the pieces settle", () => {
+    expect(wheel).toContain("tile.clientHeight < 520 ? 2.7 : 1.7");
+    expect(wheel).toContain("at + late");
+  });
+
+  it("the phone wheel and its hint sit above the browser bar", () => {
+    expect(wheel).toContain("roomy = vis > low + 36");
+    expect(wheel).toContain("hintAt(room)");
+    expect(css).toContain(".hx-up .hx-lay{padding-block:14px 6px}");
   });
 });

@@ -349,7 +349,7 @@
        picture (css/home-color.css --hero-wash): x, y, half-width, half-height (as a share of the stage), then the colour. */
     const WASH = [[0.88, 0.08, 0.58, 0.7, 76, 174, 217, 0.48, 0.72], [1, 0.92, 0.52, 0.62, 255, 201, 51, 0.56, 0.72], [0.58, 1.04, 0.48, 0.6, 229, 106, 93, 0.32, 0.72], [0, 0.96, 0.44, 0.56, 20, 201, 143, 0.32, 0.7]];
     /* A tall stage (a phone held upright) is tall and the four desktop glows sit mostly below its first screen, so it gets six smaller ones spread down both sides: the same colours, a little colour all the way down the panel. */
-    const WASH_NARROW = [[0.9, 0.05, 0.7, 0.5, 76, 174, 217, 0.5, 0.72], [0.05, 0.2, 0.6, 0.42, 255, 201, 51, 0.5, 0.72], [0, 0.62, 0.5, 0.4, 229, 106, 93, 0.3, 0.72], [1, 0.55, 0.5, 0.4, 98, 97, 175, 0.3, 0.72], [0.1, 1, 0.7, 0.5, 20, 201, 143, 0.34, 0.7], [0.95, 0.95, 0.6, 0.45, 255, 201, 51, 0.45, 0.72]];
+    const WASH_NARROW = [[0.9, 0.05, 0.7, 0.5, 76, 174, 217, 0.5, 0.72], [0.05, 0.2, 0.6, 0.42, 255, 201, 51, 0.33, 0.72], [0, 0.62, 0.5, 0.4, 229, 106, 93, 0.3, 0.72], [1, 0.55, 0.5, 0.4, 98, 97, 175, 0.3, 0.72], [0.1, 1, 0.7, 0.5, 20, 201, 143, 0.34, 0.7], [0.95, 0.95, 0.6, 0.45, 255, 201, 51, 0.3, 0.72]];
     const washCv = document.createElement("canvas");
     let wkey = "";
     const washed = (W, H) => {
@@ -433,12 +433,13 @@
              whatever the plate's. At the stops one piece is featured, so the rest carry their icons and no words. */
           const name = outer ? Math.max(!phone && size >= 13 ? flat : 0, p.n) : p.n;
           ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c));
+          let shown = 0;
           if (name > 0.01) {
             ctx.globalAlpha = vis * name;
             if (outer) {
               /* A name is fitted inside its own piece at every width: never wider than the piece's face, never crossing its edge.
                  Its ink is whichever of the piece's dark ink and white reads better on the piece's colour right now. */
-              let nf = nk, mf = phone ? nk * 0.62 : sc * 0.56, lit = false;
+              let nf = nk, mf = phone ? nk * 0.62 : sc * 0.56, lit = false, shy = false, noteShy = false;
               const nt = phone && w.d.n && w.d.n.length > 9;
               const two = w.lines.length > 1, note = w.d.n && p.n > 0.01, y0 = p.n > 0.01 ? 12 - (two ? 16 : 0) - (note && nt ? 24 : 0) : 54 - (two ? 8 : 0);
               {
@@ -452,16 +453,20 @@
                   for (let j = 0; j < n; j++) { const k = (j + 1) % n, y1 = ty[j], y2 = ty[k]; if ((y1 <= yy && y2 > yy) || (y2 <= yy && y1 > yy)) { const xx = tx[j] + ((yy - y1) * (tx[k] - tx[j])) / (y2 - y1); if (xx <= ax && xx > l) l = xx; if (xx >= ax && xx < r) r = xx; } }
                   if (l > -1e8 && r < 1e8) hw = Math.min(hw, ax - l, r - ax);
                 }
-                const room = 2 * hw * 0.88, floor = ((phone ? 9.5 : 10.5) * dpr) / 31;
-                nf = Math.max(floor, Math.min(nk, room / Math.max(1, ...w.lines.map(wid))));
-                if (w.d.n) mf = Math.max(((phone ? 9.5 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid))));
+                const room = 2 * hw * 0.88, floor = ((phone ? 11 : 10.5) * dpr) / 31;
+                const fitN = Math.min(nk, room / Math.max(1, ...w.lines.map(wid)));
+                /* No name is drawn under 11 px on a phone: a piece whose name would be smaller shows its icon only, as at rest. */
+                shy = phone && fitN < floor;
+                nf = Math.max(floor, fitN);
+                if (w.d.n) { const nw = room / Math.max(1, ...(nt ? lines2(w.d.n) : [w.d.n]).map(wid)); noteShy = phone && nw < (11 * dpr) / 31; mf = Math.max(((phone ? 11 : 10) * dpr) / 31, Math.min(mf, nf * 0.8, nw)); }
                 const lf = lum(f), ld = lum(mix(INK, w.ink, p.c));
                 lit = 1.05 / (lf + 0.05) > (Math.max(lf, ld) + 0.05) / (Math.min(lf, ld) + 0.05);
+                if (shy) lit = false;
                 if (lit) { ctx.fillStyle = ctx.strokeStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,0.34)"; ctx.shadowBlur = 2.5 * dpr; ctx.shadowOffsetY = 0.6 * dpr; }
               }
-              ctx.setTransform(nf, 0, 0, nf * nq, ax, ay);
-              for (let j = 0; j < w.lines.length; j++) ctx.fillText(w.lines[j], 0, y0 + j * 31);
-              if (note) { const yn = ((y0 + 34) * nf) / mf, ls = nt ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(mf, 0, 0, mf * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
+              shown = shy ? 0 : 1;
+              if (!shy) { ctx.setTransform(nf, 0, 0, nf * nq, ax, ay); for (let j = 0; j < w.lines.length; j++) ctx.fillText(w.lines[j], 0, y0 + j * 31); }
+              if (note && !shy && !noteShy) { const yn = ((y0 + 34) * nf) / mf, ls = nt ? lines2(w.d.n) : [w.d.n]; ctx.setTransform(mf, 0, 0, mf * nq, ax, ay); for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, yn + j * 34); }
               if (lit) { ctx.shadowColor = "rgba(0,0,0,0)"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c)); } /* the icon keeps the piece's own ink */
             } else {
               const side = Math.abs(ux) > 0.7, r = (side || uy < 0 ? r1 : r0) + sl, gap = (phone ? 6 : 12) * dpr, ck = Math.max(phone ? sc * 0.9 : sc * 0.76, ((phone ? 13 : 12) * dpr) / 31);
@@ -472,12 +477,12 @@
                 let x0 = 1e9, x1 = -1e9;
                 for (let j = 0; j < n; j++) { if (tx[j] < x0) x0 = tx[j]; if (tx[j] > x1) x1 = tx[j]; }
                 const lim = uy < 0 ? 0.6 * cx : (x1 - x0) * 0.82, tw = uy < 0 ? Math.max(...list.map((v) => wid(v.d.t))) : wid(w.d.t);
-                ckf = Math.max(((phone ? 9.5 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
+                ckf = Math.max(((phone ? 11 : 10.5) * dpr) / 31, Math.min(ck, lim / Math.max(1, tw)));
                 /* On a small wheel the two back names would sit on top of each other: each then reads outward from its own piece, as far as the stage lets it. */
-                if (uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { out = true; ckf = Math.max((9 * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw))); }
+                if (uy < 0 && 2 * Math.abs(px - cx) < tw * ckf * 1.02) { out = true; ckf = Math.max(((phone ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - 8 * dpr) / Math.max(1, tw))); }
               } else {
                 /* A name beside the wheel never runs off the stage: it shrinks, a little, to stay on it. */
-                ckf = Math.max((9 * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - gap - 8 * dpr) / Math.max(1, wid(w.d.t))));
+                ckf = Math.max(((phone ? 11 : 9) * dpr) / 31, Math.min(ckf, ((ux > 0 ? cv.width - px : px) - gap - 8 * dpr) / Math.max(1, wid(w.d.t))));
               }
               ctx.textAlign = side || out ? (ux > 0 ? "left" : "right") : "center";
               ctx.fillStyle = css(INK);
@@ -489,7 +494,7 @@
           }
           const is = Math.max(1.25 * sc, (phone ? 0.62 : 0.8) * dpr) * (outer ? 1 : rg + lift * 0.4);
           /* Once it is named, a daily-work plate carries the name alone: its icon would crowd it. */
-          ctx.globalAlpha = vis * (outer ? 1 - p.n * (1 - flat) : 1);
+          ctx.globalAlpha = vis * (outer ? 1 - p.n * shown * (1 - flat) : 1);
           if (ctx.globalAlpha > 0.01) {
             ctx.setTransform(is, 0, 0, is * sq, ax, ay - (outer ? 24 * sc * sq * flat : 0)); ctx.translate(-24, -24);
             ctx.lineWidth = ((outer ? 1.35 : 1.35 + lift * 0.5) * dpr) / is; ctx.lineCap = ctx.lineJoin = "round"; ctx.stroke(w.ic);
@@ -594,8 +599,9 @@
       if (phone) {
         /* The hero's words sit above the stage, in the page. At rest the wheel takes what the first screen shows of the stage, and at
            the end what the last words leave it. A short phone shows the top of it and scrolling brings the rest. */
-        const elTop = el.getBoundingClientRect().top + root.scrollY, vis = pin.offsetHeight + pinTop - elTop - tile.offsetTop, low = Math.min(W * 0.72, 460) + 14, room = vis > low + 36;
-        F.flat = fitTo(flatBB, { l: pad, t: 14, r: W - pad, b: clamp(low, H - 14, vis - (room ? 40 : 14)) }, W * 0.86);
+        const elTop = el.getBoundingClientRect().top + root.scrollY, vis = pin.offsetHeight + pinTop - elTop - tile.offsetTop, low = Math.min(W * 0.72, 460) + 14, roomy = vis > low + 36, keep = Math.max(176, vis - 40), room = roomy || vis >= 216;
+        /* Wheel and hint both sit above the browser bar: a screen too short for the full wheel gets a smaller one, not a cut one. */
+        F.flat = fitTo(flatBB, { l: pad, t: 14, r: W - pad, b: roomy ? clamp(low, H - 14, vis - 40) : keep }, W * 0.86);
         hintAt(room);
         F.end = fitTo(flatBB, { l: pad, t: bottomOf(hx[1], hx[1].querySelector(".rfw-sub")) + 18, r: W - pad, b: H - 18 }, W * 0.86);
         const zs = (p, u) => ({ zO: p.zO * u, zI: p.zI * u, zH: p.zH * u }), aBand = { l: 8, t: bottomOf(hx[0], hx[0].querySelector(".rfw-sub")) + 12, r: W - 8, b: H - 30 };
@@ -619,11 +625,11 @@
         /* The words keep one column, on the left where the hero's words were; the wheel keeps the right of the stage. */
         const cr = copy ? copy.getBoundingClientRect() : null, L = cr ? Math.max(pad, cr.left - tr.left) : pad, gap = Math.max(24, W * 0.02);
         tile.style.setProperty("--rfw-l", L + "px");
-        const colR = hx[0].offsetLeft + hx[0].offsetWidth, restL = (cr ? cr.right - tr.left : colR) + gap, side = { l: colR + gap, t: pad, r: W - pad, b: H - pad };
+        const colR = hx[0].offsetLeft + hx[0].offsetWidth, restL = (cr ? cr.right - tr.left : colR) + gap, pv = H < 480 ? Math.round(H * 0.04) : pad, side = { l: colR + gap, t: pv, r: W - pad, b: H - pv };
         F.flat = F.end = fitTo(flatBB, { l: restL, t: pad, r: W - pad, b: H - pad - 28 }, H * 0.74);
         hintAt(true);
         /* Centre stage: for this one moment the words have gone, so it may use the whole tile. */
-        F.burst = fitTo(apartBB, { l: pad, t: Math.round(pad * 0.7), r: W - pad, b: H - Math.round(pad * 0.7) }, W - 2 * pad);
+        F.burst = fitTo(apartBB, { l: pad, t: Math.round(pv * 0.7), r: W - pad, b: H - Math.round(pv * 0.7) }, W - 2 * pad);
         F.apart = fitTo(apartBB, side, side.r - side.l);
         F.story = fitTo(storyBB, side, side.r - side.l);
         noteTwo = false;
@@ -697,12 +703,14 @@
     T.to(S, { lI: 1, duration: 5.2, ease: HEAVY }, 1.1);
     T.to(S, { lO: 1, duration: 5.2, ease: HEAVY }, 1.3);
     T.to(S, { dr: 1, duration: 5, ease: "sine.out" }, 3.3);
+    /* On a short stage the names wait until the pieces have landed, so they never sit on a piece still in flight. */
+    const late = tile.clientHeight < 520 ? 2.7 : 1.7;
     WD.forEach((w) => {
       const p = P[w.i], at = w.o ? 1.4 + w.rank * 0.4 : 1.1 + w.rank * 0.36;
       T.to(p, { e: -0.03, duration: 0.5, ease: "sine.inOut" }, 0.35);
       T.to(p, { e: 1, duration: 4.5, ease: HEAVY }, at);
       T.to(p, { c: 1, duration: 1.2, ease: IO }, at + 0.5);
-      T.to(p, { n: 1, duration: 0.45, ease: OUT }, at + 1.7);
+      T.to(p, { n: 1, duration: 0.45, ease: OUT }, at + late);
       T.to(p, { n: 0, duration: 0.3, ease: IO }, T_SEEN + 0.1);
     });
     /* Every piece has its name. The camera makes room and one line says what it all is. */

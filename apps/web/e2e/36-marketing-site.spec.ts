@@ -1820,3 +1820,44 @@ test.describe("T22 — the wheel runs on a short screen", () => {
     await context.close();
   });
 });
+
+// ─── T23 — on a phone, headings rise into place and are never hidden ─────────
+// The rise is movement only (a scroll timeline, behind @supports). With real scroll, every heading on screen (outside the wheel, which
+// has its own beats) is fully opaque and visible once the page has settled at each step.
+test.describe("T23 — the phone's rising headings", () => {
+  for (const route of ["/", "/pricing", "/product"]) {
+    test(`T23 — ${route} at 390: headings on screen are opaque, and settle in place`, async ({
+      browser,
+    }) => {
+      test.setTimeout(180_000);
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+      });
+      const page = await context.newPage();
+      await page.goto(route, { waitUntil: "load" });
+      await page.waitForTimeout(2000);
+      const bad: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        await page.mouse.wheel(0, 640);
+        await page.waitForTimeout(1300);
+        const seen = await page.evaluate(() =>
+          [...document.querySelectorAll("h2")]
+            .filter((h) => {
+              if (h.closest(".rfw")) return false;
+              const r = h.getBoundingClientRect();
+              return r.top > 70 && r.bottom < innerHeight && r.height > 0;
+            })
+            .map((h) => {
+              const c = getComputedStyle(h);
+              return { t: (h.textContent || "").slice(0, 30), o: c.opacity, v: c.visibility };
+            }),
+        );
+        for (const s of seen)
+          if (s.o !== "1" || s.v !== "visible") bad.push(`${s.t}: ${s.o}/${s.v}`);
+      }
+      await context.close();
+      expect(bad, "headings hidden on screen").toEqual([]);
+    });
+  }
+});
