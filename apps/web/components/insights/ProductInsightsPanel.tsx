@@ -515,6 +515,8 @@ export function ProductInsightsPanel({ productId }: { productId: string }) {
             productId={productId}
             sku={data.product.sku || data.product.name}
             hideFullLink
+            seedFrom={data.window.from}
+            seedTo={data.window.to}
           />
         )}
       </div>

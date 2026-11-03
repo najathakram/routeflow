@@ -16,6 +16,8 @@ const PAGES = [
   "does-and-doesnt.html",
   "data-in-and-out.html",
   "security.html",
+  "company.html",
+  "contact.html",
 ];
 const DEPTH = ["does-and-doesnt", "data-in-and-out", "security"];
 

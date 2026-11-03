@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  */
-// The home, pricing, product, landing and four deep pages (getting-started, does-and-doesnt,
+// The home, pricing, product, landing, company, contact and four deep pages (getting-started, does-and-doesnt,
 // data-in-and-out, security) are ready-made HTML under public/site, served at
 // their own addresses by the rewrites in next.config.mjs. This pins what makes that safe: the
 // rewrites point at real files, every file the pages name is there, every link goes to a route
@@ -29,6 +29,8 @@ const PAGES: Array<{ route: string; file: string; indexable: boolean }> = [
   { route: "/does-and-doesnt", file: "does-and-doesnt.html", indexable: true },
   { route: "/data-in-and-out", file: "data-in-and-out.html", indexable: true },
   { route: "/security", file: "security.html", indexable: true },
+  { route: "/company", file: "company.html", indexable: true },
+  { route: "/contact", file: "contact.html", indexable: true },
 ];
 
 function loadConfig<T>(call: "redirects" | "rewrites" | "headers"): T {
@@ -77,7 +79,7 @@ describe("ready-made pages: served by rewrites", () => {
     "rewrites",
   ).beforeFiles;
 
-  it("R1: exactly these eight addresses are rewritten, each to site-page and its file under public/site", () => {
+  it("R1: exactly these ten addresses are rewritten, each to site-page and its file under public/site", () => {
     expect(rewrites.map((r) => [r.source, r.destination])).toEqual(
       PAGES.map((p) => [p.route, `/site-page/${p.file.replace(/\.html$/, "")}`]),
     );
@@ -90,7 +92,7 @@ describe("ready-made pages: served by rewrites", () => {
     expect(text).toContain("</html>");
   });
 
-  it("R3: none of the eight is also a page built in Next (a second source of truth)", () => {
+  it("R3: none of the ten is also a page built in Next (a second source of truth)", () => {
     for (const { route } of PAGES) {
       const dir = route === "/" ? "" : route.slice(1);
       for (const group of ["(marketing)", ""]) {
@@ -105,8 +107,8 @@ describe("ready-made pages: served by rewrites", () => {
       .filter((r) => r.headers.some((h) => h.key === "X-Robots-Tag"))
       .map((r) => r.source);
     expect(sources).toEqual([
-      "/site/:page(home|pricing|product|landing|getting-started|does-and-doesnt|data-in-and-out|security).html",
-      "/site-page/:page(home|pricing|product|landing|getting-started|does-and-doesnt|data-in-and-out|security)",
+      "/site/:page(home|pricing|product|landing|company|contact|getting-started|does-and-doesnt|data-in-and-out|security).html",
+      "/site-page/:page(home|pricing|product|landing|company|contact|getting-started|does-and-doesnt|data-in-and-out|security)",
     ]);
   });
 });
