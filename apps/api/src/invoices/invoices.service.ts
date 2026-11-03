@@ -2812,6 +2812,8 @@ export class InvoicesService {
 
       // #2070 / SA-523: each line's bump is a CAS on what was read; any miss rolls back the partial.
       await bumpInvoicedQtyCas(tx, dto.items, itemById);
+      // SA-962 row 721: the partial's regulated lines book in this tx (under the Order lock above).
+      await this.resyncInvoiceLedger(created.id, order.id, created.items ?? [], tx);
 
       await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
       return created;
