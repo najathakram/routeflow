@@ -69,6 +69,10 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
   let routesService: RoutesService;
   let invoicesService: InvoicesService;
   let settleLedger: jest.Mock;
+  let ledgerMock: Record<
+    "writeSaleEntries" | "reverseInvoiceEntries" | "settleRegulatedLedger",
+    jest.Mock
+  >;
   const createdTenantIds: string[] = [];
 
   const mockGateway = {
@@ -174,7 +178,8 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
 
     routesService = module.get(RoutesService);
     invoicesService = module.get(InvoicesService);
-    settleLedger = module.get(RegulatedLedgerService).settleRegulatedLedger as jest.Mock;
+    ledgerMock = module.get(RegulatedLedgerService) as unknown as typeof ledgerMock;
+    settleLedger = ledgerMock.settleRegulatedLedger;
   });
 
   afterAll(async () => {
@@ -608,7 +613,7 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
       label: string,
       cats: string[],
       lines: Array<{ cat: number | null; qty: number }>,
-      drafts: number[][],
+      drafts: number[][] | "real",
     ) {
       const slug = freshTenantSlug(label);
       const tenant = await prisma.tenant.create({ data: { slug, name: `SA-1098 ${slug}` } });
@@ -704,7 +709,17 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
       }
       const groupId = randomUUID();
       const invoiceIds: string[] = [];
-      for (const [d, idxs] of drafts.entries()) {
+      if (drafts === "real") {
+        // A-4: the drafts the product itself makes (one per group, base first), numbers, totals and ledger rows included.
+        await tenantCtx.run(tenantId, () => invoicesService.createInvoiceFromOrder(order.id));
+        const created = await prisma.invoice.findMany({
+          where: { orderId: order.id },
+          orderBy: { createdAt: "asc" },
+          select: { id: true },
+        });
+        invoiceIds.push(...created.map((c) => c.id));
+      }
+      for (const [d, idxs] of drafts === "real" ? [] : drafts.entries()) {
         const sub = idxs.reduce((sum, i) => sum + lines[i].qty * 10, 0);
         // eslint-disable-next-line no-await-in-loop
         const inv = await prisma.invoice.create({
@@ -945,6 +960,215 @@ describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
       expect(await needsReviewRows(s, st.orderId)).toBe(0);
       expect(await officeReads({ tenantId: s.tenantId, orderId: st.orderId })).toEqual({
         flagged: false,
+      });
+    });
+
+    /**
+     * SA-1098 A-4: the one draft left on a split order. Real `createInvoiceFromOrder` drafts (base first), a real `send` and a real
+     * ledger, so the lines, totals and SALE rows are what the product writes. Line prices are $10: the qty is the line's dollars / 10.
+     */
+    const observe = (label: string, v: unknown) =>
+      // eslint-disable-next-line no-console
+      console.info(`${label} observed:`, JSON.stringify(v));
+    const withRealLedger = async (fn: () => Promise<void>) => {
+      const real = new RegulatedLedgerService(prisma);
+      const names = ["writeSaleEntries", "reverseInvoiceEntries", "settleRegulatedLedger"] as const;
+      for (const n of names)
+        ledgerMock[n].mockImplementation((...a: unknown[]) =>
+          (real[n] as (...x: unknown[]) => unknown)(...a),
+        );
+      try {
+        await fn();
+      } finally {
+        ledgerMock.writeSaleEntries.mockReset();
+        ledgerMock.reverseInvoiceEntries.mockReset();
+        ledgerMock.settleRegulatedLedger.mockReset();
+        ledgerMock.settleRegulatedLedger.mockResolvedValue({ written: 0, amendedPeriod: null });
+      }
+    };
+    const splitSend = (sp: Split, n: number) =>
+      tenantCtx.run(sp.tenantId, () => invoicesService.send(sp.invoiceIds[n]));
+    /** Per order line: the ledger rows by the position of the invoice they sit on (0 = base), e.g. `{ 1: ["SALE:2"] }`. */
+    const ledgerByLine = async (sp: Split) => {
+      const rows = await prisma.regulatedSalesLedger.findMany({
+        where: { orderItemId: { in: sp.made.map((m) => m.id) } },
+        orderBy: { createdAt: "asc" },
+        select: { orderItemId: true, invoiceId: true, entryType: true, qty: true },
+      });
+      const out: Record<string, string[]> = {};
+      for (const r of rows) {
+        const key = `line${sp.made.findIndex((m) => m.id === r.orderItemId)}@${sp.invoiceIds.indexOf(r.invoiceId as string)}`;
+        (out[key] ??= []).push(`${r.entryType}:${Number(r.qty)}`);
+      }
+      return out;
+    };
+    /** The non-void invoices holding a line; empty = the line is on no invoice. */
+    const billedOn = (sp: Split, line: number) =>
+      prisma.invoiceItem.count({
+        where: { orderItemId: sp.made[line].id, invoice: { status: { not: "VOID" } } },
+      });
+    const LEFT_OFF_KIND = "line-left-off";
+    const leftOffRows = (sp: Split) =>
+      prisma.auditLog.count({
+        where: {
+          tenantId: sp.tenantId,
+          action: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+          entityId: sp.orderId,
+          meta: { path: ["kind"], equals: LEFT_OFF_KIND },
+        },
+      });
+
+    it("D-52 (red, RV-6): -R1 issued, a line of its group refused then Undo, Delivered: the base takes only its own group", async () => {
+      await withRealLedger(async () => {
+        const sp = await seedSplit(
+          "d52",
+          ["R"],
+          [
+            { cat: null, qty: 1 },
+            { cat: 0, qty: 2 },
+            { cat: 0, qty: 3 },
+          ],
+          "real",
+        );
+        await splitGo(sp, splitDto(sp, [1, 0, 3], [1, 2, 3]), "k-d52a");
+        await splitSend(sp, 1);
+        await splitUndo(sp);
+        await splitGo(sp, splitDto(sp, [1, 2, 3], [1, 2, 3]), "k-d52b");
+        observe("D-52", {
+          state: await splitState(sp),
+          ledger: await ledgerByLine(sp),
+          leftOff: await leftOffRows(sp),
+          office: await officeReads(sp),
+        });
+        expect(await splitState(sp)).toEqual([
+          { total: 10, lines: [0] },
+          { total: 30, lines: [2] },
+        ]);
+        expect(await billedOn(sp, 1)).toBe(0);
+        expect(Object.keys(await ledgerByLine(sp)).filter((k) => k.startsWith("line1@0"))).toEqual(
+          [],
+        );
+        expect(await leftOffRows(sp)).toBe(1);
+        expect(await officeReads(sp)).toEqual({ flagged: true, reason: LEFT_OFF_REASON });
+      });
+    });
+
+    it("D-53 (red, RV-7): the base issued, a base line refused then Undo, Delivered: -R1 takes only its own group", async () => {
+      await withRealLedger(async () => {
+        const sp = await seedSplit(
+          "d53",
+          ["R"],
+          [
+            { cat: null, qty: 1 },
+            { cat: null, qty: 2 },
+            { cat: 0, qty: 3 },
+          ],
+          "real",
+        );
+        await splitGo(sp, splitDto(sp, [1, 0, 3], [1, 2, 3]), "k-d53a");
+        await splitSend(sp, 0);
+        await splitUndo(sp);
+        await splitGo(sp, splitDto(sp, [1, 2, 3], [1, 2, 3]), "k-d53b");
+        observe("D-53", {
+          state: await splitState(sp),
+          ledger: await ledgerByLine(sp),
+          leftOff: await leftOffRows(sp),
+          office: await officeReads(sp),
+        });
+        expect(await splitState(sp)).toEqual([
+          { total: 10, lines: [0] },
+          { total: 30, lines: [2] },
+        ]);
+        expect(await billedOn(sp, 1)).toBe(0);
+        expect(await leftOffRows(sp)).toBe(1);
+        expect(await officeReads(sp)).toEqual({ flagged: true, reason: LEFT_OFF_REASON });
+      });
+    });
+
+    it("D-54 (red): two groups, the one draft left is empty, the sibling issued: an empty draft is not the base, the line stays off", async () => {
+      await withRealLedger(async () => {
+        const sp = await seedSplit(
+          "d54",
+          ["R"],
+          [
+            { cat: null, qty: 1 },
+            { cat: 0, qty: 2 },
+          ],
+          "real",
+        );
+        await splitGo(sp, splitDto(sp, [0, 2], [1, 2]), "k-d54a");
+        await splitSend(sp, 1);
+        await splitUndo(sp);
+        await splitGo(sp, splitDto(sp, [1, 2], [1, 2]), "k-d54b");
+        observe("D-54", {
+          state: await splitState(sp),
+          ledger: await ledgerByLine(sp),
+          leftOff: await leftOffRows(sp),
+          office: await officeReads(sp),
+        });
+        expect(await billedOn(sp, 0)).toBe(0);
+        expect(await leftOffRows(sp)).toBe(1);
+        expect(await officeReads(sp)).toEqual({ flagged: true, reason: LEFT_OFF_REASON });
+      });
+    });
+
+    it("D-55 (guard): -R1 issued, Undo on a standard line, Delivered: the line goes back on the base draft and bills, no flag", async () => {
+      await withRealLedger(async () => {
+        const sp = await seedSplit(
+          "d55",
+          ["R"],
+          [
+            { cat: null, qty: 1 },
+            { cat: 0, qty: 2 },
+            { cat: null, qty: 3 },
+          ],
+          "real",
+        );
+        await splitGo(sp, splitDto(sp, [1, 2, 0], [1, 2, 3]), "k-d55a");
+        await splitSend(sp, 1);
+        await splitUndo(sp);
+        await splitGo(sp, splitDto(sp, [1, 2, 3], [1, 2, 3]), "k-d55b");
+        observe("D-55", {
+          state: await splitState(sp),
+          ledger: await ledgerByLine(sp),
+          leftOff: await leftOffRows(sp),
+          office: await officeReads(sp),
+        });
+        expect(await splitState(sp)).toEqual([
+          { total: 40, lines: [0, 2] },
+          { total: 20, lines: [1] },
+        ]);
+        expect(await leftOffRows(sp)).toBe(0);
+        expect(await needsReviewRows(sp, sp.orderId)).toBe(0);
+        expect(await officeReads(sp)).toEqual({ flagged: false });
+      });
+    });
+
+    it("D-56 (guard): a sibling voided, not issued, then a line of its group delivered: the line stays off, flagged", async () => {
+      await withRealLedger(async () => {
+        const sp = await seedSplit(
+          "d56",
+          ["R"],
+          [
+            { cat: null, qty: 1 },
+            { cat: 0, qty: 2 },
+          ],
+          "real",
+        );
+        await tenantCtx.run(sp.tenantId, () =>
+          invoicesService.voidInvoice(sp.invoiceIds[1], operator),
+        );
+        await splitGo(sp, splitDto(sp, [1, 2], [1, 2]), "k-d56");
+        observe("D-56", {
+          state: await splitState(sp),
+          ledger: await ledgerByLine(sp),
+          leftOff: await leftOffRows(sp),
+          office: await officeReads(sp),
+        });
+        expect(await splitState(sp)).toEqual([{ total: 10, lines: [0] }]);
+        expect(await billedOn(sp, 1)).toBe(0);
+        expect(await leftOffRows(sp)).toBe(1);
+        expect(await officeReads(sp)).toEqual({ flagged: true, reason: LEFT_OFF_REASON });
       });
     });
 

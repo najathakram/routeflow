@@ -33,10 +33,66 @@ describe("placeUnbilledLines", () => {
     expect(groupsOf).not.toHaveBeenCalled();
   });
 
-  it("one draft: every unbilled line goes on it", async () => {
-    const r = await run([draft("d1", [["a", null]])], ["a", "b", "c"], []);
+  it("one draft, one group: every unbilled line goes on it", async () => {
+    const groups = [{ trackedCategoryId: null, lineIds: ["a", "b", "c"] }];
+    const r = await run([draft("d1", [["a", null]])], ["a", "b", "c"], groups);
     expect(asObj(r.placed)).toEqual({ d1: ["b", "c"] });
     expect(r.needsReview).toBe(false);
+  });
+
+  describe("A-4: one draft left, several groups", () => {
+    const groups = [
+      { trackedCategoryId: null, lineIds: ["std", "std2"] },
+      { trackedCategoryId: "R", lineIds: ["reg", "reg2"] },
+    ];
+    const all = ["std", "std2", "reg", "reg2"];
+
+    it("the base draft takes the standard lines only; the regulated one stays off, flagged", async () => {
+      const r = await run([draft("base", [["std", null]])], all, groups);
+      expect(asObj(r.placed)).toEqual({ base: ["std2"] });
+      expect(r.needsReview).toBe(true);
+    });
+
+    it("the regulated draft takes its own group only; the standard line stays off, flagged", async () => {
+      const r = await run([draft("r1", [["reg", "R"]])], all, groups);
+      expect(asObj(r.placed)).toEqual({ r1: ["reg2"] });
+      expect(r.needsReview).toBe(true);
+    });
+
+    it("only its own group's lines unbilled: placed, no flag", async () => {
+      const r = await run([draft("base", [["std", null]])], ["std", "std2", "reg"], groups, [
+        { items: [{ orderItemId: "reg" }] },
+      ]);
+      expect(asObj(r.placed)).toEqual({ base: ["std2"] });
+      expect(r.needsReview).toBe(false);
+    });
+
+    it("an empty draft is not the base: nothing placed, flagged", async () => {
+      const r = await run([draft("base")], all, groups);
+      expect(asObj(r.placed)).toEqual({});
+      expect(r.needsReview).toBe(true);
+    });
+
+    it("two categories on the draft: unreadable, nothing placed, flagged", async () => {
+      const g3 = [...groups, { trackedCategoryId: "S", lineIds: ["s1"] }];
+      const two = draft("d1", [
+        ["reg", "R"],
+        ["s1", "S"],
+      ]);
+      const r = await run([two], [...all, "s1"], g3);
+      expect(asObj(r.placed)).toEqual({});
+      expect(r.needsReview).toBe(true);
+    });
+
+    it("a category that is not a group (no standard group, a null key): nothing placed, flagged", async () => {
+      const noStd = [
+        { trackedCategoryId: "R", lineIds: ["reg", "reg2"] },
+        { trackedCategoryId: "S", lineIds: ["s1"] },
+      ];
+      const r = await run([draft("d1", [["x", null]])], ["x", "reg", "reg2", "s1"], noStd);
+      expect(asObj(r.placed)).toEqual({});
+      expect(r.needsReview).toBe(true);
+    });
   });
 
   it("a line billed by a finalized invoice is not unbilled", async () => {

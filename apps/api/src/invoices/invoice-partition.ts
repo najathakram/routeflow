@@ -219,10 +219,13 @@ export interface PlacementDraft {
  * at 0 (refused, then undone) loses its invoice item, and the next completion reads a draft's lines
  * from the items it still holds and never sees it again. This decides, WITHOUT touching the DB,
  * which draft each live order line that NO non-void invoice bills goes back on before the rebuild
- * (the only reads are the caller's own `groupsOf`, called only when several drafts need it).
+ * (the only reads are the caller's own `groupsOf`, called whenever a line is unbilled and a draft is open).
  * The rebuild's own filter still drops a line delivered at 0, so a refused line never bills.
  *
- *   - one draft: every unbilled line goes on it;
+ *   - one draft, one group: every unbilled line goes on it;
+ *   - one draft, several groups (A-4): the draft takes only its OWN group's unbilled lines, read from the
+ *     category its items carry; every other unbilled line is left OFF with `needsReview`. A draft with no
+ *     items, two categories, or a category that is not a group, has no readable group: all stay off;
  *   - several drafts: a line goes on the draft that holds its group's category (`groupsOf` is the one
  *     grouping function's answer over the live lines: the standard group first, then each
  *     SEPARATE_INVOICE category in numbering order). When a draft has no items left, the category
@@ -249,11 +252,6 @@ export async function placeUnbilledLines(input: {
   const put = (draftId: string, lineId: string) =>
     placed.set(draftId, [...(placed.get(draftId) ?? []), lineId]);
 
-  if (input.drafts.length === 1) {
-    for (const id of unbilled) put(input.drafts[0].id, id);
-    return { placed, needsReview: false };
-  }
-
   const { drafts } = input;
   const groups = await input.groupsOf();
   const sepCats = new Set(groups.map((g) => g.trackedCategoryId).filter(Boolean));
@@ -266,6 +264,28 @@ export async function placeUnbilledLines(input: {
     if (cats.size > 1) return undefined;
     return cats.size === 1 ? [...cats][0] : null;
   };
+
+  if (drafts.length === 1) {
+    const only = drafts[0];
+    if (groups.length <= 1) {
+      // one group: the one draft takes any unbilled line
+      for (const id of unbilled) put(only.id, id);
+      return { placed, needsReview: false };
+    }
+    // Several groups, one draft left: it takes only its own group's lines. An empty draft has no category to
+    // read (catOf answers null for no items, which would read as the base), so items are tested first (D-54).
+    const own = (only.items ?? []).length > 0 ? catOf(only) : undefined;
+    const ownGroup =
+      own === undefined ? undefined : groups.find((g) => g.trackedCategoryId === own);
+    let left = false;
+    const ownIds = new Set(ownGroup?.lineIds ?? []);
+    for (const id of unbilled) {
+      if (ownIds.has(id)) put(only.id, id);
+      else left = true;
+    }
+    return { placed, needsReview: left };
+  }
+
   const anyEmpty = drafts.some((d) => (d.items ?? []).length === 0);
   const draftForGroup = new Map<string | null, string>();
   if (groups.length !== drafts.length) return { placed, needsReview: true };
