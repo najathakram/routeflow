@@ -605,6 +605,37 @@
   <div class="foot-bottom"><span>© 2026 RouteFlow</span><button class="rm-toggle" type="button" data-rm aria-pressed="false">Reduce motion</button><span><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a></span></div>
 </div></footer>
 
+<script>/* Land on a home anchor (#use-cases, #stores, #founder ...) as soon as the page can be laid out, then keep the
+   target at the top while the layout settles (fonts, scroll pins, wheel stage). Browsers do this only after the
+   deferred scripts have run, which on a slow phone is many seconds with the page sitting at the top. Stops at the
+   first touch, wheel, key or click, and on any later hash change. Not for reload or back/forward.
+   The browser also jumps to the #hash by itself when parsing ends and again at load, and a wheel scroll does not
+   cancel that jump, so a person who had already scrolled away was pulled back. The hash is taken off the address
+   until load, so this script is the only thing that moves the page, and put back after load. It gives up when the
+   target is fixed, or three moves in a row do not bring it to the top (pinned, or below what the page can scroll). */
+(function(w,d){var id;try{id=decodeURIComponent(location.hash.slice(1))}catch(e){return}if(!id||!d.getElementById(id))return;
+var nav=w.performance&&performance.getEntriesByType&&performance.getEntriesByType("navigation")[0];
+if(nav&&(nav.type==="reload"||nav.type==="back_forward"))return;
+var root=d.documentElement,t0=Date.now(),loaded=false,last=t0,done=false,miss=0,checked=false,marked=false,ro,iv,url=location.pathname+location.search,hash=location.hash;
+try{history.replaceState(history.state,"",url)}catch(e){}
+function back(){try{if(!location.hash)history.replaceState(history.state,"",url+hash)}catch(e){}}
+function stop(){if(done)return;done=true;clearInterval(iv);if(ro)ro.disconnect();
+["wheel","touchstart","pointerdown","keydown"].forEach(function(e){w.removeEventListener(e,stop,true)});w.removeEventListener("hashchange",stop);if(loaded)back()}
+function mark(el){if(marked)return;marked=true;try{var t=el.getAttribute("tabindex");if(t===null)el.setAttribute("tabindex","-1");el.focus({preventScroll:true});el.blur();if(t===null)el.removeAttribute("tabindex")}catch(e){}}
+function go(){if(done)return;var el=d.getElementById(id);if(!el)return;
+if(!checked){checked=true;for(var a=el;a&&a.nodeType===1;a=a.parentElement)if(getComputedStyle(a).position==="fixed"){stop();return}}
+mark(el);
+var m=parseFloat(getComputedStyle(el).scrollMarginTop)||0,y=Math.max(0,Math.round(el.getBoundingClientRect().top+w.pageYOffset-m));
+if(Math.abs(w.pageYOffset-y)<2){miss=0;return}
+var s=root.style.scrollBehavior;root.style.scrollBehavior="auto";w.scrollTo(0,y);root.style.scrollBehavior=s;last=Date.now();
+if(loaded){if(Math.abs(el.getBoundingClientRect().top-m)>3){if(++miss>=3)stop()}else miss=0}}
+["wheel","touchstart","pointerdown","keydown"].forEach(function(e){w.addEventListener(e,stop,{capture:true,passive:true})});
+w.addEventListener("hashchange",stop);
+go();
+if(w.ResizeObserver){ro=new ResizeObserver(go);ro.observe(root);if(d.body)ro.observe(d.body)}
+w.addEventListener("load",function(){loaded=true;go();setTimeout(back,0)});
+if(d.fonts&&d.fonts.ready)d.fonts.ready.then(go);
+iv=setInterval(function(){go();var n=Date.now();if(n-t0>30000||(loaded&&n-last>1500))stop()},250)})(window,document);</script>
 <script src="/site/js/vendor/gsap.min.js" defer></script><script src="/site/js/vendor/ScrollTrigger.min.js" defer></script>
 <script src="/site/js/prices.js"></script><script src="/site/graphics/rf-wheel-up.js" defer></script>
 <script src="/site/js/home-up.js" defer></script>
