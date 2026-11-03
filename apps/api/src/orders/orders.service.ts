@@ -3741,7 +3741,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // silently discarding a real item.qty typed alongside it (the
                 // `if (editHasSplit)` branch below ignores item.qty entirely).
                 const editHasSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
-                const wasBoxSplit = li.boxes != null;
+                const wasBoxSplit = li.boxes != null || li.pieces != null;
                 // Resolve the box size for a catalog line even on a qty-ONLY edit. A STORED split line reads the
                 // pack it was sold in, never today's product pack; one that can't be read is refused (SA-1097, L-332).
                 const {

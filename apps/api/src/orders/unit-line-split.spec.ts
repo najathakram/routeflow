@@ -101,3 +101,13 @@ describe("change-request writes run the unit-aware target check first (#2230, SA
     expect(check).toBeLessThan(body.indexOf(write));
   });
 });
+
+describe("the edit path reads a pieces-only split as a split (SA-1097 A-6, review-a 6598291649)", () => {
+  it("updateOrderItems' wasBoxSplit gate is boxes OR pieces, like the at-door gate and packForLineEdit", () => {
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const src = fs.readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8");
+    expect(src).toContain("const wasBoxSplit = li.boxes != null || li.pieces != null;");
+    expect(src).not.toMatch(/const wasBoxSplit = li\.boxes != null;/);
+  });
+});

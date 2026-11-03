@@ -845,6 +845,84 @@ describeDb(
       expect(Number((added as any).unitsPerBox)).toBe(24);
     }, 120_000);
 
+    // ── Row F's line, edited afterwards (review-a 6598291649, review-b 6598355250): the add stamps {boxes null, pieces 6, 24} ──
+    async function addPiecesLine(s: Seeded, pieces: number) {
+      await tenantCtx.run(s.tenantId, () =>
+        orders.updateOrderItems(
+          s.orderId,
+          { replaceAll: false, items: [{ productId: s.productId, pieces }] },
+          operatorOf(s),
+        ),
+      );
+      return prisma.orderItem.findFirstOrThrow({
+        where: { orderId: s.orderId, id: { not: s.lineId } },
+      });
+    }
+    const editAdded = (s: Seeded, lineId: string, item: Record<string, unknown>) =>
+      tenantCtx.run(s.tenantId, () =>
+        orders.updateOrderItems(
+          s.orderId,
+          { replaceAll: false, items: [{ id: lineId, ...item }] },
+          operatorOf(s),
+        ),
+      );
+    async function addedState(s: Seeded, lineId: string) {
+      const l = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineId } });
+      const p = await prisma.product.findUniqueOrThrow({ where: { id: s.productId } });
+      return {
+        qty: Number(l.qty),
+        boxes: l.boxes == null ? null : Number(l.boxes),
+        pieces: l.pieces == null ? null : Number(l.pieces),
+        unitsPerBox: (l as any).unitsPerBox ?? null,
+        subtotal: Number(l.subtotal),
+        stock: Number(p.currentStock),
+      };
+    }
+
+    it("A6-F1 (red): add {productId, pieces 6} on a 24-pack, then an echo {qty 6, price 10} stays 2.50 with its split and snapshot, stock unmoved", async () => {
+      const s = await seed("a6-f1", 24, 24, { snapshot: 24, qty: 240, ...OPEN });
+      const added = await addPiecesLine(s, 6);
+      const before = await addedState(s, added.id);
+      expect(before.subtotal).toBe(2.5);
+      await editAdded(s, added.id, { qty: 6, unitPrice: 10 });
+      const after = await addedState(s, added.id);
+      measure("A6-F1 after the echo", after);
+      expect(after.subtotal).toBe(2.5);
+      expect(after.pieces).toBe(6);
+      expect(after.unitsPerBox).toBe(24);
+      expect(after.stock).toBe(before.stock);
+    }, 120_000);
+
+    it("A6-F2 (red): the same added line, a quantity-only edit {qty 8} is 3.33 and moves stock by the 2 pieces only", async () => {
+      const s = await seed("a6-f2", 24, 24, { snapshot: 24, qty: 240, ...OPEN });
+      const added = await addPiecesLine(s, 6);
+      const before = await addedState(s, added.id);
+      await editAdded(s, added.id, { qty: 8 });
+      const after = await addedState(s, added.id);
+      measure("A6-F2 after qty 8", after);
+      expect(after.subtotal).toBe(3.33);
+      expect(after.pieces).toBe(8);
+      expect(after.stock).toBe(before.stock - 2);
+    }, 120_000);
+
+    it("A6-F3 (red): a stored {boxes null, pieces 6, snapshot 24} at 2.50: the echo stays 2.50 and stock does not move", async () => {
+      const s = await seed("a6-f3", 24, 24, {
+        boxes: null,
+        pieces: 6,
+        qty: 6,
+        subtotal: 2.5,
+        snapshot: 24,
+        ...OPEN,
+      });
+      const before = await state(s);
+      await edit(s, { qty: 6, unitPrice: 10 });
+      const after = await state(s);
+      measure("A6-F3 after", after);
+      expect(after.line.subtotal).toBe(2.5);
+      expect(after.line.unitsPerBox).toBe(24);
+      expect(after.stock).toBe(before.stock);
+    }, 120_000);
+
     it("A6-6 (guard): a zero line on a 12-pack typed up to 2 boxes is 24 units, 20.00, stock 66", async () => {
       const s = await seed("a6-6", 12, 12, { boxes: 0, pieces: 0, qty: 0, subtotal: 0, ...OPEN });
       await edit(s, { boxes: 2, pieces: 0, unitPrice: 10 });
