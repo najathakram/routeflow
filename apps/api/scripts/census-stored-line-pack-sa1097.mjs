@@ -46,12 +46,24 @@
  * SA-1097-q10-line.sql is embedded byte for byte as Q10_LINE_SQL (sha-256 pinned by the script spec, and run against the SA's fixture by
  * the db spec).
  *
+ * SA-1097 A-9 (rf-specs 42c774b8c0, SQL at f65160b0dc): `--q10-owner` runs the SA's one read INSTEAD of the census, in the same read-only
+ * session, for the owner only: the July line with its business, customer, invoice and amounts. THIS ONE PRINTS NAMES AND MONEY, so:
+ *   - the rows go only to the gitignored file local-assets/sa1097-q10-owner-2026-11-03.json (mode 0600), never to stdout;
+ *   - stdout prints the row count and the path, nothing else (the per-query log on stderr is a count and a time);
+ *   - anything other than exactly one row writes nothing, prints the count, and exits 3;
+ *   - no agent opens that file; the owner opens it at the PC.
+ *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs --q10-owner   (the owner's yes, this one read)
+ * SA-1097-q10-owner.sql is embedded byte for byte as Q10_OWNER_SQL (sha-256 pinned by the script spec; run against the SA's fixtures,
+ * made-up names only, by the db spec).
+ *
  * SAFETY: the session is read-only before any query (`default_transaction_read_only = on`, confirmed with SHOW, exit 2
  * otherwise) and each query runs in its own BEGIN READ ONLY ... ROLLBACK; `statement_timeout` is set; SELECTs only. The target
  * (redacted) goes to stderr, the JSON to stdout. NEVER RUN FROM AN IMPLEMENTATION SESSION AGAINST PRODUCTION.
  */
 import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 
@@ -62,6 +74,12 @@ export const DENOMINATORS_SQL_COMMIT = "6faf86cde43fa28f4499fd1eb749c6bb0eaf2fc3
 export const UNBILLED_SQL_COMMIT = "29603388630276e43374e2368e959ee35d874045";
 export const THIRD_SQL_COMMIT = "67dfe0b894a09bfdc2e9a412e15b032f85b68f1c";
 export const Q10_LINE_SQL_COMMIT = "03eb45aa48e81c514257e84f61b3376cf9a24095";
+export const Q10_OWNER_SQL_COMMIT = "f65160b0dcd589f57842521e6bf9c71861a6619b";
+export const OWNER_OUT_NAME = "sa1097-q10-owner-2026-11-03.json";
+export const OWNER_OUT_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../local-assets",
+);
 export const DEFAULT_TIMEOUT_S = 300;
 
 export const CENSUS_SQL = String.raw`-- SA-1097 census. SELECT only, counts and totals, no ids or names. Every query is a plain WITH, because a read-only session can't create a view.
@@ -482,12 +500,54 @@ ORDER BY 1, 2 LIMIT 20;
 
 export const Q10_LINE_SQL_SHA256 = createHash("sha256").update(Q10_LINE_SQL).digest("hex");
 
+export const Q10_OWNER_SQL = String.raw`-- SA-1097 A-9 read. SELECT only, plain WITH, for a read-only session. THIS ONE PRINTS NAMES AND MONEY: its output goes to a gitignored local file for the owner, never to stdout, a transcript, a PR, the board or this register.
+-- The one line A-8's read found: a MANUAL split line, money is qty x price, not its own split, typed price within a factor of 2 of the price before the edit, billed on a non-void invoice. Anything other than one row: the caller writes nothing and prints the count.
+WITH l AS (
+  SELECT oi.id, oi."orderId", oi."productId", o."tenantId", o."customerId", o."orderNumber" AS order_number, o.status AS order_status,
+         oi.boxes, oi.pieces, oi."unitsPerBox" AS units_per_box, oi.qty, oi."originalPrice" AS price_before_edit, oi."unitPrice" AS price, oi.subtotal AS line_total,
+         oi."deliveredQty" AS delivered_qty, oi."updatedAt" AS line_last_changed,
+         round(oi."unitPrice" * (GREATEST(COALESCE(oi.boxes, 0) - COALESCE(oi."promoFreeUnits", 0), 0) + COALESCE(oi.pieces, 0)::numeric / oi."unitsPerBox"), 2) AS total_at_its_split
+  FROM "OrderItem" oi
+  JOIN "Order" o ON o.id = oi."orderId"
+  WHERE oi.status <> 'CANCELLED' AND o.status <> 'CANCELLED' AND oi."priceType" = 'MANUAL'
+    AND (oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL) AND oi."unitsPerBox" > 1
+    AND oi."originalPrice" > 0 AND oi."unitPrice" / oi."originalPrice" BETWEEN 0.5 AND 2
+    AND abs(oi.subtotal - round(oi."unitPrice" * oi.qty, 2)) <= 0.01
+)
+SELECT t.name AS business, c."businessName" AS customer, l.order_number, l.order_status,
+       i."invoiceNumber" AS invoice_number, i.status AS invoice_status, i."issueDate" AS invoice_date, i."paidAt" AS paid_at, i.total AS invoice_total,
+       p.name AS product, l.boxes, l.pieces, l.units_per_box, l.qty, l.price_before_edit, l.price, l.line_total, l.total_at_its_split,
+       l.line_total - l.total_at_its_split AS difference, l.delivered_qty, l.line_last_changed,
+       (SELECT count(*)::int FROM "CreditNote" n WHERE n."invoiceId" = i.id) AS credit_notes,
+       peers.lines AS other_split_lines_same_product, peers.fit AS of_those_money_fits_split, peers.median_price AS of_those_median_price
+FROM l
+JOIN "InvoiceItem" it ON it."orderItemId" = l.id
+JOIN "Invoice" i ON i.id = it."invoiceId" AND i.status <> 'VOID'
+LEFT JOIN "Tenant" t ON t.id = l."tenantId"
+LEFT JOIN "Customer" c ON c.id = l."customerId"
+LEFT JOIN "Product" p ON p.id = l."productId"
+CROSS JOIN LATERAL (
+  SELECT count(*)::int AS lines,
+         count(*) FILTER (WHERE abs(x.subtotal - round(x."unitPrice" * (GREATEST(COALESCE(x.boxes, 0) - COALESCE(x."promoFreeUnits", 0), 0) + COALESCE(x.pieces, 0)::numeric / x."unitsPerBox"), 2)) <= 0.01)::int AS fit,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY x."unitPrice") AS median_price
+  FROM "OrderItem" x
+  JOIN "Order" y ON y.id = x."orderId"
+  WHERE x."productId" = l."productId" AND y."tenantId" = l."tenantId" AND x.id <> l.id
+    AND x.status <> 'CANCELLED' AND y.status <> 'CANCELLED' AND (x.boxes IS NOT NULL OR x.pieces IS NOT NULL) AND x."unitsPerBox" > 1
+) peers
+LIMIT 5;
+`;
+
+export const Q10_OWNER_SQL_SHA256 = createHash("sha256").update(Q10_OWNER_SQL).digest("hex");
+
 /** The queries, split at the SQL's own `-- Q<n> ` markers (Q1-Q3 for the census, Q4-Q8 for the denominators, Q9-Q12 for the third count); each runs as written. */
 export function splitCensusSql(text = CENSUS_SQL) {
   // The unbilled count is one plain SELECT with no `-- Q<n> ` markers: it runs whole, as written.
   if (text === UNBILLED_SQL) return [{ name: "unbilled", sql: text.trim() }];
   // The Q10 line read is one plain SELECT too (its comment mentions "Q10", but no line starts with `-- Q<n> `): it runs whole.
   if (text === Q10_LINE_SQL) return [{ name: "q10_line", sql: text.trim() }];
+  // The owner read is one plain WITH ... SELECT too: it runs whole.
+  if (text === Q10_OWNER_SQL) return [{ name: "q10_owner", sql: text.trim() }];
   const parts = text.split(/^-- (?=Q\d+ )/m).slice(1);
   return parts.map((p) => ({
     name: p.slice(0, p.indexOf(" ")).toLowerCase(),
@@ -501,6 +561,7 @@ export function checkArgs(argv) {
   let unbilled = false;
   let third = false;
   let q10Line = false;
+  let q10Owner = false;
   for (const a of argv) {
     if (a === "--denominators") {
       denominators = true;
@@ -518,23 +579,27 @@ export function checkArgs(argv) {
       q10Line = true;
       continue;
     }
+    if (a === "--q10-owner") {
+      q10Owner = true;
+      continue;
+    }
     const m = /^--timeout-s=(\d+)$/.exec(a);
     if (!m || Number(m[1]) < 1 || Number(m[1]) > 1800) {
       return {
         ok: false,
-        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled | --third | --q10-line] [--timeout-s=<1-1800>])`,
+        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled | --third | --q10-line | --q10-owner] [--timeout-s=<1-1800>])`,
       };
     }
     timeoutS = Number(m[1]);
   }
-  if ([denominators, unbilled, third, q10Line].filter(Boolean).length > 1) {
+  if ([denominators, unbilled, third, q10Line, q10Owner].filter(Boolean).length > 1) {
     return {
       ok: false,
       message:
-        "--denominators, --unbilled, --third and --q10-line are separate counts: run one at a time",
+        "--denominators, --unbilled, --third, --q10-line and --q10-owner are separate counts: run one at a time",
     };
   }
-  return { ok: true, timeoutS, denominators, unbilled, third, q10Line };
+  return { ok: true, timeoutS, denominators, unbilled, third, q10Line, q10Owner };
 }
 
 export async function runCensus(
@@ -546,6 +611,7 @@ export async function runCensus(
     unbilled = false,
     third = false,
     q10Line = false,
+    q10Owner = false,
   } = {},
 ) {
   await client.query("SET default_transaction_read_only = on");
@@ -553,27 +619,31 @@ export async function runCensus(
   if (ro !== "on") throw Object.assign(new Error("session is not read-only"), { exitCode: 2 });
   await client.query(`SET statement_timeout = '${timeoutS}s'`);
   const out = {
-    spec: q10Line
-      ? { sqlCommit: Q10_LINE_SQL_COMMIT, sqlSha256: Q10_LINE_SQL_SHA256 }
-      : third
-        ? { sqlCommit: THIRD_SQL_COMMIT, sqlSha256: THIRD_SQL_SHA256 }
-        : unbilled
-          ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
-          : denominators
-            ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
-            : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
+    spec: q10Owner
+      ? { sqlCommit: Q10_OWNER_SQL_COMMIT, sqlSha256: Q10_OWNER_SQL_SHA256 }
+      : q10Line
+        ? { sqlCommit: Q10_LINE_SQL_COMMIT, sqlSha256: Q10_LINE_SQL_SHA256 }
+        : third
+          ? { sqlCommit: THIRD_SQL_COMMIT, sqlSha256: THIRD_SQL_SHA256 }
+          : unbilled
+            ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
+            : denominators
+              ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
+              : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
     timingMs: {},
   };
   const t0 = Date.now();
-  const sqlText = q10Line
-    ? Q10_LINE_SQL
-    : third
-      ? THIRD_SQL
-      : unbilled
-        ? UNBILLED_SQL
-        : denominators
-          ? DENOMINATORS_SQL
-          : CENSUS_SQL;
+  const sqlText = q10Owner
+    ? Q10_OWNER_SQL
+    : q10Line
+      ? Q10_LINE_SQL
+      : third
+        ? THIRD_SQL
+        : unbilled
+          ? UNBILLED_SQL
+          : denominators
+            ? DENOMINATORS_SQL
+            : CENSUS_SQL;
   for (const q of splitCensusSql(sqlText)) {
     const t = Date.now();
     await client.query("BEGIN READ ONLY");
@@ -587,6 +657,26 @@ export async function runCensus(
   }
   out.timingMs.total = Date.now() - t0;
   return out;
+}
+
+/**
+ * SA-1097 A-9: the owner read's rows go to one gitignored file and nowhere else. Exactly one row writes the file (mode 0600) and
+ * prints "rows 1" and the path; any other count writes nothing, prints the count, and returns 3. Never prints a row.
+ */
+export function writeOwnerRead(
+  census,
+  { dir = OWNER_OUT_DIR, write = writeFileSync, mkdir = mkdirSync, print = console.log } = {},
+) {
+  const rows = census.q10_owner ?? [];
+  if (rows.length !== 1) {
+    print(`${NAME}: q10_owner rows ${rows.length}; expected exactly 1, nothing written`);
+    return 3;
+  }
+  const file = resolve(dir, OWNER_OUT_NAME);
+  mkdir(dir, { recursive: true });
+  write(file, JSON.stringify({ spec: census.spec, q10_owner: rows }, null, 2), { mode: 0o600 });
+  print(`${NAME}: q10_owner rows 1 written to ${file}`);
+  return 0;
 }
 
 async function main(argv) {
@@ -608,7 +698,9 @@ async function main(argv) {
       unbilled: args.unbilled,
       third: args.third,
       q10Line: args.q10Line,
+      q10Owner: args.q10Owner,
     });
+    if (args.q10Owner) return writeOwnerRead(census); // names and money: to the file, never to stdout
     console.log(JSON.stringify(census, null, 2));
   } catch (e) {
     console.error(`${NAME}: ${e.message}`);
