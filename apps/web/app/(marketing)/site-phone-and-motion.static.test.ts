@@ -86,6 +86,6 @@ describe("wheel pieces are explained and legible on a phone", () => {
 
   it("phone labels have a floor above 12 px", () => {
     const wheel = read("graphics/rf-wheel-up.js");
-    expect(wheel).toContain("((phone ? 13 : 10.5) * dpr) / 31");
+    expect(wheel).toContain("((phone ? 13 : 12) * dpr) / 31");
   });
 });
