@@ -224,3 +224,63 @@ describe("every home anchor the site links to exists on the home page", () => {
     expect(up).toMatch(/#stores,#founder,#faq\{scroll-margin-top:68px/);
   });
 });
+
+// A question or card opened after scrolling down asks for ScrollTrigger.refresh(), which scrolls to the top to
+// measure and back. With the site's scroll-behavior:smooth both calls were animated: the page swooped toward
+// the top (WebKit: about 3,700 px), and on a phone a touch in that window left the person there. Every refresh now
+// runs with instant scrolling. The behaviour in a real browser is e2e spec 36, T20 (never moves the page).
+describe("every ScrollTrigger refresh runs with instant scrolling", () => {
+  const up = fs.readFileSync(path.join(SITE, "js/home-up.js"), "utf8");
+  const from = up.indexOf("var smoothHeld = 0");
+  const refreshAt = up.indexOf('ST.addEventListener("refresh",', from);
+  const block = up.slice(from, up.indexOf("\n", refreshAt));
+  const make = (inline = "") => {
+    const handlers: Record<string, () => void> = {};
+    const html = { style: { scrollBehavior: inline } };
+    const ST = {
+      addEventListener: (name: string, fn: () => void) => {
+        handlers[name] = fn;
+      },
+    };
+    new Function("ST", "html", block)(ST, html);
+    return { html, init: () => handlers.refreshInit!(), done: () => handlers.refresh!() };
+  };
+
+  it("is in the home script, registered on ScrollTrigger's own refresh events", () => {
+    expect(from).toBeGreaterThan(0);
+    expect(block).toContain('ST.addEventListener("refreshInit"');
+    expect(block).toContain('ST.addEventListener("refresh"');
+  });
+
+  it("scrolls instantly while a refresh runs, and puts the setting back after", () => {
+    const t = make();
+    t.init();
+    expect(t.html.style.scrollBehavior).toBe("auto");
+    t.done();
+    expect(t.html.style.scrollBehavior).toBe("");
+  });
+
+  it("restores whatever the page had set, not a fixed value", () => {
+    const t = make("smooth");
+    t.init();
+    expect(t.html.style.scrollBehavior).toBe("auto");
+    t.done();
+    expect(t.html.style.scrollBehavior).toBe("smooth");
+  });
+
+  it("holds through a refresh inside a refresh and releases at the last one", () => {
+    const t = make();
+    t.init();
+    t.init();
+    t.done();
+    expect(t.html.style.scrollBehavior).toBe("auto");
+    t.done();
+    expect(t.html.style.scrollBehavior).toBe("");
+  });
+
+  it("a stray refresh event never leaves it stuck", () => {
+    const t = make("smooth");
+    t.done();
+    expect(t.html.style.scrollBehavior).toBe("smooth");
+  });
+});

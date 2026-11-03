@@ -111,6 +111,13 @@
   g.registerPlugin(ST); // once, before any ScrollTrigger is made
   g.defaults({ ease: "power3.out", duration: 0.8 }); // the house ease and duration
   ST.config({ ignoreMobileResize: true });
+  /* ScrollTrigger.refresh() scrolls to the top to measure, then back (scrollTo(0,0), scrollTo(0,y)). With the site's
+     `scroll-behavior: smooth` both calls are animated, so a question or card opened after scrolling down made the page
+     swoop toward the top, and on a phone a touch or momentum in that window left the person there. Every refresh, whoever
+     asks for it (a details toggle, fonts, images, resize), runs with instant scrolling and puts the setting back after. */
+  var smoothHeld = 0, smoothWas = "";
+  ST.addEventListener("refreshInit", function () { if (!smoothHeld++) { smoothWas = html.style.scrollBehavior; html.style.scrollBehavior = "auto"; } });
+  ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) html.style.scrollBehavior = smoothWas; });
 
   /* ?motion=on: review only, runs the motion on a machine whose OS turns animation off. Same flag as rf-wheel.js.
      desk: the pinned scenes, on a screen with room for them. mob: everything else, phones on their side too.

@@ -19,7 +19,7 @@
  * Signed-out throughout — no storageState, dependencies: [] on the "marketing" project
  * (playwright.config.ts).
  */
-import { test, expect, devices, type BrowserContext, type Page } from "@playwright/test";
+import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
 
 // The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
@@ -1171,6 +1171,150 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
       }
       expect(errors, "page errors").toEqual([]);
       await context.close();
+    });
+  }
+
+  // Opening a question or a card after scrolling down used to send the page toward the top. Every layout
+  // change calls ScrollTrigger.refresh(), which scrolls to the top to measure and back (scrollTo(0,0), then
+  // scrollTo(0,y)); the site's scroll-behavior:smooth animated both. In WebKit the page swooped about 3,700 px up
+  // and back, and on a phone a touch in that window left the person at the top. Chromium keeps its place in a test
+  // (the second call cancels the first before a frame), so the row also pins the cause: no scroll call is ever
+  // made while smooth scrolling is on. Chromium rows run everywhere; the WebKit rows run where it is installed.
+  const TAPS = [
+    { name: "desktop FAQ", width: 1440, height: 900, phone: false, scope: "#faq", nth: 2 },
+    { name: "phone FAQ", width: 390, height: 844, phone: true, scope: "#faq", nth: 2 },
+    { name: "phone use case", width: 390, height: 844, phone: true, scope: "#use-cases", nth: 3 },
+  ];
+  const tapAndWatch = async (
+    page: Page,
+    t: (typeof TAPS)[number],
+  ): Promise<{
+    moved: number;
+    open: boolean;
+    callsWhileSmooth: string[];
+    calls: number;
+    inline: string;
+    drift: number[];
+  }> => {
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForFunction(
+      () =>
+        !!document.querySelector(".rfw-live") &&
+        !!(window as unknown as { ScrollTrigger?: unknown }).ScrollTrigger,
+      null,
+      { timeout: 30_000 },
+    );
+    await page.waitForTimeout(2500);
+    const sum = page.locator(`${t.scope} details summary:visible`).nth(t.nth);
+    for (let i = 0; i < 80; i++) {
+      const top = await sum.evaluate((e) => e.getBoundingClientRect().top);
+      if (top < t.height * 0.8 && top > t.height * 0.3) break;
+      await page.mouse.move(t.width / 2, t.height / 2);
+      await page.mouse.wheel(0, top > t.height * 0.8 ? 900 : -300);
+      await page.waitForTimeout(250);
+    }
+    await page.waitForTimeout(2500);
+    await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const calls: string[] = [];
+      w.__calls = calls;
+      const smooth = () => getComputedStyle(document.documentElement).scrollBehavior;
+      for (const [o, n] of [
+        [window, "scrollTo"],
+        [window, "scroll"],
+        [window, "scrollBy"],
+        [Element.prototype, "scrollIntoView"],
+        [Element.prototype, "scrollTo"],
+      ] as Array<[Record<string, (...a: unknown[]) => unknown>, string]>) {
+        const orig = o[n]!;
+        o[n] = function (this: unknown, ...a: unknown[]) {
+          calls.push(`${n}:${smooth()}`);
+          return orig.apply(this, a);
+        };
+      }
+      const ys: number[] = [];
+      w.__ys = ys;
+      const t0 = performance.now();
+      (function frame() {
+        ys.push(Math.round(scrollY));
+        if (performance.now() - t0 < 3500) requestAnimationFrame(frame);
+      })();
+    });
+    const box = (await sum.boundingBox())!;
+    const open0 = await sum.evaluate((e) => (e.parentElement as HTMLDetailsElement).open);
+    if (t.phone && page.context().browser()?.browserType().name() === "chromium") {
+      await page.touchscreen.tap(box.x + 40, box.y + box.height / 2);
+    } else {
+      await page.mouse.click(box.x + 40, box.y + box.height / 2);
+    }
+    await page.waitForTimeout(3600);
+    const r = await page.evaluate(() => {
+      const w = window as unknown as { __calls: string[]; __ys: number[] };
+      return {
+        calls: w.__calls,
+        ys: w.__ys,
+        inline: document.documentElement.style.scrollBehavior,
+      };
+    });
+    // The pins and triggers below the opened item are where a fresh refresh puts them.
+    const drift = await page.evaluate(async () => {
+      const ST = (
+        window as unknown as {
+          ScrollTrigger: { getAll(): Array<{ start: number }>; refresh(): void };
+        }
+      ).ScrollTrigger;
+      const before = ST.getAll().map((x) => x.start);
+      document.documentElement.style.scrollBehavior = "auto";
+      ST.refresh();
+      document.documentElement.style.scrollBehavior = "";
+      return ST.getAll().map((x, i) => Math.abs(x.start - (before[i] ?? 0)));
+    });
+    expect(open0, "the item was closed before the tap").toBe(false);
+    return {
+      moved: Math.max(...r.ys) - Math.min(...r.ys),
+      open: true,
+      callsWhileSmooth: r.calls.filter((c) => !c.endsWith(":auto")),
+      calls: r.calls.length,
+      inline: r.inline,
+      drift,
+    };
+  };
+  const expectStill = (r: Awaited<ReturnType<typeof tapAndWatch>>) => {
+    expect(r.moved, "px the page moved in the three seconds after the tap").toBeLessThanOrEqual(2);
+    expect(r.callsWhileSmooth, "scroll calls made while smooth scrolling is on").toEqual([]);
+    expect(r.inline, "scroll-behavior left as the page had it").toBe("");
+    expect(
+      Math.max(0, ...r.drift),
+      "trigger positions after the tap vs a fresh refresh",
+    ).toBeLessThanOrEqual(2);
+  };
+  for (const t of TAPS) {
+    test(`T20 — opening a question or card never moves the page (${t.name}, Chromium)`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const context = await browser.newContext({
+        viewport: { width: t.width, height: t.height },
+        hasTouch: t.phone,
+        isMobile: t.phone,
+      });
+      const page = await context.newPage();
+      expectStill(await tapAndWatch(page, t));
+      await context.close();
+    });
+    test(`T20 — opening a question or card never moves the page (${t.name}, WebKit)`, async () => {
+      test.setTimeout(120_000);
+      let wk: import("@playwright/test").Browser;
+      try {
+        wk = await webkit.launch({ executablePath: process.env.PW_WEBKIT_EXECUTABLE || undefined });
+      } catch {
+        test.skip(true, "WebKit is not installed here");
+        return;
+      }
+      const context = await wk.newContext({ viewport: { width: t.width, height: t.height } });
+      const page = await context.newPage();
+      expectStill(await tapAndWatch(page, t));
+      await wk.close();
     });
   }
 
