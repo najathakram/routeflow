@@ -116,6 +116,11 @@ const nextConfig = {
         source: "/(.*)",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },
+          // Site audit 2026-11-02 §7: www answered with no HSTS, so a first visit over http
+          // was never pinned to https. One year, this host only: no includeSubDomains
+          // (the API and other hosts are not ours to pin from here) and no preload
+          // (a list entry outlives any later change of mind).
+          { key: "Strict-Transport-Security", value: "max-age=31536000" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {

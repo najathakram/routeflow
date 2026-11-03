@@ -110,7 +110,7 @@
     <li><a class="pd-tile" href="#stores" style="--pc:#244f7c;--pi:#fff"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-store"/></svg><b>Let stores order</b><span>Stores see their own prices and order online.</span></a></li>
     <li><a class="pd-tile" href="#paid" style="--pc:#e7b64a;--pi:#3c2b02"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-receipt"/></svg><b>Get paid</b><span>Bills, payments, and returns.</span></a></li>
     <li><a class="pd-tile" href="#buy" style="--pc:#6277d9;--pi:#1c244f"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-box"/></svg><b>Buy and keep stock</b><span>Suppliers and what you have.</span></a></li>
-    <li><a class="pd-tile" href="#deliver" style="--pc:#44bd92;--pi:#003726"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-truck"/></svg><b>Deliver</b><span>Routes and a driver app.</span></a></li>
+    <li><a class="pd-tile" href="#deliver" style="--pc:#44bd92;--pi:#003726"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-truck"/></svg><b>Deliver</b><span>Routes and stops for drivers.</span></a></li>
     <li><a class="pd-tile" href="#counter" style="--pc:#6261af;--pi:#fff"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-register"/></svg><b>Sell at the counter</b><span>Scan items and print a receipt.</span></a></li>
     <li><a class="pd-tile" href="#numbers" style="--pc:#a462b4;--pi:#381b3f"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-chart"/></svg><b>See your numbers</b><span>Sales, profit, and who owes you.</span></a></li>
     <li><a class="pd-tile" href="#regulated" style="--pc:#2d4470;--pi:#fff"><svg class="ico pd-ic" aria-hidden="true"><use href="#i-shield"/></svg><b>Sell regulated items</b><span>Goods like tobacco, with extra legal rules.</span></a></li>
@@ -212,20 +212,14 @@
   </article>
 
   <article class="pd-g" id="deliver" aria-labelledby="g-deliver">
-    <div class="pd-gh"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-truck"/></svg><h3 id="g-deliver">Deliver</h3><span class="cap">If you deliver</span><p>Make the route. The driver sees the stops on the phone.</p></div>
+    <div class="pd-gh"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-truck"/></svg><h3 id="g-deliver">Deliver</h3><span class="cap">If you deliver</span><p>Make the route. Drivers see the stops on the web.</p></div>
     <ul class="pd-cs" role="list">
       <li class="pd-c"><h4>Routes and stops</h4><p>Put orders on a route. See each delivery.</p></li>
-      <li class="pd-c"><h4>Driver app</h4><p>Your drivers use the RouteFlow phone app.</p></li>
-      <li class="pd-c"><h4>Proof of delivery</h4><p>The driver can take a photo and a signature.</p></li>
-      <li class="pd-c"><h4>No signal</h4><p>Drivers can finish a stop with no signal. It’s sent later.</p><details class="pd-more"><summary>Read more <svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary><p>Not everything works with no signal. The list is <a href="#signal">further down</a>.</p></details></li>
+      <li class="pd-c"><h4>Driver view</h4><p>Your drivers see their stops in a web browser. They can start or skip a stop.</p></li>
+      <li class="pd-c"><h4>Finishing a stop</h4><p>On a new account, drivers can’t finish a stop, or take a photo or a signature.</p></li>
+      <li class="pd-c"><h4>Delivered</h4><p>An order on a run is delivered when its stop is completed. Its invoice unlocks then.</p></li>
     </ul>
-    <figure class="pd-s uc-card reveal" role="img" aria-label="Illustration with sample data: stop 4 of 5, Corner Market, with a photo and a signature taken.">
-      <div class="rfw-hd"><div class="rfw-id"><b>Stop 4 of 5</b><span>Corner Market</span></div><span class="rfw-pill rfw-pill--info">At the stop</span></div>
-      <div class="rfw-row"><span class="n">Photo</span><span class="m"><svg class="ico pd-tk" aria-hidden="true"><use href="#i-check"/></svg></span></div>
-      <div class="rfw-row"><span class="n">Signature</span><span class="m"><svg class="ico pd-tk" aria-hidden="true"><use href="#i-check"/></svg></span></div>
-      <p class="pd-sl">Sample</p>
-    </figure>
-    <p class="pd-know"><b>Two limits.</b> There’s no live map of your drivers on the web. On a new account, drivers can’t take payment in the app.</p>
+    <p class="pd-know"><b>Two limits.</b> There’s no live map of your drivers on the web. Drivers can’t take payment at the door.</p>
   </article>
 
   <article class="pd-g pd-g--flat" id="counter" aria-labelledby="g-counter">
@@ -270,7 +264,7 @@
   <ul class="pd-four" role="list">
     <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#10264d;--pi:#fff" aria-hidden="true"><use href="#i-gear"/></svg><h3>Admin</h3><p>Everything staff can do. Admins also change billing and settings, and add staff.</p></li>
     <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#e56a5d;--pi:#4b1e19" aria-hidden="true"><use href="#i-users"/></svg><h3>Staff</h3><p>Orders, customers, invoices, and stock.</p></li>
-    <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-phone"/></svg><h3>Driver</h3><p>The route, the stops, and proof of delivery, in the phone app.</p></li>
+    <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#44bd92;--pi:#003726" aria-hidden="true"><use href="#i-phone"/></svg><h3>Driver</h3><p>The route and the stops, in a web browser.</p></li>
     <li class="pd-k reveal"><svg class="ico pd-ic" style="--pc:#244f7c;--pi:#fff" aria-hidden="true"><use href="#i-store"/></svg><h3>Store</h3><p>Its own prices, orders, and invoices, in a web browser.</p></li>
   </ul>
   <p class="pd-foot">Access goes by role. You can’t set it for one person.</p>
@@ -312,7 +306,7 @@
         <tr><th scope="row">Estimate</th><td>You send it. It turns into an invoice.</td><td>You can skip this step.</td></tr>
         <tr><th scope="row">Order</th><td>Staff enter it, or the store orders online.</td><td>Extra pieces roll into boxes. The price comes from the store’s level or its own price.</td></tr>
         <tr><th scope="row">Invoice</th><td>It starts as a draft, built from the order.</td><td>It can’t be sent or edited until the order is delivered. Edit the order instead.</td></tr>
-        <tr><th scope="row">Delivery</th><td>If you deliver, the driver takes a photo and a signature at the stop.</td><td>If the invoice is still a draft, RouteFlow changes it to what was delivered.</td></tr>
+        <tr><th scope="row">Delivery</th><td>If you deliver, drivers start or skip each stop.</td><td>An order on a run is delivered when its stop is completed. That unlocks its invoice.</td></tr>
         <tr><th scope="row">Payment</th><td>You record the amount and how it was paid.</td><td>You see who has paid and who still owes you.</td></tr>
         <tr><th scope="row">Return</th><td>You take goods back and give store credit.</td><td>Cash back needs a fully paid invoice.</td></tr>
       </tbody>
@@ -320,11 +314,11 @@
   </div>
 
   <div class="pd-qs">
-    <div class="pd-q" id="signal">
-      <h3>What works with no signal?</h3>
+    <div class="pd-q" id="driver">
+      <h3>What can a driver do?</h3>
       <div class="pd-two">
-        <div><h4>Works, and is sent later</h4><ul class="pd-tick" role="list"><li>Finish or skip a stop</li><li>Take a photo</li><li>Take a return</li><li>Place an order</li></ul></div>
-        <div><h4>Needs signal</h4><ul class="pd-cross" role="list"><li>Start a route</li><li>Change an order at the door</li><li>Close a run</li></ul></div>
+        <div><h4>Can do</h4><ul class="pd-tick" role="list"><li>See the route and the stops</li><li>Open a stop in maps</li><li>Call the store</li><li>Start or skip a stop</li></ul></div>
+        <div><h4>Can’t do</h4><ul class="pd-cross" role="list"><li>Finish a stop</li><li>Take a photo or a signature</li><li>Take payment at the door</li></ul></div>
       </div>
     </div>
     <div class="pd-q" id="stock">
