@@ -87,4 +87,15 @@ describe("public site sentences the code backs", () => {
     );
     expect(page("getting-started")).toContain("Drivers sign in on the web and see their route.");
   });
+
+  // The only path that records a short delivery is the driver app's stop-complete call (routes.controller.ts
+  // POST :id/stops/:stopId/complete); the web has no per-line delivered quantity, and "mark delivered" stamps the full
+  // quantity. So a new account's staff cannot make a draft invoice follow a short delivery, and the pages must not say it.
+  it("home, product: no claim that the invoice follows what was delivered", () => {
+    for (const name of ["home", "product"]) {
+      expect(page(name)).not.toMatch(/what was delivered/i);
+    }
+    expect(page("home")).not.toContain("jr-upd");
+    expect(page("product")).toContain("Delivering the order unlocks its invoice.");
+  });
 });

@@ -217,15 +217,15 @@
     var figs = panels.map(function (p) { return $(".jr-fig", p); });
     var ordTot = $(".jr-p:nth-child(1) .a-sum b", s), invTots = $$(".jr-p:nth-child(2) .a-tots p > :last-child", s);
     var paid = $$(".jr-pd .a-tots p > :last-child", s), paidPill = $(".jr-pd .a-pill", s), payRow = $(".jr-pd .a-pay", s), chk = $(".jr-pd .chk, .jr-paid .chk", s);
-    var phone = $(".dv", s), short = $(".dv .a-pill--bad", s), upd = $(".jr-upd", s), strikes = $$(".upd-o i", s), news = $$(".upd-n", s), olds = $$(".upd-o", s);
+    var phone = $(".dv", s);
     var rowsOf = function (i) { return $$(".a-r:not(.a-rh)", panels[i]); };
     /* Payments received and the balance always add up to the invoice, on every frame. */
     var payCount = function () {
       var o = { v: 0 };
       keep(paid[1]); keep(paid[2]);
-      var write = function () { var c = Math.round(o.v * 100); paid[1].textContent = money(c / 100); paid[2].textContent = money((9900 - c) / 100); };
+      var write = function () { var c = Math.round(o.v * 100); paid[1].textContent = money(c / 100); paid[2].textContent = money((11100 - c) / 100); };
       write();
-      return g.to(o, { v: 99, duration: 0.5, ease: "power2.inOut", onUpdate: write });
+      return g.to(o, { v: 111, duration: 0.5, ease: "power2.inOut", onUpdate: write });
     };
     /* What happens inside each step, built once; the step decides when it plays. */
     var step = [
@@ -242,12 +242,7 @@
       function (tl) {
         tl.fromTo(phone, { opacity: 0, y: 60 }, { opacity: 1, y: 0 }, 0)
           .fromTo(rtLine, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.6, ease: "none" }, 0.1)
-          .fromTo(rtDots, { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.18, stagger: { each: 0.14 } }, 0.1)
-          .fromTo(short, { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3 }, 0.6)
-          .fromTo(upd, { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.45 }, 0.75)
-          .fromTo(strikes, { scaleX: 0 }, { scaleX: 1, duration: 0.3, stagger: { each: 0.1 }, ease: "power2.inOut" }, 1.05)
-          .fromTo(olds, { opacity: 1 }, { opacity: 0.8, duration: 0.3 }, 1.15)
-          .fromTo(news, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, stagger: { each: 0.1 } }, 1.2);
+          .fromTo(rtDots, { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.18, stagger: { each: 0.14 } }, 0.1);
       },
       function (tl) {
         tl.fromTo(chk, { opacity: 0, x: -50, rotation: -9 }, { opacity: 1, x: 0, rotation: -4 }, 0)
