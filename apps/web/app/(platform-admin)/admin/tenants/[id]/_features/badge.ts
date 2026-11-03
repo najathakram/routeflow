@@ -1,3 +1,4 @@
+import type { FeatureOverrideKind } from "@routeflow/types";
 import type { EffectiveFeature, FeatureBadge, FeatureRegistryRow } from "./types";
 
 // design.md §2 Effective: source priority OVERRIDE_DENY → OVERRIDE_GRANT → ADDON_SKU →
@@ -95,7 +96,7 @@ export const READOUT_CHIPS: Partial<
  * SA-963 A-1: the Details panel's words for an override's kind, in ONE map. A raw enum ("COMP", "GRANDFATHER") never reaches the
  * screen; a kind this map does not know (or none) gets no phrase at all rather than a guess.
  */
-export const OVERRIDE_KIND_WORDS: Record<string, string> = {
+export const OVERRIDE_KIND_WORDS: Record<FeatureOverrideKind, string> = {
   PILOT: "for a pilot",
   SUPPORT: "for support",
   COMP: "at no charge",
@@ -104,7 +105,7 @@ export const OVERRIDE_KIND_WORDS: Record<string, string> = {
 };
 
 export function overrideKindWords(kind: string | null | undefined): string | null {
-  return (kind && OVERRIDE_KIND_WORDS[kind]) || null;
+  return (kind && OVERRIDE_KIND_WORDS[kind as FeatureOverrideKind]) || null;
 }
 
 export function deriveReadout(
