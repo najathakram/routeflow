@@ -395,6 +395,19 @@ describeDb(
       expect(after.line.qty).toBe(120);
       expect(after.invoices[0]!.total).toBe(120);
     }, 120_000);
+    it("A2-5: the 12-pack line with boxes 10 / pieces 0 echoed in the payload stays qty 120, 120.00, stock unmoved", async () => {
+      const s = await seed("boxesecho", 12, 24);
+      const before = await state(s);
+      await edit(s, { qty: 120, boxes: 10, pieces: 0, unitPrice: 12 });
+      const after = await state(s);
+      measure("A2-5 before", before);
+      measure("A2-5 after", after);
+      expect(after.line.qty).toBe(120);
+      expect(after.line.subtotal).toBe(120);
+      expect(after.invoices[0]!.total).toBe(120);
+      expect(after.stock).toBe(before.stock);
+      expect(after.ledger).toEqual(before.ledger);
+    }, 120_000);
 
     it("A2-3: a QTY edit 10 -> 9 on the delivered line is 90.00, not 9 pieces of a 24-pack (3.75)", async () => {
       const s = await seed("qty", null, 24);
