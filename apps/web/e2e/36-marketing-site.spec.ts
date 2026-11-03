@@ -1060,6 +1060,73 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     });
   }
 
+  // review-a, #4153: below 900 px the closed wheel, as loaded and never scrolled, drew a plain navy hub. Looking
+  // straight down the puck's base sits inside its lid, so the "stand the mark upright" blend clamped to 1 and drew
+  // it at almost no size. The hub is found by its own navy; the logo is white pixels in the middle of it.
+  for (const view of [
+    { name: "768", width: 768, height: 1024 },
+    { name: "390", width: 390, height: 844 },
+  ]) {
+    test(`T21 — the hub shows the logo at rest at ${view.name}`, async ({ browser }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, view, "no-preference");
+      const hub = await page.evaluate(() => {
+        const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
+        const { width: W, height: H } = cv;
+        const d = cv.getContext("2d")!.getImageData(0, 0, W, H).data;
+        const near = (i: number, t: number[]) =>
+          Math.abs(d[i]! - t[0]!) < 7 &&
+          Math.abs(d[i + 1]! - t[1]!) < 7 &&
+          Math.abs(d[i + 2]! - t[2]!) < 7;
+        // the biggest connected blob of the hub's two navies
+        const m = new Uint8Array(W * H);
+        for (let i = 0; i < W * H; i++) {
+          const p = i * 4;
+          if (d[p + 3]! > 250 && (near(p, [16, 38, 77]) || near(p, [10, 26, 56]))) m[i] = 1;
+        }
+        const seen = new Uint8Array(W * H);
+        let best: { n: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+        for (let s = 0; s < W * H; s++) {
+          if (!m[s] || seen[s]) continue;
+          const st = [s];
+          seen[s] = 1;
+          const b = { n: 0, x0: W, y0: H, x1: -1, y1: -1 };
+          while (st.length) {
+            const q = st.pop()!;
+            const x = q % W;
+            const y = (q / W) | 0;
+            b.n++;
+            b.x0 = Math.min(b.x0, x);
+            b.x1 = Math.max(b.x1, x);
+            b.y0 = Math.min(b.y0, y);
+            b.y1 = Math.max(b.y1, y);
+            for (const k of [q - 1, q + 1, q - W, q + W])
+              if (k >= 0 && k < W * H && m[k] && !seen[k]) {
+                seen[k] = 1;
+                st.push(k);
+              }
+          }
+          if (!best || b.n > best.n) best = b;
+        }
+        if (!best) return { found: false, white: 0, w: 0 };
+        const w = best.x1 - best.x0;
+        const h = best.y1 - best.y0;
+        let white = 0;
+        for (let y = Math.round(best.y0 + 0.3 * h); y <= best.y1 - 0.3 * h; y++)
+          for (let x = Math.round(best.x0 + 0.3 * w); x <= best.x1 - 0.3 * w; x++) {
+            const p = (y * W + x) * 4;
+            if (d[p]! > 200 && d[p + 1]! > 200 && d[p + 2]! > 200) white++;
+          }
+        return { found: true, white, w };
+      });
+      expect(hub.found, "a navy hub on the canvas").toBe(true);
+      expect(hub.w, "the hub is a real size").toBeGreaterThan(60);
+      expect(hub.white, "white logo pixels in the middle of the hub").toBeGreaterThan(40);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
   test("T21 — a leftover Reduce motion switch value in the browser changes nothing", async ({
     browser,
   }) => {

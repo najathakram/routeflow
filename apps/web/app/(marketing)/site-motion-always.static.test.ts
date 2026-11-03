@@ -102,6 +102,15 @@ describe("the public site's motion does not depend on the visitor's motion setti
       expect(wheel).toContain("room / Math.max(1, ...w.lines.map(wid))");
       expect(wheel).toContain("for (const k in wc) delete wc[k];"); // font changes clear the measures
     });
+    it("the room for a name is the piece's real width on the rows the words cover, not its bounding box", () => {
+      expect(wheel).toContain("const room = 2 * hw * 0.88");
+      expect(wheel).toContain("hw = Math.min(hw, ax - l, r - ax)");
+    });
+    it("the icon keeps the piece's own ink after a white name", () => {
+      expect(wheel).toContain(
+        "ctx.fillStyle = ctx.strokeStyle = css(mix(INK, w.ink, p.c)); } /* the icon keeps",
+      );
+    });
     it("a long note wraps to two lines on a phone", () => {
       expect(wheel).toContain("const nt = phone && w.d.n && w.d.n.length > 9;");
       expect(wheel).toContain("lines2(w.d.n)");
@@ -119,6 +128,9 @@ describe("the public site's motion does not depend on the visitor's motion setti
     });
     it("the hub mark stands upright on the puck's front while the lid is a sliver, and lies on it as the lid opens", () => {
       expect(wheel).toContain("let up = 0, ft = -1e9, fb = -1e9, lt = 1e9;");
+      // straight down (the page at rest) the base sits inside the lid: no front face, so the mark lies flat (review-a, #4153)
+      expect(wheel).toContain("up = fb - ft > 1 ? clamp(0, 1,");
+      expect(wheel).not.toContain("0.8 * (fb - ft) + 1e-6");
       expect(wheel).toContain("if (up < 0.5) {");
       expect(wheel).toContain("if (up > 0.5) {");
     });
