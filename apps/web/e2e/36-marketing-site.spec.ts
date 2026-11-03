@@ -1377,7 +1377,7 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
 // ─── T21 — the motion does not depend on the visitor's motion setting ───────
 // Owner ruling 2026-11-03: the wheel comes apart on scroll for everyone. The OS "reduce motion" setting, the
 // footer switch and ?motion=on are gone; a computer with animations off used to get a still dial and a page
-// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a window under 500 px tall keep the still.
+// 8,000 px shorter (no ScrollTriggers at all). Only no-JS and a browser that cannot run the wheel keep the still (T22 covers short windows).
 test.describe("T21 — the motion does not depend on the visitor's motion setting", () => {
   const VIEWS = [
     { name: "1440", width: 1440, height: 900 },
@@ -1682,5 +1682,141 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     const plain = await (await request.get("/")).text();
     const forced = await (await request.get("/?motion=on")).text();
     expect(forced).toBe(plain);
+  });
+});
+
+// ─── T22 — the wheel runs on a short screen, a phone held sideways included ──
+// Owner, iPhone in desktop mode turned to landscape: no wheel graphics. The wheel used to give way to the still under
+// 500 px tall. It now runs on every height; below 900 px, short and wider than tall, it takes the wide layout (the words
+// beside the wheel). A turn of the phone builds it again for the new shape and puts the visitor at the same place.
+test.describe("T22 — the wheel runs on a short screen", () => {
+  const SIZES = [
+    { w: 667, h: 375 },
+    { w: 844, h: 390 },
+    { w: 932, h: 430 },
+    { w: 1024, h: 500 },
+    { w: 1100, h: 450 },
+  ];
+
+  const state = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const el = document.querySelector(".rfw") as
+        (HTMLElement & { _rfw?: { trig?: { progress: number } } }) | null;
+      const r = el ? el.getBoundingClientRect() : null;
+      const copy = document.querySelector(".hx-copy") as HTMLElement | null;
+      const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement | null;
+      const c = cv ? cv.getBoundingClientRect() : null;
+      return {
+        live: !!document.querySelector(".rfw-live"),
+        still: !!document.querySelector(".rfw--static"),
+        canvas: !!cv,
+        progress: el?._rfw?.trig?.progress ?? null,
+        top: r ? r.top + window.scrollY : 0,
+        height: r ? r.height : 0,
+        copyRight: copy ? copy.getBoundingClientRect().right : null,
+        canvasLeft: c ? c.left : null,
+        docW: document.documentElement.scrollWidth,
+        winW: window.innerWidth,
+      };
+    });
+
+  const load = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
+    const context = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto("/", { waitUntil: "load" });
+    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    return { context, page, errors };
+  };
+
+  for (const s of SIZES) {
+    test(`T22 — ${s.w}x${s.h}: a live wheel with the words beside it, no sideways scroll`, async ({
+      browser,
+    }) => {
+      test.setTimeout(120_000);
+      const { context, page, errors } = await load(browser, s.w, s.h);
+      const a = await state(page);
+      expect(a.live, "live wheel").toBe(true);
+      expect(a.still, "not the still").toBe(false);
+      expect(a.canvas, "a canvas").toBe(true);
+      expect(a.copyRight, "words sit left of the wheel").toBeLessThanOrEqual(
+        (a.canvasLeft ?? 0) + s.w * 0.62,
+      );
+      // real scroll: the story plays and the page never grows sideways
+      const before = a.progress ?? 0;
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, 160);
+        await page.waitForTimeout(250);
+      }
+      await page.waitForTimeout(1500);
+      const b = await state(page);
+      expect(b.progress ?? 0, "scroll plays the story").toBeGreaterThan(before + 0.02);
+      expect(b.docW, "no sideways scroll").toBeLessThanOrEqual(b.winW);
+      expect(errors).toEqual([]);
+      await context.close();
+    });
+  }
+
+  test("T22 — pieces move when scrolled: the canvas changes between two places in the story", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page } = await load(browser, 844, 390);
+    const grab = async (f: number) => {
+      const { top, height } = await state(page);
+      await page.evaluate(
+        ([t, h, f2]) => {
+          document.documentElement.style.scrollBehavior = "auto";
+          window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - 390));
+        },
+        [top, height, f],
+      );
+      await page.waitForTimeout(1800);
+      return page.evaluate(() => {
+        const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement;
+        const g = cv.getContext("2d")!;
+        const d = g.getImageData(0, 0, cv.width, cv.height).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 97) sum = (sum * 31 + d[i]) % 1000003;
+        return sum;
+      });
+    };
+    const rest = await grab(0.02);
+    const apart = await grab(0.3);
+    expect(apart, "the pieces have moved").not.toBe(rest);
+    await context.close();
+  });
+
+  test("T22 — turning the phone builds the wheel again and keeps the place", async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const { context, page, errors } = await load(browser, 390, 844);
+    const { top, height } = await state(page);
+    await page.evaluate(
+      ([t, h]) => {
+        document.documentElement.style.scrollBehavior = "auto";
+        window.scrollTo(0, (t as number) + 0.5 * ((h as number) - 844));
+      },
+      [top, height],
+    );
+    await page.waitForTimeout(2200);
+    const p1 = (await state(page)).progress ?? 0;
+    expect(p1).toBeGreaterThan(0.2);
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.waitForTimeout(3000);
+    const land = await state(page);
+    expect(land.live && land.canvas, "live wheel after the turn").toBe(true);
+    expect(Math.abs((land.progress ?? 0) - p1), "same place in the story").toBeLessThan(0.04);
+    expect(land.docW).toBeLessThanOrEqual(land.winW);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(3000);
+    const back = await state(page);
+    expect(back.live && back.canvas).toBe(true);
+    expect(Math.abs((back.progress ?? 0) - p1)).toBeLessThan(0.04);
+    expect(errors).toEqual([]);
+    await context.close();
   });
 });

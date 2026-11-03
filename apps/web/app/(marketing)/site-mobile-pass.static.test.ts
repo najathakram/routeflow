@@ -119,3 +119,31 @@ describe("every colour it adds keeps the text above it AA", () => {
     expect(ratio(INK, hex("#e3f5f4"))).toBeGreaterThanOrEqual(12);
   });
 });
+
+describe("the first screen on a phone is not grey", () => {
+  const wheel = read("graphics/rf-wheel-up.js");
+  const css = read("css/mobile.css");
+
+  it("a tall stage gets its own six glows, painted into the canvas under the pieces", () => {
+    expect(wheel).toContain("const WASH_NARROW = [");
+    expect(wheel).toContain("of H > W * 1.05 ? WASH_NARROW : WASH)");
+    // six glows, every one soft (alpha at most 0.5, so the stage stays light behind the pieces)
+    const body = wheel.slice(wheel.indexOf("const WASH_NARROW = ["), wheel.indexOf("const washCv"));
+    const alphas = [...body.matchAll(/\d+, \d+, \d+, (0\.\d+), 0\.7\d?\]/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(alphas).toHaveLength(6);
+    for (const a of alphas) expect(a).toBeLessThanOrEqual(0.5);
+  });
+
+  it("three thin brand rings sit in the hero's right margin, no repeat, behind the text", () => {
+    expect(css).toContain("background-repeat:no-repeat");
+    expect(css).toContain("background-size:150px 150px,auto,auto");
+    for (const hex of ["%234caed9", "%236261af", "%23ffc933"]) expect(css).toContain(hex);
+  });
+
+  it("the trial sentence breaks between its two sentences, or is balanced", () => {
+    expect(css).toContain(".hx-note,.pd-note,.cta-band p,h1,h2,h3");
+    expect(read("home.html")).toContain('<span class="nb">No card needed.</span>');
+  });
+});

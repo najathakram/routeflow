@@ -7,7 +7,7 @@
 /* ---------- type ---------- */
 .nb{white-space:nowrap}
 :where(p,li,figcaption,dd,summary,.sub,.lede,.hx-lede){text-wrap:pretty}
-h1,h2,h3,.h3,.risk-h,.pb-lines,.pb-big,.fd-q,.sy-ph,.co-q,.inc-label{text-wrap:balance}
+.hx-note,.pd-note,.cta-band p,h1,h2,h3,.h3,.risk-h,.pb-lines,.pb-big,.fd-q,.sy-ph,.co-q,.inc-label{text-wrap:balance}
 /* label, headline, text and button sit the same distance apart on every page */
 h1+.sub,h2+.sub,h1+.lede,h2+.lede{margin-top:12px}
 .home .hx .kick,.home #sell .kick,.home #journey .kick,.home #stores .kick,.home #counter .kick,.home #use-cases .kick{margin-bottom:14px}
@@ -31,7 +31,7 @@ body:has(.pg-top) .section-head.center,body:has(.pg-top) .section-head.center .l
 body:has(.pg-top) .section.alt:not(.pg-top){background:#e3f5f4}
 
 /* ---------- colour ---------- */
-.home .hx-up .hx-over{background-image:radial-gradient(70% 60% at 100% 0%,rgba(var(--mb-sky),.2),transparent 72%),radial-gradient(60% 48% at 0% 6%,rgba(var(--mb-gold),.18),transparent 72%)}
+.home .hx-up .hx-over{background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 200 200%27 fill=%27none%27%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2796%27 stroke=%27%234caed9%27 stroke-opacity=%27.34%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2770%27 stroke=%27%236261af%27 stroke-opacity=%27.26%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2744%27 stroke=%27%23ffc933%27 stroke-opacity=%27.5%27 stroke-width=%272%27/%3E%3C/svg%3E"),radial-gradient(70% 60% at 100% 0%,rgba(var(--mb-sky),.2),transparent 72%),radial-gradient(60% 48% at 0% 6%,rgba(var(--mb-gold),.18),transparent 72%);background-repeat:no-repeat;background-size:150px 150px,auto,auto;background-position:right -75px top 280px,0 0,0 0}
 .home #pricing{background:linear-gradient(180deg,#eceefb 0,#f6f7fd 55%,#fff 100%)}
 .home .pl-wrap{box-shadow:0 0 0 1px rgba(16,38,77,.06),0 14px 30px -18px rgba(16,38,77,.28)}
 .home .risk{background-image:radial-gradient(70% 90% at 100% 0%,rgba(var(--mb-sky),.28),transparent 70%),radial-gradient(60% 80% at 0% 100%,rgba(var(--mb-coral),.2),transparent 70%)}
