@@ -12,6 +12,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import type { AppConfig } from "../config/configuration";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BUYER_ACCESS_AUDIENCE } from "../auth/session-token";
+import { revokeBuyerLinkTokens } from "../auth/link-token-revocation";
 
 /**
  * SUPER_ADMIN buyer account management.
@@ -104,7 +105,12 @@ export class BuyerAdminService {
     if (status === "DELETED") data.deletedAt = new Date();
     if (status === "ACTIVE") data.deletedAt = null;
 
-    await this.prisma.buyerAccount.update({ where: { id }, data });
+    // F03 slice 2 (SA-1096): leaving ACTIVE burns the buyer's live links in the same transaction, so a reset
+    // link mailed before a suspension or removal cannot work after a later reactivation.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.buyerAccount.update({ where: { id }, data });
+      if (status !== "ACTIVE") await revokeBuyerLinkTokens(tx, id);
+    });
     return { id, status, message: `Buyer account ${status.toLowerCase()}` };
   }
 
@@ -243,6 +249,8 @@ export class BuyerAdminService {
         // address. Revoke sessions too: the identity anchor just changed.
         await tx.buyerEmailVerificationToken.deleteMany({ where: { buyerAccountId: id } });
         await tx.buyerRefreshToken.deleteMany({ where: { buyerAccountId: id } });
+        // A reset link mailed to the old address must not work either (F03 slice 2, SA-1096).
+        await revokeBuyerLinkTokens(tx, id);
       }
       return u;
     });

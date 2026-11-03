@@ -33,6 +33,9 @@ export const CANCELLABLE_FROM = Object.keys(ORDER_STATUS_TRANSITIONS).filter((k)
   ORDER_STATUS_TRANSITIONS[k].includes("CANCELLED"),
 ) as OrderStatus[];
 
+/** The statuses a cancel credits stock from. A DRAFT holds none. */
+export const CANCEL_CREDITS_FROM = CANCELLABLE_FROM.filter((s) => s !== "DRAFT");
+
 /**
  * Throws the service's own 400s for an illegal transition, and for a demotion with no reason.
  * Returns `isDeliveredDemotion` (DELIVERED → CONFIRMED / PARTIALLY_DELIVERED), which the caller's

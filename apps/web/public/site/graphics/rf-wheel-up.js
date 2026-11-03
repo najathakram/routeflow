@@ -429,6 +429,7 @@
         if (focusI === w.i) { ctx.beginPath(); trace(tx, ty, n); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = "#2b4c88"; ctx.stroke(); }
         /* Words stay upright and readable; only the plate tilts. The piece the object stands on lets it have the spot. */
         const vis = (outer ? 1 - S.obj * p.w : 1) * (1 - m * 0.55);
+        p.nd = false;
         if (vis > 0.03) {
           proj(ux * (w.mid * rg + sl), uy * (w.mid * rg + sl), zT);
           const sc = K * pp, ax = px, ay = py, sq = 0.62 + 0.38 * ct, size = (sc / dpr) * 31, nk = Math.max(phone ? sc * 1.22 : sc, ((phone ? 13 : 12) * dpr) / 31), nq = 1;
@@ -496,9 +497,12 @@
               ctx.fillStyle = css(INK);
               ctx.setTransform(ckf, 0, 0, ckf * nq, px + (side ? (ux > 0 ? gap : -gap) : 0), py + (side ? 5 * dpr : -gap));
               if (!drop) for (let j = 0; j < ls.length; j++) ctx.fillText(ls[j], 0, (j - (ls.length - 1) / 2) * 34);
+              shown = drop ? 0 : 1;
               ctx.textAlign = "center"; ctx.fillStyle = css(mix(INK, w.ink, p.c));
             }
           }
+          /* Whether the piece carries its own name right now: the hover label would only say it again. */
+          p.nd = name > 0.55 && shown === 1;
           const is = Math.max(1.25 * sc, (small ? 0.62 : 0.8) * dpr) * (outer ? 1 : rg + lift * 0.4);
           /* Once it is named, a daily-work plate carries the name alone: its icon would crowd it. */
           ctx.globalAlpha = vis * (outer ? 1 - p.n * shown * (1 - flat) : 1);
@@ -571,6 +575,8 @@
       if (S.rip > 0.001 && S.rip < 0.999) { ctx.beginPath(); for (let j = 0; j <= 96; j++) { const a = (j / 96) * TAU, r = R1 + 14 + S.rip * 110; proj(r * Math.cos(a), r * Math.sin(a), 0); if (j) ctx.lineTo(px, py); else ctx.moveTo(px, py); } ctx.lineWidth = 1.25 * dpr; ctx.strokeStyle = css(NVY, 0.2 * (1 - S.rip)); ctx.stroke(); }
       /* The object lives in the world; it is sized once per layout and only moves here. */
       if (S.obj > 0.01) { proj(ax, ay, zo + THO + lz + S.hop * 70 + S.fall * 520); tok.style.transform = `translate3d(${(px / dpr + ox).toFixed(1)}px,${(py / dpr + oy).toFixed(1)}px,0)`; }
+      /* A label that repeats the name already on the piece (the first screen, the stops) stays away; a piece with only its icon still gets it. */
+      if (tipI >= 0) tip.classList.toggle("on", !P[tipI].nd);
       if (tipI >= 0) { const w = WD[tipI], p = P[tipI], o = w.o, a = w.ca + (o ? spo : spi), l = Math.max(p.w, p.h * 0.6), r = w.mid + l * (o ? FS : FSI) + p.e * (o ? EX.o : EX.i) * (1 + DRIFT * S.dr); proj(r * Math.cos(a), r * Math.sin(a), (o ? zo + THO : zi + THI) + l * LF); tip.style.transform = `translate3d(${(px / dpr + ox).toFixed(1)}px,${(py / dpr + oy - 46 * Math.max(0.6, K / dpr)).toFixed(1)}px,0) translateX(-50%)`; }
     };
 
@@ -798,7 +804,7 @@
     };
     const showTip = (i) => {
       clearTimeout(tipT);
-      if (i >= 0) { tipI = i; tip.textContent = ALL[i].t; tip.classList.add("on"); force = true; mark(); } else tipT = setTimeout(() => { tip.classList.remove("on"); tipI = -1; }, 160);
+      if (i >= 0) { tipI = i; tip.textContent = ALL[i].t; tip.classList.toggle("on", !P[i].nd); force = true; mark(); } else tipT = setTimeout(() => { tip.classList.remove("on"); tipI = -1; }, 160);
     };
     const over = (i) => {
       if (i === hov) return;

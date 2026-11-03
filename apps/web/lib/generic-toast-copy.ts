@@ -139,6 +139,8 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.FAMILY_NOT_PRICEABLE]:
     "A product family can't be priced or promoted. Use its variants instead.",
+  [API_ERROR_CODES.PACK_CONVERSION_TOO_LARGE]:
+    "That many pieces won't fit. Choose Pieces, or use a smaller pack size.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
@@ -350,6 +352,20 @@ export function billHasPaymentsCopy(data: Record<string, unknown>): string {
   return `This bill has ${amount ?? "payments"}${amount ? " in payments" : ""}. Move them to a supplier credit first.`;
 }
 
+/** SA-1093: a document received before its units per box were set. A bill has a void; a purchase order keeps its stock. */
+function receivedBeforePackCopy(data: Record<string, unknown>): string {
+  return data.document === "purchase-order"
+    ? "This purchase order was received before its units per box were set. Save the edit without changing stock."
+    : "This bill was received before its units per box were set. To change it, void it and enter a new bill.";
+}
+
+/** SA-1093: an open order holds a line in its own unit, so the product can't move to boxes yet. */
+function packOpenLinesCopy(data: Record<string, unknown>): string {
+  const order =
+    typeof data.orderNumber === "string" ? `Order ${data.orderNumber}` : "An open order";
+  return `${order} has a line in its own unit. Finish or cancel the order first, or choose pieces.`;
+}
+
 /** A payment's allocations add up to more than the payment: the two amounts come from structured body fields. */
 function allocationsCopy(data: Record<string, unknown>): string {
   const allocated = usd(data.allocatedTotal);
@@ -486,6 +502,8 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.BILL_HAS_PAYMENTS) return billHasPaymentsCopy(data);
+  if (code === API_ERROR_CODES.RECEIVED_BEFORE_PACK) return receivedBeforePackCopy(data);
+  if (code === API_ERROR_CODES.PACK_OPEN_LINES) return packOpenLinesCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (code === API_ERROR_CODES.RECEIVE_EXCEEDS_OUTSTANDING) return receiveExceedsCopy(data);
   // Row 563: a backdated stock write into a filed period (tobacco report / regulated filing). Fixed copy, the period from

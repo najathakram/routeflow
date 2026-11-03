@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsDecimal,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -12,6 +13,7 @@ import {
   Min,
 } from "class-validator";
 import { Transform } from "class-transformer";
+import { PACK_READINGS, type PackReading } from "../pack-intro";
 import { CostingMethod } from "@prisma/client";
 import {
   emptyToNull,
@@ -82,6 +84,8 @@ export class UpdateProductDto {
   @IsOptional() @Transform(toOptionalMsrp) @IsDecimal() msrp?: string | null;
   // Whole pieces per box, 1 or more; null/absent = unboxed (@IsOptional skips both). 0 or -3 would unbox silently.
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
+  // SA-946: what the price was for when a pack is introduced on a product with stock or cost. An answer, never a column.
+  @IsOptional() @IsIn(PACK_READINGS) packReading?: PackReading;
   // SA-797 (row 218): the pack the form READ when it opened, sent with a save that carries `unit`. The
   // server compares them under the pack lock: a 409 PRODUCT_PACK_STALE when any moved. A check, never written.
   @IsOptional() @IsString() expectedUnit?: string;

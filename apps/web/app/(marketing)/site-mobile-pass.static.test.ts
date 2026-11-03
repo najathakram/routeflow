@@ -187,3 +187,19 @@ describe("the first screen on a phone is not grey", () => {
     expect(css).toContain(".hx-up .hx-lay{padding-block:14px 6px}");
   });
 });
+
+describe("the hover label never repeats a name the piece carries", () => {
+  const wheel = read("graphics/rf-wheel-up.js");
+
+  it("each piece records whether its own name is drawn right now (left out counts as not drawn)", () => {
+    expect(wheel).toContain("p.nd = false;");
+    expect(wheel).toContain("p.nd = name > 0.55 && shown === 1;");
+    expect(wheel).toContain("shown = shy ? 0 : 1;");
+    expect(wheel).toContain("shown = drop ? 0 : 1;");
+  });
+
+  it("the label is off for a named piece, on for an icon-only one, on hover and while it is up", () => {
+    expect(wheel).toContain('tip.classList.toggle("on", !P[i].nd)');
+    expect(wheel).toContain('if (tipI >= 0) tip.classList.toggle("on", !P[tipI].nd);');
+  });
+});

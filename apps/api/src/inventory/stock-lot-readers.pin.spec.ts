@@ -40,6 +40,11 @@ const PINNED: Record<string, Counts> = {
   // NEW kind (alias reads, uncounted before this slot existed): `db.stockLot` is handed into the dependent-models list
   // whose members only get groupBy(productId) for an "is this product referenced" check; no quantity, no cost.
   "products/product-delete-classify.ts": [0, 0, 0, 1],
+  // W-867 first pack: reads a product's open lots to rescale them with the stock they feed. Stock and cost come from
+  // Product, so no money comes from the figure. An open lot alone can only ask "boxes or pieces" (SA-961 R1), and
+  // either answer saves; the too-large refusal is the column's limit on the value being written.
+  "products/pack-intro-apply.ts": [1, 0, 2, 0],
+  "products/pack-intro.ts": [0, 0, 8, 0], // the lot's type, the question, and the rescale
 };
 
 const DELEGATE_READ =
