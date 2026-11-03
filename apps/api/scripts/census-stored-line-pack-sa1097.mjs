@@ -39,6 +39,13 @@
  * SA-1097-third.sql is embedded byte for byte as THIRD_SQL (sha-256 pinned by the script spec, and run against the SA's fixture by the
  * db spec); counts, ratios and dates only.
  *
+ * SA-1097 A-8 (rf-specs de0a5ad80a, SQL at 03eb45aa48): `--q10-line` runs the SA's one more read INSTEAD of the census, in the same
+ * read-only session: Q10's July line again, as ratios, statuses and yes/no only (no ids, names, prices or totals; at most 20 rows).
+ * One SELECT, run as one query named `q10_line`:
+ *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs --q10-line   (the owner's per-call yes)
+ * SA-1097-q10-line.sql is embedded byte for byte as Q10_LINE_SQL (sha-256 pinned by the script spec, and run against the SA's fixture by
+ * the db spec).
+ *
  * SAFETY: the session is read-only before any query (`default_transaction_read_only = on`, confirmed with SHOW, exit 2
  * otherwise) and each query runs in its own BEGIN READ ONLY ... ROLLBACK; `statement_timeout` is set; SELECTs only. The target
  * (redacted) goes to stderr, the JSON to stdout. NEVER RUN FROM AN IMPLEMENTATION SESSION AGAINST PRODUCTION.
@@ -54,6 +61,7 @@ export const SPEC_SQL_COMMIT = "1375ac917b11ea85a13190e487e73f5ef548cf56";
 export const DENOMINATORS_SQL_COMMIT = "6faf86cde43fa28f4499fd1eb749c6bb0eaf2fc3";
 export const UNBILLED_SQL_COMMIT = "29603388630276e43374e2368e959ee35d874045";
 export const THIRD_SQL_COMMIT = "67dfe0b894a09bfdc2e9a412e15b032f85b68f1c";
+export const Q10_LINE_SQL_COMMIT = "03eb45aa48e81c514257e84f61b3376cf9a24095";
 export const DEFAULT_TIMEOUT_S = 300;
 
 export const CENSUS_SQL = String.raw`-- SA-1097 census. SELECT only, counts and totals, no ids or names. Every query is a plain WITH, because a read-only session can't create a view.
@@ -437,10 +445,49 @@ GROUP BY 1 ORDER BY 1;
 
 export const THIRD_SQL_SHA256 = createHash("sha256").update(THIRD_SQL).digest("hex");
 
+export const Q10_LINE_SQL = String.raw`-- SA-1097 A-8 count. SELECT only, plain WITH, for a read-only session. No ids, names, prices or totals: ratios, statuses and yes/no only. At most 20 rows.
+-- Q10's lines again (a split line whose money differs from its own split), with what separates a price typed per piece from a line billed too much.
+-- price_to_original near 1 / snap: the typed price is a per-piece price. Near 1: a box price, and the money is too high. billed_to_line: what non-void invoices bill against the line's own money.
+WITH l AS (
+  SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, oi.id, oi."createdAt" AS at, oi.status AS line_status, o.status AS order_status,
+         oi."priceType" AS price_type, oi."unitPrice" AS price, oi."originalPrice" AS original, oi.subtotal, oi.qty, oi."deliveredQty" AS delivered,
+         oi."overrideReason" IS NOT NULL AS has_reason, oi."overriddenBy" IS NOT NULL AS has_author,
+         COALESCE(oi.boxes, 0) AS b, oi."unitsPerBox" AS snap,
+         round(oi."unitPrice" * (GREATEST(COALESCE(oi.boxes, 0) - COALESCE(oi."promoFreeUnits", 0), 0) + COALESCE(oi.pieces, 0)::numeric / oi."unitsPerBox"), 2) AS expected
+  FROM "OrderItem" oi
+  JOIN "Order" o ON o.id = oi."orderId"
+  LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+  WHERE oi.status <> 'CANCELLED' AND o.status <> 'CANCELLED' AND (oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL) AND oi."unitsPerBox" > 1
+), bills AS (
+  SELECT it."orderItemId" AS id, sum(it.subtotal) AS billed, count(*)::int AS invoice_lines,
+         array_agg(DISTINCT i.status::text) AS invoice_statuses, bool_or(i."paidAt" IS NOT NULL) AS any_paid,
+         (SELECT count(*)::int FROM "CreditNote" c WHERE c."invoiceId" = ANY (array_agg(i.id))) AS credit_notes
+  FROM "InvoiceItem" it
+  JOIN "Invoice" i ON i.id = it."invoiceId"
+  WHERE i.status <> 'VOID' AND it."orderItemId" IS NOT NULL
+  GROUP BY 1
+)
+SELECT l.tenant_class, to_char(l.at, 'YYYY-MM') AS month, l.line_status, l.order_status, l.price_type, l.snap,
+       l.has_reason, l.has_author,
+       CASE WHEN l.expected = 0 THEN NULL ELSE round(l.subtotal / l.expected, 4) END AS ratio_to_own_split,
+       CASE WHEN l.b = 0 THEN NULL ELSE round(l.qty / l.b, 4) END AS qty_per_box,
+       CASE WHEN l.original IS NULL OR l.original = 0 THEN NULL ELSE round(l.price / l.original, 4) END AS price_to_original,
+       CASE WHEN l.qty = 0 THEN NULL ELSE round(l.delivered / l.qty, 4) END AS delivered_to_qty,
+       COALESCE(x.invoice_lines, 0) AS invoice_lines, x.invoice_statuses, COALESCE(x.any_paid, false) AS any_paid, COALESCE(x.credit_notes, 0) AS credit_notes,
+       CASE WHEN l.subtotal = 0 THEN NULL ELSE round(x.billed / l.subtotal, 4) END AS billed_to_line
+FROM l LEFT JOIN bills x ON x.id = l.id
+WHERE abs(l.subtotal - l.expected) > 0.01
+ORDER BY 1, 2 LIMIT 20;
+`;
+
+export const Q10_LINE_SQL_SHA256 = createHash("sha256").update(Q10_LINE_SQL).digest("hex");
+
 /** The queries, split at the SQL's own `-- Q<n> ` markers (Q1-Q3 for the census, Q4-Q8 for the denominators, Q9-Q12 for the third count); each runs as written. */
 export function splitCensusSql(text = CENSUS_SQL) {
   // The unbilled count is one plain SELECT with no `-- Q<n> ` markers: it runs whole, as written.
   if (text === UNBILLED_SQL) return [{ name: "unbilled", sql: text.trim() }];
+  // The Q10 line read is one plain SELECT too (its comment mentions "Q10", but no line starts with `-- Q<n> `): it runs whole.
+  if (text === Q10_LINE_SQL) return [{ name: "q10_line", sql: text.trim() }];
   const parts = text.split(/^-- (?=Q\d+ )/m).slice(1);
   return parts.map((p) => ({
     name: p.slice(0, p.indexOf(" ")).toLowerCase(),
@@ -453,6 +500,7 @@ export function checkArgs(argv) {
   let denominators = false;
   let unbilled = false;
   let third = false;
+  let q10Line = false;
   for (const a of argv) {
     if (a === "--denominators") {
       denominators = true;
@@ -466,22 +514,27 @@ export function checkArgs(argv) {
       third = true;
       continue;
     }
+    if (a === "--q10-line") {
+      q10Line = true;
+      continue;
+    }
     const m = /^--timeout-s=(\d+)$/.exec(a);
     if (!m || Number(m[1]) < 1 || Number(m[1]) > 1800) {
       return {
         ok: false,
-        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled | --third] [--timeout-s=<1-1800>])`,
+        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled | --third | --q10-line] [--timeout-s=<1-1800>])`,
       };
     }
     timeoutS = Number(m[1]);
   }
-  if ([denominators, unbilled, third].filter(Boolean).length > 1) {
+  if ([denominators, unbilled, third, q10Line].filter(Boolean).length > 1) {
     return {
       ok: false,
-      message: "--denominators, --unbilled and --third are separate counts: run one at a time",
+      message:
+        "--denominators, --unbilled, --third and --q10-line are separate counts: run one at a time",
     };
   }
-  return { ok: true, timeoutS, denominators, unbilled, third };
+  return { ok: true, timeoutS, denominators, unbilled, third, q10Line };
 }
 
 export async function runCensus(
@@ -492,6 +545,7 @@ export async function runCensus(
     denominators = false,
     unbilled = false,
     third = false,
+    q10Line = false,
   } = {},
 ) {
   await client.query("SET default_transaction_read_only = on");
@@ -499,23 +553,27 @@ export async function runCensus(
   if (ro !== "on") throw Object.assign(new Error("session is not read-only"), { exitCode: 2 });
   await client.query(`SET statement_timeout = '${timeoutS}s'`);
   const out = {
-    spec: third
-      ? { sqlCommit: THIRD_SQL_COMMIT, sqlSha256: THIRD_SQL_SHA256 }
-      : unbilled
-        ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
-        : denominators
-          ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
-          : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
+    spec: q10Line
+      ? { sqlCommit: Q10_LINE_SQL_COMMIT, sqlSha256: Q10_LINE_SQL_SHA256 }
+      : third
+        ? { sqlCommit: THIRD_SQL_COMMIT, sqlSha256: THIRD_SQL_SHA256 }
+        : unbilled
+          ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
+          : denominators
+            ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
+            : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
     timingMs: {},
   };
   const t0 = Date.now();
-  const sqlText = third
-    ? THIRD_SQL
-    : unbilled
-      ? UNBILLED_SQL
-      : denominators
-        ? DENOMINATORS_SQL
-        : CENSUS_SQL;
+  const sqlText = q10Line
+    ? Q10_LINE_SQL
+    : third
+      ? THIRD_SQL
+      : unbilled
+        ? UNBILLED_SQL
+        : denominators
+          ? DENOMINATORS_SQL
+          : CENSUS_SQL;
   for (const q of splitCensusSql(sqlText)) {
     const t = Date.now();
     await client.query("BEGIN READ ONLY");
@@ -549,6 +607,7 @@ async function main(argv) {
       denominators: args.denominators,
       unbilled: args.unbilled,
       third: args.third,
+      q10Line: args.q10Line,
     });
     console.log(JSON.stringify(census, null, 2));
   } catch (e) {

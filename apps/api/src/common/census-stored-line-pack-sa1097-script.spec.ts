@@ -20,10 +20,12 @@ const SA_DENOMINATORS_SHA256 = "3291839e87910afc1c9c4b1ca6acd2703f885fc5a881ae08
 const SA_UNBILLED_SHA256 = "4f1b503172b2e3a3aead159fe413ea55b01b22c418aa28a011f62d545eff48c1";
 // SA-1097 A-7: rf-specs decisions/sa/SA-1097-third.sql at 67dfe0b894 (Q9-Q12), LF line endings as filed.
 const SA_THIRD_SHA256 = "7ea78269ad97bb03bbe7ab37e6d0d90e95a7d23b9c028776d67a7409a3975877";
+// SA-1097 A-8: rf-specs decisions/sa/SA-1097-q10-line.sql at 03eb45aa48 (Q10's July line again), LF line endings as filed.
+const SA_Q10_LINE_SHA256 = "19d7a0f681863448f7f5f47bb91f38df93cf2dcc36aa1ceb0baadff44c4fa1d9";
 
 function run(body: string): any {
   const code = `
-import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, THIRD_SQL, THIRD_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
+import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, THIRD_SQL, THIRD_SQL_SHA256, Q10_LINE_SQL, Q10_LINE_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
 ${body}
 `;
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -297,6 +299,66 @@ describe("SA-1097 census script", () => {
     ]);
     expect(seen.spec.sqlSha256).toBe(SA_THIRD_SHA256);
     expect(seen.keys).toEqual(["spec", "timingMs", "q9", "q10", "q11", "q12"]);
+  });
+
+  // SA-1097 A-8: the Q10 line read, behind --q10-line.
+  it("embeds the SA's Q10 line SQL unchanged (sha-256 of rf-specs SA-1097-q10-line.sql)", () => {
+    expect(run(`console.log(JSON.stringify(Q10_LINE_SQL_SHA256));`)).toBe(SA_Q10_LINE_SHA256);
+    expect(run(`console.log(JSON.stringify(Q10_LINE_SQL.includes("\\r")));`)).toBe(false);
+  });
+
+  it("--q10-line is one query named q10_line, a plain WITH ... SELECT that writes nothing and prints at most 20 rows", () => {
+    const qs = run(`console.log(JSON.stringify(splitCensusSql(Q10_LINE_SQL)));`);
+    expect(qs.map((q: any) => q.name)).toEqual(["q10_line"]);
+    const code = qs[0].sql.replace(/^--.*$/gm, "");
+    expect(code).toMatch(/^\s*WITH\b/);
+    expect(code).not.toMatch(
+      /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|COPY|SET)\b/i,
+    );
+    expect(code.trim().endsWith("LIMIT 20;")).toBe(true);
+  });
+
+  it("--q10-line is its own flag: it refuses to run with any other count or a write flag", () => {
+    const out = run(`
+      console.log(JSON.stringify([
+        checkArgs(["--q10-line"]), checkArgs(["--q10-line", "--timeout-s=60"]),
+        checkArgs(["--q10-line", "--denominators"]), checkArgs(["--q10-line", "--unbilled"]), checkArgs(["--q10-line", "--third"]),
+        checkArgs(["--q10-line", "--apply"]), checkArgs(["--q10-line=1"]),
+      ].map((r) => r.ok ? [r.timeoutS, r.denominators, r.unbilled, r.third, r.q10Line] : "refused")));
+    `);
+    expect(out).toEqual([
+      [300, false, false, false, true],
+      [60, false, false, false, true],
+      "refused",
+      "refused",
+      "refused",
+      "refused",
+      "refused",
+    ]);
+  });
+
+  it("with --q10-line: read-only before any read, the one query in its own READ ONLY transaction, rolled back", () => {
+    const seen = run(`
+      const log = [];
+      const client = { async query(sql) {
+        log.push(sql.trim().split("\\n")[0].slice(0, 40));
+        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "on" }] };
+        return { rows: [] };
+      } };
+      const out = await runCensus(client, { timeoutS: 60, q10Line: true });
+      console.log(JSON.stringify({ log, spec: out.spec, keys: Object.keys(out) }));
+    `);
+    expect(seen.log).toEqual([
+      "SET default_transaction_read_only = on",
+      "SHOW transaction_read_only",
+      "SET statement_timeout = '60s'",
+      "BEGIN READ ONLY",
+      expect.stringMatching(/^-- SA-1097 A-8 count/),
+      "ROLLBACK",
+    ]);
+    expect(seen.spec.sqlSha256).toBe(SA_Q10_LINE_SHA256);
+    expect(seen.spec.sqlCommit).toBe("03eb45aa48e81c514257e84f61b3376cf9a24095");
+    expect(seen.keys).toEqual(["spec", "timingMs", "q10_line"]);
   });
 
   it("is import-safe and uses the shared report resolver, with no write path in the source", () => {
