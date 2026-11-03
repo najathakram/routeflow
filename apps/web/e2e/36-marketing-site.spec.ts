@@ -59,7 +59,13 @@ test.describe("T1 — public pages share one header and footer", () => {
       await expect(h1, `${route} renders exactly one h1`).toHaveCount(1);
       await expect(h1).toHaveText(H1_BY_ROUTE[route]!);
 
-      const nav = page.locator("header.site-header ul.nav-links");
+      // At 1080px and below the header nav is hidden and the same links live in the phone menu.
+      const menuButton = page.locator("header.site-header .menu-btn");
+      let nav = page.locator("header.site-header ul.nav-links");
+      if (await menuButton.isVisible()) {
+        await menuButton.click();
+        nav = page.locator("#mobile-menu");
+      }
       for (const item of NAV_ITEMS) {
         await expect(
           nav.getByRole("link", { name: item, exact: true }),
@@ -189,6 +195,93 @@ test.describe("T2 — no public page scrolls sideways at 390px", () => {
       expect(widths.doc, "documentElement.scrollWidth").toBeLessThanOrEqual(widths.inner);
       expect(widths.body, "body.scrollWidth").toBeLessThanOrEqual(widths.inner);
     });
+  }
+});
+
+// ─── T2b — the header fits on one line from 901 to 1440 px, on the ready-made and the React pages ─────
+
+// Above 1080 px the header shows the nav links; at 1080 and below it shows the menu button instead.
+const HEADER_FIT_WIDTHS: Array<[number, boolean]> = [
+  [1440, true],
+  [1281, true],
+  [1100, true],
+  [1081, true],
+  [1080, false],
+  [1024, false],
+  [901, false],
+];
+
+test.describe("T2b — the header is one line with no overlap and no sideways scroll", () => {
+  for (const [width, navShown] of HEADER_FIT_WIDTHS) {
+    for (const route of ["/", "/company"]) {
+      test.describe(`at ${width}px`, () => {
+        test.use({ ...desktopChrome, viewport: { width, height: 900 } });
+
+        test(`T2b — ${route} at ${width}px: ${navShown ? "nav links" : "menu button"}, one row, no overlap`, async ({
+          page,
+        }) => {
+          await page.goto(route);
+          const header = page.locator("header.site-header");
+          await expect(header).toBeVisible();
+          await expect(header.locator("ul.nav-links")).toBeVisible({ visible: navShown });
+          await expect(header.locator(".menu-btn")).toBeVisible({ visible: !navShown });
+
+          const measured = await header.evaluate((el) => {
+            const shown = (n: Element) => {
+              const r = n.getBoundingClientRect();
+              const cs = getComputedStyle(n);
+              return (
+                r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none"
+              );
+            };
+            const rects = [
+              ...el.querySelectorAll(
+                ".brand, .nav-links a, .nav-signin, .nav-price, .menu-btn, .nav-actions .btn",
+              ),
+            ]
+              .filter(shown)
+              .map((n) => {
+                const r = n.getBoundingClientRect();
+                return {
+                  text: (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+                  left: r.left,
+                  right: r.right,
+                  top: r.top,
+                  bottom: r.bottom,
+                  centre: (r.top + r.bottom) / 2,
+                  height: r.height,
+                };
+              });
+            const sorted = [...rects].sort((a, b) => a.left - b.left);
+            const overlaps = sorted
+              .slice(1)
+              .map((r, i) => ({ a: sorted[i]!, b: r }))
+              .filter(({ a, b }) => b.left < a.right - 0.5)
+              .map(({ a, b }) => `${a.text} / ${b.text}`);
+            const box = el.getBoundingClientRect();
+            return {
+              count: rects.length,
+              overlaps,
+              // one row: every item's centre is on the same line, and nothing wrapped to a second line
+              centreSpread:
+                Math.max(...rects.map((r) => r.centre)) - Math.min(...rects.map((r) => r.centre)),
+              tallest: Math.max(...rects.map((r) => r.height)),
+              inside: rects.every((r) => r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5),
+              right: Math.max(...rects.map((r) => r.right)),
+              doc: document.documentElement.scrollWidth,
+              inner: window.innerWidth,
+            };
+          });
+          expect(measured.count, "header items found").toBeGreaterThan(2);
+          expect(measured.overlaps, "overlapping items").toEqual([]);
+          expect(measured.centreSpread, "items on one row").toBeLessThan(8);
+          expect(measured.tallest, "tallest item (a wrapped label is taller)").toBeLessThan(60);
+          expect(measured.inside, "items inside the header").toBe(true);
+          expect(measured.right, "rightmost item").toBeLessThanOrEqual(measured.inner);
+          expect(measured.doc, "sideways scroll").toBeLessThanOrEqual(measured.inner);
+        });
+      });
+    }
   }
 });
 
@@ -508,7 +601,10 @@ test.describe("T13b — W3 M2-M4: visitor counts", () => {
       return route.fulfill({ json: {} });
     });
     await page.goto("/admin/dashboard");
-    await expect(page.getByRole("navigation").first()).toBeVisible();
+    // The sidebar is hidden below 1024px (a drawer there), so only a wide screen shows a navigation.
+    if ((page.viewportSize()?.width ?? 1280) >= 1024) {
+      await expect(page.getByRole("navigation").first()).toBeVisible();
+    }
     await expect(page.getByRole("heading", { name: "Platform Dashboard" })).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(page.locator(UMAMI_SCRIPT)).toHaveCount(0);
