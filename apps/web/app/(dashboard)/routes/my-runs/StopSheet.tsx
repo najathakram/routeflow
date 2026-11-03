@@ -51,7 +51,11 @@ function stopMapsUrl(stop: RouteRunStop): string | null {
     : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
-function orderStatusBadge(status: string) {
+/** The chip beside an order. The stop's own status wins once the stop is done: a held run shows the snapshot from before the
+ *  completion, and a skipped stop's orders went back to the office, so neither may read "In progress" beside Undo. */
+function orderStatusBadge(status: string, stopStatus?: string) {
+  if (stopStatus === "SKIPPED") return null;
+  if (stopStatus === "COMPLETED" && status !== "CANCELLED") return <Badge status="COMPLETED" />;
   if (status === "DELIVERED") return <Badge status="COMPLETED" />;
   if (status === "CANCELLED") return <Badge status="CANCELLED" />;
   if (status === "OUT_FOR_DELIVERY") return <Badge status="IN_PROGRESS" />;
@@ -229,8 +233,11 @@ export function StopSheet({
   // A refresh that shows the stop done settles an earlier attempt whose answer was lost: its key must not outlive it, or after an
   // Undo the same key would answer "completed" for a stop that is open again.
   const shownDone = stop?.status === "COMPLETED" || stop?.status === "SKIPPED";
+  // The same refresh also settles the sentence: a lost answer left "we couldn't confirm" on screen, and now the stop reads done.
   React.useEffect(() => {
-    if (stopId && shownDone) releaseStopKey(stopId);
+    if (!stopId || !shownDone) return;
+    releaseStopKey(stopId);
+    setError(null);
   }, [stopId, shownDone]);
 
   const mapsUrl = stop ? stopMapsUrl(stop) : null;
@@ -344,6 +351,10 @@ export function StopSheet({
   };
 
   const done = stop?.status === "COMPLETED" || stop?.status === "SKIPPED";
+  // SA-1098 A-3 (D-49..D-51): the server frees a skipped stop's orders when its run ends and refuses to reopen it on a finished run,
+  // so the button could only lead to an office sentence. A skipped stop on a run that is not open, or with no orders left, has no Undo.
+  const releasedSkip =
+    stop?.status === "SKIPPED" && (runStatus !== "IN_PROGRESS" || orders.length === 0);
 
   return (
     <Modal
@@ -400,7 +411,7 @@ export function StopSheet({
               </Button>
             </div>
           )}
-          {done && (
+          {done && !releasedSkip && (
             <Button
               className={TAP}
               variant="secondary"
@@ -410,6 +421,11 @@ export function StopSheet({
             >
               Undo
             </Button>
+          )}
+          {releasedSkip && (
+            <p className="text-sm text-navy/70">
+              Skipped. Anything not delivered went back to your office.
+            </p>
           )}
           <div className="grid grid-cols-2 gap-2">
             <Button
@@ -435,7 +451,7 @@ export function StopSheet({
               variant="secondary"
               onClick={handleStart}
               loading={updateStatus.isPending && updateStatus.variables?.status === "IN_PROGRESS"}
-              disabled={stop?.status !== "PENDING" || busy}
+              disabled={stop?.status !== "PENDING" || busy || !online}
             >
               Start stop
             </Button>
@@ -444,7 +460,7 @@ export function StopSheet({
               variant="danger-outline"
               onClick={handleSkip}
               loading={updateStatus.isPending && updateStatus.variables?.status === "SKIPPED"}
-              disabled={done || busy}
+              disabled={done || busy || !online}
             >
               Skip
             </Button>
@@ -458,7 +474,7 @@ export function StopSheet({
             <li key={order.id} className="py-2.5">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-navy">{order.orderNumber}</span>
-                {orderStatusBadge(order.status)}
+                {orderStatusBadge(order.status, stop?.status)}
               </div>
               {open && runOpen && !refusing && lines.length > 0 && (
                 <ul className="mt-2 space-y-2">
@@ -498,8 +514,11 @@ export function StopSheet({
           />
         </div>
       )}
-      {open && !runOpen && (
+      {open && runStatus === "SCHEDULED" && (
         <p className="mt-3 text-sm text-navy/70">Start the route to record this stop.</p>
+      )}
+      {open && (runStatus === "COMPLETED" || runStatus === "CANCELLED") && (
+        <p className="mt-3 text-sm text-navy/70">This route has ended.</p>
       )}
       {open && runOpen && !online && (
         <p className="mt-3 text-sm text-navy/70">You are offline. Connect to record this stop.</p>

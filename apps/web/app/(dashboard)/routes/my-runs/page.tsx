@@ -28,6 +28,9 @@ import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 import { runActionErrorCopy } from "@/lib/driver-stop-copy";
 import { StopSheet } from "./StopSheet";
 
+/** The line on a run the driver's own completion finished (D-32). A refused stop keeps its Undo; a released skipped stop has none (A-3). */
+const FINISHED_RUN_NOTE = "Route finished. To undo a delivered or refused stop, tap it.";
+
 type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
 
 function statusBadge(status: RunStatus) {
@@ -208,14 +211,16 @@ function FieldStopRow({
           {orderCount} order{orderCount === 1 ? "" : "s"}
         </span>
       )}
-      {statusBadge(
-        stop.status === "COMPLETED"
-          ? "COMPLETED"
-          : stop.status === "IN_PROGRESS"
-            ? "IN_PROGRESS"
-            : stop.status === "SKIPPED"
-              ? "CANCELLED"
+      {stop.status === "SKIPPED" ? (
+        <Badge variant="neutral" label="Skipped" />
+      ) : (
+        statusBadge(
+          stop.status === "COMPLETED"
+            ? "COMPLETED"
+            : stop.status === "IN_PROGRESS"
+              ? "IN_PROGRESS"
               : "SCHEDULED",
+        )
       )}
     </li>
   );
@@ -325,6 +330,8 @@ function TodayRunHero({
   const total = run._count?.stops ?? stops.length;
   const doneCount = stops.filter((s) => s.status === "COMPLETED").length;
   const nextStop = stops.find((s) => s.status === "PENDING" || s.status === "IN_PROGRESS");
+  // A run from an earlier day that is still open shows its date, so the driver knows why it leads the page (A-3, finding 7).
+  const fromEarlier = !!run.scheduledDate && run.scheduledDate.slice(0, 10) < todayLocalISO();
   const deliveredOrders = stops
     .filter((s) => s.status === "COMPLETED")
     .reduce((sum, s) => sum + (s.orders?.length ?? 0), 0);
@@ -335,6 +342,7 @@ function TodayRunHero({
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-navy">{run.route?.name ?? "Today's run"}</h2>
           <p className="mt-0.5 text-xs text-navy/70">
+            {fromEarlier ? `${fmtCalendarDateWithWeekday(run.scheduledDate, "short")} · ` : ""}
             {run.startedAt
               ? `Started ${new Date(run.startedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
               : "Not started yet"}
@@ -351,15 +359,13 @@ function TodayRunHero({
         />
         <StatCard label="Next stop" value={nextStop?.customer?.businessName ?? "—"} />
         <StatCard
-          label="Delivered today"
+          label="Stops done"
           value={String(doneCount)}
           trendLabel={deliveredOrders > 0 ? `${deliveredOrders} orders` : undefined}
         />
       </div>
 
-      {finished && (
-        <p className="px-5 pb-4 text-sm text-navy/70">Route finished. Tap a stop to undo it.</p>
-      )}
+      {finished && <p className="px-5 pb-4 text-sm text-navy/70">{FINISHED_RUN_NOTE}</p>}
       <RunLifecycle run={run} stops={stops} />
 
       {/* Primary action row — big touch targets, scanner shortcut front and center */}
@@ -402,10 +408,6 @@ export default function MyRunsPage() {
   const [openStop, setOpenStop] = React.useState<{ stop: RouteRunStop; runId: string } | null>(
     null,
   );
-
-  React.useEffect(() => {
-    setTitle("My Routes");
-  }, [setTitle]);
 
   // D-32: a completion that finishes the run takes it out of `my-runs`. The page keeps that run (marked finished, in memory only)
   // until it is back in the list (Undo) or the driver leaves the page. Finish route and a reload do not hold it.
@@ -459,12 +461,17 @@ export default function MyRunsPage() {
 
   // A pure driver has no "operator view" to toggle back to — always field layout.
   const fieldLayout = baseIsDriver || driveMode;
+  // The sidebar calls the driver's page "Today's route"; the title says the same.
+  React.useEffect(() => {
+    setTitle(fieldLayout ? "Today's route" : "My Routes");
+  }, [setTitle, fieldLayout]);
 
-  const { todayRuns, upcomingRuns } = React.useMemo(() => {
+  const { todayRuns, upcomingRuns, earlierRuns } = React.useMemo(() => {
     const all = data?.data ?? [];
     const today = todayLocalISO();
     const todayList: RouteRun[] = [];
     const upcomingList: RouteRun[] = [];
+    const earlierList: RouteRun[] = [];
     for (const run of all) {
       if (!run.scheduledDate) continue;
       const runDate = run.scheduledDate.slice(0, 10);
@@ -472,22 +479,37 @@ export default function MyRunsPage() {
         todayList.push(run);
       } else if (runDate > today) {
         upcomingList.push(run);
+      } else if (run.status === "IN_PROGRESS" || run.status === "SCHEDULED") {
+        // A-3 (finding 7): an open run from an earlier day stays on the page; an operator's list also carries finished ones, which do not.
+        earlierList.push(run);
       }
     }
+    earlierList.sort((a, b) =>
+      a.scheduledDate.slice(0, 10).localeCompare(b.scheduledDate.slice(0, 10)),
+    );
     upcomingList.sort((a, b) =>
       a.scheduledDate.slice(0, 10).localeCompare(b.scheduledDate.slice(0, 10)),
     );
-    return { todayRuns: todayList, upcomingRuns: upcomingList.slice(0, 20) };
+    return {
+      todayRuns: todayList,
+      upcomingRuns: upcomingList.slice(0, 20),
+      earlierRuns: earlierList,
+    };
   }, [data?.data]);
 
   // Today's active/next run gets promoted to the drive-mode hero card — the rest
   // of today's runs (if more than one) still render in the compact list below it.
-  const heroRun =
-    held ??
+  // A live run keeps the top of the page (A-3, findings 4 and 7): an open run from an earlier day, then today's in-progress, then
+  // today's scheduled run. The run the driver just finished is the hero only when nothing live is left; otherwise it stays as a
+  // compact finished card below, with the same sheet and Undo.
+  const liveRun =
+    earlierRuns.find((r) => r.status === "IN_PROGRESS") ??
     todayRuns.find((r) => r.status === "IN_PROGRESS") ??
-    todayRuns.find((r) => r.status === "SCHEDULED") ??
-    todayRuns[0];
+    todayRuns.find((r) => r.status === "SCHEDULED");
+  const heroRun = liveRun ?? held ?? todayRuns[0];
+  const compactHeld = held && heroRun !== held ? held : null;
   const restOfToday = todayRuns.filter((r) => r.id !== heroRun?.id);
+  const earlierRest = earlierRuns.filter((r) => r.id !== heroRun?.id);
   // The open stop is read from the LATEST run data by id, so the 60 s refetch updates the sheet (what is left, its status)
   // without closing it; the tapped snapshot is the fallback if the run left the list.
   const openRun = openStop
@@ -516,7 +538,7 @@ export default function MyRunsPage() {
     return (
       <div className="space-y-5 p-4 sm:p-6">
         <PageHeader
-          title="My Routes"
+          title="Today's route"
           subtitle="Today's run first — everything else is one tap away."
           action={
             // A pure driver has no operator view to exit back to.
@@ -546,6 +568,33 @@ export default function MyRunsPage() {
           <section className="rounded-lg border border-surface-border bg-white p-6 shadow-card">
             <p className="text-sm text-navy/70">No runs scheduled for you today.</p>
           </section>
+        )}
+
+        {compactHeld && (
+          <CardShell title={`Just finished: ${compactHeld.route?.name ?? "route"}`}>
+            <p className="pb-2 text-sm text-navy/70">{FINISHED_RUN_NOTE}</p>
+            <ul className="divide-y divide-surface-border">
+              {(compactHeld.stops ?? []).map((stop) => (
+                <FieldStopRow
+                  key={stop.id}
+                  stop={stop}
+                  onOpen={(st) => setOpenStop({ stop: st, runId: compactHeld.id })}
+                />
+              ))}
+            </ul>
+          </CardShell>
+        )}
+
+        {earlierRest.length > 0 && (
+          <CardShell title="Earlier, still open">
+            <RunsList
+              runs={earlierRest}
+              isLoading={false}
+              isError={false}
+              emptyText="No earlier runs."
+              driveMode
+            />
+          </CardShell>
         )}
 
         {restOfToday.length > 0 && (
@@ -584,6 +633,12 @@ export default function MyRunsPage() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader title="My Routes" subtitle="Runs assigned to you." />
+
+      {earlierRuns.length > 0 && (
+        <CardShell title="Earlier, still open">
+          <RunsList runs={earlierRuns} isLoading={false} isError={false} emptyText="" />
+        </CardShell>
+      )}
 
       <CardShell title="Today">
         <RunsList

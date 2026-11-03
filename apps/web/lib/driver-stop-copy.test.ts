@@ -18,83 +18,47 @@ const err = (status?: number, code?: string, message?: string) => ({
   response: status === undefined ? undefined : { status, data: { code, message } },
 });
 
-/** SA-1098 PR-2 error table: what the driver reads for each answer, and whether the screen refreshes or offers another try. */
+/** SA-1098 PR-2 error table: what the driver reads for each answer. */
 describe("stopErrorCopy", () => {
   it.each([
     [
       "a 400 fit refusal reads as the fixed line and refreshes, never the server's words",
       err(400, undefined, "Only 7 left."),
       STOP_NOT_ACCEPTED_COPY,
-      true,
-      false,
     ],
     [
       "a READ_ONLY 403 reads as the read-only line, not the stop-changed line",
       err(403, "READ_ONLY", "raw"),
       readOnlyRefusalCopy(),
-      false,
-      false,
     ],
     [
       "409 IDEMPOTENCY_KEY_CONFLICT reads as the fixed line and refreshes",
       err(409, "IDEMPOTENCY_KEY_CONFLICT", "raw"),
       STOP_KEY_CONFLICT_COPY,
-      true,
-      false,
     ],
-    [
-      "a lost race (409, no code) refreshes",
-      err(409, undefined, "raw"),
-      STOP_MOVED_COPY,
-      true,
-      false,
-    ],
-    [
-      "409 STOP_ALREADY_COMPLETED refreshes",
-      err(409, "STOP_ALREADY_COMPLETED"),
-      STOP_MOVED_COPY,
-      true,
-      false,
-    ],
+    ["a lost race (409, no code) refreshes", err(409, undefined, "raw"), STOP_MOVED_COPY],
+    ["409 STOP_ALREADY_COMPLETED refreshes", err(409, "STOP_ALREADY_COMPLETED"), STOP_MOVED_COPY],
     [
       "D-31: 409 STOP_REOPENED reads as the reopened line and refreshes",
       err(409, "STOP_REOPENED", "raw server words"),
       STOP_REOPENED_COPY,
-      true,
-      false,
     ],
-    [
-      "409 MERGE_IN_PROGRESS offers another try",
-      err(409, "MERGE_IN_PROGRESS"),
-      STOP_BUSY_COPY,
-      false,
-      true,
-    ],
-    [
-      "503 LOCK_UNAVAILABLE offers another try",
-      err(503, "LOCK_UNAVAILABLE"),
-      STOP_BUSY_COPY,
-      false,
-      true,
-    ],
+    ["409 MERGE_IN_PROGRESS offers another try", err(409, "MERGE_IN_PROGRESS"), STOP_BUSY_COPY],
+    ["503 LOCK_UNAVAILABLE offers another try", err(503, "LOCK_UNAVAILABLE"), STOP_BUSY_COPY],
     [
       "a regulated stop says to call the office",
       err(400, "REGULATED_POD_REQUIRED", "raw"),
       STOP_REGULATED_COPY,
-      false,
-      false,
     ],
     [
       "a 403 (not your run, or not in progress) refreshes",
       err(403, undefined, "raw"),
       STOP_MOVED_COPY,
-      true,
-      false,
     ],
-    ["no response (offline) offers another try", err(undefined), STOP_GENERIC_COPY, false, true],
-    ["a 500 offers another try", err(500), STOP_GENERIC_COPY, false, true],
-  ])("%s", (_l, e, text, refresh, retry) => {
-    expect(stopErrorCopy(e)).toEqual({ text, refresh, retry });
+    ["no response (offline) offers another try", err(undefined), STOP_GENERIC_COPY],
+    ["a 500 offers another try", err(500), STOP_GENERIC_COPY],
+  ])("%s", (_l, e, text) => {
+    expect(stopErrorCopy(e)).toEqual({ text });
   });
 });
 
@@ -122,12 +86,15 @@ describe("leftToDeliverText (review-b F2: every line names its unit)", () => {
       "2 Cases",
     );
   });
-  it("a plain line reads its product unit, or pcs when it has none", () => {
+  it("a plain line reads its product unit, or the number alone when it stores none (A-3: no unit is invented)", () => {
     expect(leftToDeliverText({ orderedQty: 12, unitLabel: null, unitsPerBox: null }, "lb")).toBe(
       "12 lb",
     );
     expect(leftToDeliverText({ orderedQty: 12, unitLabel: null, unitsPerBox: null }, null)).toBe(
-      "12 pcs",
+      "12",
+    );
+    expect(leftToDeliverText({ orderedQty: 12, unitLabel: null, unitsPerBox: null }, " ")).toBe(
+      "12",
     );
   });
   it("a factor-1 unit line counts pieces like a plain line", () => {

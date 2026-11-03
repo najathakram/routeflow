@@ -5,6 +5,7 @@ import { RECURRING_ROUTES_ADDON } from "@routeflow/types";
 import { STOP_GENERIC_COPY } from "@/lib/driver-stop-copy";
 import MyRunsPage, { finishRouteBlocker, finishedRunView } from "./page";
 import type { RouteRun, RouteRunStop } from "@/lib/api/routes";
+import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 
 const get = jest.fn();
 const patch = jest.fn();
@@ -244,7 +245,9 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
     });
     await user.click(await screen.findByRole("button", { name: "Delivered" }));
 
-    expect(await screen.findByText("Route finished. Tap a stop to undo it.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Route finished. To undo a delivered or refused stop, tap it."),
+    ).toBeInTheDocument();
     expect(screen.getByText("North loop")).toBeInTheDocument();
     expect(screen.queryByText("No runs scheduled for you today.")).not.toBeInTheDocument();
 
@@ -258,7 +261,9 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
 
     await waitFor(() => expect(post).toHaveBeenLastCalledWith("/route-runs/run-1/stops/s1/reopen"));
     await waitFor(() =>
-      expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByText("Route finished. To undo a delivered or refused stop, tap it."),
+      ).not.toBeInTheDocument(),
     );
     expect(screen.getByText("North loop")).toBeInTheDocument();
   });
@@ -278,7 +283,9 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
 
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(2));
-    expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Route finished. To undo a delivered or refused stop, tap it."),
+    ).not.toBeInTheDocument();
   });
 
   it("D-33: Finish route does not hold the run", async () => {
@@ -296,7 +303,9 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
     await user.click(await screen.findByRole("button", { name: "Finish route" }));
 
     expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
-    expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Route finished. To undo a delivered or refused stop, tap it."),
+    ).not.toBeInTheDocument();
   });
 
   it("D-33b: a reload after a held run shows no run (the hold is in memory only)", async () => {
@@ -310,12 +319,204 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
       return Promise.resolve({ data: {} });
     });
     await user.click(await screen.findByRole("button", { name: "Delivered" }));
-    await screen.findByText("Route finished. Tap a stop to undo it.");
+    await screen.findByText("Route finished. To undo a delivered or refused stop, tap it.");
 
     first.unmount();
     renderWithProviders(<MyRunsPage />);
 
     expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
-    expect(screen.queryByText("Route finished. Tap a stop to undo it.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Route finished. To undo a delivered or refused stop, tap it."),
+    ).not.toBeInTheDocument();
+  });
+});
+
+/** SA-1098 A-3: findings 4 and 7 (which run leads the page) and the skipped-stop Undo rows (D-49..D-51). */
+describe("MyRunsPage: A-3 live run on top, earlier open runs, no Undo on a released skipped stop", () => {
+  const yesterday = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T00:00:00.000Z`;
+  };
+  const withOrder = (id: string, status: RouteRunStop["status"], n = 1): RouteRunStop => ({
+    ...stop(id, status),
+    stopNumber: n,
+    orders: [
+      {
+        id: `o-${id}`,
+        orderNumber: `SO-${id}`,
+        status: "OUT_FOR_DELIVERY",
+        lineItems: [
+          {
+            id: `l-${id}`,
+            productId: "p1",
+            product: { id: "p1", name: "Napkins" },
+            qty: 10,
+            remaining: 10,
+            status: "CONFIRMED",
+            subtotal: 20,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            unitLabel: null,
+          },
+        ],
+      },
+    ],
+  });
+  const FINISHED = "Route finished. To undo a delivered or refused stop, tap it.";
+  const SKIPPED_LINE = "Skipped. Anything not delivered went back to your office.";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+    patch.mockResolvedValue({ data: {} });
+    post.mockResolvedValue({ data: {} });
+  });
+
+  it("D-46: a run held for Undo does not push a run scheduled today off the top; the held run stays below with its Undo", async () => {
+    let listed = true;
+    const next = run({
+      id: "run-2",
+      route: { id: "r2", name: "South loop" },
+      status: "SCHEDULED",
+      stops: [stop("t1", "PENDING")],
+    });
+    serveList(() =>
+      listed
+        ? [run({ status: "IN_PROGRESS", stops: [withOrder("s1", "IN_PROGRESS")] }), next]
+        : [next],
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<MyRunsPage />);
+    await user.click(await screen.findByRole("button", { name: /Shop s1/ }));
+    post.mockImplementationOnce(() => {
+      listed = false;
+      return Promise.resolve({ data: {} });
+    });
+    await user.click(await screen.findByRole("button", { name: "Delivered" }));
+
+    const held = await screen.findByText(/Just finished: North loop/);
+    // the live run leads: its Start route button is on the page and comes before the held card
+    const start = await screen.findByRole("button", { name: "Start route" });
+    expect(start.compareDocumentPosition(held) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // the held run's stop is still one tap from Undo
+    await user.click(screen.getByRole("button", { name: /Shop s1/ }));
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeEnabled();
+  });
+
+  it("D-47: an IN_PROGRESS run dated yesterday leads the page with its date, and Finish route works", async () => {
+    serveList(() => [
+      run({ status: "IN_PROGRESS", scheduledDate: yesterday(), stops: [stop("s1", "COMPLETED")] }),
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<MyRunsPage />);
+
+    expect(await screen.findByText("North loop")).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`${fmtCalendarDateWithWeekday(yesterday(), "short")} · `)),
+    ).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Finish route" }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/route-runs/run-1/status", expect.anything()),
+    );
+  });
+
+  it("D-48 (guard): a SCHEDULED run from yesterday is listed with its date; a finished run from yesterday is not shown", async () => {
+    serveList(() => [
+      run({
+        id: "old-sched",
+        route: { id: "r3", name: "Old scheduled" },
+        scheduledDate: yesterday(),
+      }),
+      run({
+        id: "old-done",
+        route: { id: "r4", name: "Old finished" },
+        status: "COMPLETED",
+        scheduledDate: yesterday(),
+      }),
+    ]);
+    renderWithProviders(<MyRunsPage />);
+
+    expect(await screen.findByText("Old scheduled")).toBeInTheDocument();
+    expect(screen.getByText("Earlier, still open")).toBeInTheDocument();
+    expect(screen.queryByText("Old finished")).not.toBeInTheDocument();
+  });
+
+  /** A run with stop A skipped (its orders still on it) and stop B open; B's delivery finishes the run. */
+  const skipAThenDeliverB = async (user: ReturnType<typeof userEvent.setup>) => {
+    let listed = true;
+    serveList(() =>
+      listed
+        ? [
+            run({
+              status: "IN_PROGRESS",
+              stops: [withOrder("a", "SKIPPED", 1), withOrder("b", "IN_PROGRESS", 2)],
+            }),
+          ]
+        : [],
+    );
+    renderWithProviders(<MyRunsPage />);
+    await user.click(await screen.findByRole("button", { name: /Shop b/ }));
+    post.mockImplementationOnce(() => {
+      listed = false;
+      return Promise.resolve({ data: {} });
+    });
+    await user.click(await screen.findByRole("button", { name: "Delivered" }));
+    await screen.findByText(FINISHED);
+  };
+
+  it("D-49: skip A, deliver B, the run finishes: A on the held run has no Undo, says why, and no reopen can be sent", async () => {
+    const user = userEvent.setup();
+    await skipAThenDeliverB(user);
+    post.mockClear();
+
+    await user.click(screen.getByRole("button", { name: /Shop a/ }));
+
+    expect(await screen.findByText(SKIPPED_LINE)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("D-50: Undo B puts the run back in progress; A, with its orders released, still has no Undo", async () => {
+    const user = userEvent.setup();
+    await skipAThenDeliverB(user);
+    // Undo B from the held run; the server answers with the run back in progress and A's orders released
+    serveList(() => [
+      run({
+        status: "IN_PROGRESS",
+        stops: [{ ...stop("a", "SKIPPED"), orders: [] }, withOrder("b", "PENDING", 2)],
+      }),
+    ]);
+    await user.click(screen.getByRole("button", { name: /Shop b/ }));
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(post).toHaveBeenLastCalledWith("/route-runs/run-1/stops/b/reopen"));
+    await waitFor(() => expect(screen.queryByText(FINISHED)).not.toBeInTheDocument());
+
+    await user.click(await screen.findByRole("button", { name: /Shop a/ }));
+
+    expect(await screen.findByText(SKIPPED_LINE)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+  });
+
+  it("D-51 (guard): a delivered stop on the held run keeps Undo, and the held line reads as ruled", async () => {
+    const user = userEvent.setup();
+    await skipAThenDeliverB(user);
+    expect(screen.getByText(FINISHED)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Shop b/ }));
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeEnabled();
+  });
+
+  it("D-51b (guard): a skipped stop with its orders on a run still in progress keeps Undo", async () => {
+    serveList(() => [
+      run({
+        status: "IN_PROGRESS",
+        stops: [withOrder("a", "SKIPPED", 1), withOrder("b", "PENDING", 2)],
+      }),
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<MyRunsPage />);
+    await user.click(await screen.findByRole("button", { name: /Shop a/ }));
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeEnabled();
   });
 });

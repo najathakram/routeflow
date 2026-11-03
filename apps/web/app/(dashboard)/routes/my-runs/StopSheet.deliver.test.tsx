@@ -515,7 +515,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
 
   // ---- review-b findings on #4173 ----
 
-  it("F2: every line names its unit: a Case line reads in cases, a plain line in its product unit or pcs", () => {
+  it("F2: every line names its unit: a Case line reads in cases, a plain line in its product unit or the number alone", () => {
     const stop = STOP({
       orders: [
         {
@@ -534,7 +534,7 @@ describe("StopSheet: Delivered and Refused (SA-1098 PR-2)", () => {
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.getByText("Left to deliver: 2 Cases + 5 pcs")).toBeInTheDocument();
     expect(dialog.getByText("Left to deliver: 12 lb")).toBeInTheDocument();
-    expect(dialog.getByText("Left to deliver: 9 pcs")).toBeInTheDocument();
+    expect(dialog.getByText("Left to deliver: 9")).toBeInTheDocument();
   });
 
   it("F3: one primary button per sheet state: Delivered on an open stop, none once it is done", () => {
