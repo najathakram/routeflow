@@ -1,6 +1,6 @@
 /* The home page (index.html), with the wheel in the hero. Loaded after css/home.css; changes nothing the other pages load.
    The hero's words stay as they are. On a wide screen they sit on the wheel's stage, where the page grid puts them; on a phone they
-   sit above it, in the page. The default here is the final state too: no JS and reduced motion show the words and the still wheel. */
+   sit above it, in the page. The default here is the final state too: no JS shows the words and the still wheel. */
 
 /* ---------- 1. Hero ---------- */
 .hx-up{--hx-bar:68px;--hx-gy:clamp(8px,2.2vh,24px);--hx-pad:clamp(28px,4.2vw,56px)}
