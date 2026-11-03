@@ -3,9 +3,10 @@ import { join } from "path";
 
 /**
  * SA-1053 (I-192) class pin: every reader of an order's or an invoice's credited amount counts the order's refund notes that were
- * minted before the order was invoiced, through ONE helper. `loadUnlinkedRefundReturns` is called in exactly three places: the
- * single-invoice reader (`loadLineCredits`), the order pool (`loadOrderPool`) and the credit-note door's order-wide bound
- * (`validateAndBuildCnItems`). A fourth credit reader must either call it (and move this count on purpose) or be named in the
+ * minted before the order was invoiced, through ONE helper. `loadUnlinkedRefundReturns` is called in exactly four places: the
+ * single-invoice reader (`loadLineCredits`), the order pool (`loadOrderPool`), the credit-note door's order-wide bound
+ * (`loadOrderRefundRoom`) and its many-orders twin for the read-only census (`loadOrderRefundRooms`, which hands the helper a
+ * list of order ids). A fifth credit reader must either call it (and move this count on purpose) or be named in the
  * PR that adds it. The predicate for "no invoice" is written once, in the helper.
  */
 const SRC = join(__dirname, "..");
@@ -20,7 +21,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("SA-1053: one helper counts the refunds minted before the order was invoiced", () => {
-  it("loadUnlinkedRefundReturns( is called exactly 3 times outside specs (the definition does not count)", () => {
+  it("loadUnlinkedRefundReturns( is called exactly 4 times outside specs (the definition does not count)", () => {
     const calls = sourceFiles(SRC).flatMap((file) =>
       readFileSync(file, "utf8")
         .split("\n")
@@ -31,9 +32,9 @@ describe("SA-1053: one helper counts the refunds minted before the order was inv
         )
         .map((l) => `${file.slice(SRC.length + 1).replace(/\\/g, "/")}: ${l.trim()}`),
     );
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(calls.filter((c) => c.startsWith("credit-notes/line-credit-headroom.ts"))).toHaveLength(
-      3,
+      4,
     );
     expect(calls.filter((c) => c.startsWith("credit-notes/credit-notes.service.ts"))).toHaveLength(
       0,

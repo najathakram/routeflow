@@ -54,11 +54,48 @@ describe("report-sa1091-order-bound-census (SA-1091 piece 1)", () => {
     expect(r.stderr).toContain("no write mode");
   });
 
-  it("proves the session read-only before the reads and ends in a rollback", () => {
+  it("proves the session read-only, then every read transaction read-only, and rolls each one back", () => {
     expect(code).toContain("default_transaction_read_only=on");
     expect(code).toContain("SHOW transaction_read_only");
+    expect(code).toContain("await proveSession(pool)");
     expect(code).toContain("throw ROLLBACK");
-    expect(code).toContain("censusOrderBound(tx)");
+    // the census is handed the per-read wrapper, never a client or one long transaction of its own
+    expect(code).toContain("censusOrderBound(makeReader(db)");
+    expect(code).not.toContain("censusOrderBound(tx");
+    expect(code).not.toContain("censusOrderBound(db");
+  });
+
+  it("bounds the production connection: short statements, a short transaction backstop, a time budget, few workers", () => {
+    expect(code).toContain("statement_timeout=${STATEMENT_TIMEOUT_MS}");
+    expect(code).toMatch(/STATEMENT_TIMEOUT_MS = 30_000/);
+    const backstop = Number(
+      new RegExp("TX_BACKSTOP_MS = ([0-9_]+)").exec(code)?.[1]?.replace(/_/g, ""),
+    );
+    expect(backstop).toBeGreaterThan(0);
+    expect(backstop).toBeLessThanOrEqual(90_000); // the failed run held one transaction for 120 s
+    expect(code).toContain("timeout: TX_BACKSTOP_MS");
+    expect(code).toContain("deadline: started + args.maxMinutes * 60_000");
+    expect(code).toContain("max: args.workers + 1");
+  });
+
+  it("sends nothing from a connect handler: a query fired there overlaps the first one Prisma sends", () => {
+    // the first production run warned "client.query() called while the client is already executing a query"
+    expect(code).not.toContain('.on("connect"');
+    expect(code).not.toContain(".on('connect'");
+  });
+
+  it("refuses a worker count or a budget out of range (exit 2) before connecting", () => {
+    for (const bad of [
+      "--workers=9",
+      "--workers=0",
+      "--max-minutes=0",
+      "--max-minutes=999",
+      "--max-minutes=ten",
+    ]) {
+      const r = run([bad], { CENSUS_DATABASE_URL: FAKE_URL });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("must be a whole number");
+    }
   });
 
   it("holds no write: no INSERT/UPDATE/DELETE/DDL, no $executeRaw, no create/update/delete call", () => {
@@ -80,8 +117,9 @@ describe("report-sa1091-order-bound-census (SA-1091 piece 1)", () => {
     expect(body).not.toMatch(/\$queryRaw/);
   });
 
-  it("reads the order-wide bound through the helper itself, never a copy of its sum", () => {
-    expect(body).toContain("loadOrderRefundRoom(db, anchor)");
+  it("reads the order-wide bound through the headroom module's batch read, never a copy of its sum", () => {
+    expect(body).toContain("loadOrderRefundRooms(tx, batch)");
+    expect(body).not.toContain("loadOrderRefundRoom(");
     expect(body).toContain("refundableLineShare(");
     // counts and buckets only: nothing the census returns is an id, a name or an amount
     expect(body).not.toMatch(/sample|ids\b.*:\s*string\[\]/);
