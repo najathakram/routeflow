@@ -1,10 +1,10 @@
 /* RouteFlow home (index.html), the wheel in the hero. Replaces js/site.js on this page only. Edited by hand.
-   Chrome first (prices, tracking, header, menu, reduce-motion switch), then motion.
+   Chrome first (prices, tracking, header, menu), then motion.
    Motion: GSAP + ScrollTrigger. One init per section: initX(scope) builds that section inside gsap.matchMedia(scope)
    and returns a cleanup (gsap.context style), so each one ports to useGSAP({ scope }) as it is.
    Rules kept here: transforms and opacity only; triggers are made top to bottom; no layout reads in onUpdate; will-change
-   only while a trigger is active; the OS reduced-motion setting or the footer switch (html.rm) builds no ScrollTriggers and
-   leaves the HTML, which is the final state.
+   only while a trigger is active. The motion always runs (owner ruling 2026-11-03: no reduced-motion setting, no switch); only no-JS
+   and a window under 600 px tall fall back to the HTML, which is the final state.
    Stop scrolling and the screen is finished: anything that is not a pinned object reveals once on enter, on the clock, never
    on scroll position (ST.batch once, or toggleActions "play none none none"). Scrub is only for the desktop's pinned objects.
    Phones have one pin, the answer card: CSS position:sticky with ScrollTrigger only watching, so it can't jump or fight the
@@ -92,19 +92,6 @@
   /* A question opened or closed: everything below it moved. */
   d.addEventListener("toggle", function (e) { if (e.target.matches && e.target.matches("details") && refreshSoon) refreshSoon(); }, true);
 
-  var userRM = function () { return html.classList.contains("rm"); };
-  $$("[data-rm]").forEach(function (b) {
-    b.setAttribute("aria-pressed", String(userRM()));
-    b.addEventListener("click", function () {
-      var on = !userRM();
-      try { localStorage.setItem("rf-rm", on ? "1" : "0"); } catch (e) {}
-      html.classList.toggle("rm", on); if (on) html.classList.remove("js-motion");
-      $$("[data-rm]").forEach(function (x) { x.setAttribute("aria-pressed", String(on)); });
-      if (W.gsap && W.gsap.matchMediaRefresh) W.gsap.matchMediaRefresh();
-      if (refreshSoon) refreshSoon(); // pins came or went: every position below them moved
-    });
-  });
-
   /* ---------- motion ---------- */
   var g = W.gsap, ST = W.ScrollTrigger;
   if (!g || !ST) { html.classList.remove("js-motion"); return; }
@@ -119,20 +106,12 @@
   ST.addEventListener("refreshInit", function () { if (!smoothHeld++) { smoothWas = html.style.scrollBehavior; html.style.scrollBehavior = "auto"; } });
   ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) html.style.scrollBehavior = smoothWas; });
 
-  /* ?motion=on: review only, runs the motion on a machine whose OS turns animation off. Same flag as rf-wheel.js.
-     desk: the pinned scenes, on a screen with room for them. mob: everything else, phones on their side too.
+  /* desk: the pinned scenes, on a screen with room for them. mob: everything else, phones on their side too.
      pin: a phone or tablet held upright, the only place the answer card pins. */
-  var forced = /[?&]motion=on(&|$)/.test(W.location.search);
-  var Q = forced ? {
+  var Q = {
     desk: "(min-width: 900px) and (min-height: 600px)",
     mob: "(max-width: 899.98px), (max-height: 599.98px)",
-    pin: "(max-width: 899.98px) and (min-height: 600px)",
-    reduce: "not all"
-  } : {
-    desk: "(min-width: 900px) and (min-height: 600px) and (prefers-reduced-motion: no-preference)",
-    mob: "(max-width: 899.98px) and (prefers-reduced-motion: no-preference), (max-height: 599.98px) and (prefers-reduced-motion: no-preference)",
-    pin: "(max-width: 899.98px) and (min-height: 600px) and (prefers-reduced-motion: no-preference)",
-    reduce: "(prefers-reduced-motion: reduce)"
+    pin: "(max-width: 899.98px) and (min-height: 600px)"
   };
   var SCRUB = 0.8, BELOW = -2; // BELOW: refreshPriority for sections under the wheel (everything above it, and the wheel, is 0)
   var EDGE = "top 104%"; // just under the screen, so everything on a stopped screen has already been told to appear
@@ -144,13 +123,12 @@
   var isShown = function (el) { return !!el && el.getClientRects().length > 0; };
   var shown = function (list) { return list.filter(isShown); };
 
-  /* One section: matchMedia branches, scoped. The reduce branch (or the footer switch) builds nothing.
+  /* One section: matchMedia branches, scoped.
      build(c, scope, keep) returns its own cleanup; keep(el) restores an element's final text on revert. */
   function section(scope, build) {
     var mm = g.matchMedia(scope);
     mm.add(Q, function (ctx) {
       var c = ctx.conditions;
-      if (c.reduce || userRM()) { html.classList.remove("js-motion"); return; }
       html.classList.add("js-motion");
       var kept = [];
       var keep = function (el) { if (el) kept.push([el, el.textContent]); return el; };
@@ -228,15 +206,15 @@
     var figs = panels.map(function (p) { return $(".jr-fig", p); });
     var ordTot = $(".jr-p:nth-child(1) .a-sum b", s), invTots = $$(".jr-p:nth-child(2) .a-tots p > :last-child", s);
     var paid = $$(".jr-pd .a-tots p > :last-child", s), paidPill = $(".jr-pd .a-pill", s), payRow = $(".jr-pd .a-pay", s), chk = $(".jr-pd .chk, .jr-paid .chk", s);
-    var phone = $(".dv", s), short = $(".dv .a-pill--bad", s), upd = $(".jr-upd", s), strikes = $$(".upd-o i", s), news = $$(".upd-n", s), olds = $$(".upd-o", s);
+    var phone = $(".dv", s);
     var rowsOf = function (i) { return $$(".a-r:not(.a-rh)", panels[i]); };
     /* Payments received and the balance always add up to the invoice, on every frame. */
     var payCount = function () {
       var o = { v: 0 };
       keep(paid[1]); keep(paid[2]);
-      var write = function () { var c = Math.round(o.v * 100); paid[1].textContent = money(c / 100); paid[2].textContent = money((9900 - c) / 100); };
+      var write = function () { var c = Math.round(o.v * 100); paid[1].textContent = money(c / 100); paid[2].textContent = money((11100 - c) / 100); };
       write();
-      return g.to(o, { v: 99, duration: 0.5, ease: "power2.inOut", onUpdate: write });
+      return g.to(o, { v: 111, duration: 0.5, ease: "power2.inOut", onUpdate: write });
     };
     /* What happens inside each step, built once; the step decides when it plays. */
     var step = [
@@ -253,12 +231,7 @@
       function (tl) {
         tl.fromTo(phone, { opacity: 0, y: 60 }, { opacity: 1, y: 0 }, 0)
           .fromTo(rtLine, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.6, ease: "none" }, 0.1)
-          .fromTo(rtDots, { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.18, stagger: { each: 0.14 } }, 0.1)
-          .fromTo(short, { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3 }, 0.6)
-          .fromTo(upd, { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.45 }, 0.75)
-          .fromTo(strikes, { scaleX: 0 }, { scaleX: 1, duration: 0.3, stagger: { each: 0.1 }, ease: "power2.inOut" }, 1.05)
-          .fromTo(olds, { opacity: 1 }, { opacity: 0.8, duration: 0.3 }, 1.15)
-          .fromTo(news, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, stagger: { each: 0.1 } }, 1.2);
+          .fromTo(rtDots, { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.18, stagger: { each: 0.14 } }, 0.1);
       },
       function (tl) {
         tl.fromTo(chk, { opacity: 0, x: -50, rotation: -9 }, { opacity: 1, x: 0, rotation: -4 }, 0)

@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import * as React from "react";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import { ADDON_ROW_KEY_BY_REGISTRY_KEY, FeatureConsole } from "./FeatureConsole";
@@ -13,6 +15,7 @@ import {
 } from "./__fixtures__/effective.fixtures";
 import { diffsFixture } from "./__fixtures__/diffs.fixtures";
 import { BADGE_COLORS } from "./badge";
+import { MIXED_LABEL } from "./mode-utils";
 import type { EffectiveFeature, FeatureRegistryRow } from "./types";
 import { previewFixture } from "./__fixtures__/preview.fixtures";
 import { fulfilmentModeLabel } from "./setup-copy";
@@ -167,10 +170,10 @@ describe("FeatureConsole — data-driven readouts (test 1, BO-12)", () => {
 
     // The source badge is folded into the one readout (BO-12): Inherited and Off are dropped.
     const table: Array<[string, string]> = [
-      ["tobacco_dealer", "Off, removed by override"],
+      ["tobacco_dealer", "Off for this business"],
       ["msrp", "On, kept from an earlier plan"],
-      ["recurring_routes", "On, paid add-on"],
-      ["route_optimization", "On"],
+      ["recurring_routes", "Add-on"],
+      ["route_optimization", "In plan"],
       ["boxes_pieces_mode", "Off"],
     ];
     for (const [key, readout] of table) {
@@ -183,7 +186,7 @@ describe("FeatureConsole — data-driven readouts (test 1, BO-12)", () => {
     // Toggle "show internal" reveals the 6th row with its own readout.
     fireEvent.click(screen.getByLabelText("Show internal"));
     const devRow = document.querySelector('[data-feature-key="developer_mode"]') as HTMLElement;
-    expect(within(devRow).getByTestId("readout")).toHaveTextContent("On, added by override");
+    expect(within(devRow).getByTestId("readout")).toHaveTextContent("Free until Dec 31, 2026");
   });
 });
 
@@ -991,7 +994,7 @@ describe("BO-12: one state readout per console row", () => {
     effRow("is_ga"),
     effRow("is_deprecated", { serving: true, source: "PRESET" }),
     effRow("is_sunset"),
-    effRow("plain_on", { serving: true, resolver: true, source: "PRESET" }),
+    effRow("plain_on", { serving: true, resolver: true, source: "NONE" }),
     effRow("grant_but_off", { serving: false, resolver: true, source: "OVERRIDE_GRANT" }),
   ];
 
@@ -1054,7 +1057,10 @@ describe("BO-12: one state readout per console row", () => {
     const { rowOf } = await renderAll();
     for (const r of REGISTRY) {
       const chips = Array.from(rowOf(r.key).querySelectorAll('[class~="text-[10px]"]')).filter(
-        (el) => !el.closest("[id^='why-panel-']") && !el.closest("[role='radiogroup']"),
+        (el) =>
+          !el.closest("[id^='why-panel-']") &&
+          !el.closest("[role='radiogroup']") &&
+          el.textContent !== MIXED_LABEL, // the mixed-mode label is the mode readout, not a status chip
       );
       expect({ key: r.key, atMostOne: chips.length <= 1 }).toEqual({
         key: r.key,
@@ -1107,18 +1113,20 @@ describe("BO-12: one state readout per console row", () => {
   it("a dark row that is on for a real reason keeps that reason (the first rule that applies wins)", async () => {
     const { rowOf } = await renderAll();
     // route_optimization: dark, serving, source PRESET. developer_mode: dark, serving, GRANT.
-    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(/^On$/);
+    expect(within(rowOf("route_optimization")).getByTestId("readout")).toHaveTextContent(
+      /^In plan$/,
+    );
     expect(within(rowOf("developer_mode")).getByTestId("readout")).toHaveTextContent(
-      /^On, added by override$/,
+      /^Free until Dec 31, 2026$/,
     );
   });
 
   it("the four source chips use the badge colours and are a 10 px chip", async () => {
     const { rowOf } = await renderAll();
     const cases: Array<[string, string, string]> = [
-      ["developer_mode", "On, added by override", BADGE_COLORS.added],
-      ["tobacco_dealer", "Off, removed by override", BADGE_COLORS.removed],
-      ["recurring_routes", "On, paid add-on", BADGE_COLORS.purchased],
+      ["developer_mode", "Free until Dec 31, 2026", BADGE_COLORS.added],
+      ["tobacco_dealer", "Off for this business", BADGE_COLORS.removed],
+      ["recurring_routes", "Add-on", BADGE_COLORS.purchased],
       ["msrp", "On, kept from an earlier plan", BADGE_COLORS.grandfathered],
     ];
     for (const [key, text, colours] of cases) {
@@ -1127,6 +1135,48 @@ describe("BO-12: one state readout per console row", () => {
       expect(readout).toHaveClass("text-[10px]");
       for (const cls of colours.split(" ")) expect(readout).toHaveClass(cls);
     }
+  });
+
+  it("the Details panel names the same end date as the chip (one date text, in UTC)", async () => {
+    const { rowOf, open, panelOf } = await renderAll();
+    const chip = within(rowOf("developer_mode")).getByTestId("readout").textContent ?? "";
+    const date = /^Free until (.+)$/.exec(chip)?.[1];
+    expect(date).toBeTruthy();
+    open("developer_mode");
+    expect(panelOf("developer_mode")).toHaveTextContent(`Expires ${date}.`);
+  });
+
+  // SA-963 A-1 (F13): the resolver now fills the override's kind; the panel says it in words, never the raw enum.
+  it("the Details panel says an override's kind in words, with the reason and the end date, and never a raw enum", async () => {
+    const { open, panelOf } = await renderAll();
+    open("developer_mode");
+    expect(panelOf("developer_mode")).toHaveTextContent(
+      'This is on because an admin override added it (for a pilot) — "Piloting the mobile driver-app preview.". Expires Dec 31, 2026.',
+    );
+    expect(panelOf("developer_mode").textContent).not.toMatch(/PILOT|COMP|SUPPORT|GRANDFATHER/);
+    open("msrp");
+    expect(panelOf("msrp")).toHaveTextContent(
+      'This is on because an admin override added it (kept from an earlier plan) — "Grandfathered from the legacy MSRP pilot cohort.".',
+    );
+    expect(panelOf("msrp").textContent).not.toMatch(/GRANDFATHER|Expires/);
+  });
+
+  it("the Details sentences take their end date from the chip's own helper, never the admin's locale", () => {
+    const src = readFileSync(join(__dirname, "FeatureConsole.tsx"), "utf8");
+    expect(src).toContain("endDateText(");
+    expect(src).not.toContain("toLocaleDateString(");
+  });
+
+  it("the Add-on chip links to the tenant's billing tab and copies no price; no other chip is a link", async () => {
+    const { rowOf } = await renderAll();
+    const addon = within(rowOf("recurring_routes")).getByTestId("readout");
+    const link = addon.closest("a");
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toMatch(/[?]tab=billing$/);
+    expect(addon.textContent).toBe("Add-on");
+    expect(addon.textContent).not.toContain("$");
+    for (const key of ["developer_mode", "tobacco_dealer", "msrp"])
+      expect(within(rowOf(key)).getByTestId("readout").closest("a")).toBeNull();
   });
 
   it("a plain On or Off stays 12 px text (emerald or slate), never a chip", async () => {
@@ -1143,7 +1193,7 @@ describe("BO-12: one state readout per console row", () => {
 
   it("a source that contradicts what the row is serving falls back to plain On or Off", async () => {
     const { rowOf } = await renderAll();
-    // the resolver would grant it but it is not served today: never claim "On, added by override"
+    // the resolver would grant it but it is not served today: never claim "Set for this business"
     expect(within(rowOf("grant_but_off")).getByTestId("readout")).toHaveTextContent(/^Off$/);
   });
 
