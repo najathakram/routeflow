@@ -49,6 +49,10 @@ describeDb("SA-1083: the retention switch script, real Postgres", () => {
         createdAt: daysAgo(days),
       },
     });
+  /** One report row each night, the job's real schedule: 8 nights ago to last night unless told otherwise. */
+  const nights = async (days = [8, 7, 6, 5, 4, 3, 2, 1]) => {
+    for (const d of days) await runRow(d);
+  };
   const switchValue = async (key: string = RETENTION_DEMO_BOOKING_SWITCH) => {
     const rows = await prisma.$queryRaw<{ value: string }[]>`
       SELECT value FROM "PlatformConfig" WHERE key = ${key}
@@ -126,7 +130,7 @@ describeDb("SA-1083: the retention switch script, real Postgres", () => {
 
   describe("RT-33: on, then off", () => {
     it("a dry run prints the target, redacted, and before and after, and writes nothing", async () => {
-      await runRow(8);
+      await nights();
       const out = switchOn();
 
       expect(out.status).toBe(0);
@@ -144,7 +148,7 @@ describeDb("SA-1083: the retention switch script, real Postgres", () => {
     });
 
     it("--apply: the job enforces, then reports, with one audit row each", async () => {
-      await runRow(8);
+      await nights();
 
       const on = switchOn("--apply");
       expect(on.status).toBe(0);
@@ -216,27 +220,83 @@ describeDb("SA-1083: the retention switch script, real Postgres", () => {
     });
 
     it("--on when the rows that go back 8 days enforced", async () => {
-      await runRow(8, "enforce");
+      for (const d of [8, 7, 6, 5, 4, 3, 2, 1]) await runRow(d, "enforce");
       await expectRefused(/has not run in report mode for 7 days/);
     });
 
     it("--on when an enforce run cut the report rows to 6 days", async () => {
-      await runRow(20);
+      await nights([14, 13, 12, 11, 10, 9, 8]);
       await runRow(7, "enforce");
-      await runRow(6);
+      await nights([6, 5, 4, 3, 2, 1]);
       await expectRefused(/has not run in report mode for 7 days/);
     });
 
-    it("--on is accepted again after 7 report days since the last enforce run", async () => {
-      await runRow(20, "enforce");
+    it("--on when a run row with no mode cut the report rows: it counts as not report", async () => {
+      await nights([14, 13, 12, 11, 10, 9, 8]);
+      await prisma.auditLog.create({
+        data: { action: RUN_ACTION, entityType: "RetentionRun", meta: {}, createdAt: daysAgo(7) },
+      });
+      await nights([6, 5, 4, 3, 2, 1]);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with 7 distinct UTC days that span under 7 days: the oldest clause holds on its own", async () => {
+      const sinceMidnight = (Date.now() % 86_400_000) / 86_400_000;
+      await nights([6, 5, 4, 3, 2, 1, 0].map((k) => k + sinceMidnight));
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with one report row, 8 days old", async () => {
       await runRow(8);
-      await runRow(1);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with rows at 8 days and 1 day", async () => {
+      await nights([8, 1]);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with 8 nightly rows, the newest 3 days old: the job has stopped", async () => {
+      await nights([10, 9, 8, 7, 6, 5, 4, 3]);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with the newest row just over 48 hours old", async () => {
+      await nights([9, 8, 7, 6, 5, 4, 3, 49 / 24]);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with 8 days and two nights missing", async () => {
+      await nights([8, 7, 6, 5, 3, 1]);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on with 8 rows on 5 days: a day counts once", async () => {
+      await nights([8, 8, 8, 8, 5, 4, 3, 1]);
+      await expectRefused(/has not run in report mode for 7 days/);
+    });
+
+    it("--on is accepted with 8 days and one night missing", async () => {
+      await nights([8, 7, 6, 5, 4, 3, 1]);
+      expect(switchOn("--apply").status).toBe(0);
+      expect(await switches.modeOf(RETENTION_DEMO_BOOKING_SWITCH)).toBe("enforce");
+    });
+
+    it("--on is accepted with the newest row just under 48 hours old", async () => {
+      await nights([9, 8, 7, 6, 5, 4, 3, 47 / 24]);
+      expect(switchOn("--apply").status).toBe(0);
+      expect(await switches.modeOf(RETENTION_DEMO_BOOKING_SWITCH)).toBe("enforce");
+    });
+
+    it("--on is accepted again after a nightly week of report rows since the last enforce run", async () => {
+      await runRow(20, "enforce");
+      await nights();
       expect(switchOn("--apply").status).toBe(0);
       expect(await switches.modeOf(RETENTION_DEMO_BOOKING_SWITCH)).toBe("enforce");
     });
 
     it("--on with a failed audit write: the switch stays as it was", async () => {
-      await runRow(8);
+      await nights();
       const before = await withFailingAudit(async () => {
         const out = switchOn("--apply");
         expect(out.status).toBe(3);
@@ -249,7 +309,7 @@ describeDb("SA-1083: the retention switch script, real Postgres", () => {
     });
 
     it("--off with a failed audit write: the switch stays on", async () => {
-      await runRow(8);
+      await nights();
       expect(switchOn("--apply").status).toBe(0);
       const on = await switchValue();
 

@@ -1,10 +1,11 @@
 /**
- * SA-1083 A-4: turns one retention job's switch on or off, with its audit row in the same transaction. A dry run unless
- * `--apply`. `--on` refuses unless the job's run rows, read back from today, have stayed in report mode for 7 days.
- * `--off` has no conditions. The job reads its switch once per run, so a change takes effect at its next run.
+ * SA-1083 A-4, A-5: turns one retention job's switch on or off, with its audit row in the same transaction. A dry run
+ * unless `--apply`. `--on` refuses unless the job's run rows since its last non-report run go back 7 days, fall on 7
+ * distinct UTC days, and the newest is under 48 hours old. `--off` has no conditions. The job reads its switch once per
+ * run, so a change takes effect at its next run. `by` is the account that ran this; who approved it goes in `--reason`.
  *
- *   node apps/api/scripts/set-retention-switch.mjs --job demo-bookings --off --reason "<why>"            (dry run)
- *   railway run --service postgres node apps/api/scripts/set-retention-switch.mjs --job demo-bookings --on --reason "<why>" --apply
+ *   node apps/api/scripts/set-retention-switch.mjs --job demo-bookings --off --reason "owner yes <date>: <why>"            (dry run)
+ *   railway run --service postgres node apps/api/scripts/set-retention-switch.mjs --job demo-bookings --on --reason "owner yes <date>: <why>" --apply
  *
  * SAFETY: writes one `PlatformConfig` key and one `AuditLog` row with no tenant, and no tenant's data. The target is
  * printed redacted. Each job's key has to match `retention-switch.service.ts`, and its run action `audit-actions.constant.ts`.
@@ -19,6 +20,7 @@ const require = createRequire(import.meta.url);
 
 const AUDIT_ACTION = "retention.switch.changed";
 const REPORT_DAYS = 7;
+const NEWEST_RUN_HOURS = 48;
 
 const JOBS = {
   "demo-bookings": {
@@ -27,9 +29,17 @@ const JOBS = {
   },
 };
 
-/** The job's run rows since its last one that wasn't in report mode: a run that enforced ends the report period it follows. */
+/**
+ * The job's run rows since its last one that wasn't in report mode: a run that enforced ends the report period it follows.
+ * "createdAt" is stored in UTC, so its date is the UTC day. One missed night in 8 passes, so a deploy can't block a flip.
+ */
 const REPORT_PERIOD_SQL = `
-  SELECT coalesce(min("createdAt") <= timezone('UTC', clock_timestamp()) - make_interval(days => $2), false) AS enough
+  SELECT coalesce(
+    min("createdAt") <= timezone('UTC', clock_timestamp()) - make_interval(days => $2::int)
+      AND count(DISTINCT "createdAt"::date) >= $2::int
+      AND max("createdAt") > timezone('UTC', clock_timestamp()) - make_interval(hours => $3::int),
+    false
+  ) AS enough
   FROM "AuditLog"
   WHERE action = $1
     AND "createdAt" > coalesce(
@@ -37,7 +47,7 @@ const REPORT_PERIOD_SQL = `
       '-infinity'::timestamp
     )`;
 
-const USAGE = 'usage: --job <job> --on|--off --reason "<why>" [--apply]';
+const USAGE = 'usage: --job <job> --on|--off --reason "owner yes <date>: <why>" [--apply]';
 
 function parseArgs(argv) {
   const value = (flag) => {
@@ -89,7 +99,11 @@ async function main(argv) {
   await client.connect();
   try {
     if (on) {
-      const { rows } = await client.query(REPORT_PERIOD_SQL, [target.runAction, REPORT_DAYS]);
+      const { rows } = await client.query(REPORT_PERIOD_SQL, [
+        target.runAction,
+        REPORT_DAYS,
+        NEWEST_RUN_HOURS,
+      ]);
       if (!rows[0].enough) {
         return refuse(`${job} has not run in report mode for ${REPORT_DAYS} days`);
       }
