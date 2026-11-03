@@ -148,6 +148,8 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/scrub-demo-contacts.mjs": "test-slug-only",
   "apps/api/scripts/seed-marketing-screenshot-products.js": "local-only",
   "apps/api/scripts/seed-test-catalog.js": "test-slug-only",
+  // SA-1083 A-4: one PlatformConfig key and its AuditLog row, neither with a tenant.
+  "apps/api/scripts/set-retention-switch.mjs": "global-catalog",
   "apps/api/scripts/stock-ledger-gap.mjs": "read-only",
   "apps/api/scripts/report-sa740-walkin-return-source.mjs": "read-only",
   "apps/api/scripts/report-sitting4-sizing.mjs": "read-only", // SA-772 §4 step 5 + SA-814 §3 C1-C4

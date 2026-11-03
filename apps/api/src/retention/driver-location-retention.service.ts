@@ -111,7 +111,9 @@ export class DriverLocationRetentionService {
         }
       } catch (err) {
         out.failedTenants += 1;
-        this.logger.warn(`Location retention failed for a tenant: ${(err as Error)?.message}`);
+        this.logger.warn(
+          `Location retention failed for tenant ${tenant.id}: ${(err as Error)?.message}`,
+        );
       }
     }
     out.capped = budget <= 0;

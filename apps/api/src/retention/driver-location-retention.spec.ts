@@ -165,8 +165,10 @@ describe("SA-1083: DriverLocationRetentionService", () => {
         { id: "t2", retentionHoldAt: null },
       ],
     });
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     const out = await job.run(NOW);
     expect(out.failedTenants).toBe(1);
+    expect(warn.mock.calls.flat().join(" ")).toContain("tenant t1");
     expect(out.perTenant.t1.deleted).toBe(1);
     expect(out.perTenant.t2.deleted).toBe(1);
     expect(out.deleted).toBe(2);

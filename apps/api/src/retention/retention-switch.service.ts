@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 
-/** SA-1083: one `PlatformConfig` switch per retention job. Nothing writes these keys yet: a flip is its own change. */
+/** SA-1083: one `PlatformConfig` switch per retention job. Only `scripts/set-retention-switch.mjs` writes them. */
 export const RETENTION_LOCATION_SWITCH = "retention.driverLocationsEnforced";
 export const RETENTION_DEMO_BOOKING_SWITCH = "retention.demoBookingsEnforced";
 
