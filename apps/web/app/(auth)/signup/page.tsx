@@ -17,8 +17,8 @@ const signupSchema = z.object({
   businessName: z.string().min(2, "Business name must be at least 2 characters").max(100),
   slug: z
     .string()
-    .min(3, "Workspace ID must be at least 3 characters")
-    .max(30, "Workspace ID must be 30 characters or less")
+    .min(3, "Use at least 3 characters.")
+    .max(30, "Use 30 characters or fewer.")
     .regex(
       /^[a-z0-9][a-z0-9-]{2,29}$/,
       "Only lowercase letters, numbers, and hyphens — must start with a letter or number",
@@ -35,10 +35,10 @@ const signupSchema = z.object({
   // signup could then be rejected the first time the user tried to reset it.
   adminPassword: z
     .string()
-    .min(8, "Password must be at least 8 characters")
-    .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-    .regex(/[a-z]/, "Must contain at least one lowercase letter")
-    .regex(/[0-9\W_]/, "Must contain at least one number or special character"),
+    .min(8, "Use at least 8 characters.")
+    .regex(/[A-Z]/, "Add a capital letter.")
+    .regex(/[a-z]/, "Add a small letter.")
+    .regex(/[0-9\W_]/, "Add a number or symbol."),
 });
 
 type SignupFormValues = z.infer<typeof signupSchema>;
@@ -320,7 +320,8 @@ function SignupInner() {
             <p className="text-xs text-success">This workspace ID is available.</p>
           ) : (
             <p className="text-xs text-navy/70">
-              You’ll need this to sign in. Use small letters, numbers, and dashes (-).
+              A short name for your business. You’ll type it every time you sign in. Use small
+              letters, numbers, and dashes (-).
             </p>
           )}
         </div>
@@ -412,7 +413,7 @@ function SignupInner() {
             <p className="text-xs text-danger">{errors.adminPassword.message}</p>
           )}
           <p className="text-xs text-navy/70">
-            At least 8 characters. Uppercase, lowercase, and a number or symbol required.
+            Use 8 or more characters, with a capital letter, a small letter, and a number or symbol.
           </p>
         </div>
 

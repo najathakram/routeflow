@@ -129,8 +129,8 @@ describe("middleware — ?desktop=1 / prefer-desktop are accepted and inert (R-M
 // here per lib/marketing-routes.ts's own header pointer, even though the
 // export it validates is no longer consumed by this middleware itself.
 describe("marketing path list parity — MKT-PIN T11-parity", () => {
-  it("MARKETING_PAGE_PATHS equals site.ts routes plus / and /distributors (MKT-PIN T11-parity)", () => {
-    const fromSite = ["/", "/distributors", ...routes.map((route) => `/${route.slug}`)];
+  it("MARKETING_PAGE_PATHS equals site.ts routes plus / (MKT-PIN T11-parity)", () => {
+    const fromSite = ["/", ...routes.map((route) => `/${route.slug}`)];
     expect([...MARKETING_PAGE_PATHS].sort()).toEqual(fromSite.sort());
   });
 });

@@ -297,7 +297,14 @@ test.describe("Cross-cutting — Home is home for everyone", () => {
     await seedPresenceCookies(context, ["rf-op-auth"]);
     await page.goto("/");
     await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
-    await headerLink(page).click();
+    // At 1080px and below the header link is hidden; the same link lives in the mobile menu.
+    const menuBtn = page.locator("header .menu-btn");
+    if (await menuBtn.isVisible()) {
+      await menuBtn.click();
+      await page.locator("#mobile-menu a[data-signin]").click();
+    } else {
+      await headerLink(page).click();
+    }
     // /dashboard → AuthGuard finds no tokens → /login. Bounded, no loop, and the failed restore
     // clears the stale cookie, so the header offers Sign in again.
     await page.waitForURL(/\/login/, { timeout: 20_000 });

@@ -1,4 +1,4 @@
-// Serves the ready-made home, pricing, product and landing pages (public/site/<page>.html) at their
+// Serves the ready-made pages (public/site/<page>.html) at their
 // own addresses. next.config.mjs rewrites "/", "/pricing", "/product" and "/landing" here, after the
 // middleware, so the signed-in redirect on "/" still comes first. The route is built once: the page
 // is the file plus, when NEXT_PUBLIC_UMAMI_WEBSITE_ID is set, the visit-count tags (see
