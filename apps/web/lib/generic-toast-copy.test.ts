@@ -917,6 +917,36 @@ describe("SA-814g: 409 INVOICE_TAX_STATE_STALE copy follows the kind of invoice 
   });
 });
 
+describe("SA-1093: a document received before its units per box were set", () => {
+  const refusal = (document: string) => ({
+    response: { status: 409, data: { code: API_ERROR_CODES.RECEIVED_BEFORE_PACK, document } },
+  });
+
+  it("a bill names its void, a purchase order keeps its stock", () => {
+    expect(genericToastCopy(refusal("bill"))).toBe(
+      "This bill was received before its units per box were set. To change it, void it and enter a new bill.",
+    );
+    expect(genericToastCopy(refusal("purchase-order"))).toBe(
+      "This purchase order was received before its units per box were set. Save the edit without changing stock.",
+    );
+  });
+});
+
+describe("SA-1093: an open line in its own unit", () => {
+  const refusal = (orderNumber?: string) => ({
+    response: { status: 409, data: { code: API_ERROR_CODES.PACK_OPEN_LINES, orderNumber } },
+  });
+
+  it("names the order, and has a sentence without one", () => {
+    expect(genericToastCopy(refusal("ORD-7"))).toBe(
+      "Order ORD-7 has a line in its own unit. Finish or cancel the order first, or choose pieces.",
+    );
+    expect(genericToastCopy(refusal())).toBe(
+      "An open order has a line in its own unit. Finish or cancel the order first, or choose pieces.",
+    );
+  });
+});
+
 describe("SA-1091 AC-16: the app-wide toast names the room left on an order-wide over-credit", () => {
   it.each(["RETURN_REFUND_OVER_LINE_HEADROOM", "CREDIT_NOTE_OVER_HEADROOM"])(
     "%s with orderBound and remaining shows the amount, never the server text",

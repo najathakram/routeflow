@@ -918,8 +918,14 @@ export class GoogleOAuthService {
       : ({ allowed: false, reason: "SELLER_BLOCKED" } as const);
     if (!verdict.allowed) return "seller_unavailable";
 
-    await this.prisma.customerLink.update({
-      where: { id: link.id },
+    // F03 slice 2 (SA-1096): the claim is one conditional write, so two accepts of one invite cannot both win;
+    // the loser reads as a dead link, like any other the Google path skips.
+    const claim = await this.prisma.customerLink.updateMany({
+      where: {
+        id: link.id,
+        inviteToken: token,
+        status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
+      },
       data: {
         buyerAccountId,
         status: "ACTIVE",
@@ -928,6 +934,7 @@ export class GoogleOAuthService {
         linkedAt: new Date(),
       },
     });
+    if (claim.count !== 1) return "ignored";
     this.logger.log(`CustomerLink accepted via Google invite: buyer=${buyerAccountId}`);
     return "accepted";
   }
