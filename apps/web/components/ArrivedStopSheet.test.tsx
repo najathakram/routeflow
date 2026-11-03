@@ -35,7 +35,7 @@ describe("ArrivedStopSheet role gating (B966)", () => {
     mockRole = "OPERATOR";
   });
 
-  it("a DRIVER sees NO tiles, a pointer to the driver app, and no empty action row", () => {
+  it("a DRIVER sees NO tiles, a pointer to Today's route, and no empty action row", () => {
     mockRole = "DRIVER";
     const onClose = jest.fn();
     render(
@@ -50,7 +50,9 @@ describe("ArrivedStopSheet role gating (B966)", () => {
     expect(screen.queryByText("New order at door")).not.toBeInTheDocument();
     expect(screen.queryByText("Collect payment")).not.toBeInTheDocument();
     expect(screen.queryByText("At-the-door actions")).not.toBeInTheDocument();
-    expect(screen.getByText(/Use the RouteFlow driver app/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Open Today's route to mark it delivered or refused/i),
+    ).toBeInTheDocument();
     expect(document.querySelector(".space-y-2\\.5")).toBeNull(); // no empty action container
     // The sheet itself still works: the title shows and Close dismisses it.
     expect(screen.getByText("Acme Foods")).toBeInTheDocument();

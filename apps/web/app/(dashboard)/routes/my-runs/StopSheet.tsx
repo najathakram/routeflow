@@ -1,9 +1,28 @@
 "use client";
 
 import * as React from "react";
-import { Modal, Button, Badge } from "@routeflow/ui/web";
-import { useUpdateStopStatus, type RouteRunStop } from "@/lib/api/routes";
-import { DRIVER_APP_LOGIN_URL } from "@/lib/driver-app-link";
+import { Modal, Button, Badge, Textarea } from "@routeflow/ui/web";
+import {
+  buildStopDeliveries,
+  caseStepperCasesDelivered,
+  caseStepperDecrement,
+  caseStepperIncrement,
+  fallbackShortPickLines,
+  formatCaseStepperSplit,
+  isUnitAwareLine,
+  linesAwaitingEntry,
+  normalizeDeliveryPlan,
+  type ShortPickLine,
+} from "@routeflow/pricing";
+import {
+  useCompleteStop,
+  useReopenStop,
+  useUpdateStopStatus,
+  type RouteRun,
+  type RouteRunStop,
+  type RunStopOrder,
+} from "@/lib/api/routes";
+import { stopErrorCopy, type StopErrorCopy } from "@/lib/driver-stop-copy";
 
 /** Apple Maps on iOS/iPadOS, Google Maps everywhere else — mirrors the native
  *  app's openInMaps.ts choice of provider (see apps/mobile/components/openInMaps.ts). */
@@ -33,26 +52,232 @@ function orderStatusBadge(status: string) {
   return <Badge status="SCHEDULED" />;
 }
 
+function useOnline(): boolean {
+  const [online, setOnline] = React.useState(
+    typeof navigator === "undefined" ? true : navigator.onLine !== false,
+  );
+  React.useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+  return online;
+}
+
+interface PlanOrder {
+  order: RunStopOrder;
+  lines: ShortPickLine[];
+  names: Record<string, string>;
+}
+
+function LineQty({
+  line,
+  name,
+  value,
+  disabled,
+  onChange,
+}: {
+  line: ShortPickLine;
+  name: string;
+  value: number | undefined;
+  disabled: boolean;
+  onChange: (qty: number | undefined) => void;
+}) {
+  const ordered = line.orderedQty;
+  if (isUnitAwareLine(line) && value !== undefined) {
+    const upb = Number(line.unitsPerBox);
+    const cases = caseStepperCasesDelivered(value, ordered, upb);
+    const label = (line.unitLabel ?? "").trim() || "Case";
+    const shown = formatCaseStepperSplit(cases, Math.max(0, value - cases * upb), label);
+    return (
+      <div className="flex items-center gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={`Fewer ${name}`}
+          disabled={disabled || value <= 0}
+          onClick={() => onChange(caseStepperDecrement(value, ordered, upb))}
+        >
+          −
+        </Button>
+        <span
+          className="min-w-[5.5rem] text-center text-sm font-medium text-navy"
+          aria-live="polite"
+        >
+          {shown}
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={`More ${name}`}
+          disabled={disabled || value >= ordered}
+          onClick={() => onChange(caseStepperIncrement(value, ordered, upb))}
+        >
+          +
+        </Button>
+      </div>
+    );
+  }
+  return <QtyInput line={line} name={name} value={value} disabled={disabled} onChange={onChange} />;
+}
+
+/** The plain-pack quantity box. It holds what the driver is typing (an emptied box is not "put back to full" under the cursor)
+ *  and commits the clamped whole number; an emptied box means 0, except on a line the server served no `remaining` for. */
+function QtyInput({
+  line,
+  name,
+  value,
+  disabled,
+  onChange,
+}: {
+  line: ShortPickLine;
+  name: string;
+  value: number | undefined;
+  disabled: boolean;
+  onChange: (qty: number | undefined) => void;
+}) {
+  const ordered = line.orderedQty;
+  const [text, setText] = React.useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      inputMode="numeric"
+      min={0}
+      max={ordered}
+      step={1}
+      aria-label={`Delivered ${name}`}
+      className="h-11 w-20 rounded-lg border border-surface-border bg-white px-2 text-right text-sm text-navy"
+      value={text ?? (value === undefined ? "" : value)}
+      disabled={disabled}
+      onBlur={() => setText(null)}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw === "") {
+          setText("");
+          return onChange(line.needsEntry ? undefined : 0);
+        }
+        const n = Math.floor(Number(raw));
+        if (!Number.isFinite(n)) return;
+        const clamped = Math.max(0, Math.min(ordered, n));
+        setText(String(clamped));
+        onChange(clamped);
+      }}
+    />
+  );
+}
+
 export interface StopSheetProps {
   /** null closes the sheet — Modal's own open/onClose stays in sync with this. */
   stop: RouteRunStop | null;
   runId: string | null;
+  /** The run's status. Deliveries are recorded only while it is IN_PROGRESS (the server refuses them otherwise). */
+  runStatus?: RouteRun["status"];
   onClose: () => void;
 }
 
 /**
- * PHASE 1a: tapping a stop in the drive-mode field layout opens this sheet —
- * customer/address/order lines READ-ONLY, plus Navigate/Call/Start/Skip.
- * Money-collecting completion ("Delivered in full" / "Refused" / "Collect") is
- * PHASE 1b (Lane F, SA-129) — the disabled slot below links out to the
- * installed driver app instead, which already has 1b's full flow.
+ * SA-1098 PR-2: a stop on the web driver screen. Customer, address and the order lines (what is left to deliver, from the server's
+ * own `remaining`), then Delivered / Refused / Skip / Undo. Delivered sends one explicit entry per line of EVERY order at the stop
+ * through the shared `buildStopDeliveries`; a short delivery is a changed quantity. It records what was delivered and never takes
+ * money (no `payment` in the request).
  */
-export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
+export function StopSheet({ stop, runId, runStatus = "IN_PROGRESS", onClose }: StopSheetProps) {
   const updateStatus = useUpdateStopStatus();
+  const complete = useCompleteStop();
+  const reopen = useReopenStop();
+  const online = useOnline();
+  const inFlight = React.useRef(false);
+
+  const [qtyById, setQtyById] = React.useState<Record<string, number | undefined>>({});
+  const [refusing, setRefusing] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState<StopErrorCopy | null>(null);
+
+  const stopId = stop?.id;
+  React.useEffect(() => {
+    setQtyById({});
+    setRefusing(false);
+    setReason("");
+    setError(null);
+  }, [stopId]);
 
   const mapsUrl = stop ? stopMapsUrl(stop) : null;
   const phone = stop?.customer?.phone?.trim();
-  const orders = stop?.orders ?? [];
+  const orders = React.useMemo(() => stop?.orders ?? [], [stop]);
+
+  const plans: PlanOrder[] = React.useMemo(
+    () =>
+      orders.map((order) => {
+        const names: Record<string, string> = {};
+        for (const li of order.lineItems ?? []) names[li.id] = li.product?.name ?? "Item";
+        return { order, lines: fallbackShortPickLines(order), names };
+      }),
+    [orders],
+  );
+
+  const linesLoaded = orders.length > 0 && orders.every((o) => Array.isArray(o.lineItems));
+  const allLines = plans.flatMap((p) => p.lines);
+  const entered = Object.fromEntries(
+    Object.entries(qtyById).filter(([, v]) => v !== undefined),
+  ) as Record<string, number>;
+  const shown = normalizeDeliveryPlan(allLines, entered);
+  const awaiting = linesAwaitingEntry(allLines, entered);
+  const deliveredTotal = allLines.reduce((n, li) => n + (shown[li.orderItemId] ?? 0), 0);
+
+  const open = stop?.status === "PENDING" || stop?.status === "IN_PROGRESS";
+  const runOpen = runStatus === "IN_PROGRESS";
+  const busy = complete.isPending || reopen.isPending || updateStatus.isPending;
+  const canRecord =
+    !!stop && !!runId && open && runOpen && online && linesLoaded && allLines.length > 0 && !busy;
+
+  const fail = (err: unknown) => {
+    inFlight.current = false;
+    setError(stopErrorCopy(err));
+  };
+
+  const send = (mode: "deliver" | "refuse") => {
+    if (!stop || !runId || inFlight.current) return;
+    if (mode === "refuse" && !reason.trim()) return;
+    inFlight.current = true;
+    setError(null);
+    const plan = plans.map((p) => ({
+      orderId: p.order.id,
+      lines: p.lines,
+      deliveredQtyById:
+        mode === "refuse"
+          ? Object.fromEntries(p.lines.map((li) => [li.orderItemId, 0]))
+          : Object.fromEntries(
+              p.lines.map((li) => [li.orderItemId, shown[li.orderItemId] ?? li.orderedQty]),
+            ),
+    }));
+    let deliveries;
+    try {
+      deliveries = buildStopDeliveries(plan);
+    } catch {
+      inFlight.current = false;
+      return;
+    }
+    complete.mutate(
+      {
+        runId,
+        stopId: stop.id,
+        deliveries,
+        driverNote: mode === "refuse" ? reason.trim() : undefined,
+      },
+      {
+        onSuccess: () => {
+          inFlight.current = false;
+          onClose();
+        },
+        onError: fail,
+      },
+    );
+  };
 
   const handleStart = () => {
     if (!stop || !runId) return;
@@ -65,6 +290,15 @@ export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
       return;
     updateStatus.mutate({ runId, stopId: stop.id, status: "SKIPPED" }, { onSuccess: onClose });
   };
+
+  const handleUndo = () => {
+    if (!stop || !runId) return;
+    if (!window.confirm("Undo this stop? It goes back on the route.")) return;
+    setError(null);
+    reopen.mutate({ runId, stopId: stop.id }, { onSuccess: onClose, onError: fail });
+  };
+
+  const done = stop?.status === "COMPLETED" || stop?.status === "SKIPPED";
 
   return (
     <Modal
@@ -79,6 +313,46 @@ export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
       scroll
       footer={
         <div className="flex w-full flex-col gap-2">
+          {open && runOpen && !refusing && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="primary"
+                onClick={() => send("deliver")}
+                loading={complete.isPending}
+                disabled={!canRecord || awaiting.length > 0 || deliveredTotal <= 0}
+              >
+                Delivered
+              </Button>
+              <Button variant="secondary" onClick={() => setRefusing(true)} disabled={!canRecord}>
+                Refused
+              </Button>
+            </div>
+          )}
+          {open && runOpen && refusing && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => setRefusing(false)} disabled={busy}>
+                Back
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => send("refuse")}
+                loading={complete.isPending}
+                disabled={!canRecord || !reason.trim()}
+              >
+                Confirm refusal
+              </Button>
+            </div>
+          )}
+          {done && (
+            <Button
+              variant="secondary"
+              onClick={handleUndo}
+              loading={reopen.isPending}
+              disabled={busy || !online}
+            >
+              Undo
+            </Button>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant="secondary"
@@ -96,7 +370,7 @@ export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
               variant="primary"
               onClick={handleStart}
               loading={updateStatus.isPending && updateStatus.variables?.status === "IN_PROGRESS"}
-              disabled={stop?.status !== "PENDING" || updateStatus.isPending}
+              disabled={stop?.status !== "PENDING" || busy}
             >
               Start stop
             </Button>
@@ -104,39 +378,71 @@ export function StopSheet({ stop, runId, onClose }: StopSheetProps) {
               variant="danger"
               onClick={handleSkip}
               loading={updateStatus.isPending && updateStatus.variables?.status === "SKIPPED"}
-              disabled={
-                stop?.status === "COMPLETED" || stop?.status === "SKIPPED" || updateStatus.isPending
-              }
+              disabled={done || busy}
             >
               Skip
             </Button>
           </div>
-          {/* PHASE 1b placeholder (Lane F, SA-129) — money-collecting completion
-              isn't built here yet; the driver app already has the full flow. */}
-          <Button
-            variant="secondary"
-            disabled
-            title="Coming soon — finish in the driver app for now"
-          >
-            Delivered / Refused / Collect payment
-          </Button>
-          <Button variant="link" href={DRIVER_APP_LOGIN_URL} size="sm">
-            Finish in the app →
-          </Button>
         </div>
       }
     >
       {orders.length > 0 ? (
         <ul className="divide-y divide-surface-border">
-          {orders.map((order) => (
-            <li key={order.id} className="flex items-center justify-between gap-3 py-2.5">
-              <span className="text-sm font-medium text-navy">{order.orderNumber}</span>
-              {orderStatusBadge(order.status)}
+          {plans.map(({ order, lines, names }) => (
+            <li key={order.id} className="py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-navy">{order.orderNumber}</span>
+                {orderStatusBadge(order.status)}
+              </div>
+              {open && runOpen && !refusing && lines.length > 0 && (
+                <ul className="mt-2 space-y-2">
+                  {lines.map((li) => (
+                    <li key={li.orderItemId} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-navy">{names[li.orderItemId]}</p>
+                        <p className="text-xs text-navy/60">Left to deliver: {li.orderedQty}</p>
+                      </div>
+                      <LineQty
+                        line={li}
+                        name={names[li.orderItemId] ?? "item"}
+                        value={shown[li.orderItemId]}
+                        disabled={busy}
+                        onChange={(q) => setQtyById((m) => ({ ...m, [li.orderItemId]: q }))}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-sm text-navy/70">No orders on this stop.</p>
+      )}
+      {open && runOpen && refusing && (
+        <div className="mt-3">
+          <Textarea
+            label="Why was it refused?"
+            placeholder="For example, the store was closed"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+          />
+        </div>
+      )}
+      {open && !runOpen && (
+        <p className="mt-3 text-sm text-navy/70">Start the route to record this stop.</p>
+      )}
+      {open && runOpen && !online && (
+        <p className="mt-3 text-sm text-navy/70">You are offline. Connect to record this stop.</p>
+      )}
+      {open && runOpen && orders.length > 0 && !linesLoaded && (
+        <p className="mt-3 text-sm text-navy/70">The order lines are still loading.</p>
+      )}
+      {error && (
+        <p role="alert" className="mt-3 text-sm text-danger">
+          {error.message}
+        </p>
       )}
     </Modal>
   );

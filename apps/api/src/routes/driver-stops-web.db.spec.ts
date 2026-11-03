@@ -1,0 +1,460 @@
+/**
+ * SA-1098 PR-2 server rows (D-4, D-6, D-13, D-16) for the web driver stop: what the SAME `complete-with-payment` request the web
+ * screen sends (no `payment`, one explicit entry per line) does on real Postgres. No server change ships in PR-2; these rows record
+ * what master does today. D-9 (the dropped-response replay) is PR-1's I-1/I-2, unchanged.
+ *
+ * SAFETY: throwaway `qa-sa1098-<run>-<n>-<label>` tenants approved by `assertTestTenant`; `afterAll` deletes exactly the tenants
+ * this run created, best-effort. Collected only by `jest.db.config.js`.
+ */
+
+jest.mock("../invoices/invoice-pdf.service", () => ({
+  InvoicePdfService: jest.fn().mockImplementation(() => ({
+    getOrGenerate: jest.fn().mockResolvedValue("https://example.com/invoice.pdf"),
+  })),
+}));
+jest.mock("../storage/compress.util", () => ({
+  compressDocument: jest.fn(),
+  compressImage: jest.fn(),
+}));
+
+import { Test, TestingModule } from "@nestjs/testing";
+import { ConfigService } from "@nestjs/config";
+import { randomUUID } from "crypto";
+import { RoutesService } from "./routes.service";
+import { InvoicesService } from "../invoices/invoices.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NotificationsService } from "../notifications/notifications.service";
+import { EmailService } from "../email/email.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { StorageService } from "../storage/storage.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { EstimatesService } from "../estimates/estimates.service";
+import { NumberingService } from "../import/numbering.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { IdempotencyService } from "../common/idempotency.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+const RUN_SUFFIX = randomUUID().slice(0, 8);
+let tenantSeq = 0;
+function freshTenantSlug(label: string): string {
+  tenantSeq += 1;
+  return assertTestTenant(
+    `qa-sa1098-${RUN_SUFFIX}-${tenantSeq}-${label}`,
+    "driver-stops-web.db.spec.ts",
+  );
+}
+
+type Path = "completeStop" | "completeWithPayment";
+const PATHS: Path[] = ["completeStop", "completeWithPayment"];
+const operator = { sub: "sa1098-operator", role: "OPERATOR" } as never;
+
+describeDb("SA-1098 PR-2 driver stop on the web — real Postgres", () => {
+  let prisma: PrismaService;
+  let tenantCtx: TenantContextService;
+  let routesService: RoutesService;
+  let invoicesService: InvoicesService;
+  const createdTenantIds: string[] = [];
+
+  const mockGateway = {
+    emitInvoiceUpdated: jest.fn(),
+    emitOrderCreated: jest.fn(),
+    emitOrderStatusChanged: jest.fn(),
+    emitLowStock: jest.fn(),
+    emitStopCompleted: jest.fn(),
+    emitUrgentOrder: jest.fn(),
+    emitRunUpdated: jest.fn(),
+  };
+  const mockMessaging = {
+    notify: jest.fn().mockResolvedValue([]),
+    notifyEvent: jest.fn().mockResolvedValue(undefined),
+  };
+  const mockStorage = {
+    upload: jest.fn().mockResolvedValue("stored"),
+    presignedUrl: jest.fn().mockResolvedValue("https://signed/url"),
+    delete: jest.fn().mockResolvedValue(undefined),
+  };
+
+  beforeAll(async () => {
+    requireLocalDatabaseUrl();
+    tenantCtx = new TenantContextService();
+    prisma = new PrismaService(tenantCtx);
+    await prisma.$connect();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RoutesService,
+        InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
+        EstimatesService,
+        NumberingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: mockGateway },
+        { provide: NotificationsService, useValue: { create: jest.fn(), notify: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
+        { provide: FeatureConfigService, useValue: { get: jest.fn(), isEnabled: jest.fn() } },
+        {
+          provide: EmailService,
+          useValue: {
+            sendInvoice: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }),
+            isEmailConfigured: jest.fn().mockResolvedValue(true),
+          },
+        },
+        { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
+        {
+          provide: SystemConfigService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            set: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            writeSaleEntries: jest.fn(),
+            reverseInvoiceEntries: jest.fn(),
+            settleRegulatedLedger: jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null }),
+          },
+        },
+        {
+          provide: AuthorizationGuardService,
+          useValue: {
+            assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
+            checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
+          },
+        },
+        {
+          provide: CreditNotesService,
+          useValue: {
+            autoApplyOldestCreditsInTx: jest
+              .fn()
+              .mockResolvedValue({ applied: 0, invoiceStatus: null }),
+            settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
+            releaseInvoiceCreditsInTx: jest.fn().mockResolvedValue([]),
+          },
+        },
+        { provide: MessagingService, useValue: mockMessaging },
+        { provide: StorageService, useValue: mockStorage },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+      ],
+    }).compile();
+
+    routesService = module.get(RoutesService);
+    invoicesService = module.get(InvoicesService);
+  });
+
+  afterAll(async () => {
+    for (const tenantId of createdTenantIds) {
+      // eslint-disable-next-line no-await-in-loop
+      await cleanupTenant(tenantId).catch(() => {
+        // Best-effort: a failed cleanup must never mask a test's own pass/fail result.
+      });
+    }
+    await prisma?.$disconnect();
+  });
+
+  beforeEach(() => jest.clearAllMocks());
+
+  async function cleanupTenant(tenantId: string): Promise<void> {
+    await prisma.auditLog.deleteMany({ where: { tenantId } });
+    await prisma.advancePayment.deleteMany({ where: { tenantId } });
+    await prisma.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
+    await prisma.deliveryMutation.deleteMany({ where: { tenantId } });
+    await prisma.invoiceItem.deleteMany({ where: { tenantId } });
+    await prisma.invoice.deleteMany({ where: { tenantId } });
+    await prisma.orderItem.deleteMany({ where: { tenantId } });
+    await prisma.order.deleteMany({ where: { tenantId } });
+    await prisma.routeRunStop.deleteMany({ where: { tenantId } });
+    await prisma.routeRun.deleteMany({ where: { tenantId } });
+    await prisma.routeStop.deleteMany({ where: { tenantId } });
+    await prisma.route.deleteMany({ where: { tenantId } });
+    await prisma.product.deleteMany({ where: { tenantId } });
+    await prisma.customer.deleteMany({ where: { tenantId } });
+    await prisma.user.deleteMany({ where: { tenantId } });
+    await prisma.tenant.delete({ where: { id: tenantId } });
+  }
+
+  /**
+   * A run of `stopCount` stops, each with one two-line order (10 x $10, 4 x $5 = $120) and its DRAFT
+   * mirror. The run's last stop is the last of them.
+   */
+  async function seedRun(label: string, stopCount: number) {
+    const slug = freshTenantSlug(label);
+    const tenant = await prisma.tenant.create({ data: { slug, name: `SA-1098 ${slug}` } });
+    createdTenantIds.push(tenant.id);
+    const tenantId = tenant.id;
+    const idBase = `${tenantId}-${label}`;
+    const route = await prisma.route.create({ data: { name: `SA-1098 ${label}`, tenantId } });
+    const run = await prisma.routeRun.create({
+      data: {
+        routeId: route.id,
+        status: "IN_PROGRESS",
+        scheduledDate: new Date(),
+        startedAt: new Date(),
+        tenantId,
+      },
+    });
+    const p1 = await prisma.product.create({
+      data: { name: `SA-1098 P1 ${label}`, unit: "each", pricePerUnit: 10, tenantId },
+    });
+    const p2 = await prisma.product.create({
+      data: { name: `SA-1098 P2 ${label}`, unit: "each", pricePerUnit: 5, tenantId },
+    });
+    const stops: {
+      stopId: string;
+      orderId: string;
+      line1: { id: string };
+      line2: { id: string };
+    }[] = [];
+    for (let n = 1; n <= stopCount; n++) {
+      /* eslint-disable no-await-in-loop */
+      const user = await prisma.user.create({
+        data: {
+          email: `${idBase}-${n}@example.invalid`,
+          username: `${idBase}-${n}`,
+          role: "CUSTOMER",
+          tenantId,
+        },
+      });
+      const customer = await prisma.customer.create({
+        data: {
+          userId: user.id,
+          businessName: `SA-1098 customer ${label} ${n}`,
+          contactName: `SA-1098 contact ${label} ${n}`,
+          tenantId,
+        },
+      });
+      const routeStop = await prisma.routeStop.create({
+        data: { routeId: route.id, customerId: customer.id, stopNumber: n, tenantId },
+      });
+      const runStop = await prisma.routeRunStop.create({
+        data: {
+          routeRunId: run.id,
+          routeStopId: routeStop.id,
+          customerId: customer.id,
+          stopNumber: n,
+          status: "IN_PROGRESS",
+          tenantId,
+        },
+      });
+      const order = await prisma.order.create({
+        data: {
+          customerId: customer.id,
+          status: "OUT_FOR_DELIVERY",
+          orderNumber: `SA1098-${RUN_SUFFIX}-${label}-${n}`,
+          routeRunId: run.id,
+          routeRunStopId: runStop.id,
+          subtotal: 120,
+          tax: 0,
+          total: 120,
+          tenantId,
+        },
+      });
+      const line1 = await prisma.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: p1.id,
+          qty: 10,
+          unitPrice: 10,
+          subtotal: 100,
+          tenantId,
+        },
+      });
+      const line2 = await prisma.orderItem.create({
+        data: { orderId: order.id, productId: p2.id, qty: 4, unitPrice: 5, subtotal: 20, tenantId },
+      });
+      await tenantCtx.run(tenantId, () => invoicesService.createInvoiceFromOrder(order.id));
+      stops.push({ stopId: runStop.id, orderId: order.id, line1, line2 });
+      /* eslint-enable no-await-in-loop */
+    }
+    return { tenantId, runId: run.id, stops };
+  }
+
+  type Seed = Awaited<ReturnType<typeof seedRun>>;
+  type Stop = Seed["stops"][number];
+
+  const body = (st: Stop, q1 = 10) => ({
+    deliveries: [
+      {
+        orderItemId: st.line1.id,
+        type: q1 === 10 ? "DELIVERED" : "PARTIAL",
+        quantityDelivered: q1,
+      },
+      { orderItemId: st.line2.id, type: "DELIVERED", quantityDelivered: 4 },
+    ],
+  });
+
+  const complete = (s: Seed, st: Stop, path: Path, dto: unknown, user: never = operator) =>
+    tenantCtx.run(s.tenantId, () =>
+      routesService[path](s.runId, st.stopId, dto as never, user),
+    ) as Promise<unknown>;
+
+  /** Every row a completion writes for this stop, so a test can say none of it moved. */
+  async function footprint(s: Seed, st: Stop) {
+    const lines = await prisma.orderItem.findMany({
+      where: { orderId: st.orderId },
+      orderBy: { id: "asc" },
+      select: { deliveredQty: true },
+    });
+    const invoice = await prisma.invoice.findFirst({
+      where: { orderId: st.orderId, status: { not: "VOID" } },
+      select: { total: true },
+    });
+    return {
+      stop: (await prisma.routeRunStop.findUnique({ where: { id: st.stopId } }))?.status,
+      mutations: await prisma.deliveryMutation.count({
+        where: { tenantId: s.tenantId, orderItem: { orderId: st.orderId } },
+      }),
+      payments: await prisma.invoicePayment.count({
+        where: { invoice: { orderId: st.orderId } },
+      }),
+      delivered: lines.map((l) => Number(l.deliveredQty ?? 0)),
+      invoiceTotal: Number(invoice?.total ?? -1),
+    };
+  }
+
+  const web = (st: Stop, q1: number, q2 = 4) => ({
+    deliveries: [
+      {
+        orderItemId: st.line1.id,
+        type: q1 <= 0 ? "REFUSED" : q1 === 10 ? "DELIVERED" : "PARTIAL",
+        quantityDelivered: q1,
+      },
+      {
+        orderItemId: st.line2.id,
+        type: q2 <= 0 ? "REFUSED" : q2 === 4 ? "DELIVERED" : "PARTIAL",
+        quantityDelivered: q2,
+      },
+    ],
+  });
+  const driverComplete = (s: Seed, st: Stop, dto: unknown, key?: string) =>
+    complete(s, st, "completeWithPayment", { ...(dto as object), idempotencyKey: key } as never);
+
+  it("D-4: the web's short delivery (10 -> 7, no payment) completes the stop PARTIAL and bills the delivered goods", async () => {
+    const s = await seedRun("d4", 2);
+    const st = s.stops[0];
+    await driverComplete(s, st, web(st, 7), "k-d4");
+    const f = await footprint(s, st);
+    expect(f.stop).toBe("COMPLETED");
+    expect([...f.delivered].sort()).toEqual([4, 7]); // line 1 short at 7, line 2 in full
+    expect(f.mutations).toBe(2);
+    expect(f.payments).toBe(0);
+    // 7 x 10 + 4 x 5: the invoice follows what was delivered
+    expect(f.invoiceTotal).toBe(90);
+  });
+
+  it("D-4b: an invoice already SENT is left alone by a short delivery (the shortfall goes to a credit path, not a rewrite)", async () => {
+    const s = await seedRun("d4b", 2);
+    const st = s.stops[0];
+    await prisma.invoice.updateMany({
+      where: { orderId: st.orderId },
+      data: { status: "SENT" },
+    });
+    await driverComplete(s, st, web(st, 7), "k-d4b");
+    const invoices = await prisma.invoice.findMany({
+      where: { orderId: st.orderId, status: { not: "VOID" } },
+      select: { status: true, total: true },
+    });
+    const sent = invoices.filter((i) => i.status === "SENT");
+    expect(sent.map((i) => Number(i.total))).toEqual([120]);
+  });
+
+  it("D-6: a later visit: 3 of 10 delivered at another stop leaves 7; 8 is refused as not fitting and 7 completes", async () => {
+    const s = await seedRun("d6", 2);
+    const first = s.stops[0];
+    const later = s.stops[1];
+    await driverComplete(s, first, web(first, 3), "k-d6a");
+    // the undelivered rest of the order rides the next stop (a re-delivery visit)
+    await prisma.order.update({
+      where: { id: first.orderId },
+      data: { routeRunStopId: later.stopId, status: "OUT_FOR_DELIVERY" },
+    });
+    const dto = (q1: number) => ({
+      deliveries: [
+        {
+          orderItemId: first.line1.id,
+          type: q1 === 7 ? "DELIVERED" : "PARTIAL",
+          quantityDelivered: q1,
+        },
+      ],
+    });
+
+    const refused = await complete(s, later, "completeWithPayment", dto(8) as never).then(
+      () => "accepted",
+      (e: { status?: number }) => `refused ${e.status}`,
+    );
+    // eslint-disable-next-line no-console
+    console.info("D-6 observed: 8 of 7 left ->", refused);
+    expect(refused).toBe("refused 400");
+    await complete(s, later, "completeWithPayment", dto(7) as never);
+    const lines = await prisma.orderItem.findFirst({ where: { id: first.line1.id } });
+    expect(Number(lines?.deliveredQty ?? 0)).toBe(10);
+  });
+
+  it("D-16 (observe): REFUSED with a quantity of 5 sent directly", async () => {
+    const s = await seedRun("d16", 2);
+    const st = s.stops[0];
+    const dto = {
+      deliveries: [
+        { orderItemId: st.line1.id, type: "REFUSED", quantityDelivered: 5 },
+        { orderItemId: st.line2.id, type: "DELIVERED", quantityDelivered: 4 },
+      ],
+    };
+    const outcome = await driverComplete(s, st, dto, "k-d16").then(
+      () => "accepted",
+      (e: { status?: number }) => `refused ${e.status}`,
+    );
+    const f = await footprint(s, st);
+    // eslint-disable-next-line no-console
+    console.info("D-16 observed:", outcome, JSON.stringify(f));
+    expect(["accepted", "refused 400"]).toContain(outcome);
+  });
+
+  it("D-13 (observe): Undo on the last stop of a run that finished itself", async () => {
+    const s = await seedRun("d13", 1);
+    const st = s.stops[0];
+    await driverComplete(s, st, web(st, 10), "k-d13");
+    expect((await prisma.routeRun.findUnique({ where: { id: s.runId } }))?.status).toBe(
+      "COMPLETED",
+    );
+
+    await tenantCtx.run(s.tenantId, () => routesService.reopenStop(s.runId, st.stopId, operator));
+
+    const run = await prisma.routeRun.findUnique({ where: { id: s.runId } });
+    const stop = await prisma.routeRunStop.findUnique({ where: { id: st.stopId } });
+    // eslint-disable-next-line no-console
+    console.info("D-13 observed: run", run?.status, "stop", stop?.status);
+    expect(stop?.status).not.toBe("COMPLETED");
+  });
+});

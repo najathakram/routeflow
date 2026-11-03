@@ -1,5 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import {
+  keepsStopCompletionKey,
+  retryOnLockUnavailable,
+} from "@routeflow/types/stop-completion-key";
+import type { StopDeliveryEntry } from "@routeflow/pricing";
+import { releaseStopKey, stopKey } from "../stop-completion-key";
 import type {
   RouteAnalysisResult,
   RouteSettings,
@@ -102,6 +108,9 @@ export interface RouteRun {
    *  callers must `Number(...)` before formatting or comparing it. */
   settlementVariance?: number | string | null;
   stops?: RouteRunStop[];
+  /** GET /route-runs/my-runs only — what this driver collected at the door on the run (SA-1098: the web screen never
+   *  collects, so a non-zero count that is not yet settled keeps "Finish route" off). */
+  collectedPayments?: { cashTotal: number; checkTotal: number; count: number };
   _count?: { stops: number };
   /** Dispatch response only — how many orders the sweep actually attached to
    *  this run (an ad-hoc trip can lose orders between build and send). */
@@ -119,7 +128,32 @@ export interface RouteRunStop {
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
   completedAt?: string;
   driverNote?: string;
-  orders?: { id: string; orderNumber: string; status: string }[];
+  orders?: RunStopOrder[];
+}
+
+/** One order's line on a run stop, as the run read serves it (RUN_LINE_ITEMS_SELECT + `remaining`/`deliveredSoFar`). */
+export interface RunStopLine {
+  id: string;
+  productId: string | null;
+  product?: { id: string; name: string; unit?: string | null } | null;
+  qty: number | string;
+  deliveredQty?: number | string | null;
+  status?: string | null;
+  subtotal?: number | string | null;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+  /** SA-366: what this visit can still deliver (the server's own number; the client never derives it). */
+  remaining?: number | string | null;
+  deliveredSoFar?: number | string | null;
+}
+
+export interface RunStopOrder {
+  id: string;
+  orderNumber: string;
+  status: string;
+  lineItems?: RunStopLine[];
 }
 
 interface PaginatedResponse<T> {
@@ -365,6 +399,66 @@ export function useUpdateStopStatus() {
       qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
       qc.invalidateQueries({ queryKey: ["route-runs", runId] });
       qc.invalidateQueries({ queryKey: ["route-runs"] });
+    },
+  });
+}
+
+/**
+ * SA-1098 PR-2: POST /route-runs/:id/stops/:stopId/complete-with-payment WITHOUT a `payment` — the web screen records what was
+ * delivered and never takes money. One Idempotency-Key per stop (sessionStorage), kept while the outcome is unknown and released
+ * on any known answer; a 503 LOCK_UNAVAILABLE is retried with the same key.
+ */
+export function useCompleteStop() {
+  const qc = useQueryClient();
+  return useMutation<
+    unknown,
+    Error,
+    { runId: string; stopId: string; deliveries: StopDeliveryEntry[]; driverNote?: string }
+  >({
+    mutationFn: async ({ runId, stopId, deliveries, driverNote }) => {
+      const key = stopKey(stopId);
+      const body = {
+        deliveries: deliveries.map((d) => ({
+          orderItemId: d.orderItemId,
+          productId: d.productId,
+          type: d.type,
+          quantityDelivered: d.quantityDelivered,
+        })),
+        ...(driverNote ? { driverNote } : {}),
+      };
+      try {
+        const res = await retryOnLockUnavailable(() =>
+          apiClient.post(`/route-runs/${runId}/stops/${stopId}/complete-with-payment`, body, {
+            headers: { "Idempotency-Key": key },
+          }),
+        );
+        releaseStopKey(stopId);
+        return res.data;
+      } catch (err) {
+        if (!keepsStopCompletionKey(err)) releaseStopKey(stopId);
+        throw err;
+      }
+    },
+    onSettled: (_d, _e, { runId }) => {
+      qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+    },
+  });
+}
+
+/** SA-1098 PR-2: undo a completed or skipped stop. The server refuses it once the stop's money is confirmed. */
+export function useReopenStop() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, { runId: string; stopId: string }>({
+    mutationFn: ({ runId, stopId }) =>
+      apiClient.post(`/route-runs/${runId}/stops/${stopId}/reopen`).then((r) => r.data),
+    onSettled: (_d, _e, { runId }) => {
+      qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }

@@ -15,7 +15,13 @@ import { PageHeader, Badge, Button, StatCard } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useDriveMode } from "@/lib/drive-mode";
-import { useRouteRuns, useMyRuns, type RouteRun, type RouteRunStop } from "@/lib/api/routes";
+import {
+  useRouteRuns,
+  useMyRuns,
+  useUpdateRouteRunStatus,
+  type RouteRun,
+  type RouteRunStop,
+} from "@/lib/api/routes";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
 import { useTenantAddons } from "@/lib/api/tobacco";
 import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
@@ -214,6 +220,76 @@ function FieldStopRow({
   );
 }
 
+/** SA-1098 PR-2: why Finish route is not offered yet, or null when it is. Money the driver took at the door in the app
+ *  (collectedPayments) stays with that app's settlement — the web screen never settles it. */
+export function finishRouteBlocker(run: RouteRun, stops: RouteRunStop[]): string | null {
+  if (run.status !== "IN_PROGRESS") return null;
+  if (stops.some((s) => s.status === "PENDING" || s.status === "IN_PROGRESS")) return null;
+  const collected = run.collectedPayments;
+  if (collected && collected.count > 0 && !run.settlementNote) {
+    return "You collected money on this route. Settle it in the driver app, then finish the route.";
+  }
+  return "";
+}
+
+function runActionError(err: unknown): string {
+  const data = (err as { response?: { data?: { message?: unknown } } } | null)?.response?.data;
+  return typeof data?.message === "string" && data.message
+    ? data.message
+    : "That did not go through. Check your connection and try again.";
+}
+
+/** Start route on a scheduled run; Finish route once no stop is left (also a run that has no stops). */
+function RunLifecycle({ run, stops }: { run: RouteRun; stops: RouteRunStop[] }) {
+  const setStatus = useUpdateRouteRunStatus();
+  const [error, setError] = React.useState<string | null>(null);
+  const blocker = finishRouteBlocker(run, stops);
+  const canStart = run.status === "SCHEDULED";
+  if (!canStart && blocker === null) return null;
+
+  const go = (status: "IN_PROGRESS" | "COMPLETED") => {
+    if (
+      status === "COMPLETED" &&
+      !window.confirm("Finish this route? Stops left open stay undelivered.")
+    ) {
+      return;
+    }
+    setError(null);
+    setStatus.mutate({ id: run.id, status }, { onError: (e) => setError(runActionError(e)) });
+  };
+
+  return (
+    <div className="px-5 pb-4">
+      {canStart && (
+        <Button
+          variant="primary"
+          className="h-14 w-full text-base"
+          loading={setStatus.isPending}
+          onClick={() => go("IN_PROGRESS")}
+        >
+          Start route
+        </Button>
+      )}
+      {blocker === "" && (
+        <Button
+          variant="primary"
+          className="h-14 w-full text-base"
+          loading={setStatus.isPending}
+          onClick={() => go("COMPLETED")}
+        >
+          Finish route
+        </Button>
+      )}
+      {blocker && <p className="text-sm text-navy/70">{blocker}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Field layout hero card for today's active/next run — today's run first, big
  *  targets, matches docs/design-package/project/unified/my-runs.html. Falls back
  *  to the same summary the compact list would show when stop detail isn't part
@@ -265,6 +341,8 @@ function TodayRunHero({
           trendLabel={deliveredOrders > 0 ? `${deliveredOrders} orders` : undefined}
         />
       </div>
+
+      <RunLifecycle run={run} stops={stops} />
 
       {/* Primary action row — big touch targets, scanner shortcut front and center */}
       <div className="flex flex-wrap gap-3 px-5 pb-5">
@@ -367,6 +445,12 @@ export default function MyRunsPage() {
     todayRuns.find((r) => r.status === "SCHEDULED") ??
     todayRuns[0];
   const restOfToday = todayRuns.filter((r) => r.id !== heroRun?.id);
+  // The open stop is read from the LATEST run data by id, so the 60 s refetch updates the sheet (what is left, its status)
+  // without closing it; the tapped snapshot is the fallback if the run left the list.
+  const openRun = openStop ? (data?.data ?? []).find((r) => r.id === openStop.runId) : undefined;
+  const liveStop = openStop
+    ? (openRun?.stops?.find((s) => s.id === openStop.stop.id) ?? openStop.stop)
+    : null;
 
   if (!canAccessMyRuns) {
     return (
@@ -441,8 +525,9 @@ export default function MyRunsPage() {
         </CardShell>
 
         <StopSheet
-          stop={openStop?.stop ?? null}
+          stop={liveStop}
           runId={openStop?.runId ?? null}
+          runStatus={openRun?.status}
           onClose={() => setOpenStop(null)}
         />
       </div>

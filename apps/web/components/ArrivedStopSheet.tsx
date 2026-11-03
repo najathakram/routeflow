@@ -63,8 +63,8 @@ export function ArrivedStopSheet({
   const router = useRouter();
   const { user } = useAuth();
   // B966: the house staff condition (RouteGuard isStaffRole). Every tile goes to /orders or
-  // /finance, which a DRIVER is bounced off (dead ends); drivers adjust, add and collect in the
-  // native app. A DRIVER's sheet therefore has no tiles and shows a pointer instead.
+  // /finance, which a DRIVER is bounced off (dead ends); drivers record the stop from
+  // Today's route. A DRIVER's sheet therefore has no tiles and shows a pointer instead.
   const role = user?.role;
   const isStaff = !!role && role !== "CUSTOMER" && role !== "DRIVER";
   const primaryOrder = orders[0];
@@ -108,8 +108,7 @@ export function ArrivedStopSheet({
         </>
       ) : (
         <p className="text-sm text-navy/70">
-          Use the RouteFlow driver app to adjust orders, add orders and collect payments at the
-          door.
+          Record this stop from your route. Open Today's route to mark it delivered or refused.
         </p>
       )}
     </Modal>
