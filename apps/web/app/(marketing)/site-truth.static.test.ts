@@ -8,6 +8,8 @@ import * as path from "path";
 
 const SITE = path.resolve(__dirname, "../../public/site");
 const page = (name: string) => fs.readFileSync(path.join(SITE, `${name}.html`), "utf8");
+// The wheel on the home page paints its own copy at run time from this file, so the .html pins above cannot see it.
+const wheel = () => fs.readFileSync(path.join(SITE, "graphics/rf-wheel-up.js"), "utf8");
 
 describe("public site sentences the code backs", () => {
   // order-status-invoicing.ts / pending-mirror.ts: an order's invoice is locked until the order is DELIVERED, or SHIPPED on
@@ -81,11 +83,29 @@ describe("public site sentences the code backs", () => {
       expect(html).not.toMatch(/Complete stop/);
     }
     expect(page("product")).toContain("drivers can’t finish a stop");
-    expect(page("product")).toContain("Staff mark the order delivered.");
+    expect(page("product")).toContain("An order on a run is delivered when its stop is completed.");
     expect(page("home")).toContain(
       "Drivers see the stops on the web and can start or skip a stop.",
     );
     expect(page("getting-started")).toContain("Drivers sign in on the web and see their route.");
+  });
+
+  // orders.service.ts changeStatus -> assertStopDoneForOfficeDelivered (office-delivered-route-stop.ts, SA-978a): an office
+  // DELIVERED on an order whose run stop is not COMPLETED is refused, 409 ORDER_DELIVERED_ON_ROUTE_STOP. The office can only
+  // take the order off the run. So "staff mark the order delivered" is false for an order on a run, and no page may say it.
+  it("delivery: nobody says staff mark a run's order delivered, on the pages or in the wheel", () => {
+    const all = [
+      ...["home", "pricing", "product", "getting-started", "security", "does-and-doesnt"].map(page),
+      wheel(),
+    ];
+    for (const text of all) {
+      expect(text).not.toMatch(/staff (can )?mark(s)? (the|an|each) order(s)? (as )?delivered/i);
+      expect(text).not.toMatch(/mark(s|ed)? .{0,20}delivered/i);
+      expect(text).not.toMatch(/signature and a photo|photo and a signature/i);
+    }
+    expect(wheel()).toContain("Drivers see each stop and can start or skip it.");
+    expect(page("home")).toContain("Drivers see each stop and can start or skip it.");
+    expect(page("product")).toContain("That unlocks its invoice.");
   });
 
   // The only path that records a short delivery is the driver app's stop-complete call (routes.controller.ts
@@ -96,6 +116,5 @@ describe("public site sentences the code backs", () => {
       expect(page(name)).not.toMatch(/what was delivered/i);
     }
     expect(page("home")).not.toContain("jr-upd");
-    expect(page("product")).toContain("Delivering the order unlocks its invoice.");
   });
 });
