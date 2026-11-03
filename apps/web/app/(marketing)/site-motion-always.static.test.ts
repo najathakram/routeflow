@@ -39,6 +39,7 @@ const STYLES = [
   "css/company.css",
   "css/home-color.css",
   "css/color-deep.css",
+  "css/mobile.css",
   "graphics/rf-graphics.css",
   "graphics/rf-wheel-up.css",
 ];
@@ -80,11 +81,34 @@ describe("the public site's motion does not depend on the visitor's motion setti
     expect(problems).toEqual([]);
   });
 
-  it("the wheel falls back to the still only for a window under 500 px tall", () => {
+  it("the wheel runs on every height: no still for a short window, and a sideways phone takes the wide layout", () => {
     const wheel = read("graphics/rf-wheel-up.js");
-    expect(wheel).toContain('short: "(max-height: 499.98px)"');
-    expect(wheel).toContain("if (c.conditions.short) { still(); return undefined; }");
+    // a window under 500 px tall is a condition for the names and the burst (`low`), never a reason for the still
+    expect(wheel).not.toContain('short: "(max-height: 499.98px)"');
+    expect(wheel).toContain('low: "(max-height: 499.98px)"');
+    expect(wheel).not.toContain("c.conditions.short");
+    expect(wheel).toContain(
+      `land: "(max-width: 899.98px) and (max-height: 599.98px) and (min-aspect-ratio: 1/1)"`,
+    );
+    expect(wheel).toContain("!c.conditions.wide && !c.conditions.land");
     expect(wheel).toContain("const liveWanted = can;");
+    // the still stays for no JavaScript and a browser that cannot run the wheel
+    expect(wheel).toContain("if (!can) return still();");
+    // the page CSS follows the same shape: no 500 px height gate left on the wheel or the hero
+    for (const css of ["css/home-up.css", "graphics/rf-wheel-up.css"]) {
+      expect(read(css)).not.toContain("min-height:500px");
+    }
+    expect(read("css/home-up.css")).toContain(
+      "@media (min-width:900px),(max-width:899.98px) and (max-height:599.98px) and (min-aspect-ratio:1/1){",
+    );
+  });
+
+  it("a turn of the phone puts the visitor back at the same place in the story", () => {
+    const wheel = read("graphics/rf-wheel-up.js");
+    expect(wheel).toContain("const trackKeep = () => {");
+    expect(wheel).toContain("inst.keep = ");
+    expect(wheel).toContain("if (k && inst.rebuilt) {");
+    expect(wheel).toContain(`root.removeEventListener("scroll", trackKeep);`);
   });
 
   // Owner, phone screenshot: "On the mobile, these texts can be better and more cleaner." The phone's wheel names were
