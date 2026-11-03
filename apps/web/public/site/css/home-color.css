@@ -88,22 +88,20 @@
 .home .fq .faq details p{padding-bottom:20px}
 .home .fq .faq summary .ico{color:#0d7c7e}
 
-/* ---------- life: press and scroll motion, off for reduced motion and the reduce switch ---------- */
-@media (prefers-reduced-motion:no-preference){
-  html:not(.rm) .btn{transition:transform .18s var(--ease),background .2s,box-shadow .25s}
-  html:not(.rm) .btn-primary:hover{box-shadow:0 12px 26px -12px var(--rf-brand-700);transform:translateY(-1px)}
-  html:not(.rm) .btn:active{transform:scale(.965)}
-  @media (min-width:900px) and (hover:hover){
-    html:not(.rm) .home .inc-i:hover{transform:translateY(-4px);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 40%,transparent),0 18px 34px -18px var(--pc)}
-    html:not(.rm) .home .inc-i:hover .inc-ic{transform:rotate(-6deg) scale(1.06)}
-  }
-  html:not(.rm) .home .inc-i{transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
-  html:not(.rm) .home .inc-i .inc-ic{transition:transform .35s var(--ease)}
-  html:not(.rm) .home .inc-i:active{transform:scale(.985)}
-  @supports (animation-timeline:view()){
-    html:not(.rm) .home .inc-i .inc-ic{animation:rf-tile-pop linear both;animation-timeline:view();animation-range:entry 0% entry 70%}
-    html:not(.rm) .home .fq .fq-art{animation:rf-van-in linear both;animation-timeline:view();animation-range:entry 0% entry 80%}
-  }
+/* ---------- life: press and scroll motion ---------- */
+.btn{transition:transform .18s var(--ease),background .2s,box-shadow .25s}
+.btn-primary:hover{box-shadow:0 12px 26px -12px var(--rf-brand-700);transform:translateY(-1px)}
+.btn:active{transform:scale(.965)}
+@media (min-width:900px) and (hover:hover){
+  .home .inc-i:hover{transform:translateY(-4px);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pc) 40%,transparent),0 18px 34px -18px var(--pc)}
+  .home .inc-i:hover .inc-ic{transform:rotate(-6deg) scale(1.06)}
+}
+.home .inc-i{transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
+.home .inc-i .inc-ic{transition:transform .35s var(--ease)}
+.home .inc-i:active{transform:scale(.985)}
+@supports (animation-timeline:view()){
+  .home .inc-i .inc-ic{animation:rf-tile-pop linear both;animation-timeline:view();animation-range:entry 0% entry 70%}
+  .home .fq .fq-art{animation:rf-van-in linear both;animation-timeline:view();animation-range:entry 0% entry 80%}
 }
 @keyframes rf-tile-pop{from{transform:scale(.55) rotate(-14deg);opacity:.2}to{transform:none;opacity:1}}
 @keyframes rf-van-in{from{transform:translateX(60px);opacity:0}to{transform:none;opacity:1}}

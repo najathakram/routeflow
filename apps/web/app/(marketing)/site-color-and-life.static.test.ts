@@ -3,7 +3,7 @@
  */
 // Colour and life for the site (W-1129): static pins on the ported pages in public/site (no rendering).
 // What must stay true: the colour files are linked, every pill and card text stays AA on its tint,
-// motion is off for reduced motion, pricing is untouched, and the new picture is decoration only.
+// motion runs for everyone (owner ruling 11-03: no reduced-motion gates), pricing is untouched, and the new picture is decoration only.
 import * as fs from "fs";
 import * as path from "path";
 
@@ -113,31 +113,27 @@ describe("the wheel wears its colours at rest", () => {
     });
   });
 
-  it("the still dial (reduced motion, no script) paints the same tint", () => {
+  it("the still dial (no script) paints the same tint", () => {
     expect(js).toContain(
       'style="fill:${pastel(d.c, inner ? 0.5 : 0.4)};stroke:${pastel(d.c, inner ? 0.5 : 0.4)}"',
     );
   });
 });
 
-describe("life: motion is for people who have not asked for less", () => {
+describe("life: the motion runs for everyone", () => {
   it.each(["css/home-color.css", "css/color-deep.css"])(
-    "%s: every transition and animation is inside the no-preference query",
+    "%s: no reduced-motion query and no switch class gate the press and scroll motion",
     (file) => {
       const css = read(file);
-      const at = css.indexOf("@media (prefers-reduced-motion:no-preference)");
-      expect(at).toBeGreaterThan(-1);
-      const outside = css.slice(0, at);
-      // keyframes are only definitions; nothing outside the query may start one
-      expect(outside).not.toMatch(/(^|[;{\s])(transition|animation)\s*:/);
-      expect(outside).not.toContain("animation-timeline");
+      expect(css).not.toMatch(/prefers-reduced-motion|html:not(.rm)|.rm/);
+      expect(css).toContain(".btn:active{transform:scale(.965)}");
     },
   );
 
-  it("the motion rules also respect the reduce switch", () => {
+  it("the home tiles press, lift and pop in on scroll", () => {
     const css = read("css/home-color.css");
-    expect(css).toContain("html:not(.rm) .btn:active");
-    expect(css).toContain("html:not(.rm) .home .inc-i:hover");
+    expect(css).toContain(".home .inc-i:hover{transform:translateY(-4px)");
+    expect(css).toContain("animation:rf-tile-pop linear both;animation-timeline:view()");
   });
 });
 

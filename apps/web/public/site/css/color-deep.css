@@ -37,9 +37,7 @@
 /* ---------- warm glows on the dark bands ---------- */
 .pd .pd-deep{background-image:radial-gradient(520px 320px at 8% 0%,rgba(255,201,51,.18),transparent 70%),radial-gradient(560px 340px at 100% 100%,rgba(255,94,77,.18),transparent 70%),radial-gradient(460px 280px at 70% 0%,rgba(76,174,217,.16),transparent 70%)}
 
-/* ---------- life: press motion, off for reduced motion and the reduce switch ---------- */
-@media (prefers-reduced-motion:no-preference){
-  html:not(.rm) .btn{transition:transform .18s var(--ease),background .2s,box-shadow .25s}
-  html:not(.rm) .btn-primary:hover{box-shadow:0 12px 26px -12px var(--rf-brand-700);transform:translateY(-1px)}
-  html:not(.rm) .btn:active{transform:scale(.965)}
-}
+/* ---------- life: press motion ---------- */
+.btn{transition:transform .18s var(--ease),background .2s,box-shadow .25s}
+.btn-primary:hover{box-shadow:0 12px 26px -12px var(--rf-brand-700);transform:translateY(-1px)}
+.btn:active{transform:scale(.965)}
