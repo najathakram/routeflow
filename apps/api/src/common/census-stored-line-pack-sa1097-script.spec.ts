@@ -18,10 +18,12 @@ const SA_FILE_SHA256 = "9b75d69a820faf304eb60ac3b5fcf9fb8ed1761b8f9635f4883651eb
 const SA_DENOMINATORS_SHA256 = "3291839e87910afc1c9c4b1ca6acd2703f885fc5a881ae0868c2c94e882d2e81";
 // SA-1098 A-3: rf-specs decisions/sa/SA-1098-unbilled.sql at 29603388 (unchanged at f72e1c1678), LF line endings as filed.
 const SA_UNBILLED_SHA256 = "4f1b503172b2e3a3aead159fe413ea55b01b22c418aa28a011f62d545eff48c1";
+// SA-1097 A-7: rf-specs decisions/sa/SA-1097-third.sql at 67dfe0b894 (Q9-Q12), LF line endings as filed.
+const SA_THIRD_SHA256 = "7ea78269ad97bb03bbe7ab37e6d0d90e95a7d23b9c028776d67a7409a3975877";
 
 function run(body: string): any {
   const code = `
-import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
+import { CENSUS_SQL, CENSUS_SQL_SHA256, DENOMINATORS_SQL, DENOMINATORS_SQL_SHA256, UNBILLED_SQL, UNBILLED_SQL_SHA256, THIRD_SQL, THIRD_SQL_SHA256, splitCensusSql, checkArgs, runCensus } from "${HREF}";
 ${body}
 `;
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -233,6 +235,68 @@ describe("SA-1097 census script", () => {
     ]);
     expect(seen.spec.sqlSha256).toBe(SA_UNBILLED_SHA256);
     expect(seen.keys).toEqual(["spec", "timingMs", "unbilled"]);
+  });
+
+  // SA-1097 A-7: the third count (Q9-Q12), behind --third.
+  it("embeds the SA's third-count SQL unchanged (sha-256 of rf-specs SA-1097-third.sql, A-7's Q12 included)", () => {
+    expect(run(`console.log(JSON.stringify(THIRD_SQL_SHA256));`)).toBe(SA_THIRD_SHA256);
+    expect(run(`console.log(JSON.stringify(THIRD_SQL.includes("\\r")));`)).toBe(false);
+    expect(run(`console.log(JSON.stringify(THIRD_SQL.includes("-- Q12 ")));`)).toBe(true);
+  });
+
+  it("splits the third count into Q9 to Q12, every one a SELECT that writes nothing", () => {
+    const qs = run(`console.log(JSON.stringify(splitCensusSql(THIRD_SQL)));`);
+    expect(qs.map((q: any) => q.name)).toEqual(["q9", "q10", "q11", "q12"]);
+    for (const q of qs) {
+      const code = q.sql.replace(/^--.*$/gm, "");
+      expect(code).toMatch(/^\s*(WITH|SELECT)\b/);
+      expect(code).not.toMatch(
+        /\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|COPY|SET)\b/i,
+      );
+      expect(code.trim().endsWith(";")).toBe(true);
+    }
+  });
+
+  it("--third is its own flag: it refuses to run with --denominators, --unbilled or a write flag", () => {
+    const out = run(`
+      console.log(JSON.stringify([
+        checkArgs(["--third"]), checkArgs(["--third", "--timeout-s=60"]),
+        checkArgs(["--third", "--denominators"]), checkArgs(["--third", "--unbilled"]), checkArgs(["--third", "--apply"]), checkArgs(["--third=1"]),
+      ].map((r) => r.ok ? [r.timeoutS, r.denominators, r.unbilled, r.third] : "refused")));
+    `);
+    expect(out).toEqual([
+      [300, false, false, true],
+      [60, false, false, true],
+      "refused",
+      "refused",
+      "refused",
+      "refused",
+    ]);
+  });
+
+  it("with --third: read-only before any read, Q9 to Q12 each in its own READ ONLY transaction, rolled back", () => {
+    const seen = run(`
+      const log = [];
+      const client = { async query(sql) {
+        log.push(sql.trim().split("\\n")[0].slice(0, 40));
+        if (sql === "SHOW transaction_read_only") return { rows: [{ transaction_read_only: "on" }] };
+        return { rows: [] };
+      } };
+      const out = await runCensus(client, { timeoutS: 60, third: true });
+      console.log(JSON.stringify({ log, spec: out.spec, keys: Object.keys(out) }));
+    `);
+    expect(seen.log).toEqual([
+      "SET default_transaction_read_only = on",
+      "SHOW transaction_read_only",
+      "SET statement_timeout = '60s'",
+      ...["Q9", "Q10", "Q11", "Q12"].flatMap((q) => [
+        "BEGIN READ ONLY",
+        expect.stringMatching(new RegExp(`^-- ${q} `)),
+        "ROLLBACK",
+      ]),
+    ]);
+    expect(seen.spec.sqlSha256).toBe(SA_THIRD_SHA256);
+    expect(seen.keys).toEqual(["spec", "timingMs", "q9", "q10", "q11", "q12"]);
   });
 
   it("is import-safe and uses the shared report resolver, with no write path in the source", () => {

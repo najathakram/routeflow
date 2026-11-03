@@ -30,6 +30,15 @@
  * SA-1098-unbilled.sql is embedded byte for byte as UNBILLED_SQL (sha-256 pinned by the script spec, and run against the SA's fixture
  * by the db spec).
  *
+ * SA-1097 A-6 + A-7 (rf-specs 67dfe0b894): `--third` runs the SA's third count INSTEAD of the census, in the same read-only session:
+ *   Q9  plain lines holding a pack snapshot: is their money qty x price, and do they sit on an order an invoice edit synced
+ *   Q10 each split line whose money differs from its own split, as a ratio (at most 20 rows; no price or total prints)
+ *   Q11 revision pairs: did a stored line's pack ever change, or a split disappear
+ *   Q12 pieces-only lines (boxes null, pieces set) by tenant class: with a snapshot, order not delivered, money reading as pieces / boxes
+ *   railway run --service postgres node apps/api/scripts/census-stored-line-pack-sa1097.mjs --third   (the owner's per-call yes)
+ * SA-1097-third.sql is embedded byte for byte as THIRD_SQL (sha-256 pinned by the script spec, and run against the SA's fixture by the
+ * db spec); counts, ratios and dates only.
+ *
  * SAFETY: the session is read-only before any query (`default_transaction_read_only = on`, confirmed with SHOW, exit 2
  * otherwise) and each query runs in its own BEGIN READ ONLY ... ROLLBACK; `statement_timeout` is set; SELECTs only. The target
  * (redacted) goes to stderr, the JSON to stdout. NEVER RUN FROM AN IMPLEMENTATION SESSION AGAINST PRODUCTION.
@@ -44,6 +53,7 @@ const NAME = "census-stored-line-pack-sa1097";
 export const SPEC_SQL_COMMIT = "1375ac917b11ea85a13190e487e73f5ef548cf56";
 export const DENOMINATORS_SQL_COMMIT = "6faf86cde43fa28f4499fd1eb749c6bb0eaf2fc3";
 export const UNBILLED_SQL_COMMIT = "29603388630276e43374e2368e959ee35d874045";
+export const THIRD_SQL_COMMIT = "67dfe0b894a09bfdc2e9a412e15b032f85b68f1c";
 export const DEFAULT_TIMEOUT_S = 300;
 
 export const CENSUS_SQL = String.raw`-- SA-1097 census. SELECT only, counts and totals, no ids or names. Every query is a plain WITH, because a read-only session can't create a view.
@@ -341,11 +351,97 @@ GROUP BY 1 ORDER BY 1;
 
 export const UNBILLED_SQL_SHA256 = createHash("sha256").update(UNBILLED_SQL).digest("hex");
 
-/** The queries, split at the SQL's own `-- Q<n> ` markers (Q1-Q3 for the census, Q4-Q8 for the denominators); each runs as written. */
+export const THIRD_SQL = String.raw`-- SA-1097 third count. SELECT only, plain WITH, for a read-only session. No ids, names, prices or line totals: counts, ratios and dates only.
+-- Q9 Plain lines holding a pack snapshot: is their money qty x price, and do they sit on an order an invoice edit synced?
+WITH l AS (
+  SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, oi."orderId", oi."createdAt" AS at, oi.qty, oi."unitPrice" AS price, oi.subtotal,
+         COALESCE(oi."promoFreeUnits", 0) AS free, oi."unitsPerBox" AS snap, COALESCE(p."unitsPerBox", 0) AS live, oi."unitLabel" AS label,
+         EXISTS (SELECT 1 FROM "OrderRevision" r WHERE r."orderId" = o.id AND r.source = 'SYSTEM_INVOICE_SYNC') AS on_sync_order
+  FROM "OrderItem" oi
+  JOIN "Order" o ON o.id = oi."orderId"
+  LEFT JOIN "Product" p ON p.id = oi."productId"
+  LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+  WHERE oi.status <> 'CANCELLED' AND o.status <> 'CANCELLED' AND oi.boxes IS NULL AND oi.pieces IS NULL AND oi."unitsPerBox" > 1
+)
+SELECT tenant_class, count(*)::int AS plain_snap_lines, count(DISTINCT "orderId")::int AS orders,
+       count(*) FILTER (WHERE on_sync_order)::int AS on_sync_order,
+       count(*) FILTER (WHERE abs(subtotal - round(price * GREATEST(qty - free, 0), 2)) <= 0.01)::int AS money_is_qty_price,
+       count(*) FILTER (WHERE abs(subtotal - round(price * GREATEST(qty - free, 0), 2)) > 0.01)::int AS money_other,
+       count(*) FILTER (WHERE snap = live)::int AS snap_equals_live,
+       count(*) FILTER (WHERE label IS NOT NULL)::int AS labelled,
+       min(at) AS first_at, max(at) AS last_at
+FROM l GROUP BY 1 ORDER BY 1;
+
+-- Q10 Each split line whose money differs from its own split: how it differs, as a ratio. At most 20 rows; no price or total prints.
+WITH l AS (
+  SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, oi.id, oi."orderId", oi."createdAt" AS at, oi.status AS line_status, o.status AS order_status,
+         oi."priceType" AS price_type, oi."originalPrice" IS NOT NULL AS has_original_price, oi.subtotal, oi.qty,
+         COALESCE(oi.boxes, 0) AS b, COALESCE(oi.pieces, 0) AS pc, oi."unitsPerBox" AS snap, COALESCE(oi."promoFreeUnits", 0) AS free,
+         round(oi."unitPrice" * (GREATEST(COALESCE(oi.boxes, 0) - COALESCE(oi."promoFreeUnits", 0), 0) + COALESCE(oi.pieces, 0)::numeric / oi."unitsPerBox"), 2) AS expected
+  FROM "OrderItem" oi
+  JOIN "Order" o ON o.id = oi."orderId"
+  LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+  WHERE oi.status <> 'CANCELLED' AND o.status <> 'CANCELLED' AND (oi.boxes IS NOT NULL OR oi.pieces IS NOT NULL) AND oi."unitsPerBox" > 1
+)
+SELECT tenant_class, to_char(at, 'YYYY-MM') AS month, line_status, order_status, price_type, has_original_price,
+       b > 0 AS has_boxes, pc > 0 AS has_pieces, snap, free > 0 AS has_free,
+       CASE WHEN expected = 0 THEN NULL ELSE round(subtotal / expected, 4) END AS ratio_to_own_split,
+       abs(subtotal - expected) <= 0.05 AS within_five_cents,
+       EXISTS (SELECT 1 FROM "OrderRevision" r WHERE r."orderId" = l."orderId" AND r.source = 'SYSTEM_INVOICE_SYNC') AS on_sync_order,
+       (SELECT count(*)::int FROM "OrderRevision" r WHERE r."orderId" = l."orderId") AS revisions_on_order
+FROM l WHERE abs(subtotal - expected) > 0.01 ORDER BY 1, 2 LIMIT 20;
+
+-- Q11 Revision pairs: did a stored line's pack ever change, or a split disappear? Q8 only read lines with no snapshot, so it could not see a line with one.
+WITH rev AS (
+  SELECT r."orderId", r.source, r.snapshot->'lineItems' AS items,
+         lag(r.snapshot->'lineItems') OVER (PARTITION BY r."orderId" ORDER BY r."revisionNumber") AS prev_items
+  FROM "OrderRevision" r
+  WHERE jsonb_typeof(r.snapshot->'lineItems') = 'array'
+), pairs AS (
+  SELECT rev."orderId", rev.source, (p->>'unitsPerBox')::int AS prev_pack, (x->>'unitsPerBox')::int AS next_pack,
+         p->>'boxes' AS prev_boxes, x->>'boxes' AS next_boxes, x->>'pieces' AS next_pieces,
+         (p->>'subtotal')::numeric AS before_total, (x->>'subtotal')::numeric AS after_total
+  FROM rev
+  CROSS JOIN LATERAL jsonb_array_elements(rev.prev_items) p
+  CROSS JOIN LATERAL jsonb_array_elements(rev.items) x
+  WHERE rev.prev_items IS NOT NULL
+    AND p->>'productId' = x->>'productId'
+    AND (SELECT count(*) FROM jsonb_array_elements(rev.prev_items) e WHERE e->>'productId' = p->>'productId') = 1
+    AND (SELECT count(*) FROM jsonb_array_elements(rev.items) e WHERE e->>'productId' = p->>'productId') = 1
+)
+SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, pairs.source, count(*)::int AS pairs,
+       count(*) FILTER (WHERE prev_boxes IS NOT NULL)::int AS split_before,
+       count(*) FILTER (WHERE prev_pack > 1 AND next_pack > 1 AND prev_pack <> next_pack)::int AS pack_changed,
+       count(DISTINCT pairs."orderId") FILTER (WHERE prev_pack > 1 AND next_pack > 1 AND prev_pack <> next_pack)::int AS orders_pack_changed,
+       count(*) FILTER (WHERE prev_boxes IS NOT NULL AND next_boxes IS NULL AND next_pieces IS NULL)::int AS split_lost,
+       count(*) FILTER (WHERE prev_boxes IS NOT NULL AND next_boxes IS NULL AND next_pieces IS NULL AND before_total <> after_total)::int AS split_lost_money_moved
+FROM pairs
+JOIN "Order" o ON o.id = pairs."orderId"
+LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Q12 Pieces-only lines: boxes null, pieces set. The earlier counts took them as split lines and never separated them. Any stored pieces read as boxes by a stored-line merge (SA-1097 A-7). No rows means none.
+SELECT COALESCE(t.class::text, 'NO_TENANT') AS tenant_class, count(*)::int AS lines,
+       count(*) FILTER (WHERE oi.pieces > 0)::int AS pieces_above_0,
+       count(*) FILTER (WHERE oi."unitsPerBox" > 1)::int AS with_snapshot,
+       count(*) FILTER (WHERE o.status <> 'DELIVERED')::int AS order_not_delivered,
+       count(*) FILTER (WHERE COALESCE(NULLIF(oi."unitsPerBox", 0), p."unitsPerBox", 0) > 1 AND abs(oi.subtotal - oi."unitPrice" * oi.pieces / COALESCE(NULLIF(oi."unitsPerBox", 0), p."unitsPerBox")) <= 0.01)::int AS money_reads_as_pieces,
+       count(*) FILTER (WHERE abs(oi.subtotal - oi."unitPrice" * oi.pieces) <= 0.01)::int AS money_reads_as_boxes
+FROM "OrderItem" oi
+JOIN "Order" o ON o.id = oi."orderId"
+LEFT JOIN "Product" p ON p.id = oi."productId"
+LEFT JOIN "Tenant" t ON t.id = o."tenantId"
+WHERE oi.status <> 'CANCELLED' AND o.status <> 'CANCELLED' AND oi.boxes IS NULL AND oi.pieces IS NOT NULL
+GROUP BY 1 ORDER BY 1;
+`;
+
+export const THIRD_SQL_SHA256 = createHash("sha256").update(THIRD_SQL).digest("hex");
+
+/** The queries, split at the SQL's own `-- Q<n> ` markers (Q1-Q3 for the census, Q4-Q8 for the denominators, Q9-Q12 for the third count); each runs as written. */
 export function splitCensusSql(text = CENSUS_SQL) {
   // The unbilled count is one plain SELECT with no `-- Q<n> ` markers: it runs whole, as written.
   if (text === UNBILLED_SQL) return [{ name: "unbilled", sql: text.trim() }];
-  const parts = text.split(/^-- (?=Q\d )/m).slice(1);
+  const parts = text.split(/^-- (?=Q\d+ )/m).slice(1);
   return parts.map((p) => ({
     name: p.slice(0, p.indexOf(" ")).toLowerCase(),
     sql: `-- ${p}`.trim(),
@@ -356,6 +452,7 @@ export function checkArgs(argv) {
   let timeoutS = DEFAULT_TIMEOUT_S;
   let denominators = false;
   let unbilled = false;
+  let third = false;
   for (const a of argv) {
     if (a === "--denominators") {
       denominators = true;
@@ -365,44 +462,61 @@ export function checkArgs(argv) {
       unbilled = true;
       continue;
     }
+    if (a === "--third") {
+      third = true;
+      continue;
+    }
     const m = /^--timeout-s=(\d+)$/.exec(a);
     if (!m || Number(m[1]) < 1 || Number(m[1]) > 1800) {
       return {
         ok: false,
-        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled] [--timeout-s=<1-1800>])`,
+        message: `unknown or invalid argument: ${a} (usage: [--denominators | --unbilled | --third] [--timeout-s=<1-1800>])`,
       };
     }
     timeoutS = Number(m[1]);
   }
-  if (denominators && unbilled) {
+  if ([denominators, unbilled, third].filter(Boolean).length > 1) {
     return {
       ok: false,
-      message: "--denominators and --unbilled are separate counts: run one at a time",
+      message: "--denominators, --unbilled and --third are separate counts: run one at a time",
     };
   }
-  return { ok: true, timeoutS, denominators, unbilled };
+  return { ok: true, timeoutS, denominators, unbilled, third };
 }
 
 export async function runCensus(
   client,
-  { timeoutS = DEFAULT_TIMEOUT_S, log = () => {}, denominators = false, unbilled = false } = {},
+  {
+    timeoutS = DEFAULT_TIMEOUT_S,
+    log = () => {},
+    denominators = false,
+    unbilled = false,
+    third = false,
+  } = {},
 ) {
   await client.query("SET default_transaction_read_only = on");
   const [{ transaction_read_only: ro }] = (await client.query("SHOW transaction_read_only")).rows;
   if (ro !== "on") throw Object.assign(new Error("session is not read-only"), { exitCode: 2 });
   await client.query(`SET statement_timeout = '${timeoutS}s'`);
   const out = {
-    spec: unbilled
-      ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
-      : denominators
-        ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
-        : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
+    spec: third
+      ? { sqlCommit: THIRD_SQL_COMMIT, sqlSha256: THIRD_SQL_SHA256 }
+      : unbilled
+        ? { sqlCommit: UNBILLED_SQL_COMMIT, sqlSha256: UNBILLED_SQL_SHA256 }
+        : denominators
+          ? { sqlCommit: DENOMINATORS_SQL_COMMIT, sqlSha256: DENOMINATORS_SQL_SHA256 }
+          : { sqlCommit: SPEC_SQL_COMMIT, sqlSha256: CENSUS_SQL_SHA256 },
     timingMs: {},
   };
   const t0 = Date.now();
-  for (const q of splitCensusSql(
-    unbilled ? UNBILLED_SQL : denominators ? DENOMINATORS_SQL : CENSUS_SQL,
-  )) {
+  const sqlText = third
+    ? THIRD_SQL
+    : unbilled
+      ? UNBILLED_SQL
+      : denominators
+        ? DENOMINATORS_SQL
+        : CENSUS_SQL;
+  for (const q of splitCensusSql(sqlText)) {
     const t = Date.now();
     await client.query("BEGIN READ ONLY");
     try {
@@ -434,6 +548,7 @@ async function main(argv) {
       log: console.error,
       denominators: args.denominators,
       unbilled: args.unbilled,
+      third: args.third,
     });
     console.log(JSON.stringify(census, null, 2));
   } catch (e) {
