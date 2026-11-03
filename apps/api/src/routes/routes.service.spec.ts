@@ -8,6 +8,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
 import { RoutesService, RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
+import { stopCompletionRequestHash } from "./stop-completion-key";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -2511,7 +2512,7 @@ describe("RoutesService", () => {
 
   // ─── RF-019: Idempotency key deduplication ───────────────────────────────
 
-  describe("completeStop idempotency (RF-019)", () => {
+  describe("completeStop idempotency (SA-953 S1)", () => {
     const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
 
     it("should return cached response for duplicate idempotency key", async () => {
@@ -2524,10 +2525,20 @@ describe("RoutesService", () => {
         orders: [],
       });
 
-      // Mock $queryRaw to simulate an existing idempotency key in the DB
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
-        { response: JSON.stringify(cachedStop) },
-      ]);
+      // The key lookup's own read-only transaction finds the row.
+      (prisma.tenantTransaction as jest.Mock).mockImplementationOnce((fn: any) =>
+        fn({
+          $executeRaw: jest.fn().mockResolvedValue(0),
+          $queryRaw: jest.fn().mockResolvedValue([
+            {
+              response: JSON.stringify({
+                requestHash: stopCompletionRequestHash({}),
+                response: cachedStop,
+              }),
+            },
+          ]),
+        }),
+      );
 
       const result = await service.completeStop(
         "run-1",
@@ -2536,9 +2547,9 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // Should return the cached response, not call tenantTransaction
+      // The cached response, and no second transaction: nothing is written.
       expect(result).toEqual(cachedStop);
-      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
     });
   });
 
